@@ -28,6 +28,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 20
+      start_period: 30s
 
   neo4j:
     image: neo4j:5.26-community
@@ -41,6 +42,7 @@ services:
       interval: 5s
       timeout: 3s
       retries: 30
+      start_period: 60s
 
   kali:
     image: redamon-kali-sandbox:latest
