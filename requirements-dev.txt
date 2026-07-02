@@ -1,5 +1,5 @@
 pytest==8.3.4
 psycopg[binary]==3.2.3
 neo4j==5.27.0
-fastmcp==2.11.0
+fastmcp>=2.14,<3
 httpx==0.28.1
