@@ -2,7 +2,10 @@
 # Idempotent gap-fill for the reused redamon-kali-sandbox image. Installs the
 # recon tools it lacks into a persisted volume (/opt/localbin) + the venv, so
 # recreation never recompiles.
-set -e
+# Best-effort by design (I1): a failed gap-fill step must NOT abort this script,
+# because the compose entrypoint is `postrun.sh && mcp_server.py` — aborting here
+# would take down the whole exec server (incl. tools that need no gap-fill).
+# No `set -e`; script always exits 0 (see end).
 export PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:/usr/local/go/bin:$PATH"
 mkdir -p /opt/localbin /resolvers
 
@@ -50,3 +53,4 @@ fi
 [ -f /resolvers/resolvers.txt ] || curl -sL https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt -o /resolvers/resolvers.txt
 
 echo "[postrun] gap-fill complete"
+exit 0
