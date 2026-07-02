@@ -1,0 +1,68 @@
+name: polymerhus
+
+networks:
+  polymerhus-net:
+    driver: bridge
+
+volumes:
+  neo4j-data:
+  pg-data:
+  kali-tools:      # persists massdns/puredns/kr so recreation never recompiles
+  resolvers:
+  work:
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg16
+    environment:
+      POSTGRES_USER: polymerhus
+      POSTGRES_PASSWORD: polymerhus
+      POSTGRES_DB: polymerhus
+    ports: ["5432:5432"]
+    volumes:
+      - pg-data:/var/lib/postgresql/data
+      - ./db/postgres/init.sql:/docker-entrypoint-initdb.d/10-init.sql:ro
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U polymerhus -d polymerhus"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+
+  neo4j:
+    image: neo4j:5.26-community
+    environment:
+      NEO4J_AUTH: neo4j/polymerhus
+    ports: ["7474:7474", "7687:7687"]
+    volumes: [neo4j-data:/data]
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://localhost:7474 || exit 1"]
+      interval: 5s
+      timeout: 3s
+      retries: 30
+
+  kali:
+    image: redamon-kali-sandbox:latest
+    entrypoint: ["bash", "-lc", "/opt/postrun.sh && /opt/venv/bin/python /opt/mcp_server.py"]
+    ports: ["8000:8000"]
+    volumes:
+      - ./kali/mcp_server.py:/opt/mcp_server.py:ro
+      - ./kali/postrun.sh:/opt/postrun.sh:ro
+      - kali-tools:/opt/localbin
+      - resolvers:/resolvers
+      - work:/work
+    networks: [polymerhus-net]
+
+  agent:
+    build: { context: ., dockerfile: agent/Dockerfile }
+    image: polymerhus-agent:latest
+    env_file:
+      - path: .env
+        required: false
+    ports: ["8080:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      neo4j: { condition: service_healthy }
+      kali: { condition: service_started }
+    networks: [polymerhus-net]

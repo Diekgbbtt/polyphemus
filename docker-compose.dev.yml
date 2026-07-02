@@ -1,0 +1,10 @@
+# Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
+# agent: live source + uvicorn --reload (edits apply instantly)
+# kali : mcp_server.py/postrun.sh already bind-mounted in base — `docker restart kali` to reload
+services:
+  agent:
+    volumes:
+      - ./agent:/srv/agent
+      - ./db:/srv/db
+    command: ["uvicorn", "agent.app.main:app", "--host", "0.0.0.0", "--port", "8080",
+              "--reload", "--reload-dir", "/srv"]
