@@ -16,9 +16,17 @@ Redamon's two base images must exist locally (reused, not rebuilt):
 Services: agent `:8080/health` · kali fastmcp `:8000/mcp` · neo4j `:7474`/`:7687` (neo4j/polymerhus) · postgres `:5432`.
 
 ## Verify
-    python -m pytest tests/ -v
+    python -m pytest tests/ -v          # integration + e2e
+    python -m pytest tests/e2e/ -v      # deep e2e + observability only
 
-`GET /health` returns `{"status":"ok","checks":{"postgres":true,"neo4j":true,"kali_mcp":true}}` when healthy.
+`tests/e2e/` covers real work + failure paths: a live jsluice URL-extraction run,
+idempotent neo4j MERGE, pgvector cosine search, checkpoint persistence, and the
+observability paths (a degraded backend is reported *and diagnosed*, exec failures
+surface returncode/stderr/timeout).
+
+`GET /health` returns `{"status":"ok","checks":{...},"errors":{}}` when healthy; on a
+degraded backend, `status` is `degraded`, its check is `false`, and `errors.<backend>`
+carries the reason (e.g. connection refused).
 
 ## Reload during dev
 - agent: automatic (`uvicorn --reload`).

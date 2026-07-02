@@ -10,17 +10,21 @@ async def _startup():
 
 @app.get("/health")
 async def health():
+    # Observability: capture WHY a backend is down (not just a bare boolean),
+    # so a degraded stack is diagnosable from the endpoint alone.
     checks = {"postgres": False, "neo4j": False, "kali_mcp": False}
+    errors: dict[str, str] = {}
     try:
         checks["postgres"] = pg.check()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        errors["postgres"] = f"{type(e).__name__}: {e}"
     try:
         checks["neo4j"] = neo4j_client.check()
-    except Exception:  # noqa: BLE001
-        pass
+    except Exception as e:  # noqa: BLE001
+        errors["neo4j"] = f"{type(e).__name__}: {e}"
     try:
         checks["kali_mcp"] = await kali_mcp.check()
-    except Exception:  # noqa: BLE001
-        pass
-    return {"status": "ok" if all(checks.values()) else "degraded", "checks": checks}
+    except Exception as e:  # noqa: BLE001
+        errors["kali_mcp"] = f"{type(e).__name__}: {e}"
+    return {"status": "ok" if all(checks.values()) else "degraded",
+            "checks": checks, "errors": errors}
