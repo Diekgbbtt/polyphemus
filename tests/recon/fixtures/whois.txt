@@ -1,0 +1,21 @@
+Domain Name: EXAMPLE.COM
+Registry Domain ID: 2336799_DOMAIN_COM-VRSN
+Registrar WHOIS Server: whois.example-registrar.com
+Registrar URL: http://www.example-registrar.com
+Updated Date: 2025-08-14T10:22:31Z
+Creation Date: 1995-08-14T04:00:00Z
+Registry Expiry Date: 2026-08-13T04:00:00Z
+Registrar: Example Registrar, LLC
+Registrar IANA ID: 376
+Registrar Abuse Contact Email: abuse@example-registrar.com
+Registrar Abuse Contact Phone: +1.4805058800
+Domain Status: clientDeleteProhibited https://icann.org/epp#clientDeleteProhibited
+Domain Status: clientTransferProhibited https://icann.org/epp#clientTransferProhibited
+Registry Registrant ID: REDACTED FOR PRIVACY
+Registrant Organization: Example Org, Inc.
+Registrant Country: US
+Registrant Email: Select Contact Domain Holder link at https://example-registrar.com
+Name Server: A.IANA-SERVERS.NET
+Name Server: B.IANA-SERVERS.NET
+DNSSEC: unsigned
+>>> Last update of WHOIS database: 2026-06-01T00:00:00Z <<<
