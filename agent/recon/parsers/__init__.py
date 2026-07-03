@@ -6,6 +6,7 @@ from agent.recon.parsers.subdomain_parser import parse_subfinder, parse_amass
 from agent.recon.parsers.dns_parser import parse_dnsx, parse_puredns
 from agent.recon.parsers.whois_parser import parse as parse_whois
 from agent.recon.parsers.naabu_parser import parse as parse_naabu
+from agent.recon.parsers.katana_parser import parse as parse_katana
 
 PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     "httpx": parse_httpx,
@@ -15,6 +16,7 @@ PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     "puredns": parse_puredns,
     "whois": parse_whois,
     "naabu": parse_naabu,
+    "katana": parse_katana,
 }
 
 
