@@ -1,0 +1,4 @@
+https://app.example.com/dashboard
+https://app.example.com/search?id=1&q=x
+
+not a valid url at all
