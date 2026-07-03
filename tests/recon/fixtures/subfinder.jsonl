@@ -1,0 +1,4 @@
+{"host": "www.example.com", "source": "subfinder"}
+{"host": "API.Example.com", "source": "subfinder"}
+NOT JSON
+{"host": ""}

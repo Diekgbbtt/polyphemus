@@ -1,0 +1,4 @@
+{"name": "mail.example.com", "domain": "example.com", "addresses": [{"ip": "93.184.216.34", "cidr": "93.184.216.0/24", "asn": 15133, "desc": "Example Inc."}], "tag": "dns", "sources": ["DNS"]}
+{"name": "beta.example.com", "domain": "example.com", "addresses": [], "tag": "dns", "sources": ["DNS"]}
+NOT JSON
+{"name": ""}
