@@ -1,0 +1,4 @@
+www.example.com
+mail.example.com
+
+not valid host

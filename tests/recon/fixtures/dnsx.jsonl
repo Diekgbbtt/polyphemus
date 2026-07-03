@@ -1,0 +1,4 @@
+{"host": "www.example.com", "a": ["93.184.216.34"], "cname": ["edge.example.net"]}
+{"host": "mail.example.com", "mx": ["10 mail.example.com"], "txt": ["v=spf1 -all"]}
+NOT JSON
+{"host": ""}
