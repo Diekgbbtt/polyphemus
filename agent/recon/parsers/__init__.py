@@ -7,6 +7,7 @@ from agent.recon.parsers.dns_parser import parse_dnsx, parse_puredns
 from agent.recon.parsers.whois_parser import parse as parse_whois
 from agent.recon.parsers.naabu_parser import parse as parse_naabu
 from agent.recon.parsers.katana_parser import parse as parse_katana
+from agent.recon.parsers.jsluice_parser import parse as parse_jsluice
 from agent.recon.parsers.passive_url_parser import parse_gau, parse_paramspider
 from agent.recon.parsers.active_param_parser import parse_arjun, parse_ffuf, parse_kiterunner
 
@@ -19,6 +20,7 @@ PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     "whois": parse_whois,
     "naabu": parse_naabu,
     "katana": parse_katana,
+    "jsluice": parse_jsluice,
     "gau": parse_gau,
     "paramspider": parse_paramspider,
     "arjun": parse_arjun,

@@ -1,0 +1,3 @@
+{"url": "https://target.example.com/api/v2/data?id=1", "method": "GET", "type": "fetch"}
+{"kind": "aws-access-key", "secret": "AKIAABCDEFGHIJKLMNOP", "severity": "high", "base_url": "https://target.example.com", "filename": "/tmp/redamon/jsluice_1/app.js"}
+not-json-garbage {{{
