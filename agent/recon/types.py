@@ -58,6 +58,7 @@ class PodState(TypedDict, total=False):
     asset_context: str
     extra: dict
     session_id: str
+    project_id: str
     invocation: ToolInvocation
     exec_result: ExecResult
     iteration: int

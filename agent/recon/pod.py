@@ -1,0 +1,199 @@
+"""Recon pod subgraph: configurator -> execute -> gate -> parser -> triager -> curator.
+
+`build_pod_graph` takes the three side-effecting collaborators (exec_fn,
+curate_fn, triage_fn) as parameters so callers can inject fakes in tests -
+no live Kali/LLM/Neo4j is touched by the unit tests in tests/recon/test_pod.py.
+
+`default_exec_fn` and `default_triage_fn` wire the real kali MCP client and
+the triager LLM respectively, but they resolve their clients lazily on first
+call (inside the function body). Importing this module must never perform
+network I/O or require env vars to be set - `pod_graph` is built from the
+defaults at import time, but building it only wires function references, it
+does not invoke them.
+"""
+from __future__ import annotations
+
+import time
+
+from langgraph.graph import StateGraph, START, END
+from pydantic import BaseModel, Field
+
+from agent.recon.types import (
+    PodState, ToolInvocation, PodExport, ExecResult, AssetDelta, Observation, JobSpec,
+)
+from agent.recon.parsers import get_parser
+from agent.recon.curator import curate
+from agent.recon.config import MAX_POD_ITERS, EXEC_TIMEOUT_S
+
+
+def fill_template(command_template: str, input_asset: dict, extra: dict) -> str:
+    """Deterministic placeholder fill for a job's command_template.
+
+    - {target}: input_asset["name"] or ["url"] or ["address"], first present.
+    - {domain}: input_asset["name"] or ["domain"], falling back to {target}.
+    - {baseurl}: input_asset["url"] or ["baseurl"], falling back to {target}.
+    - {auth_header}: empty unless extra["auth_context"] is present AND the
+      caller has flagged extra["_use_auth"] truthy (the configurator node
+      sets this from job.use_auth before calling fill_template).
+    """
+    extra = extra or {}
+    target = input_asset.get("name") or input_asset.get("url") or input_asset.get("address") or ""
+    domain = input_asset.get("name") or input_asset.get("domain") or target
+    baseurl = input_asset.get("url") or input_asset.get("baseurl") or target
+    auth_header = ""
+    if extra.get("auth_context") and extra.get("_use_auth"):
+        auth_header = extra["auth_context"]
+
+    result = command_template
+    result = result.replace("{target}", str(target))
+    result = result.replace("{domain}", str(domain))
+    result = result.replace("{baseurl}", str(baseurl))
+    result = result.replace("{auth_header}", str(auth_header))
+    return result
+
+
+def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
+    """Build the compiled recon-pod subgraph, injecting the three
+    side-effecting collaborators: exec_fn(command, session_id, timeout_s) ->
+    ExecResult, curate_fn(assets, observations, project_id) -> (int, int),
+    triage_fn(exec_result, assets, job) -> list[Observation].
+    """
+
+    def configurator(state: PodState) -> dict:
+        job = state["job"]
+        extra = dict(state.get("extra") or {})
+        extra["_use_auth"] = job.use_auth
+        command = fill_template(job.command_template, state["input_asset"], extra)
+        invocation = ToolInvocation(command=command, session_id=state["session_id"])
+        iteration = state.get("iteration", 0) + 1
+        return {"invocation": invocation, "iteration": iteration}
+
+    def execute(state: PodState) -> dict:
+        invocation = state["invocation"]
+        exec_result = exec_fn(invocation.command, invocation.session_id, EXEC_TIMEOUT_S)
+        return {"exec_result": exec_result}
+
+    def gate(state: PodState) -> str:
+        exec_result = state["exec_result"]
+        if exec_result.returncode == 0 and exec_result.stdout.strip():
+            return "parse"
+        if exec_result.returncode != 0 and state.get("iteration", 0) < MAX_POD_ITERS:
+            return "configurator"
+        return "fail"
+
+    def parser(state: PodState) -> dict:
+        job = state["job"]
+        exec_result = state["exec_result"]
+        assets = get_parser(job.tool)(exec_result.stdout)
+        return {"assets": assets}
+
+    def triager(state: PodState) -> dict:
+        observations = triage_fn(state["exec_result"], state.get("assets", []), state["job"])
+        return {"observations": observations}
+
+    def curator_node(state: PodState) -> dict:
+        assets = state.get("assets", [])
+        observations = state.get("observations", [])
+        assets_merged, observations_merged = curate_fn(assets, observations, state["project_id"])
+        export = PodExport(
+            input_asset=state["input_asset"],
+            verdict="success",
+            assets_merged=assets_merged,
+            observations_merged=observations_merged,
+            iterations=state.get("iteration", 0),
+        )
+        return {"export": export}
+
+    def fail(state: PodState) -> dict:
+        exec_result = state.get("exec_result")
+        error = exec_result.stderr if exec_result is not None else "unknown error"
+        export = PodExport(
+            input_asset=state["input_asset"],
+            verdict="failed",
+            assets_merged=0,
+            observations_merged=0,
+            iterations=state.get("iteration", 0),
+            error=error,
+        )
+        return {"export": export}
+
+    g = StateGraph(PodState)
+    g.add_node("configurator", configurator)
+    g.add_node("execute", execute)
+    g.add_node("parser", parser)
+    g.add_node("triager", triager)
+    g.add_node("curator", curator_node)
+    g.add_node("fail", fail)
+
+    g.add_edge(START, "configurator")
+    g.add_edge("configurator", "execute")
+    g.add_conditional_edges(
+        "execute", gate, {"parse": "parser", "configurator": "configurator", "fail": "fail"}
+    )
+    g.add_edge("parser", "triager")
+    g.add_edge("triager", "curator")
+    g.add_edge("curator", END)
+    g.add_edge("fail", END)
+
+    return g.compile()
+
+
+def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult:
+    """Real collaborator: run `command` via the kali MCP `execute_command`
+    tool. Builds its MCP client lazily on each call - no client/connection is
+    constructed at import time.
+    """
+    import asyncio
+    from langchain_mcp_adapters.client import MultiServerMCPClient
+    from agent.app.config import config
+
+    async def _run():
+        client = MultiServerMCPClient(
+            {"kali": {"url": config.KALI_MCP_URL, "transport": "streamable_http"}}
+        )
+        tools = await client.get_tools()
+        exec_tool = next(t for t in tools if t.name == "execute_command")
+        return await exec_tool.ainvoke(
+            {"command": command, "session_id": session_id, "timeout_s": timeout_s}
+        )
+
+    start = time.monotonic()
+    result = asyncio.run(_run())
+    duration_ms = int((time.monotonic() - start) * 1000)
+
+    if isinstance(result, dict):
+        return ExecResult(
+            stdout=str(result.get("stdout", "")),
+            stderr=str(result.get("stderr", "")),
+            returncode=int(result.get("returncode", 1)),
+            duration_ms=duration_ms,
+        )
+    # Unstructured tool result: treat as raw stdout, assume success.
+    return ExecResult(stdout=str(result), stderr="", returncode=0, duration_ms=duration_ms)
+
+
+class _ObservationBatch(BaseModel):
+    observations: list[Observation] = Field(default_factory=list)
+
+
+def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: JobSpec) -> list[Observation]:
+    """Real collaborator: ask the triager LLM to flag noteworthy observations
+    from a completed tool run. Builds its chat model lazily on each call.
+    """
+    from agent.app.llm.roles import chat_model_for
+
+    llm = chat_model_for("triager")
+    structured_llm = llm.with_structured_output(_ObservationBatch)
+    prompt = (
+        f"Tool: {job.tool}\n"
+        f"Command stdout:\n{exec_result.stdout[:4000]}\n"
+        f"Parsed assets: {[a.model_dump() for a in assets]}\n"
+        "Identify any noteworthy security observations (macro_kind, severity, "
+        "evidence, rationale, anchor {type, identity}, source_job, source_tool). "
+        "Return an empty list if nothing notable."
+    )
+    result = structured_llm.invoke(prompt)
+    return result.observations
+
+
+pod_graph = build_pod_graph(exec_fn=default_exec_fn, curate_fn=curate, triage_fn=default_triage_fn)
