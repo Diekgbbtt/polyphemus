@@ -1,0 +1,4 @@
+{
+  "https://api.example.com/search": {"params": ["q", "page"], "method": "GET"},
+  "https://api.example.com/submit": {"params": ["token"], "method": "POST"}
+}

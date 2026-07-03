@@ -1,0 +1,6 @@
+{"method":"GET","target":"https://api.example.com","path":"/v1/users","responses":[{"sc":200,"len":512}],"time":"2026-01-04T19:12:21+01:00"}
+{"method":"POST","target":"https://api.example.com","path":"/v1/orders","responses":[{"sc":401,"len":0}],"time":"2026-01-04T19:12:22+01:00"}
+{"level":"info","message":"starting scan"}
+
+garbage not json at all
+GET  404  https://api.example.com/v1/orphan  128

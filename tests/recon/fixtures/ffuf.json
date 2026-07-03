@@ -1,0 +1,26 @@
+{
+  "results": [
+    {
+      "url": "https://example.com/admin",
+      "status": 200,
+      "length": 1234,
+      "words": 45,
+      "lines": 10,
+      "content-type": "text/html",
+      "redirectlocation": "",
+      "duration": 123,
+      "input": {"FUZZ": "admin"}
+    },
+    {
+      "url": "https://example.com/backup",
+      "status": 403,
+      "length": 50,
+      "words": 3,
+      "lines": 1,
+      "content-type": "text/html",
+      "redirectlocation": "",
+      "duration": 98,
+      "input": {"FUZZ": "backup"}
+    }
+  ]
+}
