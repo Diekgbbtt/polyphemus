@@ -10,6 +10,7 @@ from agent.recon.parsers.katana_parser import parse as parse_katana
 from agent.recon.parsers.jsluice_parser import parse as parse_jsluice
 from agent.recon.parsers.passive_url_parser import parse_gau, parse_paramspider
 from agent.recon.parsers.active_param_parser import parse_arjun, parse_ffuf, parse_kiterunner
+from agent.recon.parsers.graphql_parser import parse as parse_graphql_cop
 
 PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     "httpx": parse_httpx,
@@ -26,6 +27,7 @@ PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     "arjun": parse_arjun,
     "ffuf": parse_ffuf,
     "kiterunner": parse_kiterunner,
+    "graphql-cop": parse_graphql_cop,
 }
 
 

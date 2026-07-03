@@ -1,0 +1,20 @@
+[
+  {
+    "title": "Introspection",
+    "description": "GraphQL Introspection is enabled, exposing the entire schema.",
+    "impact": "Information Disclosure",
+    "severity": "MEDIUM",
+    "result": true,
+    "curl_verify": "curl -X POST https://api.example.com/graphql -H 'Content-Type: application/json' -d '{\"query\": \"{__schema{types{name}}}\"}'",
+    "color": "yellow"
+  },
+  {
+    "title": "GraphQL IDE",
+    "description": "A GraphQL IDE (GraphiQL/Playground) was not detected.",
+    "impact": "Information Disclosure",
+    "severity": "LOW",
+    "result": false,
+    "curl_verify": "curl https://api.example.com/graphql",
+    "color": "green"
+  }
+]
