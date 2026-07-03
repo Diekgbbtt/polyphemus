@@ -4,9 +4,9 @@ Ported from Redamon's `main_recon_modules/http_probe.py::parse_httpx_output`.
 Only the field-mapping logic is kept; all Docker/execution/AI-annotation
 code was dropped. Deterministic, tolerant of malformed JSONL lines.
 """
-import json
 from urllib.parse import urlparse
 
+from agent.recon.parsers._jsonlines import iter_json_dicts
 from agent.recon.types import AssetDelta, Edge
 
 
@@ -21,18 +21,9 @@ def _first(entry: dict, *keys):
 def parse(stdout: str) -> list[AssetDelta]:
     deltas: list[AssetDelta] = []
 
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
+    for entry in iter_json_dicts(stdout):
         url = _first(entry, "url", "input")
-        if not url:
+        if not url or not isinstance(url, str):
             continue
 
         status_code = _first(entry, "status_code", "status-code")
@@ -85,8 +76,10 @@ def parse(stdout: str) -> list[AssetDelta]:
         )
 
         techs = _first(entry, "tech", "technologies") or []
+        if not isinstance(techs, list):
+            techs = []
         for tech in techs:
-            if not tech:
+            if not tech or not isinstance(tech, str):
                 continue
             deltas.append(
                 AssetDelta(
@@ -104,10 +97,14 @@ def parse(stdout: str) -> list[AssetDelta]:
             )
 
         tls = entry.get("tls") or {}
+        if not isinstance(tls, dict):
+            tls = {}
         subject_cn = tls.get("subject_cn")
-        if subject_cn:
+        if subject_cn and isinstance(subject_cn, str):
             issuer = _first(tls, "issuer_org", "issuer_dn", "issuer")
             san = _first(tls, "subject_an", "san") or []
+            if not isinstance(san, list):
+                san = []
             deltas.append(
                 AssetDelta(
                     type="Certificate",

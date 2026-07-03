@@ -36,8 +36,7 @@ instead, per design §10.3.
 Both functions are pure, deterministic, and tolerate malformed lines
 and missing optional keys.
 """
-import json
-
+from agent.recon.parsers._jsonlines import iter_json_dicts, safe_str
 from agent.recon.types import AssetDelta, Edge
 
 # Record types resolved to an address (emit IP + RESOLVES_TO).
@@ -51,17 +50,9 @@ _RECORD_TYPE_KEYS = ("a", "aaaa", "mx", "ns", "txt", "soa", "cname")
 def parse_dnsx(stdout: str) -> list[AssetDelta]:
     deltas: list[AssetDelta] = []
 
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        host = (entry.get("host") or "").strip().lower()
+    for entry in iter_json_dicts(stdout):
+        host = safe_str(entry.get("host"))
+        host = host.strip().lower() if host else ""
         if not host:
             continue
 
@@ -71,9 +62,12 @@ def parse_dnsx(stdout: str) -> list[AssetDelta]:
 
         for key in _RECORD_TYPE_KEYS:
             values = entry.get(key) or []
+            if not isinstance(values, list):
+                continue
             record_type = key.upper()
             for value in values:
-                value = (value or "").strip() if isinstance(value, str) else value
+                value = safe_str(value)
+                value = value.strip() if value else ""
                 if not value:
                     continue
 

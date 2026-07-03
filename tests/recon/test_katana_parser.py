@@ -51,12 +51,17 @@ def test_query_params_emit_parameter_deltas_with_edge():
     names = {p.identity["name"] for p in params}
     assert names == {"id", "q"}
 
+    search = next(
+        d for d in deltas if d.type == "Endpoint" and d.identity["path"] == "/search"
+    )
+
     for p in params:
         assert p.identity["position"] == "query"
         assert p.identity["endpoint_path"] == "/search"
         assert p.identity["baseurl"] == "https://app.example.com"
         assert any(
             e.rel == "HAS_PARAMETER" and e.dir == "in" and e.node_type == "Endpoint"
+            and e.node_identity == search.identity
             for e in p.edges
         )
 

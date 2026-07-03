@@ -13,33 +13,30 @@ key with a `HAS_PARAMETER` edge from the `Endpoint`.
 
 Pure, deterministic, tolerant of malformed/missing-key lines - never raises.
 """
-import json
 from urllib.parse import parse_qs, urlparse
 
+from agent.recon.parsers._jsonlines import iter_json_dicts, safe_str
 from agent.recon.types import AssetDelta, Edge
 
 
 def parse(stdout: str) -> list[AssetDelta]:
     deltas: list[AssetDelta] = []
 
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
+    for entry in iter_json_dicts(stdout):
         request = entry.get("request") or {}
-        endpoint = request.get("endpoint")
+        if not isinstance(request, dict):
+            request = {}
+        endpoint = safe_str(request.get("endpoint"))
         if not endpoint:
             continue
 
         method = request.get("method") or "GET"
+        if not isinstance(method, str):
+            method = "GET"
 
         response = entry.get("response") or {}
+        if not isinstance(response, dict):
+            response = {}
         status_code = response.get("status_code")
         content_type = response.get("content_type")
 

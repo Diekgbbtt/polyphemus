@@ -14,8 +14,7 @@ out by the task brief. Unknown ports resolve to "unknown".
 
 Pure, deterministic, tolerant of malformed/missing-key lines - never raises.
 """
-import json
-
+from agent.recon.parsers._jsonlines import iter_json_dicts, safe_str
 from agent.recon.types import AssetDelta, Edge
 
 # Minimal common-port -> service-name map (subset of Redamon's IANA/friendly
@@ -53,17 +52,8 @@ def parse(stdout: str) -> list[AssetDelta]:
     seen_ips: set[str] = set()
     seen_ports: set[tuple[int, str]] = set()
 
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        ip = entry.get("ip")
+    for entry in iter_json_dicts(stdout):
+        ip = safe_str(entry.get("ip"))
         port = entry.get("port")
         if not ip or not port:
             continue

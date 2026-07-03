@@ -25,8 +25,7 @@ emitted here; `record_type` capture is deferred to the dnsx/puredns
 parser (Task 2), whose target schema puts `record_type` on a `DNSRecord`
 node instead.
 """
-import json
-
+from agent.recon.parsers._jsonlines import iter_json_dicts, safe_str
 from agent.recon.types import AssetDelta, Edge
 
 
@@ -40,17 +39,9 @@ def _parent_domain(host: str) -> str:
 def parse_subfinder(stdout: str) -> list[AssetDelta]:
     deltas: list[AssetDelta] = []
 
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        host = (entry.get("host") or "").strip().lower()
+    for entry in iter_json_dicts(stdout):
+        host = safe_str(entry.get("host"))
+        host = host.strip().lower() if host else ""
         if not host:
             continue
 
@@ -75,21 +66,15 @@ def parse_subfinder(stdout: str) -> list[AssetDelta]:
 def parse_amass(stdout: str) -> list[AssetDelta]:
     deltas: list[AssetDelta] = []
 
-    for line in stdout.splitlines():
-        line = line.strip()
-        if not line:
-            continue
-
-        try:
-            entry = json.loads(line)
-        except json.JSONDecodeError:
-            continue
-
-        name = (entry.get("name") or "").strip().lower()
+    for entry in iter_json_dicts(stdout):
+        name = safe_str(entry.get("name"))
+        name = name.strip().lower() if name else ""
         if not name:
             continue
 
-        domain = (entry.get("domain") or "").strip().lower() or _parent_domain(name)
+        domain = safe_str(entry.get("domain"))
+        domain = domain.strip().lower() if domain else ""
+        domain = domain or _parent_domain(name)
 
         edges = [
             Edge(
@@ -101,9 +86,14 @@ def parse_amass(stdout: str) -> list[AssetDelta]:
         ]
 
         addresses = entry.get("addresses") or []
+        if not isinstance(addresses, list):
+            addresses = []
         ips: list[str] = []
         for addr in addresses:
-            ip = (addr.get("ip") or "").strip()
+            if not isinstance(addr, dict):
+                continue
+            ip = safe_str(addr.get("ip"))
+            ip = ip.strip() if ip else ""
             if not ip:
                 continue
             ips.append(ip)
