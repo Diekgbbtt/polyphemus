@@ -1,0 +1,14 @@
+[
+  {
+    "subdomain": "old.example.com",
+    "service": "aws/s3",
+    "vulnerable": true,
+    "cname": "dangling-bucket.s3.amazonaws.com"
+  },
+  {
+    "subdomain": "www.example.com",
+    "service": "",
+    "vulnerable": false,
+    "cname": ""
+  }
+]
