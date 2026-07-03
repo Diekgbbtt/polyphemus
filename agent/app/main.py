@@ -1,5 +1,6 @@
 from fastapi import FastAPI
 from agent.app.clients import pg, neo4j_client, kali_mcp
+from agent.app.llm import validate_llm_config
 
 app = FastAPI(title="polymerhus-agent")
 
@@ -7,6 +8,7 @@ app = FastAPI(title="polymerhus-agent")
 async def _startup():
     await pg.ensure_checkpoint_tables()
     neo4j_client.ensure_schema()
+    validate_llm_config()
 
 @app.get("/health")
 async def health():
