@@ -138,6 +138,41 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     return g.compile()
 
 
+def _exec_result_from_artifact(artifact, *, content=None, duration_ms: int = 0) -> ExecResult:
+    """Pure: turn an MCP tool-call artifact into an ExecResult.
+
+    `langchain-mcp-adapters` registers `execute_command` with
+    response_format="content_and_artifact": the structured
+    {stdout, stderr, returncode, duration_ms} payload lives in the
+    ToolMessage's `.artifact`, either as the raw dict directly or wrapped in
+    an `MCPToolArtifact` TypedDict (i.e. a dict) under the
+    "structured_content" key. If neither shape is present (artifact is None,
+    or has no usable returncode), this is NOT success - it is a failure: we
+    have no evidence the command exited 0, so we must not assume it did.
+    """
+    structured = artifact
+    if isinstance(structured, dict) and "structured_content" in structured:
+        structured = structured["structured_content"]
+    else:
+        structured = getattr(artifact, "structured_content", structured)
+
+    if isinstance(structured, dict) and "returncode" in structured:
+        return ExecResult(
+            stdout=str(structured.get("stdout", "")),
+            stderr=str(structured.get("stderr", "")),
+            returncode=int(structured.get("returncode", 1)),
+            duration_ms=int(structured.get("duration_ms", duration_ms)),
+        )
+
+    # No structured result: treat as FAILURE, never assume success.
+    return ExecResult(
+        stdout=str(content) if content else "",
+        stderr="no structured result from execute_command",
+        returncode=1,
+        duration_ms=duration_ms,
+    )
+
+
 def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult:
     """Real collaborator: run `command` via the kali MCP `execute_command`
     tool. Builds its MCP client lazily on each call - no client/connection is
@@ -153,23 +188,23 @@ def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult
         )
         tools = await client.get_tools()
         exec_tool = next(t for t in tools if t.name == "execute_command")
-        return await exec_tool.ainvoke(
-            {"command": command, "session_id": session_id, "timeout_s": timeout_s}
-        )
+        # Invoke with a ToolCall (not a plain dict) so langchain-core returns
+        # a ToolMessage carrying `.artifact` - a plain-dict invocation drops
+        # the structured artifact and only returns the bare string content.
+        return await exec_tool.ainvoke({
+            "type": "tool_call",
+            "name": "execute_command",
+            "id": session_id or "exec",
+            "args": {"command": command, "session_id": session_id, "timeout_s": timeout_s},
+        })
 
     start = time.monotonic()
     result = asyncio.run(_run())
     duration_ms = int((time.monotonic() - start) * 1000)
 
-    if isinstance(result, dict):
-        return ExecResult(
-            stdout=str(result.get("stdout", "")),
-            stderr=str(result.get("stderr", "")),
-            returncode=int(result.get("returncode", 1)),
-            duration_ms=duration_ms,
-        )
-    # Unstructured tool result: treat as raw stdout, assume success.
-    return ExecResult(stdout=str(result), stderr="", returncode=0, duration_ms=duration_ms)
+    artifact = getattr(result, "artifact", None)
+    content = getattr(result, "content", None)
+    return _exec_result_from_artifact(artifact, content=content, duration_ms=duration_ms)
 
 
 class _ObservationBatch(BaseModel):

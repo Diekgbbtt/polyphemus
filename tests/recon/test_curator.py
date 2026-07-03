@@ -33,3 +33,25 @@ def test_curate_counts_and_skips_bad_delta():
     a, o = curator.curate([good, bad], [], "proj1", merge_fn=fake_merge)
     assert a == 1 and o == 0
     assert len(calls) == 1
+
+def test_curate_continues_batch_when_merge_fn_raises(caplog):
+    """§10.6: one bad delta (here, a merge_fn exception) never aborts the job -
+    the remaining valid deltas must still be processed."""
+    calls = []
+    state = {"n": 0}
+    def flaky_merge(cy, params):
+        state["n"] += 1
+        if state["n"] == 1:
+            raise RuntimeError("boom: transient neo4j failure")
+        calls.append((cy, params))
+
+    first = AssetDelta(type="BaseURL", identity={"url": "https://a"})
+    second = AssetDelta(type="BaseURL", identity={"url": "https://b"})
+
+    with caplog.at_level("WARNING"):
+        a, o = curator.curate([first, second], [], "proj1", merge_fn=flaky_merge)
+
+    assert a == 1 and o == 0
+    assert len(calls) == 1
+    assert state["n"] == 2  # both items were attempted, the raise did not abort the batch
+    assert any("merge failed" in rec.message for rec in caplog.records)
