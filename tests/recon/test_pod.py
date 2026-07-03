@@ -1,6 +1,7 @@
 from agent.recon.types import JobSpec, ExecResult, Observation
 from agent.recon import pod
 from agent.recon.curator import curate
+from agent.recon.jobs import JOBS
 
 HTTPX_JOB = JobSpec(tool="httpx", skill="http_probe",
                     command_template="httpx -u {target} -json -silent",
@@ -101,3 +102,41 @@ def test_pod_real_parser_to_curator_seam():
     assert any(":Endpoint" in cy for cy in captured_cypher)
     assert any(":Technology" in cy for cy in captured_cypher)
     assert any(":Certificate" in cy for cy in captured_cypher)
+
+
+TAKEOVER_JSON = (
+    '[{"subdomain":"old.example.com","vulnerable":true,'
+    '"service":"aws/s3","cname":"dangling-bucket.s3.amazonaws.com"}]'
+)
+
+
+def test_pod_takeover_findings_reach_curator_even_when_llm_triager_returns_nothing():
+    """Findings-parser observations (deterministic, from `parse_findings`) must
+    reach the curator even when the LLM triager (triage_fn) returns []."""
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        return ExecResult(stdout=TAKEOVER_JSON, stderr="", returncode=0, duration_ms=2)
+
+    def curate_fn(assets, obs, pid):
+        captured["observations"] = obs
+        return (len(assets), len(obs))
+
+    def triage_fn(er, assets, job):
+        return []
+
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
+    out = g.invoke({
+        "job": JOBS["subdomain_takeover"], "input_asset": {"name": "old.example.com"},
+        "asset_context": "", "extra": {}, "session_id": "run-takeover",
+        "iteration": 0, "project_id": "proj-takeover",
+    })
+
+    assert out["export"].verdict == "success"
+    observations = captured["observations"]
+    assert len(observations) >= 1
+    obs = observations[0]
+    assert isinstance(obs, Observation)
+    assert obs.macro_kind == "potential_subdomain_takeover"
+    assert obs.severity == "high"
+    assert obs.anchor == {"type": "Subdomain", "identity": {"name": "old.example.com"}}

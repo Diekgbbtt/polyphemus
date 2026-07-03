@@ -22,8 +22,20 @@ from agent.recon.types import (
     PodState, ToolInvocation, PodExport, ExecResult, AssetDelta, Observation, JobSpec,
 )
 from agent.recon.parsers import get_parser
+from agent.recon.parsers import graphql_parser, takeover_parser
+from agent.recon.findings import finding_to_observation
 from agent.recon.curator import curate
 from agent.recon.config import MAX_POD_ITERS, EXEC_TIMEOUT_S
+
+# Tools whose parser module exposes `parse_findings(stdout) -> list[dict]` -
+# a deterministic, non-LLM source of Observations that the triager node
+# merges alongside whatever the LLM triager (triage_fn) produces. Only two
+# of the sixteen fleet tools have a findings parser today; every other job's
+# triager behavior is unchanged (LLM-only).
+_FINDINGS_MODULES = {
+    "graphql-cop": graphql_parser,
+    "subdomain_takeover": takeover_parser,
+}
 
 
 def fill_template(command_template: str, input_asset: dict, extra: dict) -> str:
@@ -88,7 +100,22 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
         return {"assets": assets}
 
     def triager(state: PodState) -> dict:
-        observations = triage_fn(state["exec_result"], state.get("assets", []), state["job"])
+        job = state["job"]
+        observations = list(
+            triage_fn(state["exec_result"], state.get("assets", []), job)
+        )
+
+        parser_module = _FINDINGS_MODULES.get(job.tool)
+        parse_findings_fn = getattr(parser_module, "parse_findings", None)
+        if parse_findings_fn is not None:
+            findings = parse_findings_fn(state["exec_result"].stdout)
+            for finding in findings:
+                observation = finding_to_observation(
+                    finding, source_job=job.skill, source_tool=job.tool
+                )
+                if observation is not None:
+                    observations.append(observation)
+
         return {"observations": observations}
 
     def curator_node(state: PodState) -> dict:
