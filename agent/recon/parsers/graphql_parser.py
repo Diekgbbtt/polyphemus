@@ -38,9 +38,9 @@ entries - never raises.
 """
 import json
 import re
-from urllib.parse import urlparse
 
-from agent.recon.types import AssetDelta, Edge
+from agent.recon.parsers._urls import url_to_deltas
+from agent.recon.types import AssetDelta
 
 _URL_RE = re.compile(r"https?://[^\s'\"]+")
 
@@ -79,37 +79,15 @@ def parse(stdout: str) -> list[AssetDelta]:
     if not endpoint_url:
         return []
 
-    parsed = urlparse(endpoint_url)
-    if not parsed.scheme or not parsed.netloc:
-        return []
-
-    baseurl = f"{parsed.scheme}://{parsed.netloc}"
-    path = parsed.path or "/"
-
-    endpoint_identity = {"path": path, "method": "POST", "baseurl": baseurl}
-
-    return [
-        AssetDelta(
-            type="BaseURL",
-            identity={"url": baseurl},
-        ),
-        AssetDelta(
-            type="Endpoint",
-            identity=endpoint_identity,
-            props={
-                "endpoint_type": "graphql",
-                "source": "graphql-cop",
-            },
-            edges=[
-                Edge(
-                    rel="HAS_ENDPOINT",
-                    dir="in",
-                    node_type="BaseURL",
-                    node_identity={"url": baseurl},
-                )
-            ],
-        ),
-    ]
+    # graphql-cop's `curl_verify` never carries a query string, but be
+    # defensive and only keep the BaseURL+Endpoint deltas from the shared
+    # helper - this parser has never emitted Parameter deltas.
+    return url_to_deltas(
+        endpoint_url,
+        method="POST",
+        source="graphql-cop",
+        extra_endpoint_props={"endpoint_type": "graphql"},
+    )[:2]
 
 
 def parse_findings(stdout: str) -> list[dict]:

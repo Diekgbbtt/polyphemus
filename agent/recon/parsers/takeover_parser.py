@@ -45,14 +45,8 @@ non-string entries - never raises.
 """
 import json
 
+from agent.recon.parsers._urls import registrable_domain as _parent_domain
 from agent.recon.types import AssetDelta, Edge
-
-
-def _parent_domain(host: str) -> str:
-    labels = host.split(".")
-    if len(labels) <= 2:
-        return host
-    return ".".join(labels[-2:])
 
 
 def _load_rows(stdout: str) -> list[dict]:

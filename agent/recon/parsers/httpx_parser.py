@@ -4,9 +4,8 @@ Ported from Redamon's `main_recon_modules/http_probe.py::parse_httpx_output`.
 Only the field-mapping logic is kept; all Docker/execution/AI-annotation
 code was dropped. Deterministic, tolerant of malformed JSONL lines.
 """
-from urllib.parse import urlparse
-
 from agent.recon.parsers._jsonlines import iter_json_dicts
+from agent.recon.parsers._urls import url_to_deltas
 from agent.recon.types import AssetDelta, Edge
 
 
@@ -35,45 +34,39 @@ def parse(stdout: str) -> list[AssetDelta]:
         scheme = entry.get("scheme")
         host = entry.get("host")
 
-        deltas.append(
-            AssetDelta(
-                type="BaseURL",
-                identity={"url": url},
-                props={
-                    "scheme": scheme,
-                    "host": host,
-                    "status_code": status_code,
-                    "title": title,
-                    "content_type": content_type,
-                    "final_url": final_url,
-                    "server": server,
-                },
-            )
-        )
+        # F2 fix: normalize BaseURL/Endpoint.baseurl to scheme://netloc via
+        # the shared helper (was the raw probe `url`, which is latently
+        # path/port-bearing and would silently graph-split from every other
+        # tool's normalized BaseURL for the same host). httpx never derives
+        # Parameters from the probed URL's query string - only keep the
+        # BaseURL+Endpoint deltas.
+        url_deltas = url_to_deltas(
+            url,
+            method="GET",
+            source="http_probe",
+            extra_endpoint_props={
+                "status_code": status_code,
+                "content_type": content_type,
+                "content_length": content_length,
+                "title": title,
+                "server": server,
+            },
+        )[:2]
+        if not url_deltas:
+            continue
 
-        path = urlparse(url).path or "/"
-        deltas.append(
-            AssetDelta(
-                type="Endpoint",
-                identity={"path": path, "method": "GET", "baseurl": url},
-                props={
-                    "status_code": status_code,
-                    "content_type": content_type,
-                    "content_length": content_length,
-                    "title": title,
-                    "server": server,
-                    "source": "http_probe",
-                },
-                edges=[
-                    Edge(
-                        rel="HAS_ENDPOINT",
-                        dir="in",
-                        node_type="BaseURL",
-                        node_identity={"url": url},
-                    )
-                ],
-            )
-        )
+        baseurl_delta, endpoint_delta = url_deltas
+        baseurl_delta.props = {
+            "scheme": scheme,
+            "host": host,
+            "status_code": status_code,
+            "title": title,
+            "content_type": content_type,
+            "final_url": final_url,
+            "server": server,
+        }
+        deltas.append(baseurl_delta)
+        deltas.append(endpoint_delta)
 
         techs = _first(entry, "tech", "technologies") or []
         if not isinstance(techs, list):
@@ -90,7 +83,7 @@ def parse(stdout: str) -> list[AssetDelta]:
                             rel="USES_TECHNOLOGY",
                             dir="in",
                             node_type="BaseURL",
-                            node_identity={"url": url},
+                            node_identity=baseurl_delta.identity,
                         )
                     ],
                 )
@@ -120,7 +113,7 @@ def parse(stdout: str) -> list[AssetDelta]:
                             rel="HAS_CERTIFICATE",
                             dir="in",
                             node_type="BaseURL",
-                            node_identity={"url": url},
+                            node_identity=baseurl_delta.identity,
                         )
                     ],
                 )

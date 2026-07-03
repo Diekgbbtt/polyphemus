@@ -23,75 +23,12 @@ object built for the Endpoint delta so it byte-matches for curation.
 
 Pure, deterministic, tolerant of blank/malformed lines - never raises.
 """
-from urllib.parse import parse_qs, urlparse
-
-from agent.recon.types import AssetDelta, Edge
+from agent.recon.parsers._urls import url_to_deltas
+from agent.recon.types import AssetDelta
 
 
 def _url_to_deltas(url: str, source: str) -> list[AssetDelta]:
-    deltas: list[AssetDelta] = []
-
-    try:
-        parsed = urlparse(url)
-    except ValueError:
-        return deltas
-
-    if not parsed.scheme or not parsed.netloc:
-        return deltas
-
-    baseurl = f"{parsed.scheme}://{parsed.netloc}"
-    path = parsed.path or "/"
-
-    deltas.append(
-        AssetDelta(
-            type="BaseURL",
-            identity={"url": baseurl},
-        )
-    )
-
-    endpoint_identity = {"path": path, "method": "GET", "baseurl": baseurl}
-    deltas.append(
-        AssetDelta(
-            type="Endpoint",
-            identity=endpoint_identity,
-            props={
-                "url": url,
-                "source": source,
-            },
-            edges=[
-                Edge(
-                    rel="HAS_ENDPOINT",
-                    dir="in",
-                    node_type="BaseURL",
-                    node_identity={"url": baseurl},
-                )
-            ],
-        )
-    )
-
-    query_params = parse_qs(parsed.query, keep_blank_values=True)
-    for name in query_params:
-        deltas.append(
-            AssetDelta(
-                type="Parameter",
-                identity={
-                    "name": name,
-                    "position": "query",
-                    "endpoint_path": path,
-                    "baseurl": baseurl,
-                },
-                edges=[
-                    Edge(
-                        rel="HAS_PARAMETER",
-                        dir="in",
-                        node_type="Endpoint",
-                        node_identity=endpoint_identity,
-                    )
-                ],
-            )
-        )
-
-    return deltas
+    return url_to_deltas(url, method="GET", source=source)
 
 
 def _parse_lines(stdout: str, source: str) -> list[AssetDelta]:

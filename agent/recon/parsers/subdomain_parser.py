@@ -26,14 +26,8 @@ parser (Task 2), whose target schema puts `record_type` on a `DNSRecord`
 node instead.
 """
 from agent.recon.parsers._jsonlines import iter_json_dicts, safe_str
+from agent.recon.parsers._urls import registrable_domain as _parent_domain
 from agent.recon.types import AssetDelta, Edge
-
-
-def _parent_domain(host: str) -> str:
-    labels = host.split(".")
-    if len(labels) <= 2:
-        return host
-    return ".".join(labels[-2:])
 
 
 def parse_subfinder(stdout: str) -> list[AssetDelta]:

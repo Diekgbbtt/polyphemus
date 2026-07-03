@@ -13,10 +13,9 @@ key with a `HAS_PARAMETER` edge from the `Endpoint`.
 
 Pure, deterministic, tolerant of malformed/missing-key lines - never raises.
 """
-from urllib.parse import parse_qs, urlparse
-
 from agent.recon.parsers._jsonlines import iter_json_dicts, safe_str
-from agent.recon.types import AssetDelta, Edge
+from agent.recon.parsers._urls import url_to_deltas
+from agent.recon.types import AssetDelta
 
 
 def parse(stdout: str) -> list[AssetDelta]:
@@ -40,62 +39,16 @@ def parse(stdout: str) -> list[AssetDelta]:
         status_code = response.get("status_code")
         content_type = response.get("content_type")
 
-        parsed = urlparse(endpoint)
-        if not parsed.scheme or not parsed.netloc:
-            continue
-
-        baseurl = f"{parsed.scheme}://{parsed.netloc}"
-        path = parsed.path or "/"
-
-        deltas.append(
-            AssetDelta(
-                type="BaseURL",
-                identity={"url": baseurl},
-            )
-        )
-
-        endpoint_identity = {"path": path, "method": method, "baseurl": baseurl}
-        deltas.append(
-            AssetDelta(
-                type="Endpoint",
-                identity=endpoint_identity,
-                props={
-                    "url": endpoint,
+        deltas.extend(
+            url_to_deltas(
+                endpoint,
+                method=method,
+                source="resource_enum",
+                extra_endpoint_props={
                     "status_code": status_code,
                     "content_type": content_type,
-                    "source": "resource_enum",
                 },
-                edges=[
-                    Edge(
-                        rel="HAS_ENDPOINT",
-                        dir="in",
-                        node_type="BaseURL",
-                        node_identity={"url": baseurl},
-                    )
-                ],
             )
         )
-
-        query_params = parse_qs(parsed.query, keep_blank_values=True)
-        for name in query_params:
-            deltas.append(
-                AssetDelta(
-                    type="Parameter",
-                    identity={
-                        "name": name,
-                        "position": "query",
-                        "endpoint_path": path,
-                        "baseurl": baseurl,
-                    },
-                    edges=[
-                        Edge(
-                            rel="HAS_PARAMETER",
-                            dir="in",
-                            node_type="Endpoint",
-                            node_identity=endpoint_identity,
-                        )
-                    ],
-                )
-            )
 
     return deltas

@@ -30,18 +30,14 @@ Pure, deterministic, tolerant of malformed/missing-key lines - never raises.
 """
 import hashlib
 import json
-from urllib.parse import urlparse
 
+from agent.recon.parsers._urls import base_and_path, url_to_deltas
 from agent.recon.types import AssetDelta, Edge
 
 
 def _baseurl_from(url: str) -> str | None:
-    if not isinstance(url, str):
-        return None
-    parsed = urlparse(url)
-    if not parsed.scheme or not parsed.netloc:
-        return None
-    return f"{parsed.scheme}://{parsed.netloc}"
+    split = base_and_path(url)
+    return split[0] if split is not None else None
 
 
 def _parse_url_entry(entry: dict) -> list[AssetDelta]:
@@ -49,32 +45,12 @@ def _parse_url_entry(entry: dict) -> list[AssetDelta]:
     if not url or not isinstance(url, str):
         return []
 
-    baseurl = _baseurl_from(url)
-    if not baseurl:
-        return []
-
-    parsed = urlparse(url)
-    path = parsed.path or "/"
     method = entry.get("method") or "GET"
 
-    endpoint_identity = {"path": path, "method": method, "baseurl": baseurl}
-
-    return [
-        AssetDelta(type="BaseURL", identity={"url": baseurl}),
-        AssetDelta(
-            type="Endpoint",
-            identity=endpoint_identity,
-            props={"url": url, "source": "jsluice"},
-            edges=[
-                Edge(
-                    rel="HAS_ENDPOINT",
-                    dir="in",
-                    node_type="BaseURL",
-                    node_identity={"url": baseurl},
-                )
-            ],
-        ),
-    ]
+    # jsluice's `urls` mode never derives Parameters from the discovered
+    # URL's query string - only keep the BaseURL+Endpoint deltas from the
+    # shared helper.
+    return url_to_deltas(url, method=method, source="jsluice")[:2]
 
 
 def _parse_secret_entry(entry: dict) -> list[AssetDelta]:

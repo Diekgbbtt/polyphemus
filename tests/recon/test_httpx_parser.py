@@ -26,3 +26,19 @@ def test_endpoint_has_incoming_baseurl_edge():
 def test_malformed_line_skipped():
     deltas = parse('{"url":"https://a","status_code":200}\nNOT JSON\n')
     assert any(d.type == "BaseURL" for d in deltas)
+
+
+def test_path_bearing_url_normalizes_baseurl_to_scheme_netloc():
+    # F2 regression guard: if httpx ever probes/emits a path- or port-bearing
+    # `url` (e.g. from a redirect-following config), BaseURL identity and
+    # Endpoint.baseurl must still normalize to scheme://netloc so the node
+    # MERGEs with the same host discovered by every other tool - not split
+    # into a distinct graph node keyed on the raw path-bearing string.
+    deltas = parse('{"url":"https://host/some/path","status_code":200}\n')
+
+    baseurl = next(d for d in deltas if d.type == "BaseURL")
+    assert baseurl.identity == {"url": "https://host"}
+
+    endpoint = next(d for d in deltas if d.type == "Endpoint")
+    assert endpoint.identity["baseurl"] == "https://host"
+    assert endpoint.identity["path"] == "/some/path"
