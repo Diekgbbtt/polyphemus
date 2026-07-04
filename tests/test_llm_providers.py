@@ -14,6 +14,7 @@ def test_validate_raises_when_key_missing(monkeypatch):
     monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
     monkeypatch.setenv("LLM_MODEL_CONFIGURATOR", "openai:gpt-4o")
     monkeypatch.setenv("LLM_MODEL_JOB_ORCHESTRATOR", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_MODEL_CRAWLER", "openai:gpt-4o")
     monkeypatch.delenv("API_KEY_OPENROUTER", raising=False)
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
     with pytest.raises(P.LLMConfigError) as e:
@@ -21,7 +22,7 @@ def test_validate_raises_when_key_missing(monkeypatch):
     assert "OPENROUTER" in str(e.value)
 
 def test_validate_raises_on_unknown_provider(monkeypatch):
-    for r in ("TRIAGER", "CONFIGURATOR", "JOB_ORCHESTRATOR"):
+    for r in ("TRIAGER", "CONFIGURATOR", "JOB_ORCHESTRATOR", "CRAWLER"):
         monkeypatch.setenv(f"LLM_MODEL_{r}", "openai:gpt-4o")
     monkeypatch.setenv("LLM_MODEL_TRIAGER", "bogus:model")
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
@@ -29,7 +30,7 @@ def test_validate_raises_on_unknown_provider(monkeypatch):
         P.validate_llm_config()
 
 def test_validate_passes_when_all_present(monkeypatch):
-    for r in ("TRIAGER", "CONFIGURATOR", "JOB_ORCHESTRATOR"):
+    for r in ("TRIAGER", "CONFIGURATOR", "JOB_ORCHESTRATOR", "CRAWLER"):
         monkeypatch.setenv(f"LLM_MODEL_{r}", "swissai:meta-llama/Llama-3.3-70B-Instruct")
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     P.validate_llm_config()  # no raise
