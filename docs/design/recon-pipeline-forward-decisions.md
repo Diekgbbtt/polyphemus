@@ -30,17 +30,14 @@ nuclei therefore becomes the first **optional, on-demand recon tool**, invoked o
 This introduces a forward architectural seam to build now and lean on later: a **re-entrant, targeted recon interface** on the pipeline orchestrator - a way to request focused recon on a specific graph component outside the linear phase plan, returning the resulting assets/observations.
 Phase 2 builds the nuclei pod + this on-demand entry point (with template selection stubbed to an explicit caller-supplied template/tag set); the knowledge-base phase later fills in automatic template selection.
 
-## D3 - Agentic crawl engine: self-hosted browser, not external Steel.dev
+## D3 - Agentic crawl engine: external Steel.dev (operator decision 2026-07-04)
 
 Redamon's `steel_helpers.merge_steel_into_by_base_url` is only a **merge adapter** over a crawl manifest (`{endpoints:[...], js_urls:[...]}`).
-The manifest is produced by an agentic ReAct loop (`crawl_agentic.py`) driving **Steel.dev MCP tools** (`steel_crawl_start/navigate/frontier/finish/eval/click/await_auth`) against an external Steel browser service - infra the 4-service topology does not include.
-The reused kali image instead ships a local **Playwright** MCP server (`/opt/mcp_servers/playwright_server.py`).
+The manifest is produced by an agentic ReAct loop (`crawl_agentic.py`, in the `redamon-agent` base image at `/app`) driving **Steel.dev MCP tools** (`steel_crawl_start/navigate/frontier/finish/eval/click/await_auth`) against a Steel browser service.
 
-Decision: **the Phase-2 agentic crawl reuses a self-hosted Playwright-based browser engine, exposing the same crawl-tool surface and emitting the same manifest contract**, rather than depending on the external Steel.dev service.
-Rationale: keeps the stack self-contained (no external SaaS dependency, no credentials/egress), preserves the `steel_helpers` manifest contract verbatim (so the merge/parse code ports unchanged), and reuses browser automation already present in the image.
-The `steel_*` **tool names and the ReAct crawl skill are preserved** as the interface; only the engine behind them changes.
-Authenticated crawl (`steel_await_auth` + human-in-the-loop viewer login) is preserved as the auth path for `use_auth` crawl jobs.
-This is the one architecture fork flagged for operator veto; absent objection it is the Phase-4 (agentic-crawl sub-plan) baseline.
+**Decision (operator, 2026-07-04): use external Steel.dev**, driving Redamon's crawl loop + `steel_*` MCP tools verbatim, rather than a self-hosted Playwright engine.
+This *supersedes* my earlier recommended default (self-hosted Playwright reusing the kali image's `/opt/mcp_servers/playwright_server.py`), which I had flagged for operator veto - the operator vetoed it in favour of Steel.dev.
+Implications for sub-plan 4: the agent needs a **Steel MCP client** + config (`STEEL_API_KEY`, Steel MCP endpoint) and **network egress** to Steel; less porting (Redamon's `crawl_agentic.py` ReAct loop + steel tool wiring reused as-is). The agentic-crawl job is `configurator_mode="agent"` (the ReAct loop IS the configurator from iteration 1). `steel_helpers.merge_steel_into_by_base_url` ports to an `AssetDelta` emitter like the rest of the fleet. Authenticated crawl uses `steel_await_auth` (human-in-the-loop viewer login). Unit tests mock the Steel MCP client (like the pod mocks `exec_fn`); real Steel integration is a deploy-time concern needing the key.
 
 ## D4 - Parser porting reality (supersedes rev-5 "porting LOW")
 
