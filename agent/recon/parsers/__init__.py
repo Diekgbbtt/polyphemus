@@ -12,6 +12,7 @@ from agent.recon.parsers.passive_url_parser import parse_gau, parse_paramspider
 from agent.recon.parsers.active_param_parser import parse_arjun, parse_ffuf, parse_kiterunner
 from agent.recon.parsers.graphql_parser import parse as parse_graphql_cop
 from agent.recon.parsers.takeover_parser import parse as parse_subdomain_takeover
+from agent.recon.parsers.steel_parser import parse as parse_steel_crawl
 
 PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     "httpx": parse_httpx,
@@ -30,6 +31,7 @@ PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     "kiterunner": parse_kiterunner,
     "graphql-cop": parse_graphql_cop,
     "subdomain_takeover": parse_subdomain_takeover,
+    "steel_crawl": parse_steel_crawl,
 }
 
 

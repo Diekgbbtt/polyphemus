@@ -1,0 +1,19 @@
+{
+  "endpoints": [
+    {
+      "method": "GET",
+      "url": "https://app.example.com/search?id=1",
+      "query": ["id"],
+      "body": [],
+      "status": 200
+    },
+    {
+      "method": "POST",
+      "url": "https://app.example.com/login",
+      "query": [],
+      "body": ["username"],
+      "status": 200
+    }
+  ],
+  "js_urls": ["https://app.example.com/static/bundle.js"]
+}
