@@ -137,10 +137,10 @@ def test_auth_context_only_passed_to_use_auth_jobs():
         )
     )
 
-    assert seen_extra["subfinder"] == {}
-    assert seen_extra["httpx"] == {"auth_context": {"cookies": []}}
-    assert seen_extra["katana"] == {"auth_context": {"cookies": []}}
-    assert seen_extra["kiterunner"] == {}
+    assert seen_extra["subfinder"] == {"project_id": "proj1"}
+    assert seen_extra["httpx"] == {"project_id": "proj1", "auth_context": {"cookies": []}}
+    assert seen_extra["katana"] == {"project_id": "proj1", "auth_context": {"cookies": []}}
+    assert seen_extra["kiterunner"] == {"project_id": "proj1"}
 
 
 def test_auth_context_absent_when_settings_have_none():
@@ -165,7 +165,7 @@ def test_auth_context_absent_when_settings_have_none():
         )
     )
 
-    assert seen_extra["httpx"] == {}
+    assert seen_extra["httpx"] == {"project_id": "proj1"}
 
 
 def test_run_job_exception_marks_job_degraded_and_pipeline_still_completes():

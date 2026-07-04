@@ -108,11 +108,9 @@ async def run_pipeline(
             else:
                 input_assets = read_assets(job.consumes, project_id)
 
-            extra = (
-                {"auth_context": settings["auth_context"]}
-                if job.use_auth and settings.get("auth_context")
-                else {}
-            )
+            extra = {"project_id": project_id}
+            if job.use_auth and settings.get("auth_context"):
+                extra["auth_context"] = settings["auth_context"]
 
             registry.upsert_job(run_id, phase_idx, name, "in_progress")
             job_configs[name] = (job, input_assets, extra)
