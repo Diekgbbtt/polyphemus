@@ -44,11 +44,26 @@ def load_settings(project_id: str) -> dict:
         return row[0] if row else {}
 
 
+def save_settings(project_id: str, recon: dict) -> None:
+    """Upsert the project's `settings.recon` JSONB blob."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO settings (project_id, recon) VALUES (%s, %s) "
+            "ON CONFLICT (project_id) DO UPDATE SET recon = EXCLUDED.recon",
+            (project_id, json.dumps(recon)),
+        )
+
+
 def create_run(run_id: str, project_id: str) -> None:
+    """Insert a recon_runs row. Idempotent: the REST route creates the run
+    synchronously so a poll right after launch sees it, and `run_pipeline`
+    also calls this - the ON CONFLICT DO NOTHING makes the second call a
+    harmless no-op (run_id is the PK)."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO recon_runs (run_id, project_id, status, started_at) "
-            "VALUES (%s, %s, %s, now())",
+            "VALUES (%s, %s, %s, now()) "
+            "ON CONFLICT (run_id) DO NOTHING",
             (run_id, project_id, "running"),
         )
 

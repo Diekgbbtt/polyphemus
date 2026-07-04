@@ -1,8 +1,10 @@
 from fastapi import FastAPI
 from agent.app.clients import pg, neo4j_client, kali_mcp
 from agent.app.llm import validate_llm_config
+from agent.app.routes import router as recon_router
 
 app = FastAPI(title="polymerhus-agent")
+app.include_router(recon_router)
 
 @app.on_event("startup")
 async def _startup():

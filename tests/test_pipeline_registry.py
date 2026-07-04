@@ -94,6 +94,7 @@ def test_create_run_inserts_running_status(monkeypatch):
 
     query, params = cur.executed[0]
     assert "INSERT INTO recon_runs" in query
+    assert "ON CONFLICT (run_id) DO NOTHING" in query
     assert params[0] == "run1"
     assert params[1] == "proj1"
     assert "running" in params
