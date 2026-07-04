@@ -26,7 +26,8 @@ CREATE TABLE IF NOT EXISTS recon_jobs (
     started_at  TIMESTAMPTZ,
     finished_at TIMESTAMPTZ,
     stats       JSONB NOT NULL DEFAULT '{}'::jsonb,
-    error       TEXT
+    error       TEXT,
+    CONSTRAINT recon_jobs_run_phase_job_key UNIQUE (run_id, phase, job)
 );
 CREATE TABLE IF NOT EXISTS ingest_runs (
     ingest_id   TEXT PRIMARY KEY,
