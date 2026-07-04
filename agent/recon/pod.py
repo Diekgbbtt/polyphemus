@@ -273,9 +273,9 @@ def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult
     tool. Builds its MCP client lazily on each call - no client/connection is
     constructed at import time.
     """
-    import asyncio
     from langchain_mcp_adapters.client import MultiServerMCPClient
     from agent.app.config import config
+    from agent.recon.async_bridge import run_coro_blocking
 
     async def _run():
         client = MultiServerMCPClient(
@@ -294,7 +294,7 @@ def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult
         })
 
     start = time.monotonic()
-    result = asyncio.run(_run())
+    result = run_coro_blocking(_run())
     duration_ms = int((time.monotonic() - start) * 1000)
 
     artifact = getattr(result, "artifact", None)

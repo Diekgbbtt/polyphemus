@@ -16,10 +16,11 @@ terminal `fail` node that sets `verdict="failed"` and curates ONE
 Nothing from this node ever propagates as an unhandled exception.
 
 `default_run_crawl_fn` wraps the async `crawl_agent.run_crawl` behind
-`asyncio.run`, exactly like `pod.default_exec_fn` wraps the async kali MCP
-call - so every node in this graph, like every node in `pod.py`'s graph,
-is a plain sync function and the compiled graph is `.invoke()`-able
-synchronously from `job_agent`.
+`agent.recon.async_bridge.run_coro_blocking`, exactly like
+`pod.default_exec_fn` wraps the async kali MCP call - so every node in this
+graph, like every node in `pod.py`'s graph, is a plain sync function and
+the compiled graph is `.invoke()`-able synchronously from `job_agent`, even
+though `job_agent` itself runs inside the pipeline's event loop.
 """
 from __future__ import annotations
 
@@ -76,14 +77,14 @@ def _coverage_observation(input_asset: dict, reason: str) -> Observation:
 def default_run_crawl_fn(target: str, *, scope: list[str]):
     """Real collaborator: run the agentic Steel crawl loop synchronously.
 
-    Wraps `crawl_agent.run_crawl` (async) behind `asyncio.run`, resolving
-    the crawl-agent module lazily so importing this module performs no I/O.
+    Wraps `crawl_agent.run_crawl` (async) behind `run_coro_blocking`,
+    resolving the crawl-agent module lazily so importing this module
+    performs no I/O.
     """
-    import asyncio
-
     from agent.recon.crawl import crawl_agent
+    from agent.recon.async_bridge import run_coro_blocking
 
-    return asyncio.run(crawl_agent.run_crawl(target, scope=scope))
+    return run_coro_blocking(crawl_agent.run_crawl(target, scope=scope))
 
 
 def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
