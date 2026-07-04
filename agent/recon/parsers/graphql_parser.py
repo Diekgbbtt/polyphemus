@@ -15,23 +15,27 @@ Vulnerability/graph nodes. Observations are owned by the pod's triager step,
 not by parsers (parsers only emit `AssetDelta`s). So this module exposes TWO
 functions with a deliberate split of responsibility:
 
-  - `parse(stdout) -> list[AssetDelta]`: the graph-asset side. Emits ONLY the
-    GraphQL endpoint itself - a `BaseURL` + an `Endpoint` (method="POST",
-    endpoint_type="graphql") with an inbound `HAS_ENDPOINT` edge - so the
-    graph knows a GraphQL surface exists. This is the function registered in
-    `PARSERS["graphql-cop"]`.
-  - `parse_findings(stdout) -> list[dict]`: the finding side. Returns one
-    normalized `{title, severity, evidence}` dict per FAILED check
-    (`result: true`), for the pod's triager to turn into `Observation`s.
-    NOT registered in `PARSERS` - the triager calls this directly.
+  - `parse(stdout, *, target_url=None) -> list[AssetDelta]`: the graph-asset
+    side. Emits ONLY the GraphQL endpoint itself - a `BaseURL` + an
+    `Endpoint` (method="POST", endpoint_type="graphql") with an inbound
+    `HAS_ENDPOINT` edge - so the graph knows a GraphQL surface exists. This
+    is the function registered in `PARSERS["graphql-cop"]`.
+  - `parse_findings(stdout, *, target_url=None) -> list[dict]`: the finding
+    side. Returns one normalized `{title, severity, evidence, anchor?}` dict
+    per FAILED check (`result: true`), for the pod's triager to turn into
+    `Observation`s. NOT registered in `PARSERS` - the triager calls this
+    directly.
 
-graphql-cop's JSON output does not include a dedicated "target url" field;
-the tested endpoint is only recoverable from the `curl_verify` field's
-embedded URL (best-effort, first http(s) URL found in that string). If no
-check row yields a URL, `parse` returns an empty list - graphql-cop's own
-plain output offers no fallback (no target arg is passed to this parser to
-keep the `parse(stdout)` signature uniform with every other parser in this
-registry).
+graphql-cop's JSON output does not include a dedicated "target url" field.
+When the pod triager knows the job's target (the input asset's URL), it
+passes it as `target_url` (SP2 F1) - this is deterministic and takes
+priority over any regex derivation, for both `parse`'s Endpoint identity and
+`parse_findings`'s `anchor`. When `target_url` is not given (e.g. called
+outside the pod, or in tests), both functions fall back to the best-effort
+`curl_verify` regex derivation (first http(s) URL found in that field). If
+no URL can be derived from either source, `parse` returns an empty list and
+`parse_findings` omits the `anchor` key from each finding (which
+`finding_to_observation` treats as "drop this finding").
 
 Pure, deterministic, tolerant of malformed JSON / non-list / non-dict
 entries - never raises.
@@ -39,7 +43,7 @@ entries - never raises.
 import json
 import re
 
-from agent.recon.parsers._urls import url_to_deltas
+from agent.recon.parsers._urls import base_and_path, url_to_deltas
 from agent.recon.types import AssetDelta
 
 _URL_RE = re.compile(r"https?://[^\s'\"]+")
@@ -70,12 +74,12 @@ def _derive_endpoint_url(checks: list) -> str | None:
     return None
 
 
-def parse(stdout: str) -> list[AssetDelta]:
+def parse(stdout: str, *, target_url: str | None = None) -> list[AssetDelta]:
     checks = _load_checks(stdout)
     if not checks:
         return []
 
-    endpoint_url = _derive_endpoint_url(checks)
+    endpoint_url = target_url or _derive_endpoint_url(checks)
     if not endpoint_url:
         return []
 
@@ -90,9 +94,30 @@ def parse(stdout: str) -> list[AssetDelta]:
     )[:2]
 
 
-def parse_findings(stdout: str) -> list[dict]:
+def _endpoint_anchor(checks: list, *, target_url: str | None) -> dict | None:
+    """Build an Endpoint anchor from `target_url` when given, else fall back
+    to the best-effort curl_verify regex derivation. Returns `None` when
+    neither source yields an absolute URL."""
+    url = target_url or _derive_endpoint_url(checks)
+    if not url:
+        return None
+
+    split = base_and_path(url)
+    if split is None:
+        return None
+
+    baseurl, path = split
+    return {
+        "type": "Endpoint",
+        "identity": {"path": path, "method": "POST", "baseurl": baseurl},
+    }
+
+
+def parse_findings(stdout: str, *, target_url: str | None = None) -> list[dict]:
     checks = _load_checks(stdout)
     findings: list[dict] = []
+
+    anchor = _endpoint_anchor(checks, target_url=target_url)
 
     for check in checks:
         if check.get("result") is not True:
@@ -105,12 +130,14 @@ def parse_findings(stdout: str) -> list[dict]:
 
         evidence = check.get("curl_verify") or check.get("description") or ""
 
-        findings.append(
-            {
-                "title": title,
-                "severity": severity,
-                "evidence": evidence,
-            }
-        )
+        finding = {
+            "title": title,
+            "severity": severity,
+            "evidence": evidence,
+        }
+        if anchor is not None:
+            finding["anchor"] = anchor
+
+        findings.append(finding)
 
     return findings

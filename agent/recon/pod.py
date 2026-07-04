@@ -13,6 +13,7 @@ does not invoke them.
 """
 from __future__ import annotations
 
+import inspect
 import time
 
 from langgraph.graph import StateGraph, START, END
@@ -36,6 +37,27 @@ _FINDINGS_MODULES = {
     "graphql-cop": graphql_parser,
     "subdomain_takeover": takeover_parser,
 }
+
+
+def _input_asset_url(input_asset: dict) -> str | None:
+    """Best-effort extraction of the pod's target URL from its input asset
+    (a BaseURL/Endpoint dict) - `url`, then `baseurl`, then `name`."""
+    return (
+        input_asset.get("url")
+        or input_asset.get("baseurl")
+        or input_asset.get("name")
+    )
+
+
+def _call_with_optional_target_url(fn, stdout: str, target_url: str | None):
+    """Call `fn(stdout)`, passing `target_url=` too when `fn` declares that
+    parameter (e.g. `graphql_parser.parse`/`parse_findings`). Other parser
+    modules' `parse`/`parse_findings` (e.g. `takeover_parser`) don't accept
+    `target_url` and are called unchanged - signature-aware so adding new
+    findings-tools never requires touching this dispatch."""
+    if "target_url" in inspect.signature(fn).parameters:
+        return fn(stdout, target_url=target_url)
+    return fn(stdout)
 
 
 def fill_template(command_template: str, input_asset: dict, extra: dict) -> str:
@@ -96,7 +118,9 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     def parser(state: PodState) -> dict:
         job = state["job"]
         exec_result = state["exec_result"]
-        assets = get_parser(job.tool)(exec_result.stdout)
+        parse_fn = get_parser(job.tool)
+        target_url = _input_asset_url(state["input_asset"])
+        assets = _call_with_optional_target_url(parse_fn, exec_result.stdout, target_url)
         return {"assets": assets}
 
     def triager(state: PodState) -> dict:
@@ -108,7 +132,10 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
         parser_module = _FINDINGS_MODULES.get(job.tool)
         parse_findings_fn = getattr(parser_module, "parse_findings", None)
         if parse_findings_fn is not None:
-            findings = parse_findings_fn(state["exec_result"].stdout)
+            target_url = _input_asset_url(state["input_asset"])
+            findings = _call_with_optional_target_url(
+                parse_findings_fn, state["exec_result"].stdout, target_url
+            )
             for finding in findings:
                 observation = finding_to_observation(
                     finding, source_job=job.skill, source_tool=job.tool

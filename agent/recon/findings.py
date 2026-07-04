@@ -41,10 +41,12 @@ def finding_to_observation(
 
     Returns `None` (and logs at debug level) when the finding carries no
     `anchor` - the curator's Observation path requires a valid broad anchor
-    (Domain/Subdomain/BaseURL/IP/Service), so an anchorless finding is
-    dropped rather than mis-attached. (graphql-cop findings currently have no
-    anchor until SP3-T5 wires one in; until then they are dropped here, which
-    is expected/documented behavior, not a bug.)
+    (Domain/Subdomain/BaseURL/IP/Service/Endpoint), so an anchorless finding
+    is dropped rather than mis-attached. (graphql-cop findings get an
+    Endpoint anchor when the pod threads the job's target_url into
+    `graphql_parser.parse_findings` - SP3-T5; a graphql-cop finding is only
+    anchorless, and therefore dropped, when neither target_url nor the
+    curl_verify regex fallback can derive an endpoint URL.)
     """
     anchor = finding.get("anchor")
     if not anchor:

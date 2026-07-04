@@ -76,3 +76,56 @@ def test_parse_findings_tolerates_malformed_json():
     assert parse_findings("") == []
     assert parse_findings("{}") == []
     assert parse_findings('[1, 2, "str"]') == []
+
+
+def test_parse_with_target_url_uses_it_over_regex_derivation():
+    deltas = parse(FIX.read_text(), target_url="https://different.example.com/graphql")
+
+    baseurls = [d for d in deltas if d.type == "BaseURL"]
+    assert baseurls
+    assert all(b.identity["url"] == "https://different.example.com" for b in baseurls)
+
+    endpoints = [d for d in deltas if d.type == "Endpoint"]
+    assert len(endpoints) == 1
+    endpoint = endpoints[0]
+    assert endpoint.identity["path"] == "/graphql"
+    assert endpoint.identity["baseurl"] == "https://different.example.com"
+
+
+def test_parse_with_target_url_derives_endpoint_when_no_curl_verify():
+    # No curl_verify at all in the checks - regex fallback would return [],
+    # but target_url makes derivation deterministic.
+    stdout = """[
+        {"title": "Introspection", "severity": "MEDIUM", "result": true}
+    ]"""
+    deltas = parse(stdout, target_url="https://api.example.com/graphql")
+
+    endpoints = [d for d in deltas if d.type == "Endpoint"]
+    assert len(endpoints) == 1
+    assert endpoints[0].identity["baseurl"] == "https://api.example.com"
+    assert endpoints[0].identity["path"] == "/graphql"
+
+
+def test_parse_findings_with_target_url_attaches_endpoint_anchor():
+    findings = parse_findings(
+        FIX.read_text(), target_url="https://api.example.com/graphql"
+    )
+    assert len(findings) == 1
+    anchor = findings[0]["anchor"]
+    assert anchor == {
+        "type": "Endpoint",
+        "identity": {
+            "path": "/graphql",
+            "method": "POST",
+            "baseurl": "https://api.example.com",
+        },
+    }
+
+
+def test_parse_findings_without_target_url_has_no_anchor_key_when_undeterminable():
+    stdout = """[
+        {"title": "Some Check", "result": true}
+    ]"""
+    findings = parse_findings(stdout)
+    assert len(findings) == 1
+    assert "anchor" not in findings[0]

@@ -140,3 +140,53 @@ def test_pod_takeover_findings_reach_curator_even_when_llm_triager_returns_nothi
     assert obs.macro_kind == "potential_subdomain_takeover"
     assert obs.severity == "high"
     assert obs.anchor == {"type": "Subdomain", "identity": {"name": "old.example.com"}}
+
+
+GRAPHQL_COP_JSON = (
+    '[{"title": "Introspection", "severity": "MEDIUM", "result": true,'
+    ' "description": "GraphQL Introspection is enabled"}]'
+)
+
+
+def test_pod_graphql_findings_get_endpoint_anchor_from_input_asset_url_and_reach_curator():
+    """SP2 F1: graphql-cop findings have no dedicated 'target url' field in
+    their JSON output; the pod must thread the job's target (the input
+    asset's URL) into `parse_findings` so the resulting Observation carries
+    an Endpoint anchor (and therefore is NOT dropped by
+    `finding_to_observation`). This fixture has no `curl_verify` field at
+    all, so the old regex-only fallback would yield no anchor - only
+    target-url threading makes this pass."""
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        return ExecResult(stdout=GRAPHQL_COP_JSON, stderr="", returncode=0, duration_ms=2)
+
+    def curate_fn(assets, obs, pid):
+        captured["observations"] = obs
+        return (len(assets), len(obs))
+
+    def triage_fn(er, assets, job):
+        return []
+
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
+    out = g.invoke({
+        "job": JOBS["graphql-cop"],
+        "input_asset": {"url": "https://api.example.com/graphql"},
+        "asset_context": "", "extra": {}, "session_id": "run-graphql",
+        "iteration": 0, "project_id": "proj-graphql",
+    })
+
+    assert out["export"].verdict == "success"
+    observations = captured["observations"]
+    assert len(observations) >= 1
+    obs = observations[0]
+    assert isinstance(obs, Observation)
+    assert obs.macro_kind == "Introspection"
+    assert obs.anchor == {
+        "type": "Endpoint",
+        "identity": {
+            "path": "/graphql",
+            "method": "POST",
+            "baseurl": "https://api.example.com",
+        },
+    }
