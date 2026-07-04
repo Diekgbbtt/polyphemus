@@ -1,0 +1,170 @@
+"""TDD for the agentic-crawl adapter (`agent/recon/crawl/crawl_agent.py`).
+
+Fully mocked: no live Steel MCP client, no live LLM. The fake `llm`/`tools`
+mirror the exact interface the vendored `crawl_agentic._run_agentic_crawl`
+loop calls:
+
+  * `llm.bind_tools(tools)` -> an object with `async def ainvoke(messages)`
+    returning an "AI message" that exposes a `.tool_calls` list of
+    `{"name": str, "args": dict, "id": str}` dicts (langchain's tool-call
+    shape).
+  * each tool exposes `.name` and `async def ainvoke(args) -> dict` (the
+    loop normalizes dict/str/content-block-list results via
+    `_payload_from_tool_result`; returning a bare dict is the simplest
+    faithful fake).
+"""
+import asyncio
+
+import pytest
+
+from agent.recon.crawl import crawl_agent
+
+
+class _AIMessage:
+    def __init__(self, tool_calls):
+        self.tool_calls = tool_calls
+        self.content = ""
+
+
+class _ScriptedLLM:
+    """Fake chat model: `bind_tools` returns self; `ainvoke` pops the next
+    scripted tool-call batch from `script` on each call."""
+
+    def __init__(self, script):
+        self.script = list(script)
+        self.calls = 0
+
+    def bind_tools(self, tools):
+        return self
+
+    async def ainvoke(self, messages):
+        self.calls += 1
+        if self.script:
+            tool_calls = self.script.pop(0)
+        else:
+            tool_calls = []
+        return _AIMessage(tool_calls)
+
+
+class _LoopingLLM:
+    """Fake chat model that always re-emits the same tool-call, never finishing."""
+
+    def __init__(self, tool_call):
+        self._tool_call = tool_call
+        self.calls = 0
+
+    def bind_tools(self, tools):
+        return self
+
+    async def ainvoke(self, messages):
+        self.calls += 1
+        return _AIMessage([self._tool_call])
+
+
+class _FakeTool:
+    def __init__(self, name, result=None, record=None):
+        self.name = name
+        self._result = result if result is not None else {}
+        self._record = record
+
+    async def ainvoke(self, args):
+        if self._record is not None:
+            self._record.append(self.name)
+        return self._result
+
+
+CANNED_MANIFEST = {
+    "endpoints": [
+        {"method": "GET", "url": "https://x.com/api/v1/items", "query": ["id"], "body": [], "status": 200},
+    ],
+    "js_urls": ["https://x.com/static/app.js"],
+}
+
+
+def test_run_crawl_returns_finish_manifest_on_scripted_sequence():
+    calls_log: list[str] = []
+    tools = [
+        _FakeTool("steel_crawl_start", {"crawl_id": "c1"}, record=calls_log),
+        _FakeTool("steel_navigate", {"new_links": [], "network_delta": []}, record=calls_log),
+        _FakeTool("steel_crawl_finish", CANNED_MANIFEST, record=calls_log),
+    ]
+    llm = _ScriptedLLM(
+        [
+            [{"name": "steel_crawl_start", "args": {}, "id": "1"}],
+            [{"name": "steel_navigate", "args": {}, "id": "2"}],
+            [{"name": "steel_crawl_finish", "args": {}, "id": "3"}],
+        ]
+    )
+
+    result = asyncio.run(
+        crawl_agent.run_crawl(
+            "https://x.com",
+            scope=["x.com"],
+            tools=tools,
+            llm=llm,
+            max_iters=10,
+        )
+    )
+
+    assert result == CANNED_MANIFEST
+    assert calls_log == ["steel_crawl_start", "steel_navigate", "steel_crawl_finish"]
+
+
+def test_run_crawl_bounded_by_max_iters_when_never_finishing():
+    tools = [
+        _FakeTool("steel_navigate", {"new_links": [], "network_delta": []}),
+    ]
+    llm = _LoopingLLM({"name": "steel_navigate", "args": {}, "id": "n"})
+
+    result = asyncio.run(
+        crawl_agent.run_crawl(
+            "https://x.com",
+            scope=["x.com"],
+            tools=tools,
+            llm=llm,
+            max_iters=3,
+        )
+    )
+
+    # Loop terminates (no hang) and, since steel_crawl_start/finish were
+    # never invoked, drains to the empty manifest rather than fabricating one.
+    assert result == {"endpoints": [], "js_urls": []}
+    assert llm.calls == 3
+
+
+def test_run_crawl_with_pre_created_crawl_id_drives_await_auth_first():
+    calls_log: list[str] = []
+    # Deliberately omit steel_crawl_start from the toolset: if the loop tried
+    # to call it, `by_name.get("steel_crawl_start")` -> None -> "unknown tool"
+    # ToolMessage, not a crash - but we assert on calls_log to be explicit.
+    tools = [
+        _FakeTool("steel_await_auth", {"authenticated": True}, record=calls_log),
+        _FakeTool("steel_crawl_finish", CANNED_MANIFEST, record=calls_log),
+    ]
+    llm = _ScriptedLLM(
+        [
+            [{"name": "steel_await_auth", "args": {"crawl_id": "pre1"}, "id": "1"}],
+            [{"name": "steel_crawl_finish", "args": {}, "id": "2"}],
+        ]
+    )
+
+    result = asyncio.run(
+        crawl_agent.run_crawl(
+            "https://x.com",
+            scope=["x.com"],
+            tools=tools,
+            llm=llm,
+            max_iters=10,
+            pre_created_crawl_id="pre1",
+        )
+    )
+
+    assert result == CANNED_MANIFEST
+    assert calls_log[0] == "steel_await_auth"
+    assert "steel_crawl_start" not in calls_log
+
+
+def test_load_skill_reads_file_next_to_module():
+    text = crawl_agent._load_skill()
+    assert "Steel Agentic Crawl" in text
+    assert "steel_crawl_finish" in text
