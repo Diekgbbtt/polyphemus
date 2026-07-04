@@ -123,6 +123,47 @@ def test_run_job_convenience_wrapper_returns_pod_exports(monkeypatch):
     assert all(isinstance(e, PodExport) for e in exports)
 
 
+def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(monkeypatch):
+    from agent.recon.crawl import crawl_pod as crawl_pod_module
+    from agent.recon.types import JobSpec, PodExport
+
+    calls = []
+
+    def fake_crawl_pod_invoke(pod_input, job, run_id, phase):
+        calls.append((pod_input, job, run_id, phase))
+        return PodExport(input_asset=pod_input["input_asset"], verdict="success")
+
+    monkeypatch.setattr(crawl_pod_module, "crawl_pod_invoke", fake_crawl_pod_invoke)
+
+    agent_job = JobSpec(
+        tool="steel_crawl", skill="agentic_crawl", command_template="",
+        produces=["BaseURL"], consumes="BaseURL", configurator_mode="agent",
+    )
+    pod_input = {"input_asset": {"url": "https://app.example.com"}, "extra": {}}
+    export = ja.default_pod_invoke(pod_input, agent_job, "run-1", 4)
+
+    assert export.verdict == "success"
+    assert len(calls) == 1
+
+
+def test_default_pod_invoke_uses_template_pod_for_deterministic_jobs(monkeypatch):
+    from agent.recon import pod as pod_module
+    from agent.recon.types import PodExport
+
+    class FakePodGraph:
+        def invoke(self, state):
+            return {"export": PodExport(input_asset=state["input_asset"], verdict="success")}
+
+    monkeypatch.setattr(pod_module, "pod_graph", FakePodGraph())
+
+    job = JOBS["subfinder"]
+    assert job.configurator_mode == "deterministic"
+    pod_input = {"input_asset": {"name": "a.com"}, "extra": {}}
+    export = ja.default_pod_invoke(pod_input, job, "run-1", 0)
+
+    assert export.verdict == "success"
+
+
 def test_default_job_agent_is_import_safe_module_level_instance():
     # Importing job_agent must not perform any LLM/network I/O; the module-
     # level `job_agent` compiled graph should simply exist and be usable

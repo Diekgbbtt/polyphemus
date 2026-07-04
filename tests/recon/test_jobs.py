@@ -74,3 +74,22 @@ def test_build_phase_plan_subset():
 def test_build_phase_plan_invalid_subset_raises():
     with pytest.raises(ValueError):
         build_phase_plan(["httpx"])
+
+
+def test_steel_crawl_job_tool_matches_registered_parser():
+    assert JOBS["steel_crawl"].tool in PARSERS
+
+
+def test_steel_crawl_job_is_agent_configurator_mode():
+    assert JOBS["steel_crawl"].configurator_mode == "agent"
+
+
+def test_steel_crawl_job_consumes_baseurl_and_is_placed_after_httpx():
+    assert JOBS["steel_crawl"].consumes == "BaseURL"
+    httpx_phase_idx = next(i for i, phase in enumerate(PHASES) if "httpx" in phase)
+    steel_crawl_phase_idx = next(i for i, phase in enumerate(PHASES) if "steel_crawl" in phase)
+    assert steel_crawl_phase_idx > httpx_phase_idx
+
+
+def test_validate_job_subset_with_steel_crawl_passes():
+    validate_job_subset(["subfinder", "httpx", "steel_crawl"])

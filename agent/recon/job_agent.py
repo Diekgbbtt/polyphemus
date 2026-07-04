@@ -67,7 +67,18 @@ def default_preprocess_fn(
 def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -> PodExport:
     """Real collaborator: invoke the Foundation pod subgraph for a single
     pod_input and return its terminal export. Builds nothing at import time
-    - `agent.recon.pod.pod_graph` is already import-safe (no I/O)."""
+    - `agent.recon.pod.pod_graph` is already import-safe (no I/O).
+
+    Jobs with `configurator_mode == "agent"` (e.g. `steel_crawl`) route to
+    the crawl-pod variant instead - imported lazily here (not at module
+    top) to avoid a heavy import / circular import at `job_agent` import
+    time, mirroring how the template `pod_graph` is imported lazily below.
+    """
+    if job.configurator_mode == "agent":
+        from agent.recon.crawl.crawl_pod import crawl_pod_invoke
+
+        return crawl_pod_invoke(pod_input, job, run_id, phase)
+
     import uuid
 
     from agent.recon.pod import pod_graph

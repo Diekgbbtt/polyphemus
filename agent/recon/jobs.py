@@ -142,6 +142,15 @@ JOBS: dict[str, JobSpec] = {
         consumes="BaseURL",
         use_auth=False,
     ),
+    "steel_crawl": JobSpec(
+        tool="steel_crawl",
+        skill="agentic_crawl",
+        command_template="",
+        produces=["BaseURL", "Endpoint", "Parameter"],
+        consumes="BaseURL",
+        use_auth=True,
+        configurator_mode="agent",
+    ),
     "arjun": JobSpec(
         tool="arjun",
         skill="param_discovery",
@@ -164,7 +173,7 @@ PHASES: list[list[str]] = [
     ["dnsx", "puredns", "subdomain_takeover"],
     ["naabu"],
     ["httpx"],
-    ["katana", "ffuf", "kiterunner", "jsluice", "graphql-cop", "gau", "paramspider"],
+    ["katana", "ffuf", "kiterunner", "jsluice", "graphql-cop", "gau", "paramspider", "steel_crawl"],
     ["arjun"],
 ]
 
