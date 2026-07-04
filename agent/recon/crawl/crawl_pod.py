@@ -49,6 +49,7 @@ class CrawlPodState(PodState, total=False):
 
     manifest: Optional[dict]
     crawl_error: Optional[str]
+    viewer_url: Optional[str]
 
 
 def _manifest_is_empty(manifest: dict | None) -> bool:
@@ -87,30 +88,69 @@ def default_run_crawl_fn(target: str, *, scope: list[str]):
     return run_coro_blocking(crawl_agent.run_crawl(target, scope=scope))
 
 
-def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
+def default_run_crawl_authenticated_fn(target: str, *, scope: list[str]):
+    """Real collaborator: authenticated agentic crawl (interactive
+    `steel_await_auth` MVP path), synchronously.
+
+    Wraps `crawl_agent.run_crawl_authenticated` (async) behind
+    `run_coro_blocking`, mirroring `default_run_crawl_fn`. Returns
+    `(manifest, awaiting_status)`.
+    """
+    from agent.recon.crawl import crawl_agent
+    from agent.recon.async_bridge import run_coro_blocking
+
+    return run_coro_blocking(crawl_agent.run_crawl_authenticated(target, scope=scope))
+
+
+def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_authenticated_fn=None):
     """Build the compiled crawl-pod subgraph, injecting the side-effecting
     collaborators: run_crawl_fn(target, scope=scope) -> manifest dict,
     parse_fn(stdout) -> list[AssetDelta], triage_fn(exec_result, assets, job)
     -> list[Observation] (called with a synthetic exec_result carrying the
     manifest JSON as stdout, mirroring pod.py's triager signature),
     curate_fn(assets, observations, project_id) -> (int, int).
+
+    `run_crawl_authenticated_fn(target, scope=scope) -> (manifest, awaiting_status | None)`
+    is the interactive `steel_await_auth` MVP auth path (see
+    `crawl_agent.run_crawl_authenticated`). It is only invoked for a
+    `use_auth` job whose `extra` carries an `auth_context` signal (set by
+    the pipeline from the project's settings, see `pipeline.py`) - a
+    non-auth crawl, or an auth-capable job run without an `auth_context`,
+    never precreates a Steel session and calls `run_crawl_fn` as before.
+    When present, the `awaiting_status["viewer_url"]` is recorded on the
+    pod export's `stats` so the operator can complete the manual login
+    (surfaced by `GET /recon/{run_id}` via `pipeline.py`'s stats
+    pass-through). Non-interactive cookie-injection (from
+    `auth_context` cookies) into the Steel session is a deferred follow-up,
+    not built here.
     """
 
     def crawl(state: CrawlPodState) -> dict:
         input_asset = state.get("input_asset") or {}
         extra = state.get("extra") or {}
+        job = state.get("job")
         target = _input_asset_url(input_asset)
         scope = extra.get("scope") or ([target] if target else [])
 
+        use_auth_signal = bool(
+            job is not None and getattr(job, "use_auth", False) and extra.get("auth_context")
+        )
+
+        viewer_url = None
         try:
-            manifest = run_crawl_fn(target, scope=scope)
+            if use_auth_signal and run_crawl_authenticated_fn is not None:
+                manifest, awaiting_status = run_crawl_authenticated_fn(target, scope=scope)
+                if awaiting_status:
+                    viewer_url = awaiting_status.get("viewer_url") or None
+            else:
+                manifest = run_crawl_fn(target, scope=scope)
         except Exception as exc:  # noqa: BLE001 - best-effort, never raise
-            return {"manifest": None, "crawl_error": str(exc)}
+            return {"manifest": None, "crawl_error": str(exc), "viewer_url": viewer_url}
 
         if _manifest_is_empty(manifest):
-            return {"manifest": None, "crawl_error": "empty crawl manifest"}
+            return {"manifest": None, "crawl_error": "empty crawl manifest", "viewer_url": viewer_url}
 
-        return {"manifest": manifest}
+        return {"manifest": manifest, "viewer_url": viewer_url}
 
     def gate(state: CrawlPodState) -> str:
         return "parse" if state.get("manifest") is not None else "fail"
@@ -133,12 +173,14 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
         assets = state.get("assets", [])
         observations = state.get("observations", [])
         assets_merged, observations_merged = curate_fn(assets, observations, state["project_id"])
+        viewer_url = state.get("viewer_url")
         export = PodExport(
             input_asset=state["input_asset"],
             verdict="success",
             assets_merged=assets_merged,
             observations_merged=observations_merged,
             iterations=state.get("iteration", 0),
+            stats={"viewer_url": viewer_url} if viewer_url else None,
         )
         return {"export": export}
 
@@ -147,6 +189,7 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
         reason = state.get("crawl_error") or "crawl failed"
         observation = _coverage_observation(input_asset, reason)
         _, observations_merged = curate_fn([], [observation], state["project_id"])
+        viewer_url = state.get("viewer_url")
         export = PodExport(
             input_asset=input_asset,
             verdict="failed",
@@ -154,6 +197,7 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
             observations_merged=observations_merged,
             iterations=state.get("iteration", 0),
             error=reason,
+            stats={"viewer_url": viewer_url} if viewer_url else None,
         )
         return {"export": export}
 
@@ -176,6 +220,7 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
 
 crawl_pod = build_crawl_pod(
     run_crawl_fn=default_run_crawl_fn,
+    run_crawl_authenticated_fn=default_run_crawl_authenticated_fn,
     parse_fn=get_parser("steel_crawl"),
     triage_fn=default_triage_fn,
     curate_fn=curate,

@@ -141,12 +141,28 @@ async def run_pipeline(
             else:
                 status = "success"
 
+            job_stats = {"pods": total, "success": succeeded, "failed": failed}
+            # Surface a crawl job's Steel viewer URL (interactive
+            # steel_await_auth MVP path, see crawl_pod.py) so
+            # GET /recon/{run_id} lets the operator complete manual login -
+            # pass through the first pod export that carries one.
+            viewer_url = next(
+                (
+                    e.stats.get("viewer_url")
+                    for e in pod_exports
+                    if e.stats and e.stats.get("viewer_url")
+                ),
+                None,
+            )
+            if viewer_url:
+                job_stats["viewer_url"] = viewer_url
+
             registry.upsert_job(
                 run_id,
                 phase_idx,
                 name,
                 status,
-                stats={"pods": total, "success": succeeded, "failed": failed},
+                stats=job_stats,
             )
 
         registry.set_run_status(run_id, "running", current_phase=phase_idx)

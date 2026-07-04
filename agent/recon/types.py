@@ -51,6 +51,7 @@ class PodExport(BaseModel):
     observations_merged: int = 0
     iterations: int = 0
     error: str | None = None
+    stats: dict | None = None
 
 class PodState(TypedDict, total=False):
     job: JobSpec
