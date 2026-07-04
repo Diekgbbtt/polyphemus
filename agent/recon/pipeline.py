@@ -103,16 +103,21 @@ async def run_pipeline(
         job_configs: dict[str, tuple] = {}
         for name in phase_jobs:
             job = JOBS[name]
-            if phase_idx == 0:
-                input_assets = seed_assets(settings)
-            else:
-                input_assets = read_assets(job.consumes, project_id)
+            try:
+                if phase_idx == 0:
+                    input_assets = seed_assets(settings)
+                else:
+                    input_assets = read_assets(job.consumes, project_id)
 
-            extra = {"project_id": project_id}
-            if job.use_auth and settings.get("auth_context"):
-                extra["auth_context"] = settings["auth_context"]
+                extra = {"project_id": project_id}
+                if job.use_auth and settings.get("auth_context"):
+                    extra["auth_context"] = settings["auth_context"]
 
-            registry.upsert_job(run_id, phase_idx, name, "in_progress")
+                registry.upsert_job(run_id, phase_idx, name, "in_progress")
+            except Exception as exc:  # best-effort: a setup blip degrades
+                # only this job, it must never leave the run stuck non-terminal.
+                registry.upsert_job(run_id, phase_idx, name, "degraded", error=str(exc))
+                continue
             job_configs[name] = (job, input_assets, extra)
 
         async def _run_one(name: str) -> None:
@@ -145,6 +150,6 @@ async def run_pipeline(
             )
 
         registry.set_run_status(run_id, "running", current_phase=phase_idx)
-        await asyncio.gather(*[_run_one(name) for name in phase_jobs])
+        await asyncio.gather(*[_run_one(name) for name in job_configs])
 
     registry.set_run_status(run_id, "complete")

@@ -34,6 +34,7 @@ FIXTURES = Path(__file__).parent / "fixtures"
 SUBFINDER_STDOUT = (FIXTURES / "subfinder.jsonl").read_text()
 DNSX_STDOUT = (FIXTURES / "dnsx.jsonl").read_text()
 HTTPX_STDOUT = (FIXTURES / "httpx_probe.jsonl").read_text()
+ARJUN_STDOUT = (FIXTURES / "arjun.json").read_text()
 
 
 def fake_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult:
@@ -42,13 +43,29 @@ def fake_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult:
     command_template."""
     if command.startswith("subfinder"):
         stdout = SUBFINDER_STDOUT
-    elif command.startswith("dnsx"):
+    elif "dnsx" in command:
         stdout = DNSX_STDOUT
     elif command.startswith("httpx"):
         stdout = HTTPX_STDOUT
+    elif command.startswith("arjun"):
+        stdout = ARJUN_STDOUT
     else:
         raise AssertionError(f"unexpected command in e2e test: {command!r}")
     return ExecResult(stdout=stdout, stderr="", returncode=0, duration_ms=1)
+
+
+def make_recording_exec_fn():
+    """Wraps `fake_exec_fn`, additionally recording every filled command -
+    lets a test assert a job's `{placeholder}`s were actually resolved to
+    real values (not left blank/literal) by the time exec_fn sees them."""
+    commands: list[str] = []
+
+    def exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult:
+        commands.append(command)
+        return fake_exec_fn(command, session_id, timeout_s)
+
+    exec_fn.commands = commands
+    return exec_fn
 
 
 def fake_triage_fn(exec_result, assets, job):
@@ -67,6 +84,16 @@ class InMemoryGraph:
     `read_assets` scopes by `project_id` in its Cypher `WHERE` - so the real
     curate -> read_assets seam (including project_id scoping) is genuinely
     exercised, not just faked away.
+
+    F4: prod `pipeline.read_assets` returns `dict(record["n"])` - identity
+    AND all props (minus the first_seen/last_seen/project_id bookkeeping
+    keys) - not an identity-only dict. `build_asset_cypher` carries a
+    delta's props in the single `params["props"]` dict (merged onto the node
+    via `SET n += $props`), so this store folds `props` into the captured
+    node alongside its identity, exactly mirroring what a real Neo4j node
+    would look like on read-back. This is what makes a prop-dependent
+    template placeholder (e.g. arjun's `{target}` from an Endpoint's `url`
+    PROP) actually exercised end-to-end instead of silently no-op'd.
     """
 
     _PRIMARY_NODE_RE = re.compile(r"^MERGE \(n:(\w+) \{")
@@ -83,13 +110,15 @@ class InMemoryGraph:
         label = match.group(1)
         project_id = params.get("project_id")
         identity = {k[len("id_"):]: v for k, v in params.items() if k.startswith("id_")}
+        node = dict(identity)
+        node.update(params.get("props") or {})
         key = (project_id, tuple(sorted(identity.items())))
-        self._store.setdefault(label, {})[key] = (project_id, identity)
+        self._store.setdefault(label, {})[key] = (project_id, node)
 
     def read_assets(self, node_type: str, project_id: str) -> list[dict]:
         return [
-            identity
-            for (pid, identity) in self._store.get(node_type, {}).values()
+            node
+            for (pid, node) in self._store.get(node_type, {}).values()
             if pid == project_id
         ]
 
@@ -212,3 +241,67 @@ def test_pipeline_e2e_subfinder_dnsx_httpx():
         {"name": "www.example.com"},
         {"name": "api.example.com"},
     ]
+
+
+def test_pipeline_e2e_httpx_to_arjun_prop_dependent_target():
+    """F4: arjun's `{target}` comes from an Endpoint's `url` PROP (Endpoint
+    IDENTITY is `{path,method,baseurl}` - no url). Extends the subfinder ->
+    dnsx -> httpx chain one phase further into arjun (consumes Endpoint) to
+    prove `InMemoryGraph.read_assets` now round-trips props like prod's
+    `dict(record["n"])` - with the old identity-only fake this would
+    silently pass arjun an Endpoint with no `url`, filling `{target}` blank."""
+    graph = InMemoryGraph()
+
+    def curate_fn(assets, observations, project_id):
+        return curate(assets, observations, project_id, merge_fn=graph.merge_fn)
+
+    exec_fn = make_recording_exec_fn()
+    pod_graph = build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=fake_triage_fn)
+    job_agent = build_job_agent(
+        pod_invoke=_build_pod_invoke(pod_graph), preprocess_fn=default_preprocess_fn
+    )
+
+    seen_input_assets: dict[str, list[dict]] = {}
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        seen_input_assets[job.tool] = input_assets
+        return await real_run_job(
+            job, input_assets, run_id=run_id, phase=phase, extra=extra, agent=job_agent
+        )
+
+    registry = FakeRegistry()
+
+    def load_settings(project_id):
+        return {"target_domain": "example.com"}
+
+    asyncio.run(
+        pipeline.run_pipeline(
+            "proj-e2e-arjun",
+            run_id="run-e2e-arjun",
+            job_subset=["subfinder", "dnsx", "httpx", "arjun"],
+            run_job=run_job,
+            load_settings=load_settings,
+            registry=registry,
+            read_assets=graph.read_assets,
+        )
+    )
+
+    # arjun's Endpoint input_assets carry the `url` PROP alongside identity -
+    # the fidelity fix under test.
+    endpoint_assets = seen_input_assets["arjun"]
+    assert endpoint_assets, "httpx must have produced at least one Endpoint for arjun to consume"
+    assert all("url" in asset for asset in endpoint_assets), (
+        f"Endpoint input_assets missing the 'url' prop (identity-only fake regression): {endpoint_assets!r}"
+    )
+
+    # The real command sent to exec_fn has {target} resolved to that real
+    # url, not left blank - proves the prop actually reached fill_template.
+    arjun_commands = [c for c in exec_fn.commands if c.startswith("arjun")]
+    assert arjun_commands, "no arjun command was executed"
+    assert any("-u https://" in c for c in arjun_commands)
+    assert not any("{" in c for c in arjun_commands)
+
+    final_status = {call["job"]: call["status"] for call in registry.upsert_job_calls}
+    assert final_status["arjun"] == "success"
+    cyphers = [cy for cy, _ in graph.merges]
+    assert any(":Parameter" in cy for cy in cyphers)  # arjun

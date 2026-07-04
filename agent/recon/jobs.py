@@ -40,7 +40,7 @@ JOBS: dict[str, JobSpec] = {
     "dnsx": JobSpec(
         tool="dnsx",
         skill="dns_resolution",
-        command_template="dnsx -l {infile} -json -a -aaaa -cname -silent",
+        command_template="echo {target} | dnsx -json -a -aaaa -cname -silent",
         produces=["IP", "DNSRecord", "Subdomain"],
         consumes="Subdomain",
         use_auth=False,
@@ -48,7 +48,7 @@ JOBS: dict[str, JobSpec] = {
     "puredns": JobSpec(
         tool="puredns",
         skill="dns_resolution",
-        command_template="puredns resolve {infile} -r /resolvers/resolvers.txt -q",
+        command_template="echo {target} | puredns resolve -r /resolvers/resolvers.txt -q",
         produces=["Subdomain"],
         consumes="Subdomain",
         use_auth=False,
@@ -129,7 +129,7 @@ JOBS: dict[str, JobSpec] = {
     "jsluice": JobSpec(
         tool="jsluice",
         skill="js_secret_scan",
-        command_template="jsluice urls -R {baseurl} {js_input}",
+        command_template="curl -s {target} | jsluice urls -j -R {baseurl}",
         produces=["Endpoint", "Secret"],
         consumes="BaseURL",
         use_auth=False,

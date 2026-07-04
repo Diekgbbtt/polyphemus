@@ -215,6 +215,44 @@ def test_no_pod_exports_marks_job_skipped():
     assert statuses[-1] == "skipped"
 
 
+def test_read_assets_raising_degrades_only_that_job_and_run_still_completes():
+    """F3: phase-setup (`read_assets`/`upsert_job(in_progress)`) must be
+    best-effort per job too, not just `run_job` - a registry/Neo4j blip on
+    one job's setup must not leave the whole run stuck non-terminal."""
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        return [PodExport(input_asset={}, verdict="success")]
+
+    def flaky_read_assets(node_type, project_id):
+        if node_type == "Subdomain":
+            raise RuntimeError("neo4j blip")
+        return [{"name": "seed"}]
+
+    registry = FakeRegistry()
+    settings = {"target_domain": "t.com"}
+
+    asyncio.run(
+        pipeline.run_pipeline(
+            "proj1",
+            run_id="run1",
+            job_subset=["subfinder", "dnsx"],
+            run_job=run_job,
+            load_settings=make_load_settings(settings),
+            registry=registry,
+            read_assets=flaky_read_assets,
+        )
+    )
+
+    dnsx_statuses = [c["status"] for c in registry.upsert_job_calls if c["job"] == "dnsx"]
+    assert dnsx_statuses == ["degraded"]
+    assert registry.upsert_job_calls[-1]["error"] == "neo4j blip"
+
+    subfinder_statuses = [c["status"] for c in registry.upsert_job_calls if c["job"] == "subfinder"]
+    assert subfinder_statuses[-1] == "success"
+
+    assert registry.set_run_status_calls[-1] == ("run1", "complete", None)
+
+
 def test_phase0_uses_seed_assets_later_phases_use_read_assets():
     seen_inputs = {}
 

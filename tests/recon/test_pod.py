@@ -45,6 +45,122 @@ def test_fill_template_substitutes_target():
     cmd = pod.fill_template("httpx -u {target} -json", {"name": "app.example.com"}, {})
     assert "app.example.com" in cmd
 
+
+def test_fill_template_substitutes_session():
+    cmd = pod.fill_template(
+        "subzy run --target {target} --output /work/{session}/out.json",
+        {"name": "old.example.com"},
+        {},
+        session_id="run42-pod7",
+    )
+    assert "/work/run42-pod7/out.json" in cmd
+    assert "{session}" not in cmd
+
+
+def test_fill_template_auth_header_httpx_serializes_cookie_string_not_dict_repr():
+    cmd = pod.fill_template(
+        "httpx -u {target} -json {auth_header}",
+        {"name": "app.example.com"},
+        {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}, "_use_auth": True},
+        tool="httpx",
+    )
+    assert 'Cookie: session=abc' in cmd
+    assert '-H "Cookie: session=abc"' in cmd
+    assert "{" not in cmd  # no residual placeholder, no dict repr
+
+
+def test_fill_template_auth_header_arjun_uses_headers_flag():
+    cmd = pod.fill_template(
+        "arjun -u {target} {auth_header}",
+        {"name": "app.example.com"},
+        {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}, "_use_auth": True},
+        tool="arjun",
+    )
+    assert '--headers "Cookie: session=abc"' in cmd
+
+
+def test_fill_template_auth_header_multi_cookie():
+    cmd = pod.fill_template(
+        "httpx -u {target} {auth_header}",
+        {"name": "app.example.com"},
+        {
+            "auth_context": {
+                "cookies": [
+                    {"name": "session", "value": "abc"},
+                    {"name": "csrf", "value": "xyz"},
+                ]
+            },
+            "_use_auth": True,
+        },
+        tool="httpx",
+    )
+    assert '-H "Cookie: session=abc; csrf=xyz"' in cmd
+
+
+def test_fill_template_auth_header_empty_when_no_use_auth():
+    cmd = pod.fill_template(
+        "httpx -u {target} {auth_header}",
+        {"name": "app.example.com"},
+        {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}, "_use_auth": False},
+        tool="httpx",
+    )
+    assert "Cookie" not in cmd
+    assert "-H" not in cmd
+    assert "{" not in cmd
+
+
+def test_fill_template_auth_header_empty_when_not_use_auth_job():
+    # non-auth job: extra carries no auth_context at all (pipeline never
+    # threads it for jobs where job.use_auth is False).
+    cmd = pod.fill_template(
+        "subfinder -d {domain} -all -json -silent",
+        {"name": "example.com"},
+        {"_use_auth": False},
+        tool="subfinder",
+    )
+    assert "Cookie" not in cmd
+    assert "-H" not in cmd
+    assert "{" not in cmd
+
+
+# Representative asset for each Layer-0 consumes type a JOBS entry might
+# declare, keyed by identity + (for Endpoint) the `url` PROP that a real
+# curated/read-back asset would carry (design §10.3) - fill_template's
+# {target} falls back to a "url"/"address" key when "name" is absent, so
+# Endpoint needs its url PROP present to be single-asset-runnable, exactly
+# the F4 fidelity gap the e2e fake must also model.
+_REPRESENTATIVE_ASSETS = {
+    "Domain": {"name": "example.com"},
+    "Subdomain": {"name": "www.example.com"},
+    "BaseURL": {"url": "https://app.example.com"},
+    "Endpoint": {
+        "path": "/api/v1/users",
+        "method": "GET",
+        "baseurl": "https://app.example.com",
+        "url": "https://app.example.com/api/v1/users",
+    },
+}
+
+
+def test_no_job_command_template_leaves_a_residual_placeholder():
+    """F1 guard rail: every JOBS entry's command_template must be fully
+    fillable by `fill_template` for a representative asset of its `consumes`
+    type (+ session_id, + an auth extra for use_auth jobs) - no `{...}`
+    placeholder may survive. Regresses the whole class of "literal
+    {placeholder} shipped to the shell" bugs fleet-wide, not just per-tool."""
+    for name, job in JOBS.items():
+        asset = _REPRESENTATIVE_ASSETS[job.consumes]
+        extra = {"_use_auth": job.use_auth}
+        if job.use_auth:
+            extra["auth_context"] = {"cookies": [{"name": "session", "value": "abc"}]}
+        cmd = pod.fill_template(
+            job.command_template, asset, extra, session_id="sess-guard", tool=job.tool
+        )
+        assert "{" not in cmd and "}" not in cmd, (
+            f"job '{name}' left a residual placeholder in: {cmd!r}"
+        )
+
+
 def test_pod_happy_path_success():
     captured = {}
     def exec_fn(cmd, sid, t): return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=3)

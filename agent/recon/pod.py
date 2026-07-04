@@ -60,15 +60,24 @@ def _call_with_optional_target_url(fn, stdout: str, target_url: str | None):
     return fn(stdout)
 
 
-def fill_template(command_template: str, input_asset: dict, extra: dict) -> str:
+def fill_template(
+    command_template: str,
+    input_asset: dict,
+    extra: dict,
+    *,
+    session_id: str = "",
+    tool: str = "",
+) -> str:
     """Deterministic placeholder fill for a job's command_template.
 
     - {target}: input_asset["name"] or ["url"] or ["address"], first present.
     - {domain}: input_asset["name"] or ["domain"], falling back to {target}.
     - {baseurl}: input_asset["url"] or ["baseurl"], falling back to {target}.
+    - {session}: the pod's session_id (per-pod `/work/{session}` workdir key).
     - {auth_header}: empty unless extra["auth_context"] is present AND the
       caller has flagged extra["_use_auth"] truthy (the configurator node
-      sets this from job.use_auth before calling fill_template).
+      sets this from job.use_auth before calling fill_template); otherwise
+      serialized to the tool-appropriate cookie flag via `_auth_header`.
     """
     extra = extra or {}
     target = input_asset.get("name") or input_asset.get("url") or input_asset.get("address") or ""
@@ -76,14 +85,40 @@ def fill_template(command_template: str, input_asset: dict, extra: dict) -> str:
     baseurl = input_asset.get("url") or input_asset.get("baseurl") or target
     auth_header = ""
     if extra.get("auth_context") and extra.get("_use_auth"):
-        auth_header = extra["auth_context"]
+        auth_header = _auth_header(extra["auth_context"], tool)
 
     result = command_template
     result = result.replace("{target}", str(target))
     result = result.replace("{domain}", str(domain))
     result = result.replace("{baseurl}", str(baseurl))
-    result = result.replace("{auth_header}", str(auth_header))
+    result = result.replace("{session}", str(session_id))
+    result = result.replace("{auth_header}", auth_header)
     return result
+
+
+# Tools whose auth-cookie flag is `--headers "Cookie: ..."` rather than the
+# `-H "Cookie: ..."` form shared by httpx/katana/ffuf (design §4 table).
+_HEADERS_FLAG_TOOLS = {"arjun"}
+
+
+def _auth_header(auth_context: dict, tool: str) -> str:
+    """Serialize `auth_context["cookies"]` (`[{name, value}, ...]`) into the
+    tool-appropriate cookie-header CLI flag - never a Python dict repr.
+
+    Returns "" when there are no cookies (or `auth_context` is falsy), so a
+    template's `{auth_header}` placeholder collapses to nothing rather than
+    leaving a dangling flag/quote behind.
+    """
+    if not auth_context:
+        return ""
+    cookies = auth_context.get("cookies") or []
+    cookie_str = "; ".join(
+        f"{c['name']}={c['value']}" for c in cookies if c.get("name") and c.get("value")
+    )
+    if not cookie_str:
+        return ""
+    flag = "--headers" if tool in _HEADERS_FLAG_TOOLS else "-H"
+    return f'{flag} "Cookie: {cookie_str}"'
 
 
 def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
@@ -97,7 +132,13 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
         job = state["job"]
         extra = dict(state.get("extra") or {})
         extra["_use_auth"] = job.use_auth
-        command = fill_template(job.command_template, state["input_asset"], extra)
+        command = fill_template(
+            job.command_template,
+            state["input_asset"],
+            extra,
+            session_id=state["session_id"],
+            tool=job.tool,
+        )
         invocation = ToolInvocation(command=command, session_id=state["session_id"])
         iteration = state.get("iteration", 0) + 1
         return {"invocation": invocation, "iteration": iteration}
