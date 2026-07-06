@@ -106,20 +106,40 @@ def test_parse_with_target_url_derives_endpoint_when_no_curl_verify():
     assert endpoints[0].identity["path"] == "/graphql"
 
 
-def test_parse_findings_with_target_url_attaches_endpoint_anchor():
+def test_parse_findings_with_target_url_attaches_baseurl_anchor():
     findings = parse_findings(
         FIX.read_text(), target_url="https://api.example.com/graphql"
     )
     assert len(findings) == 1
     anchor = findings[0]["anchor"]
     assert anchor == {
-        "type": "Endpoint",
-        "identity": {
-            "path": "/graphql",
-            "method": "POST",
-            "baseurl": "https://api.example.com",
-        },
+        "type": "BaseURL",
+        "identity": {"url": "https://api.example.com"},
     }
+
+
+def test_parse_findings_anchor_survives_curate_path():
+    """Regression test for the silent-drop bug: an Endpoint anchor is not in
+    `curator.ANCHOR_ALLOWLIST`, so `build_observation_cypher` raised
+    `ValueError` and `curate` skipped+logged every graphql-cop finding. The
+    finding anchor must be BaseURL (a broad, allow-listed anchor) so the
+    Observation reaches Neo4j instead of being silently dropped."""
+    from agent.recon.curator import build_observation_cypher
+    from agent.recon.findings import finding_to_observation
+
+    findings = parse_findings(
+        FIX.read_text(), target_url="https://api.example.com/graphql"
+    )
+    assert len(findings) == 1
+
+    observation = finding_to_observation(
+        findings[0], source_job="graphql-cop-job", source_tool="graphql-cop"
+    )
+    assert observation is not None
+
+    query, params = build_observation_cypher(observation)
+    assert "MERGE" in query
+    assert params["anchor_url"] == "https://api.example.com"
 
 
 def test_parse_findings_without_target_url_has_no_anchor_key_when_undeterminable():

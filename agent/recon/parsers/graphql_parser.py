@@ -24,13 +24,17 @@ functions with a deliberate split of responsibility:
     side. Returns one normalized `{title, severity, evidence, anchor?}` dict
     per FAILED check (`result: true`), for the pod's triager to turn into
     `Observation`s. NOT registered in `PARSERS` - the triager calls this
-    directly.
+    directly. The finding `anchor` is a `BaseURL` (not `Endpoint`): Observation
+    anchors must be broad graph elements per `curator.ANCHOR_ALLOWLIST`
+    (Domain/Subdomain/BaseURL/IP/Service), which excludes `Endpoint` -
+    anchoring findings to `Endpoint` made `build_observation_cypher` raise
+    and every graphql-cop Observation was silently dropped by `curate`.
 
 graphql-cop's JSON output does not include a dedicated "target url" field.
 When the pod triager knows the job's target (the input asset's URL), it
 passes it as `target_url` (SP2 F1) - this is deterministic and takes
 priority over any regex derivation, for both `parse`'s Endpoint identity and
-`parse_findings`'s `anchor`. When `target_url` is not given (e.g. called
+`parse_findings`'s `BaseURL` anchor. When `target_url` is not given (e.g. called
 outside the pod, or in tests), both functions fall back to the best-effort
 `curl_verify` regex derivation (first http(s) URL found in that field). If
 no URL can be derived from either source, `parse` returns an empty list and
@@ -94,10 +98,11 @@ def parse(stdout: str, *, target_url: str | None = None) -> list[AssetDelta]:
     )[:2]
 
 
-def _endpoint_anchor(checks: list, *, target_url: str | None) -> dict | None:
-    """Build an Endpoint anchor from `target_url` when given, else fall back
-    to the best-effort curl_verify regex derivation. Returns `None` when
-    neither source yields an absolute URL."""
+def _finding_anchor(checks: list, *, target_url: str | None) -> dict | None:
+    """Build a BaseURL anchor (broad, in `curator.ANCHOR_ALLOWLIST`) for
+    findings, from `target_url` when given, else fall back to the
+    best-effort curl_verify regex derivation. Returns `None` when neither
+    source yields an absolute URL."""
     url = target_url or _derive_endpoint_url(checks)
     if not url:
         return None
@@ -106,18 +111,15 @@ def _endpoint_anchor(checks: list, *, target_url: str | None) -> dict | None:
     if split is None:
         return None
 
-    baseurl, path = split
-    return {
-        "type": "Endpoint",
-        "identity": {"path": path, "method": "POST", "baseurl": baseurl},
-    }
+    baseurl, _path = split
+    return {"type": "BaseURL", "identity": {"url": baseurl}}
 
 
 def parse_findings(stdout: str, *, target_url: str | None = None) -> list[dict]:
     checks = _load_checks(stdout)
     findings: list[dict] = []
 
-    anchor = _endpoint_anchor(checks, target_url=target_url)
+    anchor = _finding_anchor(checks, target_url=target_url)
 
     for check in checks:
         if check.get("result") is not True:

@@ -179,7 +179,6 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
             verdict="success",
             assets_merged=assets_merged,
             observations_merged=observations_merged,
-            iterations=state.get("iteration", 0),
             stats={"viewer_url": viewer_url} if viewer_url else None,
         )
         return {"export": export}
@@ -195,7 +194,6 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
             verdict="failed",
             assets_merged=0,
             observations_merged=observations_merged,
-            iterations=state.get("iteration", 0),
             error=reason,
             stats={"viewer_url": viewer_url} if viewer_url else None,
         )

@@ -264,14 +264,15 @@ GRAPHQL_COP_JSON = (
 )
 
 
-def test_pod_graphql_findings_get_endpoint_anchor_from_input_asset_url_and_reach_curator():
+def test_pod_graphql_findings_get_baseurl_anchor_from_input_asset_url_and_reach_curator():
     """SP2 F1: graphql-cop findings have no dedicated 'target url' field in
     their JSON output; the pod must thread the job's target (the input
     asset's URL) into `parse_findings` so the resulting Observation carries
-    an Endpoint anchor (and therefore is NOT dropped by
-    `finding_to_observation`). This fixture has no `curl_verify` field at
-    all, so the old regex-only fallback would yield no anchor - only
-    target-url threading makes this pass."""
+    a BaseURL anchor (and therefore is NOT dropped by
+    `finding_to_observation`, nor rejected by curator.ANCHOR_ALLOWLIST, which
+    excludes Endpoint). This fixture has no `curl_verify` field at all, so
+    the old regex-only fallback would yield no anchor - only target-url
+    threading makes this pass."""
     captured = {}
 
     def exec_fn(cmd, sid, t):
@@ -299,10 +300,6 @@ def test_pod_graphql_findings_get_endpoint_anchor_from_input_asset_url_and_reach
     assert isinstance(obs, Observation)
     assert obs.macro_kind == "Introspection"
     assert obs.anchor == {
-        "type": "Endpoint",
-        "identity": {
-            "path": "/graphql",
-            "method": "POST",
-            "baseurl": "https://api.example.com",
-        },
+        "type": "BaseURL",
+        "identity": {"url": "https://api.example.com"},
     }
