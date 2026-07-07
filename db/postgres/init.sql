@@ -29,6 +29,8 @@ CREATE TABLE IF NOT EXISTS recon_jobs (
     error       TEXT,
     CONSTRAINT recon_jobs_run_phase_job_key UNIQUE (run_id, phase, job)
 );
+ALTER TABLE recon_runs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
+CREATE INDEX IF NOT EXISTS recon_runs_status_idx ON recon_runs (status);
 CREATE TABLE IF NOT EXISTS ingest_runs (
     ingest_id   TEXT PRIMARY KEY,
     project_id  TEXT NOT NULL,
