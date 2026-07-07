@@ -22,9 +22,14 @@ registry, and the `read_assets` helper below.
 from __future__ import annotations
 
 import asyncio
+import logging
 
+from agent.app.config import config
+from agent.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
 from agent.recon.curator import ALLOWED_LABELS
 from agent.recon.jobs import JOBS, build_phase_plan, validate_job_subset
+
+logger = logging.getLogger(__name__)
 
 # Node properties that are bookkeeping, not part of an asset's identity -
 # excluded when re-hydrating produced assets from Neo4j for the next phase.
@@ -65,6 +70,19 @@ def read_assets(node_type: str, project_id: str, *, driver=None) -> list[dict]:
     ]
 
 
+async def _heartbeat_loop(run_id: str) -> None:
+    """Refresh the run heartbeat every HEARTBEAT_TICK_SECONDS until cancelled."""
+    try:
+        while True:
+            await asyncio.sleep(config.HEARTBEAT_TICK_SECONDS)
+            try:
+                _touch_heartbeat(run_id)
+            except Exception:  # best-effort; a heartbeat blip must not crash the run
+                logger.warning("heartbeat tick failed for run %s", run_id, exc_info=True)
+    except asyncio.CancelledError:
+        return
+
+
 async def run_pipeline(
     project_id: str,
     *,
@@ -98,74 +116,80 @@ async def run_pipeline(
     plan = build_phase_plan(job_subset)
 
     registry.create_run(run_id, project_id)
+    hb = asyncio.create_task(_heartbeat_loop(run_id))
+    try:
+        for phase_idx, phase_jobs in enumerate(plan):
+            job_configs: dict[str, tuple] = {}
+            for name in phase_jobs:
+                job = JOBS[name]
+                try:
+                    if phase_idx == 0:
+                        input_assets = seed_assets(settings)
+                    else:
+                        input_assets = read_assets(job.consumes, project_id)
 
-    for phase_idx, phase_jobs in enumerate(plan):
-        job_configs: dict[str, tuple] = {}
-        for name in phase_jobs:
-            job = JOBS[name]
-            try:
-                if phase_idx == 0:
-                    input_assets = seed_assets(settings)
+                    extra = {"project_id": project_id}
+                    if job.use_auth and settings.get("auth_context"):
+                        extra["auth_context"] = settings["auth_context"]
+
+                    registry.upsert_job(run_id, phase_idx, name, "in_progress")
+                except Exception as exc:  # best-effort: a setup blip degrades
+                    # only this job, it must never leave the run stuck non-terminal.
+                    registry.upsert_job(run_id, phase_idx, name, "degraded", error=str(exc))
+                    continue
+                job_configs[name] = (job, input_assets, extra)
+
+            async def _run_one(name: str) -> None:
+                job, input_assets, extra = job_configs[name]
+                try:
+                    pod_exports = await run_job(
+                        job, input_assets, run_id=run_id, phase=phase_idx, extra=extra
+                    )
+                except Exception as exc:  # best-effort: never abort the pipeline
+                    registry.upsert_job(run_id, phase_idx, name, "degraded", error=str(exc))
+                    return
+
+                total = len(pod_exports)
+                succeeded = sum(1 for e in pod_exports if e.verdict == "success")
+                failed = sum(1 for e in pod_exports if e.verdict == "failed")
+
+                if total == 0:
+                    status = "skipped"
+                elif failed == total:
+                    status = "degraded"
                 else:
-                    input_assets = read_assets(job.consumes, project_id)
+                    status = "success"
 
-                extra = {"project_id": project_id}
-                if job.use_auth and settings.get("auth_context"):
-                    extra["auth_context"] = settings["auth_context"]
-
-                registry.upsert_job(run_id, phase_idx, name, "in_progress")
-            except Exception as exc:  # best-effort: a setup blip degrades
-                # only this job, it must never leave the run stuck non-terminal.
-                registry.upsert_job(run_id, phase_idx, name, "degraded", error=str(exc))
-                continue
-            job_configs[name] = (job, input_assets, extra)
-
-        async def _run_one(name: str) -> None:
-            job, input_assets, extra = job_configs[name]
-            try:
-                pod_exports = await run_job(
-                    job, input_assets, run_id=run_id, phase=phase_idx, extra=extra
+                job_stats = {"pods": total, "success": succeeded, "failed": failed}
+                # Surface a crawl job's Steel viewer URL (interactive
+                # steel_await_auth MVP path, see crawl_pod.py) so
+                # GET /recon/{run_id} lets the operator complete manual login -
+                # pass through the first pod export that carries one.
+                viewer_url = next(
+                    (
+                        e.stats.get("viewer_url")
+                        for e in pod_exports
+                        if e.stats and e.stats.get("viewer_url")
+                    ),
+                    None,
                 )
-            except Exception as exc:  # best-effort: never abort the pipeline
-                registry.upsert_job(run_id, phase_idx, name, "degraded", error=str(exc))
-                return
+                if viewer_url:
+                    job_stats["viewer_url"] = viewer_url
 
-            total = len(pod_exports)
-            succeeded = sum(1 for e in pod_exports if e.verdict == "success")
-            failed = sum(1 for e in pod_exports if e.verdict == "failed")
+                registry.upsert_job(
+                    run_id,
+                    phase_idx,
+                    name,
+                    status,
+                    stats=job_stats,
+                )
 
-            if total == 0:
-                status = "skipped"
-            elif failed == total:
-                status = "degraded"
-            else:
-                status = "success"
-
-            job_stats = {"pods": total, "success": succeeded, "failed": failed}
-            # Surface a crawl job's Steel viewer URL (interactive
-            # steel_await_auth MVP path, see crawl_pod.py) so
-            # GET /recon/{run_id} lets the operator complete manual login -
-            # pass through the first pod export that carries one.
-            viewer_url = next(
-                (
-                    e.stats.get("viewer_url")
-                    for e in pod_exports
-                    if e.stats and e.stats.get("viewer_url")
-                ),
-                None,
-            )
-            if viewer_url:
-                job_stats["viewer_url"] = viewer_url
-
-            registry.upsert_job(
-                run_id,
-                phase_idx,
-                name,
-                status,
-                stats=job_stats,
-            )
-
-        registry.set_run_status(run_id, "running", current_phase=phase_idx)
-        await asyncio.gather(*[_run_one(name) for name in job_configs])
-
+            registry.set_run_status(run_id, "running", current_phase=phase_idx)
+            await asyncio.gather(*[_run_one(name) for name in job_configs])
+    finally:
+        hb.cancel()
+        try:
+            await hb
+        except asyncio.CancelledError:
+            pass
     registry.set_run_status(run_id, "complete")

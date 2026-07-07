@@ -7,5 +7,6 @@ class Config:
     POSTGRES_DSN = os.environ["POSTGRES_DSN"]
     KALI_MCP_URL = os.environ["KALI_MCP_URL"]
     PROJECT_ID = os.environ.get("PROJECT_ID", "default")
+    HEARTBEAT_TICK_SECONDS = int(os.environ.get("HEARTBEAT_TICK_SECONDS", "10"))
 
 config = Config()
