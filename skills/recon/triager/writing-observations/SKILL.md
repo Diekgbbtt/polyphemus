@@ -28,6 +28,13 @@ Domain | Subdomain | BaseURL | IP | Service
 **Any other anchor type is discarded downstream without warning.**
 The graph writer rejects an Observation whose `anchor.type` is not in that set - so an Observation anchored on an `Endpoint`, `Parameter`, `Technology`, `Header`, `Certificate`, or `Port` is computed, then thrown away. It never reaches the graph.
 
+**`anchor.type` is a closed set of exactly those five literal strings, in that PascalCase, spelled exactly as shown.**
+The curator matches the string *verbatim* against its `ANCHOR_ALLOWLIST` - no case-folding, no normalization, no synonym resolution. Three ways this silently loses your work, all observed live:
+
+- **Never lowercase or re-case a label.** `domain`, `subdomain`, `baseurl`, `url`, `ip`, `service` are all rejected. It is `Domain`, `Subdomain`, `BaseURL` (capital B, U, L), `IP` (both caps), `Service` - exactly.
+- **Never invent a type.** `Hostname`, `Host`, `URL`, `Website`, `Asset`, `Server` are not in the set and are dropped. A host is a `Domain` or `Subdomain`; a web origin is a `BaseURL`; a listening service is a `Service`.
+- **Never anchor on the narrow node the finding is literally about.** `Endpoint`, `Technology`, `Parameter`, `Header`, `Certificate`, `Port` are the most tempting and the top cause of silent recall loss. Re-anchor UP to the broad element that node hangs off (table below).
+
 So when a finding is *about* a narrow node, **re-anchor it up to the broad element that node hangs off**:
 
 | The finding is about a... | Anchor it on... | With identity |
@@ -125,6 +132,10 @@ Coin a new one only when none fits; keep it lowercase snake_case.
 | Excuse | Reality |
 |---|---|
 | "This finding is really about the Technology node, so I'll anchor there" | The graph rejects Technology anchors and drops your observation. Anchor on the BaseURL that runs it; name the tech in evidence. |
+| "This is about the `/api/v1/keys` endpoint, so I'll anchor on Endpoint" | Endpoint is not in the allowlist; the curator drops it silently. Anchor on the parent `BaseURL`; put the path in evidence. |
+| "The finding is about the `next` parameter, so anchor on Parameter" | Parameter is dropped like Endpoint. Anchor on the `BaseURL` that serves the endpoint; name the parameter in evidence. |
+| "The host is an admin box, I'll anchor on `Hostname`" | `Hostname` is not a real anchor type and is dropped. A host is a `Domain` or `Subdomain`; use that exact PascalCase label. |
+| "`domain` / `baseurl` is close enough, casing won't matter" | The curator matches the string verbatim - lowercase is rejected. It must be `Domain`, `Subdomain`, `BaseURL`, `IP`, `Service`. |
 | "The version is old, that's clearly high severity" | You have no exploit evidence, only a banner. It is `version_disclosure` at `low`. |
 | "Citing the CVE makes the observation more useful" | CVE adjudication is a later phase. A CVE in a recon observation is out of scope and misframes it. |
 | "I should record the endpoints I saw so they're not lost" | The parser already merged them. Restating them is noise. |
@@ -134,7 +145,7 @@ Coin a new one only when none fits; keep it lowercase snake_case.
 
 ## Red flags - stop and rewrite
 
-- An `anchor.type` that is not Domain/Subdomain/BaseURL/IP/Service.
+- An `anchor.type` that is not one of the five exact PascalCase literals `Domain` / `Subdomain` / `BaseURL` / `IP` / `Service` - a lowercased label (`domain`, `baseurl`), an invented type (`Hostname`, `Host`, `URL`, `Website`), or a narrow node (`Endpoint`, `Technology`, `Parameter`, `Header`, `Certificate`, `Port`). Re-anchor UP and match the casing exactly.
 - A CVE id or the word "vulnerable" anywhere in the output.
 - `severity` above `low` justified only by a version/tech fingerprint.
 - An observation whose evidence just names an asset already in the parsed list.

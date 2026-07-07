@@ -56,3 +56,34 @@ No CVE framing, no severity inflation.
 
 Clean RED -> GREEN for the caveat.
 The edit closes the primitive-restatement loophole (new `## Primitives are not observations` section, two rationalization-table rows, two red flags) without disturbing the anchor / no-CVE / severity discipline the first edit established.
+
+## Edit 3 - anchor allowlist: exact type + canonical casing
+
+Authoritative trigger: the live triager still sometimes anchored Observations on out-of-allowlist types (`Endpoint`, `Technology`, an invented `Hostname`, lowercase `domain`), which the curator (`agent/recon/curator.py` `ANCHOR_ALLOWLIST = {Domain, Subdomain, BaseURL, IP, Service}`) correctly drops - silent recall loss.
+
+### Scenario (anchor-tempting)
+
+A `subfinder` + `httpx` run over `example.com` whose parsed assets are a `Subdomain` (`admin.example.com`), its `BaseURL`, two `Endpoint`s (`/api/v1/keys` 200, `/login` 200), a `Parameter` (`next` on `/login`), and a `Technology` (Apache Struts 2.3.15).
+Deliberately tempting: each finding is *literally about* a narrow node (Technology / Endpoint / Parameter) whose own type is NOT in the allowlist.
+
+### RED - no-guidance control (no skill)
+
+4 observations, **3 of 4 anchored on a dropped type**:
+- Struts finding -> `anchor.type = "Technology"` (dropped).
+- `/api/v1/keys` finding -> `anchor.type = "Endpoint"` (dropped).
+- `next` parameter finding -> `anchor.type = "Parameter"` (dropped).
+- Only the admin-host finding anchored on `Subdomain` (survives).
+So 75% of the output would be silently discarded by the curator.
+
+### GREEN - with the tightened skill
+
+4 observations, **4 of 4 anchored on an allowlist type with exact PascalCase**:
+- Struts, `/api/v1/keys`, and `next` findings all re-anchored UP to `BaseURL` (`https://admin.example.com`), the narrow detail moved to evidence.
+- The admin-host finding anchored on `Subdomain`.
+- Zero invented types, zero lowercase labels, zero narrow-node anchors.
+100% survive curation (vs 25% in RED).
+
+### Result
+
+Clean RED -> GREEN for the anchor tightening.
+The edit hardens the existing anchor rule (closed-set + exact-casing + no-invention block, four rationalization-table rows, one expanded red flag) and is tightly scoped to anchoring - the primitives-vs-observations section from Edit 2 is untouched.
