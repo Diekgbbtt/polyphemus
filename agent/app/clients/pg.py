@@ -193,3 +193,16 @@ def list_running_runs() -> list[dict]:
             "started_at": started, "last_heartbeat_at": hb, "jobs": jobs,
         })
     return out
+
+
+def reap_stale_runs(ttl_seconds: int) -> int:
+    """Flip running runs whose heartbeat is older than ttl_seconds (or NULL)
+    to failed, stamping finished_at. Returns the number reaped."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE recon_runs SET status='failed', finished_at=now() "
+            "WHERE status='running' AND "
+            "(last_heartbeat_at IS NULL OR last_heartbeat_at <= now() - make_interval(secs => %s))",
+            (ttl_seconds,),
+        )
+        return cur.rowcount

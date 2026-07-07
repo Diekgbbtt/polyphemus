@@ -1,5 +1,9 @@
+import asyncio
+import logging
+
 from fastapi import FastAPI
 from agent.app.clients import pg, neo4j_client, kali_mcp
+from agent.app.config import config
 from agent.app.llm import validate_llm_config
 from agent.app.routes import router as recon_router
 
@@ -11,6 +15,24 @@ async def _startup():
     await pg.ensure_checkpoint_tables()
     neo4j_client.ensure_schema()
     validate_llm_config()
+    pg.reap_stale_runs(config.REAP_TTL_SECONDS)  # sweep zombies left by a prior crash
+    app.state.reaper_task = asyncio.create_task(_reaper_loop())
+
+
+async def _reaper_loop():
+    while True:
+        await asyncio.sleep(config.REAPER_SWEEP_SECONDS)
+        try:
+            pg.reap_stale_runs(config.REAP_TTL_SECONDS)
+        except Exception:
+            logging.getLogger(__name__).warning("reaper sweep failed", exc_info=True)
+
+
+@app.on_event("shutdown")
+async def _shutdown():
+    task = getattr(app.state, "reaper_task", None)
+    if task:
+        task.cancel()
 
 @app.get("/health")
 async def health():

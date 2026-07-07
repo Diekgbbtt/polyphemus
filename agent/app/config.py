@@ -8,5 +8,7 @@ class Config:
     KALI_MCP_URL = os.environ["KALI_MCP_URL"]
     PROJECT_ID = os.environ.get("PROJECT_ID", "default")
     HEARTBEAT_TICK_SECONDS = int(os.environ.get("HEARTBEAT_TICK_SECONDS", "10"))
+    REAP_TTL_SECONDS = int(os.environ.get("REAP_TTL_SECONDS", "30"))
+    REAPER_SWEEP_SECONDS = int(os.environ.get("REAPER_SWEEP_SECONDS", "60"))
 
 config = Config()
