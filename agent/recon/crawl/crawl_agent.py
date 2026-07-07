@@ -123,6 +123,7 @@ async def run_crawl_authenticated(
     max_iters: Optional[int] = None,
     precreate_fn=None,
     _run_crawl_fn=None,
+    on_awaiting_auth=None,
 ) -> "tuple[dict, Optional[dict]]":
     """Authenticated agentic crawl: interactive `steel_await_auth` MVP path.
 
@@ -131,6 +132,15 @@ async def run_crawl_authenticated(
     *before* the ReAct loop runs, then drives the loop with
     `pre_created_crawl_id` set so it calls `steel_await_auth` first and
     waits for a human to complete the login in the Steel viewer.
+
+    `on_awaiting_auth(awaiting_status)` (optional) is invoked the INSTANT the
+    session is precreated - BEFORE the blocking crawl below - so the caller can
+    surface the login/viewer URL to the operator early enough to actually
+    complete the login within the session window. This closes the known defect
+    where the viewer URL only reached job status after the whole run finished
+    (see `crawl_pod.py`, which passes a sink that writes it to the recon
+    registry mid-flight). Any exception from the callback is swallowed so a
+    status-surfacing blip never aborts the crawl.
 
     Returns `(manifest, awaiting_status)`: `awaiting_status` is the dict
     `precreate_auth_session` returned (carries `viewer_url`/`crawl_id`), or
@@ -166,14 +176,17 @@ async def run_crawl_authenticated(
         precreate = precreate_fn if precreate_fn is not None else precreate_auth_session
         crawl_id, awaiting_status = await precreate(mcp_manager, body)
 
-        # KNOWN LIMITATION (Fix B, SP4 review): `awaiting_status` (carrying the
-        # steel_await_auth `viewer_url` the operator must open to log in) is
-        # returned to the caller only AFTER the blocking crawl below finishes -
-        # so `GET /recon/{run_id}` surfaces the viewer_url too late for a human
-        # to complete the login mid-run. The path is also gated on the pod
-        # having `extra.auth_context` present (see crawl_pod.py). Proper fix =
-        # a mid-flight registry write of viewer_url BEFORE the blocking loop
-        # (tracked follow-up); NOT re-architected here.
+        # EARLY SURFACING (fixes the SP4 "viewer_url too late" defect): emit the
+        # awaiting_status (carrying the steel_await_auth `viewer_url` the operator
+        # must open to log in) NOW - before the blocking crawl below - so job
+        # status can carry it while the operator still has the session window to
+        # complete the login. `crawl_pod.py` passes a sink that writes it to the
+        # recon registry (the row `GET /recon/{run_id}` reads) mid-flight.
+        if on_awaiting_auth is not None and awaiting_status:
+            try:
+                on_awaiting_auth(awaiting_status)
+            except Exception:  # noqa: BLE001 - surfacing blip must not abort the crawl
+                pass
 
         crawl_fn = _run_crawl_fn if _run_crawl_fn is not None else run_crawl
         manifest = await crawl_fn(

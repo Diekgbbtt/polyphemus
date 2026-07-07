@@ -12,32 +12,21 @@ connected over CDP:
 exactly as in Redamon's implementation. The only credential is the steel.dev
 API key (`STEEL_API_KEY`); there is no `STEEL_MCP_URL`.
 
-PROVIDER SEAM - what is stubbed and why
----------------------------------------
-Redamon's concrete in-process steel MCP server - the module that defines the
-seven `steel_*` tool functions on top of a steel.dev Playwright-over-CDP
-session - is NOT vendored in any `redamon-*` image available in this
-environment. In the built images `steel_crawl_start` et al. appear only as
-*consumers* (`crawl_agentic.py` calls `mcp_manager.get_tools()`) and in the
-`steel_crawl` skill prompt; the server itself lives in Redamon source that is
-not present here. So it cannot be ported verbatim yet.
-
-Rather than invent a fake steel.dev integration, this module pins the CORRECT
-public contract and leaves a single, clearly-marked provider seam:
+PROVIDER SEAM
+------------
+The concrete provider is `steel_provider.SteelCrawlProvider` - the async port of
+Redamon's `mcp/servers/playwright_server.py` steel section (see that module's
+docstring). This module pins the stable public contract:
 
   * `steel_configured()` checks only the steel.dev credential.
   * `get_crawl_tools(*, client_factory=None)` returns the `steel_*` tools from
     the in-process provider, filtered to `CRAWL_TOOL_NAMES`. `client_factory`
     is injectable so tests exercise the whole contract without live Steel.
-  * `_default_client_factory()` is the ONLY place the real provider must be
-    wired. Until Redamon's steel server is vendored, it raises
+  * `_default_client_factory()` builds the real provider. If its runtime deps
+    (`playwright` + `steel-sdk`) are not importable in this build, it raises
     `SteelProviderUnavailable`, which the crawl pod's best-effort path turns
-    into an empty manifest (reduced-coverage), never a crash.
-
-Wiring the real provider is a localized follow-up: port Redamon's steel_*
-server so `_default_client_factory()` returns an object exposing
-`async get_tools() -> list[Tool]` (each tool `.name` in `CRAWL_TOOL_NAMES`,
-each `.ainvoke(dict)`-able). Nothing else in the crawl stack changes.
+    into an empty manifest (reduced coverage), never a crash. `SteelNotConfigured`
+    is raised earlier by `get_crawl_tools` when the credential itself is absent.
 """
 from agent.recon import config
 
@@ -58,13 +47,13 @@ class SteelNotConfigured(RuntimeError):
 
 
 class SteelProviderUnavailable(RuntimeError):
-    """Raised when `STEEL_API_KEY` is set but the in-process Steel MCP tool
-    provider has not been wired in this build.
+    """Raised when `STEEL_API_KEY` is set but the in-process Steel crawl-tool
+    provider cannot be built in this environment - specifically, when its
+    runtime dependencies (`playwright` and `steel-sdk`) are not importable.
 
-    See the module docstring's PROVIDER SEAM note: Redamon's concrete
-    `steel_*` server (Playwright-over-CDP to steel.dev) is not vendored in
-    this environment yet. Callers (the crawl pod) treat this as reduced
-    coverage, not a crash.
+    The provider drives a steel.dev cloud browser over CDP and needs both
+    packages; the `redamon-agent` base image provides them. Callers (the crawl
+    pod) treat this as reduced coverage, not a crash.
     """
 
 
@@ -78,22 +67,36 @@ def steel_configured() -> bool:
 
 
 def _default_client_factory():
-    """Build the in-process Steel MCP tool provider.
+    """Build the in-process Steel crawl-tool provider.
 
-    The real provider opens a steel.dev cloud-browser session and connects
-    Playwright over CDP
-    (``wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<id>``), then
-    exposes the seven `steel_*` tools over that session. That concrete
-    provider is not vendored in this environment yet (see module docstring:
-    PROVIDER SEAM) - so this raises rather than silently pretending to crawl.
-    Tests inject `client_factory` and never reach this path.
+    Returns a `steel_provider.SteelCrawlProvider`, which opens a steel.dev
+    cloud-browser session and connects Playwright over CDP
+    (``wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<id>``) lazily,
+    only when `steel_crawl_start` is invoked - so constructing the provider
+    performs no network I/O.
+
+    Raises `SteelProviderUnavailable` when the provider's runtime dependencies
+    (`playwright` and `steel-sdk`) are not importable in this build, so the
+    crawl pod degrades to reduced coverage instead of crashing. Tests inject
+    `client_factory` and never reach this path.
     """
-    raise SteelProviderUnavailable(
-        "In-process Steel MCP tool provider is not wired: port Redamon's "
-        "steel_* crawl server (Playwright-over-CDP to steel.dev) and return it "
-        "from _default_client_factory. STEEL_API_KEY is set but there is no "
-        "provider to build."
-    )
+    import importlib.util  # noqa: PLC0415
+
+    missing = [
+        pkg for pkg in ("playwright", "steel")
+        if importlib.util.find_spec(pkg) is None
+    ]
+    if missing:
+        raise SteelProviderUnavailable(
+            "Steel crawl-tool provider dependencies are not importable: "
+            f"{', '.join(missing)}. The provider drives a steel.dev cloud "
+            "browser over CDP and needs both `playwright` and `steel-sdk` "
+            "(the redamon-agent base image provides them)."
+        )
+
+    from agent.recon.crawl.steel_provider import SteelCrawlProvider  # noqa: PLC0415
+
+    return SteelCrawlProvider()
 
 
 async def get_crawl_tools(*, client_factory=None) -> list:

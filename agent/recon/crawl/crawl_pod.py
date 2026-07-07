@@ -50,6 +50,8 @@ class CrawlPodState(PodState, total=False):
     manifest: Optional[dict]
     crawl_error: Optional[str]
     viewer_url: Optional[str]
+    run_id: Optional[str]
+    phase: Optional[int]
 
 
 def _manifest_is_empty(manifest: dict | None) -> bool:
@@ -88,21 +90,49 @@ def default_run_crawl_fn(target: str, *, scope: list[str]):
     return run_coro_blocking(crawl_agent.run_crawl(target, scope=scope))
 
 
-def default_run_crawl_authenticated_fn(target: str, *, scope: list[str]):
+def default_run_crawl_authenticated_fn(target: str, *, scope: list[str], on_awaiting_auth=None):
     """Real collaborator: authenticated agentic crawl (interactive
     `steel_await_auth` MVP path), synchronously.
 
     Wraps `crawl_agent.run_crawl_authenticated` (async) behind
     `run_coro_blocking`, mirroring `default_run_crawl_fn`. Returns
-    `(manifest, awaiting_status)`.
+    `(manifest, awaiting_status)`. `on_awaiting_auth` is forwarded so the
+    viewer URL is surfaced the instant the Steel session is precreated (before
+    the blocking crawl).
     """
     from agent.recon.crawl import crawl_agent
     from agent.recon.async_bridge import run_coro_blocking
 
-    return run_coro_blocking(crawl_agent.run_crawl_authenticated(target, scope=scope))
+    return run_coro_blocking(
+        crawl_agent.run_crawl_authenticated(
+            target, scope=scope, on_awaiting_auth=on_awaiting_auth
+        )
+    )
 
 
-def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_authenticated_fn=None):
+def default_status_sink(run_id: str, phase: int, job: str, viewer_url: str) -> None:
+    """Surface a crawl's Steel `viewer_url` to job status MID-FLIGHT.
+
+    Writes the viewer URL to the recon registry row (`recon_jobs`) keyed by
+    `(run_id, phase, job)` - the SAME row `pipeline._run_one` later finalizes
+    and that `GET /recon/{run_id}` reads - with a non-terminal `in_progress`
+    status, so the operator sees the login URL while the Steel session is still
+    open (the pipeline's post-run `stats["viewer_url"]` pass-through then
+    reasserts it on the terminal write). Best-effort: a registry blip must never
+    abort the crawl, so callers wrap this in try/except; it is also guarded here.
+
+    `job` is the recon job name, which for the agentic crawl equals its
+    `JobSpec.tool` ("steel_crawl"), i.e. the key `pipeline._run_one` upserts.
+    """
+    try:
+        from agent.app.clients import pg  # noqa: PLC0415
+
+        pg.upsert_job(run_id, phase, job, "in_progress", stats={"viewer_url": viewer_url})
+    except Exception:  # noqa: BLE001 - status surfacing is best-effort
+        pass
+
+
+def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_authenticated_fn=None, status_sink=None):
     """Build the compiled crawl-pod subgraph, injecting the side-effecting
     collaborators: run_crawl_fn(target, scope=scope) -> manifest dict,
     parse_fn(stdout) -> list[AssetDelta], triage_fn(exec_result, assets, job)
@@ -117,12 +147,15 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
     the pipeline from the project's settings, see `pipeline.py`) - a
     non-auth crawl, or an auth-capable job run without an `auth_context`,
     never precreates a Steel session and calls `run_crawl_fn` as before.
-    When present, the `awaiting_status["viewer_url"]` is recorded on the
-    pod export's `stats` so the operator can complete the manual login
-    (surfaced by `GET /recon/{run_id}` via `pipeline.py`'s stats
-    pass-through). Non-interactive cookie-injection (from
-    `auth_context` cookies) into the Steel session is a deferred follow-up,
-    not built here.
+    The `awaiting_status["viewer_url"]` is surfaced two ways: (1) EARLY, the
+    instant the Steel session is precreated, via `status_sink(run_id, phase,
+    job, viewer_url)` (default `default_status_sink` writes it to the
+    `recon_jobs` registry row `GET /recon/{run_id}` reads) - so the operator can
+    complete the manual login while the session window is still open; and (2) on
+    the pod export's `stats`, which `pipeline.py` reasserts on the terminal job
+    write. `status_sink` is injectable so tests assert the early call without a
+    live registry. Non-interactive cookie-injection (from `auth_context`
+    cookies) into the Steel session is a deferred follow-up, not built here.
     """
 
     def crawl(state: CrawlPodState) -> dict:
@@ -139,15 +172,30 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
         viewer_url = None
         try:
             if use_auth_signal and run_crawl_authenticated_fn is not None:
-                # KNOWN LIMITATION (Fix B, SP4 review): run_crawl_authenticated_fn
-                # BLOCKS on the crawl before returning awaiting_status, so the
-                # steel_await_auth viewer_url captured here reaches
-                # GET /recon/{run_id} (via the export stats below) only after the
-                # run is over - too late for a human to log in mid-run. The path
-                # is also gated on extra.auth_context being present (use_auth_signal).
-                # Proper fix = mid-flight registry write of viewer_url before the
-                # blocking loop (tracked follow-up); not re-architected here.
-                manifest, awaiting_status = run_crawl_authenticated_fn(target, scope=scope)
+                # EARLY SURFACING (fixes the SP4 "viewer_url too late" defect):
+                # build a callback bound to this job's registry key and pass it
+                # into the authenticated crawl. `run_crawl_authenticated_fn`
+                # invokes it the instant the Steel session is precreated - BEFORE
+                # the blocking crawl - so the sink writes the viewer_url to the
+                # recon_jobs row that GET /recon/{run_id} reads, while the operator
+                # still has the session window to complete the login. The export
+                # stats below still carry it too (belt-and-suspenders / tests).
+                run_id = state.get("run_id")
+                phase = state.get("phase")
+                job_name = getattr(job, "tool", None)
+                sink = status_sink if status_sink is not None else default_status_sink
+
+                def _on_awaiting_auth(awaiting_status):
+                    vu = (awaiting_status or {}).get("viewer_url")
+                    if vu and run_id is not None and phase is not None and job_name:
+                        try:
+                            sink(run_id, phase, job_name, vu)
+                        except Exception:  # noqa: BLE001 - best-effort surfacing
+                            pass
+
+                manifest, awaiting_status = run_crawl_authenticated_fn(
+                    target, scope=scope, on_awaiting_auth=_on_awaiting_auth
+                )
                 if awaiting_status:
                     viewer_url = awaiting_status.get("viewer_url") or None
             else:
@@ -251,6 +299,11 @@ def crawl_pod_invoke(pod_input: dict, job, run_id: str, phase: int) -> PodExport
         "extra": extra,
         "session_id": session_id,
         "project_id": project_id,
+        # run_id/phase let the crawl node's interactive-auth path write the
+        # Steel viewer_url to the recon_jobs registry row mid-flight (early
+        # surfacing) - the SAME (run_id, phase, job) row pipeline._run_one uses.
+        "run_id": run_id,
+        "phase": phase,
     }
     # Langfuse tracing: the crawl-pod tree (crawl/parse/triager/curator) becomes
     # the per-pod span tree. Empty list (Langfuse unconfigured) is inert.

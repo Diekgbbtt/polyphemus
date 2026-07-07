@@ -53,13 +53,41 @@ def test_get_crawl_tools_raises_when_unconfigured(monkeypatch):
         asyncio.run(SC.get_crawl_tools())
 
 
-def test_default_factory_raises_provider_unavailable_until_wired(monkeypatch):
-    # Credential present but no provider wired: the seam raises
-    # SteelProviderUnavailable (the crawl pod degrades to reduced coverage,
-    # it never crashes). Guards against a silent fake steel.dev integration.
+def test_default_factory_raises_provider_unavailable_when_deps_missing(monkeypatch):
+    # Credential present but the provider's runtime deps (playwright / steel-sdk)
+    # are not importable: the seam raises SteelProviderUnavailable so the crawl
+    # pod degrades to reduced coverage instead of crashing. Simulated by forcing
+    # find_spec to report the packages missing, so this holds regardless of the
+    # local install state.
+    import importlib.util as _ilu
+
     monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
+    real_find_spec = _ilu.find_spec
+
+    def _fake_find_spec(name, *a, **k):
+        if name in ("playwright", "steel"):
+            return None
+        return real_find_spec(name, *a, **k)
+
+    monkeypatch.setattr(_ilu, "find_spec", _fake_find_spec)
     with pytest.raises(SC.SteelProviderUnavailable):
         asyncio.run(SC.get_crawl_tools())
+
+
+def test_default_factory_returns_seven_steel_tools_when_deps_present(monkeypatch):
+    # With the provider deps installed, the real default factory returns the
+    # seven steel_* StructuredTools WITHOUT any network I/O (a steel.dev session
+    # is opened lazily only when steel_crawl_start is invoked). This exercises
+    # the real _default_client_factory -> SteelCrawlProvider.get_tools() path.
+    pytest.importorskip("playwright")
+    pytest.importorskip("steel")
+
+    monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
+    tools = asyncio.run(SC.get_crawl_tools())
+    names = {t.name for t in tools}
+    assert names == set(SC.CRAWL_TOOL_NAMES)
+    # each tool must be ainvoke-able (LangChain StructuredTool contract)
+    assert all(hasattr(t, "ainvoke") and callable(t.ainvoke) for t in tools)
 
 
 def test_crawler_role_present():
