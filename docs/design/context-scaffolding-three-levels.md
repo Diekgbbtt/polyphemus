@@ -1,3 +1,6 @@
+> **SUPERSEDED.** Retained for historical trace only.
+> The authoritative doc is `recon-pipeline-design.md` §9, which folds in the L1/L2/L3 decomposition rationale and the resolved grey points (A1-A5) as an explicit "designed, not yet implemented" section.
+
 # Context Scaffolding - Three Levels (L1 / L2 / L3)
 
 *Companion to `agent-context-architecture.md` (the memory-tier model) and `recon-pipeline-forward-decisions.md` (D2, the re-entrant targeted-recon seam).

@@ -1,3 +1,7 @@
+> **SUPERSEDED.** This document is retained for historical trace only.
+> The authoritative, code-grounded design is now `recon-pipeline-design.md` (companion: `recon-pipeline-forward-decisions.md`).
+> Where this document and the live code disagree, the code wins - see `recon-pipeline-design.md` for the itemized corrections.
+
 # Reconnaissance MVP — Consolidated Design & Decisions (rev 5)
 
 *Supersedes the retired critique. Companion to `evolution-paradigm.md`. Scope: **iteration 1 of phase 1 — reconnaissance only** (Layer 1, analysis, light threat model, and the phase-2 DAG are deferred; see the paradigm's iteration roadmap, §6).*

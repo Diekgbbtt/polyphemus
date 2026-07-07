@@ -1,3 +1,7 @@
+> **SUPERSEDED.** Retained for historical trace only.
+> The authoritative doc is `recon-pipeline-design.md` §9, which folds in this document's L1/L2/L3 data contracts and core-function signatures as an explicit "designed, not yet implemented" section, verified against the live codebase (zero occurrences of any type/function named below).
+> The operator-validation items (V1-V7, §9 of this document) remain open and are preserved by reference.
+
 # Context & Memory - End to End
 
 *Companion and build-facing successor to `context-scaffolding-three-levels.md` (the L1/L2/L3 model), `agent-context-architecture.md` (the four memory tiers), and `recon-pipeline-forward-decisions.md` (D2, the re-entrant targeted-recon seam).*

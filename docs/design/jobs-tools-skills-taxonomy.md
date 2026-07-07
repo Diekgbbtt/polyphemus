@@ -1,3 +1,6 @@
+> **SUPERSEDED.** Retained for historical trace only.
+> The authoritative doc is `recon-pipeline-design.md` §4.2 (job registry + phase DAG) and §10.2 (module map), which fold in this document's job/tool/skill conceptual model and 17-job table, with the `skills/` layout status corrected against the live filesystem (partially realized: the triager skill file exists but is not wired; no `skill_for` resolver exists).
+
 # Jobs / Tools / Skills Taxonomy
 
 *Companion to `agent-context-architecture.md`.

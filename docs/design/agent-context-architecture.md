@@ -1,3 +1,7 @@
+> **SUPERSEDED.** Retained for historical trace only.
+> The authoritative doc is `recon-pipeline-design.md` §9 ("Context memory - DESIGNED, NOT BUILT"), which folds in this document's four-memory-tier model and the `asset_context`/anchor-allowlist gap diagnosis, corrected against the live code.
+> `context-scaffolding-three-levels.md` already superseded this document's single-builder `asset_context` proposal (§4 below) before this consolidation; that correction is preserved.
+
 # Agent Context & Communication Architecture
 
 *Foundational cognitive architecture for polymerhus recon.
