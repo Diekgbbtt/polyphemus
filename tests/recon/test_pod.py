@@ -187,6 +187,27 @@ def test_pod_retries_then_fails_on_nonzero():
     assert attempts["n"] >= 2  # retried
 
 
+def test_pod_zero_exit_empty_output_is_success_not_failure():
+    """A clean exit (returncode 0) with EMPTY stdout is a successful run that
+    found nothing (e.g. jsluice on a page with no JS URLs, subfinder with no
+    subdomains) - it must reach a "success" export with 0 merges, NOT be
+    mislabeled a failure. Regression for the Stream-B real-target loop, where
+    jsluice/subfinder legitimately returned empty and were wrongly degraded.
+    """
+    attempts = {"n": 0}
+    def exec_fn(cmd, sid, t):
+        attempts["n"] += 1
+        return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
+    def curate_fn(a, o, p): return (len(a), len(o))
+    def triage_fn(er, a, j): return []
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
+    out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "x"}, "asset_context": "",
+                    "extra": {}, "session_id": "s", "iteration": 0, "project_id": "p"})
+    assert out["export"].verdict == "success"
+    assert out["export"].assets_merged == 0
+    assert attempts["n"] == 1  # clean exit, no retry
+
+
 def test_pod_real_parser_to_curator_seam():
     """N2: run the REAL compiled graph through the real parser -> curator seam
     (only exec_fn and triage_fn are fakes; curate_fn wraps the real `curate`

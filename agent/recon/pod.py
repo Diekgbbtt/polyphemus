@@ -150,9 +150,16 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
 
     def gate(state: PodState) -> str:
         exec_result = state["exec_result"]
-        if exec_result.returncode == 0 and exec_result.stdout.strip():
+        # A clean exit (returncode 0) is a SUCCESSFUL run - even with empty
+        # stdout, which just means the tool found nothing (subfinder with no
+        # subdomains, jsluice on a page with no JS URLs, naabu with no open
+        # ports). Route it through the parser (-> [] assets -> a "success"
+        # export with 0 merges), NOT to "fail": an empty-but-clean run is a
+        # valid zero-finding result, not a tool failure. Only a non-zero exit
+        # is a failure (retried up to MAX_POD_ITERS, then failed).
+        if exec_result.returncode == 0:
             return "parse"
-        if exec_result.returncode != 0 and state.get("iteration", 0) < MAX_POD_ITERS:
+        if state.get("iteration", 0) < MAX_POD_ITERS:
             return "configurator"
         return "fail"
 
