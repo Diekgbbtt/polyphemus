@@ -313,7 +313,13 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     from agent.app.llm.roles import chat_model_for
 
     llm = chat_model_for("triager")
-    structured_llm = llm.with_structured_output(_ObservationBatch)
+    # method="function_calling": the default "json_schema" strict-mode path
+    # rejects Observation.anchor (an open-ended `dict` field with no
+    # `additionalProperties: false`) on OpenAI/OpenRouter-family models -
+    # confirmed live against openrouter:openai/gpt-4o-mini, which 400s with
+    # "'additionalProperties' is required to be supplied and to be false"
+    # under the default method. function_calling tolerates the loose schema.
+    structured_llm = llm.with_structured_output(_ObservationBatch, method="function_calling")
     prompt = (
         f"Tool: {job.tool}\n"
         f"Command stdout:\n{exec_result.stdout[:4000]}\n"
