@@ -20,26 +20,17 @@ class _FakeClient:
         return self._tools
 
 
-def test_steel_configured_false_when_env_unset(monkeypatch):
-    monkeypatch.setattr(config, "STEEL_MCP_URL", "")
+def test_steel_configured_false_when_key_unset(monkeypatch):
     monkeypatch.setattr(config, "STEEL_API_KEY", "")
     assert SC.steel_configured() is False
 
 
-def test_steel_configured_false_when_only_url_set(monkeypatch):
-    monkeypatch.setattr(config, "STEEL_MCP_URL", "http://steel:1234")
-    monkeypatch.setattr(config, "STEEL_API_KEY", "")
-    assert SC.steel_configured() is False
-
-
-def test_steel_configured_true_when_both_set(monkeypatch):
-    monkeypatch.setattr(config, "STEEL_MCP_URL", "http://steel:1234")
+def test_steel_configured_true_when_key_set(monkeypatch):
     monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
     assert SC.steel_configured() is True
 
 
 def test_get_crawl_tools_filters_to_crawl_tool_names(monkeypatch):
-    monkeypatch.setattr(config, "STEEL_MCP_URL", "http://steel:1234")
     monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
     tools = [
         _FakeTool("steel_crawl_start"),
@@ -57,9 +48,17 @@ def test_get_crawl_tools_filters_to_crawl_tool_names(monkeypatch):
 
 
 def test_get_crawl_tools_raises_when_unconfigured(monkeypatch):
-    monkeypatch.setattr(config, "STEEL_MCP_URL", "")
     monkeypatch.setattr(config, "STEEL_API_KEY", "")
     with pytest.raises(SC.SteelNotConfigured):
+        asyncio.run(SC.get_crawl_tools())
+
+
+def test_default_factory_raises_provider_unavailable_until_wired(monkeypatch):
+    # Credential present but no provider wired: the seam raises
+    # SteelProviderUnavailable (the crawl pod degrades to reduced coverage,
+    # it never crashes). Guards against a silent fake steel.dev integration.
+    monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
+    with pytest.raises(SC.SteelProviderUnavailable):
         asyncio.run(SC.get_crawl_tools())
 
 

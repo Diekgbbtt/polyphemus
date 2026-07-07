@@ -166,6 +166,15 @@ async def run_crawl_authenticated(
         precreate = precreate_fn if precreate_fn is not None else precreate_auth_session
         crawl_id, awaiting_status = await precreate(mcp_manager, body)
 
+        # KNOWN LIMITATION (Fix B, SP4 review): `awaiting_status` (carrying the
+        # steel_await_auth `viewer_url` the operator must open to log in) is
+        # returned to the caller only AFTER the blocking crawl below finishes -
+        # so `GET /recon/{run_id}` surfaces the viewer_url too late for a human
+        # to complete the login mid-run. The path is also gated on the pod
+        # having `extra.auth_context` present (see crawl_pod.py). Proper fix =
+        # a mid-flight registry write of viewer_url BEFORE the blocking loop
+        # (tracked follow-up); NOT re-architected here.
+
         crawl_fn = _run_crawl_fn if _run_crawl_fn is not None else run_crawl
         manifest = await crawl_fn(
             target,

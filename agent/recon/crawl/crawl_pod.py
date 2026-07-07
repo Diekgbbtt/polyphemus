@@ -139,6 +139,14 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
         viewer_url = None
         try:
             if use_auth_signal and run_crawl_authenticated_fn is not None:
+                # KNOWN LIMITATION (Fix B, SP4 review): run_crawl_authenticated_fn
+                # BLOCKS on the crawl before returning awaiting_status, so the
+                # steel_await_auth viewer_url captured here reaches
+                # GET /recon/{run_id} (via the export stats below) only after the
+                # run is over - too late for a human to log in mid-run. The path
+                # is also gated on extra.auth_context being present (use_auth_signal).
+                # Proper fix = mid-flight registry write of viewer_url before the
+                # blocking loop (tracked follow-up); not re-architected here.
                 manifest, awaiting_status = run_crawl_authenticated_fn(target, scope=scope)
                 if awaiting_status:
                     viewer_url = awaiting_status.get("viewer_url") or None

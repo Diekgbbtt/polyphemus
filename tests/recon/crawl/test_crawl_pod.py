@@ -80,7 +80,7 @@ def test_crawl_pod_success_merges_baseurl_endpoint_parameter():
 
 def test_crawl_pod_steel_not_configured_yields_failed_export_and_coverage_observation():
     def run_crawl_fn(target, *, scope):
-        raise SteelNotConfigured("STEEL_MCP_URL and STEEL_API_KEY must both be set")
+        raise SteelNotConfigured("STEEL_API_KEY (steel.dev credential) must be set")
 
     curate_fn = make_capturing_curate_fn()
     pod = crawl_pod.build_crawl_pod(
