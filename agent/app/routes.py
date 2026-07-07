@@ -68,6 +68,11 @@ def create_project(body: ProjectCreate) -> dict:
     return {"project_id": project_id}
 
 
+@router.get("/projects")
+def list_projects() -> dict:
+    return {"projects": pg.list_projects()}
+
+
 @router.put("/projects/{project_id}/settings")
 def update_settings(project_id: str, body: SettingsUpdate) -> dict:
     if not pg.project_exists(project_id):

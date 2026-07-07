@@ -206,3 +206,9 @@ def reap_stale_runs(ttl_seconds: int) -> int:
             (ttl_seconds,),
         )
         return cur.rowcount
+
+
+def list_projects() -> list[dict]:
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute("SELECT project_id, name, created_at FROM projects ORDER BY created_at DESC")
+        return [{"project_id": r[0], "name": r[1], "created_at": r[2]} for r in cur.fetchall()]
