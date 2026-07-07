@@ -158,3 +158,38 @@ def touch_run_heartbeat(run_id: str) -> None:
     """Bump last_heartbeat_at to now() to prove the run's process is alive."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute("UPDATE recon_runs SET last_heartbeat_at = now() WHERE run_id = %s", (run_id,))
+
+
+_JOB_COUNT_KEYS = ("in_progress", "success", "degraded", "skipped", "failed")
+
+
+def list_running_runs() -> list[dict]:
+    """Return running runs joined to project name, each with per-status job counts.
+    Liveness is NOT derived here (the endpoint does that with the TTL)."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT r.run_id, r.project_id, p.name, r.status, r.current_phase, "
+            "r.started_at, r.last_heartbeat_at "
+            "FROM recon_runs r JOIN projects p ON p.project_id = r.project_id "
+            "WHERE r.status = 'running' ORDER BY r.started_at DESC NULLS LAST"
+        )
+        runs = cur.fetchall()
+        cur.execute(
+            "SELECT run_id, status, count(*) FROM recon_jobs "
+            "WHERE run_id IN (SELECT run_id FROM recon_runs WHERE status='running') "
+            "GROUP BY run_id, status"
+        )
+        counts: dict[str, dict[str, int]] = {}
+        for run_id, status, n in cur.fetchall():
+            counts.setdefault(run_id, {})[status] = n
+    out = []
+    for run_id, project_id, name, status, phase, started, hb in runs:
+        c = counts.get(run_id, {})
+        jobs = {k: int(c.get(k, 0)) for k in _JOB_COUNT_KEYS}
+        jobs["total"] = sum(jobs.values())
+        out.append({
+            "run_id": run_id, "project_id": project_id, "project_name": name,
+            "status": status, "current_phase": phase,
+            "started_at": started, "last_heartbeat_at": hb, "jobs": jobs,
+        })
+    return out
