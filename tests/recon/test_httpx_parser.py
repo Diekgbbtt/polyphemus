@@ -28,6 +28,36 @@ def test_malformed_line_skipped():
     assert any(d.type == "BaseURL" for d in deltas)
 
 
+def test_parse_emits_headers_with_baseurl_edge():
+    # httpx `-irh` includes response headers under the `header` key (a map of
+    # already-lowercased name -> value). Each becomes a Header node keyed on
+    # {name, baseurl} with the value as a prop and an inbound HAS_HEADER edge
+    # from the BaseURL: (BaseURL)-[:HAS_HEADER]->(Header).
+    line = (
+        '{"url":"https://h.example.com","status_code":200,'
+        '"header":{"server":"nginx","content_type":"text/html","cf_ray":"abc123"}}\n'
+    )
+    deltas = parse(line)
+
+    headers = [d for d in deltas if d.type == "Header"]
+    by_name = {d.identity["name"]: d for d in headers}
+    assert set(by_name) == {"server", "content_type", "cf_ray"}
+    assert by_name["server"].identity == {"name": "server", "baseurl": "https://h.example.com"}
+    assert by_name["server"].props == {"value": "nginx"}
+
+    edge = by_name["server"].edges[0]
+    assert edge.rel == "HAS_HEADER"
+    assert edge.dir == "in"
+    assert edge.node_type == "BaseURL"
+    assert edge.node_identity == {"url": "https://h.example.com"}
+
+
+def test_parse_no_headers_when_header_field_absent():
+    # No `header` key (httpx run without -irh, or malformed) -> zero Header deltas.
+    deltas = parse('{"url":"https://a.example.com","status_code":200}\n')
+    assert not [d for d in deltas if d.type == "Header"]
+
+
 def test_path_bearing_url_normalizes_baseurl_to_scheme_netloc():
     # F2 regression guard: if httpx ever probes/emits a path- or port-bearing
     # `url` (e.g. from a redirect-following config), BaseURL identity and

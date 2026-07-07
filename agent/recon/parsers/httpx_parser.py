@@ -68,6 +68,31 @@ def parse(stdout: str) -> list[AssetDelta]:
         deltas.append(baseurl_delta)
         deltas.append(endpoint_delta)
 
+        # Response headers (httpx `-irh` -> the `header` map, name -> value,
+        # names already lowercased by httpx). Each becomes a Header node keyed
+        # on {name, baseurl} with the value as a prop and an inbound HAS_HEADER
+        # edge from the BaseURL: (BaseURL)-[:HAS_HEADER]->(Header).
+        headers = entry.get("header") or {}
+        if isinstance(headers, dict):
+            for name, value in headers.items():
+                if not name or not isinstance(name, str):
+                    continue
+                deltas.append(
+                    AssetDelta(
+                        type="Header",
+                        identity={"name": name.lower(), "baseurl": baseurl_delta.identity["url"]},
+                        props={"value": str(value)},
+                        edges=[
+                            Edge(
+                                rel="HAS_HEADER",
+                                dir="in",
+                                node_type="BaseURL",
+                                node_identity=baseurl_delta.identity,
+                            )
+                        ],
+                    )
+                )
+
         techs = _first(entry, "tech", "technologies") or []
         if not isinstance(techs, list):
             techs = []

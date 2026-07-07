@@ -75,8 +75,8 @@ JOBS: dict[str, JobSpec] = {
     "httpx": JobSpec(
         tool="httpx",
         skill="http_probe",
-        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json {auth_header}",
-        produces=["BaseURL", "Endpoint", "Technology", "Certificate"],
+        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_header}",
+        produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
         consumes="Subdomain",
         use_auth=True,
     ),
