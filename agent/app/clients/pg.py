@@ -61,8 +61,8 @@ def create_run(run_id: str, project_id: str) -> None:
     harmless no-op (run_id is the PK)."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "INSERT INTO recon_runs (run_id, project_id, status, started_at) "
-            "VALUES (%s, %s, %s, now()) "
+            "INSERT INTO recon_runs (run_id, project_id, status, started_at, last_heartbeat_at) "
+            "VALUES (%s, %s, %s, now(), now()) "
             "ON CONFLICT (run_id) DO NOTHING",
             (run_id, project_id, "running"),
         )
@@ -74,13 +74,14 @@ def set_run_status(run_id: str, status: str, current_phase: int | None = None) -
             cur.execute(
                 "UPDATE recon_runs SET status = %s, "
                 "current_phase = COALESCE(%s, current_phase), "
-                "finished_at = now() WHERE run_id = %s",
+                "finished_at = now(), last_heartbeat_at = now() WHERE run_id = %s",
                 (status, current_phase, run_id),
             )
         else:
             cur.execute(
                 "UPDATE recon_runs SET status = %s, "
-                "current_phase = COALESCE(%s, current_phase) WHERE run_id = %s",
+                "current_phase = COALESCE(%s, current_phase), "
+                "last_heartbeat_at = now() WHERE run_id = %s",
                 (status, current_phase, run_id),
             )
 
@@ -150,3 +151,10 @@ def upsert_job(
             "stats = EXCLUDED.stats, error = EXCLUDED.error",
             (run_id, phase, job, status, json.dumps(stats or {}), error),
         )
+        cur.execute("UPDATE recon_runs SET last_heartbeat_at = now() WHERE run_id = %s", (run_id,))
+
+
+def touch_run_heartbeat(run_id: str) -> None:
+    """Bump last_heartbeat_at to now() to prove the run's process is alive."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute("UPDATE recon_runs SET last_heartbeat_at = now() WHERE run_id = %s", (run_id,))
