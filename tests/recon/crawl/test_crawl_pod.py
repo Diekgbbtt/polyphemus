@@ -146,7 +146,7 @@ def test_crawl_pod_invoke_builds_pod_state_and_scopes_project_id(monkeypatch):
     captured = {}
 
     class FakeCrawlPod:
-        def invoke(self, state):
+        def invoke(self, state, config=None):
             captured.update(state)
             from agent.recon.types import PodExport
             return {"export": PodExport(input_asset=state["input_asset"], verdict="success")}

@@ -95,7 +95,14 @@ def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -
         "session_id": session_id,
         "project_id": project_id,
     }
-    result = pod_graph.invoke(pod_state)
+    # Langfuse tracing: the pod subgraph tree (configurator/execute/parser/
+    # triager/curator) becomes the per-pod span tree. Empty list (unconfigured)
+    # is inert. See agent/app/observability/langfuse_tracing.py.
+    from agent.app.observability import get_langfuse_callbacks
+
+    result = pod_graph.invoke(
+        pod_state, config={"callbacks": get_langfuse_callbacks()}
+    )
     return result["export"]
 
 
@@ -178,5 +185,10 @@ async def run_job(
         "run_id": run_id,
         "phase": phase,
     }
-    result = graph.invoke(initial)
+    # Langfuse tracing: the job graph (preprocess -> pod fan-out) is the
+    # top-level per-job trace; the pod subgraphs nest under it. Empty list
+    # (Langfuse unconfigured) is inert.
+    from agent.app.observability import get_langfuse_callbacks
+
+    result = graph.invoke(initial, config={"callbacks": get_langfuse_callbacks()})
     return result["pod_exports"]

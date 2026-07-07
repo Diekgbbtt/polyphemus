@@ -89,7 +89,7 @@ def test_default_exec_fn_works_when_called_from_within_running_loop(monkeypatch)
     class _FakeTool:
         name = "execute_command"
 
-        async def ainvoke(self, tool_call):
+        async def ainvoke(self, tool_call, config=None):
             await asyncio.sleep(0)
             return _FakeToolMessage(
                 {

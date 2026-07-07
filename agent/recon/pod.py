@@ -275,7 +275,13 @@ def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult
     """
     from langchain_mcp_adapters.client import MultiServerMCPClient
     from agent.app.config import config
+    from agent.app.observability import get_langfuse_callbacks
     from agent.recon.async_bridge import run_coro_blocking
+
+    # Trace the Kali MCP tool call + its response. This runs in a worker thread
+    # (run_coro_blocking) where the graph's callback contextvar does not reach,
+    # so pass the callbacks explicitly. Empty list (unconfigured) is inert.
+    callbacks = get_langfuse_callbacks()
 
     async def _run():
         client = MultiServerMCPClient(
@@ -286,12 +292,15 @@ def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult
         # Invoke with a ToolCall (not a plain dict) so langchain-core returns
         # a ToolMessage carrying `.artifact` - a plain-dict invocation drops
         # the structured artifact and only returns the bare string content.
-        return await exec_tool.ainvoke({
-            "type": "tool_call",
-            "name": "execute_command",
-            "id": session_id or "exec",
-            "args": {"command": command, "session_id": session_id, "timeout_s": timeout_s},
-        })
+        return await exec_tool.ainvoke(
+            {
+                "type": "tool_call",
+                "name": "execute_command",
+                "id": session_id or "exec",
+                "args": {"command": command, "session_id": session_id, "timeout_s": timeout_s},
+            },
+            config={"callbacks": callbacks},
+        )
 
     start = time.monotonic()
     result = run_coro_blocking(_run())

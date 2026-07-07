@@ -31,8 +31,15 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0) -> Ch
     api_key = os.environ.get(_key_env(provider))
     if not api_key:
         raise LLMConfigError(f"missing {_key_env(provider)} for provider {provider!r}")
+    # Attach Langfuse tracing at construction so every role LLM's reasoning
+    # (inputs/outputs) is captured even when the model is invoked inside a
+    # worker thread (async_bridge) where LangGraph's callback contextvar does
+    # not propagate. Empty list (Langfuse unconfigured) is inert. Fail-open.
+    from agent.app.observability import get_langfuse_callbacks
+
     return ChatOpenAI(model=model, api_key=api_key,
-                      base_url=PROVIDERS[provider], temperature=temperature)
+                      base_url=PROVIDERS[provider], temperature=temperature,
+                      callbacks=get_langfuse_callbacks())
 
 def validate_llm_config() -> None:
     """Fail fast: every configured role must name a known provider with a present key."""

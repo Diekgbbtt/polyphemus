@@ -1,0 +1,7 @@
+# Optional observability dependency layered on top of the redamon-agent base
+# image (which already ships langchain/langgraph/langchain-mcp-adapters).
+# Langfuse is used only for lightweight, opt-in tracing via the LangChain
+# CallbackHandler (agent/app/observability/langfuse_tracing.py). Pinned to the
+# latest v4 line at time of writing; the CallbackHandler API is stable across
+# v3/v4. If Langfuse is absent at runtime, tracing is a silent no-op.
+langfuse==4.13.0

@@ -151,7 +151,7 @@ def test_default_pod_invoke_uses_template_pod_for_deterministic_jobs(monkeypatch
     from agent.recon.types import PodExport
 
     class FakePodGraph:
-        def invoke(self, state):
+        def invoke(self, state, config=None):
             return {"export": PodExport(input_asset=state["input_asset"], verdict="success")}
 
     monkeypatch.setattr(pod_module, "pod_graph", FakePodGraph())

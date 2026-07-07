@@ -252,5 +252,11 @@ def crawl_pod_invoke(pod_input: dict, job, run_id: str, phase: int) -> PodExport
         "session_id": session_id,
         "project_id": project_id,
     }
-    result = crawl_pod.invoke(pod_state)
+    # Langfuse tracing: the crawl-pod tree (crawl/parse/triager/curator) becomes
+    # the per-pod span tree. Empty list (Langfuse unconfigured) is inert.
+    from agent.app.observability import get_langfuse_callbacks
+
+    result = crawl_pod.invoke(
+        pod_state, config={"callbacks": get_langfuse_callbacks()}
+    )
     return result["export"]
