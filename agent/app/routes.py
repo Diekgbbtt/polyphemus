@@ -14,11 +14,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from datetime import datetime, timezone
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from agent.app.clients import pg
+from agent.app.config import config
 from agent.recon.jobs import JOBS, validate_job_subset
 from agent.recon.pipeline import run_pipeline
 
@@ -71,6 +73,20 @@ def create_project(body: ProjectCreate) -> dict:
 @router.get("/projects")
 def list_projects() -> dict:
     return {"projects": pg.list_projects()}
+
+
+@router.get("/runs")
+def list_runs(status: str | None = None) -> dict:
+    if status != "running":
+        raise HTTPException(status_code=400, detail="only status=running is supported")
+    ttl = config.LIVENESS_TTL_SECONDS
+    now = datetime.now(timezone.utc)
+    runs = []
+    for r in pg.list_running_runs():
+        hb = r["last_heartbeat_at"]
+        live = hb is not None and (now - hb).total_seconds() <= ttl
+        runs.append({**r, "liveness": "live" if live else "stalled"})
+    return {"runs": runs, "liveness_ttl_seconds": ttl}
 
 
 @router.put("/projects/{project_id}/settings")
