@@ -52,3 +52,18 @@ def test_get_runs_marks_live(client):
     pg.create_run(rid, pid)  # heartbeat now()
     row = next(r for r in client.get("/runs?status=running").json()["runs"] if r["run_id"] == rid)
     assert row["liveness"] == "live"
+
+
+def test_graph_404_unknown_project(client):
+    assert client.get("/projects/does-not-exist/graph").status_code == 404
+
+
+def test_graph_shape_for_known_project(client):
+    from agent.app.clients import pg
+    pid = str(uuid.uuid4())
+    pg.create_project(pid, "graph-shape")
+    r = client.get(f"/projects/{pid}/graph")
+    assert r.status_code == 200
+    body = r.json()
+    assert body["project_id"] == pid
+    assert isinstance(body["nodes"], list) and isinstance(body["links"], list)

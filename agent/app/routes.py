@@ -21,6 +21,7 @@ from pydantic import BaseModel
 
 from agent.app.clients import pg
 from agent.app.config import config
+from agent.recon.graph_read import fetch_project_graph
 from agent.recon.jobs import JOBS, validate_job_subset
 from agent.recon.pipeline import run_pipeline
 
@@ -73,6 +74,14 @@ def create_project(body: ProjectCreate) -> dict:
 @router.get("/projects")
 def list_projects() -> dict:
     return {"projects": pg.list_projects()}
+
+
+@router.get("/projects/{project_id}/graph")
+def project_graph(project_id: str) -> dict:
+    if not pg.project_exists(project_id):
+        raise HTTPException(status_code=404, detail="unknown project")
+    g = fetch_project_graph(project_id)
+    return {"project_id": project_id, "nodes": g["nodes"], "links": g["links"]}
 
 
 @router.get("/runs")
