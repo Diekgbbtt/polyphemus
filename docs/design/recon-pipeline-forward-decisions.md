@@ -30,6 +30,14 @@ nuclei therefore becomes the first **optional, on-demand recon tool**, invoked o
 This introduces a forward architectural seam to build now and lean on later: a **re-entrant, targeted recon interface** on the pipeline orchestrator - a way to request focused recon on a specific graph component outside the linear phase plan, returning the resulting assets/observations.
 Phase 2 builds the nuclei pod + this on-demand entry point (with template selection stubbed to an explicit caller-supplied template/tag set); the knowledge-base phase later fills in automatic template selection.
 
+### D2 addendum - L3 is the first in-tree caller of the re-entrant interface (operator A5, 2026-07-07)
+
+The context-scaffolding L3 scaffold (`context-scaffolding-three-levels.md` §4; end-to-end trace in `context-memory-end-to-end.md` §5) is the **first concrete caller** of this re-entrant interface, and it fixes its shape:
+- **Signature.** `request_targeted_recon(run_id, component, tool, template_set) -> list[PodExport]` - builds a synthetic single-pod `JobSpec` around `{component, tool, template_set}` and reuses the existing pod machinery (no new subgraph). This is the "on-demand entry point" this decision reserved, now given a type.
+- **Two origins on one seam.** L3's post-core synthesis calls it with `origin="l3_synthesis"` (deterministic finding-triggered candidates, LLM-ranked under a request cap); a future **analyser -> probing-request** (the L2-A2 deferred grounding path) calls the *same* interface with `origin="analyser_probe"`. Building it once for L3 satisfies both.
+- **Fail-open (A3).** The interface is best-effort like the rest of the pipeline: a targeted probe that cannot succeed returns a `failed` `PodExport` and the caller (L3's single-pass, capped extension loop) records it and moves on - it never re-queues or blocks the run's terminal `complete`.
+- **Cap.** L3 enforces a hard `EXTENSION_REQUEST_CAP` on the number of D2 calls per run, so the interface cannot be driven into an unbounded scan loop.
+
 ## D3 - Agentic crawl engine: external Steel.dev (operator decision 2026-07-04)
 
 Redamon's `steel_helpers.merge_steel_into_by_base_url` is only a **merge adapter** over a crawl manifest (`{endpoints:[...], js_urls:[...]}`).
