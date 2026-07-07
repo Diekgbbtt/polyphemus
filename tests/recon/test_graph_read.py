@@ -31,10 +31,10 @@ def test_observation_node_name_uses_macro_kind():
     assert graph_read.node_name(["Observation"], {"macro_kind": "Exposed Admin"}) == "Exposed Admin"
 
 
-NEO = os.environ.get("NEO4J_URI")
+from tests.conftest import neo4j_live
 
 
-@pytest.mark.skipif(not NEO, reason="NEO4J_URI not set (live neo4j)")
+@pytest.mark.skipif(not neo4j_live(), reason="live neo4j not reachable")
 def test_fetch_project_graph_includes_isolated_seed():
     from agent.app.clients import neo4j_client
     from agent.recon.graph_read import fetch_project_graph

@@ -5,8 +5,10 @@ import psycopg
 import pytest
 from fastapi.testclient import TestClient
 
-DSN, NEO = os.environ.get("POSTGRES_DSN"), os.environ.get("NEO4J_URI")
-pytestmark = pytest.mark.skipif(not (DSN and NEO), reason="live PG+Neo4j required")
+from tests.conftest import neo4j_live, pg_live_dsn
+
+DSN = pg_live_dsn()
+pytestmark = pytest.mark.skipif(not (DSN and neo4j_live()), reason="live PG+Neo4j required")
 
 
 @pytest.fixture(scope="module")

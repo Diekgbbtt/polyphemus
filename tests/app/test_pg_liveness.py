@@ -5,8 +5,10 @@ import pytest
 
 from agent.app.clients import pg
 
-DSN = os.environ.get("POSTGRES_DSN")
-pytestmark = pytest.mark.skipif(not DSN, reason="POSTGRES_DSN not set (live PG)")
+from tests.conftest import pg_live_dsn
+
+DSN = pg_live_dsn()
+pytestmark = pytest.mark.skipif(not DSN, reason="live PG not reachable")
 
 
 def _mk_project_and_run():

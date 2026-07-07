@@ -4,8 +4,10 @@ import uuid
 import pytest
 from fastapi.testclient import TestClient
 
-DSN = os.environ.get("POSTGRES_DSN")
-pytestmark = pytest.mark.skipif(not DSN, reason="POSTGRES_DSN not set (live PG)")
+from tests.conftest import pg_live_dsn
+
+DSN = pg_live_dsn()
+pytestmark = pytest.mark.skipif(not DSN, reason="live PG not reachable")
 
 
 @pytest.fixture(scope="module")

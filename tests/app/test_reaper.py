@@ -1,8 +1,9 @@
 import os, uuid, psycopg, pytest
 from agent.app.clients import pg
+from tests.conftest import pg_live_dsn
 
-DSN = os.environ.get("POSTGRES_DSN")
-pytestmark = pytest.mark.skipif(not DSN, reason="POSTGRES_DSN not set (live PG)")
+DSN = pg_live_dsn()
+pytestmark = pytest.mark.skipif(not DSN, reason="live PG not reachable")
 
 
 def test_reap_flips_stale_running_to_failed():
