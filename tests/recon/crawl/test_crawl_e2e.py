@@ -192,7 +192,11 @@ def _run_recon_pipeline(*, crawl_tools, crawl_llm):
         registry = FakeRegistry()
 
         def load_settings(project_id):
-            return {"target_domain": "app.example.com"}
+            # Wildcard: keep the full subfinder->dnsx->httpx discovery chain
+            # alive (an exact host would suppress it under the D14 scope gate);
+            # the app.example.com endpoint assertions below come from the steel
+            # manifest, independent of this target.
+            return {"target_domain": "*.example.com"}
 
         asyncio.run(
             pipeline.run_pipeline(

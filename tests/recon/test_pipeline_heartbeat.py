@@ -21,7 +21,10 @@ def test_heartbeat_tick_fires_and_is_cancelled(monkeypatch):
     async def _run():
         await pipeline.run_pipeline(
             "proj", run_id="r1", job_subset=["subfinder"],
-            run_job=fake_run_job, load_settings=lambda p: {}, registry=Reg(),
+            run_job=fake_run_job,
+            # Wildcard target so the discovery job (subfinder) survives the D14
+            # scope gate and actually runs to hold the pipeline open.
+            load_settings=lambda p: {"target_domain": "*.t.com"}, registry=Reg(),
             read_assets=lambda t, p: [],
         )
         assert ticks, "heartbeat tick never fired during a slow job"

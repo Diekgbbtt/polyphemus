@@ -65,7 +65,7 @@ def test_phases_run_in_order_behind_a_barrier():
         return [PodExport(input_asset={}, verdict="success")]
 
     registry = FakeRegistry()
-    settings = {"target_domain": "t.com"}
+    settings = {"target_domain": "*.t.com"}
 
     async def scenario():
         task = asyncio.create_task(
@@ -97,7 +97,7 @@ def test_job_with_all_pods_failed_is_degraded_and_run_completes():
         return [PodExport(input_asset={}, verdict="failed", error="boom")]
 
     registry = FakeRegistry()
-    settings = {"target_domain": "t.com"}
+    settings = {"target_domain": "*.t.com"}
 
     asyncio.run(
         pipeline.run_pipeline(
@@ -124,7 +124,7 @@ def test_auth_context_only_passed_to_use_auth_jobs():
         return [PodExport(input_asset={}, verdict="success")]
 
     registry = FakeRegistry()
-    settings = {"target_domain": "t.com", "auth_context": {"cookies": []}}
+    settings = {"target_domain": "*.t.com", "auth_context": {"cookies": []}}
 
     asyncio.run(
         pipeline.run_pipeline(
@@ -151,7 +151,7 @@ def test_auth_context_absent_when_settings_have_none():
         return [PodExport(input_asset={}, verdict="success")]
 
     registry = FakeRegistry()
-    settings = {"target_domain": "t.com"}
+    settings = {"target_domain": "*.t.com"}
 
     asyncio.run(
         pipeline.run_pipeline(
@@ -173,7 +173,7 @@ def test_run_job_exception_marks_job_degraded_and_pipeline_still_completes():
         raise RuntimeError("boom")
 
     registry = FakeRegistry()
-    settings = {"target_domain": "t.com"}
+    settings = {"target_domain": "*.t.com"}
 
     asyncio.run(
         pipeline.run_pipeline(
@@ -197,7 +197,7 @@ def test_no_pod_exports_marks_job_skipped():
         return []
 
     registry = FakeRegistry()
-    settings = {"target_domain": "t.com"}
+    settings = {"target_domain": "*.t.com"}
 
     asyncio.run(
         pipeline.run_pipeline(
@@ -229,7 +229,7 @@ def test_read_assets_raising_degrades_only_that_job_and_run_still_completes():
         return [{"name": "seed"}]
 
     registry = FakeRegistry()
-    settings = {"target_domain": "t.com"}
+    settings = {"target_domain": "*.t.com"}
 
     asyncio.run(
         pipeline.run_pipeline(
@@ -261,7 +261,7 @@ def test_phase0_uses_seed_assets_later_phases_use_read_assets():
         return [PodExport(input_asset={}, verdict="success")]
 
     registry = FakeRegistry()
-    settings = {"target_domain": "t.com"}
+    settings = {"target_domain": "*.t.com"}
     read_assets = make_read_assets(default_name="from-neo4j")
 
     asyncio.run(
@@ -277,14 +277,19 @@ def test_phase0_uses_seed_assets_later_phases_use_read_assets():
     )
 
     assert seen_inputs["subfinder"] == [{"name": "t.com"}]
-    assert seen_inputs["dnsx"] == [{"name": "from-neo4j"}]
+    # D11/D14: the apex seed host is prepended into the Subdomain-consuming
+    # job's input set (before the read_assets-sourced subdomains).
+    assert seen_inputs["dnsx"] == [{"name": "t.com"}, {"name": "from-neo4j"}]
     assert ("Subdomain", "proj1") in read_assets.calls
 
 
 def test_job_stats_records_consumed_and_produced_lineage():
     """D12: recon_jobs.stats must carry per-job data lineage - consumed
     (input-asset count) and produced (sum of pod assets_merged /
-    observations_merged) - alongside the existing pod counts."""
+    observations_merged) - alongside the existing pod counts.
+
+    Uses a wildcard target so discovery runs under the D14 scope gate; the
+    D11 apex-prepend means dnsx consumes the apex plus the read_assets nodes."""
     async def run_job(job, input_assets, *, run_id, phase, extra):
         # Two pods, producing 3+2 assets and 1+4 observations merged.
         return [
@@ -295,8 +300,8 @@ def test_job_stats_records_consumed_and_produced_lineage():
         ]
 
     registry = FakeRegistry()
-    settings = {"target_domain": "t.com"}
-    # read_assets returns 2 input assets for phase-1 dnsx (consumed == 2).
+    settings = {"target_domain": "*.t.com"}
+    # read_assets returns 2 input assets for phase-1 dnsx.
     def read_assets(node_type, project_id):
         return [{"name": "a"}, {"name": "b"}]
 
@@ -312,18 +317,92 @@ def test_job_stats_records_consumed_and_produced_lineage():
         )
     )
 
-    # Phase-0 subfinder: consumed == 1 (the single seed asset).
+    # Phase-0 subfinder: consumed == 1 (the single Domain seed asset).
     subfinder = [c for c in registry.upsert_job_calls
                  if c["job"] == "subfinder" and c["stats"] is not None][-1]
     assert subfinder["stats"]["consumed"] == 1
     assert subfinder["stats"]["produced_assets"] == 5
     assert subfinder["stats"]["produced_observations"] == 5
 
-    # Phase-1 dnsx: consumed == 2 (read_assets returned two assets).
+    # Phase-1 dnsx: consumed == 3 (the D11 apex-prepend + read_assets' two).
     dnsx = [c for c in registry.upsert_job_calls
             if c["job"] == "dnsx" and c["stats"] is not None][-1]
-    assert dnsx["stats"]["consumed"] == 2
+    assert dnsx["stats"]["consumed"] == 3
     assert dnsx["stats"]["produced_assets"] == 5
     assert dnsx["stats"]["produced_observations"] == 5
     # Existing pod counts still present (not regressed).
     assert dnsx["stats"]["pods"] == 2
+
+
+# --- D14 scope gate + D11 apex probe --------------------------------------
+
+
+def _run_and_capture(settings, *, job_subset=None):
+    """Drive a fully-mocked pipeline, returning (call_order, seen_inputs)."""
+    call_order = []
+    seen_inputs = {}
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        call_order.append(job.tool)
+        seen_inputs[job.tool] = input_assets
+        return [PodExport(input_asset={}, verdict="success")]
+
+    asyncio.run(
+        pipeline.run_pipeline(
+            "proj1",
+            run_id="run1",
+            job_subset=job_subset,
+            run_job=run_job,
+            load_settings=make_load_settings(settings),
+            registry=FakeRegistry(),
+            read_assets=make_read_assets(default_name="discovered.t.com"),
+        )
+    )
+    return call_order, seen_inputs
+
+
+def test_exact_mode_suppresses_subdomain_discovery_jobs():
+    """D14: an exact host suppresses subfinder/amass/puredns/dnsx entirely."""
+    call_order, _ = _run_and_capture({"target_domain": "app.t.com"})
+
+    assert "subfinder" not in call_order
+    assert "amass" not in call_order
+    assert "puredns" not in call_order
+    assert "dnsx" not in call_order
+    # Non-discovery jobs still run.
+    assert "whois" in call_order
+    assert "httpx" in call_order
+    assert "naabu" in call_order
+
+
+def test_exact_mode_keeps_subdomain_takeover():
+    """D14 carve-out: takeover scanning stays enabled in exact mode."""
+    call_order, seen_inputs = _run_and_capture({"target_domain": "app.t.com"})
+
+    assert "subdomain_takeover" in call_order
+    # It runs against the seeded exact host even though discovery is off
+    # (prepended; the mocked read_assets adds a stray node after it).
+    assert seen_inputs["subdomain_takeover"][0] == {"name": "app.t.com"}
+
+
+def test_exact_mode_seeds_single_host_into_httpx_and_naabu():
+    """D14: in exact mode the single host must reach the Subdomain-consuming
+    probes even though no discovery job produced it. read_assets returns a
+    stray node; only the seeded exact host should be probed here (prepended)."""
+    _, seen_inputs = _run_and_capture({"target_domain": "app.t.com"})
+
+    assert seen_inputs["httpx"][0] == {"name": "app.t.com"}
+    assert seen_inputs["naabu"][0] == {"name": "app.t.com"}
+    # The Domain-consuming phase-0 root is the registrable apex.
+    assert seen_inputs["whois"] == [{"name": "t.com"}]
+
+
+def test_wildcard_mode_runs_discovery_and_probes_apex():
+    """D11+D14: wildcard keeps discovery AND injects the apex into the probe
+    input so the apex's own web origin is enriched, not left a stub."""
+    call_order, seen_inputs = _run_and_capture({"target_domain": "*.t.com"})
+
+    assert "subfinder" in call_order and "dnsx" in call_order
+    # httpx sees the apex (prepended) ahead of discovered subdomains.
+    assert seen_inputs["httpx"][0] == {"name": "t.com"}
+    assert {"name": "discovered.t.com"} in seen_inputs["httpx"]

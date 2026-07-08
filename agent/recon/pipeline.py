@@ -28,6 +28,7 @@ from agent.app.config import config
 from agent.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
 from agent.recon.curator import ALLOWED_LABELS
 from agent.recon.jobs import JOBS, build_phase_plan, validate_job_subset
+from agent.recon.scope import DISCOVERY_JOBS, parse_scope
 
 logger = logging.getLogger(__name__)
 
@@ -37,9 +38,44 @@ _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
 
 
 def seed_assets(settings: dict) -> list[dict]:
-    """Phase-0 root input: the project's target domain (or a deterministic
-    placeholder if none is configured)."""
-    return [{"name": settings.get("target_domain") or "example.com"}]
+    """Phase-0 root input: the project's target apex domain (or a deterministic
+    placeholder if none is configured).
+
+    The raw `target_domain` may carry a `*.` wildcard placeholder (D14); the
+    Domain-consuming phase-0 jobs (subfinder/whois/gau/...) must run against the
+    bare apex, never the literal `*.example.com`, so the scope descriptor's
+    parsed `apex` is used rather than the raw setting."""
+    scope = parse_scope(settings.get("target_domain"))
+    return [{"name": scope["apex"]}]
+
+
+def _gate_plan_by_scope(plan: list[list[str]], scope: dict) -> list[list[str]]:
+    """Apply the D14 scope gate: in `exact` mode, drop the subdomain-discovery
+    jobs (`DISCOVERY_JOBS`) from every phase and drop any phase left empty. In
+    `wildcard` mode the plan is returned unchanged (discovery runs as today).
+
+    `subdomain_takeover` is not in `DISCOVERY_JOBS`, so it survives the gate."""
+    if scope["mode"] != "exact":
+        return plan
+    gated = [[j for j in phase if j not in DISCOVERY_JOBS] for phase in plan]
+    return [phase for phase in gated if phase]
+
+
+def _inject_seed_host(input_assets: list[dict], scope: dict) -> list[dict]:
+    """Ensure the scope's seed host is in a Subdomain-consuming job's input set.
+
+    D11/D14: the primary host (the apex in wildcard mode, the exact host in
+    exact mode) must be HTTP-probed / port-scanned even when subdomain discovery
+    did not produce it - the apex is a `Domain` node, never a `Subdomain`, and
+    in exact mode discovery is suppressed entirely. Prepending (not appending)
+    guarantees the seed host survives the MAX_PODS cap the per-job orchestrator
+    applies to a large discovered-subdomain population."""
+    seed_host = scope.get("seed_host")
+    if not seed_host:
+        return input_assets
+    if any(asset.get("name") == seed_host for asset in input_assets):
+        return input_assets
+    return [{"name": seed_host}, *input_assets]
 
 
 def read_assets(node_type: str, project_id: str, *, driver=None) -> list[dict]:
@@ -120,7 +156,12 @@ async def run_pipeline(
     if job_subset is not None:
         validate_job_subset(job_subset)
 
-    plan = build_phase_plan(job_subset)
+    scope = parse_scope(settings.get("target_domain"))
+    # D14: suppress subdomain discovery when the target is an exact host. The
+    # gate is applied to the resolved plan (not re-validated) - the seed-host
+    # injection below is what satisfies the Subdomain-consuming jobs at runtime
+    # once their discovery producers are gone.
+    plan = _gate_plan_by_scope(build_phase_plan(job_subset), scope)
 
     await asyncio.to_thread(registry.create_run, run_id, project_id)
     hb = asyncio.create_task(_heartbeat_loop(run_id))
@@ -136,6 +177,13 @@ async def run_pipeline(
                         input_assets = await asyncio.to_thread(
                             read_assets, job.consumes, project_id
                         )
+                        # D11/D14: the primary host is a Domain node, never a
+                        # Subdomain, so it is never in a Subdomain-consuming
+                        # job's input set on its own. Seed it in so httpx/naabu/
+                        # takeover reach the apex (wildcard) or the single exact
+                        # host (exact, where discovery produced nothing).
+                        if job.consumes == "Subdomain":
+                            input_assets = _inject_seed_host(input_assets, scope)
 
                     extra = {"project_id": project_id}
                     if job.use_auth and settings.get("auth_context"):

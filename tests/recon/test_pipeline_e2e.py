@@ -198,7 +198,9 @@ def test_pipeline_e2e_subfinder_dnsx_httpx():
     registry = FakeRegistry()
 
     def load_settings(project_id):
-        return {"target_domain": "example.com"}
+        # Wildcard: exercise the full subdomain-discovery chain (an exact host
+        # would suppress subfinder/dnsx under the D14 scope gate).
+        return {"target_domain": "*.example.com"}
 
     # project_id and run_id are deliberately different values: this is the
     # only way the test can catch a pipeline that forgets to thread the real
@@ -236,8 +238,10 @@ def test_pipeline_e2e_subfinder_dnsx_httpx():
 
     # 4. subfinder -> dnsx asset handoff: dnsx's pods received exactly the
     # Subdomain identities subfinder produced (real curate -> read_assets
-    # seam, not a stub).
+    # seam, not a stub), with the apex seed host prepended ahead of them
+    # (D11: the apex's own origin is probed alongside discovered subdomains).
     assert seen_input_assets["dnsx"] == [
+        {"name": "example.com"},
         {"name": "www.example.com"},
         {"name": "api.example.com"},
     ]
@@ -272,7 +276,9 @@ def test_pipeline_e2e_httpx_to_arjun_prop_dependent_target():
     registry = FakeRegistry()
 
     def load_settings(project_id):
-        return {"target_domain": "example.com"}
+        # Wildcard: exercise the full subdomain-discovery chain (an exact host
+        # would suppress subfinder/dnsx under the D14 scope gate).
+        return {"target_domain": "*.example.com"}
 
     asyncio.run(
         pipeline.run_pipeline(
