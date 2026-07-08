@@ -77,17 +77,19 @@ def _coverage_observation(input_asset: dict, reason: str) -> Observation:
     )
 
 
-def default_run_crawl_fn(target: str, *, scope: list[str]):
+def default_run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None):
     """Real collaborator: run the agentic Steel crawl loop synchronously.
 
     Wraps `crawl_agent.run_crawl` (async) behind `run_coro_blocking`,
     resolving the crawl-agent module lazily so importing this module
-    performs no I/O.
+    performs no I/O. `auth_cookies` (from the project's `auth_context.cookies`)
+    is forwarded so the Steel browser context is seeded for non-interactive
+    auth; it is `None` for an anonymous crawl.
     """
     from agent.recon.crawl import crawl_agent
     from agent.recon.async_bridge import run_coro_blocking
 
-    return run_coro_blocking(crawl_agent.run_crawl(target, scope=scope))
+    return run_coro_blocking(crawl_agent.run_crawl(target, scope=scope, auth_cookies=auth_cookies))
 
 
 def default_run_crawl_authenticated_fn(target: str, *, scope: list[str], on_awaiting_auth=None):
@@ -154,8 +156,16 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
     complete the manual login while the session window is still open; and (2) on
     the pod export's `stats`, which `pipeline.py` reasserts on the terminal job
     write. `status_sink` is injectable so tests assert the early call without a
-    live registry. Non-interactive cookie-injection (from `auth_context`
-    cookies) into the Steel session is a deferred follow-up, not built here.
+    live registry.
+
+    Non-interactive cookie-injection takes PRECEDENCE over the interactive path:
+    when the `auth_context` carries non-empty `cookies`, the `crawl` node calls
+    the plain `run_crawl_fn(target, scope=scope, auth_cookies=...)` and the Steel
+    provider seeds the browser context with them (`context.add_cookies`) before
+    the crawl, so no human-viewer step is needed. The interactive
+    `run_crawl_authenticated_fn` path is used only when `use_auth` is signalled
+    with an `auth_context` that has NO cookies (login handled by a human in the
+    viewer).
     """
 
     def crawl(state: CrawlPodState) -> dict:
@@ -165,13 +175,23 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
         target = _input_asset_url(input_asset)
         scope = extra.get("scope") or ([target] if target else [])
 
+        auth_context = extra.get("auth_context") or {}
+        auth_cookies = auth_context.get("cookies") or []
         use_auth_signal = bool(
-            job is not None and getattr(job, "use_auth", False) and extra.get("auth_context")
+            job is not None and getattr(job, "use_auth", False) and auth_context
         )
 
         viewer_url = None
         try:
-            if use_auth_signal and run_crawl_authenticated_fn is not None:
+            if use_auth_signal and auth_cookies:
+                # NON-INTERACTIVE AUTH: the project supplied session cookies, so
+                # inject them into the Steel browser context and run a plain
+                # crawl - no human steel_await_auth viewer step. The provider's
+                # context.add_cookies seeds the session before any navigation
+                # (see steel_provider._steel_crawl_start). Cookies present takes
+                # precedence over the interactive path below.
+                manifest = run_crawl_fn(target, scope=scope, auth_cookies=auth_cookies)
+            elif use_auth_signal and run_crawl_authenticated_fn is not None:
                 # EARLY SURFACING (fixes the SP4 "viewer_url too late" defect):
                 # build a callback bound to this job's registry key and pass it
                 # into the authenticated crawl. `run_crawl_authenticated_fn`

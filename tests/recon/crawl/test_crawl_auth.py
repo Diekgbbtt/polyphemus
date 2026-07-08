@@ -341,3 +341,59 @@ def test_pipeline_surfaces_crawl_job_viewer_url_in_job_stats():
     crawl_calls = [c for c in registry.upsert_job_calls if c["job"] == "steel_crawl" and c["status"] != "in_progress"]
     assert crawl_calls, "expected a terminal upsert_job call for steel_crawl"
     assert crawl_calls[-1]["stats"]["viewer_url"] == "https://steel.example/v/abc"
+
+
+# ---------------------------------------------------------------------------
+# crawl_pod: non-interactive cookie injection (cookies present -> skip viewer)
+# ---------------------------------------------------------------------------
+
+
+def test_auth_job_with_cookies_injects_and_skips_precreate():
+    precreate_calls = []
+    run_calls = []
+
+    def run_crawl_authenticated_fn(target, *, scope, on_awaiting_auth=None):
+        precreate_calls.append(target)
+        return dict(CANNED_MANIFEST), {"viewer_url": "should-not-be-used"}
+
+    def run_crawl_fn(target, *, scope, auth_cookies=None):
+        run_calls.append((target, scope, auth_cookies))
+        return dict(CANNED_MANIFEST)
+
+    pod = crawl_pod.build_crawl_pod(
+        run_crawl_fn=run_crawl_fn,
+        run_crawl_authenticated_fn=run_crawl_authenticated_fn,
+        parse_fn=lambda stdout: [],
+        triage_fn=lambda exec_result, assets, job: [],
+        curate_fn=make_capturing_curate_fn(),
+    )
+
+    cookies = [{"name": ".AspNet.Cookies", "value": "TOK"}]
+    result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": cookies}}))
+
+    assert precreate_calls == []  # non-interactive path, no human viewer
+    assert run_calls == [("https://app.example.com", ["https://app.example.com"], cookies)]
+    assert result["export"].verdict == "success"
+
+
+def test_auth_job_empty_cookies_still_uses_interactive_path():
+    precreate_calls = []
+
+    def run_crawl_authenticated_fn(target, *, scope, on_awaiting_auth=None):
+        precreate_calls.append(target)
+        return dict(CANNED_MANIFEST), {"viewer_url": "https://steel.example/v/abc", "crawl_id": "c1"}
+
+    def run_crawl_fn(target, *, scope, auth_cookies=None):
+        raise AssertionError("empty cookies must fall to the interactive path")
+
+    pod = crawl_pod.build_crawl_pod(
+        run_crawl_fn=run_crawl_fn,
+        run_crawl_authenticated_fn=run_crawl_authenticated_fn,
+        parse_fn=lambda stdout: [],
+        triage_fn=lambda exec_result, assets, job: [],
+        curate_fn=make_capturing_curate_fn(),
+    )
+
+    result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": []}}))
+    assert precreate_calls == ["https://app.example.com"]
+    assert result["export"].stats == {"viewer_url": "https://steel.example/v/abc"}
