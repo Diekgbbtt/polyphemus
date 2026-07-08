@@ -13,17 +13,19 @@ from agent.recon.types import AssetDelta, Edge
 # --- static-render path segments all drop ---------------------------------
 
 @pytest.mark.parametrize("path", [
-    "/assets/app.js",
-    "/static/main.js",
-    "/styles/site.js",
-    "/css/theme.js",
-    "/fonts/glyphs.js",
-    "/dist/bundle.js",
-    "/build/output.js",
-    "/node_modules/lib/index.js",
-    "/vendor/lib.js",
-    "/_next/static/chunks/pages/index.js",  # covered by the "static" segment
-    "/ASSETS/App.js",                        # case-insensitive
+    # Non-JS assets under a static-render segment: dropped by the path rule.
+    # (JS under these same segments is EXEMPT for D17 - see the JS test below.)
+    "/assets/app.css",
+    "/static/main.css",
+    "/styles/site.scss",
+    "/css/theme.css",
+    "/fonts/glyphs.woff2",
+    "/dist/bundle.css",
+    "/build/output.html",
+    "/node_modules/lib/index.html",
+    "/vendor/lib.css",
+    "/_next/static/chunks/pages/index.css",  # covered by the "static" segment
+    "/ASSETS/App.css",                        # case-insensitive
 ])
 def test_static_path_segments_drop(path):
     assert classify_endpoint(path) == "static"
@@ -36,19 +38,18 @@ def test_static_extensions_drop(ext):
     assert classify_endpoint(f"/somewhere/thing.{ext}") == "static"
 
 
-# --- fingerprinted / bundler filenames drop -------------------------------
+# --- fingerprinted / bundler CSS bundles drop -----------------------------
+# NB: fingerprinted JS/.mjs bundles do NOT drop - they are attack surface for
+# D17 (see test_javascript_always_surface_for_jsluice). Only CSS bundles, which
+# are never jsluice input, remain droppable via the fingerprint/bundler rule.
 
 @pytest.mark.parametrize("path", [
-    "/js/app.4f3a2b1c.js",
     "/main.deadbeef12.css",
-    "/x-1a2b3c4d.mjs",
-    "/scripts/app_0a1b2c3d4e5f.js",
-    "/runtime.js",
-    "/vendor.abc123.js",
-    "/polyfill-modern.mjs",
-    "/chunk.2.js",
+    "/styles/app.4f3a2b1c.css",
+    "/vendor.abc123.css",
+    "/runtime.css",
 ])
-def test_fingerprinted_bundles_drop(path):
+def test_fingerprinted_css_bundles_drop(path):
     assert classify_endpoint(path) == "static"
 
 
@@ -99,11 +100,27 @@ def test_user_controllable_images_kept(path):
     "/api/v1/users",
     "/login",
     "/",
-    "/js/app.js",              # "js" is NOT a listed drop segment -> kept
     "/graphql",
 ])
 def test_ambiguous_paths_kept(path):
     assert classify_endpoint(path) == "ambiguous"
+
+
+# --- JavaScript is always surface (D17), even fingerprinted / under /static --
+
+@pytest.mark.parametrize("path", [
+    "/js/app.js",
+    "/static/bundle.js",                 # under a drop-path but still JS
+    "/static/js/main.8f3a2b1c.js",       # fingerprinted AND under /static
+    "/bundle.abc123ef.js",               # fingerprinted at root
+    "/assets/index-a1b2c3d4.js",         # fingerprinted under /assets
+    "/vendor.js",                        # bundler marker
+    "/app.mjs",
+])
+def test_javascript_always_surface_for_jsluice(path):
+    # D15/D17 reconciliation: JS bundles are jsluice's input, never dropped as
+    # presentational noise - the exemption wins over static-path + fingerprint.
+    assert classify_endpoint(path) == "surface"
 
 
 def test_empty_path_kept():
@@ -126,13 +143,16 @@ def test_filter_drops_static_endpoints_keeps_surface():
     deltas = [
         AssetDelta(type="BaseURL", identity={"url": "https://h"}),
         _endpoint("/assets/app.css"),                       # static -> drop
-        _endpoint("/static/main.4f3a2b1c.js"),              # static -> drop
+        _endpoint("/assets/main.4f3a2b1c.css"),             # static -> drop
+        _endpoint("/static/main.4f3a2b1c.js"),              # JS -> keep (D17)
         _endpoint("/upload/photo.jpg"),                     # surface -> keep
         _endpoint("/api/v1/users"),                         # ambiguous -> keep
     ]
     kept = filter_deltas(deltas)
     kept_paths = [d.identity["path"] for d in kept if d.type == "Endpoint"]
-    assert kept_paths == ["/upload/photo.jpg", "/api/v1/users"]
+    assert kept_paths == [
+        "/static/main.4f3a2b1c.js", "/upload/photo.jpg", "/api/v1/users"
+    ]
     # BaseURL always survives
     assert any(d.type == "BaseURL" for d in kept)
 

@@ -52,6 +52,15 @@ IMAGE_EXTS = frozenset({
     "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp",
 })
 
+# JavaScript is NEVER dropped as noise: a `.js`/`.mjs` bundle is prime attack
+# surface (it is the input jsluice fetches to recover endpoints + secrets and
+# to discover sourcemaps - forward decision D17). This exemption wins over the
+# static-path and fingerprint drops below, so a fingerprinted SPA bundle under
+# `/static` or `/assets` still reaches the graph for D17 to analyze. Without it
+# D15 would starve D17 of its primary input (the two features collide - the
+# bundles D15 calls "noise" for surface-mapping are D17's gold for extraction).
+JS_EXTS = frozenset({"js", "mjs"})
+
 # Path segments that affirmatively mark user-controllable / user-uploaded
 # content. Any of these forces PRESERVE regardless of extension.
 PRESERVE_SEGMENTS = frozenset({
@@ -98,12 +107,13 @@ def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
     Precedence (PRESERVE beats DROP so the recall bias always wins):
       1. a query parameter present            -> "surface"
       2. a user-content path segment          -> "surface"
-      3. a never-surface extension            -> "static"
-      4. a fingerprinted / bundler filename   -> "static"
-      5. an image extension                   -> "static" iff under a drop-path,
+      3. a JavaScript extension (.js/.mjs)     -> "surface" (D17 attack surface)
+      4. a never-surface extension            -> "static"
+      5. a fingerprinted / bundler filename   -> "static"
+      6. an image extension                   -> "static" iff under a drop-path,
                                                  else "ambiguous"
-      6. any static-render path segment       -> "static"
-      7. otherwise                            -> "ambiguous"
+      7. any static-render path segment       -> "static"
+      8. otherwise                            -> "ambiguous"
     """
     if has_params:
         return "surface"
@@ -117,6 +127,11 @@ def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
     filename = segments[-1] if segments else ""
     ext = _extension(filename)
     under_drop_path = bool(seg_set & DROP_SEGMENTS)
+
+    # JavaScript is attack surface for D17 (jsluice), never presentational
+    # noise - keep it even when fingerprinted or under a static drop-path.
+    if ext in JS_EXTS:
+        return "surface"
 
     if ext in STATIC_EXTS:
         return "static"
