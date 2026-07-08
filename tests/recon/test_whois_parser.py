@@ -63,3 +63,17 @@ def test_parse_whois_garbage_input_returns_empty_list():
 def test_parse_whois_missing_domain_name_returns_empty_list():
     text = "Registrar: No Domain Name Registrar\nCreation Date: 2020-01-01T00:00:00Z\n"
     assert parse(text) == []
+
+
+def test_parse_whois_dedups_name_servers_preserving_order():
+    """Registries list each NS twice (registry + registrar sections); the
+    parser must dedup while preserving first-seen order (Defect D4)."""
+    text = (
+        "Domain Name: dedup.com\n"
+        "Name Server: NS1.EXAMPLE.NET\n"
+        "Name Server: NS2.EXAMPLE.NET\n"
+        "Name Server: ns1.example.net\n"  # dup (case-normalised)
+        "Name Server: ns2.example.net\n"  # dup
+    )
+    domain = next(d for d in parse(text) if d.type == "Domain")
+    assert domain.props["name_servers"] == ["ns1.example.net", "ns2.example.net"]

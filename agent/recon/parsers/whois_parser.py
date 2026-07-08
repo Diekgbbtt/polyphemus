@@ -86,7 +86,9 @@ def parse(stdout: str) -> list[AssetDelta]:
     if updated_date is not None:
         props["updated_date"] = updated_date
     if name_servers:
-        props["name_servers"] = name_servers
+        # Registries commonly emit each NS twice (registry + registrar
+        # sections); dedup while preserving first-seen order.
+        props["name_servers"] = list(dict.fromkeys(name_servers))
 
     return [
         AssetDelta(

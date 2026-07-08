@@ -29,8 +29,13 @@ ALLOWED_LABELS = frozenset({
     "Traceroute", "ExternalDomain",
 })
 
-# Observation anchors are restricted to broad, well-identified nodes.
-ANCHOR_ALLOWLIST = frozenset({"Domain", "Subdomain", "BaseURL", "IP", "Service"})
+# Observation anchors may target ANY real Layer-0 primitive (an observation
+# about an exposed Endpoint/Header/Port/Technology is as valid as one about a
+# Subdomain). Restricting to a narrow "broad node" subset silently dropped
+# grounded observations anchored to e.g. Endpoint (found live). Pseudo-anchor
+# types the triager sometimes invents (e.g. 'tool_output') are still rejected
+# because they are not real primitives / not in ALLOWED_LABELS.
+ANCHOR_ALLOWLIST = ALLOWED_LABELS
 
 # Placeholder value used by the pure builders; curate() overwrites it with the
 # real project_id before dispatching to merge_fn.
