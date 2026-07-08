@@ -16,6 +16,8 @@ from __future__ import annotations
 import inspect
 import time
 
+import os
+
 from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel, Field
 
@@ -322,6 +324,10 @@ class _ObservationBatch(BaseModel):
     observations: list[Observation] = Field(default_factory=list)
 
 
+# Max parsed assets serialized into the triager prompt (see default_triage_fn).
+_MAX_TRIAGE_ASSETS = int(os.environ.get("MAX_TRIAGE_ASSETS", "200"))
+
+
 def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: JobSpec) -> list[Observation]:
     """Real collaborator: ask the triager LLM to flag noteworthy observations
     from a completed tool run. Builds its chat model lazily on each call.
@@ -336,10 +342,24 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     # "'additionalProperties' is required to be supplied and to be false"
     # under the default method. function_calling tolerates the loose schema.
     structured_llm = llm.with_structured_output(_ObservationBatch, method="function_calling")
+    # Cap the assets serialized into the prompt: a high-volume tool (e.g.
+    # subfinder on a large org can yield tens of thousands of Subdomain deltas)
+    # would otherwise blow past the model's context window (observed: 41k assets
+    # -> ~2M tokens -> 400), failing the triager AND, because the pod then fails
+    # before the curator node, silently dropping every already-parsed asset. A
+    # representative sample + the true total is enough to reason about.
+    asset_dicts = [a.model_dump() for a in assets]
+    shown = asset_dicts[:_MAX_TRIAGE_ASSETS]
+    omitted = len(asset_dicts) - len(shown)
+    assets_line = (
+        f"Parsed assets ({len(asset_dicts)} total"
+        + (f", showing first {len(shown)}, {omitted} omitted" if omitted else "")
+        + f"): {shown}"
+    )
     prompt = (
         f"Tool: {job.tool}\n"
         f"Command stdout:\n{exec_result.stdout[:4000]}\n"
-        f"Parsed assets: {[a.model_dump() for a in assets]}\n"
+        f"{assets_line}\n"
         "Identify any noteworthy security observations (macro_kind, severity, "
         "evidence, rationale, anchor {type, identity}, source_job, source_tool). "
         "Return an empty list if nothing notable."

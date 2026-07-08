@@ -324,3 +324,42 @@ def test_pod_graphql_findings_get_baseurl_anchor_from_input_asset_url_and_reach_
         "type": "BaseURL",
         "identity": {"url": "https://api.example.com"},
     }
+
+
+def test_triage_caps_assets_to_avoid_llm_context_overflow(monkeypatch):
+    """Regression: a high-volume tool (subfinder on a large org -> tens of
+    thousands of Subdomain deltas) must not serialize every asset into the
+    triager prompt. Doing so overflowed the model context (~2M tokens > 1M),
+    400'd the triager, failed the pod BEFORE the curator, and silently dropped
+    every parsed asset (0 nodes persisted). The prompt must be capped to a
+    sample + the true total."""
+    from agent.recon.types import AssetDelta
+
+    captured = {}
+
+    class FakeStructured:
+        def invoke(self, prompt):
+            captured["prompt"] = prompt
+            return pod._ObservationBatch(observations=[])
+
+    class FakeLLM:
+        def with_structured_output(self, schema, method=None):
+            return FakeStructured()
+
+    import agent.app.llm.roles as roles
+    monkeypatch.setattr(roles, "chat_model_for", lambda role: FakeLLM())
+
+    n = pod._MAX_TRIAGE_ASSETS + 300
+    assets = [AssetDelta(type="Subdomain", identity={"name": f"h{i}.x.com"}) for i in range(n)]
+    exec_result = ExecResult(stdout="stdout", stderr="", returncode=0, duration_ms=1)
+
+    obs = pod.default_triage_fn(exec_result, assets, JOBS["subfinder"])
+
+    assert obs == []
+    p = captured["prompt"]
+    assert f"{n} total" in p                      # true total surfaced
+    assert f"showing first {pod._MAX_TRIAGE_ASSETS}" in p
+    assert "h0.x.com" in p                         # sample present
+    assert f"h{pod._MAX_TRIAGE_ASSETS - 1}.x.com" in p
+    assert f"h{pod._MAX_TRIAGE_ASSETS}.x.com" not in p   # capped beyond the sample
+    assert f"h{n - 1}.x.com" not in p
