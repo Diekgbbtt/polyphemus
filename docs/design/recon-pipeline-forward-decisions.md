@@ -125,3 +125,16 @@ This stream (Stream 1, docs-only) explicitly did not touch `agent/recon/crawl/**
 Checked against this doc's own history and the design docs it superseded: **no prior forward-decision entry constrained `Header` capture scope.**
 The live behavior - `httpx` invoked with `-irh` (include-response-headers) and every response header persisted as a `Header{name, baseurl}` node with a `HAS_HEADER` edge from `BaseURL` (`agent/recon/parsers/httpx_parser.py:71-84`, `agent/recon/jobs.py:78` command template) - was a design choice made and shipped directly (commit `b783773`, per memory `recon-e2e-validation`), not a walk-back of an earlier narrower decision.
 Recorded here only to close out the brief's question, not because there is an open deferral: **all headers are captured today; there is no pending forward-decision item for header scope.**
+
+## D8 - Deterministic re-anchor repair for triager anchor errors (deferred, not built)
+
+Observation anchors are deliberately restricted to five broad assets (`agent/recon/curator.py::ANCHOR_ALLOWLIST = {Domain, Subdomain, BaseURL, IP, Service}`); the triager (`skills/recon/triager/writing-observations`) is instructed to re-anchor a finding UP to the broad asset that owns the narrow element (Endpoint/Header/Technology/Parameter/Port), naming the narrow element in `evidence`.
+When the triager fails to re-anchor, `build_observation_cypher` correctly raises and `curate` skips+logs the observation, so it is silently lost.
+This is a live, measured failure, not hypothetical: in the 2026-07-08 multi-target validation (memory `recon-e2e-validation`), ~36% of one target's observations arrived anchored on narrow nodes (Endpoint 16, Port 4, Header 2 of 61) - a direct consequence of the fact that the skill is **not wired into the triager prompt today** (`default_triage_fn` in `agent/recon/pod.py` uses a terse inline prompt; nothing under `agent/` loads the skill).
+
+**Operator decision (2026-07-08): a failed re-anchor-UP is recoverable DETERMINISTICALLY in the parse/curator layer** - not by widening the allowlist (rejected: fragments the host-level observation graph, masks mis-anchoring) and **not by a hybrid broad-anchor + narrow `locus` reference (rejected: risks blowing up the graph** with a per-narrow-node observation edge/property explosion).
+
+The repair shape (to build later): when an observation arrives anchored on a narrow node whose type is a real primitive but outside `ANCHOR_ALLOWLIST`, **detect it, traverse the graph from that narrow node to its closest higher-level broad hop** (Endpoint/Header/Technology -> owning `BaseURL`; `Parameter` -> owning `BaseURL`; `Port` -> owning `IP`/`Service`), **and rewrite the MERGE to anchor on that broad node** rather than dropping it; the narrow node's identity stays in `evidence`.
+This is a systematic, non-LLM safety net that runs on the deterministic curator path.
+
+**Status: not built.** `build_observation_cypher` today raises `ValueError` on a disallowed anchor and `curate` skips it (`agent/recon/curator.py:80-119,153-166`); there is no traversal-based re-anchor. The PRIMARY fix stays triager-side (wire + harden the writing-observations skill so anchoring is correct at generation time); this D8 repair is the belt-and-suspenders layer for the residual cases the LLM still gets wrong after the skill is in place.
