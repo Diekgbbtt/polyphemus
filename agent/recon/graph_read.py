@@ -7,6 +7,35 @@ zero-degree nodes are still returned."""
 from __future__ import annotations
 
 
+def _jsonable(value):
+    """Coerce neo4j-native property values into JSON-safe primitives.
+
+    The neo4j driver returns temporal (neo4j.time.DateTime/Date/Time/Duration)
+    and spatial (neo4j.spatial.Point) types, which pydantic cannot serialize,
+    causing serialize_response to 500. Detect by module (no hard neo4j import,
+    so the pure formatter stays driver-free) and recurse through containers.
+    Temporal -> ISO string, Duration -> ISO 8601 duration, Point -> [x, y].
+
+    neo4j types are checked BEFORE the container branches: Duration and Point
+    subclass tuple, so the generic list/tuple recursion would otherwise expand
+    a Duration into its raw [months, days, seconds, nanos] components."""
+    module = type(value).__module__
+    if module.startswith("neo4j."):
+        native = value.to_native() if hasattr(value, "to_native") else None
+        if hasattr(native, "isoformat"):  # datetime / date / time
+            return native.isoformat()
+        if hasattr(value, "iso_format"):  # Duration -> "P1DT30S"
+            return value.iso_format()
+        if module.startswith("neo4j.spatial"):  # Point is iterable of coords
+            return list(value)
+        return str(value)
+    if isinstance(value, dict):
+        return {k: _jsonable(v) for k, v in value.items()}
+    if isinstance(value, (list, tuple)):
+        return [_jsonable(v) for v in value]
+    return value
+
+
 def node_name(labels: list[str], props: dict) -> str:
     label = labels[0] if labels else "Unknown"
     p = props or {}
@@ -31,7 +60,7 @@ def format_graph_records(records: list[dict]) -> dict:
                 "id": nid,
                 "name": node_name(node.get("labels", []), node.get("props", {})),
                 "type": (node.get("labels") or ["Unknown"])[0],
-                "properties": dict(node.get("props", {})),
+                "properties": _jsonable(dict(node.get("props", {}))),
             }
 
     for rec in records:
