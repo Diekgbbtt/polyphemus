@@ -18,10 +18,18 @@ def test_unknown_label_rejected():
         curator.build_asset_cypher(d)
 
 def test_observation_anchor_allowlist_enforced():
-    """Anchors are restricted to broad, well-identified assets. Narrow elements
-    (Endpoint/Parameter/Technology) and invented pseudo-types (tool_output) are
-    rejected by design: the triager must re-anchor UP to the owning broad asset
-    and name the narrow element in evidence (see writing-observations skill)."""
+    """Anchors are restricted to broad, well-identified assets. These cases all
+    still raise, but for two distinct reasons after D8's re-anchor repair landed:
+
+    - `tool_output` is an invented pseudo-type, not a real primitive, so it is
+      not a re-anchor candidate at all and is rejected outright.
+    - `Endpoint`/`Parameter`/`Technology` ARE real narrow primitives, but here
+      their anchor identity is the minimal `{"name": "q"}` with NO owner key
+      (`baseurl`/`ip_address`). D8's `broaden_anchor` is pure identity-key
+      derivation - with no owner key present it returns None, so these fall
+      through to the same drop-and-log path as before. (When the owner key IS
+      present, Endpoint/Header/Parameter/Port are repaired - see the tests
+      below; Technology has no owner key in its identity and always drops.)"""
     import pytest
     for bad in ("Parameter", "Endpoint", "Technology", "tool_output"):
         o = Observation(macro_kind="auth_surface", severity="info", evidence="e",
@@ -29,6 +37,109 @@ def test_observation_anchor_allowlist_enforced():
                         source_job="j", source_tool="t")
         with pytest.raises(ValueError):
             curator.build_observation_cypher(o)
+
+
+# --- D8: deterministic re-anchor repair (pure broaden_anchor) --------------
+
+def test_broaden_anchor_endpoint_header_parameter_to_baseurl():
+    """Endpoint/Header/Parameter carry the owning BaseURL url in their `baseurl`
+    identity key, so pure derivation rewrites the anchor to that BaseURL."""
+    for narrow in ("Endpoint", "Header", "Parameter"):
+        broad = curator.broaden_anchor(
+            {"type": narrow, "identity": {"name": "x", "baseurl": "https://a"}}
+        )
+        assert broad == {"type": "BaseURL", "identity": {"url": "https://a"}}
+
+
+def test_broaden_anchor_port_to_ip_canonical_and_alias():
+    """Port carries the owning IP in `ip_address` (canonical) or `ip` (alias)."""
+    assert curator.broaden_anchor(
+        {"type": "Port", "identity": {"number": 443, "ip_address": "1.2.3.4"}}
+    ) == {"type": "IP", "identity": {"address": "1.2.3.4"}}
+    assert curator.broaden_anchor(
+        {"type": "Port", "identity": {"number": 443, "ip": "1.2.3.4"}}
+    ) == {"type": "IP", "identity": {"address": "1.2.3.4"}}
+
+
+def test_broaden_anchor_returns_none_when_not_repairable():
+    """Technology (no owner key), a narrow anchor missing its owner key, a
+    non-primitive pseudo-type, and malformed input are all unrepairable."""
+    assert curator.broaden_anchor(
+        {"type": "Technology", "identity": {"name": "nginx", "version": ""}}
+    ) is None
+    assert curator.broaden_anchor(
+        {"type": "Endpoint", "identity": {"path": "/x", "method": "GET"}}
+    ) is None  # no baseurl key
+    assert curator.broaden_anchor(
+        {"type": "Port", "identity": {"number": 443}}
+    ) is None  # no ip_address/ip key
+    assert curator.broaden_anchor(
+        {"type": "tool_output", "identity": {"name": "q"}}
+    ) is None  # not a real primitive
+    assert curator.broaden_anchor({"type": "Endpoint"}) is None  # no identity
+    assert curator.broaden_anchor("not-a-dict") is None
+
+
+def test_build_observation_cypher_reanchors_narrow_anchor():
+    """A narrow-but-repairable anchor is rewritten to its broad owner instead of
+    being dropped; the MERGE targets the broad node and the narrow node's
+    identity is preserved in the observation evidence."""
+    o = Observation(macro_kind="auth_surface", severity="info",
+                    evidence="login form present",
+                    rationale="r",
+                    anchor={"type": "Endpoint",
+                            "identity": {"path": "/login", "method": "GET",
+                                         "baseurl": "https://a"}},
+                    source_job="j", source_tool="httpx")
+    cy, params = curator.build_observation_cypher(o)
+    assert "MERGE (a:BaseURL {url: $anchor_url, project_id: $project_id})" in cy
+    assert params["anchor_url"] == "https://a"
+    # narrow identity is carried into evidence, deterministically (sorted keys)
+    assert params["evidence"] == (
+        "login form present [re-anchored from Endpoint "
+        "{baseurl=https://a, method=GET, path=/login}]"
+    )
+
+
+def test_build_observation_cypher_reanchored_obs_id_reflects_repair():
+    """obs_id hashes the POST-repair evidence+anchor, so a repaired observation
+    gets one stable id distinct from the (dropped) pre-repair form."""
+    narrow = Observation(macro_kind="k", severity="info", evidence="e",
+                         rationale="r",
+                         anchor={"type": "Port",
+                                 "identity": {"number": 443, "ip_address": "1.2.3.4"}},
+                         source_job="j", source_tool="naabu")
+    equivalent_broad = Observation(
+        macro_kind="k", severity="info",
+        evidence="e [re-anchored from Port {ip_address=1.2.3.4, number=443}]",
+        rationale="r",
+        anchor={"type": "IP", "identity": {"address": "1.2.3.4"}},
+        source_job="j", source_tool="naabu")
+    _, p_narrow = curator.build_observation_cypher(narrow)
+    _, p_broad = curator.build_observation_cypher(equivalent_broad)
+    assert p_narrow["obs_id"] == p_broad["obs_id"]
+
+
+def test_curate_merges_reanchored_and_still_drops_unrepairable():
+    """A repairable narrow anchor is now merged (was dropped pre-D8); a
+    Technology anchor (no owner key) still drops-and-logs."""
+    calls = []
+    def fake_merge(cy, params): calls.append((cy, params))
+    repairable = Observation(macro_kind="k", severity="info", evidence="e",
+                             rationale="r",
+                             anchor={"type": "Endpoint",
+                                     "identity": {"path": "/x", "method": "GET",
+                                                  "baseurl": "https://a"}},
+                             source_job="j", source_tool="t")
+    unrepairable = Observation(macro_kind="k", severity="info", evidence="e",
+                               rationale="r",
+                               anchor={"type": "Technology",
+                                       "identity": {"name": "nginx", "version": ""}},
+                               source_job="j", source_tool="t")
+    a, o = curator.curate([], [repairable, unrepairable], "proj1", merge_fn=fake_merge)
+    assert a == 0 and o == 1
+    assert len(calls) == 1
+    assert "MERGE (a:BaseURL" in calls[0][0]
 
 
 def test_observation_anchor_accepts_broad_assets():

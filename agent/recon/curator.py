@@ -39,9 +39,72 @@ ALLOWED_LABELS = frozenset({
 # host-level observation graph). See the writing-observations skill's Edit 3.
 ANCHOR_ALLOWLIST = frozenset({"Domain", "Subdomain", "BaseURL", "IP", "Service"})
 
+# D8 - deterministic re-anchor repair (forward-decision D8, operator-approved
+# 2026-07-08). The triager is supposed to re-anchor a finding UP to the owning
+# broad asset, but when it fails and anchors on a narrow primitive the
+# observation is silently dropped (build_observation_cypher raises, curate
+# skips). This is a belt-and-suspenders safety net on the deterministic curator
+# path: it re-anchors UP by PURE identity-key derivation (NOT graph traversal -
+# operator explicitly accepted this divergence from D8's literal wording), which
+# covers 100% of the measured drops because the owning broad asset's id is
+# already carried in the narrow node's own identity for four of the five types:
+#   - Endpoint / Header / Parameter  ->  owning BaseURL, via the `baseurl` key
+#   - Port                           ->  owning IP,      via `ip_address` (or `ip`)
+# Each rule: narrow type -> (broad type, broad node's id key, ordered tuple of
+# candidate keys on the narrow anchor's identity holding the owner id). The
+# first non-empty candidate wins (canonical key first, then the minimal alias).
+# Technology (global {name, version}, no owner key in its identity) is
+# deliberately absent: it is not repairable by pure derivation and falls through
+# to the unchanged drop-and-log path, exactly like today.
+_REANCHOR_RULES: dict[str, tuple[str, str, tuple[str, ...]]] = {
+    "Endpoint": ("BaseURL", "url", ("baseurl",)),
+    "Header": ("BaseURL", "url", ("baseurl",)),
+    "Parameter": ("BaseURL", "url", ("baseurl",)),
+    "Port": ("IP", "address", ("ip_address", "ip")),
+}
+
 # Placeholder value used by the pure builders; curate() overwrites it with the
 # real project_id before dispatching to merge_fn.
 _PENDING_PROJECT_ID = "__pending_project_id__"
+
+
+def broaden_anchor(anchor: dict) -> dict | None:
+    """Pure D8 re-anchor repair: if `anchor` sits on a narrow primitive whose
+    owning broad asset is derivable from the anchor's own identity, return a new
+    broad anchor dict `{"type": ..., "identity": {...}}`; otherwise return None
+    (the caller then drops-and-logs, unchanged pre-D8 behavior).
+
+    Derivation is by identity key ONLY - no graph/driver access, so this stays
+    pure and unit-testable like the rest of this module. Not repairable (returns
+    None): Technology and any narrow anchor missing its owner key, non-primitive
+    pseudo-types, and malformed input.
+    """
+    if not isinstance(anchor, dict):
+        return None
+    rule = _REANCHOR_RULES.get(anchor.get("type"))
+    if rule is None:
+        return None
+    broad_type, broad_key, candidate_keys = rule
+    identity = anchor.get("identity")
+    if not isinstance(identity, dict):
+        return None
+    for key in candidate_keys:
+        owner = identity.get(key)
+        if owner:
+            return {"type": broad_type, "identity": {broad_key: owner}}
+    return None
+
+
+def _reanchor_evidence_suffix(anchor: dict) -> str:
+    """Render the narrow anchor's identity into a deterministic evidence suffix
+    so the re-anchored observation still names the narrow element it came from.
+    Sorted keys keep the string (and therefore the obs_id hash) stable."""
+    identity = anchor.get("identity")
+    narrow_type = anchor.get("type")
+    if isinstance(identity, dict) and identity:
+        rendered = ", ".join(f"{k}={identity[k]}" for k in sorted(identity))
+        return f" [re-anchored from {narrow_type} {{{rendered}}}]"
+    return f" [re-anchored from {narrow_type}]"
 
 
 def _identity_clause(prefix: str, identity: dict) -> tuple[str, dict]:
@@ -87,16 +150,30 @@ def build_asset_cypher(delta: AssetDelta) -> tuple[str, dict]:
 def build_observation_cypher(obs: Observation) -> tuple[str, dict]:
     """Pure: build a parameterised MERGE for one Observation + its anchor edge.
 
-    Raises ValueError if the anchor type is outside the broad-anchor allowlist.
+    Raises ValueError if the anchor type is outside the broad-anchor allowlist
+    AND cannot be deterministically re-anchored UP to a broad owner (D8).
     """
-    anchor_type = obs.anchor.get("type")
-    anchor_identity = obs.anchor.get("identity", {})
+    anchor = obs.anchor
+    evidence = obs.evidence
+    anchor_type = anchor.get("type")
+
+    if anchor_type not in ANCHOR_ALLOWLIST:
+        # D8: try to re-anchor UP before rejecting. On success, the narrow
+        # anchor's identity is preserved in evidence and both anchor+evidence
+        # flow into obs_id below, so the repaired observation gets one stable id.
+        broadened = broaden_anchor(anchor)
+        if broadened is not None:
+            evidence = evidence + _reanchor_evidence_suffix(anchor)
+            anchor = broadened
+            anchor_type = anchor.get("type")
+
+    anchor_identity = anchor.get("identity", {})
     if anchor_type not in ANCHOR_ALLOWLIST:
         raise ValueError(f"Observation anchor type not allowed: {anchor_type!r}")
 
-    anchor_canonical = json.dumps(obs.anchor, sort_keys=True)
+    anchor_canonical = json.dumps(anchor, sort_keys=True)
     obs_id = hashlib.sha1(
-        f"{obs.macro_kind}|{obs.evidence}|{anchor_canonical}|{obs.source_tool}".encode()
+        f"{obs.macro_kind}|{evidence}|{anchor_canonical}|{obs.source_tool}".encode()
     ).hexdigest()
 
     a_clause, params = _identity_clause("anchor_", anchor_identity)
@@ -104,7 +181,7 @@ def build_observation_cypher(obs: Observation) -> tuple[str, dict]:
     params["obs_id"] = obs_id
     params["macro_kind"] = obs.macro_kind
     params["severity"] = obs.severity
-    params["evidence"] = obs.evidence
+    params["evidence"] = evidence
     params["rationale"] = obs.rationale
     params["source_job"] = obs.source_job
     params["source_tool"] = obs.source_tool
