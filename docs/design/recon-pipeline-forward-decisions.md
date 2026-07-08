@@ -138,3 +138,31 @@ The repair shape (to build later): when an observation arrives anchored on a nar
 This is a systematic, non-LLM safety net that runs on the deterministic curator path.
 
 **Status: not built.** `build_observation_cypher` today raises `ValueError` on a disallowed anchor and `curate` skips it (`agent/recon/curator.py:80-119,153-166`); there is no traversal-based re-anchor. The PRIMARY fix stays triager-side (wire + harden the writing-observations skill so anchoring is correct at generation time); this D8 repair is the belt-and-suspenders layer for the residual cases the LLM still gets wrong after the skill is in place.
+
+## D9 - Certificate capture is NOT needed (operator decision 2026-07-08, closed)
+
+The 2026-07-08 validation flagged that no `Certificate` nodes are emitted despite HTTPS on every host (`recon-e2e-validation`). **Operator decision: Certificate elements are not needed** - the recon graph does not require TLS-certificate primitives as first-class nodes for its attack-surface purpose.
+This closes that finding as **won't-fix**, not a deferred gap: `Certificate` remains a legal Layer-0 label (`curator.ALLOWED_LABELS`) so nothing breaks if a parser ever emits one, but there is no work item to make `httpx` (or any tool) produce them, and their absence is expected, not a defect.
+
+## D10 - amass is low-value and stays deferred (documented, not scheduled)
+
+`amass` (`agent/recon/jobs.py:24-30`) is broken against the installed **amass v4.2.0**: its `enum` subcommand removed the `-json` streaming flag the command template and `parse_amass` expect, so the job degrades on every target (verified live, both unibas and magnific/houseofhr runs show `amass degraded` in `recon_jobs`).
+**Operator decision: low value, deferred - do not prioritize.** `subfinder` already covers passive subdomain enumeration well (verified: 41k subdomains on unibas.ch in isolation), so amass's failure does not reduce coverage on any observed target; it is a redundant second source. Fixing it later means a v4.2.0 command rework (`amass enum -dir <d>` populates a graph DB; JSON comes from a separate `amass db` export) plus adapting `parse_amass` to the v4 output shape - recorded so a later pass does not re-derive this, but explicitly not scheduled.
+
+## D11 - apex domain must be HTTP-probed / BaseURL phase must include the apex URL (NEW work item, verified gap)
+
+**Verified live (houseofhr run `cbfc76ec`, 2026-07-08):** the seed apex's own web origin is never characterized. `http://houseofhr.com`, `https://houseofhr.com`, and `https://www.houseofhr.com` exist as BaseURL **stubs** (`status_code` NULL, no title/headers/technology), while every ENRICHED BaseURL is a *subdomain* (mycv-*, opcosquare-*). Root cause is a data-contract gap: `httpx` (phase 3, the BaseURL-enriching probe) `consumes="Subdomain"` (`jobs.py:75-81`), and the apex `houseofhr.com` is modeled as a `Domain` node, **not** a `Subdomain` - it is never in httpx's input set. The apex BaseURL stubs are created later by the Domain-consuming phase-4 tools (gau/katana), which is why they exist but are unenriched.
+
+Downstream contract check: the phase-4 jobs that `consumes="BaseURL"` (katana/ffuf/kiterunner) read ALL project BaseURLs including the apex stub, so they *do* run against the apex URL - but against an unenriched origin (no tech/header context), reducing their effectiveness on the primary host.
+
+**Work item (to build): the BaseURL-producing/enriching phase must include the URL formed from the apex domain.** Cleanest options: (a) seed the apex as a `Subdomain` (name == apex) so httpx probes it like any host, or (b) widen httpx to also consume the `Domain` apex. Either makes the primary target's live surface (status/title/security headers/technology) first-class. Verify after the fix that the apex BaseURL is ENRICHED and that phase-4 consumers pick up the enriched node.
+
+## D12 - phase-execution observability: execution persisted, per-job data lineage is not (NEW work item)
+
+**What IS persisted (verified):** `recon_runs` (per run: status, current_phase, heartbeat) + `recon_jobs` (per run x phase x job: `status` in success/degraded/skipped, and `stats = {pods, success, failed}`). This is the authoritative artifact proving which phases/jobs executed - e.g. houseofhr run `cbfc76ec` shows all 6 phases ran (phase 0 subfinder/whois success, amass degraded; phase 1 dnsx/puredns/subdomain_takeover 8/8; phase 2 naabu 7/8; phase 3 httpx 8/8; phase 4 ffuf/katana/kiterunner/jsluice/graphql-cop 7/7, gau/paramspider 1/1, steel_crawl 7/7 failed [expected, D3-steel]; phase 5 arjun 4/8). Queryable directly; also exposed at `GET /projects/{id}/recon/{run_id}` (`per_job`).
+
+**What is NOT persisted:** per-job **data lineage** - the exact assets each job *consumed* and *produced*. `stats` records pod counts, not asset counts; produced assets are only inferable in aggregate from Neo4j label totals + each `JobSpec.consumes/produces`, and cannot be attributed to a specific job (many jobs produce the same label). **Work item (to build): persist per-job produced-asset (and ideally consumed-asset) counts** on the `recon_jobs` row (or a companion table), and/or a run-summary endpoint, so "all phases executed with the data they consumed/produced" is verifiable from persisted state rather than reconstructed.
+
+## D13 - frontend graph nodes must render their object data (NEW work item)
+
+Today the force-graph (`frontend/src/graph/GraphCanvas.tsx`) renders every node as a bare colored dot; the node's data (`properties`, and for an `Observation` its natural-language comment) is fetched (`GET /projects/{id}/graph` returns `node.properties`) but never shown. **Work item (to build): each node shows its object data in a small box** - an `Observation` shows its NL comment (evidence/rationale/macro_kind), and each attack-surface element shows its object attributes. Given graph scale (houseofhr 6656 nodes), an always-on box per node is unreadable, so the box should surface on hover/selection (a `nodeLabel` tooltip and/or a detail panel on click), not as permanent labels.
