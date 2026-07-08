@@ -17,28 +17,29 @@ def test_unknown_label_rejected():
     with pytest.raises(ValueError):
         curator.build_asset_cypher(d)
 
-def test_observation_anchor_rejects_non_primitive_pseudo_type():
-    """A pseudo-anchor the triager sometimes invents (not a real Layer-0
-    primitive) must still be rejected rather than MERGE'd as a junk node."""
+def test_observation_anchor_allowlist_enforced():
+    """Anchors are restricted to broad, well-identified assets. Narrow elements
+    (Endpoint/Parameter/Technology) and invented pseudo-types (tool_output) are
+    rejected by design: the triager must re-anchor UP to the owning broad asset
+    and name the narrow element in evidence (see writing-observations skill)."""
     import pytest
-    o = Observation(macro_kind="auth_surface", severity="info", evidence="e",
-                    rationale="r", anchor={"type": "tool_output", "identity": {"name": "whois"}},
-                    source_job="j", source_tool="t")
-    with pytest.raises(ValueError):
-        curator.build_observation_cypher(o)
+    for bad in ("Parameter", "Endpoint", "Technology", "tool_output"):
+        o = Observation(macro_kind="auth_surface", severity="info", evidence="e",
+                        rationale="r", anchor={"type": bad, "identity": {"name": "q"}},
+                        source_job="j", source_tool="t")
+        with pytest.raises(ValueError):
+            curator.build_observation_cypher(o)
 
 
-def test_observation_anchor_accepts_any_real_primitive():
-    """Regression: observations grounded on a real primitive like Endpoint or
-    Parameter were silently dropped when ANCHOR_ALLOWLIST was a narrow subset.
-    Any Layer-0 primitive is now a valid anchor."""
-    for label, ident in [("Endpoint", {"url": "https://a/x"}),
-                         ("Parameter", {"name": "q"}),
-                         ("Header", {"name": "x-frame-options", "baseurl": "https://a"})]:
+def test_observation_anchor_accepts_broad_assets():
+    """The five broad, durable anchor types are accepted."""
+    for label, ident in [("Domain", {"name": "a.com"}), ("Subdomain", {"name": "x.a.com"}),
+                         ("BaseURL", {"url": "https://a"}), ("IP", {"address": "1.2.3.4"}),
+                         ("Service", {"port": 443, "ip": "1.2.3.4"})]:
         o = Observation(macro_kind="k", severity="info", evidence="e", rationale="r",
                         anchor={"type": label, "identity": ident},
                         source_job="j", source_tool="t")
-        cy, params = curator.build_observation_cypher(o)
+        cy, _ = curator.build_observation_cypher(o)
         assert f"MERGE (a:{label}" in cy
 
 def test_curate_counts_and_skips_bad_delta():
