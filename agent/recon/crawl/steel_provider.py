@@ -121,6 +121,32 @@ def _extract_links_expr() -> str:
     return "els => els.map(a => a.href)"
 
 
+def _to_playwright_cookies(cookies, default_url: str) -> list:
+    """Map auth_context cookies ({name, value, [domain], [path]}) to the
+    Playwright `context.add_cookies` shape.
+
+    With a domain -> {name, value, domain, path} (path defaults to "/").
+    Without a domain -> {name, value, url} so Playwright infers domain/path
+    from `default_url` (the crawl target's URL). Entries lacking a string
+    name/value are skipped so one malformed fixture entry never aborts the set.
+    """
+    out = []
+    for c in cookies or []:
+        if not isinstance(c, dict):
+            continue
+        name, value = c.get("name"), c.get("value")
+        if not isinstance(name, str) or not isinstance(value, str):
+            continue
+        pc = {"name": name, "value": value}
+        if c.get("domain"):
+            pc["domain"] = c["domain"]
+            pc["path"] = c.get("path", "/")
+        else:
+            pc["url"] = default_url
+        out.append(pc)
+    return out
+
+
 # ---------------------------------------------------------------------------
 
 class _Crawl:
@@ -259,13 +285,17 @@ class SteelCrawlProvider:
     `StructuredTool`s bound to this instance's crawl registry.
     """
 
-    def __init__(self, api_key: str | None = None, *, session_lifetime_s: int | None = None):
+    def __init__(self, api_key: str | None = None, *, session_lifetime_s: int | None = None, auth_cookies=None):
         self._api_key = api_key if api_key is not None else config.STEEL_API_KEY
         self._session_lifetime_s = (
             session_lifetime_s
             if session_lifetime_s is not None
             else int(getattr(config, "CRAWL_JOB_TIMEOUT_S", 480))
         )
+        # Non-interactive auth: session cookies to seed the browser context with
+        # (via context.add_cookies) BEFORE the crawl, so it runs authenticated
+        # without the human steel_await_auth step. Empty for an anonymous crawl.
+        self._auth_cookies = list(auth_cookies or [])
         self._crawls: dict[str, _Crawl] = {}
         self._lock = threading.Lock()
 
@@ -339,6 +369,16 @@ class SteelCrawlProvider:
         try:
             browser = await p.chromium.connect_over_cdp(cdp_url)
             ctx = browser.contexts[0]
+            if self._auth_cookies:
+                # NON-INTERACTIVE AUTH: seed the browser context with the
+                # project's session cookies BEFORE any navigation, so the crawl
+                # runs authenticated without the human steel_await_auth step.
+                # Best-effort: a malformed cookie must degrade to an
+                # unauthenticated crawl, never crash the session.
+                try:
+                    await ctx.add_cookies(_to_playwright_cookies(self._auth_cookies, target))
+                except Exception:
+                    pass
             page = ctx.pages[0] if ctx.pages else await ctx.new_page()
         except Exception:
             try:
