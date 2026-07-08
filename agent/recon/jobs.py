@@ -101,7 +101,7 @@ JOBS: dict[str, JobSpec] = {
         skill="crawl",
         command_template=(
             "katana -u {target} -d 3 -jc -kf robotstxt -c 10 -rl 50 "
-            "-ef png,jpg,gif,css,woff,woff2,ttf -silent -jsonl {auth_header}"
+            "-ef css,woff,woff2,ttf -silent -jsonl {auth_header}"
         ),
         produces=["BaseURL", "Endpoint", "Parameter"],
         consumes="BaseURL",

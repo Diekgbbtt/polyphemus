@@ -17,6 +17,7 @@ import hashlib
 import json
 import logging
 
+from agent.recon.noise_filter import filter_deltas
 from agent.recon.types import AssetDelta, Edge, Observation
 
 logger = logging.getLogger(__name__)
@@ -218,6 +219,11 @@ def curate(
     if merge_fn is None:
         from agent.app.clients import neo4j_client
         merge_fn = neo4j_client.merge
+
+    # D15: central path-based noise gate. Every recon source (incl. steel_crawl)
+    # funnels its AssetDeltas through curate, so dropping static-render Endpoints
+    # here filters ALL tools with one rule instead of per-parser copies.
+    assets = filter_deltas(assets)
 
     assets_merged = 0
     for delta in assets:
