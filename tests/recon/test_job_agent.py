@@ -123,6 +123,58 @@ def test_run_job_convenience_wrapper_returns_pod_exports(monkeypatch):
     assert all(isinstance(e, PodExport) for e in exports)
 
 
+def test_run_job_offloads_blocking_invoke_so_gather_is_concurrent():
+    """Regression: the pod graph's `.invoke` is blocking (LLM triage, sync
+    Neo4j curate, exec bridge). `run_job` must offload it via
+    `asyncio.to_thread` so the pipeline's per-job `asyncio.gather` truly runs
+    concurrently AND the API event loop stays responsive during a run.
+
+    Before the fix, `.invoke` ran directly on the loop: two gathered jobs
+    serialized (~2x one job's time) and a concurrent coroutine could not tick.
+    """
+    import time
+
+    SLEEP = 0.3
+
+    class BlockingAgent:
+        def invoke(self, state, config=None):
+            time.sleep(SLEEP)  # simulate blocking pod work
+            return {"pod_exports": []}
+
+    agent = BlockingAgent()
+
+    async def scenario():
+        # 1) two concurrent run_jobs overlap (concurrent, not serialized)
+        t0 = time.perf_counter()
+        await asyncio.gather(
+            ja.run_job(None, [], run_id="c1", phase=0, extra={}, agent=agent),
+            ja.run_job(None, [], run_id="c2", phase=0, extra={}, agent=agent),
+        )
+        elapsed = time.perf_counter() - t0
+
+        # 2) the loop stays responsive while a job runs (ticker keeps advancing)
+        ticks = 0
+
+        async def ticker():
+            nonlocal ticks
+            while True:
+                await asyncio.sleep(SLEEP / 10)
+                ticks += 1
+
+        tk = asyncio.create_task(ticker())
+        await ja.run_job(None, [], run_id="c3", phase=0, extra={}, agent=agent)
+        tk.cancel()
+        return elapsed, ticks
+
+    elapsed, ticks = asyncio.run(scenario())
+
+    # Concurrent: ~1x SLEEP (+thread overhead), comfortably below the 2x that
+    # serialized execution would take.
+    assert elapsed < SLEEP * 1.6, f"run_jobs serialized (elapsed={elapsed:.3f}s)"
+    # Loop not blocked during a job: the ticker advanced several times.
+    assert ticks >= 3, f"event loop was blocked during run_job (ticks={ticks})"
+
+
 def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(monkeypatch):
     from agent.recon.crawl import crawl_pod as crawl_pod_module
     from agent.recon.types import JobSpec, PodExport

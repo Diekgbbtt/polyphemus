@@ -17,6 +17,7 @@ default). Importing this module performs no I/O: building the module-level
 """
 from __future__ import annotations
 
+import asyncio
 import operator
 from typing import Annotated, TypedDict
 
@@ -173,9 +174,12 @@ async def run_job(
 ) -> list[PodExport]:
     """Convenience async wrapper: invoke the compiled job agent and return
     its collected pod_exports. The Foundation pod subgraph is sync-invokable
-    (no async collaborators in the default wiring), so this simply calls
-    the compiled graph's sync `.invoke` - kept `async def` for the pipeline
-    orchestrator's benefit (it awaits per-job runs concurrently)."""
+    (no async collaborators in the default wiring), but its work (LLM triage,
+    the sync Neo4j curate, the exec bridge) is blocking. Calling `.invoke`
+    directly on the event loop would stall the whole API and serialize the
+    pipeline's `asyncio.gather` fan-out, so we offload it to a worker thread
+    via `asyncio.to_thread`. Inside that thread there is no running loop, so
+    `run_coro_blocking` (pod exec) cleanly takes its `asyncio.run` path."""
     graph = agent or job_agent
     initial: JobState = {
         "job": job,
@@ -190,5 +194,7 @@ async def run_job(
     # (Langfuse unconfigured) is inert.
     from agent.app.observability import get_langfuse_callbacks
 
-    result = graph.invoke(initial, config={"callbacks": get_langfuse_callbacks()})
+    result = await asyncio.to_thread(
+        graph.invoke, initial, config={"callbacks": get_langfuse_callbacks()}
+    )
     return result["pod_exports"]

@@ -12,6 +12,17 @@ app.include_router(recon_router)
 
 @app.on_event("startup")
 async def _startup():
+    # Size up the default thread pool that asyncio.to_thread uses: the recon
+    # pipeline offloads every blocking pod graph.invoke AND all sync pg/neo4j
+    # calls onto it. The stdlib default (~cpu+4) is far too small for phase
+    # fan-out and lets long-held pod threads starve the heartbeat/DB calls,
+    # which in turn wedged the API and tripped the reaper (Defect C).
+    import concurrent.futures
+    asyncio.get_running_loop().set_default_executor(
+        concurrent.futures.ThreadPoolExecutor(
+            max_workers=config.WORKER_THREADS, thread_name_prefix="recon-worker"
+        )
+    )
     await pg.ensure_checkpoint_tables()
     neo4j_client.ensure_schema()
     validate_llm_config()

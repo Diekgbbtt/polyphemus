@@ -9,7 +9,15 @@ class Config:
     PROJECT_ID = os.environ.get("PROJECT_ID", "default")
     HEARTBEAT_TICK_SECONDS = int(os.environ.get("HEARTBEAT_TICK_SECONDS", "10"))
     LIVENESS_TTL_SECONDS = int(os.environ.get("LIVENESS_TTL_SECONDS", "30"))
-    REAP_TTL_SECONDS = int(os.environ.get("REAP_TTL_SECONDS", "30"))
+    # Reaping a run only because its heartbeat went stale must tolerate heavy
+    # phases (crawl/fuzz) + transient DB slowness; 30s was aggressive enough to
+    # flip healthy runs to "failed" (D1). At a 10s tick this is 30 missed ticks.
+    REAP_TTL_SECONDS = int(os.environ.get("REAP_TTL_SECONDS", "300"))
     REAPER_SWEEP_SECONDS = int(os.environ.get("REAPER_SWEEP_SECONDS", "60"))
+    # Worker-thread pool for offloaded blocking work (pod graph.invoke + all
+    # sync pg/neo4j calls). The asyncio default (~cpu+4=12) is far too small for
+    # phase fan-out (MAX_PODS=20 x several jobs), which starves the heartbeat/DB
+    # calls behind long-held pod threads. Sized generously; work is I/O-bound.
+    WORKER_THREADS = int(os.environ.get("WORKER_THREADS", "64"))
 
 config = Config()

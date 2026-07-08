@@ -76,7 +76,10 @@ async def _heartbeat_loop(run_id: str) -> None:
         while True:
             await asyncio.sleep(config.HEARTBEAT_TICK_SECONDS)
             try:
-                _touch_heartbeat(run_id)
+                # Offload the blocking pg write so the heartbeat tick never
+                # depends on (or blocks) the API event loop - a stalled tick is
+                # exactly what makes the reaper spuriously fail a live run.
+                await asyncio.to_thread(_touch_heartbeat, run_id)
             except Exception:  # best-effort; a heartbeat blip must not crash the run
                 logger.warning("heartbeat tick failed for run %s", run_id, exc_info=True)
     except asyncio.CancelledError:
@@ -108,14 +111,18 @@ async def run_pipeline(
     if read_assets is None:
         read_assets = globals()["read_assets"]
 
-    settings = load_settings(project_id) or {}
+    # All DB helpers below (pg + neo4j) are synchronous/blocking. run_pipeline
+    # runs on the API event loop, so every one is offloaded via asyncio.to_thread
+    # - otherwise a single slow query stalls the whole API (health, polls,
+    # /graph) and starves the heartbeat under concurrent runs (Defect C).
+    settings = (await asyncio.to_thread(load_settings, project_id)) or {}
 
     if job_subset is not None:
         validate_job_subset(job_subset)
 
     plan = build_phase_plan(job_subset)
 
-    registry.create_run(run_id, project_id)
+    await asyncio.to_thread(registry.create_run, run_id, project_id)
     hb = asyncio.create_task(_heartbeat_loop(run_id))
     try:
         for phase_idx, phase_jobs in enumerate(plan):
@@ -126,16 +133,22 @@ async def run_pipeline(
                     if phase_idx == 0:
                         input_assets = seed_assets(settings)
                     else:
-                        input_assets = read_assets(job.consumes, project_id)
+                        input_assets = await asyncio.to_thread(
+                            read_assets, job.consumes, project_id
+                        )
 
                     extra = {"project_id": project_id}
                     if job.use_auth and settings.get("auth_context"):
                         extra["auth_context"] = settings["auth_context"]
 
-                    registry.upsert_job(run_id, phase_idx, name, "in_progress")
+                    await asyncio.to_thread(
+                        registry.upsert_job, run_id, phase_idx, name, "in_progress"
+                    )
                 except Exception as exc:  # best-effort: a setup blip degrades
                     # only this job, it must never leave the run stuck non-terminal.
-                    registry.upsert_job(run_id, phase_idx, name, "degraded", error=str(exc))
+                    await asyncio.to_thread(
+                        registry.upsert_job, run_id, phase_idx, name, "degraded", error=str(exc)
+                    )
                     continue
                 job_configs[name] = (job, input_assets, extra)
 
@@ -146,7 +159,9 @@ async def run_pipeline(
                         job, input_assets, run_id=run_id, phase=phase_idx, extra=extra
                     )
                 except Exception as exc:  # best-effort: never abort the pipeline
-                    registry.upsert_job(run_id, phase_idx, name, "degraded", error=str(exc))
+                    await asyncio.to_thread(
+                        registry.upsert_job, run_id, phase_idx, name, "degraded", error=str(exc)
+                    )
                     return
 
                 total = len(pod_exports)
@@ -176,7 +191,8 @@ async def run_pipeline(
                 if viewer_url:
                     job_stats["viewer_url"] = viewer_url
 
-                registry.upsert_job(
+                await asyncio.to_thread(
+                    registry.upsert_job,
                     run_id,
                     phase_idx,
                     name,
@@ -184,7 +200,9 @@ async def run_pipeline(
                     stats=job_stats,
                 )
 
-            registry.set_run_status(run_id, "running", current_phase=phase_idx)
+            await asyncio.to_thread(
+                registry.set_run_status, run_id, "running", current_phase=phase_idx
+            )
             await asyncio.gather(*[_run_one(name) for name in job_configs])
     finally:
         hb.cancel()
@@ -192,4 +210,4 @@ async def run_pipeline(
             await hb
         except asyncio.CancelledError:
             pass
-    registry.set_run_status(run_id, "complete")
+    await asyncio.to_thread(registry.set_run_status, run_id, "complete")
