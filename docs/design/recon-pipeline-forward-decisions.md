@@ -166,3 +166,55 @@ Downstream contract check: the phase-4 jobs that `consumes="BaseURL"` (katana/ff
 ## D13 - frontend graph nodes must render their object data (NEW work item)
 
 Today the force-graph (`frontend/src/graph/GraphCanvas.tsx`) renders every node as a bare colored dot; the node's data (`properties`, and for an `Observation` its natural-language comment) is fetched (`GET /projects/{id}/graph` returns `node.properties`) but never shown. **Work item (to build): each node shows its object data in a small box** - an `Observation` shows its NL comment (evidence/rationale/macro_kind), and each attack-surface element shows its object attributes. Given graph scale (houseofhr 6656 nodes), an always-on box per node is unreadable, so the box should surface on hover/selection (a `nodeLabel` tooltip and/or a detail panel on click), not as permanent labels.
+
+## D14 - seed-domain scope semantics: exact-apex vs wildcard (NEW work item, verified gap)
+
+**Verified live:** the pipeline has **no scope concept**. `pipeline.py:42` seeds the root asset as `[{"name": settings.get("target_domain")}]` - a bare domain string with no exact-vs-wildcard distinction. The only `scope` token in the codebase is `auth_context.scope` (`routes.py:49-64`), an unrelated auth field. Consequently subfinder/amass (`consumes="Domain"`) always fan out to discover subdomains regardless of whether the operator meant "this exact host" or "the whole zone".
+
+**Desired semantics (operator, 2026-07-08):**
+- If the submitted target is a **complete/exact domain** (e.g. `app.example.com`), that host **is** the scope: no further subdomain discovery should run - the discovery phase (subfinder/amass, and the puredns/dnsx expansion that follows) should be suppressed, and recon proceeds on the single seeded host.
+- If the target carries a **wildcard placeholder** (e.g. `*.example.com`), the whole zone is in scope: subdomain discovery runs as today.
+
+**Explicit carve-out:** this scope gate does **not** apply to `subdomain_takeover`. Using an out-of-scope asset as a *parameter* to a takeover check is valid (the finding is about a dangling reference the in-scope target points at), so takeover scanning stays enabled regardless of the exact/wildcard decision.
+
+**Work item (to build):** introduce a scope descriptor on the target (parse the `*.` placeholder at settings/seed time into `{apex, mode: exact|wildcard}`), and gate the discovery phase on `mode == wildcard`. In `exact` mode, seed the single host directly into the post-discovery input set (it must still reach httpx/naabu/etc.) rather than dropping it because discovery was skipped. Keep `subdomain_takeover` outside the gate.
+
+## D15 - endpoint noise filtering: path-based, precision-traded-for-recall on user-controllable assets (NEW work item)
+
+**Problem (operator, houseofhr as reference):** the attack surface is polluted by endpoints that are strictly presentational - static assets and pure HTML render artifacts (`.css`, `.jpg`/`.jpeg`, `/assets/`, `/styles/`, fonts). These should be removed. **But** blanket extension filtering (Redamon's `katana -ef png,jpg,gif,css,woff,woff2,ttf`, which we currently replicate at `jobs.py:104`) also discards **user-controllable images** - images referenced via a user-supplied `src` attribute or user-uploaded media - which are legitimate attack surface (SSRF/stored-XSS/path traversal vectors) and must be retained.
+
+**Why extension filtering can't express this:** the risky-vs-noise distinction is not in the file extension - a `.jpg` under `/assets/` is noise, a `.jpg` under `/upload/` or served from a user-controlled path is surface. Extension filtering is high-precision/low-recall on exactly the assets we care about keeping.
+
+**Direction (operator):** filter on **URL path** rather than extension. Path-based rules (drop `/assets/`, `/static/`, `/styles/`, fingerprinted-bundle paths; keep `/upload/`, `/media/`, user-content paths, and any path with a user-supplied parameter) trade precision for **recall on user-controllable media** - the correct trade here, since a false-negative (keeping a truly-static asset) is cheap noise while a false-positive (dropping a user-controllable image) loses real surface. **Work item (to build):** (a) remove/relax the blanket `-ef` extension filter so user-controllable images survive collection, (b) add a post-collection path-based noise classifier (drop static-render paths, preserve user-content/parameterized paths), applied as a curator/parser-side filter so the rule is centralized and testable rather than embedded per-tool. Note this interacts with D16 (profiling): a path filter is a coarse first cut; content-type profiling refines it.
+
+## D16 - two-stage endpoint discovery + profiling drives downstream routing (NEW work item, may split a phase)
+
+**Current shape:** phase 4 discovers endpoints (katana crawl, ffuf brute, gau passive) and phase 5 (arjun) plus phase-4 kiterunner/paramspider consume them - but **without any webapp-vs-webapi classification**. Every BaseURL/Endpoint is treated identically; api-specific tools (kiterunner, api-mode ffuf) fire against presentational endpoints and param tools fire indiscriminately.
+
+**Desired shape (operator):**
+1. **Discover** endpoints - crawled by katana, or brute-forced/passively harvested by ffuf/gau.
+2. **Profile** each endpoint as **webapp** (HTML UI) or **webapi** (backend-exposing, e.g. JSON). Classification signals: content-type (`application/json` => api), and more generally the httpx-observable response shape. This profiling can also **prune gau noise**: many passively-harvested URLs are dead (404) and can be dropped by an httpx liveness+profile pass before they reach expensive consumers.
+3. **Route by profile:**
+   - **webapi** endpoints -> ffuf (configured for **API** discovery, distinct from content-discovery mode) + kiterunner.
+   - **parameters** -> paramspider + arjun run on **both** classes.
+
+**Feasibility (verified):** the profiling signal is **already collected** - the httpx parser captures `content_type` today (`httpx_parser.py:29,64`). What is missing is (a) a profiling step that persists a webapp/webapi label per endpoint (httpx is the natural home; it could also do the gau-liveness prune), and (b) a router that keys downstream `consumes` on that label rather than on the bare `Endpoint`/`BaseURL` type.
+
+**Architectural consequence:** this likely **decomposes the current single discovery phase into two** - *discover* then *profile* - with the profile becoming a first-class asset attribute that the phase-5 (and api-specific phase-4) tools consume. This touches the phase DAG (`jobs.py` PHASES + JobSpec.consumes), so it is a structural change, not a tweak; sequence it after D14 (scope) since scope determines the endpoint population being profiled.
+
+## D17 - jsluice JS-analysis is not doing what its parser documents (NEW work item, verified defect)
+
+**The operator asked to see precisely how JS files are discovered, identified, and processed, and specifically whether jsluice (1) attempts to discover each bundle's source `.map` file and (2) processes every discovered JS file. Both answers are NO, and the live evidence shows why.**
+
+**What the job actually runs** (`jobs.py:129-136`): `curl -s {target} | jsluice urls -j -R {baseurl}`, with `consumes="BaseURL"`. So for each BaseURL the pod `curl`s the **origin root page** (typically HTML) and pipes *that* into `jsluice urls`. It does **not**: enumerate the site's JS bundles first, fetch each `.js`, run jsluice per bundle, attempt `.map` sourcemap discovery, or ever invoke `jsluice secrets` mode.
+
+**What the parser *documents* it should do** (`parsers/jsluice_parser.py:4-6`): "jsluice is run **in two modes** (`urls` + `secrets`) **against JS files discovered by the crawl phase**." The parser is even built to ingest interleaved `urls` and `secrets` lines and to emit `Secret` nodes. **The job command and the parser contract have diverged** - the parser can handle secrets and per-bundle input the job never produces.
+
+**Live evidence (all runs):**
+- **0 `Secret` nodes** in Neo4j, ever - `jsluice secrets` mode never executes.
+- **5** jsluice-sourced `Endpoint` nodes total across all runs - i.e. `jsluice urls` over the HTML root yields almost nothing, because the real endpoints live inside the JS bundles it never opens.
+- **1507 `.js` endpoints** exist in the graph (discovered by **katana**, which crawls JS), but jsluice `consumes="BaseURL"`, not these `.js` `Endpoint`s, so **not one discovered bundle was fed to jsluice**.
+- **0 `.map` files** discovered anywhere - no sourcemap-discovery logic exists in the pipeline.
+- Per-run execution is confirmed in `recon_jobs` (e.g. run `cbfc76ec` jsluice success, `stats.pods=7` == BaseURL count, **not** JS-file count), so jsluice ran **once per BaseURL origin**, not **once per JS bundle**. Langfuse traces (job_agent wires `get_langfuse_callbacks`, `job_agent.py:198`) carry the per-pod command+stdout for the same runs.
+
+**Work item (to build): make jsluice actually analyze JS.** (a) Change the jsluice input to the discovered **JS-bundle endpoints** (the `.js` `Endpoint`s katana already produces) rather than the BaseURL root - one jsluice pod per bundle, fetching that bundle. (b) Run **both** modes per bundle (`jsluice urls` **and** `jsluice secrets`) so the `Secret` path the parser already supports is exercised. (c) Add **sourcemap (`.map`) discovery**: for each bundle, probe the conventional `<bundle>.map` (and honour `//# sourceMappingURL=` when present) and analyze the recovered original sources - sourcemaps frequently expose full source, endpoints, and secrets a minified bundle hides. This is a data-contract change (jsluice `consumes` shifts from BaseURL to a JS-Endpoint selector) and pairs naturally with D16's profiling step.
