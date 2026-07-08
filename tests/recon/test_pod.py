@@ -356,7 +356,9 @@ def test_triage_caps_assets_to_avoid_llm_context_overflow(monkeypatch):
     obs = pod.default_triage_fn(exec_result, assets, JOBS["subfinder"])
 
     assert obs == []
-    p = captured["prompt"]
+    # default_triage_fn invokes the model with a message list ([SystemMessage
+    # (skill)?, HumanMessage(prompt)]); the asset prompt is the last message.
+    p = captured["prompt"][-1].content
     assert f"{n} total" in p                      # true total surfaced
     assert f"showing first {pod._MAX_TRIAGE_ASSETS}" in p
     assert "h0.x.com" in p                         # sample present
