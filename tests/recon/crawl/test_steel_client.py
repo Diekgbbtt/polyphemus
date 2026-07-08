@@ -90,5 +90,36 @@ def test_default_factory_returns_seven_steel_tools_when_deps_present(monkeypatch
     assert all(hasattr(t, "ainvoke") and callable(t.ainvoke) for t in tools)
 
 
+def test_default_factory_passes_auth_cookies_to_provider(monkeypatch):
+    monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
+    captured = {}
+
+    class _FakeProvider:
+        def __init__(self, auth_cookies=None):
+            captured["auth_cookies"] = auth_cookies
+
+        async def get_tools(self):
+            return []
+
+    import agent.recon.crawl.steel_provider as SP
+    monkeypatch.setattr(SP, "SteelCrawlProvider", _FakeProvider)
+
+    SC._default_client_factory(auth_cookies=[{"name": "a", "value": "b"}])
+    assert captured["auth_cookies"] == [{"name": "a", "value": "b"}]
+
+
+def test_get_crawl_tools_threads_auth_cookies_through_default_factory(monkeypatch):
+    monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
+    seen = {}
+
+    def fake_default_factory(auth_cookies=None):
+        seen["auth_cookies"] = auth_cookies
+        return _FakeClient([_FakeTool("steel_crawl_start")])
+
+    monkeypatch.setattr(SC, "_default_client_factory", fake_default_factory)
+    asyncio.run(SC.get_crawl_tools(auth_cookies=[{"name": "x", "value": "y"}]))
+    assert seen["auth_cookies"] == [{"name": "x", "value": "y"}]
+
+
 def test_crawler_role_present():
     assert "crawler" in P.ROLES

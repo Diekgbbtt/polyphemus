@@ -66,7 +66,7 @@ def steel_configured() -> bool:
     return bool(config.STEEL_API_KEY)
 
 
-def _default_client_factory():
+def _default_client_factory(auth_cookies=None):
     """Build the in-process Steel crawl-tool provider.
 
     Returns a `steel_provider.SteelCrawlProvider`, which opens a steel.dev
@@ -74,6 +74,10 @@ def _default_client_factory():
     (``wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<id>``) lazily,
     only when `steel_crawl_start` is invoked - so constructing the provider
     performs no network I/O.
+
+    `auth_cookies` (a list of `{name, value, [domain], [path]}` dicts, from the
+    project's `auth_context.cookies`) is forwarded to the provider, which seeds
+    the browser context with them before the crawl (non-interactive auth).
 
     Raises `SteelProviderUnavailable` when the provider's runtime dependencies
     (`playwright` and `steel-sdk`) are not importable in this build, so the
@@ -96,22 +100,27 @@ def _default_client_factory():
 
     from agent.recon.crawl.steel_provider import SteelCrawlProvider  # noqa: PLC0415
 
-    return SteelCrawlProvider()
+    return SteelCrawlProvider(auth_cookies=auth_cookies)
 
 
-async def get_crawl_tools(*, client_factory=None) -> list:
+async def get_crawl_tools(*, client_factory=None, auth_cookies=None) -> list:
     """Return the `steel_*` crawl tools from the in-process provider.
 
-    `client_factory` (default `_default_client_factory`) builds a provider
-    object exposing `async get_tools() -> list`; the result is filtered to
-    `CRAWL_TOOL_NAMES`. Raises `SteelNotConfigured` when the steel.dev
-    credential is absent.
+    The default provider (`_default_client_factory`) exposes
+    `async get_tools() -> list`; the result is filtered to `CRAWL_TOOL_NAMES`.
+    `auth_cookies` (from the project's `auth_context.cookies`) is threaded to the
+    default provider so the browser context is seeded for non-interactive auth;
+    an injected `client_factory` stays a zero-arg callable (tests build the
+    provider themselves) and does not receive cookies. Raises
+    `SteelNotConfigured` when the steel.dev credential is absent.
     """
     if not steel_configured():
         raise SteelNotConfigured(
             "STEEL_API_KEY (steel.dev credential) must be set to use the crawl tools"
         )
-    factory = client_factory or _default_client_factory
-    client = factory()
+    if client_factory is not None:
+        client = client_factory()
+    else:
+        client = _default_client_factory(auth_cookies=auth_cookies)
     tools = await client.get_tools()
     return [t for t in tools if getattr(t, "name", "") in CRAWL_TOOL_NAMES]
