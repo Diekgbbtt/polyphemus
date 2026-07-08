@@ -365,3 +365,58 @@ def test_triage_caps_assets_to_avoid_llm_context_overflow(monkeypatch):
     assert f"h{pod._MAX_TRIAGE_ASSETS - 1}.x.com" in p
     assert f"h{pod._MAX_TRIAGE_ASSETS}.x.com" not in p   # capped beyond the sample
     assert f"h{n - 1}.x.com" not in p
+
+
+def test_batched_jsluice_configurator_builds_batch_command_and_reaches_curator():
+    """D17/Q6: for a batched job the configurator builds the command from the
+    pod's `batch` list (NOT fill_template), executes it, and the jsluice JSONL
+    the batch scanner emits flows through the real parser to the curator."""
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        captured["cmd"] = cmd
+        # What scripts/jsluice_scan.py emits: a jsluice `urls` line + an
+        # annotated `secrets` line, both anchored on the bundle origin.
+        stdout = (
+            '{"url":"https://h.example.com/api/hidden","base_url":"https://h.example.com"}\n'
+            '{"kind":"aws-access-key","secret":"AKIAABCDEFGHIJKLMNOP","base_url":"https://h.example.com"}\n'
+        )
+        return ExecResult(stdout=stdout, stderr="", returncode=0, duration_ms=5)
+
+    def triage_fn(er, assets, job):
+        return []
+
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=lambda a, o, p: (len(a), len(o)), triage_fn=triage_fn)
+    batch = ["https://h.example.com/static/app.js", "https://h.example.com/static/vendor.js"]
+    out = g.invoke({
+        "job": JOBS["jsluice"],
+        "input_asset": {"batch": batch},
+        "asset_context": "", "extra": {}, "session_id": "run-js1",
+        "iteration": 0, "project_id": "proj1",
+    })
+    assert out["export"].verdict == "success"
+    # command is the base64-embedded scanner over the batch URLs, not a template
+    assert "python3 -" in captured["cmd"]
+    assert "app.js" in captured["cmd"] and "vendor.js" in captured["cmd"]
+    assert "{target}" not in captured["cmd"]
+    # both an Endpoint (from urls) and a Secret (from secrets) were curated
+    assert out["export"].assets_merged >= 2
+
+
+def test_batched_jsluice_parser_emits_endpoint_and_redacted_secret():
+    """The parser side already handles the batch scanner's interleaved output:
+    a urls line -> Endpoint, a base_url-annotated secrets line -> redacted
+    Secret with a HAS_SECRET edge to the bundle's BaseURL."""
+    from agent.recon.parsers.jsluice_parser import parse
+
+    stdout = (
+        '{"url":"https://h.example.com/api/hidden","base_url":"https://h.example.com"}\n'
+        '{"kind":"aws-access-key","secret":"AKIAABCDEFGHIJKLMNOP","base_url":"https://h.example.com"}\n'
+    )
+    deltas = parse(stdout)
+    secrets = [d for d in deltas if d.type == "Secret"]
+    endpoints = [d for d in deltas if d.type == "Endpoint"]
+    assert len(secrets) == 1 and len(endpoints) == 1
+    assert secrets[0].props["redacted"] is True
+    assert any(e.rel == "HAS_SECRET" and e.node_identity == {"url": "https://h.example.com"}
+               for e in secrets[0].edges)

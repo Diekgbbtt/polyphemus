@@ -34,12 +34,26 @@ class ToolInvocation(BaseModel):
     command: str
     session_id: str
 
+class AssetSelector(BaseModel):
+    """Declarative, pure predicate over a read-back asset's identity/prop dict.
+
+    A `JobSpec.consumes_where` narrows a job's input population beyond the bare
+    `consumes` label: e.g. jsluice consumes `Endpoint` but only wants the JS
+    bundles, expressed as `field="path", op="ends_with", values=[".js",".mjs"]`.
+    Kept a data structure (not a callable) so a JobSpec stays a plain model and
+    the matching logic lives in one pure, testable place (`selectors.py`)."""
+    field: str
+    op: Literal["ends_with", "starts_with", "equals", "contains"] = "ends_with"
+    values: list[str]
+
 class JobSpec(BaseModel):
     tool: str
     skill: str
     command_template: str
     produces: list[str]
     consumes: str
+    consumes_where: AssetSelector | None = None
+    batch: bool = False
     use_auth: bool = False
     configurator_mode: Literal["deterministic", "agent"] = "deterministic"
     eval_criteria: str = "returncode_zero_nonempty"

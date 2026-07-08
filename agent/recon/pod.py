@@ -134,13 +134,21 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
         job = state["job"]
         extra = dict(state.get("extra") or {})
         extra["_use_auth"] = job.use_auth
-        command = fill_template(
-            job.command_template,
-            state["input_asset"],
-            extra,
-            session_id=state["session_id"],
-            tool=job.tool,
-        )
+        input_asset = state["input_asset"]
+        if job.batch and "batch" in input_asset:
+            # Batched job (jsluice, D17/Q6): the pod runs one command over a
+            # list of bundle URLs, not a single-asset template fill.
+            from agent.recon.batching import build_batch_command
+
+            command = build_batch_command(job, input_asset["batch"])
+        else:
+            command = fill_template(
+                job.command_template,
+                input_asset,
+                extra,
+                session_id=state["session_id"],
+                tool=job.tool,
+            )
         invocation = ToolInvocation(command=command, session_id=state["session_id"])
         iteration = state.get("iteration", 0) + 1
         return {"invocation": invocation, "iteration": iteration}

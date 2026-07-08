@@ -83,7 +83,9 @@ def _inject_seed_host(input_assets: list[dict], scope: dict) -> list[dict]:
     return [{"name": seed_host}, *input_assets]
 
 
-def read_assets(node_type: str, project_id: str, *, driver=None) -> list[dict]:
+def read_assets(
+    node_type: str, project_id: str, where=None, *, driver=None
+) -> list[dict]:
     """Re-query Neo4j for all `node_type` nodes belonging to `project_id`,
     returning each as an identity dict (bookkeeping props stripped).
 
@@ -91,6 +93,13 @@ def read_assets(node_type: str, project_id: str, *, driver=None) -> list[dict]:
     (`agent.recon.curator.ALLOWED_LABELS`) before being interpolated into
     the Cypher label position - the only place a label can legally appear
     unparameterised. Values stay fully parameterised.
+
+    `where` (an optional `AssetSelector`) narrows the read-back set beyond the
+    bare label - e.g. jsluice consumes `Endpoint` but only the `.js`/`.mjs`
+    bundles (D17/Q5). The predicate is applied purely in Python via
+    `apply_selector`, so this stays a reusable label-plus-predicate read, not a
+    per-tool special case. (The label population read here is one query per job
+    per run; pushing the suffix into Cypher is a possible future optimization.)
     """
     if node_type not in ALLOWED_LABELS:
         raise ValueError(f"Unknown asset label: {node_type!r}")
@@ -105,10 +114,14 @@ def read_assets(node_type: str, project_id: str, *, driver=None) -> list[dict]:
         result = session.run(query, project_id=project_id)
         records = [dict(record["n"]) for record in result]
 
-    return [
+    assets = [
         {k: v for k, v in record.items() if k not in _NON_IDENTITY_KEYS}
         for record in records
     ]
+
+    from agent.recon.selectors import apply_selector
+
+    return apply_selector(assets, where)
 
 
 async def _heartbeat_loop(run_id: str) -> None:
@@ -190,6 +203,10 @@ async def run_pipeline(
                 try:
                     if phase_idx == 0:
                         input_assets = seed_assets(settings)
+                    elif job.consumes_where is not None:
+                        input_assets = await asyncio.to_thread(
+                            read_assets, job.consumes, project_id, job.consumes_where
+                        )
                     else:
                         input_assets = await asyncio.to_thread(
                             read_assets, job.consumes, project_id
@@ -201,6 +218,22 @@ async def run_pipeline(
                         # host (exact, where discovery produced nothing).
                         if job.consumes == "Subdomain":
                             input_assets = _inject_seed_host(input_assets, scope)
+
+                    # Batched jobs (jsluice, D17/Q6): the raw per-bundle assets
+                    # are reduced (first-party filter + url/basename dedup) and
+                    # distributed across <= MAX_PODS pods, each carrying a
+                    # `batch` list. This keeps the pod budget intact for a job
+                    # whose input population (653 bundles) dwarfs MAX_PODS.
+                    if job.batch:
+                        from agent.recon.batching import build_batch_assets
+                        from agent.recon.config import MAX_PODS
+                        from agent.recon.parsers._urls import registrable_domain
+
+                        target = settings.get("target_domain")
+                        apex = registrable_domain(target) if target else None
+                        input_assets = build_batch_assets(
+                            input_assets, apex_registrable=apex, max_pods=MAX_PODS
+                        )
 
                     extra = {"project_id": project_id}
                     if job.use_auth and settings.get("auth_context"):

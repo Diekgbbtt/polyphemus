@@ -93,3 +93,30 @@ def test_steel_crawl_job_consumes_baseurl_and_is_placed_after_httpx():
 
 def test_validate_job_subset_with_steel_crawl_passes():
     validate_job_subset(["subfinder", "httpx", "steel_crawl"])
+
+
+def test_jsluice_consumes_js_endpoints_via_path_selector_and_is_batched():
+    job = JOBS["jsluice"]
+    assert job.consumes == "Endpoint"
+    assert job.batch is True
+    assert job.command_template == ""  # batched: command built per-pod, not filled
+    assert job.consumes_where is not None
+    assert job.consumes_where.field == "path"
+    assert job.consumes_where.op == "ends_with"
+    assert set(job.consumes_where.values) == {".js", ".mjs"}
+
+
+def test_jsluice_runs_after_the_endpoint_producing_crawlers():
+    # jsluice must sit in a LATER phase than katana/gau (which mint the `.js`
+    # Endpoints it consumes) or the phase barrier feeds it nothing (D17).
+    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
+    katana_idx = next(i for i, p in enumerate(PHASES) if "katana" in p)
+    gau_idx = next(i for i, p in enumerate(PHASES) if "gau" in p)
+    assert jsluice_idx > katana_idx
+    assert jsluice_idx > gau_idx
+
+
+def test_arjun_runs_after_jsluice_so_recovered_endpoints_reach_it():
+    arjun_idx = next(i for i, p in enumerate(PHASES) if "arjun" in p)
+    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
+    assert arjun_idx > jsluice_idx

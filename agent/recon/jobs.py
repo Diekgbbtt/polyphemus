@@ -8,7 +8,7 @@ plan such that every job's `consumes` type is either the pre-seeded root
 type ("Domain") or has been produced by a job in an earlier phase.
 """
 
-from agent.recon.types import JobSpec
+from agent.recon.types import AssetSelector, JobSpec
 
 DOMAIN = "Domain"  # pre-seeded root asset type (the project's target domain)
 
@@ -129,9 +129,19 @@ JOBS: dict[str, JobSpec] = {
     "jsluice": JobSpec(
         tool="jsluice",
         skill="js_secret_scan",
-        command_template="curl -s {target} | jsluice urls -j -R {baseurl}",
+        # Batched: the per-pod command is built from the pod's bundle batch by
+        # agent.recon.batching.build_batch_command (fetch + jsluice urls/secrets
+        # + sourcemap extraction), NOT from this template. Left empty because a
+        # batched job never routes through fill_template.
+        command_template="",
         produces=["Endpoint", "Secret"],
-        consumes="BaseURL",
+        # jsluice consumes the discovered JS bundles (the `.js`/`.mjs` Endpoints
+        # katana crawls up), NOT the HTML BaseURL root - the D17 defect fix. The
+        # selector is path-suffix, not content-type, because katana-minted `.js`
+        # Endpoints carry no content_type (D17/Q5).
+        consumes="Endpoint",
+        consumes_where=AssetSelector(field="path", op="ends_with", values=[".js", ".mjs"]),
+        batch=True,
         use_auth=False,
     ),
     "graphql-cop": JobSpec(
@@ -173,7 +183,13 @@ PHASES: list[list[str]] = [
     ["dnsx", "puredns", "subdomain_takeover"],
     ["naabu"],
     ["httpx"],
-    ["katana", "ffuf", "kiterunner", "jsluice", "graphql-cop", "gau", "paramspider", "steel_crawl"],
+    ["katana", "ffuf", "kiterunner", "graphql-cop", "gau", "paramspider", "steel_crawl"],
+    # jsluice consumes the `.js`/`.mjs` Endpoints the phase-4 crawlers (katana,
+    # gau) produce, so it MUST run in a later phase than them - the phase
+    # barrier resolves a job's inputs before any same-phase job runs, so keeping
+    # jsluice in phase 4 would feed it only httpx's endpoints, not katana's
+    # bundles (the D17 defect). Its own recovered Endpoints then reach arjun.
+    ["jsluice"],
     ["arjun"],
 ]
 

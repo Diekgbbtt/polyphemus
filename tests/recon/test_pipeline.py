@@ -334,6 +334,62 @@ def test_job_stats_records_consumed_and_produced_lineage():
     assert dnsx["stats"]["pods"] == 2
 
 
+def test_batched_jsluice_job_gets_filtered_read_and_batch_wrapped_inputs():
+    """D17/Q5+Q6 end to end through the orchestrator: the jsluice job's read is
+    filtered by its `consumes_where` (only `.js`/`.mjs` Endpoints reach it) and
+    the survivors are reduced + distributed into <= MAX_PODS batch pod-inputs
+    before fan-out. jsluice is not a discovery job, so it runs even though the
+    bare `houseofhr.com` target is exact-mode under the D14 scope gate."""
+    from agent.recon.config import MAX_PODS
+
+    seen_inputs = {}
+    where_seen = {}
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        seen_inputs[job.tool] = input_assets
+        return [PodExport(input_asset={}, verdict="success")]
+
+    # A read_assets that honors the optional `where` selector, returning a mix
+    # of many .js bundles across two first-party hosts plus non-JS noise.
+    def read_assets(node_type, project_id, where=None):
+        where_seen[node_type] = where
+        if node_type != "Endpoint":
+            return [{"name": "www.houseofhr.com"}]
+        assets = [{"path": "/app.css", "url": "https://a.houseofhr.com/app.css"}]
+        for i in range(60):
+            assets.append({"path": f"/b{i}.js", "url": f"https://a.houseofhr.com/b{i}.js"})
+        from agent.recon.selectors import apply_selector
+        return apply_selector(assets, where)
+
+    registry = FakeRegistry()
+    settings = {"target_domain": "houseofhr.com"}
+
+    asyncio.run(
+        pipeline.run_pipeline(
+            "projX",
+            run_id="runX",
+            job_subset=["subfinder", "httpx", "jsluice"],
+            run_job=run_job,
+            load_settings=make_load_settings(settings),
+            registry=registry,
+            read_assets=read_assets,
+        )
+    )
+
+    # The Endpoint read carried the jsluice path-suffix selector.
+    sel = where_seen["Endpoint"]
+    assert sel is not None and sel.field == "path" and set(sel.values) == {".js", ".mjs"}
+
+    # jsluice received batch pod-inputs, capped at MAX_PODS, and the .css noise
+    # never made it in (filtered by the selector).
+    js_inputs = seen_inputs["jsluice"]
+    assert 0 < len(js_inputs) <= MAX_PODS
+    assert all("batch" in pi for pi in js_inputs)
+    all_urls = [u for pi in js_inputs for u in pi["batch"]]
+    assert len(all_urls) == 60  # all 60 .js bundles, none dropped
+    assert not any(u.endswith(".css") for u in all_urls)
+
+
 # --- D14 scope gate + D11 apex probe --------------------------------------
 
 

@@ -2,8 +2,10 @@
 
 Ported from Redamon's `helpers/resource_enum/jsluice_helpers.py`
 (`run_jsluice_analysis` + `merge_jsluice_into_by_base_url`). jsluice is run
-in two modes against JS files discovered by the crawl phase, and both modes'
-output can be interleaved line-by-line in this parser's input:
+in two modes against the JS-bundle Endpoints katana discovers - and, via the
+sourcemap-extraction wrapper (`scripts/jsluice_scan.py`, D17/Q7), against the
+original sources recovered from each bundle's `.map`. Both modes' output can be
+interleaved line-by-line in this parser's input:
 
   - `jsluice urls` lines: `{"url": "...", "method": "GET", "type": "..."}`
     -> discovered endpoint, decomposed into BaseURL + Endpoint (+HAS_ENDPOINT
