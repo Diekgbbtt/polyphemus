@@ -196,7 +196,11 @@ def test_upsert_job_second_call_same_key_uses_conflict_update_path(monkeypatch):
     pg.upsert_job("run1", 0, "subfinder", "in_progress")
     pg.upsert_job("run1", 0, "subfinder", "success", stats={"pods": 1})
 
-    for query, _ in cur.executed:
+    # upsert_job also fires a separate `UPDATE recon_runs SET last_heartbeat_at`
+    # query; scope these assertions to the recon_jobs upsert only.
+    job_upserts = [q for q, _ in cur.executed if "INTO recon_jobs" in q]
+    assert job_upserts
+    for query in job_upserts:
         assert "ON CONFLICT (run_id, phase, job) DO UPDATE" in query
         assert "status = EXCLUDED.status" in query
         assert "finished_at = EXCLUDED.finished_at" in query
