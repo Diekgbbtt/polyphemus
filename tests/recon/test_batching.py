@@ -48,18 +48,55 @@ def test_is_first_party_rejects_third_party_cdn():
 
 
 # ---------------------------- reductions --------------------------------- #
-def test_reduce_dedups_exact_url_and_basename_across_hosts():
+def test_reduce_dedups_exact_url_and_fingerprinted_basename_across_hosts():
     assets = [
-        _ep(url="https://a.houseofhr.com/static/app.4f3a.js"),
-        _ep(url="https://a.houseofhr.com/static/app.4f3a.js"),  # exact dup
-        _ep(url="https://b.houseofhr.com/static/app.4f3a.js"),  # same basename, other host
-        _ep(url="https://a.houseofhr.com/static/vendor.9c1d.js"),
+        _ep(url="https://a.houseofhr.com/static/app.a1b2c3d4.js"),
+        _ep(url="https://a.houseofhr.com/static/app.a1b2c3d4.js"),  # exact dup
+        _ep(url="https://b.houseofhr.com/static/app.a1b2c3d4.js"),  # same fp basename, other host
+        _ep(url="https://a.houseofhr.com/static/vendor.9c1d2e3f.js"),
     ]
     out = reduce_bundles(assets, apex_registrable="houseofhr.com")
     assert out == [
-        "https://a.houseofhr.com/static/app.4f3a.js",
-        "https://a.houseofhr.com/static/vendor.9c1d.js",
+        "https://a.houseofhr.com/static/app.a1b2c3d4.js",
+        "https://a.houseofhr.com/static/vendor.9c1d2e3f.js",
     ]
+
+
+def test_reduce_keeps_generic_basename_per_host_across_hosts():
+    # main.js has no content hash, so two hosts' copies may genuinely differ -
+    # both survive (recall-safe); the pod's md5 source dedup is the finer net.
+    assets = [
+        _ep(url="https://a.houseofhr.com/main.js"),
+        _ep(url="https://b.houseofhr.com/main.js"),
+        _ep(url="https://c.houseofhr.com/index.js"),
+    ]
+    out = reduce_bundles(assets, apex_registrable="houseofhr.com")
+    assert out == [
+        "https://a.houseofhr.com/main.js",
+        "https://b.houseofhr.com/main.js",
+        "https://c.houseofhr.com/index.js",
+    ]
+
+
+def test_reduce_generic_basename_still_dedups_exact_url():
+    # The exact-URL dedup is unchanged: the same main.js on ONE host collapses.
+    assets = [
+        _ep(url="https://a.houseofhr.com/main.js"),
+        _ep(url="https://a.houseofhr.com/main.js"),
+    ]
+    out = reduce_bundles(assets, apex_registrable="houseofhr.com")
+    assert out == ["https://a.houseofhr.com/main.js"]
+
+
+def test_reduce_dedups_hashless_bundler_marker_basename_across_hosts():
+    # A bundler-marker name (vendor/runtime/chunk/polyfill) counts as
+    # fingerprinted per the D15 rule even without a hash, so it dedups.
+    assets = [
+        _ep(url="https://a.houseofhr.com/runtime.js"),
+        _ep(url="https://b.houseofhr.com/runtime.js"),
+    ]
+    out = reduce_bundles(assets, apex_registrable="houseofhr.com")
+    assert out == ["https://a.houseofhr.com/runtime.js"]
 
 
 def test_reduce_drops_third_party_when_apex_given():

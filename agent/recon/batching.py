@@ -10,9 +10,11 @@ Reductions (cheapest, before batching):
   1. same-origin / first-party filter - drop third-party CDN bundles that are
      out of scope and carry no value (`assets.allegrostatic.com`, tag managers);
   2. dedup by exact bundle URL;
-  3. dedup by basename across hosts - the same fingerprinted SPA bundle set
-     duplicated across tenant subdomains collapses to one scan (content-hash of
-     the recovered *sources* is a second, finer dedup inside the pod).
+  3. dedup FINGERPRINTED basenames across hosts - the same content-hashed SPA
+     bundle set duplicated across tenant subdomains collapses to one scan. A
+     generic basename (`main.js`, `index.js` with no hash) is NOT deduped
+     across hosts: each host's copy may be genuinely distinct, so it survives
+     to the pod, where the md5 source-body dedup is the finer, fetch-aware net.
 
 All functions are pure and deterministic (stable ordering) so the reductions
 and batch construction are unit-testable without Neo4j or a pod.
@@ -20,6 +22,7 @@ and batch construction are unit-testable without Neo4j or a pod.
 from __future__ import annotations
 
 import base64
+import re
 import shlex
 from pathlib import Path
 from urllib.parse import urlparse
@@ -28,6 +31,26 @@ from agent.recon.parsers._urls import registrable_domain
 from agent.recon.types import JobSpec
 
 _RUNNER = Path(__file__).resolve().parent / "scripts" / "jsluice_scan.py"
+
+# Fingerprint definition MIRRORS D15's `agent/recon/noise_filter.py` rule (that
+# stream is on a separate unmerged branch, so the regex/marker set is replicated
+# here rather than imported; DRY them on consolidation). A filename is
+# "fingerprinted" when it carries a >=8-char hex content hash delimited before a
+# js/css/mjs extension, OR contains a bundler-marker token. Only fingerprinted
+# basenames are content-stable enough to dedup across hosts.
+_FINGERPRINT_RE = re.compile(r"[.\-_][0-9a-f]{8,}\.(?:js|css|mjs)$")
+_BUNDLER_MARKER_RE = re.compile(r"(?:^|[.\-_])(?:chunk|runtime|polyfill|vendor)(?:[.\-_]|$)")
+_BUNDLE_EXTS = frozenset({"js", "css", "mjs"})
+
+
+def _is_fingerprinted(filename: str) -> bool:
+    """True when `filename` is a content-hashed / bundler-marked bundle name -
+    the D15 fingerprint rule. Such names identify identical content across
+    hosts; generic names (`main.js`) do not."""
+    if _FINGERPRINT_RE.search(filename):
+        return True
+    ext = filename.rpartition(".")[2].lower() if "." in filename else ""
+    return ext in _BUNDLE_EXTS and bool(_BUNDLER_MARKER_RE.search(filename))
 
 
 def bundle_url(asset: dict) -> str | None:
@@ -77,16 +100,20 @@ def reduce_bundles(assets: list[dict], *, apex_registrable: str | None = None) -
         urls = [u for u in urls if is_first_party(u, apex_registrable)]
 
     seen_urls: set[str] = set()
-    seen_basenames: set[str] = set()
+    seen_fingerprints: set[str] = set()
     reduced: list[str] = []
     for u in urls:
         if u in seen_urls:
             continue
         seen_urls.add(u)
         base = _basename(u)
-        if base in seen_basenames:
-            continue
-        seen_basenames.add(base)
+        # Cross-host basename dedup is gated on the fingerprint rule: a hashed
+        # bundle name is content-stable, so a second host's identical copy is
+        # dropped; a generic name (main.js) is kept per host (recall-safe).
+        if _is_fingerprinted(base):
+            if base in seen_fingerprints:
+                continue
+            seen_fingerprints.add(base)
         reduced.append(u)
     return reduced
 
