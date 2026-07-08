@@ -2,6 +2,7 @@ FROM redamon-agent:latest
 WORKDIR /srv
 COPY agent/ /srv/agent/
 COPY db/ /srv/db/
+COPY skills/ /srv/skills/
 # Optional lightweight tracing dependency (Langfuse). Layered on top of the
 # base image; the agent runs fine without it (tracing fail-open no-op), but
 # baking it in lets operators enable tracing purely via LANGFUSE_* env vars.

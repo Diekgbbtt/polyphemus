@@ -87,3 +87,24 @@ So 75% of the output would be silently discarded by the curator.
 
 Clean RED -> GREEN for the anchor tightening.
 The edit hardens the existing anchor rule (closed-set + exact-casing + no-invention block, four rationalization-table rows, one expanded red flag) and is tightly scoped to anchoring - the primitives-vs-observations section from Edit 2 is untouched.
+
+## Edit 4 - wire the skill into the live triager (the words were never delivered)
+
+Authoritative trigger: the 2026-07-08 multi-target validation (memory `recon-e2e-validation`) found the live triager still mis-anchoring ~36% of observations onto narrow nodes (Endpoint/Port/Header) *despite* Edits 1-3. Root cause was not the wording: `agent/recon/pod.py::default_triage_fn` invoked the triager with a terse inline prompt and **never loaded this skill** - nothing under `agent/` read it, and `skills/` was not even present in the container (`Dockerfile` copied only `agent/`+`db/`). Every prior edit hardened text the model never saw.
+
+### RED - triager with the inline prompt only (this skill NOT wired)
+
+Anchor-tempting scenario (`httpx` over `app.example.com`: BaseURL + two status-bearing Endpoints /admin 403, /api/v1/users 401 + a Technology nginx/1.18.0 + an X-Frame-Options Header), 3 reps against the live model:
+- **8 of 11 anchors out of the allowlist** (`Endpoint`, `Technology`, `Header`), plus restatements of the raw 403/401/header primitives.
+- High variance: reps disagreed (one rep happened to anchor cleanly, two did not) - the model was guessing without the rule.
+
+### GREEN - same scenario, skill wired as the triager system prompt
+
+Wiring: `default_triage_fn` now loads this `SKILL.md` (frontmatter stripped) via `_load_triager_skill()` and passes it as a `SystemMessage`, single-sourced from `skills/` (mounted at `/srv/skills` in dev, `COPY skills/` in the Dockerfile for prod). 4 reps:
+- **0 of 12 anchors out of the allowlist** - all re-anchored UP to `BaseURL`.
+- Reps converged identically on the taught insights: `exposed_admin`, `separate_api_surface`, `version_disclosure`.
+- The primitives-vs-observations discipline also engaged unprompted: the X-Frame-Options and raw-status restatements were dropped.
+
+### Result
+
+Clean RED -> GREEN achieved by **wiring, not wording**. Edits 1-3's text was already sufficient; it simply never reached the model. No word change was made in Edit 4 (the test passes 0/12 as-is, and adding nuance to a passing recipe risks regressing it). The forward `recon-pipeline-forward-decisions.md` D8 records the deterministic curator-side re-anchor repair as the belt-and-suspenders net for the residual cases the model still gets wrong.
