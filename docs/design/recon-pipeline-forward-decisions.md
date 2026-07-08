@@ -75,10 +75,11 @@ Remaining implications, verified live: the agentic-crawl job is `configurator_mo
 Authenticated crawl uses `steel_await_auth` (human-in-the-loop viewer login) - built, with a known timing limitation (viewer URL only surfaces after the blocking crawl completes, see `recon-pipeline-design.md` §7.5).
 Unit tests inject `client_factory`/`tools` (like the pod mocks `exec_fn`) - built (`tests/recon/` mocks the Steel client per `steel_client.py`'s injection seam).
 
-**What is still genuinely unbuilt, distinct from the MCP-endpoint phrasing fix above:** the **in-process Steel MCP tool provider itself**.
-`steel_client._default_client_factory()` unconditionally raises `SteelProviderUnavailable` (`steel_client.py:80-96`) - Redamon's concrete `steel_*` server (the module that actually opens the CDP session and exposes the seven tools) "is NOT vendored in any `redamon-*` image available in this environment" (module docstring, `steel_client.py:15-23`).
-This means every real (non-test) crawl pod invocation today degrades to an empty manifest via the `SteelProviderUnavailable` path (`recon-pipeline-design.md` §7.3) - the crawl job runs, fails gracefully, and emits a `reduced_crawl_coverage` Observation, but never actually crawls anything.
-Porting Redamon's steel server so `_default_client_factory()` returns a working provider is the concrete remaining Phase-2 gap, separate from and smaller than the "full port" a later phase's authenticated-crawl work may also cover (see §12).
+**NOW BUILT (verified 2026-07-08, commit `5d2ec2d`) - this paragraph previously described the provider as unbuilt; that is stale.** The in-process Steel tool provider is ported and live.
+`steel_client._default_client_factory()` (`steel_client.py:69-99`) now returns a real `agent/recon/crawl/steel_provider.py::SteelCrawlProvider` (573-line async port of Redamon's steel server: opens a steel.dev cloud session via the Steel SDK and drives it with Playwright over CDP, exposing all seven `steel_*` tools as LangChain `StructuredTool`s).
+It raises `SteelProviderUnavailable` **only** when `playwright`/`steel-sdk` are not importable in the build (the `redamon-agent` base image provides both), in which case the crawl pod still degrades gracefully to a `reduced_crawl_coverage` Observation.
+So a real crawl pod only degrades to an empty manifest when the deps are absent OR `STEEL_API_KEY` is unset - when the provider and key are present it performs a real cloud-browser crawl.
+See D6 for the merged commit trail and the auth-viewer-timing fix.
 
 ## D4 - Parser porting reality (supersedes rev-5 "porting LOW") (VERIFIED, built)
 
@@ -109,16 +110,22 @@ It was designed opportunistically during Phase 2 (operator answers A1-A5, 2026-0
 - **Seven operator-validation items remain open** (V1-V7 in the retired `context-memory-end-to-end.md` §9, preserved there for the full text): LLM-preprocess cost/latency gating on `job_context != ''`, the `recon_signals` writer placement (pipeline-flush vs. triager-direct-write), whether L3 reuses the pod/job machinery vs. a dedicated extension subgraph, the `triage_fn`/`preprocess_fn` contract-widening confirmation, the L2-minimal-now tension (free LLM judgement vs. a structural/checklist coverage baseline), `recon_signals`' run-scoped-vs-cross-run durability, and the `EXTENSION_REQUEST_CAP` default (proposed 5) + initial `EXTENSION_RULES` seed set.
   None of these were resolved by code; they are still open questions for whoever picks up L1/L2/L3.
 
-## D6 - Steel full-port + authenticated crawl (IN PROGRESS, not deferred - concurrent stream)
+## D6 - Steel full-port + authenticated crawl (DONE, merged - verified 2026-07-08)
 
-Unlike D5, this is not a deliberately-deferred decision - it is **active, concurrent work** on `agent/recon/crawl/**` by another stream in this same tree (confirmed via sibling worktrees at the time of this refresh: commits `3fbb284` "feat(recon): Steel MCP client + crawl config + crawler LLM role" and `6b0df4e` "fix(recon): correct Steel client architecture (in-process Playwright-proxy-to-steel.dev, drop STEEL_MCP_URL) + document interactive-auth limitation" are present on sibling branches ahead of what has landed on `feat/recon-pipeline` as of this doc).
-Recorded here only so this doc's D2/D3 status doesn't go stale the moment that work merges.
+This was in-flight concurrent work on `agent/recon/crawl/**`; **it has now landed on `feat/recon-pipeline`** and this section is updated from "IN PROGRESS" to reflect the merged state (verified: all three commits below are ancestors of HEAD).
+Merged commit trail:
+- `3fbb284` feat(recon): Steel MCP client + crawl config + crawler LLM role.
+- `6b0df4e` fix(recon): correct Steel client architecture (in-process Playwright-proxy-to-steel.dev, drop `STEEL_MCP_URL`) + document interactive-auth limitation.
+- `5d2ec2d` feat(crawl): port real Steel provider (Playwright-over-CDP) + early auth `viewer_url` + gated e2e (+1037 lines / 7 files) - this is D6 itself.
 
-**What D3 already documents as unbuilt and this stream is targeting:** the concrete in-process Steel MCP tool provider behind `steel_client._default_client_factory()` (`agent/recon/crawl/steel_client.py:80-96`), which today unconditionally raises `SteelProviderUnavailable`, meaning every real crawl pod invocation currently degrades to an empty manifest (see D3's closing paragraph and `recon-pipeline-design.md` §7.3).
-Also in scope for that work per its commit history: authenticated crawl hardening (`crawl_pod.py`'s `steel_await_auth` MVP path and its documented viewer-URL-timing limitation, `recon-pipeline-design.md` §7.5).
+**Both scope items are built:**
+- **In-process Steel provider - BUILT.** `steel_client._default_client_factory()` returns a real `SteelCrawlProvider` (see D3, now refreshed); `SteelProviderUnavailable` is raised only when `playwright`/`steel-sdk` are absent.
+- **Auth-crawl hardening + viewer-URL-timing fix - BUILT.** The §7.5 defect (viewer URL surfaced only after the blocking crawl, too late to log in) is fixed by an early-surfacing callback: `crawl_agent.run_crawl_authenticated(..., on_awaiting_auth=...)` precreates the Steel session and fires the hook BEFORE the blocking crawl; `crawl_pod.py` wires it to write `viewer_url` mid-flight to the `recon_jobs` row that `GET /recon/{run_id}` reads, so the operator can log in within the session window.
 
-**Action for whoever reads this doc next:** before relying on any Steel-related status claim in `recon-pipeline-design.md` §6/§7.3/§7.5 or in D3 above, check whether the concurrent stream's commits have landed on `feat/recon-pipeline` - if they have, `SteelProviderUnavailable` may no longer be the live path and both documents need a follow-up refresh.
-This stream (Stream 1, docs-only) explicitly did not touch `agent/recon/crawl/**` or verify the sibling worktrees' code correctness - only their existence and target scope, to avoid this doc misrepresenting concurrent work as either "shipped" or "deferred" when it is actually "in flight."
+Tests shipped with the port: `tests/recon/crawl/test_crawl_auth.py`, `test_steel_client.py`, and a gated live e2e `test_steel_crawl_real_e2e.py` (skips unless `STEEL_API_KEY` set AND Neo4j reachable; interactive-auth portion further gated on `STEEL_MANUAL_AUTH_E2E=1`).
+
+**Remaining (not code, human/serialized):** (1) provision a funded steel.dev `STEEL_API_KEY` in the deployment `.env` (currently empty in `.env.example`) - without it, live crawl degrades gracefully to `reduced_crawl_coverage`; (2) run the gated live happy-path + interactive-auth E2E on the main tree (satisfies the D18 authenticated-testing requirement). **One deferred code follow-up, explicitly NOT part of D6:** non-interactive cookie-injection into the Steel session from `extra.auth_context.cookies` (today only the human-in-the-loop viewer flow is supported); track separately.
+`recon-pipeline-design.md` §7.5 still presents the viewer-URL-timing gap as a live limitation and should get the same follow-up refresh.
 
 ## D7 - Header capture scope: not a prior forward decision, closing the loop
 
