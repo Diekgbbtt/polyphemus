@@ -38,15 +38,20 @@ _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
 
 
 def seed_assets(settings: dict) -> list[dict]:
-    """Phase-0 root input: the project's target apex domain (or a deterministic
-    placeholder if none is configured).
+    """Phase-0 root input: the Domain node the phase-0 Domain-consuming jobs run
+    against (or a deterministic placeholder if none is configured).
 
-    The raw `target_domain` may carry a `*.` wildcard placeholder (D14); the
-    Domain-consuming phase-0 jobs (subfinder/whois/gau/...) must run against the
-    bare apex, never the literal `*.example.com`, so the scope descriptor's
-    parsed `apex` is used rather than the raw setting."""
+    - `wildcard` mode: the parsed `apex` (never the literal `*.example.com`) -
+      subfinder/amass need the registrable parent to enumerate the zone.
+    - `exact` mode: the `seed_host` itself, NOT the registrable apex (D14 Q2).
+      subfinder/amass are already suppressed in exact mode, so the only
+      remaining Domain-consumers are the ungated passive harvesters
+      (gau/paramspider); seeding the exact host keeps them confined to the
+      in-scope host instead of harvesting the whole zone. (whois also consumes
+      the exact host in exact-subdomain mode - accepted as low-signal, D14b.)"""
     scope = parse_scope(settings.get("target_domain"))
-    return [{"name": scope["apex"]}]
+    name = scope["seed_host"] if scope["mode"] == "exact" else scope["apex"]
+    return [{"name": name}]
 
 
 def _gate_plan_by_scope(plan: list[list[str]], scope: dict) -> list[list[str]]:
@@ -162,6 +167,18 @@ async def run_pipeline(
     # injection below is what satisfies the Subdomain-consuming jobs at runtime
     # once their discovery producers are gone.
     plan = _gate_plan_by_scope(build_phase_plan(job_subset), scope)
+
+    # D14 Q1: an exact-scope run is deliberately small (no subdomain fan-out).
+    # Record why at run start so an otherwise near-empty run is self-explaining
+    # rather than looking silently broken. recon_runs/recon_jobs carry no
+    # run-level note column, so this is a structured log (no schema change).
+    if scope["mode"] == "exact":
+        logger.info(
+            "run %s scope=exact target=%s; subdomain discovery suppressed (%s)",
+            run_id,
+            scope["seed_host"],
+            "/".join(sorted(DISCOVERY_JOBS)),
+        )
 
     await asyncio.to_thread(registry.create_run, run_id, project_id)
     hb = asyncio.create_task(_heartbeat_loop(run_id))

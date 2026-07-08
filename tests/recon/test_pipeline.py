@@ -393,8 +393,10 @@ def test_exact_mode_seeds_single_host_into_httpx_and_naabu():
 
     assert seen_inputs["httpx"][0] == {"name": "app.t.com"}
     assert seen_inputs["naabu"][0] == {"name": "app.t.com"}
-    # The Domain-consuming phase-0 root is the registrable apex.
-    assert seen_inputs["whois"] == [{"name": "t.com"}]
+    # D14 Q2: in exact mode the Domain-consuming phase-0 root is the exact
+    # seed host (NOT the registrable apex), so ungated passive harvesters
+    # (gau/paramspider) stay confined to the in-scope host.
+    assert seen_inputs["whois"] == [{"name": "app.t.com"}]
 
 
 def test_wildcard_mode_runs_discovery_and_probes_apex():
@@ -406,3 +408,39 @@ def test_wildcard_mode_runs_discovery_and_probes_apex():
     # httpx sees the apex (prepended) ahead of discovered subdomains.
     assert seen_inputs["httpx"][0] == {"name": "t.com"}
     assert {"name": "discovered.t.com"} in seen_inputs["httpx"]
+
+
+def test_seed_assets_exact_mode_uses_seed_host_wildcard_uses_apex():
+    """D14 Q2: the phase-0 Domain root is the exact host in exact mode (so
+    ungated gau/paramspider stay in-scope) and the registrable apex in
+    wildcard mode (so subfinder/amass enumerate the zone)."""
+    # Exact subdomain: seed the host itself, not the registrable parent.
+    assert pipeline.seed_assets({"target_domain": "app.example.com"}) == [
+        {"name": "app.example.com"}
+    ]
+    # Exact apex: host == apex anyway.
+    assert pipeline.seed_assets({"target_domain": "example.com"}) == [
+        {"name": "example.com"}
+    ]
+    # Wildcard: the registrable apex (never the literal '*.example.com').
+    assert pipeline.seed_assets({"target_domain": "*.example.com"}) == [
+        {"name": "example.com"}
+    ]
+
+
+def test_exact_mode_logs_discovery_suppression(caplog):
+    """D14 Q1: an exact-scope run records why it is small at run start."""
+    import logging
+
+    with caplog.at_level(logging.INFO, logger="agent.recon.pipeline"):
+        _run_and_capture({"target_domain": "app.t.com"})
+
+    suppression_logs = [
+        r.getMessage() for r in caplog.records if "scope=exact" in r.getMessage()
+    ]
+    assert suppression_logs, "expected an exact-scope suppression log line"
+    msg = suppression_logs[0]
+    assert "subdomain discovery suppressed" in msg
+    assert "app.t.com" in msg
+    for job in ("subfinder", "amass", "puredns", "dnsx"):
+        assert job in msg
