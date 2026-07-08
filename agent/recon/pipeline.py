@@ -175,7 +175,22 @@ async def run_pipeline(
                 else:
                     status = "success"
 
-                job_stats = {"pods": total, "success": succeeded, "failed": failed}
+                # Per-job data lineage (D12): consumed = number of input
+                # assets this job was asked to process; produced_* = assets /
+                # observations merged into the graph (new+updated) summed
+                # across this job's pods. Persisted inside the existing stats
+                # JSONB so "phases executed with the data they consumed/
+                # produced" is verifiable from state, not reconstructed.
+                produced_assets = sum(e.assets_merged for e in pod_exports)
+                produced_observations = sum(e.observations_merged for e in pod_exports)
+                job_stats = {
+                    "pods": total,
+                    "success": succeeded,
+                    "failed": failed,
+                    "consumed": len(input_assets),
+                    "produced_assets": produced_assets,
+                    "produced_observations": produced_observations,
+                }
                 # Surface a crawl job's Steel viewer URL (interactive
                 # steel_await_auth MVP path, see crawl_pod.py) so
                 # GET /recon/{run_id} lets the operator complete manual login -

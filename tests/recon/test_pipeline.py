@@ -279,3 +279,51 @@ def test_phase0_uses_seed_assets_later_phases_use_read_assets():
     assert seen_inputs["subfinder"] == [{"name": "t.com"}]
     assert seen_inputs["dnsx"] == [{"name": "from-neo4j"}]
     assert ("Subdomain", "proj1") in read_assets.calls
+
+
+def test_job_stats_records_consumed_and_produced_lineage():
+    """D12: recon_jobs.stats must carry per-job data lineage - consumed
+    (input-asset count) and produced (sum of pod assets_merged /
+    observations_merged) - alongside the existing pod counts."""
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        # Two pods, producing 3+2 assets and 1+4 observations merged.
+        return [
+            PodExport(input_asset={}, verdict="success",
+                      assets_merged=3, observations_merged=1),
+            PodExport(input_asset={}, verdict="success",
+                      assets_merged=2, observations_merged=4),
+        ]
+
+    registry = FakeRegistry()
+    settings = {"target_domain": "t.com"}
+    # read_assets returns 2 input assets for phase-1 dnsx (consumed == 2).
+    def read_assets(node_type, project_id):
+        return [{"name": "a"}, {"name": "b"}]
+
+    asyncio.run(
+        pipeline.run_pipeline(
+            "proj1",
+            run_id="run1",
+            job_subset=["subfinder", "dnsx"],
+            run_job=run_job,
+            load_settings=make_load_settings(settings),
+            registry=registry,
+            read_assets=read_assets,
+        )
+    )
+
+    # Phase-0 subfinder: consumed == 1 (the single seed asset).
+    subfinder = [c for c in registry.upsert_job_calls
+                 if c["job"] == "subfinder" and c["stats"] is not None][-1]
+    assert subfinder["stats"]["consumed"] == 1
+    assert subfinder["stats"]["produced_assets"] == 5
+    assert subfinder["stats"]["produced_observations"] == 5
+
+    # Phase-1 dnsx: consumed == 2 (read_assets returned two assets).
+    dnsx = [c for c in registry.upsert_job_calls
+            if c["job"] == "dnsx" and c["stats"] is not None][-1]
+    assert dnsx["stats"]["consumed"] == 2
+    assert dnsx["stats"]["produced_assets"] == 5
+    assert dnsx["stats"]["produced_observations"] == 5
+    # Existing pod counts still present (not regressed).
+    assert dnsx["stats"]["pods"] == 2
