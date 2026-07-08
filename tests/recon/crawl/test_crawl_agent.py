@@ -168,3 +168,28 @@ def test_load_skill_reads_file_next_to_module():
     text = crawl_agent._load_skill()
     assert "Steel Agentic Crawl" in text
     assert "steel_crawl_finish" in text
+
+
+def test_run_crawl_forwards_auth_cookies_to_get_crawl_tools(monkeypatch):
+    # When tools are NOT injected, run_crawl builds them via
+    # steel_client.get_crawl_tools and must forward auth_cookies so the default
+    # provider seeds the browser context for non-interactive auth.
+    from agent.recon.crawl import steel_client
+
+    seen = {}
+
+    async def fake_get_crawl_tools(*, client_factory=None, auth_cookies=None):
+        seen["auth_cookies"] = auth_cookies
+        return []
+
+    async def fake_run_agentic(body, mcp_manager, build_llm_fn=None, pre_created_crawl_id=None):
+        return {"endpoints": [], "js_urls": []}
+
+    monkeypatch.setattr(steel_client, "get_crawl_tools", fake_get_crawl_tools)
+    monkeypatch.setattr(crawl_agent, "_run_agentic_crawl", fake_run_agentic)
+
+    asyncio.run(crawl_agent.run_crawl(
+        "https://t.example", scope=["https://t.example"], llm=object(),
+        auth_cookies=[{"name": "a", "value": "b"}],
+    ))
+    assert seen["auth_cookies"] == [{"name": "a", "value": "b"}]

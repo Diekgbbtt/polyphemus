@@ -68,8 +68,15 @@ async def run_crawl(
     max_depth: Optional[int] = None,
     max_iters: Optional[int] = None,
     pre_created_crawl_id: Optional[str] = None,
+    auth_cookies: Optional[list] = None,
 ) -> dict:
     """Run the bounded agentic-crawl ReAct loop and return its manifest.
+
+    `auth_cookies` (from the project's `auth_context.cookies`) is forwarded to
+    `steel_client.get_crawl_tools` when the tools are built here, so the default
+    Steel provider seeds the browser context with them before the crawl
+    (non-interactive auth). Ignored when `tools` are injected (tests build the
+    provider themselves).
 
     Best-effort: any exception (Steel unconfigured, tool/LLM failure, ...)
     yields the empty manifest rather than propagating, so callers (the crawl
@@ -78,7 +85,7 @@ async def run_crawl(
     try:
         resolved_tools = tools
         if resolved_tools is None:
-            resolved_tools = await steel_client.get_crawl_tools()
+            resolved_tools = await steel_client.get_crawl_tools(auth_cookies=auth_cookies)
         mcp_manager = _ToolsManager(resolved_tools)
 
         if llm is not None:
