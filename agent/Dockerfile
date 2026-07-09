@@ -7,6 +7,10 @@ COPY skills/ /srv/skills/
 # base image; the agent runs fine without it (tracing fail-open no-op), but
 # baking it in lets operators enable tracing purely via LANGFUSE_* env vars.
 RUN pip install --no-cache-dir -r /srv/agent/requirements-observability.txt
+# Agentic-crawl (Steel) client libs - the base image was assumed to provide
+# these but does not, so steel_crawl degraded to empty manifests. Cloud browser
+# over CDP, so no `playwright install` (local browsers) is needed.
+RUN pip install --no-cache-dir -r /srv/agent/requirements-crawl.txt
 ENV PYTHONPATH="/srv:/app"
 EXPOSE 8080
 CMD ["uvicorn", "agent.app.main:app", "--host", "0.0.0.0", "--port", "8080"]

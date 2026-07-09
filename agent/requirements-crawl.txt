@@ -1,0 +1,12 @@
+# Agentic-crawl (Steel) runtime dependencies (forward decision D6).
+#
+# steel_provider.py drives a steel.dev CLOUD browser over CDP
+# (wss://connect.steel.dev), so only the Python client libraries are needed -
+# NO local browser binaries, i.e. `playwright install` is NOT required.
+#
+# Without these, steel_client._default_client_factory() raises
+# SteelProviderUnavailable and every steel_crawl pod degrades to an empty
+# manifest (reduced_crawl_coverage), which is what happened on run
+# 8816cc2d: the base image did not actually provide them.
+steel-sdk
+playwright
