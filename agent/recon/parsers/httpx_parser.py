@@ -43,7 +43,7 @@ def parse(stdout: str) -> list[AssetDelta]:
         url_deltas = url_to_deltas(
             url,
             method="GET",
-            source="http_probe",
+            source="httpx",
             extra_endpoint_props={
                 "status_code": status_code,
                 "content_type": content_type,

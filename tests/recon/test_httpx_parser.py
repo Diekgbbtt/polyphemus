@@ -23,6 +23,13 @@ def test_endpoint_has_incoming_baseurl_edge():
     ep = next(d for d in deltas if d.type == "Endpoint")
     assert any(e.rel == "HAS_ENDPOINT" and e.node_type == "BaseURL" for e in ep.edges)
 
+
+def test_endpoint_source_is_the_tool_name():
+    # source must be the tool ("httpx"), not the skill/phase name.
+    deltas = parse(FIX.read_text())
+    ep = next(d for d in deltas if d.type == "Endpoint")
+    assert ep.props["source"] == "httpx"
+
 def test_malformed_line_skipped():
     deltas = parse('{"url":"https://a","status_code":200}\nNOT JSON\n')
     assert any(d.type == "BaseURL" for d in deltas)

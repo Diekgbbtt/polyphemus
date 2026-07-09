@@ -43,7 +43,7 @@ def parse(stdout: str) -> list[AssetDelta]:
             url_to_deltas(
                 endpoint,
                 method=method,
-                source="resource_enum",
+                source="katana",
                 extra_endpoint_props={
                     "status_code": status_code,
                     "content_type": content_type,

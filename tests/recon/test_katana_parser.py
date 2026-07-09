@@ -25,7 +25,7 @@ def test_parse_emits_baseurl_and_endpoint():
     assert dashboard.identity["baseurl"] == "https://app.example.com"
     assert dashboard.props["status_code"] == 200
     assert dashboard.props["content_type"] == "text/html"
-    assert dashboard.props["source"] == "resource_enum"
+    assert dashboard.props["source"] == "katana"
 
     search = next(e for e in endpoints if e.identity["path"] == "/search")
     assert search.identity["method"] == "GET"
