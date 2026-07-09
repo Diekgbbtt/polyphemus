@@ -146,6 +146,16 @@ async def launch_recon(project_id: str, body: ReconLaunch) -> dict:
         except ValueError as exc:
             raise HTTPException(status_code=400, detail=str(exc)) from exc
 
+    # Refuse to launch a targetless run: without target_domain the pipeline
+    # silently falls back to the example.com placeholder and scans an unrelated
+    # third party. Fail loudly instead so a wiped/omitted target is caught here.
+    if not (pg.load_settings(project_id) or {}).get("target_domain"):
+        raise HTTPException(
+            status_code=400,
+            detail="no target_domain configured; PUT /projects/{id}/settings "
+                   "with recon.target_domain before launching recon",
+        )
+
     run_id = str(uuid.uuid4())
     # Create the run row synchronously so a poll right after this returns
     # sees it (no 404 race). `run_pipeline` also calls create_run, but it is

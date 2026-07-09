@@ -99,8 +99,24 @@ def test_post_recon_subset_breaking_consumes_400(monkeypatch):
     assert resp.status_code == 400
 
 
+def test_post_recon_no_target_domain_400(monkeypatch):
+    # A targetless run must be refused, not silently fall back to example.com.
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {})
+    launched = []
+    monkeypatch.setattr(routes, "_launch_pipeline",
+                        lambda project_id, run_id, jobs: launched.append(run_id))
+
+    resp = client.post("/projects/p1/recon", json={"jobs": ["subfinder", "dnsx"]})
+
+    assert resp.status_code == 400
+    assert "target_domain" in resp.json()["detail"]
+    assert launched == []  # never launched
+
+
 def test_post_recon_valid_launches_pipeline_and_returns_run_id(monkeypatch):
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_domain": "example.com"})
     events = []
     monkeypatch.setattr(pg, "create_run", lambda run_id, pid: events.append(("create_run", pid, run_id)))
     monkeypatch.setattr(
@@ -122,6 +138,7 @@ def test_post_recon_valid_launches_pipeline_and_returns_run_id(monkeypatch):
 
 def test_post_recon_valid_no_jobs_launches_full_pipeline(monkeypatch):
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_domain": "example.com"})
     monkeypatch.setattr(pg, "create_run", lambda run_id, pid: None)
     launched = []
     monkeypatch.setattr(
@@ -138,6 +155,7 @@ def test_post_recon_then_get_status_no_404_race(monkeypatch):
     """The run row exists synchronously after POST, so a GET immediately
     afterwards returns 200, not 404."""
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_domain": "example.com"})
     store: dict[str, dict] = {}
     monkeypatch.setattr(
         pg, "create_run", lambda run_id, pid: store.__setitem__(

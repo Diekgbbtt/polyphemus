@@ -216,3 +216,18 @@ def test_upsert_job_with_error(monkeypatch):
 
     query, params = cur.executed[0]
     assert "boom" in params
+
+
+def test_save_settings_merges_rather_than_replaces(monkeypatch):
+    """A partial settings PUT (e.g. adding auth_context) must MERGE into the
+    stored recon, not replace it - otherwise it silently wipes target_domain
+    and the run falls back to the example.com placeholder."""
+    cur = patch_connect(monkeypatch, FakeCursor())
+    pg.save_settings("proj1", {"auth_context": {"cookies": []}})
+
+    query, params = cur.executed[0]
+    assert "INSERT INTO settings" in query
+    # shallow JSONB merge: existing keys preserved, incoming keys overwrite.
+    assert "recon = settings.recon || EXCLUDED.recon" in query
+    assert "= EXCLUDED.recon" not in query.replace("|| EXCLUDED.recon", "")
+    assert params[0] == "proj1"

@@ -45,11 +45,18 @@ def load_settings(project_id: str) -> dict:
 
 
 def save_settings(project_id: str, recon: dict) -> None:
-    """Upsert the project's `settings.recon` JSONB blob."""
+    """Upsert the project's `settings.recon` JSONB blob, MERGING the incoming
+    keys into any existing settings (shallow JSONB `||` merge).
+
+    A partial update - e.g. a PUT that only adds `auth_context` - must NOT wipe
+    previously-set keys like `target_domain`. Keys present in `recon` overwrite;
+    keys absent from `recon` are preserved. (A plain replace here silently
+    dropped `target_domain` when an auth-context PUT omitted it, making the run
+    fall back to the example.com placeholder.)"""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO settings (project_id, recon) VALUES (%s, %s) "
-            "ON CONFLICT (project_id) DO UPDATE SET recon = EXCLUDED.recon",
+            "ON CONFLICT (project_id) DO UPDATE SET recon = settings.recon || EXCLUDED.recon",
             (project_id, json.dumps(recon)),
         )
 
