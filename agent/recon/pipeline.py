@@ -238,6 +238,11 @@ async def run_pipeline(
                     extra = {"project_id": project_id}
                     if job.use_auth and settings.get("auth_context"):
                         extra["auth_context"] = settings["auth_context"]
+                    # Scope gate for URL-hosted assets (out-of-scope BaseURL
+                    # drop in curate): the seed host/apex, only when a target is
+                    # actually configured (never the parse_scope placeholder).
+                    if settings.get("target_domain"):
+                        extra["scope_domain"] = scope["seed_host"]
 
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "in_progress"

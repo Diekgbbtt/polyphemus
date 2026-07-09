@@ -210,20 +210,25 @@ def curate(
     project_id: str,
     *,
     merge_fn=None,
+    scope_domain: str | None = None,
 ) -> tuple[int, int]:
     """Execute each asset/observation MERGE, skipping+logging single-item
     failures (bad label, bad anchor, or a merge_fn exception) and continuing.
 
     Returns (assets_merged, observations_merged) counts of successful merges.
+
+    `scope_domain` (the seeded target host/apex, D14) drops out-of-scope
+    BaseURLs and everything anchored to them - the social/analytics origins
+    httpx and katana surface from page links.
     """
     if merge_fn is None:
         from agent.app.clients import neo4j_client
         merge_fn = neo4j_client.merge
 
-    # D15: central path-based noise gate. Every recon source (incl. steel_crawl)
-    # funnels its AssetDeltas through curate, so dropping static-render Endpoints
-    # here filters ALL tools with one rule instead of per-parser copies.
-    assets = filter_deltas(assets)
+    # D15: central curator-gate hard filter - static-render noise Endpoints AND
+    # out-of-scope BaseURLs. Every recon source (incl. steel_crawl) funnels its
+    # AssetDeltas through curate, so one rule here covers ALL tools.
+    assets = filter_deltas(assets, scope_domain=scope_domain)
 
     assets_merged = 0
     for delta in assets:

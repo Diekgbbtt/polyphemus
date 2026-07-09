@@ -144,6 +144,67 @@ def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
     return "ambiguous"
 
 
+def _netloc_host(netloc: str) -> str:
+    """Bare host from a URL netloc: strip userinfo and port, handle IPv6."""
+    netloc = netloc.rsplit("@", 1)[-1]
+    if netloc.startswith("["):            # IPv6 literal [::1]:443
+        return netloc[1:].split("]", 1)[0].lower()
+    return netloc.split(":", 1)[0].lower().rstrip(".")
+
+
+def _host_of_url(url: str) -> str:
+    if not isinstance(url, str) or not url:
+        return ""
+    try:
+        return _netloc_host(urlparse(url).netloc)
+    except ValueError:
+        return ""
+
+
+def host_in_scope(host: str, scope_domain: str) -> bool:
+    """True when `host` is the scope domain itself or a subdomain of it.
+
+    The scope domain is the seeded target (D14): the exact host in exact mode,
+    the registrable apex in wildcard mode. Both admit the domain itself (the
+    apex is in scope and is explicitly probed, D11) and any subdomain of it.
+    """
+    host = (host or "").lower().rstrip(".")
+    scope = (scope_domain or "").lower().rstrip(".")
+    if not host or not scope:
+        return False
+    return host == scope or host.endswith("." + scope)
+
+
+def _referenced_base_hosts(delta: AssetDelta) -> list[str]:
+    """Hosts of every BaseURL this delta is anchored to: its own `url`/`baseurl`
+    identity plus any BaseURL node its edges reference. A delta with none (a
+    Subdomain / IP / Port / Domain) is not a URL-hosted asset and is never
+    scope-filtered here - host scope for those is the discovery gate's job."""
+    urls: list[str] = []
+    for key in ("url", "baseurl"):
+        val = delta.identity.get(key)
+        if isinstance(val, str):
+            urls.append(val)
+    for edge in delta.edges:
+        if edge.node_type == "BaseURL":
+            val = edge.node_identity.get("url")
+            if isinstance(val, str):
+                urls.append(val)
+    return [_host_of_url(u) for u in urls]
+
+
+def _delta_out_of_scope(delta: AssetDelta, scope_domain: str) -> bool:
+    """A URL-hosted delta is out of scope when ANY BaseURL it is anchored to
+    sits outside the seed domain's subtree. Dropping every delta anchored to an
+    out-of-scope BaseURL (the BaseURL, its Endpoints, Headers, Technology,
+    Certificate, Parameters) removes the host cleanly with no orphaned stub -
+    the edges that would otherwise MERGE-recreate it are dropped too."""
+    hosts = _referenced_base_hosts(delta)
+    if not hosts:
+        return False
+    return any(not host_in_scope(h, scope_domain) for h in hosts)
+
+
 def _endpoint_has_params(delta: AssetDelta) -> bool:
     """True when the endpoint's recorded URL carries a query string. The URL in
     `props` already reflects the discovered query (parsers build Parameter
@@ -158,14 +219,25 @@ def _endpoint_has_params(delta: AssetDelta) -> bool:
         return False
 
 
-def filter_deltas(deltas: list[AssetDelta]) -> list[AssetDelta]:
-    """Drop Endpoint deltas classified as static noise; pass everything else
-    (BaseURL, Parameter, and all other labels) through untouched.
+def filter_deltas(
+    deltas: list[AssetDelta], scope_domain: str | None = None
+) -> list[AssetDelta]:
+    """Central curator-gate hard filter. Two independent drops:
 
-    A dropped static Endpoint is param-less by construction (a parameterized
-    endpoint classifies "surface" and is kept), so its associated Parameter
-    deltas do not exist and nothing is orphaned. BaseURL deltas are never
-    dropped - hosts are always legitimate surface.
+    1. Static-noise Endpoints (D15): a param-less presentational Endpoint
+       (`/assets/app.css`, fonts, images under a static path) is dropped. A
+       dropped static Endpoint is param-less by construction, so no Parameter
+       delta is orphaned.
+
+    2. Out-of-scope hosts (when `scope_domain` is given): httpx and katana
+       surface BaseURLs that are not the target - social/analytics/integration
+       origins linked from the page (facebook.com, googletagmanager.com, ...).
+       A BaseURL must be the seed domain or a subdomain of it; any delta
+       anchored to an out-of-scope BaseURL (the BaseURL and its Endpoints,
+       Headers, Technology, Certificate, Parameters) is dropped together, so
+       nothing is orphaned. Deltas with no BaseURL anchor (Subdomain, IP, Port,
+       Domain, DNSRecord) are untouched here - their scope is the D14 discovery
+       gate, not this URL filter.
     """
     kept: list[AssetDelta] = []
     for delta in deltas:
@@ -173,5 +245,7 @@ def filter_deltas(deltas: list[AssetDelta]) -> list[AssetDelta]:
             path = delta.identity.get("path", "/")
             if classify_endpoint(path, has_params=_endpoint_has_params(delta)) == "static":
                 continue
+        if scope_domain and _delta_out_of_scope(delta, scope_domain):
+            continue
         kept.append(delta)
     return kept

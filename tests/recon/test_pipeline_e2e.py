@@ -177,8 +177,9 @@ def _build_pod_invoke(pod_graph):
 def test_pipeline_e2e_subfinder_dnsx_httpx():
     graph = InMemoryGraph()
 
-    def curate_fn(assets, observations, project_id):
-        return curate(assets, observations, project_id, merge_fn=graph.merge_fn)
+    def curate_fn(assets, observations, project_id, scope_domain=None):
+        return curate(assets, observations, project_id,
+                      merge_fn=graph.merge_fn, scope_domain=scope_domain)
 
     pod_graph = build_pod_graph(exec_fn=fake_exec_fn, curate_fn=curate_fn, triage_fn=fake_triage_fn)
     job_agent = build_job_agent(
@@ -256,8 +257,9 @@ def test_pipeline_e2e_httpx_to_arjun_prop_dependent_target():
     silently pass arjun an Endpoint with no `url`, filling `{target}` blank."""
     graph = InMemoryGraph()
 
-    def curate_fn(assets, observations, project_id):
-        return curate(assets, observations, project_id, merge_fn=graph.merge_fn)
+    def curate_fn(assets, observations, project_id, scope_domain=None):
+        return curate(assets, observations, project_id,
+                      merge_fn=graph.merge_fn, scope_domain=scope_domain)
 
     exec_fn = make_recording_exec_fn()
     pod_graph = build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=fake_triage_fn)

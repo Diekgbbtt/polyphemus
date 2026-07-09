@@ -166,8 +166,9 @@ def _run_recon_pipeline(*, crawl_tools, crawl_llm):
     tools/LLM passed in."""
     graph = InMemoryGraph()
 
-    def curate_fn(assets, observations, project_id):
-        return curate(assets, observations, project_id, merge_fn=graph.merge_fn)
+    def curate_fn(assets, observations, project_id, scope_domain=None):
+        return curate(assets, observations, project_id,
+                      merge_fn=graph.merge_fn, scope_domain=scope_domain)
 
     deterministic_pod_graph = build_pod_graph(
         exec_fn=fake_upstream_exec_fn, curate_fn=curate_fn, triage_fn=fake_triage_fn

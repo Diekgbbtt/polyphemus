@@ -206,7 +206,18 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     def curator_node(state: PodState) -> dict:
         assets = state.get("assets", [])
         observations = state.get("observations", [])
-        assets_merged, observations_merged = curate_fn(assets, observations, state["project_id"])
+        # The seed scope domain (D14) rides in `extra` alongside project_id;
+        # forward it so curate drops out-of-scope BaseURLs. Passed only when
+        # present so injected 3-arg fake curate_fns stay compatible.
+        scope_domain = (state.get("extra") or {}).get("scope_domain")
+        if scope_domain:
+            assets_merged, observations_merged = curate_fn(
+                assets, observations, state["project_id"], scope_domain=scope_domain
+            )
+        else:
+            assets_merged, observations_merged = curate_fn(
+                assets, observations, state["project_id"]
+            )
         export = PodExport(
             input_asset=state["input_asset"],
             verdict="success",

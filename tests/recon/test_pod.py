@@ -420,3 +420,32 @@ def test_batched_jsluice_parser_emits_endpoint_and_redacted_secret():
     assert secrets[0].props["redacted"] is True
     assert any(e.rel == "HAS_SECRET" and e.node_identity == {"url": "https://h.example.com"}
                for e in secrets[0].edges)
+
+
+def test_curator_node_forwards_scope_domain_from_extra():
+    """The seed scope domain rides in extra and must reach curate as a kwarg so
+    out-of-scope BaseURLs are dropped (D14/curator scope gate)."""
+    seen = {}
+    def exec_fn(cmd, sid, t): return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=3)
+    def curate_fn(assets, obs, pid, scope_domain=None):
+        seen["scope_domain"] = scope_domain
+        return (len(assets), len(obs))
+    def triage_fn(er, assets, job): return []
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
+    g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "app.example.com"},
+              "asset_context": "", "extra": {"scope_domain": "example.com"},
+              "session_id": "s", "iteration": 0, "project_id": "proj1"})
+    assert seen["scope_domain"] == "example.com"
+
+
+def test_curator_node_omits_scope_domain_when_absent():
+    """No scope_domain in extra -> a 3-arg fake curate_fn is called unchanged
+    (backward compatibility for the many pod tests that don't set scope)."""
+    def exec_fn(cmd, sid, t): return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=3)
+    def curate_fn(assets, obs, pid): return (len(assets), len(obs))  # 3-arg, no scope
+    def triage_fn(er, assets, job): return []
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
+    out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "app.example.com"},
+                    "asset_context": "", "extra": {}, "session_id": "s",
+                    "iteration": 0, "project_id": "proj1"})
+    assert out["export"].verdict == "success"

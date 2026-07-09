@@ -6,7 +6,7 @@ PRESERVE seed sets, the fingerprint rules, and the delta-level filter behavior
 """
 import pytest
 
-from agent.recon.noise_filter import classify_endpoint, filter_deltas
+from agent.recon.noise_filter import classify_endpoint, filter_deltas, host_in_scope
 from agent.recon.types import AssetDelta, Edge
 
 
@@ -180,3 +180,60 @@ def test_filter_drops_static_endpoint_missing_url_prop():
                    identity={"path": "/assets/x.css", "method": "GET", "baseurl": "https://h"},
                    props={"source": "steel"})
     assert filter_deltas([d]) == []
+
+
+# --- out-of-scope BaseURL filtering (seed-domain scope) --------------------
+
+@pytest.mark.parametrize("host,scope,expected", [
+    ("example.com", "example.com", True),        # apex itself is in scope (D11)
+    ("api.example.com", "example.com", True),     # subdomain
+    ("a.b.example.com", "example.com", True),     # deep subdomain
+    ("WWW.Example.com", "example.com", True),     # case-insensitive
+    ("facebook.com", "example.com", False),       # unrelated social origin
+    ("googletagmanager.com", "example.com", False),
+    ("evil-example.com", "example.com", False),   # suffix trick, not a subdomain
+    ("notexample.com", "example.com", False),
+    ("app.example.com", "app.example.com", True), # exact-mode seed host
+    ("api.example.com", "app.example.com", False),# sibling is out of an exact scope
+])
+def test_host_in_scope(host, scope, expected):
+    assert host_in_scope(host, scope) is expected
+
+
+def _baseurl(url):
+    return AssetDelta(type="BaseURL", identity={"url": url})
+
+
+def test_scope_filter_drops_out_of_scope_baseurls_and_anchored_children():
+    in_base = _baseurl("https://api.example.com")
+    out_base = _baseurl("https://www.facebook.com")
+    # An Endpoint + a Technology, each edge-anchored to the out-of-scope host.
+    out_ep = _endpoint("/tr", baseurl="https://www.facebook.com")
+    out_tech = AssetDelta(
+        type="Technology", identity={"name": "gtag", "version": "1"},
+        edges=[Edge(rel="USES_TECHNOLOGY", dir="in", node_type="BaseURL",
+                    node_identity={"url": "https://analytics.google.com"})],
+    )
+    in_ep = _endpoint("/api/users", baseurl="https://api.example.com")
+    sub = AssetDelta(type="Subdomain", identity={"name": "x.example.com"})
+
+    kept = filter_deltas(
+        [in_base, out_base, out_ep, out_tech, in_ep, sub], scope_domain="example.com"
+    )
+    assert in_base in kept and in_ep in kept and sub in kept
+    assert out_base not in kept and out_ep not in kept and out_tech not in kept
+
+
+def test_scope_filter_noop_without_scope_domain():
+    out_base = _baseurl("https://www.facebook.com")
+    # No scope_domain -> scope filtering is disabled (backward compatible).
+    assert filter_deltas([out_base]) == [out_base]
+
+
+def test_scope_filter_keeps_apex_and_composes_with_noise_drop():
+    apex = _baseurl("https://example.com")
+    static_ep = _endpoint("/assets/app.css", baseurl="https://example.com")  # noise
+    js_ep = _endpoint("/static/main.abcd1234.js", baseurl="https://example.com")  # kept
+    kept = filter_deltas([apex, static_ep, js_ep], scope_domain="example.com")
+    assert apex in kept and js_ep in kept
+    assert static_ep not in kept  # D15 noise drop still applies within scope

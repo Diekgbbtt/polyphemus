@@ -137,10 +137,14 @@ def test_auth_context_only_passed_to_use_auth_jobs():
         )
     )
 
-    assert seen_extra["subfinder"] == {"project_id": "proj1"}
-    assert seen_extra["httpx"] == {"project_id": "proj1", "auth_context": {"cookies": []}}
-    assert seen_extra["katana"] == {"project_id": "proj1", "auth_context": {"cookies": []}}
-    assert seen_extra["kiterunner"] == {"project_id": "proj1"}
+    # scope_domain rides in extra alongside project_id (D14/curator scope gate);
+    # "*.t.com" -> seed_host "t.com".
+    assert seen_extra["subfinder"] == {"project_id": "proj1", "scope_domain": "t.com"}
+    assert seen_extra["httpx"] == {
+        "project_id": "proj1", "scope_domain": "t.com", "auth_context": {"cookies": []}}
+    assert seen_extra["katana"] == {
+        "project_id": "proj1", "scope_domain": "t.com", "auth_context": {"cookies": []}}
+    assert seen_extra["kiterunner"] == {"project_id": "proj1", "scope_domain": "t.com"}
 
 
 def test_auth_context_absent_when_settings_have_none():
@@ -165,7 +169,7 @@ def test_auth_context_absent_when_settings_have_none():
         )
     )
 
-    assert seen_extra["httpx"] == {"project_id": "proj1"}
+    assert seen_extra["httpx"] == {"project_id": "proj1", "scope_domain": "t.com"}
 
 
 def test_run_job_exception_marks_job_degraded_and_pipeline_still_completes():
