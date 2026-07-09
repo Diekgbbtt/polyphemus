@@ -263,3 +263,28 @@ The D14/Q2 fix (seed `Domain = seed_host` in exact mode) exposes a second-order 
 - **The typing is binary, not "which have an authenticated *version*".** The operator's phrasing ("detect structurally which have an authenticated version of the execution") is satisfied today by the `use_auth` boolean + cookie injection - but if a tool needs a *materially different invocation* under auth (e.g. a different wordlist, an extra login-aware flag, or a distinct command_template) rather than just an added header, that is not yet expressible. If that is the intent, `use_auth: bool` should become an optional authenticated command variant (e.g. `auth_command_template`) that the configurator selects when context is present.
 
 **Testing requirement (operator, explicit): the authenticated actions must be tested afterward.** Once the typing is settled, add tests that exercise the authenticated path end-to-end - not just that `{auth_header}` renders, but that with a real `auth_context` the auth-typed tools (httpx/katana/ffuf/arjun/steel) reach and record **authenticated-only surface** they miss unauthenticated (e.g. behind-login endpoints/parameters). This needs a target with an auth-gated area; gate the live portion on reachability the same way the existing frontend-bff live suite does (commit `d8bd8af`).
+
+## D19 - gau withdrawn from the pipeline (temporary, bring-forward, 2026-07-09)
+
+**Operator decision:** gau produced overwhelming passive-archive noise - in run `8816cc2d` its pod merged **866** low-value assets (dead/duplicate archive URLs) versus katana's live crawl, polluting the attack surface for little unique signal.
+gau is **removed from the pipeline now**: its `JobSpec` and phase-4 `PHASES` entry are withdrawn so the orchestrator no longer schedules it.
+The pure `parse_gau` parser (`agent/recon/parsers/passive_url_parser.py`) is **kept dormant** - not deleted - so a future re-introduction is cheap.
+
+**Bring-forward:** re-evaluate gau behind a noise filter before re-wiring it. A viable path is to feed gau output through the D15 curator-gate filter (drop static/noise, D-www dedup, out-of-scope drop) AND an httpx-liveness prune (D16) so only live, in-scope, non-presentational archive URLs survive.
+Only re-add the `JobSpec`/`PHASES` entry once that filtering is in place; until then gau stays out.
+
+**Verification (contract):** `POST /projects/{id}/recon` with `jobs` including `gau` now returns 400 (unknown job) and never launches; the baseline (no-jobs) pipeline still launches without it (`tests/test_rest_api.py::test_post_recon_with_removed_gau_job_returns_error`, `..._baseline_pipeline_still_launches_without_gau`, `tests/recon/test_jobs.py::test_gau_is_not_a_scheduled_job`).
+The live-container check of the same requires the agent image to run this code (dev bind-mount or rebuild).
+
+## D20 - BaseURL must link to its source Subdomain (built, strong constraint, 2026-07-09)
+
+**Verified defect (project `64d2ab81`):** all 24 BaseURLs had **zero incoming edges** - httpx minted them orphaned, diverging from Redamon's `Domain -> Subdomain -> BaseURL` chain.
+Root cause: `httpx_parser` built the BaseURL delta with no edge to the host it was probed from.
+
+**Built:** `httpx_parser` now emits `BaseURL -[:BELONGS_TO]-> Subdomain{name: <httpx input>}` (httpx's `input` is exactly the probed Subdomain, so it matches an existing node), mirroring `subdomain_parser`'s `Subdomain -[:BELONGS_TO]-> Domain`.
+Strong constraint enforced by `tests/recon/test_httpx_parser.py::test_every_baseurl_belongs_to_its_source_subdomain` - a BaseURL delta without a `BELONGS_TO -> Subdomain` edge fails the suite.
+
+## D21 - www.<host> deduplication (built, 2026-07-09)
+
+`www.<host>` is conventionally the same web content as `<host>`, but the graph showed both as distinct Subdomains/BaseURLs.
+**Built:** the curator gate (`noise_filter.filter_deltas`) unconditionally drops any `Subdomain` named `www.*` (which cascades - httpx never probes it, so no `www.` BaseURL is minted) and any `www.` BaseURL / anchored child as a belt; `parse_scope` strips a leading `www.` from the seed so seeding `www.x` or `*.www.x` resolves to the same scope as `x`. Applies in both exact and wildcard modes.

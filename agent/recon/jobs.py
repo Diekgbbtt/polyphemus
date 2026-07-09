@@ -80,14 +80,11 @@ JOBS: dict[str, JobSpec] = {
         consumes="Subdomain",
         use_auth=True,
     ),
-    "gau": JobSpec(
-        tool="gau",
-        skill="passive_url_harvest",
-        command_template="gau {domain}",
-        produces=["BaseURL", "Endpoint", "Parameter"],
-        consumes="Domain",
-        use_auth=False,
-    ),
+    # gau removed from the pipeline (forward decision D-gau, 2026-07-09):
+    # its passive-archive harvest produced overwhelming noise (866 low-value
+    # assets in one run vs katana's crawl). The pure parser stays for a possible
+    # future re-introduction behind a noise filter; only the JOBS/PHASES wiring
+    # is withdrawn so the orchestrator no longer schedules it.
     "paramspider": JobSpec(
         tool="paramspider",
         skill="passive_url_harvest",
@@ -183,9 +180,9 @@ PHASES: list[list[str]] = [
     ["dnsx", "puredns", "subdomain_takeover"],
     ["naabu"],
     ["httpx"],
-    ["katana", "ffuf", "kiterunner", "graphql-cop", "gau", "paramspider", "steel_crawl"],
-    # jsluice consumes the `.js`/`.mjs` Endpoints the phase-4 crawlers (katana,
-    # gau) produce, so it MUST run in a later phase than them - the phase
+    ["katana", "ffuf", "kiterunner", "graphql-cop", "paramspider", "steel_crawl"],
+    # jsluice consumes the `.js`/`.mjs` Endpoints the phase-4 crawler (katana)
+    # produces, so it MUST run in a later phase than it - the phase
     # barrier resolves a job's inputs before any same-phase job runs, so keeping
     # jsluice in phase 4 would feed it only httpx's endpoints, not katana's
     # bundles (the D17 defect). Its own recovered Endpoints then reach arjun.

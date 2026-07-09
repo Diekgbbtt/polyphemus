@@ -32,6 +32,12 @@ DISCOVERY_JOBS = frozenset({"subfinder", "amass", "puredns", "dnsx"})
 _DEFAULT_APEX = "example.com"
 
 
+def _strip_www(host: str) -> str:
+    """Drop a leading `www.` label - www.<x> is the same web content as <x>, so
+    seeding either resolves to the same scope (dedup, D-www)."""
+    return host[4:] if host.startswith("www.") else host
+
+
 def parse_scope(target: str | None) -> dict:
     """Parse a raw `target_domain` into a scope descriptor.
 
@@ -53,10 +59,10 @@ def parse_scope(target: str | None) -> dict:
     # Check the wildcard placeholder before trimming trailing dots, so a bare
     # `*.` is still recognized as (degenerate) wildcard rather than becoming `*`.
     if raw.startswith("*."):
-        apex = raw[2:].rstrip(".") or _DEFAULT_APEX
+        apex = _strip_www(raw[2:].rstrip(".")) or _DEFAULT_APEX
         return {"apex": apex, "seed_host": apex, "mode": "wildcard"}
 
-    raw = raw.rstrip(".")
+    raw = _strip_www(raw.rstrip("."))
     if not raw:
         return {"apex": _DEFAULT_APEX, "seed_host": _DEFAULT_APEX, "mode": "exact"}
 

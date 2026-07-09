@@ -65,6 +65,23 @@ def parse(stdout: str) -> list[AssetDelta]:
             "final_url": final_url,
             "server": server,
         }
+        # Strong constraint: every httpx BaseURL is linked back to the Subdomain
+        # it was probed from - the `input` echoed by httpx is exactly that host
+        # (httpx consumes Subdomain, so `input` == the Subdomain node's `name`).
+        # Mirrors subdomain_parser's Subdomain-[:BELONGS_TO]->Domain, giving the
+        # Domain -> Subdomain -> BaseURL chain (was orphaned: 24/24 BaseURLs had
+        # no incoming edge). Falls back to the resolved `host` if `input` is
+        # absent, so a BaseURL is never emitted without a source-host link.
+        source_host = _first(entry, "input", "host")
+        if isinstance(source_host, str) and source_host.strip():
+            baseurl_delta.edges = [
+                Edge(
+                    rel="BELONGS_TO",
+                    dir="out",
+                    node_type="Subdomain",
+                    node_identity={"name": source_host.strip().lower()},
+                )
+            ]
         deltas.append(baseurl_delta)
         deltas.append(endpoint_delta)
 

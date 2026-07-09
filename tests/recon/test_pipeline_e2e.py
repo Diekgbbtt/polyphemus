@@ -241,9 +241,10 @@ def test_pipeline_e2e_subfinder_dnsx_httpx():
     # Subdomain identities subfinder produced (real curate -> read_assets
     # seam, not a stub), with the apex seed host prepended ahead of them
     # (D11: the apex's own origin is probed alongside discovered subdomains).
+    # www.example.com is dropped by the D21 www-dedup gate, so it never reaches
+    # the graph or dnsx.
     assert seen_input_assets["dnsx"] == [
         {"name": "example.com"},
-        {"name": "www.example.com"},
         {"name": "api.example.com"},
     ]
 

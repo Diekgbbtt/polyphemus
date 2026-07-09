@@ -225,7 +225,8 @@ def test_scope_filter_drops_out_of_scope_baseurls_and_anchored_children():
 
 
 def test_scope_filter_noop_without_scope_domain():
-    out_base = _baseurl("https://www.facebook.com")
+    # non-www host so only the scope rule is under test here.
+    out_base = _baseurl("https://facebook.com")
     # No scope_domain -> scope filtering is disabled (backward compatible).
     assert filter_deltas([out_base]) == [out_base]
 
@@ -237,3 +238,24 @@ def test_scope_filter_keeps_apex_and_composes_with_noise_drop():
     kept = filter_deltas([apex, static_ep, js_ep], scope_domain="example.com")
     assert apex in kept and js_ep in kept
     assert static_ep not in kept  # D15 noise drop still applies within scope
+
+
+# --- www dedup: www.<host> is the same content as <host> -------------------
+
+def test_www_subdomain_dropped():
+    subs = [
+        AssetDelta(type="Subdomain", identity={"name": "www.example.com"}),   # drop
+        AssetDelta(type="Subdomain", identity={"name": "api.example.com"}),   # keep
+        AssetDelta(type="Subdomain", identity={"name": "example.com"}),       # keep
+    ]
+    kept = [d.identity["name"] for d in filter_deltas(subs)]
+    assert kept == ["api.example.com", "example.com"]
+
+
+def test_www_baseurl_and_children_dropped():
+    www_base = _baseurl("https://www.example.com")
+    www_ep = _endpoint("/x", baseurl="https://www.example.com")
+    keep_base = _baseurl("https://example.com")
+    kept = filter_deltas([www_base, www_ep, keep_base])
+    assert keep_base in kept
+    assert www_base not in kept and www_ep not in kept

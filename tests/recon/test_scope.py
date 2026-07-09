@@ -60,3 +60,12 @@ def test_discovery_jobs_gate_excludes_takeover_and_passive():
     assert "whois" not in DISCOVERY_JOBS
     assert "gau" not in DISCOVERY_JOBS
     assert "paramspider" not in DISCOVERY_JOBS
+
+
+def test_parse_scope_strips_leading_www():
+    # www.<x> seeds the same scope as <x>, exact or wildcard.
+    assert parse_scope("www.example.com") == {
+        "apex": "example.com", "seed_host": "example.com", "mode": "exact"}
+    assert parse_scope("*.www.example.com")["seed_host"] == "example.com"
+    # a non-leading www label is untouched.
+    assert parse_scope("wwwize.example.com")["seed_host"] == "wwwize.example.com"

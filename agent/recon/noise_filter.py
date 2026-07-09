@@ -205,6 +205,23 @@ def _delta_out_of_scope(delta: AssetDelta, scope_domain: str) -> bool:
     return any(not host_in_scope(h, scope_domain) for h in hosts)
 
 
+def _delta_is_www_redundant(delta: AssetDelta) -> bool:
+    """A `www.`-prefixed host is conventionally the same web content as the bare
+    host, so it must not become a second Subdomain / BaseURL (dedup, D-www).
+
+    - a `Subdomain` named `www.<x>` dups its parent host: dropping it here means
+      httpx (which reads Subdomain nodes from the graph in a later phase) never
+      probes it, so no `www.` BaseURL is ever produced;
+    - a `BaseURL` (or an Endpoint/Header/... anchored to one) on a `www.` host
+      dedups to the non-www host and is dropped with its children (belt, for the
+      apex/gau/katana paths that can mint a `www.` BaseURL directly).
+    """
+    if delta.type == "Subdomain":
+        name = delta.identity.get("name", "")
+        return isinstance(name, str) and name.lower().startswith("www.")
+    return any(h.startswith("www.") for h in _referenced_base_hosts(delta))
+
+
 def _endpoint_has_params(delta: AssetDelta) -> bool:
     """True when the endpoint's recorded URL carries a query string. The URL in
     `props` already reflects the discovered query (parsers build Parameter
@@ -245,6 +262,10 @@ def filter_deltas(
             path = delta.identity.get("path", "/")
             if classify_endpoint(path, has_params=_endpoint_has_params(delta)) == "static":
                 continue
+        # www.<host> dedups to <host> (unconditional - the www convention holds
+        # whether the seed was exact or wildcard).
+        if _delta_is_www_redundant(delta):
+            continue
         if scope_domain and _delta_out_of_scope(delta, scope_domain):
             continue
         kept.append(delta)

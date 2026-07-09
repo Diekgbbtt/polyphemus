@@ -107,13 +107,17 @@ def test_jsluice_consumes_js_endpoints_via_path_selector_and_is_batched():
 
 
 def test_jsluice_runs_after_the_endpoint_producing_crawlers():
-    # jsluice must sit in a LATER phase than katana/gau (which mint the `.js`
+    # jsluice must sit in a LATER phase than katana (which mints the `.js`
     # Endpoints it consumes) or the phase barrier feeds it nothing (D17).
     jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
     katana_idx = next(i for i, p in enumerate(PHASES) if "katana" in p)
-    gau_idx = next(i for i, p in enumerate(PHASES) if "gau" in p)
     assert jsluice_idx > katana_idx
-    assert jsluice_idx > gau_idx
+
+
+def test_gau_is_not_a_scheduled_job():
+    # gau is withdrawn from the pipeline (D-gau): no JOBS entry, not in any phase.
+    assert "gau" not in JOBS
+    assert not any("gau" in phase for phase in PHASES)
 
 
 def test_arjun_runs_after_jsluice_so_recovered_endpoints_reach_it():

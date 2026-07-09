@@ -30,6 +30,21 @@ def test_endpoint_source_is_the_tool_name():
     ep = next(d for d in deltas if d.type == "Endpoint")
     assert ep.props["source"] == "httpx"
 
+
+def test_every_baseurl_belongs_to_its_source_subdomain():
+    """Strong constraint: no orphan BaseURLs - every httpx BaseURL must carry a
+    BELONGS_TO edge to the Subdomain it was probed from (httpx `input`)."""
+    deltas = parse(FIX.read_text())
+    baseurls = [d for d in deltas if d.type == "BaseURL"]
+    assert baseurls
+    for b in baseurls:
+        belongs = [e for e in b.edges
+                   if e.rel == "BELONGS_TO" and e.node_type == "Subdomain"]
+        assert belongs, f"BaseURL {b.identity} has no BELONGS_TO->Subdomain edge"
+    # the app.example.com probe links to Subdomain{name: app.example.com}
+    app = next(b for b in baseurls if b.identity["url"] == "https://app.example.com")
+    assert app.edges[0].node_identity == {"name": "app.example.com"}
+
 def test_malformed_line_skipped():
     deltas = parse('{"url":"https://a","status_code":200}\nNOT JSON\n')
     assert any(d.type == "BaseURL" for d in deltas)

@@ -212,3 +212,39 @@ def test_get_recon_status_returns_registry_shape(monkeypatch):
     assert body["current_phase"] == 2
     assert len(body["per_job"]) == 1
     assert body["per_job"][0]["job"] == "subfinder"
+
+
+def test_post_recon_with_removed_gau_job_returns_error(monkeypatch):
+    """gau is withdrawn from the pipeline (D-gau): the agent app must reject a
+    run that lists it, and must never launch. Mirrors the operator's manual
+    check (POST a run whose jobs include gau -> the app errors)."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_domain": "example.com"})
+    launched = []
+    monkeypatch.setattr(routes, "_launch_pipeline",
+                        lambda project_id, run_id, jobs: launched.append(run_id))
+
+    resp = client.post("/projects/p1/recon", json={"jobs": ["httpx", "gau"]})
+
+    assert resp.status_code == 400
+    assert "gau" in resp.json()["detail"]
+    assert launched == []
+
+
+def test_post_recon_baseline_pipeline_still_launches_without_gau(monkeypatch):
+    """The baseline (default, no explicit jobs) pipeline still launches after
+    gau's removal - the full phase plan no longer contains it."""
+    from agent.recon.jobs import PHASES
+    assert not any("gau" in phase for phase in PHASES)
+
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_domain": "example.com"})
+    monkeypatch.setattr(pg, "create_run", lambda run_id, pid: None)
+    launched = []
+    monkeypatch.setattr(routes, "_launch_pipeline",
+                        lambda project_id, run_id, jobs: launched.append(run_id))
+
+    resp = client.post("/projects/p1/recon", json={})
+
+    assert resp.status_code == 200
+    assert launched  # baseline run accepted
