@@ -170,3 +170,32 @@ def test_default_crawl_pod_module_level_instance_is_import_safe():
     assert crawl_pod.crawl_pod is not None
     assert callable(crawl_pod.crawl_pod_invoke)
     assert callable(crawl_pod.default_run_crawl_fn)
+
+
+def test_crawl_pod_fires_notify_on_awaiting_auth():
+    from agent.recon.crawl.crawl_pod import build_crawl_pod
+    from agent.recon.types import JobSpec
+
+    notified = []
+
+    def fake_run_crawl_authenticated_fn(target, *, scope, on_awaiting_auth=None):
+        on_awaiting_auth({"viewer_url": "https://app.steel.dev/sessions/xyz"})
+        return {"pages": [{"url": target}]}, {"viewer_url": "https://app.steel.dev/sessions/xyz"}
+
+    graph = build_crawl_pod(
+        run_crawl_fn=lambda *a, **k: {"pages": []},
+        parse_fn=lambda s: [],
+        triage_fn=lambda e, a, j: [],
+        curate_fn=lambda a, o, pid, **k: (0, 0),
+        run_crawl_authenticated_fn=fake_run_crawl_authenticated_fn,
+        status_sink=lambda *a, **k: None,
+        notify_fn=lambda run_id, phase, job, vu: notified.append((run_id, phase, job, vu)),
+    )
+    job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
+                  produces=["BaseURL"], consumes="BaseURL", use_auth=True,
+                  configurator_mode="agent")
+    state = {"job": job, "input_asset": {"url": "https://t.example.com"},
+             "extra": {"auth_context": {"cookies": []}}, "project_id": "p1",
+             "run_id": "run-1", "phase": 4}
+    graph.invoke(state)
+    assert notified == [("run-1", 4, "steel_crawl", "https://app.steel.dev/sessions/xyz")]

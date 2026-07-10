@@ -134,7 +134,13 @@ def default_status_sink(run_id: str, phase: int, job: str, viewer_url: str) -> N
         pass
 
 
-def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_authenticated_fn=None, status_sink=None):
+def default_notify_fn(run_id: str, phase: int, job: str, viewer_url: str) -> None:
+    """Best-effort Discord notify wrapper (see agent.recon.notify)."""
+    from agent.recon import notify  # noqa: PLC0415
+    notify.notify_awaiting_auth(run_id, phase, job, viewer_url)
+
+
+def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_authenticated_fn=None, status_sink=None, notify_fn=None):
     """Build the compiled crawl-pod subgraph, injecting the side-effecting
     collaborators: run_crawl_fn(target, scope=scope) -> manifest dict,
     parse_fn(stdout) -> list[AssetDelta], triage_fn(exec_result, assets, job)
@@ -204,6 +210,7 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
                 phase = state.get("phase")
                 job_name = getattr(job, "tool", None)
                 sink = status_sink if status_sink is not None else default_status_sink
+                notify = notify_fn if notify_fn is not None else default_notify_fn
 
                 def _on_awaiting_auth(awaiting_status):
                     vu = (awaiting_status or {}).get("viewer_url")
@@ -211,6 +218,10 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
                         try:
                             sink(run_id, phase, job_name, vu)
                         except Exception:  # noqa: BLE001 - best-effort surfacing
+                            pass
+                        try:
+                            notify(run_id, phase, job_name, vu)
+                        except Exception:  # noqa: BLE001 - best-effort out-of-band notify
                             pass
 
                 manifest, awaiting_status = run_crawl_authenticated_fn(
