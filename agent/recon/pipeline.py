@@ -124,6 +124,37 @@ def read_assets(
     return apply_selector(assets, where)
 
 
+def read_steering_signals(project_id: str, *, driver=None) -> list[dict]:
+    """Return the live WAF steering signals (fail-open to []).
+
+    Each signal is {"url", "macro_kind", "evidence"} for a BaseURL carrying a
+    WAF observation. A DELIBERATELY separate read from read_assets, which is
+    label-allowlist-clean and must never read Observation nodes. Any error ->
+    [], so a steering-read blip degrades adaptivity, never the run (mirrors the
+    heartbeat/upsert_job best-effort ethos). WAF observations anchor to BaseURL
+    with identity {"url": ...} (curator ANCHOR_ALLOWLIST)."""
+    from agent.recon.steering import WAF_MACRO_KINDS
+    try:
+        if driver is None:
+            from agent.app.clients import neo4j_client
+            driver = neo4j_client._driver
+        query = (
+            "MATCH (a:BaseURL {project_id: $project_id})-[:HAS_OBSERVATION]->"
+            "(o:Observation {project_id: $project_id}) "
+            "WHERE o.macro_kind IN $kinds "
+            "RETURN DISTINCT a.url AS url, o.macro_kind AS macro_kind, o.evidence AS evidence"
+        )
+        with driver.session() as session:
+            result = session.run(query, project_id=project_id, kinds=sorted(WAF_MACRO_KINDS))
+            return [
+                {"url": r["url"], "macro_kind": r["macro_kind"], "evidence": r["evidence"]}
+                for r in result if r["url"]
+            ]
+    except Exception:
+        logger.warning("read_steering_signals failed for %s; no adaptation", project_id, exc_info=True)
+        return []
+
+
 async def _heartbeat_loop(run_id: str) -> None:
     """Refresh the run heartbeat every HEARTBEAT_TICK_SECONDS until cancelled."""
     try:
