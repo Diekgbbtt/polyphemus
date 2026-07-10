@@ -294,6 +294,13 @@ async def run_pipeline(
                     "produced_assets": produced_assets,
                     "produced_observations": produced_observations,
                 }
+                commands = [
+                    e.stats.get("command")
+                    for e in pod_exports
+                    if e.stats and e.stats.get("command")
+                ]
+                if commands:
+                    job_stats["commands"] = commands
                 # Surface a crawl job's Steel viewer URL (interactive
                 # steel_await_auth MVP path, see crawl_pod.py) so
                 # GET /recon/{run_id} lets the operator complete manual login -

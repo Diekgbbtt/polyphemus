@@ -449,3 +449,24 @@ def test_curator_node_omits_scope_domain_when_absent():
                     "asset_context": "", "extra": {}, "session_id": "s",
                     "iteration": 0, "project_id": "proj1"})
     assert out["export"].verdict == "success"
+
+
+def test_pod_export_records_executed_command():
+    from agent.recon.pod import build_pod_graph
+    from agent.recon.types import ExecResult, JobSpec
+
+    def fake_exec(command, session_id, timeout_s):
+        return ExecResult(stdout="", stderr="", returncode=0)
+
+    graph = build_pod_graph(
+        exec_fn=fake_exec,
+        curate_fn=lambda assets, obs, pid, **kw: (0, 0),
+        triage_fn=lambda exec_result, assets, job: [],
+    )
+    job = JobSpec(tool="whois", skill="whois_lookup",
+                  command_template="whois {domain}", produces=["Domain"], consumes="Domain")
+    state = {"job": job, "input_asset": {"name": "example.com"}, "extra": {},
+             "session_id": "s1", "project_id": "p1"}
+    export = graph.invoke(state)["export"]
+    assert export.stats is not None
+    assert export.stats["command"] == "whois example.com"

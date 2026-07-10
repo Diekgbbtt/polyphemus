@@ -218,18 +218,21 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             assets_merged, observations_merged = curate_fn(
                 assets, observations, state["project_id"]
             )
+        invocation = state.get("invocation")
         export = PodExport(
             input_asset=state["input_asset"],
             verdict="success",
             assets_merged=assets_merged,
             observations_merged=observations_merged,
             iterations=state.get("iteration", 0),
+            stats={"command": invocation.command} if invocation is not None else None,
         )
         return {"export": export}
 
     def fail(state: PodState) -> dict:
         exec_result = state.get("exec_result")
         error = exec_result.stderr if exec_result is not None else "unknown error"
+        invocation = state.get("invocation")
         export = PodExport(
             input_asset=state["input_asset"],
             verdict="failed",
@@ -237,6 +240,7 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             observations_merged=0,
             iterations=state.get("iteration", 0),
             error=error,
+            stats={"command": invocation.command} if invocation is not None else None,
         )
         return {"export": export}
 

@@ -504,3 +504,36 @@ def test_exact_mode_logs_discovery_suppression(caplog):
     assert "app.t.com" in msg
     for job in ("subfinder", "amass", "puredns", "dnsx"):
         assert job in msg
+
+
+def test_job_stats_include_per_pod_commands(monkeypatch):
+    import asyncio
+    from agent.recon import pipeline
+    from agent.recon.types import PodExport
+
+    captured = {}
+
+    class FakeRegistry:
+        def create_run(self, *a, **k): pass
+        def set_run_status(self, *a, **k): pass
+        def upsert_job(self, run_id, phase, job, status, stats=None, error=None):
+            if status not in ("in_progress",):
+                captured[job] = stats
+
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+        return [
+            PodExport(input_asset=input_assets[0], verdict="success",
+                      stats={"command": "subfinder -d example.com -all -json -silent"}),
+        ]
+
+    monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
+
+    asyncio.run(pipeline.run_pipeline(
+        "p1", run_id="r1", job_subset=["subfinder"],
+        run_job=fake_run_job,
+        load_settings=lambda pid: {"target_domain": "*.example.com"},
+        registry=FakeRegistry(),
+        read_assets=lambda *a, **k: [{"name": "example.com"}],
+    ))
+
+    assert captured["subfinder"]["commands"] == ["subfinder -d example.com -all -json -silent"]
