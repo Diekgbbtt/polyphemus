@@ -54,6 +54,8 @@ def notify_awaiting_auth(
         with urlopen(req, timeout=10) as resp:  # noqa: S310 - fixed, operator-configured webhook
             status = getattr(resp, "status", 200)
             return 200 <= status < 300
-    except Exception:  # noqa: BLE001 - notification is best-effort, never disturb the crawl
-        logger.warning("awaiting-auth webhook notify failed for run %s", run_id, exc_info=True)
+    except Exception as exc:  # noqa: BLE001 - notification is best-effort, never disturb the crawl
+        # Log the exception TYPE only, never exc_info: a urllib HTTPError/URLError
+        # can embed the (secret) webhook URL in its message/traceback.
+        logger.warning("awaiting-auth webhook notify failed for run %s (%s)", run_id, type(exc).__name__)
         return False
