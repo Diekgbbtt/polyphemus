@@ -288,3 +288,15 @@ Strong constraint enforced by `tests/recon/test_httpx_parser.py::test_every_base
 
 `www.<host>` is conventionally the same web content as `<host>`, but the graph showed both as distinct Subdomains/BaseURLs.
 **Built:** the curator gate (`noise_filter.filter_deltas`) unconditionally drops any `Subdomain` named `www.*` (which cascades - httpx never probes it, so no `www.` BaseURL is minted) and any `www.` BaseURL / anchored child as a belt; `parse_scope` strips a leading `www.` from the seed so seeding `www.x` or `*.www.x` resolves to the same scope as `x`. Applies in both exact and wildcard modes.
+
+## D22 - recon-job & recon-pipeline agent skills for STEERING DECISIONS (NEW work item, bring-forward, 2026-07-10)
+
+The LLM-driven steering built on 2026-07-10 carries its reasoning in an INLINE `STEERING_DECISIONS` system-prompt constant shared by both agents.
+The recon-orchestrator agent (`decide_routing`) and the recon-job agent (`decide_pod_selection`) both live in `agent/recon/steering_agent.py`, reason over the WAF signals surfaced by `read_steering_signals`, and are gated + fail-open (no signal means no LLM call and today's behavior exactly).
+This inline constant was the operator-approved TEMPORARY home for the thought process.
+The proper home is dedicated per-agent skills, one for the recon-job agent and one for the recon-pipeline (orchestrator) agent, single-sourced and loaded at runtime the way the triager loads `skills/recon/triager/writing-observations/SKILL.md`.
+
+**Bring-forward (to build):** (a) author `skills/recon/job-agent/steering/SKILL.md` and `skills/recon/pipeline-agent/steering/SKILL.md` capturing the STEERING DECISIONS domain primitives (WAF/IP-egress routing, throttle-as-prevention, and future signal types beyond WAF).
+(b) Load them at runtime in `steering_agent.py` (replacing the inline constant), mirroring `_load_triager_skill`.
+(c) Consider splitting the shared `job_orchestrator` model role into distinct orchestrator/job roles once the skills diverge.
+Until then the inline `STEERING_DECISIONS` constant is the single source and both agents share it.
