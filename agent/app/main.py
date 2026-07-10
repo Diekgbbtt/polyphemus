@@ -5,10 +5,29 @@ from fastapi import FastAPI
 from agent.app.clients import pg, neo4j_client, kali_mcp
 from agent.app.config import config
 from agent.app.llm import validate_llm_config
+from agent.app.observability import get_langfuse_callbacks
 from agent.app.routes import router as recon_router
+
+logger = logging.getLogger(__name__)
 
 app = FastAPI(title="polymerhus-agent")
 app.include_router(recon_router)
+
+
+def log_tracing_status() -> None:
+    """Emit a one-time, loud line about whether LLM reasoning is being traced.
+
+    A silent no-op (LANGFUSE_* unset) is exactly what hid the missing reasoning
+    trace in the run e55e8626 post-mortem; surface it at boot so operators know
+    up front that decision traces will (not) be captured. Best-effort."""
+    if get_langfuse_callbacks():
+        logger.info("Langfuse tracing enabled - LLM configurator/triager reasoning is traced.")
+    else:
+        logger.warning(
+            "Langfuse tracing disabled (LANGFUSE_PUBLIC_KEY/SECRET_KEY/HOST unset) - "
+            "no LLM reasoning traces will be captured for this process."
+        )
+
 
 @app.on_event("startup")
 async def _startup():
@@ -26,6 +45,7 @@ async def _startup():
     await pg.ensure_checkpoint_tables()
     neo4j_client.ensure_schema()
     validate_llm_config()
+    log_tracing_status()
     pg.reap_stale_runs(config.REAP_TTL_SECONDS)  # sweep zombies left by a prior crash
     app.state.reaper_task = asyncio.create_task(_reaper_loop())
 
