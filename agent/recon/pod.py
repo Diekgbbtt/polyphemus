@@ -105,10 +105,13 @@ def fill_template(
 _HEADERS_FLAG_TOOLS = {"arjun"}
 
 # Conservative preventive rate profile, applied ONLY when the job-agent steering
-# marked this pod extra["rate_profile"] == "throttle". Only tools whose base
-# template carries no rate flag are listed (httpx/ffuf); katana already has
-# -rl/-c and is handled by routing, so it is intentionally absent.
-_RATE_FLAGS = {"httpx": "-rl 5", "ffuf": "-rate 5 -p 0.2"}
+# marked this pod extra["rate_profile"] == "throttle". Only ffuf currently carries
+# the {rate_flags} slot: it consumes BaseURL, so a WAF-flagged host actually
+# reaches decide_pod_selection and can be throttled. httpx consumes Subdomain and
+# runs in the detection phase BEFORE any WAF signal exists, so it can never be
+# reactively throttled - its {rate_flags} slot was a dead no-op and was removed.
+# katana already carries -rl/-c and is handled by routing, so it is absent too.
+_RATE_FLAGS = {"ffuf": "-rate 5 -p 0.2"}
 
 
 def _auth_header(auth_context: dict, tool: str) -> str:

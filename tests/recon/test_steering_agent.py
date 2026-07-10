@@ -8,6 +8,19 @@ class _FakeLLM:
     def with_structured_output(self, schema, **kw): return _FakeStructured(self._result)
 
 
+def test_decide_pod_selection_keeps_asset_omitted_from_plan():
+    # An asset the LLM does not mention at all must default to run (safe direction),
+    # never be silently dropped. Only 'a' is in the plan; 'b' is omitted entirely.
+    from agent.recon.steering_agent import decide_pod_selection, PodSelection, _AssetPlan
+    result = PodSelection(plan=[_AssetPlan(url="https://a", run=True)])
+    selected, throttle = decide_pod_selection(
+        [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
+        "katana", [{"url": "https://a"}, {"url": "https://b"}], llm=_FakeLLM(result),
+    )
+    assert selected == [{"url": "https://a"}, {"url": "https://b"}]  # b kept (omitted -> run)
+    assert throttle == set()
+
+
 def test_decide_routing_maps_exclusions():
     from agent.recon.steering_agent import decide_routing, RoutingDecision, _JobExclusion
     result = RoutingDecision(exclusions=[_JobExclusion(job="katana", exclude_urls=["https://ib.x"])])
