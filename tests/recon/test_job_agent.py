@@ -225,3 +225,34 @@ def test_default_job_agent_is_import_safe_module_level_instance():
     assert ja.job_agent is not None
     assert callable(ja.default_pod_invoke)
     assert callable(ja.default_preprocess_fn)
+
+
+def test_steering_preprocess_applies_llm_selection(monkeypatch):
+    from agent.recon import job_agent
+    from agent.recon.types import JobSpec
+
+    monkeypatch.setattr(
+        "agent.recon.steering_agent.decide_pod_selection",
+        lambda signals, job_name, assets, llm=None: ([{"url": "https://a"}], {"https://a"}),
+    )
+    job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
+                  produces=["Endpoint"], consumes="BaseURL")
+    pod_inputs = job_agent.steering_preprocess_fn(
+        [{"url": "https://a"}, {"url": "https://b"}], job,
+        {"project_id": "p1", "steering": [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}]},
+        "",
+    )
+    assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a"]
+    assert pod_inputs[0]["extra"]["rate_profile"] == "throttle"
+    assert "steering" not in pod_inputs[0]["extra"]  # steering is orchestration-only
+
+
+def test_steering_preprocess_no_signal_falls_back_to_default():
+    from agent.recon import job_agent
+    from agent.recon.types import JobSpec
+    job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
+                  produces=["Endpoint"], consumes="BaseURL")
+    pod_inputs = job_agent.steering_preprocess_fn(
+        [{"url": "https://a"}], job, {"project_id": "p1"}, "")
+    assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a"]
+    assert "rate_profile" not in pod_inputs[0]["extra"]

@@ -470,3 +470,12 @@ def test_pod_export_records_executed_command():
     export = graph.invoke(state)["export"]
     assert export.stats is not None
     assert export.stats["command"] == "whois example.com"
+
+
+def test_fill_template_rate_flags_gated_on_rate_profile():
+    from agent.recon.pod import fill_template
+    tmpl = "httpx -u {target} -silent {rate_flags}"
+    on = fill_template(tmpl, {"url": "https://x"}, {"rate_profile": "throttle"}, tool="httpx")
+    off = fill_template(tmpl, {"url": "https://x"}, {}, tool="httpx")
+    assert "-rl" in on and "{rate_flags}" not in on
+    assert off.strip() == "httpx -u https://x -silent"  # no profile -> today's string

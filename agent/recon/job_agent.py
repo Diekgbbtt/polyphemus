@@ -65,6 +65,43 @@ def default_preprocess_fn(
     ]
 
 
+def steering_preprocess_fn(
+    input_assets: list[dict], job: JobSpec, extra: dict, asset_context: str
+) -> list[dict]:
+    """Recon-job agent steering: when live steering signals are present in
+    `extra["steering"]`, ask the job-orchestrator LLM which of this job's
+    candidate assets to run and which to throttle (STEERING DECISIONS), then
+    build pod_inputs from that decision. Otherwise fall back to the
+    deterministic default. Fail-open: any error -> default_preprocess_fn.
+
+    `extra["steering"]` is orchestration-only and is stripped from the pod's
+    own extra; a throttled asset instead carries `extra["rate_profile"]`."""
+    signals = (extra or {}).get("steering") or []
+    if not signals:
+        return default_preprocess_fn(input_assets, job, extra, asset_context)
+    try:
+        from agent.recon.steering_agent import decide_pod_selection
+        selected, throttle_urls = decide_pod_selection(signals, job.tool, input_assets or [])
+    except Exception:
+        return default_preprocess_fn(input_assets, job, extra, asset_context)
+
+    capped = list(selected)[:MAX_PODS]
+    base_extra = dict(extra or {})
+    base_extra.pop("steering", None)
+    if not job.use_auth:
+        base_extra.pop("auth_context", None)
+
+    pod_inputs = []
+    for asset in capped:
+        pod_extra = dict(base_extra)
+        if asset.get("url") in throttle_urls:
+            pod_extra["rate_profile"] = "throttle"
+        pod_inputs.append(
+            {"input_asset": asset, "asset_context": asset_context or "", "extra": pod_extra}
+        )
+    return pod_inputs
+
+
 def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -> PodExport:
     """Real collaborator: invoke the Foundation pod subgraph for a single
     pod_input and return its terminal export. Builds nothing at import time
@@ -160,7 +197,7 @@ def build_job_agent(*, pod_invoke, preprocess_fn):
     return g.compile()
 
 
-job_agent = build_job_agent(pod_invoke=default_pod_invoke, preprocess_fn=default_preprocess_fn)
+job_agent = build_job_agent(pod_invoke=default_pod_invoke, preprocess_fn=steering_preprocess_fn)
 
 
 async def run_job(

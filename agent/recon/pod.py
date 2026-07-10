@@ -88,6 +88,7 @@ def fill_template(
     auth_header = ""
     if extra.get("auth_context") and extra.get("_use_auth"):
         auth_header = _auth_header(extra["auth_context"], tool)
+    rate_flags = _RATE_FLAGS.get(tool, "") if (extra.get("rate_profile") == "throttle") else ""
 
     result = command_template
     result = result.replace("{target}", str(target))
@@ -95,12 +96,19 @@ def fill_template(
     result = result.replace("{baseurl}", str(baseurl))
     result = result.replace("{session}", str(session_id))
     result = result.replace("{auth_header}", auth_header)
+    result = result.replace("{rate_flags}", rate_flags)
     return result
 
 
 # Tools whose auth-cookie flag is `--headers "Cookie: ..."` rather than the
 # `-H "Cookie: ..."` form shared by httpx/katana/ffuf (design §4 table).
 _HEADERS_FLAG_TOOLS = {"arjun"}
+
+# Conservative preventive rate profile, applied ONLY when the job-agent steering
+# marked this pod extra["rate_profile"] == "throttle". Only tools whose base
+# template carries no rate flag are listed (httpx/ffuf); katana already has
+# -rl/-c and is handled by routing, so it is intentionally absent.
+_RATE_FLAGS = {"httpx": "-rl 5", "ffuf": "-rate 5 -p 0.2"}
 
 
 def _auth_header(auth_context: dict, tool: str) -> str:

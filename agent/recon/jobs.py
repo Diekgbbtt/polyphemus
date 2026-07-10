@@ -75,7 +75,7 @@ JOBS: dict[str, JobSpec] = {
     "httpx": JobSpec(
         tool="httpx",
         skill="http_probe",
-        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_header}",
+        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {rate_flags} {auth_header}",
         produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
         consumes="Subdomain",
         use_auth=True,
@@ -109,7 +109,7 @@ JOBS: dict[str, JobSpec] = {
         skill="content_discovery",
         command_template=(
             "ffuf -u {target}/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt "
-            "-mc 200,403 -of json {auth_header}"
+            "-mc 200,403 -of json {rate_flags} {auth_header}"
         ),
         produces=["Endpoint"],
         consumes="BaseURL",
