@@ -180,6 +180,8 @@ async def run_pipeline(
     load_settings=None,
     registry=None,
     read_assets=None,
+    read_steering_signals=None,
+    decide_routing=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -195,6 +197,10 @@ async def run_pipeline(
         from agent.app.clients import pg as registry
     if read_assets is None:
         read_assets = globals()["read_assets"]
+    if read_steering_signals is None:
+        read_steering_signals = globals()["read_steering_signals"]
+    if decide_routing is None:
+        from agent.recon.steering_agent import decide_routing as decide_routing  # noqa: PLC0414
 
     # All DB helpers below (pg + neo4j) are synchronous/blocking. run_pipeline
     # runs on the API event loop, so every one is offloaded via asyncio.to_thread
@@ -226,9 +232,13 @@ async def run_pipeline(
 
     await asyncio.to_thread(registry.create_run, run_id, project_id)
     hb = asyncio.create_task(_heartbeat_loop(run_id))
+    signals: list[dict] = []
     try:
         for phase_idx, phase_jobs in enumerate(plan):
             job_configs: dict[str, tuple] = {}
+            exclusions = (
+                await asyncio.to_thread(decide_routing, signals, phase_jobs) if signals else {}
+            )
             for name in phase_jobs:
                 job = JOBS[name]
                 try:
@@ -266,6 +276,10 @@ async def run_pipeline(
                             input_assets, apex_registrable=apex, max_pods=MAX_PODS
                         )
 
+                    excluded = set(exclusions.get(name, []))
+                    if excluded:
+                        input_assets = [a for a in input_assets if a.get("url") not in excluded]
+
                     extra = {"project_id": project_id}
                     if job.use_auth and settings.get("auth_context"):
                         extra["auth_context"] = settings["auth_context"]
@@ -274,6 +288,8 @@ async def run_pipeline(
                     # actually configured (never the parse_scope placeholder).
                     if settings.get("target_domain"):
                         extra["scope_domain"] = scope["seed_host"]
+                    if signals:
+                        extra["steering"] = signals
 
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "in_progress"
@@ -360,6 +376,7 @@ async def run_pipeline(
                 registry.set_run_status, run_id, "running", current_phase=phase_idx
             )
             await asyncio.gather(*[_run_one(name) for name in job_configs])
+            signals = await asyncio.to_thread(read_steering_signals, project_id)
     finally:
         hb.cancel()
         try:

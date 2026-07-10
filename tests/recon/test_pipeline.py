@@ -537,3 +537,50 @@ def test_job_stats_include_per_pod_commands(monkeypatch):
     ))
 
     assert captured["subfinder"]["commands"] == ["subfinder -d example.com -all -json -silent"]
+
+
+def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch):
+    import asyncio
+    from agent.recon import pipeline
+
+    X = "https://ib.example.com"
+    Y = "https://app.example.com"
+
+    def fake_read_assets(node_type, project_id, where=None, *, driver=None):
+        if node_type == "Subdomain":
+            return [{"name": "app.example.com"}]
+        if node_type == "BaseURL":
+            return [{"url": X}, {"url": Y}]
+        return []
+
+    captured_inputs = {}
+    captured_steering = {}
+
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+        captured_inputs[job.tool] = [a.get("url") or a.get("name") for a in input_assets]
+        captured_steering[job.tool] = extra.get("steering")
+        return []
+
+    class FakeRegistry:
+        def create_run(self, *a, **k): pass
+        def set_run_status(self, *a, **k): pass
+        def upsert_job(self, *a, **k): pass
+
+    signals = [{"url": X, "macro_kind": "waf_protected", "evidence": "Incapsula"}]
+
+    monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
+
+    asyncio.run(pipeline.run_pipeline(
+        "p1", run_id="r1",
+        job_subset=["subfinder", "httpx", "katana", "steel_crawl"],
+        run_job=fake_run_job,
+        load_settings=lambda pid: {"target_domain": "*.example.com"},
+        registry=FakeRegistry(),
+        read_assets=fake_read_assets,
+        read_steering_signals=lambda project_id, driver=None: signals,
+        decide_routing=lambda sigs, phase_jobs, llm=None: {"katana": [X]},
+    ))
+
+    assert captured_inputs["katana"] == [Y]                 # routed away by the orchestrator agent
+    assert set(captured_inputs["steel_crawl"]) == {X, Y}    # steel keeps the flagged host
+    assert captured_steering["katana"] == signals           # signals threaded to the job agent
