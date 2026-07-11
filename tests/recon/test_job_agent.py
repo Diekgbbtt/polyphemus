@@ -232,7 +232,7 @@ def test_steering_preprocess_applies_llm_selection(monkeypatch):
     from agent.recon.types import JobSpec
 
     monkeypatch.setattr(
-        "agent.recon.steering_agent.decide_pod_selection",
+        "agent.recon.job_agent.decide_pod_selection",
         lambda signals, job_name, assets, llm=None: ([{"url": "https://a"}], {"https://a"}),
     )
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
@@ -256,3 +256,57 @@ def test_steering_preprocess_no_signal_falls_back_to_default():
         [{"url": "https://a"}], job, {"project_id": "p1"}, "")
     assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a"]
     assert "rate_profile" not in pod_inputs[0]["extra"]
+
+
+# --- recon-job agent per-asset steering decision (decide_pod_selection) ---
+# A fake LLM is injected so no provider/network is touched.
+
+
+class _FakeStructured:
+    def __init__(self, result): self._result = result
+    def invoke(self, messages): return self._result
+
+
+class _FakeLLM:
+    def __init__(self, result): self._result = result
+    def with_structured_output(self, schema, **kw): return _FakeStructured(self._result)
+
+
+def test_decide_pod_selection_applies_plan():
+    from agent.recon.job_agent import decide_pod_selection, PodSelection, _AssetPlan
+    result = PodSelection(plan=[
+        _AssetPlan(url="https://a", run=True, throttle=True),
+        _AssetPlan(url="https://b", run=False),
+    ])
+    selected, throttle = decide_pod_selection(
+        [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
+        "katana", [{"url": "https://a"}, {"url": "https://b"}], llm=_FakeLLM(result),
+    )
+    assert selected == [{"url": "https://a"}]
+    assert throttle == {"https://a"}
+
+
+def test_decide_pod_selection_keeps_asset_omitted_from_plan():
+    # An asset the LLM does not mention at all must default to run (safe direction),
+    # never be silently dropped. Only 'a' is in the plan; 'b' is omitted entirely.
+    from agent.recon.job_agent import decide_pod_selection, PodSelection, _AssetPlan
+    result = PodSelection(plan=[_AssetPlan(url="https://a", run=True)])
+    selected, throttle = decide_pod_selection(
+        [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
+        "katana", [{"url": "https://a"}, {"url": "https://b"}], llm=_FakeLLM(result),
+    )
+    assert selected == [{"url": "https://a"}, {"url": "https://b"}]  # b kept (omitted -> run)
+    assert throttle == set()
+
+
+def test_decide_pod_selection_fail_open_runs_all():
+    from agent.recon.job_agent import decide_pod_selection
+
+    class Boom:
+        def with_structured_output(self, *a, **k): raise RuntimeError("llm down")
+
+    assets = [{"url": "https://a"}]
+    selected, throttle = decide_pod_selection(
+        [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
+        "katana", assets, llm=Boom())
+    assert selected == assets and throttle == set()

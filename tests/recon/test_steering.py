@@ -41,3 +41,22 @@ def test_read_steering_signals_fail_open_on_error():
         def session(self): raise RuntimeError("neo4j down")
 
     assert read_steering_signals("p1", driver=Boom()) == []
+
+
+def test_format_signals_renders_one_line_per_host():
+    from agent.recon.steering import format_signals
+    out = format_signals([
+        {"url": "https://a", "macro_kind": "waf_protected", "evidence": "Incapsula"},
+        {"url": "https://b", "macro_kind": "waf_detection", "evidence": ""},
+    ])
+    assert "https://a [waf_protected] Incapsula" in out
+    assert "https://b [waf_detection]" in out
+    assert out.count("\n") == 1  # exactly two lines
+
+
+def test_resolve_model_returns_injected_llm():
+    # The injected-llm path is the only one exercised offline; the role-resolution
+    # branch is lazy and provider-gated, so it is not called here.
+    from agent.recon.steering import resolve_model
+    sentinel = object()
+    assert resolve_model("job_orchestrator", sentinel) is sentinel

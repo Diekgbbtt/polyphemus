@@ -18,14 +18,24 @@ default). Importing this module performs no I/O: building the module-level
 from __future__ import annotations
 
 import asyncio
+import logging
 import operator
 from typing import Annotated, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
+from pydantic import BaseModel, Field
 
 from agent.recon.config import MAX_PODS
+from agent.recon.steering import (
+    STEERING_PRIMITIVES,
+    describe_job_kind,
+    format_signals,
+    resolve_model,
+)
 from agent.recon.types import JobSpec, PodExport
+
+logger = logging.getLogger(__name__)
 
 
 class JobState(TypedDict, total=False):
@@ -65,6 +75,61 @@ def default_preprocess_fn(
     ]
 
 
+# The recon-job agent's steering responsibility: per-asset run/skip/throttle
+# within one job. The JOB_STEERING prompt is the TEMPORARY inline home for this
+# agent's thought process (dedicated skill = D22); it frames the shared
+# STEERING_PRIMITIVES for the job agent's per-asset scope.
+JOB_STEERING = (
+    "## STEERING DECISIONS (recon-job agent)\n\n"
+    "You are the recon-job agent configuring one job's pods. Given this job, its\n"
+    "candidate assets, and the signals the pipeline has already observed, decide\n"
+    "for each asset whether to run or skip it and whether to throttle it. Reason\n"
+    "about the signals; do not restate them.\n\n"
+    + STEERING_PRIMITIVES
+    + "\nSkip a flagged host only when THIS job cannot make progress against it;\n"
+    "throttle only as a deliberate preventive choice. Leave un-flagged assets\n"
+    "running.\n"
+)
+
+
+class _AssetPlan(BaseModel):
+    url: str
+    run: bool = True
+    throttle: bool = False
+
+
+class PodSelection(BaseModel):
+    plan: list[_AssetPlan] = Field(default_factory=list)
+    rationale: str = ""
+
+
+def decide_pod_selection(signals: list[dict], job_name: str, assets: list[dict], *, llm=None):
+    """Given the job's candidate assets and live signals, return
+    (assets_to_run, throttle_urls). Fail-open to (assets, set())."""
+    urls = [a.get("url") for a in assets if a.get("url")]
+    if not signals or not urls:
+        return assets, set()
+    try:
+        from langchain_core.messages import SystemMessage, HumanMessage  # noqa: PLC0415
+        model = resolve_model("job_orchestrator", llm).with_structured_output(
+            PodSelection, method="function_calling"
+        )
+        human = (
+            f"Job: {job_name} ({describe_job_kind(job_name)}).\n"
+            "Candidate BaseURLs:\n" + "\n".join(f"- {u}" for u in urls) + "\n\n"
+            f"Signals (flagged BaseURLs):\n{format_signals(signals)}\n\n"
+            "For each candidate, decide run/skip and whether to throttle."
+        )
+        decision = model.invoke([SystemMessage(content=JOB_STEERING), HumanMessage(content=human)])
+        planned = {p.url: p for p in decision.plan}
+        selected = [a for a in assets if planned.get(a.get("url"), _AssetPlan(url=a.get("url", ""))).run]
+        throttle = {u for u, p in planned.items() if p.throttle}
+        return selected, throttle
+    except Exception:
+        logger.warning("decide_pod_selection failed; running all assets", exc_info=True)
+        return assets, set()
+
+
 def steering_preprocess_fn(
     input_assets: list[dict], job: JobSpec, extra: dict, asset_context: str
 ) -> list[dict]:
@@ -80,7 +145,6 @@ def steering_preprocess_fn(
     if not signals:
         return default_preprocess_fn(input_assets, job, extra, asset_context)
     try:
-        from agent.recon.steering_agent import decide_pod_selection
         selected, throttle_urls = decide_pod_selection(signals, job.tool, input_assets or [])
     except Exception:
         return default_preprocess_fn(input_assets, job, extra, asset_context)

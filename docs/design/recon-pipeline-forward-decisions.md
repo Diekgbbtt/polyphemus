@@ -291,12 +291,12 @@ Strong constraint enforced by `tests/recon/test_httpx_parser.py::test_every_base
 
 ## D22 - recon-job & recon-pipeline agent skills for STEERING DECISIONS (NEW work item, bring-forward, 2026-07-10)
 
-The LLM-driven steering built on 2026-07-10 carries its reasoning in an INLINE `STEERING_DECISIONS` system-prompt constant shared by both agents.
-The recon-orchestrator agent (`decide_routing`) and the recon-job agent (`decide_pod_selection`) both live in `agent/recon/steering_agent.py`, reason over the WAF signals surfaced by `read_steering_signals`, and are gated + fail-open (no signal means no LLM call and today's behavior exactly).
-This inline constant was the operator-approved TEMPORARY home for the thought process.
-The proper home is dedicated per-agent skills, one for the recon-job agent and one for the recon-pipeline (orchestrator) agent, single-sourced and loaded at runtime the way the triager loads `skills/recon/triager/writing-observations/SKILL.md`.
+The LLM-driven steering built on 2026-07-10 reasons over the WAF signals surfaced by `read_steering_signals`, gated + fail-open (no signal means no LLM call and today's behavior exactly).
+Per the agent responsibility taxonomy, each steering decision lives WITH its owning agent (refactor 2026-07-11, dissolving the earlier cross-cutting `steering_agent.py`): macro cross-job routing (`decide_routing`) in the recon-orchestrator agent `agent/recon/orchestrator_agent.py`, per-asset run/skip/throttle (`decide_pod_selection`) in the recon-job agent `agent/recon/job_agent.py`.
+The shared, decision-free domain reasoning (`STEERING_PRIMITIVES`) plus thin helpers live in `agent/recon/steering.py`; each agent frames those primitives in its OWN inline system prompt (`ORCHESTRATOR_STEERING` / `JOB_STEERING`).
+Those inline per-agent prompts are the operator-approved TEMPORARY home for the thought process; the proper home is dedicated per-agent skills, single-sourced and loaded at runtime the way the triager loads `skills/recon/triager/writing-observations/SKILL.md`.
 
 **Bring-forward (to build):** (a) author `skills/recon/job-agent/steering/SKILL.md` and `skills/recon/pipeline-agent/steering/SKILL.md` capturing the STEERING DECISIONS domain primitives (WAF/IP-egress routing, throttle-as-prevention, and future signal types beyond WAF).
-(b) Load them at runtime in `steering_agent.py` (replacing the inline constant), mirroring `_load_triager_skill`.
-(c) Consider splitting the shared `job_orchestrator` model role into distinct orchestrator/job roles once the skills diverge.
-Until then the inline `STEERING_DECISIONS` constant is the single source and both agents share it.
+(b) Load each at runtime in its owning agent module (`orchestrator_agent.py` / `job_agent.py`), replacing the inline `ORCHESTRATOR_STEERING` / `JOB_STEERING` constants, mirroring `_load_triager_skill`.
+(c) Split the shared `job_orchestrator` model role (both agents pass it to `steering.resolve_model` today) into distinct orchestrator/job roles once the skills diverge.
+Until then the inline per-agent prompts are the single source, each owned by its agent.

@@ -200,7 +200,7 @@ async def run_pipeline(
     if read_steering_signals is None:
         read_steering_signals = globals()["read_steering_signals"]
     if decide_routing is None:
-        from agent.recon.steering_agent import decide_routing as decide_routing  # noqa: PLC0414
+        from agent.recon.orchestrator_agent import decide_routing as decide_routing  # noqa: PLC0414
 
     # All DB helpers below (pg + neo4j) are synchronous/blocking. run_pipeline
     # runs on the API event loop, so every one is offloaded via asyncio.to_thread
