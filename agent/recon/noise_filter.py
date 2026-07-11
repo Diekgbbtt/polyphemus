@@ -31,6 +31,34 @@ from urllib.parse import urlparse
 
 from agent.recon.types import AssetDelta
 
+# --- D16: webapp/webapi profiling ------------------------------------------
+# Classify a probed URL from httpx-observable signals so API-specific tools
+# (kiterunner, and any future api-mode ffuf) can be gated to the API surface
+# via JobSpec.consumes_where, instead of firing against presentational web apps.
+# A JSON-family content-type is the strong API signal; an api-indicating
+# hostname LABEL is a cheap secondary hint. Everything else is a web app.
+# Pure, deterministic, tolerant of missing/malformed input. Deliberately
+# high-precision + minimal - extend the hint sets as needed.
+Profile = Literal["webapp", "webapi"]
+
+_WEBAPI_CONTENT_MARKERS = ("json",)  # application/json, application/*+json, ...
+_WEBAPI_HOST_LABELS = frozenset({"api", "apis", "rest", "graphql", "gateway"})
+
+
+def classify_profile(content_type: str | None, url: str | None = None) -> Profile:
+    """Return 'webapi' when the response looks like an API (a JSON-family
+    content-type, or an api-indicating hostname label), else 'webapp'."""
+    if any(m in (content_type or "").lower() for m in _WEBAPI_CONTENT_MARKERS):
+        return "webapi"
+    host = ""
+    if isinstance(url, str):
+        # scheme://host[:port][/path] -> bare host, tolerant of missing parts.
+        host = url.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+    if _WEBAPI_HOST_LABELS.intersection(host.split(".")):
+        return "webapi"
+    return "webapp"
+
+
 Classification = Literal["static", "surface", "ambiguous"]
 
 # Path segments that mark a strictly-presentational static-render tree. A path

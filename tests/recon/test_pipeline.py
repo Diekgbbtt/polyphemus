@@ -43,7 +43,12 @@ def make_load_settings(settings):
 def make_read_assets(default_name="seed"):
     calls = []
 
-    def read_assets(node_type, project_id):
+    # Mirror the real read_assets signature (node_type, project_id, where=None):
+    # jobs with a `consumes_where` selector (jsluice, and D16-gated kiterunner)
+    # are read via the 3-arg form, so the mock must accept `where` or it
+    # TypeErrors and the job silently degrades. The selector itself is exercised
+    # in test_selectors/test_jobs; here we just return an input so run_job fires.
+    def read_assets(node_type, project_id, where=None):
         calls.append((node_type, project_id))
         return [{"name": default_name}]
 

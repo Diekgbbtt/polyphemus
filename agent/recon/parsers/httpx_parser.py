@@ -4,6 +4,7 @@ Ported from Redamon's `main_recon_modules/http_probe.py::parse_httpx_output`.
 Only the field-mapping logic is kept; all Docker/execution/AI-annotation
 code was dropped. Deterministic, tolerant of malformed JSONL lines.
 """
+from agent.recon.noise_filter import classify_profile
 from agent.recon.parsers._jsonlines import iter_json_dicts
 from agent.recon.parsers._urls import url_to_deltas
 from agent.recon.types import AssetDelta, Edge
@@ -40,6 +41,11 @@ def parse(stdout: str) -> list[AssetDelta]:
         # tool's normalized BaseURL for the same host). httpx never derives
         # Parameters from the probed URL's query string - only keep the
         # BaseURL+Endpoint deltas.
+        # D16: webapp/webapi profile derived from httpx-observable signals, set
+        # on both the BaseURL and its root Endpoint so API tools (kiterunner) can
+        # be gated to `profile == "webapi"` via JobSpec.consumes_where.
+        profile = classify_profile(content_type, url)
+
         url_deltas = url_to_deltas(
             url,
             method="GET",
@@ -50,6 +56,7 @@ def parse(stdout: str) -> list[AssetDelta]:
                 "content_length": content_length,
                 "title": title,
                 "server": server,
+                "profile": profile,
             },
         )[:2]
         if not url_deltas:
@@ -64,6 +71,7 @@ def parse(stdout: str) -> list[AssetDelta]:
             "content_type": content_type,
             "final_url": final_url,
             "server": server,
+            "profile": profile,
         }
         # Strong constraint: every httpx BaseURL is linked back to the Subdomain
         # it was probed from - the `input` echoed by httpx is exactly that host

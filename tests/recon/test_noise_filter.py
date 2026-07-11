@@ -259,3 +259,29 @@ def test_www_baseurl_and_children_dropped():
     kept = filter_deltas([www_base, www_ep, keep_base])
     assert keep_base in kept
     assert www_base not in kept and www_ep not in kept
+
+
+# --- D16 webapp/webapi profiling ---
+
+
+def test_classify_profile_json_content_type_is_webapi():
+    from agent.recon.noise_filter import classify_profile
+    assert classify_profile("application/json") == "webapi"
+    assert classify_profile("application/hal+json; charset=utf-8") == "webapi"
+
+
+def test_classify_profile_html_or_missing_is_webapp():
+    from agent.recon.noise_filter import classify_profile
+    assert classify_profile("text/html; charset=utf-8") == "webapp"
+    assert classify_profile(None) == "webapp"
+    assert classify_profile("", "https://www.example.com") == "webapp"
+
+
+def test_classify_profile_api_hostname_label_is_webapi():
+    from agent.recon.noise_filter import classify_profile
+    # host label match, even with a non-JSON content-type
+    assert classify_profile("text/html", "https://api.example.com") == "webapi"
+    assert classify_profile("text/html", "https://graphql.example.com/") == "webapi"
+    assert classify_profile("text/html", "https://gw.api.example.com:443/x") == "webapi"
+    # a substring like 'capillary' must NOT false-match (label-exact, not substring)
+    assert classify_profile("text/html", "https://capillary.example.com") == "webapp"

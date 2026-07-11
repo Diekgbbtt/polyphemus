@@ -124,3 +124,22 @@ def test_arjun_runs_after_jsluice_so_recovered_endpoints_reach_it():
     arjun_idx = next(i for i, p in enumerate(PHASES) if "arjun" in p)
     jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
     assert arjun_idx > jsluice_idx
+
+
+def test_kiterunner_is_gated_to_the_webapi_profile():
+    # D16: kiterunner (API-route scanner) only consumes BaseURLs httpx profiled
+    # as `webapi`, via the D17 consumes_where selector.
+    job = JOBS["kiterunner"]
+    assert job.consumes == "BaseURL"
+    assert job.consumes_where is not None
+    assert job.consumes_where.field == "profile"
+    assert job.consumes_where.op == "equals"
+    assert job.consumes_where.values == ["webapi"]
+
+
+def test_kiterunner_runs_after_httpx_which_sets_the_profile():
+    # The profile it gates on is set by httpx, so httpx must run in an earlier
+    # phase (else the phase barrier feeds kiterunner unprofiled BaseURLs).
+    httpx_idx = next(i for i, p in enumerate(PHASES) if "httpx" in p)
+    kite_idx = next(i for i, p in enumerate(PHASES) if "kiterunner" in p)
+    assert kite_idx > httpx_idx

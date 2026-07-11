@@ -120,7 +120,11 @@ JOBS: dict[str, JobSpec] = {
         skill="content_discovery",
         command_template="kr scan {target} -w /opt/localbin/routes-small.kite",
         produces=["Endpoint"],
+        # kiterunner scans for API routes, so it is gated to the API surface
+        # (D16): it only consumes BaseURLs httpx profiled as `webapi`, reusing
+        # the D17 consumes_where selector rather than firing at every web app.
         consumes="BaseURL",
+        consumes_where=AssetSelector(field="profile", op="equals", values=["webapi"]),
         use_auth=False,
     ),
     "jsluice": JobSpec(

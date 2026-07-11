@@ -94,3 +94,14 @@ def test_path_bearing_url_normalizes_baseurl_to_scheme_netloc():
     endpoint = next(d for d in deltas if d.type == "Endpoint")
     assert endpoint.identity["baseurl"] == "https://host"
     assert endpoint.identity["path"] == "/some/path"
+
+
+def test_baseurl_and_endpoint_carry_webapp_webapi_profile():
+    # D16: httpx sets a `profile` prop on both the BaseURL and its root Endpoint,
+    # derived from content-type (JSON-family -> webapi) else webapp.
+    api = parse('{"url":"https://x.example.com","status_code":200,"content_type":"application/json"}\n')
+    assert next(d for d in api if d.type == "BaseURL").props["profile"] == "webapi"
+    assert next(d for d in api if d.type == "Endpoint").props["profile"] == "webapi"
+
+    app = parse('{"url":"https://x.example.com","status_code":200,"content_type":"text/html"}\n')
+    assert next(d for d in app if d.type == "BaseURL").props["profile"] == "webapp"
