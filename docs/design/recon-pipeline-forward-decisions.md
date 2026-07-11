@@ -225,6 +225,8 @@ The D14/Q2 fix (seed `Domain = seed_host` in exact mode) exposes a second-order 
 
 **Architectural consequence:** this likely **decomposes the current single discovery phase into two** - *discover* then *profile* - with the profile becoming a first-class asset attribute that the phase-5 (and api-specific phase-4) tools consume. This touches the phase DAG (`jobs.py` PHASES + JobSpec.consumes), so it is a structural change, not a tweak; sequence it after D14 (scope) since scope determines the endpoint population being profiled.
 
+**BUILT (minimal, operator-directed 2026-07-11, commit `7c9b995`).** Chose the reuse-first path over a phase split: httpx already runs at phase 3 (before the phase-4 crawlers) and already carries `content_type`, so NO new job/phase was added. `noise_filter.classify_profile(content_type, url) -> "webapp"|"webapi"` (JSON-family content-type, or an api-indicating hostname label -> webapi) is set as a `profile` prop on every httpx BaseURL and its root Endpoint. `kiterunner` is gated to `consumes_where=AssetSelector(field="profile", op="equals", values=["webapi"])` (reusing the D17 selector), so it fires only at the API surface. **Deferred (not built):** the discover->profile split for crawler-minted Endpoints (katana/ffuf endpoints carry no profile yet - only httpx-probed BaseURLs do); an api-mode ffuf variant; the gau-liveness prune (gau withdrawn, D19). Revisit if API-surface coverage needs the crawled-endpoint population profiled too.
+
 ## D17 - jsluice JS-analysis is not doing what its parser documents (NEW work item, verified defect)
 
 **The operator asked to see precisely how JS files are discovered, identified, and processed, and specifically whether jsluice (1) attempts to discover each bundle's source `.map` file and (2) processes every discovered JS file. Both answers are NO, and the live evidence shows why.**
@@ -300,3 +302,8 @@ Those inline per-agent prompts are the operator-approved TEMPORARY home for the 
 (b) Load each at runtime in its owning agent module (`orchestrator_agent.py` / `job_agent.py`), replacing the inline `ORCHESTRATOR_STEERING` / `JOB_STEERING` constants, mirroring `_load_triager_skill`.
 (c) Split the shared `job_orchestrator` model role (both agents pass it to `steering.resolve_model` today) into distinct orchestrator/job roles once the skills diverge.
 Until then the inline per-agent prompts are the single source, each owned by its agent.
+
+**Scope note (operator, 2026-07-11):** a steering-only skill is almost certainly too narrow - steering is just ONE facet of recon orchestration.
+The recon-orchestrator agent's skill should be a GENERAL recon-orchestration skill (macro pipeline management: phase planning, WAF/signal-driven routing/steering, and finding-triggered deep+narrow extensions, i.e. the L3 responsibility), with steering as a section rather than the whole skill.
+Likewise the recon-job agent's skill should be its general per-job configuration skill (L1 cross-job failure-mode learning), with per-asset steering as one section.
+So (a) above should author `skills/recon/pipeline-agent/SKILL.md` and `skills/recon/job-agent/SKILL.md` as general per-agent skills, folding STEERING DECISIONS in as a subsection, not standalone `steering/` skills.
