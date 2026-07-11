@@ -1,16 +1,19 @@
 """Per-job orchestrator agent: LLM preprocess -> Send fan-out -> pod subgraph.
 
 Two-level nesting (design §3): `build_job_agent` compiles a
-`StateGraph(JobState)` with two nodes - `preprocess` (distributes a job's
-`input_assets` into <= MAX_PODS `pod_inputs`) and `pod_runner` (invokes the
-Foundation pod subgraph once per pod_input, fanned out via `Send`). Results
-accumulate into `pod_exports` through an `operator.add` reducer so the
-parallel `pod_runner` Sends don't clobber each other.
+`StateGraph(JobState)` with two nodes - `preprocess` (maps a job's
+`input_assets` 1:1 into `pod_inputs`, up to the MAX_JOB_ASSETS budget) and
+`pod_runner` (invokes the Foundation pod subgraph once per pod_input, fanned
+out via `Send`). `run_job` invokes the graph with `max_concurrency=MAX_PODS`,
+so ALL assets are covered but only MAX_PODS pods run at once (MAX_PODS is a
+concurrency ceiling, not an asset cap). Results accumulate into `pod_exports`
+through an `operator.add` reducer so the parallel `pod_runner` Sends don't
+clobber each other.
 
 `pod_invoke` and `preprocess_fn` are injected - production wires
 `default_pod_invoke` (wraps Foundation `agent.recon.pod.pod_graph`) and
-`default_preprocess_fn` (deterministic 1:1 asset->pod_input mapping capped
-at MAX_PODS; the LLM-cleaning path via chat_model_for("job_orchestrator")
+`default_preprocess_fn` (deterministic 1:1 asset->pod_input mapping up to the
+MAX_JOB_ASSETS budget; the LLM-cleaning path via chat_model_for("job_orchestrator")
 is a structured seam for a future enhancement, not exercised by the MVP
 default). Importing this module performs no I/O: building the module-level
 `job_agent` only wires function references, it does not call them.
@@ -26,7 +29,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
 from pydantic import BaseModel, Field
 
-from agent.recon.config import MAX_PODS
+from agent.recon.config import MAX_JOB_ASSETS, MAX_PODS
 from agent.recon.steering import (
     STEERING_PRIMITIVES,
     describe_job_kind,
@@ -52,15 +55,18 @@ class JobState(TypedDict, total=False):
 def default_preprocess_fn(
     input_assets: list[dict], job: JobSpec, extra: dict, asset_context: str
 ) -> list[dict]:
-    """Deterministic fallback: 1:1 map input_assets -> pod_inputs, capped at
-    MAX_PODS. `extra.auth_context` is threaded through ONLY for `use_auth`
-    jobs - non-auth pods must never see it, even if the caller passed it in.
+    """Deterministic fallback: 1:1 map input_assets -> pod_inputs, capped at the
+    MAX_JOB_ASSETS total-work budget (NOT MAX_PODS, which is the concurrency
+    ceiling applied at fan-out time). All assets up to the budget become pods and
+    are processed MAX_PODS at a time. `extra.auth_context` is threaded through
+    ONLY for `use_auth` jobs - non-auth pods must never see it, even if the
+    caller passed it in.
 
     This is the seam an LLM-driven cleaning/dedup pass (chat_model_for
     ("job_orchestrator")) would replace for `configurator_mode == "agent"`
     jobs; kept deterministic for the MVP per the plan's design notes.
     """
-    capped = list(input_assets or [])[:MAX_PODS]
+    capped = list(input_assets or [])[:MAX_JOB_ASSETS]
     base_extra = dict(extra or {})
     if not job.use_auth:
         base_extra.pop("auth_context", None)
@@ -149,7 +155,7 @@ def steering_preprocess_fn(
     except Exception:
         return default_preprocess_fn(input_assets, job, extra, asset_context)
 
-    capped = list(selected)[:MAX_PODS]
+    capped = list(selected)[:MAX_JOB_ASSETS]
     base_extra = dict(extra or {})
     base_extra.pop("steering", None)
     if not job.use_auth:
@@ -295,7 +301,13 @@ async def run_job(
     # (Langfuse unconfigured) is inert.
     from agent.app.observability import get_langfuse_callbacks
 
+    # max_concurrency=MAX_PODS makes MAX_PODS a pure CONCURRENCY ceiling: the
+    # graph fans out one pod per input asset (all of them, up to the
+    # MAX_JOB_ASSETS budget) but LangGraph runs at most MAX_PODS pod_runner
+    # Sends at a time, in waves. Verified against langgraph 1.2.7 sync .invoke.
     result = await asyncio.to_thread(
-        graph.invoke, initial, config={"callbacks": get_langfuse_callbacks()}
+        graph.invoke,
+        initial,
+        config={"callbacks": get_langfuse_callbacks(), "max_concurrency": MAX_PODS},
     )
     return result["pod_exports"]

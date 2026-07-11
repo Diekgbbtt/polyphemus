@@ -41,8 +41,27 @@ def base_state(job, input_assets, *, extra=None, run_id="run-1", phase=0):
     }
 
 
-def test_fanout_is_capped_at_max_pods(monkeypatch):
+def test_fanout_is_not_capped_by_max_pods(monkeypatch):
+    # MAX_PODS is now the CONCURRENCY ceiling, not an asset cap: a small MAX_PODS
+    # must NOT drop assets. All 5 assets become pods.
     monkeypatch.setattr(ja, "MAX_PODS", 2)
+    monkeypatch.setattr(ja, "MAX_JOB_ASSETS", 100)
+    pod_invoke = make_recording_pod_invoke()
+    agent = ja.build_job_agent(pod_invoke=pod_invoke, preprocess_fn=ja.default_preprocess_fn)
+
+    job = JOBS["subfinder"]
+    input_assets = [{"name": f"{i}.com"} for i in range(5)]
+    result = agent.invoke(base_state(job, input_assets))
+
+    assert len(result["pod_inputs"]) == 5  # all covered, not capped at MAX_PODS=2
+    assert len(pod_invoke.calls) == 5
+
+
+def test_fanout_capped_only_by_job_asset_budget(monkeypatch):
+    # The only cap on coverage is the deliberate MAX_JOB_ASSETS budget, and it is
+    # independent of MAX_PODS (concurrency).
+    monkeypatch.setattr(ja, "MAX_PODS", 1)
+    monkeypatch.setattr(ja, "MAX_JOB_ASSETS", 2)
     pod_invoke = make_recording_pod_invoke()
     agent = ja.build_job_agent(pod_invoke=pod_invoke, preprocess_fn=ja.default_preprocess_fn)
 
@@ -50,9 +69,27 @@ def test_fanout_is_capped_at_max_pods(monkeypatch):
     input_assets = [{"name": "a.com"}, {"name": "b.com"}, {"name": "c.com"}]
     result = agent.invoke(base_state(job, input_assets))
 
-    assert len(result["pod_inputs"]) == 2
-    assert len(result["pod_exports"]) == 2
+    assert len(result["pod_inputs"]) == 2  # budget=2, NOT MAX_PODS=1
     assert len(pod_invoke.calls) == 2
+
+
+def test_run_job_bounds_concurrency_to_max_pods(monkeypatch):
+    # run_job must pass max_concurrency=MAX_PODS so LangGraph runs at most
+    # MAX_PODS pod_runner Sends at a time (verified honored, langgraph 1.2.7).
+    monkeypatch.setattr(ja, "MAX_PODS", 7)
+    captured = {}
+
+    class FakeGraph:
+        def invoke(self, initial, config=None):
+            captured["config"] = config or {}
+            return {"pod_exports": []}
+
+    out = asyncio.run(
+        ja.run_job(JOBS["subfinder"], [{"name": "a.com"}],
+                   run_id="r", phase=0, extra={}, agent=FakeGraph())
+    )
+    assert captured["config"].get("max_concurrency") == 7
+    assert out == []
 
 
 def test_pod_failure_is_isolated_other_pods_still_succeed(monkeypatch):
