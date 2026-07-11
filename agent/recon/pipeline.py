@@ -73,8 +73,9 @@ def _inject_seed_host(input_assets: list[dict], scope: dict) -> list[dict]:
     exact mode) must be HTTP-probed / port-scanned even when subdomain discovery
     did not produce it - the apex is a `Domain` node, never a `Subdomain`, and
     in exact mode discovery is suppressed entirely. Prepending (not appending)
-    guarantees the seed host survives the MAX_PODS cap the per-job orchestrator
-    applies to a large discovered-subdomain population."""
+    guarantees the seed host survives the per-job MAX_JOB_ASSETS budget cap the
+    orchestrator applies to a large discovered-subdomain population (MAX_PODS is
+    now the concurrency ceiling, not an asset cap - see job_agent)."""
     seed_host = scope.get("seed_host")
     if not seed_host:
         return input_assets
@@ -263,8 +264,11 @@ async def run_pipeline(
                     # Batched jobs (jsluice, D17/Q6): the raw per-bundle assets
                     # are reduced (first-party filter + url/basename dedup) and
                     # distributed across <= MAX_PODS pods, each carrying a
-                    # `batch` list. This keeps the pod budget intact for a job
-                    # whose input population (653 bundles) dwarfs MAX_PODS.
+                    # `batch` list. Here MAX_PODS is deliberately a pod-COUNT
+                    # target (pack all bundles into <= MAX_PODS looping pods) -
+                    # intentionally different from the job-level semantics where
+                    # MAX_PODS is only the concurrency ceiling; the resulting
+                    # <= MAX_PODS batch-pods then run within that same ceiling.
                     if job.batch:
                         from agent.recon.batching import build_batch_assets
                         from agent.recon.config import MAX_PODS
