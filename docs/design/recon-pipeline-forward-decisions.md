@@ -307,3 +307,16 @@ Until then the inline per-agent prompts are the single source, each owned by its
 The recon-orchestrator agent's skill should be a GENERAL recon-orchestration skill (macro pipeline management: phase planning, WAF/signal-driven routing/steering, and finding-triggered deep+narrow extensions, i.e. the L3 responsibility), with steering as a section rather than the whole skill.
 Likewise the recon-job agent's skill should be its general per-job configuration skill (L1 cross-job failure-mode learning), with per-asset steering as one section.
 So (a) above should author `skills/recon/pipeline-agent/SKILL.md` and `skills/recon/job-agent/SKILL.md` as general per-agent skills, folding STEERING DECISIONS in as a subsection, not standalone `steering/` skills.
+
+## D23 - autonomous credentialed login for agentic crawl + MFA/SSO gap (NEW work item, in design, 2026-07-11)
+
+Operator direction (2026-07-11): add a project setting capturing authentication credentials (draft: email, password, and the login base URL) so the agentic crawl can autonomously navigate to the sign-in portal and log in, instead of relying on hand-harvested session cookies or a human completing the login in the Steel viewer inside a short window.
+
+**Threat-model note (operator):** this runs in an authorized penetration-testing context where the operator OWNS the credentials and authorizes their use against the target. Storing/handling the operator's own credentials to reach the operator's own authorized target is therefore NOT the third-party-secret-exposure risk it would be otherwise; the earlier "plaintext creds are a reusable master secret" objection does not bind here. Captchas are expected to be handled by Steel itself.
+
+**KNOWN UNSOLVED GAP - MFA / SSO / OAuth (must be addressed later).** Autonomous form login cannot, on its own, complete:
+- MFA / 2FA challenges (TOTP, SMS, push, hardware key) - a second out-of-band factor.
+- SSO / OAuth / OIDC redirects to a third-party IdP (the login leaves the target origin; the IdP may itself enforce MFA and is out of crawl scope).
+There is NO solution designed yet. The autonomous-login path MUST detect these cases and DEGRADE to the existing interactive `steel_await_auth` + Discord-notification path (human completes the login in the viewer) rather than fail silently or loop. Designing a real MFA/SSO story (e.g. operator-supplied TOTP seed, a pause-and-resume handoff, or a headful IdP step) is a follow-up work item, tracked here, deliberately deferred.
+
+**Status:** design being pinned down (critical-design pass 2026-07-11); the precise settings schema, the login-execution mechanism (deterministic Playwright routine vs. the LLM ReAct loop), the credential-storage layer, portal discovery, and the success/degrade detection are open design choices being surfaced to the operator before an implementation plan is written.
