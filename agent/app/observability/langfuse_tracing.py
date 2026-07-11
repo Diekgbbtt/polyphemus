@@ -47,6 +47,10 @@ _REQUIRED_ENV = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST")
 _lock = threading.Lock()
 _INIT_DONE = False
 _CALLBACKS: list = []
+# Why tracing is off, set by `_build_callbacks` so operators get a SPECIFIC
+# reason (which env var is missing, or a package/init failure) instead of a
+# generic "unset" message. None once tracing is successfully enabled.
+_DISABLED_REASON: str | None = None
 
 
 def _is_configured() -> bool:
@@ -61,9 +65,11 @@ def _build_callbacks() -> list:
     configured or anything goes wrong (missing package, bad keys, unreachable
     host at construction). Never raises.
     """
+    global _DISABLED_REASON
     if not _is_configured():
         missing = [n for n in _REQUIRED_ENV if not os.environ.get(n)]
-        logger.debug("langfuse tracing disabled: missing env %s", missing)
+        _DISABLED_REASON = f"missing/empty env: {', '.join(missing)}"
+        logger.debug("langfuse tracing disabled: %s", _DISABLED_REASON)
         return []
 
     try:
@@ -87,11 +93,13 @@ def _build_callbacks() -> list:
             logger.debug("langfuse auth_check raised; continuing", exc_info=True)
 
         handler = CallbackHandler()
+        _DISABLED_REASON = None
         logger.info(
             "langfuse tracing enabled (host=%s)", os.environ.get("LANGFUSE_HOST")
         )
         return [handler]
     except Exception:  # noqa: BLE001 - fail-open: tracing never breaks the run
+        _DISABLED_REASON = "langfuse env set but handler init failed (package/keys/host)"
         logger.warning(
             "langfuse tracing could not be initialised; continuing without it",
             exc_info=True,
@@ -120,13 +128,26 @@ def get_langfuse_callbacks() -> list:
     return _CALLBACKS
 
 
+def disabled_reason() -> str | None:
+    """Human-readable reason tracing is off, or None when it is enabled.
+
+    Triggers the one-time (cached) build so the reason reflects the real
+    outcome - which env var is missing, or a package/handler init failure -
+    rather than a generic message. For operator diagnostics (e.g. the startup
+    log), so a misconfiguration names itself instead of hiding.
+    """
+    get_langfuse_callbacks()
+    return _DISABLED_REASON
+
+
 def reset_cache() -> None:
     """Clear the cached handler so the next call re-reads the environment.
 
     Intended for tests that toggle `LANGFUSE_*` env vars; not part of the
     normal runtime path.
     """
-    global _INIT_DONE, _CALLBACKS
+    global _INIT_DONE, _CALLBACKS, _DISABLED_REASON
     with _lock:
         _INIT_DONE = False
         _CALLBACKS = []
+        _DISABLED_REASON = None

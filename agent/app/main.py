@@ -5,7 +5,7 @@ from fastapi import FastAPI
 from agent.app.clients import pg, neo4j_client, kali_mcp
 from agent.app.config import config
 from agent.app.llm import validate_llm_config
-from agent.app.observability import get_langfuse_callbacks
+from agent.app.observability import disabled_reason, get_langfuse_callbacks
 from agent.app.routes import router as recon_router
 
 logger = logging.getLogger(__name__)
@@ -24,8 +24,8 @@ def log_tracing_status() -> None:
         logger.info("Langfuse tracing enabled - LLM configurator/triager reasoning is traced.")
     else:
         logger.warning(
-            "Langfuse tracing disabled (LANGFUSE_PUBLIC_KEY/SECRET_KEY/HOST unset) - "
-            "no LLM reasoning traces will be captured for this process."
+            "Langfuse tracing disabled (%s) - no LLM reasoning traces will be captured "
+            "for this process.", disabled_reason() or "unknown reason"
         )
 
 
