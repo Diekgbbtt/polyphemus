@@ -81,59 +81,59 @@ def default_preprocess_fn(
     ]
 
 
-# The recon-job agent's steering responsibility: per-asset run/skip/throttle
-# within one job. The JOB_STEERING prompt is the TEMPORARY inline home for this
+# The recon-job agent's steering responsibility: per-asset THROTTLING within one
+# job. It NEVER selects which assets run - that is the recon-orchestrator's
+# concern (`orchestrator_agent.decide_routing`); every candidate asset always
+# becomes a pod. The JOB_STEERING prompt is the TEMPORARY inline home for this
 # agent's thought process (dedicated skill = D22); it frames the shared
-# STEERING_PRIMITIVES for the job agent's per-asset scope.
+# STEERING_PRIMITIVES for the job agent's throttle-only scope.
 JOB_STEERING = (
     "## STEERING DECISIONS (recon-job agent)\n\n"
-    "You are the recon-job agent configuring one job's pods. Given this job, its\n"
-    "candidate assets, and the signals the pipeline has already observed, decide\n"
-    "for each asset whether to run or skip it and whether to throttle it. Reason\n"
-    "about the signals; do not restate them.\n\n"
+    "You are the recon-job agent configuring one job's pods. Every candidate\n"
+    "asset WILL run - which assets a job processes is not your decision. Your\n"
+    "only decision is throttling: given this job, its candidate assets, and the\n"
+    "signals the pipeline has already observed, decide which assets to throttle.\n"
+    "Reason about the signals; do not restate them.\n\n"
     + STEERING_PRIMITIVES
-    + "\nSkip a flagged host only when THIS job cannot make progress against it;\n"
-    "throttle only as a deliberate preventive choice. Leave un-flagged assets\n"
-    "running.\n"
+    + "\nThrottle only as a deliberate preventive choice against a not-yet-flagged\n"
+    "host; leave every other asset at its default rate. Never skip an asset.\n"
 )
 
 
 class _AssetPlan(BaseModel):
     url: str
-    run: bool = True
     throttle: bool = False
 
 
-class PodSelection(BaseModel):
+class PodThrottlePlan(BaseModel):
     plan: list[_AssetPlan] = Field(default_factory=list)
     rationale: str = ""
 
 
-def decide_pod_selection(signals: list[dict], job_name: str, assets: list[dict], *, llm=None):
-    """Given the job's candidate assets and live signals, return
-    (assets_to_run, throttle_urls). Fail-open to (assets, set())."""
+def decide_pod_selection(signals: list[dict], job_name: str, assets: list[dict], *, llm=None) -> set[str]:
+    """Given the job's candidate assets and live signals, return the set of
+    BaseURLs to THROTTLE. This agent NEVER drops an asset - asset selection is
+    the recon-orchestrator's concern (`decide_routing`); every candidate always
+    runs. Fail-open to `set()` (nothing throttled)."""
     urls = [a.get("url") for a in assets if a.get("url")]
     if not signals or not urls:
-        return assets, set()
+        return set()
     try:
         from langchain_core.messages import SystemMessage, HumanMessage  # noqa: PLC0415
         model = resolve_model("job_orchestrator", llm).with_structured_output(
-            PodSelection, method="function_calling"
+            PodThrottlePlan, method="function_calling"
         )
         human = (
             f"Job: {job_name} ({describe_job_kind(job_name)}).\n"
             "Candidate BaseURLs:\n" + "\n".join(f"- {u}" for u in urls) + "\n\n"
             f"Signals (flagged BaseURLs):\n{format_signals(signals)}\n\n"
-            "For each candidate, decide run/skip and whether to throttle."
+            "For each candidate, decide whether to throttle it."
         )
         decision = model.invoke([SystemMessage(content=JOB_STEERING), HumanMessage(content=human)])
-        planned = {p.url: p for p in decision.plan}
-        selected = [a for a in assets if planned.get(a.get("url"), _AssetPlan(url=a.get("url", ""))).run]
-        throttle = {u for u, p in planned.items() if p.throttle}
-        return selected, throttle
+        return {p.url for p in decision.plan if p.throttle}
     except Exception:
-        logger.warning("decide_pod_selection failed; running all assets", exc_info=True)
-        return assets, set()
+        logger.warning("decide_pod_selection failed; throttling nothing", exc_info=True)
+        return set()
 
 
 def steering_preprocess_fn(
@@ -141,9 +141,12 @@ def steering_preprocess_fn(
 ) -> list[dict]:
     """Recon-job agent steering: when live steering signals are present in
     `extra["steering"]`, ask the job-orchestrator LLM which of this job's
-    candidate assets to run and which to throttle (STEERING DECISIONS), then
-    build pod_inputs from that decision. Otherwise fall back to the
-    deterministic default. Fail-open: any error -> default_preprocess_fn.
+    candidate assets to THROTTLE (STEERING DECISIONS), then build one pod per
+    (budget-capped) candidate - EVERY asset always runs; only throttled ones
+    carry `extra["rate_profile"] = "throttle"`. Asset selection is the
+    recon-orchestrator's concern (`decide_routing`), never this agent's.
+    Otherwise fall back to the deterministic default. Fail-open: any error ->
+    default_preprocess_fn.
 
     `extra["steering"]` is orchestration-only and is stripped from the pod's
     own extra; a throttled asset instead carries `extra["rate_profile"]`."""
@@ -151,11 +154,11 @@ def steering_preprocess_fn(
     if not signals:
         return default_preprocess_fn(input_assets, job, extra, asset_context)
     try:
-        selected, throttle_urls = decide_pod_selection(signals, job.tool, input_assets or [])
+        throttle_urls = decide_pod_selection(signals, job.tool, input_assets or [])
     except Exception:
         return default_preprocess_fn(input_assets, job, extra, asset_context)
 
-    capped = list(selected)[:MAX_JOB_ASSETS]
+    capped = list(input_assets or [])[:MAX_JOB_ASSETS]
     base_extra = dict(extra or {})
     base_extra.pop("steering", None)
     if not job.use_auth:

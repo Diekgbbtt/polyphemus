@@ -264,13 +264,15 @@ def test_default_job_agent_is_import_safe_module_level_instance():
     assert callable(ja.default_preprocess_fn)
 
 
-def test_steering_preprocess_applies_llm_selection(monkeypatch):
+def test_steering_preprocess_applies_throttle(monkeypatch):
     from agent.recon import job_agent
     from agent.recon.types import JobSpec
 
+    # The job agent decides ONLY throttling now; it returns a set of throttle urls
+    # and NEVER drops an asset.
     monkeypatch.setattr(
         "agent.recon.job_agent.decide_pod_selection",
-        lambda signals, job_name, assets, llm=None: ([{"url": "https://a"}], {"https://a"}),
+        lambda signals, job_name, assets, llm=None: {"https://a"},
     )
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
                   produces=["Endpoint"], consumes="BaseURL")
@@ -279,9 +281,38 @@ def test_steering_preprocess_applies_llm_selection(monkeypatch):
         {"project_id": "p1", "steering": [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}]},
         "",
     )
-    assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a"]
+    # ALL assets become pods (none dropped); only the throttled one carries rate_profile.
+    assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a", "https://b"]
     assert pod_inputs[0]["extra"]["rate_profile"] == "throttle"
+    assert "rate_profile" not in pod_inputs[1]["extra"]
     assert "steering" not in pod_inputs[0]["extra"]  # steering is orchestration-only
+    assert "steering" not in pod_inputs[1]["extra"]
+
+
+def test_steering_preprocess_never_drops_assets(monkeypatch):
+    # Responsibility-model regression (the katana-zeroing bug): with signals
+    # present, the recon-job agent must build a pod for EVERY budget-capped asset
+    # - asset selection belongs to the orchestrator (decide_routing), not here.
+    # Even a flagged host still runs; only its rate_profile differs.
+    from agent.recon import job_agent
+    from agent.recon.types import JobSpec
+
+    monkeypatch.setattr(
+        "agent.recon.job_agent.decide_pod_selection",
+        lambda signals, job_name, assets, llm=None: {"https://a"},
+    )
+    job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
+                  produces=["Endpoint"], consumes="BaseURL")
+    assets = [{"url": f"https://h{i}"} for i in range(7)] + [{"url": "https://a"}]
+    signals = [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}]
+    pod_inputs = job_agent.steering_preprocess_fn(
+        assets, job, {"project_id": "p1", "steering": signals}, "")
+    # All 8 covered (the bug zeroed this to 0 pods).
+    assert len(pod_inputs) == len(assets)
+    assert [pi["input_asset"]["url"] for pi in pod_inputs] == [a["url"] for a in assets]
+    throttled = [pi["input_asset"]["url"] for pi in pod_inputs
+                 if pi["extra"].get("rate_profile") == "throttle"]
+    assert throttled == ["https://a"]
 
 
 def test_steering_preprocess_no_signal_falls_back_to_default():
@@ -295,8 +326,9 @@ def test_steering_preprocess_no_signal_falls_back_to_default():
     assert "rate_profile" not in pod_inputs[0]["extra"]
 
 
-# --- recon-job agent per-asset steering decision (decide_pod_selection) ---
-# A fake LLM is injected so no provider/network is touched.
+# --- recon-job agent per-asset throttle decision (decide_pod_selection) ---
+# A fake LLM is injected so no provider/network is touched. The job agent decides
+# ONLY throttling now - it returns a set of throttle urls and never drops an asset.
 
 
 class _FakeStructured:
@@ -309,41 +341,39 @@ class _FakeLLM:
     def with_structured_output(self, schema, **kw): return _FakeStructured(self._result)
 
 
-def test_decide_pod_selection_applies_plan():
-    from agent.recon.job_agent import decide_pod_selection, PodSelection, _AssetPlan
-    result = PodSelection(plan=[
-        _AssetPlan(url="https://a", run=True, throttle=True),
-        _AssetPlan(url="https://b", run=False),
+def test_decide_pod_selection_returns_throttle_set():
+    from agent.recon.job_agent import decide_pod_selection, PodThrottlePlan, _AssetPlan
+    result = PodThrottlePlan(plan=[
+        _AssetPlan(url="https://a", throttle=True),
+        _AssetPlan(url="https://b", throttle=False),
     ])
-    selected, throttle = decide_pod_selection(
+    throttle = decide_pod_selection(
         [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
         "katana", [{"url": "https://a"}, {"url": "https://b"}], llm=_FakeLLM(result),
     )
-    assert selected == [{"url": "https://a"}]
     assert throttle == {"https://a"}
 
 
-def test_decide_pod_selection_keeps_asset_omitted_from_plan():
-    # An asset the LLM does not mention at all must default to run (safe direction),
-    # never be silently dropped. Only 'a' is in the plan; 'b' is omitted entirely.
-    from agent.recon.job_agent import decide_pod_selection, PodSelection, _AssetPlan
-    result = PodSelection(plan=[_AssetPlan(url="https://a", run=True)])
-    selected, throttle = decide_pod_selection(
+def test_decide_pod_selection_never_drops_asset_omitted_from_plan():
+    # Contract regression: the job agent decides ONLY throttling. An asset the LLM
+    # does not mention is simply not throttled; it is NEVER dropped (selection is
+    # the orchestrator's decide_routing concern). Only 'a' is in the plan.
+    from agent.recon.job_agent import decide_pod_selection, PodThrottlePlan, _AssetPlan
+    result = PodThrottlePlan(plan=[_AssetPlan(url="https://a", throttle=True)])
+    throttle = decide_pod_selection(
         [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
         "katana", [{"url": "https://a"}, {"url": "https://b"}], llm=_FakeLLM(result),
     )
-    assert selected == [{"url": "https://a"}, {"url": "https://b"}]  # b kept (omitted -> run)
-    assert throttle == set()
+    assert throttle == {"https://a"}  # b omitted -> just not throttled, still a candidate
 
 
-def test_decide_pod_selection_fail_open_runs_all():
+def test_decide_pod_selection_fail_open_throttles_nothing():
     from agent.recon.job_agent import decide_pod_selection
 
     class Boom:
         def with_structured_output(self, *a, **k): raise RuntimeError("llm down")
 
-    assets = [{"url": "https://a"}]
-    selected, throttle = decide_pod_selection(
+    throttle = decide_pod_selection(
         [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
-        "katana", assets, llm=Boom())
-    assert selected == assets and throttle == set()
+        "katana", [{"url": "https://a"}], llm=Boom())
+    assert throttle == set()
