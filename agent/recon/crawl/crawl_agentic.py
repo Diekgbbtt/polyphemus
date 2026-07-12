@@ -5,10 +5,15 @@ Kept in a separate file so tests can import it without pulling in the full
 FastAPI application (websockets, uvicorn, etc. not required here).
 
 Vendored verbatim from Redamon's `redamon-agent:/app/crawl_agentic.py` (SP4-T3
-port source). The ONLY adaptation is `_load_steel_crawl_skill`'s path: it now
-resolves to `steel_crawl_skill.md` next to this module (our copy of Redamon's
-`skills/tooling/steel_crawl.md`) instead of Redamon's `skills/tooling/`
-layout. The lazy `from api import _build_llm_with_model_for_user` fallback in
+port source). Local adaptations (kept minimal + marked in-line with `D23`/`SP4`):
+1. `_load_steel_crawl_skill`'s path resolves to `steel_crawl_skill.md` next to
+   this module (our copy of Redamon's `skills/tooling/steel_crawl.md`) instead
+   of Redamon's `skills/tooling/` layout.
+2. `AgenticCrawlRequest.credentials` (optional) + a credentialed-login prompt
+   branch in `_run_agentic_crawl` (D23): when credentials are supplied and no
+   human-interactive session is precreated, the agent is instructed to log in
+   autonomously before crawling.
+The lazy `from api import _build_llm_with_model_for_user` fallback in
 `_run_agentic_crawl` is left in place verbatim - our adapter (`crawl_agent.py`)
 always injects `build_llm_fn`, so that import never fires on our host.
 """
@@ -43,6 +48,10 @@ class AgenticCrawlRequest(BaseModel):
     job_timeout_s: int = 480
     proxy_escalation: bool = False
     auth_required: bool = False
+    # D23 local adaptation: optional autonomous-login credentials. When set (and
+    # no pre_created_crawl_id), _run_agentic_crawl emits a credentialed-login
+    # prompt branch instructing the agent to log in before crawling.
+    credentials: Optional[dict] = None
 
 
 async def precreate_auth_session(mcp_manager, body) -> "tuple[str | None, dict | None]":
@@ -158,6 +167,7 @@ async def _run_agentic_crawl(
     llm_t = llm.bind_tools(tools)
 
     sys_prompt = _load_steel_crawl_skill()
+    creds = getattr(body, "credentials", None) or {}
     if pre_created_crawl_id:
         user = (
             f"target={body.target}\nscope={body.scope}\n"
@@ -166,6 +176,28 @@ async def _run_agentic_crawl(
             f"FIRST call steel_await_auth(crawl_id={pre_created_crawl_id!r}). When it returns "
             f"authenticated=true, crawl the now-authenticated routes; if it returns timed_out=true, "
             f"crawl whatever is reachable. Then steel_crawl_finish.\n"
+            f"max_depth={body.max_depth} max_pages={body.max_pages} wait_ms={body.navigate_wait_ms}"
+        )
+    elif creds:
+        # D23 local adaptation: autonomous credentialed login before crawling.
+        sel = (
+            f"username selector={creds.get('username_selector') or 'auto-detect the email/text login input'}; "
+            f"password selector={creds.get('password_selector') or 'auto-detect input[type=password]'}; "
+            f"submit={creds.get('submit_selector') or 'the login form submit control'}"
+        )
+        user = (
+            f"target={body.target}\nscope={body.scope}\n"
+            f"Begin by calling steel_crawl_start. You must AUTHENTICATE with these credentials BEFORE "
+            f"crawling:\n"
+            f"1. steel_navigate to login_url={creds.get('login_url')!r}.\n"
+            f"2. Fill the login form with username={creds.get('username')!r} and the provided password "
+            f"using steel_eval; {sel}.\n"
+            f"3. steel_click the submit control EXACTLY ONCE. Do NOT resubmit on failure (account lockout).\n"
+            f"4. Verify success: an in-scope session cookie appeared AND you are on an in-scope non-login "
+            f"page. If instead you are redirected off {body.scope} (SSO/OAuth), see a second factor / "
+            f"one-time code / captcha, or find no login form, you are BLOCKED: do NOT loop - call "
+            f"steel_crawl_finish with whatever is reachable and stop.\n"
+            f"5. Once authenticated, crawl the now-authenticated routes, then steel_crawl_finish.\n"
             f"max_depth={body.max_depth} max_pages={body.max_pages} wait_ms={body.navigate_wait_ms}"
         )
     else:

@@ -95,3 +95,18 @@ progress**:
 - Never wait on `networkidle` — navigation uses `domcontentloaded` by design.
 - A blocked or error-status endpoint is still attack surface — keep crawling the others.
 - Always finish with `steel_crawl_finish`.
+
+## Credentialed login (autonomous)
+When the task message supplies credentials (a `login_url`, a username, and a password), authenticate
+yourself BEFORE crawling, then crawl the post-login surface:
+- `steel_navigate` to the `login_url`.
+- Fill the login form via `steel_eval`: use the given selectors if provided, otherwise auto-detect -
+  `input[type=password]` for the password and the nearest email/text input for the username.
+- `steel_click` the submit control EXACTLY ONCE. Never resubmit on failure - repeated bad submits lock
+  the account.
+- Success = a new in-scope session cookie appeared AND you landed on an in-scope, non-login page. Only
+  then crawl the authenticated routes.
+- You are BLOCKED (stop, do not loop) if: the login redirects off scope (SSO/OAuth to a third-party
+  identity provider), a second factor / one-time-code / verification-code challenge appears, a captcha
+  persists, or there is no login form on the page. When blocked, `steel_crawl_finish` with whatever is
+  reachable and stop - a human path handles these cases separately.

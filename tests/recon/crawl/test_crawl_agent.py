@@ -193,3 +193,33 @@ def test_run_crawl_forwards_auth_cookies_to_get_crawl_tools(monkeypatch):
         auth_cookies=[{"name": "a", "value": "b"}],
     ))
     assert seen["auth_cookies"] == [{"name": "a", "value": "b"}]
+
+
+def test_credentialed_login_prompt_names_login_url_and_submit_once():
+    import asyncio
+    from agent.recon.crawl import crawl_agentic
+
+    captured = {}
+
+    class FakeLLM:
+        def bind_tools(self, tools): return self
+        async def ainvoke(self, messages):
+            captured["messages"] = messages
+            from langchain_core.messages import AIMessage
+            return AIMessage(content="", tool_calls=[])  # no tools -> loop ends fast
+
+    class FakeMgr:
+        async def get_tools(self): return []
+
+    body = crawl_agentic.AgenticCrawlRequest(
+        target="https://app.example.com", scope=["example.com"], model="crawler",
+        max_iterations=1,
+        credentials={"username": "u", "password": "pw", "login_url": "https://login.example.com/"},
+    )
+    asyncio.run(crawl_agentic._run_agentic_crawl(body, FakeMgr(), build_llm_fn=lambda m, u: FakeLLM()))
+
+    text = captured["messages"][1].content  # the HumanMessage
+    assert "https://login.example.com/" in text
+    assert "credentials" in text.lower()
+    assert "u" in text
+    assert "once" in text.lower()
