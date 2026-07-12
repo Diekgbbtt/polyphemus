@@ -88,6 +88,17 @@ def _url_is_authenticated_app(url: str, scope: list) -> bool:
     return not _LOGIN_PATH_RE.search(p.path or "/")
 
 
+def login_succeeded(baseline_names: set, current_cookies: list, url: str, scope: list) -> bool:
+    """D23 hardened success test: an autonomous login counts as authenticated
+    ONLY when BOTH hold - a NEW in-scope session-like cookie appeared vs the
+    pre-login baseline AND the browser navigated to an in-scope non-login page.
+    Either alone is a false positive (a CSRF/visitor cookie on the login page,
+    or an off-login bounce with no session), which unattended login cannot
+    afford. Pure; composes the existing steel_await_auth predicates."""
+    return _has_new_session_cookie(baseline_names, current_cookies, scope) and \
+        _url_is_authenticated_app(url, scope)
+
+
 # ---------------------------------------------------------------------------
 # Per-session fingerprint randomisation - ported verbatim
 # ---------------------------------------------------------------------------
