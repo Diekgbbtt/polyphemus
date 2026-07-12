@@ -199,3 +199,39 @@ def test_crawl_pod_fires_notify_on_awaiting_auth():
              "run_id": "run-1", "phase": 4}
     graph.invoke(state)
     assert notified == [("run-1", 4, "steel_crawl", "https://app.steel.dev/sessions/xyz")]
+
+
+def test_credentials_apply_to_target_gates_on_host():
+    from agent.recon.crawl.crawl_pod import credentials_apply_to_target
+    creds = {"login_url": "https://login.example.com/", "domain": "example.com"}
+    assert credentials_apply_to_target(creds, "https://app.example.com") is True
+    assert credentials_apply_to_target(creds, "https://other.org") is False
+    # no explicit domain -> fall back to the login_url host's registrable domain
+    assert credentials_apply_to_target({"login_url": "https://login.example.com/"},
+                                       "https://app.example.com") is True
+
+
+def test_crawl_node_takes_credentialed_path_for_matching_host():
+    from agent.recon.crawl.crawl_pod import build_crawl_pod
+    from agent.recon.types import JobSpec
+
+    called = {}
+
+    graph = build_crawl_pod(
+        run_crawl_fn=lambda *a, **k: {"pages": []},
+        parse_fn=lambda s: [],
+        triage_fn=lambda e, a, j: [],
+        curate_fn=lambda a, o, pid, **k: (0, 0),
+        run_crawl_credentialed_fn=lambda target, scope, credentials: called.update(
+            target=target, credentials=credentials) or {"pages": [{"url": target}]},
+    )
+    job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
+                  produces=["BaseURL"], consumes="BaseURL", use_auth=True, configurator_mode="agent")
+    state = {"job": job, "input_asset": {"url": "https://app.example.com"},
+             "extra": {"auth_context": {"credentials": {
+                 "username": "u", "password": "pw",
+                 "login_url": "https://login.example.com/", "domain": "example.com"}}},
+             "project_id": "p1", "run_id": "r", "phase": 4}
+    graph.invoke(state)
+    assert called["target"] == "https://app.example.com"
+    assert called["credentials"]["username"] == "u"

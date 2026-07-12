@@ -32,6 +32,7 @@ from langgraph.graph import StateGraph, START, END
 
 from agent.recon.types import PodState, PodExport, Observation
 from agent.recon.parsers import get_parser
+from agent.recon.parsers._urls import registrable_domain
 from agent.recon.curator import curate
 from agent.recon.pod import default_triage_fn, _input_asset_url
 
@@ -112,6 +113,42 @@ def default_run_crawl_authenticated_fn(target: str, *, scope: list[str], on_awai
     )
 
 
+def _host_of(url: str) -> str:
+    return (url or "").split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
+
+
+def credentials_apply_to_target(credentials: dict, target_url: str) -> bool:
+    """D23-7: credentials belong to ONE app. A crawl pod attempts the login only
+    when its target host is in the credentials' domain - the explicit
+    `credentials.domain`, else the registrable domain of `login_url`. Prevents
+    submitting the same credentials to every host in a multi-BaseURL run
+    (lockout / mis-auth). Fail-closed: no usable domain -> False."""
+    if not isinstance(credentials, dict):
+        return False
+    dom = credentials.get("domain")
+    if not dom:
+        host = _host_of(credentials.get("login_url") or "")
+        dom = registrable_domain(host) if host else ""
+    if not dom:
+        return False
+    dom = dom.lower()
+    target_host = _host_of(target_url)
+    return target_host == dom or target_host.endswith("." + dom)
+
+
+def default_run_crawl_credentialed_fn(target: str, *, scope: list[str], credentials: dict) -> dict:
+    """Real collaborator: autonomous credentialed agentic crawl (D23), sync.
+
+    Wraps `crawl_agent.run_crawl_credentialed` (async) behind `run_coro_blocking`,
+    mirroring `default_run_crawl_fn`. Returns the crawl manifest."""
+    from agent.recon.crawl import crawl_agent
+    from agent.recon.async_bridge import run_coro_blocking
+
+    return run_coro_blocking(
+        crawl_agent.run_crawl_credentialed(target, scope=scope, credentials=credentials)
+    )
+
+
 def default_status_sink(run_id: str, phase: int, job: str, viewer_url: str) -> None:
     """Surface a crawl's Steel `viewer_url` to job status MID-FLIGHT.
 
@@ -140,7 +177,7 @@ def default_notify_fn(run_id: str, phase: int, job: str, viewer_url: str) -> Non
     notify.notify_awaiting_auth(run_id, phase, job, viewer_url)
 
 
-def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_authenticated_fn=None, status_sink=None, notify_fn=None):
+def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_authenticated_fn=None, run_crawl_credentialed_fn=None, status_sink=None, notify_fn=None):
     """Build the compiled crawl-pod subgraph, injecting the side-effecting
     collaborators: run_crawl_fn(target, scope=scope) -> manifest dict,
     parse_fn(stdout) -> list[AssetDelta], triage_fn(exec_result, assets, job)
@@ -183,13 +220,29 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
 
         auth_context = extra.get("auth_context") or {}
         auth_cookies = auth_context.get("cookies") or []
+        credentials = auth_context.get("credentials") or {}
         use_auth_signal = bool(
             job is not None and getattr(job, "use_auth", False) and auth_context
+        )
+        cred_fn = (
+            run_crawl_credentialed_fn if run_crawl_credentialed_fn is not None
+            else default_run_crawl_credentialed_fn
         )
 
         viewer_url = None
         try:
-            if use_auth_signal and auth_cookies:
+            if (
+                use_auth_signal
+                and credentials
+                and credentials_apply_to_target(credentials, target)
+            ):
+                # D23: AUTONOMOUS CREDENTIALED LOGIN drives the agentic crawl. The
+                # ReAct loop logs in with the operator's credentials before
+                # crawling (credentials are the agentic-crawl auth channel;
+                # cookies remain the request-based tools' channel). Host-gated so
+                # one app's credentials are never scattered across every BaseURL.
+                manifest = cred_fn(target, scope=scope, credentials=credentials)
+            elif use_auth_signal and auth_cookies:
                 # NON-INTERACTIVE AUTH: the project supplied session cookies, so
                 # inject them into the Steel browser context and run a plain
                 # crawl - no human steel_await_auth viewer step. The provider's
