@@ -76,17 +76,19 @@ def fill_template(
     - {domain}: input_asset["name"] or ["domain"], falling back to {target}.
     - {baseurl}: input_asset["url"] or ["baseurl"], falling back to {target}.
     - {session}: the pod's session_id (per-pod `/work/{session}` workdir key).
-    - {auth_header}: empty unless extra["auth_context"] is present AND the
-      caller has flagged extra["_use_auth"] truthy (the configurator node
-      sets this from job.use_auth before calling fill_template); otherwise
-      serialized to the tool-appropriate cookie flag via `_auth_header`.
+    - {auth_header}: empty unless extra["auth_context"] is present, in which
+      case it is serialized to the tool-appropriate cookie flag via
+      `_auth_header`. Auth-eligibility is decided ONCE, upstream: the pipeline
+      (`run_pipeline`) injects `auth_context` into `extra` only for `use_auth`
+      jobs, so a non-auth job never carries it and this gate needs no second
+      `use_auth` check (C1 single-owner consolidation).
     """
     extra = extra or {}
     target = input_asset.get("name") or input_asset.get("url") or input_asset.get("address") or ""
     domain = input_asset.get("name") or input_asset.get("domain") or target
     baseurl = input_asset.get("url") or input_asset.get("baseurl") or target
     auth_header = ""
-    if extra.get("auth_context") and extra.get("_use_auth"):
+    if extra.get("auth_context"):
         auth_header = _auth_header(extra["auth_context"], tool)
     rate_flags = _RATE_FLAGS.get(tool, "") if (extra.get("rate_profile") == "throttle") else ""
 
@@ -144,7 +146,6 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     def configurator(state: PodState) -> dict:
         job = state["job"]
         extra = dict(state.get("extra") or {})
-        extra["_use_auth"] = job.use_auth
         input_asset = state["input_asset"]
         if job.batch and "batch" in input_asset:
             # Batched job (jsluice, D17/Q6): the pod runs one command over a

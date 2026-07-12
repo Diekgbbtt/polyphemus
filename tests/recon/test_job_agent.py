@@ -128,20 +128,22 @@ def test_use_auth_job_threads_auth_context_into_pod_inputs(monkeypatch):
     assert pod_invoke.calls[0]["extra"].get("auth_context") == "Bearer xyz"
 
 
-def test_non_auth_job_strips_auth_context_from_pod_inputs(monkeypatch):
+def test_job_agent_passes_extra_through_without_restripping_auth(monkeypatch):
+    # C1 single-owner: auth-eligibility is decided ONCE, in the pipeline, which
+    # injects auth_context only for use_auth jobs. The job agent no longer
+    # re-decides it - it threads `extra` through as the pipeline built it. The
+    # pipeline-level guarantee is covered by test_pipeline.py::
+    # test_auth_context_only_passed_to_use_auth_jobs.
     monkeypatch.setattr(ja, "MAX_PODS", 5)
     pod_invoke = make_recording_pod_invoke()
     agent = ja.build_job_agent(pod_invoke=pod_invoke, preprocess_fn=ja.default_preprocess_fn)
 
     job = JOBS["subfinder"]
-    assert job.use_auth is False
-    input_assets = [{"name": "a.com"}]
     extra = {"auth_context": "Bearer xyz"}
-
-    agent.invoke(base_state(job, input_assets, extra=extra))
+    agent.invoke(base_state(job, [{"name": "a.com"}], extra=extra))
 
     assert len(pod_invoke.calls) == 1
-    assert "auth_context" not in pod_invoke.calls[0]["extra"]
+    assert pod_invoke.calls[0]["extra"].get("auth_context") == "Bearer xyz"
 
 
 def test_run_job_convenience_wrapper_returns_pod_exports(monkeypatch):

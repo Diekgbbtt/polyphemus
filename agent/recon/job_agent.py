@@ -67,9 +67,10 @@ def default_preprocess_fn(
     jobs; kept deterministic for the MVP per the plan's design notes.
     """
     capped = list(input_assets or [])[:MAX_JOB_ASSETS]
+    # Auth-eligibility is the pipeline's single concern (C1): it injects
+    # auth_context into extra ONLY for use_auth jobs, so this preprocess trusts
+    # extra as-is and never re-strips.
     base_extra = dict(extra or {})
-    if not job.use_auth:
-        base_extra.pop("auth_context", None)
 
     return [
         {
@@ -160,9 +161,7 @@ def steering_preprocess_fn(
 
     capped = list(input_assets or [])[:MAX_JOB_ASSETS]
     base_extra = dict(extra or {})
-    base_extra.pop("steering", None)
-    if not job.use_auth:
-        base_extra.pop("auth_context", None)
+    base_extra.pop("steering", None)  # orchestration-only, never reaches a pod
 
     pod_inputs = []
     for asset in capped:

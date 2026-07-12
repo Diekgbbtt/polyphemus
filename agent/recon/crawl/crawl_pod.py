@@ -221,9 +221,9 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
         auth_context = extra.get("auth_context") or {}
         auth_cookies = auth_context.get("cookies") or []
         credentials = auth_context.get("credentials") or {}
-        use_auth_signal = bool(
-            job is not None and getattr(job, "use_auth", False) and auth_context
-        )
+        # Auth-eligibility is the pipeline's single concern (C1): auth_context is
+        # present in extra only for a use_auth job, so its presence IS the signal.
+        use_auth_signal = bool(auth_context)
         cred_fn = (
             run_crawl_credentialed_fn if run_crawl_credentialed_fn is not None
             else default_run_crawl_credentialed_fn

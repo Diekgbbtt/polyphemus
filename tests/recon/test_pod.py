@@ -97,25 +97,26 @@ def test_fill_template_auth_header_multi_cookie():
     assert '-H "Cookie: session=abc; csrf=xyz"' in cmd
 
 
-def test_fill_template_auth_header_empty_when_no_use_auth():
+def test_fill_template_applies_auth_header_whenever_auth_context_present():
+    # C1 single-owner: fill_template trusts the pipeline's decision. auth_context
+    # in extra (which the pipeline only ever sets for a use_auth job) => header.
     cmd = pod.fill_template(
         "httpx -u {target} {auth_header}",
         {"name": "app.example.com"},
-        {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}, "_use_auth": False},
+        {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}},
         tool="httpx",
     )
-    assert "Cookie" not in cmd
-    assert "-H" not in cmd
+    assert 'Cookie: session=abc' in cmd
     assert "{" not in cmd
 
 
-def test_fill_template_auth_header_empty_when_not_use_auth_job():
-    # non-auth job: extra carries no auth_context at all (pipeline never
-    # threads it for jobs where job.use_auth is False).
+def test_fill_template_auth_header_empty_when_no_auth_context():
+    # non-auth job: extra carries no auth_context at all (pipeline never threads
+    # it for jobs where job.use_auth is False), so the header is empty.
     cmd = pod.fill_template(
         "subfinder -d {domain} -all -json -silent",
         {"name": "example.com"},
-        {"_use_auth": False},
+        {},
         tool="subfinder",
     )
     assert "Cookie" not in cmd
