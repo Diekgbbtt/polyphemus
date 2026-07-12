@@ -223,3 +223,38 @@ def test_credentialed_login_prompt_names_login_url_and_submit_once():
     assert "credentials" in text.lower()
     assert "u" in text
     assert "once" in text.lower()
+
+
+def test_run_crawl_credentialed_threads_credentials_into_request(monkeypatch):
+    import asyncio
+    from agent.recon.crawl import crawl_agent
+
+    seen = {}
+
+    async def fake_run_agentic(body, mcp_manager, *, build_llm_fn=None, pre_created_crawl_id=None):
+        seen["credentials"] = body.credentials
+        seen["target"] = body.target
+        return {"endpoints": [{"url": "https://app.example.com/account"}], "js_urls": []}
+
+    monkeypatch.setattr(crawl_agent, "_run_agentic_crawl", fake_run_agentic)
+
+    manifest = asyncio.run(crawl_agent.run_crawl_credentialed(
+        "https://app.example.com", scope=["example.com"],
+        credentials={"username": "u", "password": "pw", "login_url": "https://login.example.com/"},
+        tools=[], llm=object(),
+    ))
+    assert seen["credentials"]["username"] == "u"
+    assert manifest["endpoints"][0]["url"].endswith("/account")
+
+
+def test_run_crawl_credentialed_best_effort_on_error(monkeypatch):
+    import asyncio
+    from agent.recon.crawl import crawl_agent
+
+    async def boom(*a, **k): raise RuntimeError("steel down")
+    monkeypatch.setattr(crawl_agent, "_run_agentic_crawl", boom)
+
+    manifest = asyncio.run(crawl_agent.run_crawl_credentialed(
+        "https://app.example.com", scope=["example.com"],
+        credentials={"username": "u", "password": "pw", "login_url": "https://l"}, tools=[], llm=object()))
+    assert manifest == {"endpoints": [], "js_urls": []}

@@ -37,6 +37,7 @@ __all__ = [
     "precreate_auth_session",
     "run_crawl",
     "run_crawl_authenticated",
+    "run_crawl_credentialed",
 ]
 
 _EMPTY_MANIFEST = {"endpoints": [], "js_urls": []}
@@ -114,6 +115,54 @@ async def run_crawl(
             build_llm_fn=build_llm_fn,
             pre_created_crawl_id=pre_created_crawl_id,
         )
+    except Exception:  # noqa: BLE001 - best-effort, see module docstring
+        return dict(_EMPTY_MANIFEST)
+
+
+async def run_crawl_credentialed(
+    target: str,
+    *,
+    scope: list[str],
+    credentials: dict,
+    model_role: str = "crawler",
+    tools: Optional[list] = None,
+    llm=None,
+    max_pages: Optional[int] = None,
+    max_depth: Optional[int] = None,
+    max_iters: Optional[int] = None,
+) -> dict:
+    """Autonomous credentialed agentic crawl (D23): the ReAct loop logs in with
+    `credentials` (username/password/login_url [+ optional selectors]) before
+    crawling. Best-effort: any failure (Steel unconfigured, login blocked by
+    MFA/SSO/captcha, tool/LLM error) yields the empty manifest so the crawl pod
+    degrades to reduced coverage rather than crashing the pipeline."""
+    try:
+        resolved_tools = tools
+        if resolved_tools is None:
+            resolved_tools = await steel_client.get_crawl_tools()
+        mcp_manager = _ToolsManager(resolved_tools)
+
+        if llm is not None:
+            def build_llm_fn(model, user_id, _llm=llm):
+                return _llm
+        else:
+            from agent.app.llm.roles import chat_model_for
+
+            def build_llm_fn(model, user_id, _role=model_role):
+                return chat_model_for(_role)
+
+        body = AgenticCrawlRequest(
+            target=target,
+            scope=list(scope),
+            model=model_role,
+            max_depth=max_depth if max_depth is not None else config.CRAWL_MAX_DEPTH,
+            max_pages=max_pages if max_pages is not None else config.CRAWL_MAX_PAGES,
+            max_iterations=max_iters if max_iters is not None else config.CRAWL_MAX_ITERS,
+            job_timeout_s=config.CRAWL_JOB_TIMEOUT_S,
+            auth_required=True,
+            credentials=credentials,
+        )
+        return await _run_agentic_crawl(body, mcp_manager, build_llm_fn=build_llm_fn)
     except Exception:  # noqa: BLE001 - best-effort, see module docstring
         return dict(_EMPTY_MANIFEST)
 
