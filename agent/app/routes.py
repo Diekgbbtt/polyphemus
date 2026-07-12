@@ -63,6 +63,19 @@ def _validate_auth_context(auth_context: object) -> None:
     if scope is not None and not isinstance(scope, str):
         raise ValueError("auth_context.scope must be a string")
 
+    # D23: optional autonomous-login credentials (username/password/login_url
+    # required; domain + form selectors optional). Absent is valid.
+    credentials = auth_context.get("credentials")
+    if credentials is not None:
+        if not isinstance(credentials, dict):
+            raise ValueError("auth_context.credentials must be an object")
+        for field in ("username", "password", "login_url"):
+            if not isinstance(credentials.get(field), str) or not credentials[field]:
+                raise ValueError(f"auth_context.credentials.{field} must be a non-empty string")
+        for field in ("domain", "username_selector", "password_selector", "submit_selector"):
+            if field in credentials and not isinstance(credentials[field], str):
+                raise ValueError(f"auth_context.credentials.{field} must be a string")
+
 
 @router.post("/projects")
 def create_project(body: ProjectCreate) -> dict:

@@ -74,6 +74,28 @@ def test_put_settings_valid_auth_context_200(monkeypatch):
     assert saved == [("p1", recon)]
 
 
+def test_put_settings_valid_credentials_200(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    saved = []
+    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: saved.append(recon))
+    recon = {"target_domain": "example.com", "auth_context": {
+        "cookies": [],
+        "credentials": {"username": "u@e.com", "password": "pw",
+                        "login_url": "https://login.example.com/", "domain": "example.com"}}}
+    resp = client.put("/projects/p1/settings", json={"recon": recon})
+    assert resp.status_code == 200
+    assert saved and saved[0]["auth_context"]["credentials"]["username"] == "u@e.com"
+
+
+def test_put_settings_malformed_credentials_400(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: None)
+    # missing password
+    resp = client.put("/projects/p1/settings", json={"recon": {"auth_context": {
+        "cookies": [], "credentials": {"username": "u", "login_url": "https://x"}}}})
+    assert resp.status_code == 400
+
+
 def test_post_recon_unknown_project_404(monkeypatch):
     monkeypatch.setattr(pg, "project_exists", lambda pid: False)
 
