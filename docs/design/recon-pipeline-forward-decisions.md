@@ -337,3 +337,38 @@ This forces a layering compromise (C2, operator-accepted): the Steel `viewer_url
 **Bring-forward (to build):** give the recon-pipeline orchestrator, each recon-job agent, and each pod their OWN log stream (structured, per `(run_id[, phase, job, pod])`).
 Then component-owned facts surface from the owning component's log rather than being written into a shared registry row: the `viewer_url` (and any other mid-flight pod signal) surfaces from the POD's log - its rightful owner - so the pod no longer reaches into `recon_jobs`, the pipeline's re-assert hack retires, and "the pipeline is the sole `recon_jobs` writer" holds cleanly (resolving C2 by removing the shared write, not by relocating it).
 This also generalizes the D12 per-job lineage and the D-command per-pod command capture into first-class per-component logs.
+
+## D25 - client-side webapp knowledge base + semantic model (NEW work item, substantial bring-forward, 2026-07-13)
+
+**Goal.** Extend recon to collect a broad CLIENT-SIDE knowledge base for a webapp, so a later ANALYSER phase can build a *semantic model* of the client-side application - what it is, how it behaves, what it trusts, and which assumptions it makes - BEFORE any vulnerability reasoning.
+The analyser's method is the operator-authored draft skill `skills/systems-analysis/[DRAFT]webapp-clientside-semantic-model.md` (2026-07-13): an 8-stage pipeline (structural -> behavioral -> data-flow -> trust-boundary -> domain-model -> external-integration -> assumption-extraction -> architectural-risk) producing a natural-language semantic model that is the foundation for all subsequent security analysis.
+This decision covers the RECON side (collecting the artifacts that skill assumes as inputs); the analyser/skill itself is a downstream consumer.
+
+**This EXTENDS, it does not replace, the current extraction.** The existing source-artifact collectors stay as-is: httpx (BaseURL/Endpoint/Header/Technology/Certificate), katana crawl (Endpoints/Parameters), and jsluice (D17: `jsluice urls`/`secrets` over the `.js`/`.mjs` bundles + sourcemap recovery). D25 adds the *runtime / browser-observable* artifacts on top of those, and enriches the ones that already exist.
+
+**Collection matrix (draft, 6 categories).** Most items require interfacing with a live browser and reading signals from it - which the Steel-managed browser (D3) does over CDP - so the natural collector is the agentic crawl pod, not the request-based tools.
+
+| Draft category | Item | Existing coverage | New collection (Steel/CDP) |
+|---|---|---|---|
+| 1. Source artifacts | HTML, JS bundles, source maps, recovered sources | httpx (HTML/root), katana (bundles), jsluice D17 (bundles + `.map` recovery) | rendered HTML per route (post-JS), tie recovered sources to the semantic model |
+| 2. Runtime page state | rendered DOM, shadow DOM, custom elements | none (only network-captured URLs today) | `page.content()` / CDP DOM snapshot per crawled route; shadow-root + custom-element enumeration via `steel_eval` |
+| 3. Execution traces | user-interaction traces, DOM mutations, JS execution timeline | none | MutationObserver script injected via `steel_eval`; CDP tracing / Performance timeline; the crawl ReAct loop's own interaction sequence |
+| 4. Network observations | requests, response metadata, dynamic resource loading, WebSockets/EventSource | PARTIAL - `steel_provider` already captures `page.on("request")` (`self.requests`, used to build the endpoint manifest) | response metadata (status/headers/content-type), dynamic (XHR/fetch/import) loads, WS/SSE via CDP Network domain |
+| 5. Browser persistence | cookies, localStorage, sessionStorage, IndexedDB, Cache Storage | PARTIAL - auth cookies are injected/detected (D18/D23), not inventoried as surface | read all four stores per origin via `steel_eval` + CDP Storage domain (keys/shapes, not necessarily values) |
+| 6. Environment fingerprint | framework, bundler, build metadata, browser APIs used, service/web workers | PARTIAL - httpx Technology fingerprint (server-observable) | client-side framework/bundler markers from the runtime, `navigator`/API usage, registered Service/Web Workers via CDP |
+
+**Architectural placement.**
+- Collector: the Steel agentic crawl pod (`crawl_pod`/`crawl_agentic`/`steel_provider`) is where a live browser already exists per crawled route, so per-route runtime capture (DOM, storage, workers, execution traces) rides the crawl the operator is already running - ideally after authenticated login (D23), since the interesting client-side surface is post-login.
+- New asset/observation types: the captured artifacts become new graph nodes/props (e.g. a `ClientArtifact`/`RuntimeState` family, or props on the existing BaseURL/Endpoint), curated through the single curator gate. The exact schema is an open question below.
+- Consumer: the analyser phase (the same L3-ish re-entrant/synthesis seam sketched in D2-addendum and `recon-pipeline-design.md` §9.5) loads the collected artifacts + the draft skill and emits the semantic model as the deliverable.
+
+**Relationship to existing decisions.** Builds on D3 (external Steel.dev browser), D16 (webapp/webapi profile - only `webapp`-profiled BaseURLs need this deep client-side capture), D17 (jsluice source-artifact analysis - unchanged, feeds category 1), D18/D23 (authenticated crawl - the capture should run post-login), and the D2/L3 analyser seam (the consumer). It does NOT touch the request-based tools.
+
+**Open design questions (to resolve before building).**
+1. Capture volume vs. graph: a full DOM/trace per route is large - store raw artifacts where (blob/object store vs. Neo4j props vs. Postgres), and put only a distilled summary in the graph? The current graph holds compact assets/observations, not blobs.
+2. Which routes get the deep capture - every crawled route, or only `webapp`-profiled + post-auth + novel-looking ones (cost control, mirrors the MAX_PODS/MAX_JOB_ASSETS budgeting ethos)?
+3. Trigger model: is this a new phase, a richer crawl mode of the existing steel_crawl job, or a finding-triggered L3 extension (D2)?
+4. Values vs. shapes for storage/persistence (category 5): capturing localStorage/IndexedDB *values* may capture secrets/PII - default to keys+shapes, opt-in for values (a scope/consent concern like the auth secrets).
+5. Determinism: execution traces (category 3) are inherently non-deterministic per crawl run - how are they normalized so the semantic model is stable across runs?
+
+**Status:** DRAFT, deliberately deferred, substantial (a new collection subsystem + schema + the analyser consumer). The item list and the skill are drafts and will be refined; recorded here so the later phase inherits the intent (a browser-collected client-side knowledge base feeding a semantic-model analyser) rather than re-deriving it.
