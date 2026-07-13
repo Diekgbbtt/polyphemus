@@ -379,3 +379,20 @@ def test_decide_pod_selection_fail_open_throttles_nothing():
         [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
         "katana", [{"url": "https://a"}], llm=Boom())
     assert throttle == set()
+
+
+def test_batched_job_preprocess_reduces_and_packs_into_max_pods(monkeypatch):
+    # C3: batching (reduce first-party + dedup, then pack into <= MAX_PODS batch
+    # pods) is the job agent's concern, done in default_preprocess_fn. It reads
+    # apex_registrable from extra and never leaks it to the pod.
+    monkeypatch.setattr(ja, "MAX_PODS", 8)
+    job = JOBS["jsluice"]
+    assert job.batch is True
+    assets = [{"path": f"/b{i}.js", "url": f"https://a.houseofhr.com/b{i}.js"} for i in range(60)]
+    pod_inputs = ja.default_preprocess_fn(assets, job, {"apex_registrable": "houseofhr.com"}, "")
+
+    assert 0 < len(pod_inputs) <= 8
+    assert all("batch" in pi["input_asset"] for pi in pod_inputs)
+    all_urls = [u for pi in pod_inputs for u in pi["input_asset"]["batch"]]
+    assert len(all_urls) == 60  # all bundles covered, none dropped
+    assert "apex_registrable" not in pod_inputs[0]["extra"]  # orchestration-only, not leaked

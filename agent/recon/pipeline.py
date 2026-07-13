@@ -261,25 +261,6 @@ async def run_pipeline(
                         if job.consumes == "Subdomain":
                             input_assets = _inject_seed_host(input_assets, scope)
 
-                    # Batched jobs (jsluice, D17/Q6): the raw per-bundle assets
-                    # are reduced (first-party filter + url/basename dedup) and
-                    # distributed across <= MAX_PODS pods, each carrying a
-                    # `batch` list. Here MAX_PODS is deliberately a pod-COUNT
-                    # target (pack all bundles into <= MAX_PODS looping pods) -
-                    # intentionally different from the job-level semantics where
-                    # MAX_PODS is only the concurrency ceiling; the resulting
-                    # <= MAX_PODS batch-pods then run within that same ceiling.
-                    if job.batch:
-                        from agent.recon.batching import build_batch_assets
-                        from agent.recon.config import MAX_PODS
-                        from agent.recon.parsers._urls import registrable_domain
-
-                        target = settings.get("target_domain")
-                        apex = registrable_domain(target) if target else None
-                        input_assets = build_batch_assets(
-                            input_assets, apex_registrable=apex, max_pods=MAX_PODS
-                        )
-
                     excluded = set(exclusions.get(name, []))
                     if excluded:
                         input_assets = [a for a in input_assets if a.get("url") not in excluded]
@@ -292,6 +273,16 @@ async def run_pipeline(
                     # actually configured (never the parse_scope placeholder).
                     if settings.get("target_domain"):
                         extra["scope_domain"] = scope["seed_host"]
+                        # C3: batching (reduce + pack bundles into <= MAX_PODS
+                        # pods) is the recon-JOB agent's concern, not the
+                        # orchestrator's - the pipeline only supplies the one
+                        # datum the reduction needs (the target's registrable
+                        # apex, for the first-party filter), and only to the
+                        # batched job that consumes it. The job agent's preprocess
+                        # reads extra["apex_registrable"] and batches.
+                        if job.batch:
+                            from agent.recon.parsers._urls import registrable_domain
+                            extra["apex_registrable"] = registrable_domain(settings["target_domain"])
                     if signals:
                         extra["steering"] = signals
 

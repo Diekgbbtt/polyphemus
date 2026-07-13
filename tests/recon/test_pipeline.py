@@ -343,19 +343,20 @@ def test_job_stats_records_consumed_and_produced_lineage():
     assert dnsx["stats"]["pods"] == 2
 
 
-def test_batched_jsluice_job_gets_filtered_read_and_batch_wrapped_inputs():
-    """D17/Q5+Q6 end to end through the orchestrator: the jsluice job's read is
-    filtered by its `consumes_where` (only `.js`/`.mjs` Endpoints reach it) and
-    the survivors are reduced + distributed into <= MAX_PODS batch pod-inputs
-    before fan-out. jsluice is not a discovery job, so it runs even though the
-    bare `houseofhr.com` target is exact-mode under the D14 scope gate."""
-    from agent.recon.config import MAX_PODS
-
+def test_batched_jsluice_job_gets_filtered_read_and_apex_for_downstream_batching():
+    """D17/Q5+Q6 + C3: the jsluice job's read is filtered by its `consumes_where`
+    (only `.js`/`.mjs` Endpoints reach it) - the pipeline's job - and the pipeline
+    supplies `extra["apex_registrable"]` for the reduce+pack the JOB AGENT now
+    performs downstream (asserted in test_job_agent.py). jsluice is not a
+    discovery job, so it runs even though the bare `houseofhr.com` target is
+    exact-mode under the D14 scope gate."""
     seen_inputs = {}
+    seen_extra = {}
     where_seen = {}
 
     async def run_job(job, input_assets, *, run_id, phase, extra):
         seen_inputs[job.tool] = input_assets
+        seen_extra[job.tool] = extra
         return [PodExport(input_asset={}, verdict="success")]
 
     # A read_assets that honors the optional `where` selector, returning a mix
@@ -389,14 +390,13 @@ def test_batched_jsluice_job_gets_filtered_read_and_batch_wrapped_inputs():
     sel = where_seen["Endpoint"]
     assert sel is not None and sel.field == "path" and set(sel.values) == {".js", ".mjs"}
 
-    # jsluice received batch pod-inputs, capped at MAX_PODS, and the .css noise
-    # never made it in (filtered by the selector).
+    # C3: the pipeline passes the RAW filtered .js assets (no .css noise) to
+    # run_job and supplies apex_registrable in extra; the batch reduce+pack now
+    # happens inside the job agent's preprocess (not the pipeline).
     js_inputs = seen_inputs["jsluice"]
-    assert 0 < len(js_inputs) <= MAX_PODS
-    assert all("batch" in pi for pi in js_inputs)
-    all_urls = [u for pi in js_inputs for u in pi["batch"]]
-    assert len(all_urls) == 60  # all 60 .js bundles, none dropped
-    assert not any(u.endswith(".css") for u in all_urls)
+    assert len(js_inputs) == 60
+    assert all(pi["url"].endswith(".js") for pi in js_inputs)
+    assert seen_extra["jsluice"]["apex_registrable"] == "houseofhr.com"
 
 
 # --- D14 scope gate + D11 apex probe --------------------------------------

@@ -66,11 +66,24 @@ def default_preprocess_fn(
     ("job_orchestrator")) would replace for `configurator_mode == "agent"`
     jobs; kept deterministic for the MVP per the plan's design notes.
     """
-    capped = list(input_assets or [])[:MAX_JOB_ASSETS]
     # Auth-eligibility is the pipeline's single concern (C1): it injects
     # auth_context into extra ONLY for use_auth jobs, so this preprocess trusts
     # extra as-is and never re-strips.
     base_extra = dict(extra or {})
+    # C3: pod DISTRIBUTION is this agent's concern. For a batched job (jsluice),
+    # reduce (first-party filter + url/basename dedup) and pack the bundles into
+    # <= MAX_PODS batch-pods here - not in the pipeline. `apex_registrable` is the
+    # orchestration datum the pipeline supplied for the first-party filter; it is
+    # popped so it never reaches a pod.
+    apex_registrable = base_extra.pop("apex_registrable", None)
+    if job.batch:
+        from agent.recon.batching import build_batch_assets
+
+        input_assets = build_batch_assets(
+            input_assets or [], apex_registrable=apex_registrable, max_pods=MAX_PODS
+        )
+
+    capped = list(input_assets or [])[:MAX_JOB_ASSETS]
 
     return [
         {
@@ -152,7 +165,9 @@ def steering_preprocess_fn(
     `extra["steering"]` is orchestration-only and is stripped from the pod's
     own extra; a throttled asset instead carries `extra["rate_profile"]`."""
     signals = (extra or {}).get("steering") or []
-    if not signals:
+    # A batched job (jsluice) has no per-asset url to throttle and needs the
+    # reduce+pack path; delegate to the deterministic default (which batches).
+    if not signals or job.batch:
         return default_preprocess_fn(input_assets, job, extra, asset_context)
     try:
         throttle_urls = decide_pod_selection(signals, job.tool, input_assets or [])
@@ -162,6 +177,7 @@ def steering_preprocess_fn(
     capped = list(input_assets or [])[:MAX_JOB_ASSETS]
     base_extra = dict(extra or {})
     base_extra.pop("steering", None)  # orchestration-only, never reaches a pod
+    base_extra.pop("apex_registrable", None)  # orchestration-only, never reaches a pod
 
     pod_inputs = []
     for asset in capped:
