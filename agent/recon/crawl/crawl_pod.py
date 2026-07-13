@@ -162,6 +162,17 @@ def default_status_sink(run_id: str, phase: int, job: str, viewer_url: str) -> N
 
     `job` is the recon job name, which for the agentic crawl equals its
     `JobSpec.tool` ("steel_crawl"), i.e. the key `pipeline._run_one` upserts.
+
+    OWNERSHIP NOTE (C2, operator-accepted 2026-07-13): the `viewer_url` is the
+    POD's to surface. This mid-flight write to the shared `recon_jobs` row is a
+    deliberate, accepted exception to "the pipeline is the sole registry writer",
+    because the pipeline is BLOCKED on `await run_job` while this crawl runs and
+    therefore cannot surface the URL itself in time for the login window; the
+    pipeline's terminal re-assert only preserves it through the final full-stats
+    overwrite. Not critical, left as-is. ENHANCEMENT (see D24): once the
+    orchestrator, each recon-job, and each pod emit their OWN log stream, the
+    viewer_url surfaces naturally from the POD's log - no shared-row write, and
+    the two-writer coordination disappears.
     """
     try:
         from agent.app.clients import pg  # noqa: PLC0415

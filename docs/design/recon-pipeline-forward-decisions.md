@@ -328,3 +328,12 @@ There is NO solution designed yet. **Operator decision (D23-5, 2026-07-11): for 
 - **D23-7 host-gated:** only pods whose target host matches the credentials' domain (login_url origin or an explicit `credentials.domain`) attempt login; other hosts crawl anonymous - credentials belong to one app, never scattered across every BaseURL (lockout/mis-auth hazard).
 
 **Pre-existing bug flagged by the design pass (verify + fix separately, not part of D23):** `extra["scope"]` is never set by the pipeline (only `scope_domain`, pipeline.py ~294), so the crawl node falls back to `scope = [target-URL]` (crawl_pod.py ~182) and `_registrable_in_scope` compares a bare host against a full `https://...` string, which never matches. Independent of D23 but load-bearing for its cross-origin reasoning.
+
+## D24 - per-component logging (orchestrator / job / pod) supersedes shared-row status surfacing (NEW work item, bring-forward, 2026-07-13)
+
+Today the recon substrate has no per-component log streams: the only per-run/per-job observability is the `recon_jobs` registry row (status + a `stats` JSONB) plus the fail-open Langfuse trace.
+This forces a layering compromise (C2, operator-accepted): the Steel `viewer_url` is the POD's to surface, but with no pod log the pod writes it mid-flight into the shared `recon_jobs` row (`crawl_pod.default_status_sink`) while the pipeline is blocked on `await run_job`, and the pipeline then re-asserts it on the terminal write so the full-stats overwrite does not clobber it - a two-writer coordination on one row.
+
+**Bring-forward (to build):** give the recon-pipeline orchestrator, each recon-job agent, and each pod their OWN log stream (structured, per `(run_id[, phase, job, pod])`).
+Then component-owned facts surface from the owning component's log rather than being written into a shared registry row: the `viewer_url` (and any other mid-flight pod signal) surfaces from the POD's log - its rightful owner - so the pod no longer reaches into `recon_jobs`, the pipeline's re-assert hack retires, and "the pipeline is the sole `recon_jobs` writer" holds cleanly (resolving C2 by removing the shared write, not by relocating it).
+This also generalizes the D12 per-job lineage and the D-command per-pod command capture into first-class per-component logs.
