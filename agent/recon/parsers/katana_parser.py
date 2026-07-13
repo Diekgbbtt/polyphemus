@@ -1,8 +1,7 @@
 """Pure parser: katana `-jsonl` stdout -> list[AssetDelta].
 
-Ported from Redamon's `helpers/resource_enum/katana_helpers.py::run_katana_crawler`,
-which historically consumed plain `-silent` URL lines. This parser instead
-targets katana's `-jsonl` output shape (one JSON object per crawled request):
+This parser targets katana's `-jsonl` output shape (one JSON object per
+crawled request):
 
     {"timestamp":..,"request":{"endpoint":"https://host/path?x=1","method":"GET"},
      "response":{"status_code":200,"content_type":"text/html"}}

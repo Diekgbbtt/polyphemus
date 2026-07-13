@@ -6,23 +6,23 @@
 
 *Supersedes the retired critique. Companion to `evolution-paradigm.md`. Scope: **iteration 1 of phase 1 — reconnaissance only** (Layer 1, analysis, light threat model, and the phase-2 DAG are deferred; see the paradigm's iteration roadmap, §6).*
 
-**Revision history:** rev 2 fixed the seven core decisions; rev 3 added interfaces + stack; rev 4 added ht-mcp/orchestration/errors. **Rev 5** (this is the MVP-complete design): execution via **fastmcp** with a single `execute_command`; **programmatic parsing as the flat default** via Redamon-derived **command templates**; **triager reduced to observation-adding**; **auditor deferred**; and **authenticated reconnaissance** wired end-to-end.
+**Revision history:** rev 2 fixed the seven core decisions; rev 3 added interfaces + stack; rev 4 added ht-mcp/orchestration/errors. **Rev 5** (this is the MVP-complete design): execution via **fastmcp** with a single `execute_command`; **programmatic parsing as the flat default** via **command templates**; **triager reduced to observation-adding**; **auditor deferred**; and **authenticated reconnaissance** wired end-to-end.
 
 ### Changes in rev 5
 
 | # | Change | Where |
 |---|---|---|
 | A | Execution MCP rolled back to **fastmcp**, exposing **one tool `execute_command`** → `{stdout, stderr, returncode}`, with **per-session working-directory creation** so files never overlap. Native HTTP transport (no stdio bridge). | §2, §10.4, §11.3 |
-| B | **Programmatic is the flat default.** The tool-skill carries a **command template with placeholders** replicating Redamon's canonical invocation; the **configurator fills placeholders**; the **triager only adds observations**; success is a **deterministic returncode gate**. | §3, §4, §10.1, §10.6 |
+| B | **Programmatic is the flat default.** The tool-skill carries a **command template with placeholders** replicating each tool's canonical invocation; the **configurator fills placeholders**; the **triager only adds observations**; success is a **deterministic returncode gate**. | §3, §4, §10.1, §10.6 |
 | C | **Auditor deferred**; configurator flexibility deferred ("further on"). | §3, §9 |
-| D | Job `consumes`/`produces` **and** the command templates are **imported from Redamon**. | §4, §7 |
+| D | Job `consumes`/`produces` **and** the command templates are fixed per job. | §4, §7 |
 | E | **Authenticated reconnaissance** — a settings endpoint stores authN cookies; the pipeline orchestrator loads them from project settings and passes them via an **`extra` kwargs channel** on the recon-job agent and `PodState`; the crawl/active-HTTP job-skill injects them via an `{auth_header}` template placeholder. | §3, §10.1, §10.2, §10.5 |
 
 ---
 
 ## 1. Scope
 
-**In:** an autonomous reconnaissance pipeline that (a) runs recon jobs against a target — **optionally in an authenticated context** — (b) builds the **Layer-0 descriptive attack-surface graph** (Redamon typing adopted verbatim), (c) attaches **natural-language Observation nodes** to broad basic elements, and (d) supports **operator-initiated documentation ingestion** into a vector store. Single project (`project_id`), single user `admin:admin`. A REST API launches and monitors recon and writes settings; no web frontend.
+**In:** an autonomous reconnaissance pipeline that (a) runs recon jobs against a target — **optionally in an authenticated context** — (b) builds the **Layer-0 descriptive attack-surface graph**, (c) attaches **natural-language Observation nodes** to broad basic elements, and (d) supports **operator-initiated documentation ingestion** into a vector store. Single project (`project_id`), single user `admin:admin`. A REST API launches and monitors recon and writes settings; no web frontend.
 
 **Out (deferred):** service/system model and its axes/trust edges; attack-surface analysis; light threat model / test design / execution; the attack-chain DAG; scope/RoE enforcement; budget governor; multi-tenancy; the **auditor** and a flexible (non-template) configurator; `llm` parse-mode.
 
@@ -65,7 +65,7 @@ flowchart LR
 
 ### Two-level orchestration over a phase plan, carrying settings
 
-- **Pipeline orchestrator.** Loads **all project settings from Postgres** — including the **recon settings, among them the authN cookies** — into `ReconState`. Builds the **phase plan**: Redamon recon phases with encoded produces/consumes dependencies, **rooted in the project's domain (or placeholder)**, starting at **subdomain discovery**. Phases run behind a **barrier — phase `i+1` waits for all phase-`i` jobs**. For each job it selects the per-job agent configuration `{ job, skill, system_prompt, input_assets, extra }`, where **`extra`** is the kwargs channel carrying settings-derived context (the auth context, future extras).
+- **Pipeline orchestrator.** Loads **all project settings from Postgres** — including the **recon settings, among them the authN cookies** — into `ReconState`. Builds the **phase plan**: recon phases with encoded produces/consumes dependencies, **rooted in the project's domain (or placeholder)**, starting at **subdomain discovery**. Phases run behind a **barrier — phase `i+1` waits for all phase-`i` jobs**. For each job it selects the per-job agent configuration `{ job, skill, system_prompt, input_assets, extra }`, where **`extra`** is the kwargs channel carrying settings-derived context (the auth context, future extras).
 - **Per-job orchestrator agent.** Instantiates **one recon pod per input asset**, transferring `{ job, tool, skill }` and the **`extra`** context. For **crawl / active-HTTP jobs** it **retrieves the authenticated context** (cookies) from `extra` and hands it to **each pod's state** so the configurator can inject it. Fan-out via `Send`, bounded to `MAX_PODS`. Returns to the pipeline once all pods terminate.
 - **Termination.** Pod → `END` (exports); per-job agent → all pods exported; pipeline → all phase jobs returned → advance.
 
@@ -78,7 +78,7 @@ flowchart TD
     EXE[[execute_command via fastmcp<br/>stdout/stderr/returncode, per-session workdir]] --> GATE{returncode == 0<br/>and non-empty?}
     GATE -->|no + retry < MAX_POD_ITERS| CFG
     GATE -->|no + exhausted| FAIL[export: failed, 0 assets]
-    GATE -->|yes| PAR[Parser — DETERMINISTIC<br/>Redamon per-tool parser → AssetDeltas]
+    GATE -->|yes| PAR[Parser — DETERMINISTIC<br/>per-tool parser → AssetDeltas]
     PAR --> TRI[Triager — LLM<br/>add observations only]
     TRI --> CUR[Curator — DETERMINISTIC<br/>MERGE assets + observations]
     CUR --> OUT([export])
@@ -87,17 +87,17 @@ flowchart TD
     class PAR,CUR det;
 ```
 
-Roles: **Configurator** (LLM) fills the tool-skill's command template from the input asset and injects `{auth_header}` when the job-skill declares auth use and the context is present; **Execute** calls `execute_command`; a **deterministic returncode gate** decides success (Redamon's three-way: `returncode≠0` → error/retry; `returncode==0` empty → no assets; else parse); **Parser** (deterministic, Redamon per-tool) → `AssetDelta`s; **Triager** (LLM) adds observations only; **Curator** (deterministic) MERGEs. The retry edge is bounded by `MAX_POD_ITERS` + `recursion_limit`. **No auditor in the MVP** (deferred).
+Roles: **Configurator** (LLM) fills the tool-skill's command template from the input asset and injects `{auth_header}` when the job-skill declares auth use and the context is present; **Execute** calls `execute_command`; a **deterministic returncode gate** decides success (a three-way rule: `returncode≠0` → error/retry; `returncode==0` empty → no assets; else parse); **Parser** (deterministic, per-tool) → `AssetDelta`s; **Triager** (LLM) adds observations only; **Curator** (deterministic) MERGEs. The retry edge is bounded by `MAX_POD_ITERS` + `recursion_limit`. **No auditor in the MVP** (deferred).
 
 ---
 
 ## 4. Output parsing & command templates (deliverables #2 + auth)
 
-**Programmatic is the flat default.** With a single `execute_command` returning clean stdout, and the tool invoked through a **fixed command template that replicates Redamon's canonical command**, the output format is exactly what Redamon's parser expects — so extraction is deterministic and cheap, and the LLM is confined to observation-adding.
+**Programmatic is the flat default.** With a single `execute_command` returning clean stdout, and the tool invoked through a **fixed command template that replicates each tool's canonical command**, the output format is exactly what the matching parser expects - so extraction is deterministic and cheap, and the LLM is confined to observation-adding.
 
-**How it works.** Each job-skill carries a **command template with placeholders**. The configurator fills the placeholders (target from the input asset; `{auth_header}` from the auth context) — it does **not** choose format-affecting flags (those are baked into the template). The template's structured-output flags mirror Redamon (`-j`/`-json`/`-jsonl`/`-oJ`), so the **Redamon per-tool parser** (imported, deliverable #1) parses the stdout into `AssetDelta`s. The triager then adds observations. *(A flexible, non-template configurator and an `llm` parse-mode remain available but are deferred.)*
+**How it works.** Each job-skill carries a **command template with placeholders**. The configurator fills the placeholders (target from the input asset; `{auth_header}` from the auth context) - it does **not** choose format-affecting flags (those are baked into the template). The template's structured-output flags select each tool's own JSON/JSONL output mode (`-j`/`-json`/`-jsonl`/`-oJ`), so the **per-tool parser** (deliverable #1) parses the stdout into `AssetDelta`s. The triager then adds observations. *(A flexible, non-template configurator and an `llm` parse-mode remain available but are deferred.)*
 
-**Command templates (derived from Redamon's MCP wrappers — extracting the exact per-tool flags is the concrete build step):**
+**Command templates (extracting the exact per-tool flags is the concrete build step):**
 
 | Phase / job | Tool | Command template | Auth |
 |---|---|---|---|
@@ -116,11 +116,11 @@ For file-output tools (arjun, or httpx `-o`), the template writes into the **per
 
 ## 5. Data model (GP-D2/D3/D5/D8/D9, Decisions 6 & 7)
 
-**Layer-0 typing: adopt Redamon verbatim, minus security/CVE nodes.** Nodes: `Domain, Subdomain, IP, Port, Service, DNSRecord, BaseURL, Endpoint, Parameter, Header, Certificate, Technology, Secret, Traceroute, ExternalDomain`. Edges: `BELONGS_TO / HAS_SUBDOMAIN, RESOLVES_TO, HAS_PORT, RUNS_SERVICE, SERVES_URL / HAS_BASE_URL, HAS_ENDPOINT, HAS_PARAMETER, HAS_HEADER, HAS_CERTIFICATE, USES_TECHNOLOGY, HAS_TRACEROUTE, HAS_EXTERNAL_DOMAIN`, plus `HAS_OBSERVATION`.
+**Layer-0 typing, minus security/CVE nodes.** Nodes: `Domain, Subdomain, IP, Port, Service, DNSRecord, BaseURL, Endpoint, Parameter, Header, Certificate, Technology, Secret, Traceroute, ExternalDomain`. Edges: `BELONGS_TO / HAS_SUBDOMAIN, RESOLVES_TO, HAS_PORT, RUNS_SERVICE, SERVES_URL / HAS_BASE_URL, HAS_ENDPOINT, HAS_PARAMETER, HAS_HEADER, HAS_CERTIFICATE, USES_TECHNOLOGY, HAS_TRACEROUTE, HAS_EXTERNAL_DOMAIN`, plus `HAS_OBSERVATION`.
 
 **No `Vulnerability`/`CVE`/`MitreData`/`Capec` nodes.** `nuclei` removed; CVE & MITRE out of scope. **All `security_check` findings** are recorded as **Observations**, not vulnerabilities.
 
-**Deltas from Redamon:** (1) `project_id` only, `admin:admin`; (2) `first_seen`/`last_seen` on every node; (3) typed parameterised `MERGE` only; (4) **Observations as graph nodes** on broad anchors:
+**Key design points:** (1) `project_id` only, `admin:admin`; (2) `first_seen`/`last_seen` on every node; (3) typed parameterised `MERGE` only; (4) **Observations as graph nodes** on broad anchors:
 ```
 (:BroadElement)-[:HAS_OBSERVATION]->(:Observation {
     id, macro_kind, severity, evidence, rationale,
@@ -132,7 +132,7 @@ For file-output tools (arjun, or httpx `-o`), the template writes into the **per
 
 ## 6. Documentation ingestion (GP-R11)
 
-Operator-initiated; the **ingestion agent** builds the sitemap and ingests into `pgvector` via Redamon's Tradecraft tiering — deterministic extractors first, budget-bounded agentic-crawl fallback:
+Operator-initiated; the **ingestion agent** builds the sitemap and ingests into `pgvector` via Tradecraft tiering - deterministic extractors first, budget-bounded agentic-crawl fallback:
 
 | Source | Deterministic path | Fallback |
 |---|---|---|
@@ -145,18 +145,18 @@ Operator-initiated; the **ingestion agent** builds the sitemap and ingests into 
 
 ## 7. Job set & tool porting (GP-R8)
 
-**Job set (Redamon recon phases, minus exclusions):** domain discovery (subfinder, amass, puredns, dnsx, whois), port scan (naabu), HTTP probe (httpx), resource enumeration (katana, gau), parameter/endpoint discovery (arjun, ffuf), JS analysis (jsluice), AI-surface recon (custom Python), security checks (custom Python → **Observations**). **`produces`/`consumes` and command templates imported from Redamon.**
+**Job set (recon phases, minus exclusions):** domain discovery (subfinder, amass, puredns, dnsx, whois), port scan (naabu), HTTP probe (httpx), resource enumeration (katana, gau), parameter/endpoint discovery (arjun, ffuf), JS analysis (jsluice), AI-surface recon (custom Python), security checks (custom Python → **Observations**). **`produces`/`consumes` and command templates are fixed per job.**
 
 **Excluded:** `nuclei`, CVE & MITRE, heavy OSINT (`uncover`), secret-hunting (`gitleaks`/`trufflehog`).
 
-**Porting: LOW.** Redamon's `mcp/kali-sandbox/Dockerfile` already installs the suite via `go install`. Reuse it; replace Redamon's per-tool MCP wrappers with the single **fastmcp `execute_command`** and discard the DinD pipeline. `puredns` (massdns + resolvers) is the one non-trivial port. Port-scan (`naabu`) is a pinned `go install` at build.
+**Build effort: LOW.** The Kali sandbox Dockerfile installs the suite via `go install`. Replace per-tool MCP wrappers with the single **fastmcp `execute_command`** and discard the DinD pipeline. `puredns` (massdns + resolvers) is the one non-trivial piece. Port-scan (`naabu`) is a pinned `go install` at build.
 
 ---
 
 ## 8. What remains: the next build step
 
-1. **Extract the exact Redamon command per tool** (§4) into the job-skill templates, and **import the matching Redamon per-tool parsers**.
-2. **Instantiate each job contract**: `produces`/`consumes` (from Redamon), template + placeholders, `use_auth`, eval-criteria, file-naming.
+1. **Extract the exact command per tool** (§4) into the job-skill templates, and **write the matching per-tool parsers**.
+2. **Instantiate each job contract**: `produces`/`consumes`, template + placeholders, `use_auth`, eval-criteria, file-naming.
 3. **Wire the auth channel** end-to-end (settings → `ReconState.settings` → per-job `extra` → `PodState.extra` → `{auth_header}`).
 
 ---
@@ -166,11 +166,11 @@ Operator-initiated; the **ingestion agent** builds the sitemap and ingests into 
 | Item | Decision |
 |---|---|
 | Execution MCP | **fastmcp**, single `execute_command` → `{stdout, stderr, returncode}`; **per-session workdir**; native HTTP (no bridge) |
-| Parsing | **Programmatic, flat default**, via Redamon **command templates**; `llm` mode deferred |
+| Parsing | **Programmatic, flat default**, via **command templates**; `llm` mode deferred |
 | Configurator | Fills template placeholders (+ `auth_header`); flexible configurator deferred |
 | Auditor | **Deferred** |
 | Triager | **Adds observations only**; success is a deterministic returncode gate |
-| Job contract | `consumes`/`produces` **and** templates imported from Redamon |
+| Job contract | `consumes`/`produces` **and** templates fixed per job |
 | Auth (new) | Settings endpoint for authN cookies → pipeline loads from project settings → `extra` kwargs on recon-job agent + `PodState` → `{auth_header}` template injection on crawl/active-HTTP jobs |
 | *(all earlier decisions carry forward from rev 4 §9)* | |
 
@@ -253,7 +253,7 @@ The per-job agent config mirrors this with an **`extra: dict`** field; the pipel
 
 ### 10.3 Attack-surface asset schemas (Layer-0)
 
-Every node carries `project_id`, `first_seen`, `last_seen`. Identity key = the `MERGE` key (Redamon constraints, `user_id` dropped).
+Every node carries `project_id`, `first_seen`, `last_seen`. Identity key = the `MERGE` key (`user_id` dropped from constraints).
 
 | Node | Identity key | Key properties | Relationships |
 |---|---|---|---|
@@ -292,7 +292,7 @@ def execute_command(command: str, session_id: str, timeout_s: int = 300) -> dict
     Returns: { stdout, stderr, returncode, duration_ms }."""
 ```
 
-A single generic tool (not Redamon's per-tool wrappers). The pod passes `session_id = {run_id}-{pod_id}`; the server ensures `/work/{session_id}` exists and runs there. `returncode` drives the deterministic success gate (§3).
+A single generic tool (not per-tool wrappers). The pod passes `session_id = {run_id}-{pod_id}`; the server ensures `/work/{session_id}` exists and runs there. `returncode` drives the deterministic success gate (§3).
 
 ### 10.5 REST API
 
@@ -332,7 +332,7 @@ Recon is **best-effort and idempotent**; errors degrade to a partial graph, neve
 
 | Service | Image / base | Role |
 |---|---|---|
-| `agent` | `python:3.12-slim` | LangGraph runtime, FastAPI, MCP client, Redamon parsers |
+| `agent` | `python:3.12-slim` | LangGraph runtime, FastAPI, MCP client, per-tool parsers |
 | `kali` | `kalilinux/kali-rolling` | tool execution; **fastmcp `execute_command`** |
 | `neo4j` | `neo4j:5-community` | Layer-0 graph + Observations |
 | `postgres` | `pgvector/pgvector:pg16` | projects/settings/jobs + checkpoints + doc embeddings |
@@ -341,7 +341,7 @@ Volumes: `neo4j-data`, `pg-data`, `seclists`, `resolvers`, `work` (per-session w
 
 ### 11.2 Agent container
 
-**Deps (pinned):** `langgraph==1.1.6`, `langgraph-checkpoint-postgres==3.1.0`, `langchain-core`, chat-model client, MCP client, `neo4j`, `psycopg[binary]`, `fastapi`, `uvicorn`; **vendored Redamon per-tool parsers**.
+**Deps (pinned):** `langgraph==1.1.6`, `langgraph-checkpoint-postgres==3.1.0`, `langchain-core`, chat-model client, MCP client, `neo4j`, `psycopg[binary]`, `fastapi`, `uvicorn`; **per-tool parsers**.
 
 **LangGraph config:** typed state (§10.1); reducer only on `pod_exports`; per-job `Send` fan-out batched to `MAX_PODS`; pod = compiled subgraph (2-level nesting); loop bounded by `MAX_POD_ITERS` + `recursion_limit`; durability via `AsyncPostgresSaver` (`thread_id=run_id`, `checkpoint_ns=phase/job`, `.setup()` once, `LANGGRAPH_STRICT_MSGPACK=true`). Progress by polling `GET …/recon/{run_id}`.
 
@@ -356,7 +356,7 @@ Volumes: `neo4j-data`, `pg-data`, `seclists`, `resolvers`, `work` (per-session w
 ### 11.4 Neo4j
 
 - `neo4j:5-community`; auth `neo4j/<password>`; `bolt://neo4j:7687`.
-- Init (idempotent) = Redamon constraints/indexes **adapted**: identity keys drop `user_id` (keep `project_id`); no `Vulnerability`/`CVE`/OTX constraints; add `Observation(id)` uniqueness. E.g.:
+- Init (idempotent) = constraints/indexes: identity keys drop `user_id` (keep `project_id`); no `Vulnerability`/`CVE`/OTX constraints; add `Observation(id)` uniqueness. E.g.:
   ```cypher
   CREATE CONSTRAINT endpoint_unique IF NOT EXISTS
     FOR (e:Endpoint) REQUIRE (e.path, e.method, e.baseurl, e.project_id) IS UNIQUE;

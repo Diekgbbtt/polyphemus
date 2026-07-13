@@ -4,14 +4,14 @@
 
 **Goal:** Stand up the reconnaissance platform substrate — a `docker compose` stack of four services (agent, kali, neo4j, postgres/pgvector) with their schemas initialized — that both the recon pipeline and the ingestion subsystem will sit on.
 
-**Architecture:** Reuse Redamon's two heavy pre-built images to avoid rebuild/pull bottlenecks. **Kali** = `redamon-kali-sandbox:latest` (already ships the ProjectDiscovery suite + arjun/paramspider/masscan/nmap) with its entrypoint **overridden** to run a small post-run gap-fill script (`massdns`/`puredns`/`whois` + `graphql-cop` + `kiterunner`, persisted in a volume) and then our single `fastmcp execute_command` server. **Agent** = `FROM redamon-agent:latest` (inherits python 3.11, langgraph, `langchain-mcp-adapters`, fastapi, neo4j/psycopg, and the pre-baked `e5-large-v2` + `bge-reranker-base` models) with our thin FastAPI health skeleton on top. **Postgres/pgvector** holds the app schema + `doc_chunks` corpus + LangGraph checkpoint tables; **Neo4j** (`5.26-community`) holds the Layer-0 graph with Redamon-derived constraints (`user_id` dropped, security/CVE nodes removed, `Observation` added). Recon pods, the ingestion pipeline, and the Steel crawling agent are **out of scope** here — this plan delivers only the substrate.
+**Architecture:** Reuse two heavy pre-built images to avoid rebuild/pull bottlenecks. **Kali** = `redamon-kali-sandbox:latest` (already ships the ProjectDiscovery suite + arjun/paramspider/masscan/nmap) with its entrypoint **overridden** to run a small post-run gap-fill script (`massdns`/`puredns`/`whois` + `graphql-cop` + `kiterunner`, persisted in a volume) and then our single `fastmcp execute_command` server. **Agent** = `FROM redamon-agent:latest` (inherits python 3.11, langgraph, `langchain-mcp-adapters`, fastapi, neo4j/psycopg, and the pre-baked `e5-large-v2` + `bge-reranker-base` models) with our thin FastAPI health skeleton on top. **Postgres/pgvector** holds the app schema + `doc_chunks` corpus + LangGraph checkpoint tables; **Neo4j** (`5.26-community`) holds the Layer-0 graph (`user_id` dropped from constraints, security/CVE nodes removed, `Observation` added). Recon pods, the ingestion pipeline, and the Steel crawling agent are **out of scope** here — this plan delivers only the substrate.
 
 **Tech Stack:** Docker Compose, `redamon-kali-sandbox:latest`, `redamon-agent:latest` (python 3.11), `fastmcp` (server), `langchain-mcp-adapters` (client), `neo4j:5.26-community`, `pgvector/pgvector:pg16`, FastAPI, `AsyncPostgresSaver`, pytest.
 
 ## Global Constraints
 
-- **Reuse Redamon images; do not rebuild from scratch.** `redamon-agent:latest` and `redamon-kali-sandbox:latest` must exist locally (`docker images`). No new base pulls except `pgvector/pgvector:pg16` and `neo4j:5.26-community`.
-- **Single project / single user:** `project_id` only; `admin:admin`; **no** `user_id` in any Redamon-derived constraint.
+- **Reuse existing images; do not rebuild from scratch.** `redamon-agent:latest` and `redamon-kali-sandbox:latest` must exist locally (`docker images`). No new base pulls except `pgvector/pgvector:pg16` and `neo4j:5.26-community`.
+- **Single project / single user:** `project_id` only; `admin:admin`; **no** `user_id` in any constraint.
 - **No security/CVE graph nodes:** exclude `CVE`, `MitreData`, `Capec`, `Vulnerability`, `Exploit`, `Github*`, `Trufflehog*`, `JsReconFinding`, OTX, `AttackChain`/`Chain*`, `KBChunk`, `UserInput`.
 - **Neo4j writes are parameterized `MERGE` only.** Identity keys per `recon-mvp-design §10.3`, each with `project_id` appended.
 - **Embedding dimension:** `EMBED_DIM=1024` (local `intfloat/e5-large-v2`, pre-baked in the agent base). `doc_chunks.embedding` = `vector(1024)`.
@@ -383,7 +383,7 @@ Expected: FAIL — no `neo4j` service / `db.neo4j` module.
 
 ```python
 # db/neo4j/schema.py
-"""Layer-0 schema — Redamon-derived, adapted for polymerhus.
+"""Layer-0 schema for polymerhus.
   * user_id dropped from every identity key (keep project_id).
   * Security/CVE/OSINT/attack-chain node types removed.
   * Observation(id) uniqueness added.
@@ -507,7 +507,7 @@ from fastmcp import FastMCP
 
 # Prime PATH so subprocesses resolve go tools, the venv (arjun/paramspider/graphql-cop),
 # and the persisted gap-fill volume (massdns/puredns/kr). Go httpx already wins via
-# Redamon's /opt/venv/bin symlink.
+# the base image's /opt/venv/bin symlink.
 os.environ["PATH"] = ":".join([
     "/opt/localbin", "/root/go/bin", "/opt/venv/bin", "/usr/local/go/bin", os.environ.get("PATH", ""),
 ])
@@ -763,7 +763,7 @@ async def health():
     return {"status": "ok" if all(checks.values()) else "degraded", "checks": checks}
 ```
 
-- [ ] **Step 8: Create the Dockerfile (reuse the Redamon agent base)**
+- [ ] **Step 8: Create the Dockerfile (reuse the agent base image)**
 
 ```dockerfile
 # agent/Dockerfile
@@ -921,7 +921,7 @@ Autonomous vulnerability-discovery harness. Iteration 1 (recon MVP) substrate:
 four containers the recon pipeline and documentation-ingestion subsystem run on.
 
 ## Prerequisites
-Redamon's two base images must exist locally (reused, not rebuilt):
+Two base images must exist locally (reused, not rebuilt):
 `redamon-agent:latest`, `redamon-kali-sandbox:latest` (`docker images` to check).
 
 ## Run
@@ -974,8 +974,8 @@ git commit -m "test: full-stack smoke + operator run docs"
 **Type consistency:** `execute_command` → `{stdout, stderr, returncode, duration_ms}` produced in Task 4, consumed with those keys in Tasks 4/5/7; `check()`/`ensure_schema()`/`ensure_checkpoint_tables()` defined in Task 5 and called only there; `init_schema(session)` defined in Task 3, imported by Task 5's neo4j client. Consistent.
 
 **Notes / risks for the implementer:**
-- Building `agent/Dockerfile` **requires `redamon-agent:latest` locally**; `kali` service **requires `redamon-kali-sandbox:latest`**. Neither is pulled — they are Redamon build artifacts.
-- The agent base installs deps at Redamon versions (langgraph resolved from `>=0.2.0`; `langgraph-checkpoint-postgres>=2.0.0`). We **inherit and target those** — if `AsyncPostgresSaver.from_conn_string`/`get_tools` differ from the snippets, adapt to the installed version rather than force-upgrading the 16 GB base.
+- Building `agent/Dockerfile` **requires `redamon-agent:latest` locally**; `kali` service **requires `redamon-kali-sandbox:latest`**. Neither is pulled.
+- The agent base installs deps at pinned versions (langgraph resolved from `>=0.2.0`; `langgraph-checkpoint-postgres>=2.0.0`). We **inherit and target those** — if `AsyncPostgresSaver.from_conn_string`/`get_tools` differ from the snippets, adapt to the installed version rather than force-upgrading the 16 GB base.
 - First `kali` up compiles massdns + fetches `kr`/resolvers into the `kali-tools`/`resolvers` volumes; later ups reuse them. Recreating with `down -v` triggers a recompile.
 - `init.sql` runs only on an empty `pg-data` volume.
 - fastmcp is installed into the Kali venv by `postrun.sh` (kept out of the image so the image stays pull-only).

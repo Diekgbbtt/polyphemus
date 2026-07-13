@@ -537,8 +537,8 @@ agent/recon/
   parsers/       - 17 per-tool stdout -> AssetDelta[] modules
   crawl/
     crawl_pod.py      - the agentic-mode pod subgraph (§3.4)
-    crawl_agent.py     - thin adapter over the vendored ReAct loop
-    crawl_agentic.py   - vendored (Redamon) ReAct loop, verbatim
+    crawl_agent.py     - thin adapter over the ReAct loop
+    crawl_agentic.py   - the ReAct loop
     steel_client.py    - steel.dev provider seam (§6, SteelProviderUnavailable)
     steel_crawl_skill.md - the crawler's live system prompt
 agent/app/

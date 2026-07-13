@@ -18,7 +18,7 @@
 - **D23-7 = host-gated:** only crawl pods whose target host matches the credentials' domain (explicit `credentials.domain`, else the `login_url` host) attempt the login; other hosts crawl anonymous.
 - **D23-5 = MFA/SSO/captcha is a BLOCKING state (deferred):** the login just fails to complete and the pod degrades to `reduced_crawl_coverage` (existing best-effort path). Do NOT build a degrade-to-interactive/Discord handoff in this plan.
 - **Secrets:** the password is operator-owned; it is stored in `settings.recon.auth_context.credentials` and may appear in the crawl LLM trace (accepted). It must NEVER be written to a committed file, a log line at INFO, or `.env.example`. No real credential value in any test.
-- **Vendored-module note:** `crawl_agentic.py` is vendored verbatim from Redamon except its one documented skill-path adaptation. Task 3 adds a SECOND, clearly-marked local adaptation (a credentials request field + a credentialed-login prompt branch). Mark it in the module docstring exactly like the existing adaptation note.
+- **Adaptation note:** `crawl_agentic.py` already has one documented adaptation (the skill-path resolution). Task 3 adds a SECOND, clearly-marked local adaptation (a credentials request field + a credentialed-login prompt branch). Mark it in the module docstring exactly like the existing adaptation note.
 - **Best-effort / fail-open:** every new path degrades to the empty manifest / anonymous crawl on any error; nothing may abort the pipeline. Run tests with `.venv/bin/pytest`. TDD: failing test first. Commit path-scoped (`git add <exact files>`, never `git add -A`); no Co-Authored-By/agent trailer; plain dash only.
 
 ---

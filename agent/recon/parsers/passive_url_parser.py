@@ -1,10 +1,5 @@
 """Pure parsers: gau / paramspider plain-text URL stdout -> list[AssetDelta].
 
-Ported from Redamon's `helpers/resource_enum/gau_helpers.py::parse_gau_url_to_endpoint`
-and `helpers/resource_enum/paramspider_helpers.py::run_paramspider_discovery` /
-`merge_paramspider_into_by_base_url` (the latter reuses `parse_gau_url_to_endpoint`
-for its own URL parsing).
-
 Both tools emit one URL per line (plain text, NOT json):
 
     https://host/path?id=1&q=x

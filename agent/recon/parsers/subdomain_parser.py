@@ -1,19 +1,10 @@
 """Pure parsers: subdomain-discovery tool stdout -> list[AssetDelta].
 
-Ported from Redamon's `main_recon_modules/domain_recon.py::run_subfinder`
-and `run_amass`. Only the field-mapping logic is kept; all Docker/
-execution/accumulator code was dropped.
-
 - `parse_subfinder`: subfinder `-json -silent` emits one JSON object per
   line with a `host` key (`entry.get('host', '')`).
-- `parse_amass`: Redamon's own `run_amass` shells out to `amass enum`
-  *without* `-json` and regex-scrapes the plain-text `... (FQDN) --> ...`
-  output. That shape carries no structured `addresses`, so it cannot
-  satisfy this task's target schema (Subdomain + resolved IP/RESOLVES_TO).
-  This parser instead targets the documented `amass enum -json` line
-  shape (`name`, `domain`, `addresses: [{"ip": ...}, ...]`), which is
-  OWASP Amass's standard structured-output format. Noted as a documented
-  deviation from the literal Redamon source, not a guess.
+- `parse_amass`: targets the documented `amass enum -json` line shape
+  (`name`, `domain`, `addresses: [{"ip": ...}, ...]`), which is OWASP
+  Amass's standard structured-output format.
 
 Both functions are pure, deterministic, and tolerate malformed lines
 (`json.JSONDecodeError` -> skip) and missing optional keys.

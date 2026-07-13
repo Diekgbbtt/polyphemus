@@ -1,10 +1,9 @@
 """In-process Steel cloud-browser crawl-tool provider (async port).
 
 This is the concrete provider `steel_client._default_client_factory()` returns.
-It is the polymerhus port of Redamon's `mcp/servers/playwright_server.py` steel
-section, adapted from a FastMCP-in-a-subprocess server (SYNC Playwright API) to
-an IN-PROCESS provider driven from the crawl ReAct loop's asyncio event loop
-(ASYNC Playwright API - the sync API cannot run inside a running event loop).
+It is an IN-PROCESS provider driven from the crawl ReAct loop's asyncio event
+loop (ASYNC Playwright API - the sync API cannot run inside a running event
+loop).
 
 Architecture (operator correction, SP4): steel.dev is the authenticated CLOUD
 BROWSER. The provider opens a steel.dev session with the Steel SDK and drives it
@@ -20,11 +19,11 @@ Contract: `SteelCrawlProvider.get_tools()` returns a list of LangChain
 by `crawl_agentic._payload_from_tool_result`), and the list is
 `llm.bind_tools(...)`-able.
 
-De-coupled from Redamon: no DinD, no `WEBAPP_API_URL`/`INTERNAL_API_KEY` key
-resolution, no webapp Resume-flag polling, no `user_id` -> key lookup (the
-`user_id` arg is kept on `steel_crawl_start` only because the ReAct loop injects
-it; it is ignored). The crawl-session registry is INSTANCE-scoped (one provider
-per crawl job) rather than a module global, so concurrent jobs never share state.
+No DinD, no `WEBAPP_API_URL`/`INTERNAL_API_KEY` key resolution, no webapp
+Resume-flag polling, no `user_id` -> key lookup (the `user_id` arg is kept on
+`steel_crawl_start` only because the ReAct loop injects it; it is ignored).
+The crawl-session registry is INSTANCE-scoped (one provider per crawl job)
+rather than a module global, so concurrent jobs never share state.
 
 Runtime dependency: `playwright` and `steel-sdk` must be importable in the agent
 image (the `redamon-agent` base provides both). They are imported LAZILY inside

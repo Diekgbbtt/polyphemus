@@ -1,9 +1,8 @@
 """Pure parser: jsluice `urls`/`secrets` JSONL stdout -> list[AssetDelta].
 
-Ported from Redamon's `helpers/resource_enum/jsluice_helpers.py`
-(`run_jsluice_analysis` + `merge_jsluice_into_by_base_url`). jsluice is run
-in two modes against the JS-bundle Endpoints katana discovers - and, via the
-sourcemap-extraction wrapper (`scripts/jsluice_scan.py`, D17/Q7), against the
+jsluice is run in two modes against the JS-bundle Endpoints katana
+discovers - and, via the sourcemap-extraction wrapper
+(`scripts/jsluice_scan.py`, D17/Q7), against the
 original sources recovered from each bundle's `.map`. Both modes' output can be
 interleaved line-by-line in this parser's input:
 
@@ -16,9 +15,8 @@ interleaved line-by-line in this parser's input:
     only its sha1 hex digest (`value_hash`) is kept, and that hash is the
     Secret's sole identity key.
 
-    Redamon's wrapper (`_extract_secrets_for_base`) annotates each secret
-    dict with `base_url` (the BaseURL of the JS file it was extracted from)
-    before merging. We honour that same field when present. Failing that, we
+    Each secret dict may carry a `base_url` (the BaseURL of the JS file it
+    was extracted from), which we honour when present. Failing that, we
     fall back to deriving a base URL from a `source_url` field (the JS
     file's own URL) if one is present. If neither is available there is no
     reliable anchor, so the Secret delta is emitted without a `HAS_SECRET`

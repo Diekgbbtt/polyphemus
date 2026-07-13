@@ -4,11 +4,9 @@ Agentic crawl loop — helper module used by api.py's /crawl/agentic endpoint.
 Kept in a separate file so tests can import it without pulling in the full
 FastAPI application (websockets, uvicorn, etc. not required here).
 
-Vendored verbatim from Redamon's `redamon-agent:/app/crawl_agentic.py` (SP4-T3
-port source). Local adaptations (kept minimal + marked in-line with `D23`/`SP4`):
+Notable design points (kept minimal + marked in-line with `D23`/`SP4`):
 1. `_load_steel_crawl_skill`'s path resolves to `steel_crawl_skill.md` next to
-   this module (our copy of Redamon's `skills/tooling/steel_crawl.md`) instead
-   of Redamon's `skills/tooling/` layout.
+   this module.
 2. `AgenticCrawlRequest.credentials` (optional) + a credentialed-login prompt
    branch in `_run_agentic_crawl` (D23): when credentials are supplied and no
    human-interactive session is precreated, the agent is instructed to log in
@@ -102,9 +100,7 @@ async def precreate_auth_session(mcp_manager, body) -> "tuple[str | None, dict |
 def _load_steel_crawl_skill() -> str:
     """Load the steel_crawl skill system prompt from disk.
 
-    Adapted (SP4-T3): points at our vendored `steel_crawl_skill.md` copy next
-    to this module, rather than Redamon's `skills/tooling/steel_crawl.md`
-    layout.
+    Adapted (SP4-T3): points at `steel_crawl_skill.md` next to this module.
     """
     skill_path = Path(__file__).parent / "steel_crawl_skill.md"
     return skill_path.read_text(encoding="utf-8")

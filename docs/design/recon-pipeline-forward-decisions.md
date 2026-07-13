@@ -9,7 +9,7 @@ Refreshed 2026-07-07 against the real-target e2e validation (memory `recon-e2e-v
 ## D1 - Scope expansion beyond rev-5 §7 (VERIFIED, built)
 
 Rev 5 §7 excluded `nuclei` and did not list `kiterunner`, `paramspider`, `steel`, `graphql_scan`, `subdomain_takeover` in the job set.
-Operator decision (2026-07-03): **all six are in scope for Phase 2 and must be ported from Redamon.**
+Operator decision (2026-07-03): **all six are in scope for Phase 2.**
 
 **Status as of the real-target e2e validation (memory `recon-e2e-validation`): five of the six shipped.**
 `kiterunner`, `paramspider`, `graphql-cop`, `subdomain_takeover`, and `steel_crawl` are all live `JobSpec` entries in `agent/recon/jobs.py::JOBS` (verified `path:line`: `jobs.py:121-128` kiterunner, `jobs.py:91-98` paramspider, `jobs.py:137-144` graphql-cop, `jobs.py:56-66` subdomain_takeover, `jobs.py:145-153` steel_crawl), each with a working parser under `agent/recon/parsers/`.
@@ -58,10 +58,10 @@ See `recon-pipeline-design.md` §9.5 for the full designed-not-built L3 writeup,
 
 ## D3 - Agentic crawl engine: external Steel.dev (operator decision 2026-07-04) - phrasing corrected against the live client
 
-Redamon's `steel_helpers.merge_steel_into_by_base_url` is only a **merge adapter** over a crawl manifest (`{endpoints:[...], js_urls:[...]}`).
+`steel_helpers.merge_steel_into_by_base_url` is only a **merge adapter** over a crawl manifest (`{endpoints:[...], js_urls:[...]}`).
 The manifest is produced by an agentic ReAct loop (`crawl_agentic.py`, vendored verbatim from the `redamon-agent` base image, now living at `agent/recon/crawl/crawl_agentic.py`) driving **Steel.dev tools** against a Steel browser service.
 
-**Decision (operator, 2026-07-04): use external Steel.dev**, driving Redamon's crawl loop + `steel_*` tools verbatim, rather than a self-hosted Playwright engine.
+**Decision (operator, 2026-07-04): use external Steel.dev**, driving the crawl loop + `steel_*` tools, rather than a self-hosted Playwright engine.
 This *supersedes* the earlier recommended default (self-hosted Playwright reusing the kali image's `/opt/mcp_servers/playwright_server.py`), which was flagged for operator veto - the operator vetoed it in favour of Steel.dev.
 
 **Correction to this decision's original implications text.** The original text said "the agent needs a **Steel MCP client** + config (`STEEL_API_KEY`, **Steel MCP endpoint**)."
@@ -76,18 +76,18 @@ Authenticated crawl uses `steel_await_auth` (human-in-the-loop viewer login) - b
 Unit tests inject `client_factory`/`tools` (like the pod mocks `exec_fn`) - built (`tests/recon/` mocks the Steel client per `steel_client.py`'s injection seam).
 
 **NOW BUILT (verified 2026-07-08, commit `5d2ec2d`) - this paragraph previously described the provider as unbuilt; that is stale.** The in-process Steel tool provider is ported and live.
-`steel_client._default_client_factory()` (`steel_client.py:69-99`) now returns a real `agent/recon/crawl/steel_provider.py::SteelCrawlProvider` (573-line async port of Redamon's steel server: opens a steel.dev cloud session via the Steel SDK and drives it with Playwright over CDP, exposing all seven `steel_*` tools as LangChain `StructuredTool`s).
+`steel_client._default_client_factory()` (`steel_client.py:69-99`) now returns a real `agent/recon/crawl/steel_provider.py::SteelCrawlProvider` (573-line provider: opens a steel.dev cloud session via the Steel SDK and drives it with Playwright over CDP, exposing all seven `steel_*` tools as LangChain `StructuredTool`s).
 It raises `SteelProviderUnavailable` **only** when `playwright`/`steel-sdk` are not importable in the build (the `redamon-agent` base image provides both), in which case the crawl pod still degrades gracefully to a `reduced_crawl_coverage` Observation.
 So a real crawl pod only degrades to an empty manifest when the deps are absent OR `STEEL_API_KEY` is unset - when the provider and key are present it performs a real cloud-browser crawl.
 See D6 for the merged commit trail and the auth-viewer-timing fix.
 
 ## D4 - Parser porting reality (supersedes rev-5 "porting LOW") (VERIFIED, built)
 
-The deterministic parse layer lived in `redamon-recon:/app/recon` (not in the `redamon-agent` base image) and was coupled to Redamon's DinD execution + a shared cross-tool `by_base_url` accumulator.
+The deterministic parse layer lived in `redamon-recon:/app/recon` (not in the `redamon-agent` base image) and was coupled to DinD execution + a shared cross-tool `by_base_url` accumulator.
 The graph-write layer (`redamon-agent:/app/graph_db/mixins/recon/*`) wrote straight to Neo4j keyed on `user_id`.
 Neither matched the design's `AssetDelta`.
 Phase-2 approach: **vendor (copy) each per-tool parse function into the repo, strip execution + docker, drop `user_id`, and re-express each tool's individual contribution to `by_base_url` as `AssetDelta`s** consumed by one generic curator - preserving each parser's rigid determinism and tool-specific exception handling.
-Recon ports **per-tool, per-pod** (relying on `MERGE` idempotency for cross-tool convergence), not Redamon's in-memory cross-tool accumulator.
+Recon ports **per-tool, per-pod** (relying on `MERGE` idempotency for cross-tool convergence), not an in-memory cross-tool accumulator.
 
 **Verified as built and validated:** `agent/recon/parsers/` holds 16 per-tool parser modules plus `steel_parser.py` (17 total), each exposing the `stdout -> list[AssetDelta]` contract resolved by `get_parser(tool)` (`agent/recon/parsers/__init__.py:38`); `curator.curate` is the single generic MERGE consumer (`agent/recon/curator.py:122-168`), confirming the per-tool/per-pod approach shipped exactly as decided.
 No further correction needed against this decision.
@@ -204,7 +204,7 @@ The D14/Q2 fix (seed `Domain = seed_host` in exact mode) exposes a second-order 
 
 ## D15 - endpoint noise filtering: path-based, precision-traded-for-recall on user-controllable assets (NEW work item)
 
-**Problem (operator, houseofhr as reference):** the attack surface is polluted by endpoints that are strictly presentational - static assets and pure HTML render artifacts (`.css`, `.jpg`/`.jpeg`, `/assets/`, `/styles/`, fonts). These should be removed. **But** blanket extension filtering (Redamon's `katana -ef png,jpg,gif,css,woff,woff2,ttf`, which we currently replicate at `jobs.py:104`) also discards **user-controllable images** - images referenced via a user-supplied `src` attribute or user-uploaded media - which are legitimate attack surface (SSRF/stored-XSS/path traversal vectors) and must be retained.
+**Problem (operator, houseofhr as reference):** the attack surface is polluted by endpoints that are strictly presentational - static assets and pure HTML render artifacts (`.css`, `.jpg`/`.jpeg`, `/assets/`, `/styles/`, fonts). These should be removed. **But** blanket extension filtering (`katana -ef png,jpg,gif,css,woff,woff2,ttf`, which we currently replicate at `jobs.py:104`) also discards **user-controllable images** - images referenced via a user-supplied `src` attribute or user-uploaded media - which are legitimate attack surface (SSRF/stored-XSS/path traversal vectors) and must be retained.
 
 **Why extension filtering can't express this:** the risky-vs-noise distinction is not in the file extension - a `.jpg` under `/assets/` is noise, a `.jpg` under `/upload/` or served from a user-controlled path is surface. Extension filtering is high-precision/low-recall on exactly the assets we care about keeping.
 
@@ -280,7 +280,7 @@ The live-container check of the same requires the agent image to run this code (
 
 ## D20 - BaseURL must link to its source Subdomain (built, strong constraint, 2026-07-09)
 
-**Verified defect (project `64d2ab81`):** all 24 BaseURLs had **zero incoming edges** - httpx minted them orphaned, diverging from Redamon's `Domain -> Subdomain -> BaseURL` chain.
+**Verified defect (project `64d2ab81`):** all 24 BaseURLs had **zero incoming edges** - httpx minted them orphaned, diverging from the intended `Domain -> Subdomain -> BaseURL` chain.
 Root cause: `httpx_parser` built the BaseURL delta with no edge to the host it was probed from.
 
 **Built:** `httpx_parser` now emits `BaseURL -[:BELONGS_TO]-> Subdomain{name: <httpx input>}` (httpx's `input` is exactly the probed Subdomain, so it matches an existing node), mirroring `subdomain_parser`'s `Subdomain -[:BELONGS_TO]-> Domain`.

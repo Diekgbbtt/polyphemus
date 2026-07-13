@@ -1,4 +1,4 @@
-"""Layer-0 schema — Redamon-derived, adapted for polymerhus.
+"""Layer-0 schema for polymerhus.
   * user_id dropped from every identity key (keep project_id).
   * Security/CVE/OSINT/attack-chain node types removed.
   * Observation(id) uniqueness added.

@@ -1,38 +1,33 @@
 """Pure parsers: arjun / ffuf / kiterunner stdout -> list[AssetDelta].
 
-Ported from Redamon's `helpers/resource_enum/{arjun,ffuf,kiterunner}_helpers.py`.
 These are *active* discovery tools (unlike the passive gau/paramspider/katana
 sources) - arjun brute-forces parameter names on known endpoints, ffuf and
 kiterunner brute-force routes/paths.
 
-Confirmed raw tool output shapes (read from the Redamon source, not the
-wrapper-transformed intermediate structures):
+Confirmed raw tool output shapes:
 
-arjun `-oJ <file>` JSON (parsed in `_run_arjun_single_method`, ~line 145):
+arjun `-oJ <file>` JSON:
 
     {"https://host/path": {"params": ["id", "q"], "method": "GET"}, ...}
 
 Arjun discovers *parameters*, not new routes - each key is a URL that was
 tested, mapped to the parameter names found on it and the method used.
 POST/JSON/XML methods carry their parameters in the body; GET (or any other
-method) carries them in the query string (mirrors
-`merge_arjun_into_by_base_url`'s `param_position` logic).
+method) carries them in the query string.
 
-ffuf `-of json -o <file>` JSON (parsed in `_fuzz_single_target`, ~line 103):
+ffuf `-of json -o <file>` JSON:
 
     {"results": [{"url": .., "status": .., "input": {"FUZZ": ..}, ...}, ...]}
 
 ffuf is a directory/path fuzzer with no method info - method is fixed "GET".
 
-kiterunner `-o json` (parsed in `run_kiterunner_discovery`, ~line 180) emits
-one JSON object per line on stdout:
+kiterunner `-o json` emits one JSON object per line on stdout:
 
     {"method": "GET", "target": "https://host", "path": "/v1/users",
      "responses": [{"sc": 200, "len": 512}], "time": "..."}
 
 Lines carrying `level`/`message` are kiterunner's own log noise and are
-skipped (mirrors the helper's `if 'level' in data or 'message' in data`
-guard). Kiterunner also has a documented plain-text fallback format for
+skipped. Kiterunner also has a documented plain-text fallback format for
 non-JSON output: `METHOD STATUS_CODE URL [content_length]`.
 
 Target schema (SDD §10.3):

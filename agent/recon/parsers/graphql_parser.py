@@ -1,8 +1,7 @@
 """Pure parser: `graphql-cop -o json` stdout -> two separate outputs.
 
-Ported from Redamon's `recon/graphql_scan/misconfig.py::run_graphql_cop` /
-`_normalize_findings`, which wraps the `dolevf/graphql-cop` CLI. graphql-cop
-emits a JSON array of per-check result rows:
+Wraps the `dolevf/graphql-cop` CLI. graphql-cop emits a JSON array of
+per-check result rows:
 
     [{"title": "Introspection", "description": "...", "severity"/"impact": "MEDIUM",
       "result": true, "curl_verify": "curl -X POST https://host/graphql ...", ...}, ...]

@@ -4,7 +4,7 @@
 
 **Goal:** Ship a minimal read-only frontend for the recon system: a project-select landing, a project attack-surface graph, and a live running-runs page, served by three new FastAPI read endpoints plus a reliable heartbeat/liveness model.
 
-**Architecture:** The FastAPI agent owns all data access and gains three read endpoints (`GET /projects`, `GET /projects/{id}/graph`, `GET /runs?status=running`); the graph-read Cypher and its node/link formatter are colocated with the Neo4j write path so one module owns the label contract. A `last_heartbeat_at` column plus a periodic heartbeat tick, read-time liveness derivation, and a self-healing reaper make running-run tracking crash-safe. The frontend is a standalone Vite React SPA that lifts only Redamon's force-graph render and talks to the agent over `fetch`.
+**Architecture:** The FastAPI agent owns all data access and gains three read endpoints (`GET /projects`, `GET /projects/{id}/graph`, `GET /runs?status=running`); the graph-read Cypher and its node/link formatter are colocated with the Neo4j write path so one module owns the label contract. A `last_heartbeat_at` column plus a periodic heartbeat tick, read-time liveness derivation, and a self-healing reaper make running-run tracking crash-safe. The frontend is a standalone Vite React SPA with a force-graph render that talks to the agent over `fetch`.
 
 **Tech Stack:** Python 3 / FastAPI / psycopg (sync) / neo4j-driver (backend); Vite + React 19 + TypeScript + react-router-dom + react-force-graph-2d (frontend); pytest (backend tests, live-infra gated) + vitest (frontend tests).
 
@@ -41,7 +41,7 @@ Backend (Python):
 Frontend (Vite React SPA), all under new `frontend/`:
 - `frontend/package.json`, `frontend/vite.config.ts`, `frontend/tsconfig.json`, `frontend/index.html`, `frontend/.env.example`.
 - `frontend/src/main.tsx`, `frontend/src/App.tsx` (router), `frontend/src/api/client.ts`, `frontend/src/api/types.ts`.
-- `frontend/src/graph/GraphCanvas.tsx`, `frontend/src/graph/colors.ts`, `frontend/src/graph/useGraphData.ts` (lifted + adapted from Redamon).
+- `frontend/src/graph/GraphCanvas.tsx`, `frontend/src/graph/colors.ts`, `frontend/src/graph/useGraphData.ts`.
 - `frontend/src/pages/ProjectsPage.tsx`, `frontend/src/pages/GraphPage.tsx`, `frontend/src/pages/RunsPage.tsx`.
 
 Tests:
@@ -736,14 +736,14 @@ Expected: FAIL (module missing).
 
 - [ ] **Step 3: Implement `agent/recon/graph_read.py`**
 
-Port Redamon's `getNodeName` label mapping (see `../redamon/webapp/src/app/api/graph/format.ts`), extended with an `Observation` case. The read shape uses one row per node with an OPTIONAL relationship so isolated nodes survive.
+Implement a `getNodeName` label mapping, extended with an `Observation` case. The read shape uses one row per node with an OPTIONAL relationship so isolated nodes survive.
 
 ```python
 """Read + format the project attack-surface graph for the frontend.
 
 Node/link shape matches the design contract: node {id,name,type,properties},
-link {source,target,type}. Ported from Redamon's format.ts getNodeName, plus
-an Observation case. The Cypher (fetch_project_graph) uses OPTIONAL MATCH so
+link {source,target,type}, with an added Observation case. The Cypher
+(fetch_project_graph) uses OPTIONAL MATCH so
 zero-degree nodes are still returned."""
 from __future__ import annotations
 
@@ -1175,7 +1175,7 @@ git commit -m "feat(frontend-bff): typed API client for the three read endpoints
 - Produces: `<GraphCanvas nodes links />` rendering react-force-graph-2d; `useGraphData(projectId)` returning `{ data, loading, error }`.
 - Consumes: `getGraph` (Task 11).
 
-- [ ] **Step 1: Create `frontend/src/graph/colors.ts`** - lift Redamon's `NODE_COLORS` map from `../redamon/webapp/src/app/graph/config/colors.ts`, TRIM the Redamon-only labels, and ADD an `Observation` entry:
+- [ ] **Step 1: Create `frontend/src/graph/colors.ts`** - define a `NODE_COLORS` map covering only polymerhus's labels, plus an `Observation` entry:
 
 ```typescript
 export const NODE_COLORS: Record<string, string> = {
@@ -1241,7 +1241,7 @@ export function useGraphData(projectId: string) {
 
 - [ ] **Step 5: Implement `frontend/src/graph/GraphCanvas.tsx`**
 
-A thin wrapper over `react-force-graph-2d` (the heavy render is the library; we only map colors and names). Reference Redamon's `GraphCanvas2D.tsx` for node-label/color wiring but keep it minimal:
+A thin wrapper over `react-force-graph-2d` (the heavy render is the library; we only map colors and names). Keep node-label/color wiring minimal:
 
 ```tsx
 import ForceGraph2D from "react-force-graph-2d"

@@ -1,32 +1,21 @@
 """Pure parsers: DNS-resolution tool stdout -> list[AssetDelta].
 
-Ported from Redamon's `main_recon_modules/domain_recon.py::dns_lookup` /
-`resolve_all_dns` (record-type set: `DNS_RECORD_TYPES = ['A', 'AAAA', 'MX',
-'NS', 'TXT', 'SOA', 'CNAME']`) and `run_puredns_resolve`. Only the
-field-mapping logic is kept; all Docker/execution/accumulator/threading
-code was dropped.
+Record-type set: `DNS_RECORD_TYPES = ['A', 'AAAA', 'MX', 'NS', 'TXT', 'SOA',
+'CNAME']`.
 
-- `parse_dnsx`: Redamon itself resolves DNS via Python's `dns.resolver`,
-  not the `dnsx` CLI, so there is no Redamon `-json` line to port
-  directly. This parser instead targets the documented `dnsx -json`
-  output shape (ProjectDiscovery's dnsx, ``-a -aaaa -cname -mx -ns -txt
-  -soa -json``): one JSON object per line with a `host` key and one key
-  per requested record type (`a`, `aaaa`, `cname`, `mx`, `ns`, `txt`,
-  `soa`), each holding a list of record values. This mirrors Redamon's
-  own `DNS_RECORD_TYPES` set, so the record-type mapping ported here
-  (A/AAAA -> IP + RESOLVES_TO, all types -> DNSRecord + HAS_DNS_RECORD)
-  is a faithful port of `dns_lookup`'s per-record-type structure onto
-  dnsx's real wire format. Noted as a documented deviation from a
-  literal Redamon source line range, not a guess.
+- `parse_dnsx`: targets the documented `dnsx -json` output shape
+  (ProjectDiscovery's dnsx, ``-a -aaaa -cname -mx -ns -txt -soa -json``):
+  one JSON object per line with a `host` key and one key per requested
+  record type (`a`, `aaaa`, `cname`, `mx`, `ns`, `txt`, `soa`), each
+  holding a list of record values. The record-type mapping here (A/AAAA ->
+  IP + RESOLVES_TO, all types -> DNSRecord + HAS_DNS_RECORD) is applied
+  per record type onto dnsx's real wire format.
 
-- `parse_puredns`: Redamon's `run_puredns_resolve` invokes `puredns
-  resolve <input> --write <output>` and reads the output file as plain
-  resolved hostnames, one per line (no JSON, no address data) -
-  `[line.strip() for line in f if line.strip()]`. This parser ports that
-  exact shape: successful resolution only confirms the hostname has DNS
-  records, so each emitted `Subdomain` is marked `has_dns_records=True`
-  with no `DNSRecord`/`IP` deltas (puredns' output carries no record
-  type or value).
+- `parse_puredns`: `puredns resolve <input> --write <output>` writes
+  resolved hostnames, one per line (no JSON, no address data). Successful
+  resolution only confirms the hostname has DNS records, so each emitted
+  `Subdomain` is marked `has_dns_records=True` with no `DNSRecord`/`IP`
+  deltas (puredns' output carries no record type or value).
 
 Edge model has no `props` field (see `agent.recon.types.Edge`), so the
 DNS record type cannot live on the `RESOLVES_TO`/`HAS_DNS_RECORD` edges
@@ -42,8 +31,8 @@ from agent.recon.types import AssetDelta, Edge
 # Record types resolved to an address (emit IP + RESOLVES_TO).
 _ADDRESS_RECORD_TYPES = ("a", "aaaa")
 
-# Full DNS record-type set ported from Redamon's DNS_RECORD_TYPES, in
-# stable iteration order for deterministic delta emission.
+# Full DNS record-type set, in stable iteration order for deterministic
+# delta emission.
 _RECORD_TYPE_KEYS = ("a", "aaaa", "mx", "ns", "txt", "soa", "cname")
 
 

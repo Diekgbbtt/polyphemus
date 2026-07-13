@@ -1,8 +1,6 @@
 """Pure parser: httpx `-json` stdout -> list[AssetDelta].
 
-Ported from Redamon's `main_recon_modules/http_probe.py::parse_httpx_output`.
-Only the field-mapping logic is kept; all Docker/execution/AI-annotation
-code was dropped. Deterministic, tolerant of malformed JSONL lines.
+Deterministic field-mapping only, tolerant of malformed JSONL lines.
 """
 from agent.recon.noise_filter import classify_profile
 from agent.recon.parsers._jsonlines import iter_json_dicts

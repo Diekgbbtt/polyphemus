@@ -4,7 +4,7 @@
 
 **Goal:** Stand up the recon-pod substrate so one real recon job (httpx HTTP probe) runs end-to-end - deterministic configurator -> `execute_command` -> returncode gate -> deterministic parser -> LLM triager -> deterministic curator - and writes typed Layer-0 assets to Neo4j.
 
-**Architecture:** A LangGraph pod subgraph parameterised by a `JobSpec`. Deterministic nodes (configurator template-fill, gate, parser, curator) plus one LLM node (triager) that only adds observations. Tool output is parsed into `AssetDelta`s by vendored-from-Redamon per-tool parsers; a single generic curator MERGEs them. LLM roles resolve through a provider registry over OpenAI-compatible endpoints with fail-fast bootstrap validation.
+**Architecture:** A LangGraph pod subgraph parameterised by a `JobSpec`. Deterministic nodes (configurator template-fill, gate, parser, curator) plus one LLM node (triager) that only adds observations. Tool output is parsed into `AssetDelta`s by per-tool parsers; a single generic curator MERGEs them. LLM roles resolve through a provider registry over OpenAI-compatible endpoints with fail-fast bootstrap validation.
 
 **Tech Stack:** Python 3.11 (base image `redamon-agent`), LangGraph, `langchain-openai==1.3.2` (`ChatOpenAI` over OpenAI-compatible base URLs), `langchain-mcp-adapters` (kali `execute_command`), `neo4j` driver, pytest 8.3.4.
 
@@ -598,5 +598,5 @@ git commit -m "feat(recon): pod subgraph - deterministic configurator/gate/parse
 ## Self-Review (author checklist, completed)
 
 - **Spec coverage:** LLM fail-fast (Q5) -> Task 1; AssetDelta/curator split (D4) -> Tasks 2-3; deterministic-first configurator (Q2) -> Task 5 `fill_template`; one parser vendored faithfully (D4) -> Task 4. Parser fleet, orchestration, agentic crawl, on-demand nuclei are explicitly deferred to sub-plans 2-5.
-- **Placeholder scan:** port task (4) names the exact source function + a concrete fixture + expected deltas rather than inlining Redamon's code verbatim; curator task (3) gives design notes + full tests. No "TBD"/"handle edge cases" left.
+- **Placeholder scan:** port task (4) names the exact reference function + a concrete fixture + expected deltas rather than inlining reference code verbatim; curator task (3) gives design notes + full tests. No "TBD"/"handle edge cases" left.
 - **Type consistency:** `AssetDelta`, `Edge`, `Observation`, `JobSpec`, `ExecResult`, `PodExport`, `PodState` defined in Task 2 and consumed with the same names/signatures in Tasks 3-5; `curate(assets, observations, project_id, merge_fn=...)`, `get_parser(tool)`, `chat_model_for(role)`, `build_pod_graph(exec_fn, curate_fn, triage_fn)` referenced consistently.

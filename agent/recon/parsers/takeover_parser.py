@@ -1,9 +1,7 @@
 """Pure parser: subdomain-takeover scanner stdout -> two separate outputs.
 
-Ported from Redamon's `main_recon_modules/subdomain_takeover.py` (layered
-Subjack + Nuclei + BadDNS pipeline) and `helpers/takeover_helpers.py`'s
-`normalize_subjack_result`. Subjack's own JSON output (the primary, DNS-first
-layer) is an array of `Result` rows:
+Layers a Subjack + Nuclei + BadDNS pipeline. Subjack's own JSON output (the
+primary, DNS-first layer) is an array of `Result` rows:
 
     {"subdomain": "old.example.com", "vulnerable": true,
      "service": "aws/s3", "cname": "dangling-bucket.s3.amazonaws.com"}

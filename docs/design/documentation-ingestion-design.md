@@ -34,7 +34,7 @@ Two source types are live in the MVP: **`openapi`/`graphql`** (target API contra
 | Agentic crawl | **Steel cloud browser** + reused `tradecraft_crawl` loop logic | JS-rendered doc sites; `STEEL_API_KEY` / `STEEL_BASE_URL` |
 | Orchestration | Plain async pipeline (not a LangGraph subgraph) (D-c) | no fan-out/retry-loop; status via `ingest_runs` |
 
-**Reused Redamon modules (imported narrowly, wrapped):** `knowledge_base/{embedder,api_embedder,chunking,document_store}.py`; the **loop logic** of `agentic/orchestrator_helpers/tradecraft_crawl.py` (canonicalization, same-host/noise filters, LLM frontier-decision, sitemap assembly) — its fetch primitive is replaced by Steel. **Not reused:** `faiss_indexer.py`, `reranker.py`, `kb_orchestrator.py`, MMR/full-text config (retrieval side, deferred).
+**Modules used (imported narrowly, wrapped):** `knowledge_base/{embedder,api_embedder,chunking,document_store}.py`; the **loop logic** of `agentic/orchestrator_helpers/tradecraft_crawl.py` (canonicalization, same-host/noise filters, LLM frontier-decision, sitemap assembly) — its fetch primitive is replaced by Steel. **Not used:** `faiss_indexer.py`, `reranker.py`, `kb_orchestrator.py`, MMR/full-text config (retrieval side, deferred).
 
 **New dependency:** Steel service (SaaS `STEEL_API_KEY` or self-hosted `STEEL_BASE_URL`), added to the agent container config.
 
@@ -206,7 +206,7 @@ operator → POST /ingest {sources:[…]} → {ingest_id}     (returns immediate
 
 ## 8. Forward-compatibility seams
 
-- **Deferred retrieval.** `DocStore.query(embedding, top_k, anchor_filter?)` is **defined but unimplemented** — a spec'd stub marking exactly where iteration-2 plugs in (and where Redamon's `reranker`/`kb_orchestrator` re-enter). The completion event's `retrieval:"deferred"` marker + the bound `doc_refs` let iteration-2 orchestration discover "a queryable, node-bound corpus exists, not yet retrieved."
+- **Deferred retrieval.** `DocStore.query(embedding, top_k, anchor_filter?)` is **defined but unimplemented** — a spec'd stub marking exactly where iteration-2 plugs in (and where `reranker`/`kb_orchestrator` re-enter). The completion event's `retrieval:"deferred"` marker + the bound `doc_refs` let iteration-2 orchestration discover "a queryable, node-bound corpus exists, not yet retrieved."
 - **Deferred code extractors.** The **extractor registry** (`source_type → Extractor`) makes `oss_codebase`/`target_codebase` a registration change in iteration 2 — the pipeline, schema, and contracts are untouched. Their anchors (Technology, Domain) and tiering (GitHub Trees API / tarball; git clone) are pre-noted in `recon-mvp-design §6`.
 
 ---

@@ -9,14 +9,13 @@ connected over CDP:
 
     wss://connect.steel.dev?apiKey=<STEEL_API_KEY>&sessionId=<session id>
 
-exactly as in Redamon's implementation. The only credential is the steel.dev
-API key (`STEEL_API_KEY`); there is no `STEEL_MCP_URL`.
+The only credential is the steel.dev API key (`STEEL_API_KEY`); there is no
+`STEEL_MCP_URL`.
 
 PROVIDER SEAM
 ------------
-The concrete provider is `steel_provider.SteelCrawlProvider` - the async port of
-Redamon's `mcp/servers/playwright_server.py` steel section (see that module's
-docstring). This module pins the stable public contract:
+The concrete provider is `steel_provider.SteelCrawlProvider` (see that
+module's docstring). This module pins the stable public contract:
 
   * `steel_configured()` checks only the steel.dev credential.
   * `get_crawl_tools(*, client_factory=None)` returns the `steel_*` tools from

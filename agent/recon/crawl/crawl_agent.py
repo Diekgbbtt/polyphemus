@@ -1,8 +1,7 @@
-"""Thin adapter around the vendored `crawl_agentic._run_agentic_crawl` ReAct loop.
+"""Thin adapter around `crawl_agentic._run_agentic_crawl`'s ReAct loop.
 
-This module does NOT reimplement the crawl loop - `crawl_agentic.py` is
-vendored verbatim from Redamon (`redamon-agent:/app/crawl_agentic.py`, see its
-module docstring). This adapter only:
+This module does NOT reimplement the crawl loop - it wraps `crawl_agentic.py`
+(see its module docstring). This adapter only:
 
   * builds the minimal `mcp_manager` shim (`get_tools()`) the loop expects,
     defaulting to `steel_client.get_crawl_tools()` but accepting injected

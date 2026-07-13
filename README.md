@@ -4,7 +4,7 @@ Autonomous vulnerability-discovery harness. Iteration 1 (recon MVP) substrate:
 four containers the recon pipeline and documentation-ingestion subsystem run on.
 
 ## Prerequisites
-Redamon's two base images must exist locally (reused, not rebuilt):
+Two base images must exist locally (reused, not rebuilt):
 `redamon-agent:latest`, `redamon-kali-sandbox:latest` (`docker images` to check).
 
 ## Run
@@ -75,6 +75,7 @@ It has no launch or settings form, so a run always starts through the API above.
       -d '{"recon":{"target_domain":"www.example.com"}}'
 
     # 2.b. [OPTIONAL] feed an auth context (see "Project settings" below for the full shape)
+    e.g. authn cookies:
     curl -s -X PUT localhost:8080/projects/<id>/settings -H 'Content-Type: application/json' \
       -d '{"recon":{"auth_context":{"cookies":[{"name":"session","value":"..."}]}}}'
 

@@ -65,7 +65,7 @@ Three foundations, built *now*, even where phase 1 only uses a flat projection o
 
 ### Foundation 1 — Descriptive attack surface (Layer 0)
 
-Assets and relationships, navigable in near-natural language. The Redamon-style graph: Domain/Subdomain/IP/Port/Service/BaseURL/Endpoint/Parameter/Header/Certificate/Technology and the web/JS surface (DOM components, JS bundles, storage, cookies). This is the raw material the analysis stage aggregates.
+Assets and relationships, navigable in near-natural language. The source-recon-platform-style graph: Domain/Subdomain/IP/Port/Service/BaseURL/Endpoint/Parameter/Header/Certificate/Technology and the web/JS surface (DOM components, JS bundles, storage, cookies). This is the raw material the analysis stage aggregates.
 
 ### Foundation 2 — Service/System model (Layer 1) — the core of the paradigm
 
@@ -176,11 +176,11 @@ Phase-1's "pool of testing procedures" *is* the checklist. Phase-2 keeps it but 
 
 Phase 1 is itself built in iterations. The **current MVP (iteration 1) is reconnaissance only**. Layer 1 (services/systems) and stages 3–4 remain the agreed direction (sections above) but are **deferred** to later iterations; Layer-1 typing is deliberately left grey until iteration 2.
 
-- **Iteration 1 — Recon MVP (current).** Stage 1 only: the autonomous recon pipeline that builds the **Layer-0 descriptive graph** (Redamon typing adopted verbatim, single project, `admin:admin`), attaches **NL Observation nodes** to broad basic elements, and supports **operator-initiated documentation ingestion** into a vector store. Specified in `recon-mvp-design.md`.
+- **Iteration 1 — Recon MVP (current).** Stage 1 only: the autonomous recon pipeline that builds the **Layer-0 descriptive graph** (single project, `admin:admin`), attaches **NL Observation nodes** to broad basic elements, and supports **operator-initiated documentation ingestion** into a vector store. Specified in `recon-mvp-design.md`.
 - **Iteration 2 — Analysis + Layer 1.** Stage 2: derive the **service/system model** (Foundation 2) from Layer-0 + observations + ingested docs + business OSINT; add trust edges and the three axes.
 - **Iteration 3 — Light threat model + execution.** Stages 3–4 (flat projection): the checklist (Foundation 3) projected per service/system into instance-specific tests, run by an oracle.
 - **Phase 2.** Swap stages 3–4 for the recursive attack-chain DAG and anatomy abduction over the same substrate.
 
-Explicitly **not** inherited at any phase-1 iteration: anatomy abduction, verification-pod roll-up, assumption-promotion (`DD-27`/`OP-6`), dissemination (`DD-25`/`OP-7`), judge-LLM validation (`DD-31`), the expansion governor (`OP-4`), the pentest-realism wrapper (`DD-2`), Redamon's manual configuration/triggering and phase-approval orchestration, and the web frontend.
+Explicitly **not** inherited at any phase-1 iteration: anatomy abduction, verification-pod roll-up, assumption-promotion (`DD-27`/`OP-6`), dissemination (`DD-25`/`OP-7`), judge-LLM validation (`DD-31`), the expansion governor (`OP-4`), the pentest-realism wrapper (`DD-2`), manual configuration/triggering and phase-approval orchestration, and the web frontend.
 
 The line to hold across iterations: each delivers a **forward-compatible substrate** — structural seams typed, adversarial content in natural language — so the next iteration, and ultimately phase 2, swaps *reasoning* without rebuilding *substrate*.

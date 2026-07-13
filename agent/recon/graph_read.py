@@ -1,9 +1,9 @@
 """Read + format the project attack-surface graph for the frontend.
 
 Node/link shape matches the design contract: node {id,name,type,properties},
-link {source,target,type}. Ported from Redamon's format.ts getNodeName, plus
-an Observation case. The Cypher (fetch_project_graph) uses OPTIONAL MATCH so
-zero-degree nodes are still returned."""
+link {source,target,type}, with an added Observation case. The Cypher
+(fetch_project_graph) uses OPTIONAL MATCH so zero-degree nodes are still
+returned."""
 from __future__ import annotations
 
 

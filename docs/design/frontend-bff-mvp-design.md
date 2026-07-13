@@ -5,8 +5,8 @@ Scope: a deliberately minimal read-only frontend for the polymerhus recon system
 Stream: Stream 2 (frontend BFF).
 
 This doc describes a small Vite React single-page app plus three thin read endpoints on the existing FastAPI agent.
-It reuses only the force-graph render lifted from Redamon's `webapp`.
-It drops Prisma, the Redamon Postgres schema, next-auth, user-scoping, SSE, and Redamon's `page.tsx`.
+It uses only a force-graph render for the attack-surface view.
+It has no Prisma, no separate Postgres schema, no next-auth, no user-scoping, no SSE, and no server-rendered `page.tsx`.
 
 ## 1. Goals and non-goals
 
@@ -111,11 +111,9 @@ Response `200`:
 }
 ```
 
-The node/link shape mirrors Redamon's `format.ts` output exactly, so the lifted render consumes it unchanged (see section 6).
+The node/link shape is fixed so the render consumes it unchanged (see section 6).
 
 Backing Cypher lives in a new read helper colocated with the graph owner (proposed `agent/app/clients/neo4j_client.py` read function, or a small `agent/recon/graph_read.py` that imports the driver; the implementation plan picks one).
-It is trimmed from Redamon's `../redamon/webapp/src/app/api/graph/route.ts` to the polymerhus label set.
-Redamon's query is a large `UNION` whose extra branches target labels polymerhus does not have (`CVE`, `MitreData`, `Capec`, `Vulnerability`, `AttackChain`, `ChainStep`, `ChainFinding`, `ChainDecision`).
 Polymerhus needs only the generic project-scoped pattern, which already captures the full label set (`Domain`, `Subdomain`, `IP`, `Port`, `Service`, `DNSRecord`, `BaseURL`, `Endpoint`, `Parameter`, `Header`, `Certificate`, `Technology`, `Secret`, `Traceroute`, `ExternalDomain`) plus `Observation` via `HAS_OBSERVATION`:
 
 ```cypher
@@ -124,7 +122,7 @@ WHERE n.project_id = $project_id
 RETURN n, r, m
 ```
 
-Node/link formatting mirrors Redamon's `formatGraphRecords`: node `id` is the Neo4j internal id as a string, `type` is the first label, `name` is derived per-label, and integer wrapper objects are unwrapped.
+Node/link formatting: node `id` is the Neo4j internal id as a string, `type` is the first label, `name` is derived per-label, and integer wrapper objects are unwrapped.
 The Python read helper returns the already-formatted `{ nodes, links }` so the render adapter stays tiny.
 
 ### 5.3 `GET /runs?status=running`
@@ -301,33 +299,31 @@ sequenceDiagram
     API-->>UI: run no longer listed (now failed)
 ```
 
-## 7. Graph render reuse and the data adapter
+## 7. Graph render and the data adapter
 
-We lift only the render layer from `../redamon/webapp/src/app/graph/**`:
+The render layer lives under `frontend/src/graph/**`:
 
 - `components/GraphCanvas/**` (the react-force-graph 2D/3D canvas; `GraphCanvas` takes `{ nodes, links }` plus callbacks as props).
-- `hooks/useGraphData.ts` (adapted: it fetches our `GET /projects/{id}/graph` instead of Redamon's `/api/graph`; the ETag machinery can be kept or dropped, implementation plan decides).
+- `hooks/useGraphData.ts` fetches `GET /projects/{id}/graph`; the ETag machinery can be kept or dropped, implementation plan decides.
 - `config/**` (`colors.ts`, `sizes.ts`) for the node colour and size mapping.
-- The node/link formatting is done server-side (section 5.2), mirroring Redamon's `format.ts`, so `format.ts` itself is a reference rather than a lifted file.
+- The node/link formatting is done server-side (section 5.2), so the render layer consumes it directly without its own formatting step.
 
-We deliberately do not lift Redamon's `graph/page.tsx`.
-It is entangled with GVM, github-hunt, trufflehog, the Kali terminal, an AI assistant, RedZone tables, SSE hooks, and a user-scoped `ProjectProvider`.
-Our project page is a thin new shell that renders `GraphCanvas` with data from our endpoint.
+Our project page is a thin new shell that renders `GraphCanvas` with data from our endpoint - no GVM, github-hunt, trufflehog, Kali terminal, AI assistant, RedZone tables, SSE hooks, or user-scoped `ProjectProvider`.
 
-The data adapter is small because the contracts already align.
+The data adapter is small because the shape is fixed end to end.
 
-- The `{ nodes: [{ id, name, type, properties }], links: [{ source, target, type }] }` shape is identical to Redamon's.
-- Redamon's `getNodeName` already special-cases our labels (`Domain`, `Subdomain`, `BaseURL`, `Endpoint`, `Parameter`, `Port`, `Service`, `Technology`, `Header`, `DNSRecord`), so names render correctly out of the box.
-- The one addition is an `Observation` case: give it a colour in the lifted `NODE_COLORS` map (Redamon's `config/colors.ts` has no `Observation` entry, so it currently falls back to grey `Default`) and, if desired, a name derived from `macro_kind`/`severity`.
+- The `{ nodes: [{ id, name, type, properties }], links: [{ source, target, type }] }` shape is used consistently server-to-client.
+- `getNodeName` special-cases our labels (`Domain`, `Subdomain`, `BaseURL`, `Endpoint`, `Parameter`, `Port`, `Service`, `Technology`, `Header`, `DNSRecord`), so names render correctly out of the box.
+- The one addition is an `Observation` case: give it a colour in the `NODE_COLORS` map and, if desired, a name derived from `macro_kind`/`severity`.
 
-Everything else in `config/colors.ts` that references Redamon-only labels (`Vulnerability`, `CVE`, `AttackChain`, etc.) is harmless dead mapping and can be trimmed or left as-is.
+`config/colors.ts` only needs entries for the labels polymerhus actually has; unused label mappings can be trimmed.
 
-## 8. What is explicitly dropped
+## 8. What is explicitly out of scope
 
-- Prisma and the Redamon Postgres schema: Postgres-only, `user_id`-keyed, and ~1200 lines of Redamon-specific tool config; irrelevant to polymerhus's four-table registry.
+- Prisma and any separate Postgres schema for graph/tool config: irrelevant to polymerhus's four-table registry.
 - next-auth, sessions, middleware, user-scoping: no auth in this MVP.
 - SSE and websockets: replaced by cheap polling.
-- Redamon's `graph/page.tsx` and its feature web (GVM, trufflehog, github-hunt, Kali terminal, AI assistant, RedZone tables).
+- Any feature web beyond the graph view (GVM, trufflehog, github-hunt, Kali terminal, AI assistant, RedZone tables).
 - Langfuse as a data source: the running list comes from Postgres, not traces.
 
 ## 9. Open for the implementation plan

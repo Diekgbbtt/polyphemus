@@ -1,24 +1,19 @@
 """Pure parser: naabu `-json` stdout -> list[AssetDelta].
 
-Ported from Redamon's `main_recon_modules/port_scan.py::parse_naabu_output`.
-Only the field-mapping logic is kept; the by_host/by_ip aggregation,
-AI-annotation and file-IO code was dropped in favour of a flat delta list.
-
 Naabu emits one JSON object per line, one per (host, ip, port) tuple:
     {"host":"example.com","ip":"93.184.216.34","port":443}
 
-`get_service_name` is a minimal, hand-ported subset of Redamon's
-`helpers/iana_services.py::get_service_name_friendly` (which itself falls
-back to a bundled IANA CSV); this subset covers the common ports called
-out by the task brief. Unknown ports resolve to "unknown".
+`get_service_name` is a minimal IANA/friendly service-name lookup covering
+the common ports called out by the task brief. Unknown ports resolve to
+"unknown".
 
 Pure, deterministic, tolerant of malformed/missing-key lines - never raises.
 """
 from agent.recon.parsers._jsonlines import iter_json_dicts, safe_str
 from agent.recon.types import AssetDelta, Edge
 
-# Minimal common-port -> service-name map (subset of Redamon's IANA/friendly
-# lookup). Unknown ports default to "unknown".
+# Minimal common-port -> service-name map (IANA/friendly lookup).
+# Unknown ports default to "unknown".
 _SERVICE_NAMES: dict[int, str] = {
     21: "ftp",
     22: "ssh",

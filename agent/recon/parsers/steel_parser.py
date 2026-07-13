@@ -1,9 +1,7 @@
 """Pure parser: Steel agentic-crawl manifest JSON -> list[AssetDelta].
 
-Ported from Redamon's `helpers/resource_enum/steel_helpers.py::merge_steel_into_by_base_url`,
-which historically merged a Steel crawl manifest into the shared `by_base_url`
-resource-enum data structure. This parser instead targets the fleet's flat
-`AssetDelta` contract, decomposing the manifest shape:
+This parser targets the fleet's flat `AssetDelta` contract, decomposing the
+manifest shape:
 
     {"endpoints": [{"method": str, "url": str, "query": [...], "body": [...],
                     "status": int}], "js_urls": [str, ...]}
@@ -17,8 +15,8 @@ jsluice reports discovered JS-origin URLs.
 
 `query`/`body` elements are, per the manifest contract, bare param-name
 strings - but are handled defensively as `{"name": ...}` dicts too, since
-Redamon's own `_make_param` helper produces that richer shape when the
-crawl loop's manifest builder is fed already-classified params.
+the crawl loop's manifest builder can produce that richer shape when fed
+already-classified params.
 
 Pure, deterministic, tolerant of malformed/missing-key input - never raises.
 """

@@ -1,17 +1,12 @@
 """Pure parser: `whois` stdout (raw key: value text) -> list[AssetDelta].
 
-Ported from Redamon's `main_recon_modules/whois_recon.py::whois_to_dict`.
-That function converts a `python-whois` library result object into a
-clean dict; only the *set of fields it cares about* (registrar,
-creation_date, expiration_date, name servers, ...) is ported here. The
-actual parsing strategy differs: Redamon's `whois_lookup` calls the
-`python-whois` library and gets back a structured dict-like object, but
-this recon pipeline shells out to the `whois` CLI directly, whose stdout
-is raw, unstructured `Key: value` text (the classic WHOIS/RDAP text
-format). So this parser line-parses that raw text instead of ported
-Python-object access, tolerating the field-name variants different
-registries emit for the same concept (e.g. "Registry Expiry Date" vs
-"Expiration Date" vs "Expiry Date").
+Cares about a fixed set of fields (registrar, creation_date,
+expiration_date, name servers, ...). This recon pipeline shells out to the
+`whois` CLI directly, whose stdout is raw, unstructured `Key: value` text
+(the classic WHOIS/RDAP text format), so this parser line-parses that raw
+text, tolerating the field-name variants different registries emit for the
+same concept (e.g. "Registry Expiry Date" vs "Expiration Date" vs "Expiry
+Date").
 
 Pure, deterministic, tolerant of missing/malformed lines - never raises.
 """

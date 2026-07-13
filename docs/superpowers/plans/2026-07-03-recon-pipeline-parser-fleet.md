@@ -2,11 +2,11 @@
 
 > **For agentic workers:** REQUIRED SUB-SKILL: Use superpowers:subagent-driven-development to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking.
 
-**Goal:** Port every remaining deterministic recon parser from Redamon into the `agent/recon/parsers/` fleet, each as a pure `parse(stdout: str) -> list[AssetDelta]` registered in `PARSERS`, so that after this sub-plan every non-agentic recon tool's output maps to typed Layer-0 assets. (Agentic crawl / steel and on-demand nuclei are separate later sub-plans.)
+**Goal:** Build every remaining deterministic recon parser into the `agent/recon/parsers/` fleet, each as a pure `parse(stdout: str) -> list[AssetDelta]` registered in `PARSERS`, so that after this sub-plan every non-agentic recon tool's output maps to typed Layer-0 assets. (Agentic crawl / steel and on-demand nuclei are separate later sub-plans.)
 
 **Architecture:** Follows the reference parser from the Foundation sub-plan (`agent/recon/parsers/httpx_parser.py`) exactly: read the tool's structured (`-json`/`-jsonl`/line) stdout, iterate lines with a per-line JSON guard, emit `AssetDelta`s with identity/props/edges matching design §10.3, register under the tool name. Each parser is pure and deterministic - no I/O, no tool execution (that is the pod's `execute_command`), no Neo4j writes (that is the curator).
 
-**Tech Stack:** Python 3.11, pydantic (`AssetDelta`/`Edge` from `agent/recon/types.py`), pytest. Redamon parse sources live in the `redamon-recon:latest` image under `/app/recon/`.
+**Tech Stack:** Python 3.11, pydantic (`AssetDelta`/`Edge` from `agent/recon/types.py`), pytest. Reference parse sources live in the `redamon-recon:latest` image under `/app/recon/`.
 
 ## Global Constraints
 
@@ -15,7 +15,7 @@
 - Node identity keys and properties MUST match design §10.3 exactly (reproduced per task). Every node carries only its identity keys in the delta `identity`; everything else goes in `props`. `project_id`/`first_seen`/`last_seen` are injected by the curator - parsers never set them.
 - Edges use the design §5 relationship names and point in the semantically correct direction (`dir="in"` = other-node → this-node; `dir="out"` = this-node → other-node). Reproduced per task.
 - Findings-type tools (graphql_scan misconfig, subdomain_takeover) emit **`Observation`**-shaped results, NOT `Vulnerability` nodes (design §5). Since the triager owns Observations in the pod, a parser that inherently produces findings returns them as `AssetDelta`s of a dedicated shape only where the finding is a graph asset (e.g. an Endpoint discovered); pure security findings are surfaced via the pod's triager - see the per-task notes for graphql_scan / subdomain_takeover, which clarify the split.
-- To read a Redamon parse source: `docker run --rm --entrypoint sh redamon-recon:latest -c 'sed -n "<start>,<end>p" <file>'`. The `entry.get("<key>")` calls in each source reveal the exact raw tool-JSON keys - port those keys, drop all Docker/execution/accumulator/AI-annotation code.
+- To read a reference parse source: `docker run --rm --entrypoint sh redamon-recon:latest -c 'sed -n "<start>,<end>p" <file>'`. The `entry.get("<key>")` calls in each source reveal the exact raw tool-JSON keys - use those keys, drop all Docker/execution/accumulator/AI-annotation code.
 - Reference implementation to mirror for structure, registry wiring, and test style: `agent/recon/parsers/httpx_parser.py` + `tests/recon/test_httpx_parser.py` (already in the branch).
 - Tests run from repo root; gitignored `.venv/` has deps. Each task: fixture built from the real tool `-json` line shape (derive from the source's `entry.get` keys), 3-5 assertions on emitted delta types/identity/edges, plus a malformed-line-skipped test.
 
@@ -197,6 +197,6 @@
 ## Self-Review (author checklist, completed)
 
 - **Coverage:** the fleet now covers every §7 job-set tool + the D1 scope-expansion tools except the two that are their own sub-plans (steel/agentic-crawl → sub-plan 4; nuclei → sub-plan 5). Enumerated against the memory parser list: subfinder, amass, puredns, dnsx, whois, naabu, katana, gau, arjun, ffuf, jsluice, kiterunner, paramspider, graphql_scan, subdomain_takeover - all present (httpx done in Foundation). None forgotten.
-- **Placeholder scan:** each task names the exact Redamon source function + file + line range and the authoritative §10.3 target schema, following the proven Task-4 port pattern (the source is the detailed spec for a port; the implementer reads it as in Foundation Task 4). No "similar to"/"TBD".
+- **Placeholder scan:** each task names the exact reference function + file + line range and the authoritative §10.3 target schema, following the proven Task-4 pattern (the reference is the detailed spec; the implementer reads it as in Foundation Task 4). No "similar to"/"TBD".
 - **Findings-vs-assets split:** graphql_scan and subdomain_takeover use the documented `parse` (assets) + `parse_findings` (dicts → triager Observations) split, honoring design §5 "security_check → Observations, never Vulnerability nodes".
 - **Type consistency:** all parsers share the `parse(stdout) -> list[AssetDelta]` contract, register in `PARSERS`, and reuse `AssetDelta`/`Edge`; the `parse_findings` second output is only on the two findings-tools and is explicitly documented.

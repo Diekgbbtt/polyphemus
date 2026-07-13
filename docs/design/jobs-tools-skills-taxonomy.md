@@ -28,7 +28,7 @@ A job binds exactly one tool and, for each LLM role it activates, at most one sk
 ### 1.1 Job -> Tool binding
 
 Every `JobSpec` names one `tool`, and `tool` must byte-match a parser key in `PARSERS` (the deterministic `stdout -> list[AssetDelta]` function).
-For the flat default, the tool is a Kali binary and the binding is the `command_template` (the tool's canonical Redamon invocation with `{placeholders}`).
+For the flat default, the tool is a Kali binary and the binding is the `command_template` (the tool's canonical invocation with `{placeholders}`).
 For the agentic exception (`configurator_mode="agent"`), the tool is the Steel MCP surface and there is no `command_template`; the ReAct loop *is* the invocation.
 
 The `command_template` is not the tool; it is the tool's **canonical parameterised invocation**.
@@ -60,10 +60,10 @@ The taxonomy below gives that label a real referent.
 There is a naming collision to resolve up front.
 
 1. **Authoring-time agent skill** (the `writing-skills` sense): a `SKILL.md` with `name`/`description` frontmatter, discovered and loaded by an agent, authored TDD-style against baseline failures.
-2. **Runtime role prompt**: a system-prompt/playbook injected into a recon LLM role (triager/crawler) at pod runtime, like Redamon's `steel_crawl.md`.
+2. **Runtime role prompt**: a system-prompt/playbook injected into a recon LLM role (triager/crawler) at pod runtime, like `steel_crawl.md`.
 
 These are the **same artifact** in polymerhus.
-Redamon's `steel_crawl.md` is simultaneously a well-structured markdown skill *and* the crawler's runtime system prompt.
+`steel_crawl.md` is simultaneously a well-structured markdown skill *and* the crawler's runtime system prompt.
 So a polymerhus skill is: a markdown playbook, authored and tested with the `writing-skills` discipline, whose body is loaded verbatim as a recon role's system prompt.
 The frontmatter `description` says *when the skill applies* (which role/job-family); the body *is* the playbook the LLM receives.
 
@@ -169,9 +169,9 @@ Ordered by value = (impact on graph quality) x (baseline failure severity) / (au
 1. **`triager/writing-observations` - AUTHORED in this deliverable.**
    Highest value: it runs on all 17 jobs, and its baseline failures (illegal anchors silently dropped, observations-as-vulnerabilities, restating assets) directly corrupt or waste the graph.
    RED/GREEN evidence in the skill's directory.
-2. **`crawler/steel-crawl` - port + verify.**
-   Redamon's `steel_crawl.md` is battle-tested; the work is porting it verbatim (the agentic-crawl plan already does this) and adding a RED/GREEN test that a crawler without it wastes budget on `.js`/static URLs and fails to flush form-hidden endpoints.
-   Medium cost (mostly a port), high value (the only agentic job).
+2. **`crawler/steel-crawl` - verify.**
+   `steel_crawl.md` is battle-tested; the work is adding a RED/GREEN test that a crawler without it wastes budget on `.js`/static URLs and fails to flush form-hidden endpoints.
+   Medium cost, high value (the only agentic job).
 3. **`job-orchestrator/asset-distribution` - author when the LLM preprocess path is enabled.**
    Currently the deterministic 1:1 default is correct for the MVP, so this is deferred until asset volumes make cleaning/dedup/grouping worthwhile.
    Baseline failure to test: an orchestrator that fans one pod per near-duplicate asset (e.g. `www.x.com` and `x.com` resolving identically) wasting the `MAX_PODS` budget, or that mis-groups assets a single pod could batch.
