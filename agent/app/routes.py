@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import re
 import uuid
 from datetime import datetime, timezone
 
@@ -43,21 +44,37 @@ class ReconLaunch(BaseModel):
     settings: dict | None = None
 
 
+# auth_context keys that are structural, NOT HTTP headers. Every other key is
+# treated as an arbitrary request header (name -> string value).
+_RESERVED_AUTH_CONTEXT_KEYS = {"cookies", "scope", "credentials"}
+# RFC 7230 header field-names are tokens; we accept the realistic subset
+# (letters, digits, hyphen) that covers every auth header (Authorization,
+# X-Api-Key, ...) and excludes shell/CRLF-dangerous characters.
+_HTTP_HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9-]+$")
+
+
 def _validate_auth_context(auth_context: object) -> None:
     """Raise ValueError on any shape violation of the AuthContext contract:
-    a dict with a `cookies` list (each `{name, value}`) and an optional
-    string `scope`."""
+    a dict with an OPTIONAL `cookies` list (each `{name, value}`), an optional
+    string `scope`, and optional `credentials`.
+
+    `cookies` (request-based crawling) and `credentials` (agentic login, D23-2)
+    are INDEPENDENT items. A partial PUT may set either without the other, so
+    an absent `cookies` key is valid; only a present-but-malformed one is an
+    error. The registry merges partial PUTs recursively (see pg.save_settings)
+    so setting one item never wipes the other."""
     if not isinstance(auth_context, dict):
         raise ValueError("auth_context must be an object")
 
     cookies = auth_context.get("cookies")
-    if not isinstance(cookies, list):
-        raise ValueError("auth_context.cookies must be a list")
-    for cookie in cookies:
-        if not isinstance(cookie, dict) or "name" not in cookie or "value" not in cookie:
-            raise ValueError("each auth_context.cookies entry must be {name, value}")
-        if not isinstance(cookie["name"], str) or not isinstance(cookie["value"], str):
-            raise ValueError("auth_context.cookies entries must have string name/value")
+    if cookies is not None:
+        if not isinstance(cookies, list):
+            raise ValueError("auth_context.cookies must be a list")
+        for cookie in cookies:
+            if not isinstance(cookie, dict) or "name" not in cookie or "value" not in cookie:
+                raise ValueError("each auth_context.cookies entry must be {name, value}")
+            if not isinstance(cookie["name"], str) or not isinstance(cookie["value"], str):
+                raise ValueError("auth_context.cookies entries must have string name/value")
 
     scope = auth_context.get("scope")
     if scope is not None and not isinstance(scope, str):
@@ -75,6 +92,31 @@ def _validate_auth_context(auth_context: object) -> None:
         for field in ("domain", "username_selector", "password_selector", "submit_selector"):
             if field in credentials and not isinstance(credentials[field], str):
                 raise ValueError(f"auth_context.credentials.{field} must be a string")
+
+    # Arbitrary HTTP headers: auth_context is header-agnostic, so every key that
+    # is not a reserved structural key is an HTTP header name -> string value,
+    # emitted verbatim on the request-based tools (Authorization, X-Api-Key,
+    # ...). `cookies` stays the one source of the `Cookie` header, so a literal
+    # `Cookie` header is refused to avoid two sources of truth.
+    for name, value in auth_context.items():
+        if name in _RESERVED_AUTH_CONTEXT_KEYS:
+            continue
+        if name.lower() == "cookie":
+            raise ValueError(
+                "auth_context: set cookies via the `cookies` list, not a `Cookie` header"
+            )
+        if not _HTTP_HEADER_NAME_RE.match(name):
+            raise ValueError(
+                f"auth_context header name {name!r} is not a valid HTTP header token"
+            )
+        if not isinstance(value, str) or not value:
+            raise ValueError(
+                f"auth_context header {name!r} value must be a non-empty string"
+            )
+        if "\r" in value or "\n" in value:
+            raise ValueError(
+                f"auth_context header {name!r} value must not contain CR or LF"
+            )
 
 
 @router.post("/projects")

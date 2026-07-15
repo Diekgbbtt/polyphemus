@@ -65,6 +65,51 @@ def test_parse_whois_missing_domain_name_returns_empty_list():
     assert parse(text) == []
 
 
+def test_parse_whois_anchors_domain_to_apex_when_no_domain_name_line():
+    """D14b/D11: a non-registrable exact host whose whois text carries NO
+    `Domain Name:` line must STILL yield a Domain node, anchored to the
+    registrable apex derived from the queried host - so later-phase Domain
+    consumers (paramspider) always have an anchor."""
+    text = (
+        "Registrar: Some Registrar\n"
+        "Creation Date: 2019-06-01T00:00:00Z\n"
+        "Name Server: ns1.daytona.io\n"
+    )
+    deltas = parse(text, target_url="app.daytona.io")
+    domain = next(d for d in deltas if d.type == "Domain")
+    assert domain.identity == {"name": "daytona.io"}
+    # Parsed props still ride along from the raw text.
+    assert domain.props["registrar"] == "Some Registrar"
+    assert domain.props["name_servers"] == ["ns1.daytona.io"]
+
+
+def test_parse_whois_apex_anchor_overrides_raw_domain_name_line():
+    """When a queried host is supplied, the deterministic registrable apex is
+    the anchor - the raw `Domain Name:` line is NOT trusted (it can be a
+    registry-canonicalised or unrelated value)."""
+    text = "Domain Name: SOMETHINGELSE.NET\nRegistrar: R\n"
+    deltas = parse(text, target_url="api.app.daytona.io")
+    domain = next(d for d in deltas if d.type == "Domain")
+    assert domain.identity == {"name": "daytona.io"}
+
+
+def test_parse_whois_apex_anchor_tolerates_url_and_www_and_port():
+    """The queried host is a bare host in practice, but a URL / port / www.
+    prefix is tolerated when deriving the apex."""
+    for target in ("https://www.daytona.io:443/path", "www.daytona.io", "DAYTONA.IO"):
+        domain = next(
+            d for d in parse("Registrar: R\n", target_url=target) if d.type == "Domain"
+        )
+        assert domain.identity == {"name": "daytona.io"}
+
+
+def test_parse_whois_no_target_and_no_domain_name_still_empty():
+    """Fallback path unchanged: with neither a queried host nor a parseable
+    `Domain Name:` line there is no anchor, so no Domain node (existing
+    direct-parse unit-test contract)."""
+    assert parse("Registrar: R\nCreation Date: 2020-01-01T00:00:00Z\n") == []
+
+
 def test_parse_whois_dedups_name_servers_preserving_order():
     """Registries list each NS twice (registry + registrar sections); the
     parser must dedup while preserving first-seen order (Defect D4)."""

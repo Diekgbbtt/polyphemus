@@ -65,7 +65,7 @@ def test_fill_template_auth_header_httpx_serializes_cookie_string_not_dict_repr(
         tool="httpx",
     )
     assert 'Cookie: session=abc' in cmd
-    assert '-H "Cookie: session=abc"' in cmd
+    assert "-H 'Cookie: session=abc'" in cmd
     assert "{" not in cmd  # no residual placeholder, no dict repr
 
 
@@ -76,7 +76,7 @@ def test_fill_template_auth_header_arjun_uses_headers_flag():
         {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}, "_use_auth": True},
         tool="arjun",
     )
-    assert '--headers "Cookie: session=abc"' in cmd
+    assert "--headers 'Cookie: session=abc'" in cmd
 
 
 def test_fill_template_auth_header_multi_cookie():
@@ -94,7 +94,58 @@ def test_fill_template_auth_header_multi_cookie():
         },
         tool="httpx",
     )
-    assert '-H "Cookie: session=abc; csrf=xyz"' in cmd
+    assert "-H 'Cookie: session=abc; csrf=xyz'" in cmd
+
+
+def test_fill_template_auth_header_arbitrary_headers_httpx():
+    # Header-agnostic: Authorization + X-Api-Key emit as their own repeatable
+    # -H flags alongside the Cookie header; reserved keys are not emitted.
+    cmd = pod.fill_template(
+        "httpx -u {target} {auth_header}",
+        {"name": "app.example.com"},
+        {
+            "auth_context": {
+                "cookies": [{"name": "session", "value": "abc"}],
+                "Authorization": "Bearer eyJx.y.z",
+                "X-Api-Key": "k-123",
+                "scope": "/app",
+            }
+        },
+        tool="httpx",
+    )
+    assert "-H 'Cookie: session=abc'" in cmd
+    assert "-H 'Authorization: Bearer eyJx.y.z'" in cmd
+    assert "-H 'X-Api-Key: k-123'" in cmd
+    # reserved structural key is never emitted as a header
+    assert "scope" not in cmd
+
+
+def test_fill_template_auth_header_arbitrary_headers_no_cookies():
+    # Authorization alone (no cookies key at all) still emits.
+    cmd = pod.fill_template(
+        "httpx -u {target} {auth_header}",
+        {"name": "app.example.com"},
+        {"auth_context": {"Authorization": "Bearer t0ken"}},
+        tool="httpx",
+    )
+    assert "-H 'Authorization: Bearer t0ken'" in cmd
+    assert "Cookie" not in cmd
+
+
+def test_fill_template_auth_header_arjun_joins_headers_with_newline():
+    # arjun's --headers takes all headers in one newline-separated argument.
+    cmd = pod.fill_template(
+        "arjun -u {target} {auth_header}",
+        {"name": "app.example.com"},
+        {
+            "auth_context": {
+                "cookies": [{"name": "session", "value": "abc"}],
+                "Authorization": "Bearer t0ken",
+            }
+        },
+        tool="arjun",
+    )
+    assert "--headers 'Cookie: session=abc\nAuthorization: Bearer t0ken'" in cmd
 
 
 def test_fill_template_applies_auth_header_whenever_auth_context_present():
@@ -108,6 +159,41 @@ def test_fill_template_applies_auth_header_whenever_auth_context_present():
     )
     assert 'Cookie: session=abc' in cmd
     assert "{" not in cmd
+
+
+def test_fill_template_auth_header_kiterunner_uses_default_h_flag():
+    # kiterunner (`kr`) takes repeated -H "k: v" flags, same as httpx/katana/ffuf.
+    cmd = pod.fill_template(
+        "kr scan {target} -w /opt/localbin/routes-small.kite {auth_header}",
+        {"name": "app.example.com"},
+        {
+            "auth_context": {
+                "cookies": [{"name": "session", "value": "abc"}],
+                "Authorization": "Bearer t0ken",
+            }
+        },
+        tool="kiterunner",
+    )
+    assert "-H 'Cookie: session=abc'" in cmd
+    assert "-H 'Authorization: Bearer t0ken'" in cmd
+
+
+def test_fill_template_auth_header_graphql_cop_uses_comma_joined_headers_flag():
+    # graphql-cop's --headers flag takes ALL headers as one comma-joined
+    # "Key:Value,Key2:Value2" argument (its own CLI format, distinct from both
+    # the default repeated -H flag and arjun's newline-joined --headers blob).
+    cmd = pod.fill_template(
+        "graphql-cop -t {target} -o json {auth_header}",
+        {"name": "app.example.com"},
+        {
+            "auth_context": {
+                "cookies": [{"name": "session", "value": "abc"}],
+                "Authorization": "Bearer t0ken",
+            }
+        },
+        tool="graphql-cop",
+    )
+    assert "--headers 'Cookie:session=abc,Authorization:Bearer t0ken'" in cmd
 
 
 def test_fill_template_auth_header_empty_when_no_auth_context():

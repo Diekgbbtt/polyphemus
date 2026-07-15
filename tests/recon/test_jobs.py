@@ -18,6 +18,21 @@ def test_dnsx_template_has_json():
     assert "-json" in JOBS["dnsx"].command_template
 
 
+def test_ffuf_template_writes_json_to_file_and_cats_it_with_autocalibration():
+    # `-of json` alone (no `-o` destination) makes ffuf emit its human banner to
+    # stdout and never produce JSON, so parse_ffuf silently gets []. The template
+    # must write JSON to the per-pod /work/{session} dir and cat it to stdout,
+    # and carry `-ac` to filter the SPA soft-404 catch-all noise.
+    template = JOBS["ffuf"].command_template
+    assert "-o /work/{session}/ffuf.json" in template
+    assert "-of json" in template
+    assert "&& cat /work/{session}/ffuf.json" in template
+    assert "-ac" in template
+    # auth + rate slots preserved
+    assert "{auth_header}" in template
+    assert "{rate_flags}" in template
+
+
 def test_subdomain_takeover_template_has_target_placeholder():
     # A placeholder-less template gives the pod nothing to scan (silent
     # zero deltas). Guard against that regression.
@@ -41,9 +56,19 @@ def test_consumes_deps_respected_across_full_plan():
             available.update(JOBS[job_name].produces)
 
 
-def test_validate_job_subset_httpx_alone_raises():
+def test_validate_job_subset_httpx_alone_passes():
+    # httpx consumes "Subdomain", but pipeline._inject_seed_host unconditionally
+    # injects the scope's seed host into any Subdomain-consuming job's input
+    # set regardless of whether a discovery job (subfinder/amass/dnsx) ran -
+    # so httpx alone is a valid, runnable subset.
+    validate_job_subset(["httpx"])
+
+
+def test_validate_job_subset_unmet_dependency_raises():
+    # arjun consumes "Endpoint", which nothing in this subset produces and is
+    # not covered by the seed-host injection (only "Subdomain" is).
     with pytest.raises(ValueError):
-        validate_job_subset(["httpx"])
+        validate_job_subset(["arjun"])
 
 
 def test_validate_job_subset_subfinder_passes():
@@ -73,7 +98,7 @@ def test_build_phase_plan_subset():
 
 def test_build_phase_plan_invalid_subset_raises():
     with pytest.raises(ValueError):
-        build_phase_plan(["httpx"])
+        build_phase_plan(["arjun"])
 
 
 def test_steel_crawl_job_tool_matches_registered_parser():
@@ -126,15 +151,32 @@ def test_arjun_runs_after_jsluice_so_recovered_endpoints_reach_it():
     assert arjun_idx > jsluice_idx
 
 
-def test_kiterunner_is_gated_to_the_webapi_profile():
+def test_kiterunner_is_an_authenticated_job():
+    # kiterunner scans REST routes behind auth just like ffuf/katana - it must
+    # receive the project's cookies/headers, so it belongs to the use_auth set
+    # and its command_template has an {auth_header} slot to fill.
+    job = JOBS["kiterunner"]
+    assert job.use_auth is True
+    assert "{auth_header}" in job.command_template
+
+
+def test_graphql_cop_is_an_authenticated_job():
+    # graphql-cop probes a GraphQL surface that may sit behind auth, so it must
+    # receive the project's cookies/headers like the other request-based tools.
+    job = JOBS["graphql-cop"]
+    assert job.use_auth is True
+    assert "{auth_header}" in job.command_template
+
+
+def test_kiterunner_is_gated_to_the_restapi_profile():
     # D16: kiterunner (API-route scanner) only consumes BaseURLs httpx profiled
-    # as `webapi`, via the D17 consumes_where selector.
+    # as `restapi`, via the D17 consumes_where selector.
     job = JOBS["kiterunner"]
     assert job.consumes == "BaseURL"
     assert job.consumes_where is not None
     assert job.consumes_where.field == "profile"
     assert job.consumes_where.op == "equals"
-    assert job.consumes_where.values == ["webapi"]
+    assert job.consumes_where.values == ["restapi"]
 
 
 def test_kiterunner_runs_after_httpx_which_sets_the_profile():
@@ -143,3 +185,105 @@ def test_kiterunner_runs_after_httpx_which_sets_the_profile():
     httpx_idx = next(i for i, p in enumerate(PHASES) if "httpx" in p)
     kite_idx = next(i for i, p in enumerate(PHASES) if "kiterunner" in p)
     assert kite_idx > httpx_idx
+
+
+def test_graphql_cop_is_gated_to_the_graphql_api_profile():
+    # graphql-cop previously had no consumes_where and fired at every BaseURL
+    # (54 on the last live run). It only makes sense against a GraphQL surface,
+    # so it is gated to the dedicated `graphql_api` profile httpx derives from
+    # the endpoint path (a miss = no run, the accepted tradeoff).
+    job = JOBS["graphql-cop"]
+    assert job.consumes == "BaseURL"
+    assert job.consumes_where is not None
+    assert job.consumes_where.field == "profile"
+    assert job.consumes_where.op == "equals"
+    assert job.consumes_where.values == ["graphql_api"]
+
+
+def test_graphql_cop_runs_after_httpx_which_sets_the_profile():
+    # The profile it gates on is set by httpx, so httpx must run in an earlier
+    # phase (else the phase barrier feeds graphql-cop unprofiled BaseURLs).
+    httpx_idx = next(i for i, p in enumerate(PHASES) if "httpx" in p)
+    gql_idx = next(i for i, p in enumerate(PHASES) if "graphql-cop" in p)
+    assert gql_idx > httpx_idx
+
+
+# --- D27: reprofile pass + relocated API phases ----------------------------
+
+
+def test_httpx_reprofile_reuses_the_httpx_parser():
+    # The reprofile job re-probes BaseURLs and must classify them via the SAME
+    # parser as httpx (no duplicated classify logic), keyed under its own tool
+    # name so the `job.tool == name` invariant holds.
+    job = JOBS["httpx_reprofile"]
+    assert job.tool == "httpx_reprofile"
+    assert PARSERS["httpx_reprofile"] is PARSERS["httpx"]
+
+
+def test_httpx_reprofile_consumes_all_baseurls_idempotently():
+    # It consumes BaseURL with NO consumes_where: AssetSelector cannot express
+    # "profile is unset", so it re-probes every BaseURL (idempotent - a re-probe
+    # just rewrites the same profile). It is also an authenticated probe, so
+    # behind-auth API hosts classify correctly.
+    job = JOBS["httpx_reprofile"]
+    assert job.consumes == "BaseURL"
+    assert job.consumes_where is None
+    assert job.use_auth is True
+    assert "{target}" in job.command_template
+    assert "{auth_header}" in job.command_template
+
+
+def test_httpx_reprofile_runs_after_jsluice_and_before_the_api_phases():
+    # It must sit after jsluice (the last BaseURL producer, minting JS-derived
+    # API hosts) and before kiterunner/graphql-cop, so those gate on the
+    # reprofiled surface, not just httpx's originally-probed hosts.
+    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
+    reprofile_idx = next(i for i, p in enumerate(PHASES) if "httpx_reprofile" in p)
+    kite_idx = next(i for i, p in enumerate(PHASES) if "kiterunner" in p)
+    gql_idx = next(i for i, p in enumerate(PHASES) if "graphql-cop" in p)
+    assert reprofile_idx > jsluice_idx
+    assert kite_idx > reprofile_idx
+    assert gql_idx > reprofile_idx
+
+
+def test_kiterunner_and_graphql_cop_left_the_crawl_phase():
+    # D27: they were moved out of phase 4 (the katana/ffuf crawl phase) so they
+    # can gate on the reprofiled API surface. ffuf keeps its crawl role there.
+    crawl_phase = next(p for p in PHASES if "katana" in p)
+    assert "kiterunner" not in crawl_phase
+    assert "graphql-cop" not in crawl_phase
+    assert "ffuf" in crawl_phase
+
+
+def test_kiterunner_and_graphql_cop_are_two_separate_phases():
+    # Operator decision: api enumeration (kiterunner) and static api testing
+    # (graphql-cop) stay distinct phases, not one combined phase.
+    kite_phase = next(p for p in PHASES if "kiterunner" in p)
+    gql_phase = next(p for p in PHASES if "graphql-cop" in p)
+    assert kite_phase is not gql_phase
+    assert "graphql-cop" not in kite_phase
+    assert "kiterunner" not in gql_phase
+
+
+def test_arjun_runs_after_api_enumeration():
+    # D27/GP4-a: arjun repositioned after kiterunner so it discovers Parameters
+    # on the routes api enumeration just found (still after jsluice too).
+    arjun_idx = next(i for i, p in enumerate(PHASES) if "arjun" in p)
+    kite_idx = next(i for i, p in enumerate(PHASES) if "kiterunner" in p)
+    jsluice_idx = next(i for i, p in enumerate(PHASES) if "jsluice" in p)
+    assert arjun_idx > kite_idx
+    assert arjun_idx > jsluice_idx
+
+
+def test_full_plan_still_validates_with_the_reprofile_and_api_phases():
+    # The relocated API jobs must still satisfy the consumes/produces DAG:
+    # every job's consumes type is produced by an earlier phase (or Domain).
+    validate_job_subset(list(JOBS.keys()))
+
+
+def test_validate_job_subset_httpx_reprofile_needs_a_baseurl_producer():
+    # It consumes BaseURL, so alone (no producer) it must fail; with httpx (a
+    # BaseURL producer) upstream it passes.
+    with pytest.raises(ValueError):
+        validate_job_subset(["httpx_reprofile"])
+    validate_job_subset(["subfinder", "httpx", "httpx_reprofile"])

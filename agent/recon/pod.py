@@ -14,6 +14,7 @@ does not invoke them.
 from __future__ import annotations
 
 import inspect
+import shlex
 import time
 
 import os
@@ -103,8 +104,13 @@ def fill_template(
 
 
 # Tools whose auth-cookie flag is `--headers "Cookie: ..."` rather than the
-# `-H "Cookie: ..."` form shared by httpx/katana/ffuf (design §4 table).
+# `-H "Cookie: ..."` form shared by httpx/katana/ffuf/kiterunner (design §4 table).
 _HEADERS_FLAG_TOOLS = {"arjun"}
+
+# graphql-cop's own --headers format: ALL headers in one comma-joined
+# "Key:Value,Key2:Value2" argument (no space after the colon) - distinct from
+# both the default repeated -H flag and arjun's newline-joined --headers blob.
+_COMMA_HEADERS_FLAG_TOOLS = {"graphql-cop"}
 
 # Conservative preventive rate profile, applied ONLY when the job-agent steering
 # marked this pod extra["rate_profile"] == "throttle". Only ffuf currently carries
@@ -116,24 +122,64 @@ _HEADERS_FLAG_TOOLS = {"arjun"}
 _RATE_FLAGS = {"ffuf": "-rate 5 -p 0.2"}
 
 
-def _auth_header(auth_context: dict, tool: str) -> str:
-    """Serialize `auth_context["cookies"]` (`[{name, value}, ...]`) into the
-    tool-appropriate cookie-header CLI flag - never a Python dict repr.
+# auth_context is header-agnostic: `cookies` is the structured source of the
+# `Cookie` header, and every OTHER key (except these reserved structural ones,
+# which are not HTTP headers) is emitted verbatim as its own request header.
+_RESERVED_AUTH_KEYS = {"cookies", "scope", "credentials"}
 
-    Returns "" when there are no cookies (or `auth_context` is falsy), so a
-    template's `{auth_header}` placeholder collapses to nothing rather than
-    leaving a dangling flag/quote behind.
+
+def _iter_auth_headers(auth_context: dict):
+    """Yield `(name, value)` HTTP header pairs from `auth_context`.
+
+    - `cookies` (`[{name, value}, ...]`) is joined into the peculiar pair-form
+      `Cookie` header value (`k=v; k2=v2`) - the Cookie header wants key=value
+      pairs, not one opaque token.
+    - every other key except the reserved structural keys (`scope`,
+      `credentials`) is an arbitrary header (Authorization, X-Api-Key, ...),
+      yielded verbatim. A literal `Cookie` key is skipped (the API layer
+      rejects it; the `cookies` list is the one source of the Cookie header).
     """
-    if not auth_context:
-        return ""
     cookies = auth_context.get("cookies") or []
     cookie_str = "; ".join(
         f"{c['name']}={c['value']}" for c in cookies if c.get("name") and c.get("value")
     )
-    if not cookie_str:
+    if cookie_str:
+        yield ("Cookie", cookie_str)
+    for name, value in auth_context.items():
+        if name in _RESERVED_AUTH_KEYS or name.lower() == "cookie":
+            continue
+        if isinstance(value, str) and value:
+            yield (name, value)
+
+
+def _auth_header(auth_context: dict, tool: str) -> str:
+    """Serialize `auth_context` into tool-appropriate header CLI flags.
+
+    Header-agnostic: the `cookies` list becomes the `Cookie` header and any
+    other key (except the reserved `scope`/`credentials`) becomes its own
+    header. Every `name: value` is shell-quoted (`shlex`) so an operator-
+    supplied token can never break the command string.
+
+    `-H`-flag tools take one repeatable flag per header; arjun's `--headers`
+    takes all headers in a single newline-separated argument; graphql-cop's
+    `--headers` takes all headers in a single comma-joined `Key:Value` argument
+    (no space after the colon). Returns "" when nothing applies, so a
+    template's `{auth_header}` placeholder collapses to nothing rather than
+    leaving a dangling flag behind. Request-tool only - the Steel crawl injects
+    cookies via CDP separately.
+    """
+    if not auth_context:
         return ""
-    flag = "--headers" if tool in _HEADERS_FLAG_TOOLS else "-H"
-    return f'{flag} "Cookie: {cookie_str}"'
+    pairs = list(_iter_auth_headers(auth_context))
+    if not pairs:
+        return ""
+    if tool in _HEADERS_FLAG_TOOLS:
+        blob = "\n".join(f"{name}: {value}" for name, value in pairs)
+        return f"--headers {shlex.quote(blob)}"
+    if tool in _COMMA_HEADERS_FLAG_TOOLS:
+        blob = ",".join(f"{name}:{value}" for name, value in pairs)
+        return f"--headers {shlex.quote(blob)}"
+    return " ".join(f"-H {shlex.quote(f'{name}: {value}')}" for name, value in pairs)
 
 
 def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
@@ -218,18 +264,19 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     def curator_node(state: PodState) -> dict:
         assets = state.get("assets", [])
         observations = state.get("observations", [])
-        # The seed scope domain (D14) rides in `extra` alongside project_id;
-        # forward it so curate drops out-of-scope BaseURLs. Passed only when
-        # present so injected 3-arg fake curate_fns stay compatible.
-        scope_domain = (state.get("extra") or {}).get("scope_domain")
-        if scope_domain:
-            assets_merged, observations_merged = curate_fn(
-                assets, observations, state["project_id"], scope_domain=scope_domain
-            )
-        else:
-            assets_merged, observations_merged = curate_fn(
-                assets, observations, state["project_id"]
-            )
+        # The seed scope domain (D14) and the exact-mode seed_domain (D28) ride
+        # in `extra` alongside project_id; forward them so curate drops
+        # out-of-scope BaseURLs and models the seed host as a Domain. Passed
+        # only when present so injected 3-arg fake curate_fns stay compatible.
+        extra = state.get("extra") or {}
+        curate_kwargs = {}
+        if extra.get("scope_domain"):
+            curate_kwargs["scope_domain"] = extra["scope_domain"]
+        if extra.get("seed_domain"):
+            curate_kwargs["seed_domain"] = extra["seed_domain"]
+        assets_merged, observations_merged = curate_fn(
+            assets, observations, state["project_id"], **curate_kwargs
+        )
         invocation = state.get("invocation")
         export = PodExport(
             input_asset=state["input_asset"],
