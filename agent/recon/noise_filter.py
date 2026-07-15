@@ -31,7 +31,7 @@ from urllib.parse import urlparse
 
 from agent.recon.types import AssetDelta
 
-# --- D16: webapp/webapi profiling ------------------------------------------
+# --- D16: webapp/restapi profiling ------------------------------------------
 # Classify a probed URL from httpx-observable signals so API-specific tools
 # (kiterunner, and any future api-mode ffuf) can be gated to the API surface
 # via JobSpec.consumes_where, instead of firing against presentational web apps.
@@ -39,23 +39,43 @@ from agent.recon.types import AssetDelta
 # hostname LABEL is a cheap secondary hint. Everything else is a web app.
 # Pure, deterministic, tolerant of missing/malformed input. Deliberately
 # high-precision + minimal - extend the hint sets as needed.
-Profile = Literal["webapp", "webapi"]
+Profile = Literal["webapp", "restapi", "graphql_api"]
 
-_WEBAPI_CONTENT_MARKERS = ("json",)  # application/json, application/*+json, ...
-_WEBAPI_HOST_LABELS = frozenset({"api", "apis", "rest", "graphql", "gateway"})
+_RESTAPI_CONTENT_MARKERS = ("json",)  # application/json, application/*+json, ...
+_RESTAPI_HOST_LABELS = frozenset({"api", "apis", "rest", "graphql", "gateway"})
+# Common GraphQL endpoint paths (normalized: lowercased, trailing slash
+# stripped). A path match is the strongest available signal that a probed URL
+# is a GraphQL surface, so it wins over the restapi/webapp content/host rules.
+# Path-only heuristic - no new network I/O. An introspection `__schema` probe
+# would additionally catch GraphQL under generic API hosts with a non-obvious
+# path, but that needs active HTTP in the profiling stage (deliberately not done).
+_GRAPHQL_PATHS = frozenset({
+    "/graphql", "/api/graphql", "/v1/graphql", "/query",
+    "/graphql/console", "/playground",
+})
 
 
 def classify_profile(content_type: str | None, url: str | None = None) -> Profile:
-    """Return 'webapi' when the response looks like an API (a JSON-family
-    content-type, or an api-indicating hostname label), else 'webapp'."""
-    if any(m in (content_type or "").lower() for m in _WEBAPI_CONTENT_MARKERS):
-        return "webapi"
+    """Return 'graphql_api' when the URL path is a known GraphQL endpoint;
+    else 'restapi' when the response looks like an API (a JSON-family
+    content-type, or an api-indicating hostname label); else 'webapp'."""
     host = ""
+    path = ""
     if isinstance(url, str):
-        # scheme://host[:port][/path] -> bare host, tolerant of missing parts.
-        host = url.split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
-    if _WEBAPI_HOST_LABELS.intersection(host.split(".")):
-        return "webapi"
+        # scheme://host[:port]/path?query -> bare host + path, tolerant of
+        # missing parts.
+        after_scheme = url.split("://", 1)[-1]
+        host = after_scheme.split("/", 1)[0].split(":", 1)[0].lower()
+        rest = after_scheme[len(after_scheme.split("/", 1)[0]):]
+        path = rest.split("?", 1)[0].split("#", 1)[0].lower()
+    # graphql_api takes precedence: a known GraphQL path is the strongest signal.
+    normalized = path.rstrip("/") or "/"
+    if normalized in _GRAPHQL_PATHS:
+        return "graphql_api"
+    if any(m in (content_type or "").lower() for m in _RESTAPI_CONTENT_MARKERS):
+        return "restapi"
+    if _RESTAPI_HOST_LABELS.intersection(host.split(".")):
+        return "restapi"
     return "webapp"
 
 

@@ -103,6 +103,27 @@ def test_ffuf_malformed_input_tolerated():
     assert parse_ffuf("") == []
 
 
+def test_ffuf_non_empty_non_json_stdout_logs_warning(caplog):
+    # ffuf ran but its JSON never reached us (e.g. `-of json` with no `-o`
+    # destination, so stdout is the human banner/progress). This must be a
+    # visible signal, not a silent [] - "parser got garbage" != "found nothing".
+    banner = "        /'___\\  /'___\\\n.bashrc [Status: 200, Size: 819]\n"
+    with caplog.at_level("WARNING"):
+        assert parse_ffuf(banner) == []
+    assert any(
+        r.levelname == "WARNING" and "not valid JSON" in r.getMessage()
+        for r in caplog.records
+    )
+
+
+def test_ffuf_empty_stdout_does_not_warn(caplog):
+    # A genuinely empty result (empty stdout) is not an error - stay silent.
+    with caplog.at_level("WARNING"):
+        assert parse_ffuf("") == []
+        assert parse_ffuf("   \n") == []
+    assert caplog.records == []
+
+
 def test_kiterunner_json_lines_yield_endpoint_deltas():
     deltas = parse_kiterunner(KITERUNNER_FIX.read_text())
 

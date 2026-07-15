@@ -9,9 +9,12 @@ Best-effort by design (design §10.6): one job's failure (all its pods
 failing, or `run_job` itself raising) degrades that job but never aborts the
 run - the pipeline always reaches a terminal `set_run_status(..., "complete")`.
 
-Every phase is a hard barrier: all of a phase's jobs run concurrently via
-`asyncio.gather`, and the next phase does not start (its jobs' `input_assets`
-are not even resolved) until every job in the current phase has returned.
+Every phase is a hard barrier: a phase's jobs run sequentially, one job's
+`run_job` call (its MAX_PODS pod fan-out included) completing before the next
+job in the phase starts - this bounds peak concurrency to a single job's pods
+rather than (jobs in phase) x MAX_PODS. The next phase does not start (its
+jobs' `input_assets` are not even resolved) until every job in the current
+phase has returned.
 
 `run_job`, `load_settings`, `registry`, and `read_assets` are all injected so
 tests can fully mock Neo4j/Postgres/pod-graph collaborators; production
@@ -26,9 +29,10 @@ import logging
 
 from agent.app.config import config
 from agent.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
-from agent.recon.curator import ALLOWED_LABELS
+from agent.recon.curator import ALLOWED_LABELS, curate
 from agent.recon.jobs import JOBS, build_phase_plan, validate_job_subset
 from agent.recon.scope import DISCOVERY_JOBS, parse_scope
+from agent.recon.types import AssetDelta
 
 logger = logging.getLogger(__name__)
 
@@ -82,6 +86,22 @@ def _inject_seed_host(input_assets: list[dict], scope: dict) -> list[dict]:
     if any(asset.get("name") == seed_host for asset in input_assets):
         return input_assets
     return [{"name": seed_host}, *input_assets]
+
+
+def _seed_domain_host(scope: dict) -> list[dict]:
+    """The single canonical host a later-phase Domain-consuming passive harvester
+    (paramspider) runs against - EXACTLY ONE pod per zone, in both scope modes.
+
+    D14/D19: paramspider (`consumes="Domain"`) harvests archived URLs for a whole
+    zone from a single seed; it must run once, never fan out per-subdomain (the
+    wildcard rate-ban risk) and never double up the apex plus an exact subdomain.
+    The host mirrors `seed_assets`: the exact host in exact mode (confine the
+    harvest to the in-scope host), the registrable apex in wildcard mode (harvest
+    the zone once). This REPLACES whatever Domain nodes the graph read returned,
+    so paramspider runs even when whois produced no Domain node - and stays a
+    single pod even when whois produced several."""
+    name = scope["seed_host"] if scope["mode"] == "exact" else scope["apex"]
+    return [{"name": name}]
 
 
 def read_assets(
@@ -232,6 +252,19 @@ async def run_pipeline(
         )
 
     await asyncio.to_thread(registry.create_run, run_id, project_id)
+
+    # D28: in exact mode, deterministically materialize the seed host as a
+    # Domain node up front - the engagement root must be on the attack surface
+    # even if httpx never probes it (host down, timeout). curate is idempotent
+    # (MERGE), so a later probe of the same host just re-asserts it.
+    if scope["mode"] == "exact" and settings.get("target_domain"):
+        await asyncio.to_thread(
+            curate,
+            [AssetDelta(type="Domain", identity={"name": scope["seed_host"]})],
+            [],
+            project_id,
+        )
+
     hb = asyncio.create_task(_heartbeat_loop(run_id))
     signals: list[dict] = []
     try:
@@ -260,6 +293,15 @@ async def run_pipeline(
                         # host (exact, where discovery produced nothing).
                         if job.consumes == "Subdomain":
                             input_assets = _inject_seed_host(input_assets, scope)
+                        # A later-phase Domain-consuming passive harvester
+                        # (paramspider) must run EXACTLY ONE pod against the
+                        # scope's canonical host - never per-subdomain, never
+                        # apex+subdomain doubled, and even when whois produced no
+                        # Domain node. The only phase-0 Domain consumers take the
+                        # `phase_idx == 0` branch above, so this fires solely for
+                        # the later-phase harvesters (paramspider today).
+                        elif job.consumes == "Domain":
+                            input_assets = _seed_domain_host(scope)
 
                     excluded = set(exclusions.get(name, []))
                     if excluded:
@@ -273,6 +315,13 @@ async def run_pipeline(
                     # actually configured (never the parse_scope placeholder).
                     if settings.get("target_domain"):
                         extra["scope_domain"] = scope["seed_host"]
+                        # D28: in exact mode the seed host is the engagement
+                        # root - a first-class Domain node, not a Subdomain.
+                        # Tell curate to promote any Subdomain the tools mint
+                        # for it (httpx's BaseURL back-link etc.) to Domain, so
+                        # the deterministically-seeded Domain is not duplicated.
+                        if scope["mode"] == "exact":
+                            extra["seed_domain"] = scope["seed_host"]
                         # C3: batching (reduce + pack bundles into <= MAX_PODS
                         # pods) is the recon-JOB agent's concern, not the
                         # orchestrator's - the pipeline only supplies the one
@@ -379,7 +428,12 @@ async def run_pipeline(
             await asyncio.to_thread(
                 registry.set_run_status, run_id, "running", current_phase=phase_idx
             )
-            await asyncio.gather(*[_run_one(name) for name in job_configs])
+            # Sequential, not gathered: peak concurrency must be one job's
+            # MAX_PODS pod fan-out, not (jobs in phase) x MAX_PODS - the latter
+            # OOM-killed the agent container on heavy phases (e.g. phase 4's
+            # katana/ffuf/kiterunner/graphql-cop/paramspider/steel_crawl).
+            for name in job_configs:
+                await _run_one(name)
             signals = await asyncio.to_thread(read_steering_signals, project_id)
     finally:
         hb.cancel()

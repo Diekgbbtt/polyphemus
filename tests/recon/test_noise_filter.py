@@ -261,13 +261,13 @@ def test_www_baseurl_and_children_dropped():
     assert www_base not in kept and www_ep not in kept
 
 
-# --- D16 webapp/webapi profiling ---
+# --- D16 webapp/restapi profiling ---
 
 
-def test_classify_profile_json_content_type_is_webapi():
+def test_classify_profile_json_content_type_is_restapi():
     from agent.recon.noise_filter import classify_profile
-    assert classify_profile("application/json") == "webapi"
-    assert classify_profile("application/hal+json; charset=utf-8") == "webapi"
+    assert classify_profile("application/json") == "restapi"
+    assert classify_profile("application/hal+json; charset=utf-8") == "restapi"
 
 
 def test_classify_profile_html_or_missing_is_webapp():
@@ -277,11 +277,50 @@ def test_classify_profile_html_or_missing_is_webapp():
     assert classify_profile("", "https://www.example.com") == "webapp"
 
 
-def test_classify_profile_api_hostname_label_is_webapi():
+def test_classify_profile_api_hostname_label_is_restapi():
     from agent.recon.noise_filter import classify_profile
     # host label match, even with a non-JSON content-type
-    assert classify_profile("text/html", "https://api.example.com") == "webapi"
-    assert classify_profile("text/html", "https://graphql.example.com/") == "webapi"
-    assert classify_profile("text/html", "https://gw.api.example.com:443/x") == "webapi"
+    assert classify_profile("text/html", "https://api.example.com") == "restapi"
+    assert classify_profile("text/html", "https://graphql.example.com/") == "restapi"
+    assert classify_profile("text/html", "https://gw.api.example.com:443/x") == "restapi"
     # a substring like 'capillary' must NOT false-match (label-exact, not substring)
     assert classify_profile("text/html", "https://capillary.example.com") == "webapp"
+
+
+# --- graphql_api profile (path heuristic, precedence over restapi/webapp) ---
+
+
+@pytest.mark.parametrize("url", [
+    "https://example.com/graphql",
+    "https://example.com/graphql/",            # trailing slash normalized
+    "https://example.com/api/graphql",
+    "https://example.com/v1/graphql",
+    "https://example.com/query",
+    "https://example.com/graphql/console",
+    "https://example.com/playground",
+    "https://EXAMPLE.com/GraphQL",             # case-insensitive path
+    "https://example.com/graphql?query=x",     # query string ignored
+])
+def test_classify_profile_graphql_path_is_graphql_api(url):
+    from agent.recon.noise_filter import classify_profile
+    # A JSON content-type would otherwise say restapi - the graphql path wins.
+    assert classify_profile("application/json", url) == "graphql_api"
+
+
+def test_graphql_api_takes_precedence_over_restapi_and_webapp():
+    from agent.recon.noise_filter import classify_profile
+    # graphql path beats a plain HTML app (would be webapp) ...
+    assert classify_profile("text/html", "https://example.com/graphql") == "graphql_api"
+    # ... and beats an api hostname label (would be restapi).
+    assert classify_profile("text/html", "https://api.example.com/graphql") == "graphql_api"
+    # A plain HTML app stays webapp; a JSON api host stays restapi.
+    assert classify_profile("text/html", "https://example.com/") == "webapp"
+    assert classify_profile("application/json", "https://api.example.com/users") == "restapi"
+
+
+def test_non_graphql_paths_do_not_false_match():
+    from agent.recon.noise_filter import classify_profile
+    # substrings / near-misses must not match (path-exact, not substring)
+    assert classify_profile("text/html", "https://example.com/graphql-docs") == "webapp"
+    assert classify_profile("text/html", "https://example.com/mygraphql") == "webapp"
+    assert classify_profile("text/html", "https://example.com/querybuilder") == "webapp"

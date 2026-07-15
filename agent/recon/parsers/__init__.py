@@ -16,6 +16,9 @@ from agent.recon.parsers.steel_parser import parse as parse_steel_crawl
 
 PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     "httpx": parse_httpx,
+    # Reprofile job (D27): same parser as httpx, so the re-probed BaseURLs get a
+    # `profile` via the identical classify_profile path. Reuse, not duplication.
+    "httpx_reprofile": parse_httpx,
     "subfinder": parse_subfinder,
     "amass": parse_amass,
     "dnsx": parse_dnsx,

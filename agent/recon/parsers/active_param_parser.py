@@ -43,9 +43,12 @@ the referenced node so it byte-matches for curation.
 Pure, deterministic, tolerant of malformed/missing-key input - never raises.
 """
 import json
+import logging
 
 from agent.recon.parsers._urls import base_and_path, url_to_deltas
 from agent.recon.types import AssetDelta, Edge
+
+logger = logging.getLogger(__name__)
 
 _BODY_METHODS = {"POST", "JSON", "XML"}
 _VALID_HTTP_METHODS = {"GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS"}
@@ -124,6 +127,18 @@ def parse_ffuf(stdout: str) -> list[AssetDelta]:
     try:
         ffuf_output = json.loads(stdout)
     except json.JSONDecodeError:
+        # Non-empty stdout that is not JSON means ffuf ran but its JSON output
+        # never reached us (e.g. missing `-o` destination, so stdout is the
+        # human banner/progress). Surface that so "parser got garbage" is
+        # distinguishable from "genuinely found nothing" (empty stdout). Still
+        # return [] best-effort - a parse failure must not crash the pod.
+        if stdout.strip():
+            logger.warning(
+                "parse_ffuf: non-empty stdout is not valid JSON (%d bytes); "
+                "ffuf output was likely not captured. First 200 chars: %r",
+                len(stdout),
+                stdout[:200],
+            )
         return deltas
 
     if not isinstance(ffuf_output, dict):

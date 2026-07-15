@@ -2,10 +2,26 @@
 
 Deterministic field-mapping only, tolerant of malformed JSONL lines.
 """
+from urllib.parse import urlparse
+
 from agent.recon.noise_filter import classify_profile
 from agent.recon.parsers._jsonlines import iter_json_dicts
 from agent.recon.parsers._urls import url_to_deltas
 from agent.recon.types import AssetDelta, Edge
+
+
+def _bare_host(value: str) -> str:
+    """Normalize a source-host string to a bare host.
+
+    The `httpx` job echoes a bare Subdomain host in `input`, but the
+    `httpx_reprofile` job consumes BaseURLs, so its `input` is a full URL
+    (`scheme://host[/path]`). Strip any scheme/path so the back-linked node is
+    `app.example.com`, never `https://app.example.com` (which would mint a
+    malformed scheme-prefixed Subdomain node)."""
+    host = value.strip().lower()
+    if "://" in host:
+        host = urlparse(host).netloc or host
+    return host.split("/", 1)[0]
 
 
 def _first(entry: dict, *keys):
@@ -39,9 +55,10 @@ def parse(stdout: str) -> list[AssetDelta]:
         # tool's normalized BaseURL for the same host). httpx never derives
         # Parameters from the probed URL's query string - only keep the
         # BaseURL+Endpoint deltas.
-        # D16: webapp/webapi profile derived from httpx-observable signals, set
-        # on both the BaseURL and its root Endpoint so API tools (kiterunner) can
-        # be gated to `profile == "webapi"` via JobSpec.consumes_where.
+        # D16: webapp/restapi/graphql_api profile derived from httpx-observable
+        # signals, set on both the BaseURL and its root Endpoint so surface-
+        # specific tools can be gated via JobSpec.consumes_where - kiterunner to
+        # `profile == "restapi"`, graphql-cop to `profile == "graphql_api"`.
         profile = classify_profile(content_type, url)
 
         url_deltas = url_to_deltas(
@@ -85,7 +102,7 @@ def parse(stdout: str) -> list[AssetDelta]:
                     rel="BELONGS_TO",
                     dir="out",
                     node_type="Subdomain",
-                    node_identity={"name": source_host.strip().lower()},
+                    node_identity={"name": _bare_host(source_host)},
                 )
             ]
         deltas.append(baseurl_delta)

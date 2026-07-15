@@ -96,12 +96,26 @@ def test_path_bearing_url_normalizes_baseurl_to_scheme_netloc():
     assert endpoint.identity["path"] == "/some/path"
 
 
-def test_baseurl_and_endpoint_carry_webapp_webapi_profile():
+def test_baseurl_and_endpoint_carry_webapp_restapi_profile():
     # D16: httpx sets a `profile` prop on both the BaseURL and its root Endpoint,
-    # derived from content-type (JSON-family -> webapi) else webapp.
+    # derived from content-type (JSON-family -> restapi) else webapp.
     api = parse('{"url":"https://x.example.com","status_code":200,"content_type":"application/json"}\n')
-    assert next(d for d in api if d.type == "BaseURL").props["profile"] == "webapi"
-    assert next(d for d in api if d.type == "Endpoint").props["profile"] == "webapi"
+    assert next(d for d in api if d.type == "BaseURL").props["profile"] == "restapi"
+    assert next(d for d in api if d.type == "Endpoint").props["profile"] == "restapi"
 
     app = parse('{"url":"https://x.example.com","status_code":200,"content_type":"text/html"}\n')
     assert next(d for d in app if d.type == "BaseURL").props["profile"] == "webapp"
+
+
+def test_reprofile_job_uses_the_httpx_parser_to_profile_a_crawler_minted_baseurl():
+    # D27: the reprofile pass re-probes BaseURLs a crawler minted without a
+    # profile (e.g. a JS-derived API host jsluice recovered). It reuses the
+    # httpx parser (registered under `httpx_reprofile`), so the re-probe of such
+    # a host classifies it restapi via the same classify_profile path - which is
+    # exactly what gates kiterunner downstream.
+    assert get_parser("httpx_reprofile") is parse
+    reprobed = get_parser("httpx_reprofile")(
+        '{"url":"https://api.internal.example.com","status_code":200,'
+        '"content_type":"application/json"}\n'
+    )
+    assert next(d for d in reprobed if d.type == "BaseURL").props["profile"] == "restapi"
