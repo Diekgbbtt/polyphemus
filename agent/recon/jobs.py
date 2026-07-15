@@ -5,7 +5,9 @@ JOBS maps each fleet tool (matching a PARSERS key exactly) to a JobSpec
 describing its command template, the asset node type it consumes, and the
 node types it produces. PHASES groups job names into an ordered execution
 plan such that every job's `consumes` type is either the pre-seeded root
-type ("Domain") or has been produced by a job in an earlier phase.
+type ("Domain"), the seed host injected into every "Subdomain"-consuming
+job (`pipeline._inject_seed_host`), or has been produced by a job in an
+earlier phase.
 """
 
 from agent.recon.types import AssetSelector, JobSpec
@@ -80,6 +82,25 @@ JOBS: dict[str, JobSpec] = {
         consumes="Subdomain",
         use_auth=True,
     ),
+    "httpx_reprofile": JobSpec(
+        tool="httpx_reprofile",
+        skill="http_probe",
+        # Same httpx probe as the phase-3 job, but pointed at BaseURLs instead of
+        # Subdomains. Reuses parse_httpx (registered under this tool name in
+        # PARSERS), so the profile is assigned via the identical
+        # noise_filter.classify_profile path - no duplicated classify logic.
+        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_header}",
+        produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
+        # Re-probes every discovered BaseURL - the crawler-minted ones
+        # (katana/ffuf) and, crucially, the JS-derived API hosts jsluice recovers
+        # from bundles - which httpx never probed directly and so carry no
+        # `profile`. Consumes ALL BaseURLs because AssetSelector cannot express
+        # "profile is unset"; re-probing an already-profiled BaseURL is
+        # idempotent (it re-derives and rewrites the same profile), so no
+        # consumes_where narrowing is needed and none is safe to add.
+        consumes="BaseURL",
+        use_auth=True,
+    ),
     # gau removed from the pipeline (forward decision D-gau, 2026-07-09):
     # its passive-archive harvest produced overwhelming noise (866 low-value
     # assets in one run vs katana's crawl). The pure parser stays for a possible
@@ -108,8 +129,17 @@ JOBS: dict[str, JobSpec] = {
         tool="ffuf",
         skill="content_discovery",
         command_template=(
+            # `-of json` only sets the FORMAT of the file written by `-o`; without
+            # an `-o` destination ffuf emits its human banner/progress to stdout and
+            # the JSON is never produced, so parse_ffuf silently gets []. Mirror the
+            # arjun pattern: write the JSON to the per-pod /work/{session} dir then
+            # cat it to stdout for the parser. `-ac` (auto-calibration) derives
+            # dynamic size/word filters from baseline junk requests so a SPA
+            # soft-404 catch-all (every path -> 200, uniform body) is filtered while
+            # genuinely-distinct paths like /api still surface.
             "ffuf -u {target}/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt "
-            "-mc 200,403 -of json {rate_flags} {auth_header}"
+            "-mc 200,403 -ac -o /work/{session}/ffuf.json -of json {rate_flags} {auth_header} "
+            "&& cat /work/{session}/ffuf.json"
         ),
         produces=["Endpoint"],
         consumes="BaseURL",
@@ -118,14 +148,17 @@ JOBS: dict[str, JobSpec] = {
     "kiterunner": JobSpec(
         tool="kiterunner",
         skill="content_discovery",
-        command_template="kr scan {target} -w /opt/localbin/routes-small.kite",
+        command_template="kr scan {target} -w /opt/localbin/routes-small.kite {auth_header}",
         produces=["Endpoint"],
         # kiterunner scans for API routes, so it is gated to the API surface
-        # (D16): it only consumes BaseURLs httpx profiled as `webapi`, reusing
+        # (D16): it only consumes BaseURLs httpx profiled as `restapi`, reusing
         # the D17 consumes_where selector rather than firing at every web app.
         consumes="BaseURL",
-        consumes_where=AssetSelector(field="profile", op="equals", values=["webapi"]),
-        use_auth=False,
+        consumes_where=AssetSelector(field="profile", op="equals", values=["restapi"]),
+        # kr scans routes that may sit behind auth, so it receives the
+        # project's cookies/headers like the other request-based tools (`kr`
+        # takes repeated -H "k: v" flags, the shared default format).
+        use_auth=True,
     ),
     "jsluice": JobSpec(
         tool="jsluice",
@@ -148,10 +181,20 @@ JOBS: dict[str, JobSpec] = {
     "graphql-cop": JobSpec(
         tool="graphql-cop",
         skill="graphql_audit",
-        command_template="graphql-cop -t {target} -o json",
+        command_template="graphql-cop -t {target} -o json {auth_header}",
         produces=["Endpoint"],
+        # graphql-cop only makes sense against a GraphQL surface, so it is
+        # gated to the dedicated `graphql_api` profile (D16): httpx classifies a
+        # BaseURL/root Endpoint as `graphql_api` when its path is a known
+        # GraphQL endpoint (e.g. /graphql). The accepted tradeoff is that
+        # graphql-cop only runs where GraphQL is detected by path (a miss = no
+        # run), rather than firing at every web app.
         consumes="BaseURL",
-        use_auth=False,
+        consumes_where=AssetSelector(field="profile", op="equals", values=["graphql_api"]),
+        # graphql-cop probes a GraphQL surface that may sit behind auth, so it
+        # receives the project's cookies/headers (its own --headers format:
+        # comma-joined `Key:Value` pairs, see pod._COMMA_HEADERS_FLAG_TOOLS).
+        use_auth=True,
     ),
     "steel_crawl": JobSpec(
         tool="steel_crawl",
@@ -184,14 +227,36 @@ PHASES: list[list[str]] = [
     ["dnsx", "puredns", "subdomain_takeover"],
     ["naabu"],
     ["httpx"],
-    ["katana", "ffuf", "kiterunner", "graphql-cop", "paramspider", "steel_crawl"],
+    # Crawl phase. kiterunner + graphql-cop were moved OUT of this phase (D27):
+    # they now run after the reprofile pass so they can gate on the JS-derived
+    # API surface, not just httpx's originals.
+    ["katana", "ffuf", "paramspider", "steel_crawl"],
     # jsluice consumes the `.js`/`.mjs` Endpoints the phase-4 crawler (katana)
     # produces, so it MUST run in a later phase than it - the phase
     # barrier resolves a job's inputs before any same-phase job runs, so keeping
     # jsluice in phase 4 would feed it only httpx's endpoints, not katana's
     # bundles (the D17 defect). Its own recovered Endpoints then reach arjun.
     ["jsluice"],
+    # Reprofile pass (D27): re-probe every BaseURL a crawler minted without a
+    # `profile` - katana/ffuf endpoints and the JS-derived API hosts jsluice
+    # recovers from bundles - and classify each webapp/restapi/graphql_api the
+    # same way httpx does. MUST sit after jsluice (the last BaseURL producer)
+    # and before the API phases, so kiterunner/graphql-cop finally see the
+    # JS-derived API surface rather than only httpx's originally-probed hosts.
+    ["httpx_reprofile"],
+    # "api enumeration" (D27): kiterunner scans REST-API routes, gated
+    # profile==restapi - which now matches reprofiled crawler/JS BaseURLs.
+    ["kiterunner"],
+    # arjun runs after api enumeration so it discovers Parameters on the routes
+    # kiterunner just found (as well as jsluice's recovered Endpoints). A future
+    # deferred ffuf API fuzzer (D26 `ffuf_api`) would slot HERE, right after
+    # arjun, since it needs both endpoints and parameters known.
     ["arjun"],
+    # "static api testing" (D27): graphql-cop audits a GraphQL surface, gated
+    # profile==graphql_api. Kept a SEPARATE phase from api enumeration per the
+    # operator decision (the two have no data dependency on each other, so the
+    # split is a deliberate semantic boundary, not a forced one).
+    ["graphql-cop"],
 ]
 
 
@@ -200,8 +265,15 @@ def _available_types_by_phase(subset: set[str] | None = None) -> list[tuple[list
 
     Returns a list of (phase_jobs, available_before_phase) pairs, where
     phase_jobs is filtered to `subset` when provided.
+
+    `Subdomain` is seeded alongside the `Domain` root because
+    `pipeline._inject_seed_host` unconditionally injects the scope's seed host
+    into any `Subdomain`-consuming job's input set (httpx/naabu/
+    subdomain_takeover) regardless of whether a discovery job (subfinder/
+    amass/dnsx) is in the selected subset - so a subset that runs httpx
+    without subfinder is valid at runtime and must not be rejected here.
     """
-    available = {DOMAIN}
+    available = {DOMAIN, "Subdomain"}
     result = []
     for phase in PHASES:
         phase_jobs = [j for j in phase if subset is None or j in subset]
@@ -213,7 +285,9 @@ def _available_types_by_phase(subset: set[str] | None = None) -> list[tuple[list
 
 def validate_job_subset(subset: list[str]) -> None:
     """Raise ValueError if any selected job's `consumes` type is not produced
-    by an earlier selected job (and is not the pre-seeded Domain root)."""
+    by an earlier selected job (and is not the pre-seeded Domain root, nor
+    "Subdomain" - always satisfied by the seed host `pipeline._inject_seed_host`
+    injects into every Subdomain-consuming job)."""
     unknown = [j for j in subset if j not in JOBS]
     if unknown:
         raise ValueError(f"unknown job(s): {unknown}")

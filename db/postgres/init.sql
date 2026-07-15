@@ -9,6 +9,34 @@ CREATE TABLE IF NOT EXISTS settings (
     project_id  TEXT PRIMARY KEY REFERENCES projects(project_id) ON DELETE CASCADE,
     recon       JSONB NOT NULL DEFAULT '{}'::jsonb
 );
+
+-- Recursive JSONB merge: like the `||` operator but descends into nested
+-- objects instead of replacing them wholesale. Used by save_settings so a
+-- partial PUT that touches one nested item (e.g. auth_context.credentials)
+-- preserves its independent siblings (e.g. auth_context.cookies). Non-object
+-- values (scalars, arrays like the cookies list) are replaced by the incoming
+-- side, so setting cookies still overwrites the whole cookie list as expected.
+CREATE OR REPLACE FUNCTION jsonb_deep_merge(a jsonb, b jsonb)
+RETURNS jsonb LANGUAGE sql IMMUTABLE AS $$
+    SELECT CASE
+        WHEN jsonb_typeof(a) = 'object' AND jsonb_typeof(b) = 'object' THEN
+            COALESCE(
+                (SELECT jsonb_object_agg(
+                    k,
+                    CASE
+                        WHEN a ? k AND b ? k THEN jsonb_deep_merge(a -> k, b -> k)
+                        WHEN b ? k THEN b -> k
+                        ELSE a -> k
+                    END)
+                 FROM (
+                    SELECT jsonb_object_keys(a) AS k
+                    UNION
+                    SELECT jsonb_object_keys(b)
+                 ) keys),
+                '{}'::jsonb)
+        ELSE b
+    END
+$$;
 CREATE TABLE IF NOT EXISTS recon_runs (
     run_id        TEXT PRIMARY KEY,
     project_id    TEXT NOT NULL,

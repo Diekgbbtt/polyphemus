@@ -11,6 +11,9 @@ Date").
 Pure, deterministic, tolerant of missing/malformed lines - never raises.
 """
 
+from urllib.parse import urlparse
+
+from agent.recon.parsers._urls import registrable_domain
 from agent.recon.types import AssetDelta
 
 # Field-name variants (lowercased, colon-stripped) -> canonical key.
@@ -33,7 +36,29 @@ _FIELD_ALIASES: dict[str, str] = {
 }
 
 
-def parse(stdout: str) -> list[AssetDelta]:
+def _apex_from_target(target_url: str | None) -> str | None:
+    """Derive the registrable apex from the queried host (the pod's input asset).
+
+    `target_url` is the host `whois` was run against - a bare host in practice
+    (`whois consumes="Domain"`, seeded `{"name": <host>}`), but a full URL is
+    tolerated by stripping scheme/port/`www.`. Returns the last-two-labels
+    registrable parent (`app.daytona.io` -> `daytona.io`), the deterministic
+    zone-level anchor for the Domain node. Returns `None` when no host is given.
+    """
+    if not target_url:
+        return None
+    host = target_url.strip().lower()
+    if "://" in host:
+        host = urlparse(host).netloc or host
+    host = host.split("@")[-1].split(":")[0].strip(".")
+    if host.startswith("www."):
+        host = host[4:]
+    if not host:
+        return None
+    return registrable_domain(host)
+
+
+def parse(stdout: str, target_url: str | None = None) -> list[AssetDelta]:
     domain_name: str | None = None
     registrar: str | None = None
     creation_date: str | None = None
@@ -68,7 +93,16 @@ def parse(stdout: str) -> list[AssetDelta]:
         elif canonical == "name_server":
             name_servers.append(value.strip().lower())
 
-    if not domain_name:
+    # Anchor the Domain node to the registrable apex derived from the QUERIED
+    # host, not the raw `Domain Name:` line (D14b/D11): a non-registrable exact
+    # host (e.g. `app.daytona.io`) whose whois text has no parseable
+    # `Domain Name:` line would otherwise yield NO Domain node, starving the
+    # later-phase Domain consumers (paramspider) of an anchor. The queried host
+    # is deterministic and always present in a real run, so it is the reliable
+    # anchor; the parsed `Domain Name:` is the fallback only when no queried host
+    # is supplied (e.g. a direct parser unit-test call).
+    anchor = _apex_from_target(target_url) or domain_name
+    if not anchor:
         return []
 
     props: dict = {}
@@ -88,7 +122,7 @@ def parse(stdout: str) -> list[AssetDelta]:
     return [
         AssetDelta(
             type="Domain",
-            identity={"name": domain_name},
+            identity={"name": anchor},
             props=props,
         )
     ]

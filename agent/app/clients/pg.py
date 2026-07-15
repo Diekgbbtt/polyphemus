@@ -46,17 +46,22 @@ def load_settings(project_id: str) -> dict:
 
 def save_settings(project_id: str, recon: dict) -> None:
     """Upsert the project's `settings.recon` JSONB blob, MERGING the incoming
-    keys into any existing settings (shallow JSONB `||` merge).
+    keys into any existing settings (RECURSIVE JSONB merge, jsonb_deep_merge).
 
-    A partial update - e.g. a PUT that only adds `auth_context` - must NOT wipe
-    previously-set keys like `target_domain`. Keys present in `recon` overwrite;
-    keys absent from `recon` are preserved. (A plain replace here silently
-    dropped `target_domain` when an auth-context PUT omitted it, making the run
-    fall back to the example.com placeholder.)"""
+    A partial update must not wipe siblings it did not mention - at any depth:
+    - a PUT that only adds `auth_context` must NOT drop `target_domain`
+      (otherwise the run falls back to the example.com placeholder), and
+    - a PUT that only sets `auth_context.credentials` must NOT drop a
+      previously-stored `auth_context.cookies` (they are independent items).
+    A plain `||` merges only the top level, so the nested auth_context would be
+    replaced wholesale; jsonb_deep_merge descends into nested objects. Scalars
+    and arrays (e.g. the cookies list) are still replaced by the incoming
+    value, so setting cookies overwrites the whole list as expected."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO settings (project_id, recon) VALUES (%s, %s) "
-            "ON CONFLICT (project_id) DO UPDATE SET recon = settings.recon || EXCLUDED.recon",
+            "ON CONFLICT (project_id) DO UPDATE SET "
+            "recon = jsonb_deep_merge(settings.recon, EXCLUDED.recon)",
             (project_id, json.dumps(recon)),
         )
 

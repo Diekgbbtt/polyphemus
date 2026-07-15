@@ -204,6 +204,25 @@ def build_observation_cypher(obs: Observation) -> tuple[str, dict]:
     return "\n".join(lines), params
 
 
+def _promote_seed_domain(assets: list[AssetDelta], seed_domain: str) -> list[AssetDelta]:
+    """Model the exact-mode seed host as a Domain, never a Subdomain (D28).
+
+    In exact mode the seed host is the engagement root, so it must be a single
+    `Domain` node - but tools that produce it (httpx's BaseURL back-link,
+    subdomain_takeover, dns) type it as a `Subdomain`, which would duplicate the
+    deterministically-seeded Domain. Rewrite any `Subdomain` node whose name
+    equals `seed_domain` - whether a top-level delta or an edge target - to
+    `Domain`, at this single curator chokepoint so every tool is covered."""
+    seed = seed_domain.strip().lower()
+    for delta in assets:
+        if delta.type == "Subdomain" and str(delta.identity.get("name", "")).lower() == seed:
+            delta.type = "Domain"
+        for edge in delta.edges:
+            if edge.node_type == "Subdomain" and str(edge.node_identity.get("name", "")).lower() == seed:
+                edge.node_type = "Domain"
+    return assets
+
+
 def curate(
     assets: list[AssetDelta],
     observations: list[Observation],
@@ -211,6 +230,7 @@ def curate(
     *,
     merge_fn=None,
     scope_domain: str | None = None,
+    seed_domain: str | None = None,
 ) -> tuple[int, int]:
     """Execute each asset/observation MERGE, skipping+logging single-item
     failures (bad label, bad anchor, or a merge_fn exception) and continuing.
@@ -220,6 +240,10 @@ def curate(
     `scope_domain` (the seeded target host/apex, D14) drops out-of-scope
     BaseURLs and everything anchored to them - the social/analytics origins
     httpx and katana surface from page links.
+
+    `seed_domain` (exact mode only, D28) is the seed host to model as a `Domain`
+    rather than a `Subdomain`, so the engagement root is a single first-class
+    Domain node instead of being duplicated as a Subdomain by its producers.
     """
     if merge_fn is None:
         from agent.app.clients import neo4j_client
@@ -229,6 +253,8 @@ def curate(
     # out-of-scope BaseURLs. Every recon source (incl. steel_crawl) funnels its
     # AssetDeltas through curate, so one rule here covers ALL tools.
     assets = filter_deltas(assets, scope_domain=scope_domain)
+    if seed_domain:
+        assets = _promote_seed_domain(assets, seed_domain)
 
     assets_merged = 0
     for delta in assets:
