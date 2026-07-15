@@ -59,14 +59,34 @@ def _split_url(url: str) -> tuple[str, str] | None:
     return base_and_path(url)
 
 
+def _loads_lenient(stdout: str):
+    """`json.loads(stdout)`, tolerating leading non-JSON noise.
+
+    arjun (`[!] ...` progress) and ffuf (its results table) both print to
+    stdout, so a `<tool> ... && cat <json-file>` command hands us
+    `<tool noise>\\n{JSON}` rather than a single JSON document. The launch
+    command suppresses that noise (`>/dev/null`), but this is defense in depth:
+    if any tool ever interleaves human output with the JSON on stdout, recover
+    the JSON object (which the tools emit as a single trailing `{...}`) instead
+    of silently dropping every finding. Returns the parsed value, or None when
+    no JSON object can be recovered.
+    """
+    try:
+        return json.loads(stdout)
+    except json.JSONDecodeError:
+        start = stdout.find("{")
+        if start > 0:
+            try:
+                return json.loads(stdout[start:])
+            except json.JSONDecodeError:
+                return None
+        return None
+
+
 def parse_arjun(stdout: str) -> list[AssetDelta]:
     deltas: list[AssetDelta] = []
 
-    try:
-        arjun_output = json.loads(stdout)
-    except json.JSONDecodeError:
-        return deltas
-
+    arjun_output = _loads_lenient(stdout)
     if not isinstance(arjun_output, dict):
         return deltas
 
@@ -124,14 +144,13 @@ def parse_arjun(stdout: str) -> list[AssetDelta]:
 def parse_ffuf(stdout: str) -> list[AssetDelta]:
     deltas: list[AssetDelta] = []
 
-    try:
-        ffuf_output = json.loads(stdout)
-    except json.JSONDecodeError:
-        # Non-empty stdout that is not JSON means ffuf ran but its JSON output
-        # never reached us (e.g. missing `-o` destination, so stdout is the
-        # human banner/progress). Surface that so "parser got garbage" is
-        # distinguishable from "genuinely found nothing" (empty stdout). Still
-        # return [] best-effort - a parse failure must not crash the pod.
+    ffuf_output = _loads_lenient(stdout)
+    if ffuf_output is None:
+        # Non-empty stdout with no recoverable JSON means ffuf ran but its JSON
+        # output never reached us (e.g. missing `-o` destination, so stdout is
+        # only the human banner/progress). Surface that so "parser got garbage"
+        # is distinguishable from "genuinely found nothing" (empty stdout).
+        # Still return [] best-effort - a parse failure must not crash the pod.
         if stdout.strip():
             logger.warning(
                 "parse_ffuf: non-empty stdout is not valid JSON (%d bytes); "

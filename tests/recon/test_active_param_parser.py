@@ -73,6 +73,23 @@ def test_arjun_malformed_input_tolerated():
     assert parse_arjun("") == []
 
 
+def test_arjun_tolerates_tool_progress_prepended_before_json():
+    # arjun prints its own `[!]` progress lines to STDOUT, so a
+    # `arjun ... && cat file` command hands the parser `[!] lines\n{JSON}`,
+    # which is not a single JSON document. The parser must still recover the
+    # discovered parameters from the embedded JSON rather than silently
+    # dropping every finding (the live-run failure this guards against).
+    progress = (
+        "[!] Analysing HTTP response for anomalies\n"
+        "[!] Processing chunks: 103/103\n"
+    )
+    deltas = parse_arjun(progress + ARJUN_FIX.read_text())
+
+    params = [d for d in deltas if d.type == "Parameter"]
+    names = {p.identity["name"] for p in params}
+    assert {"q", "page"} <= names
+
+
 def test_ffuf_results_yield_endpoint_deltas_with_status_and_mixed_codes():
     deltas = parse_ffuf(FFUF_FIX.read_text())
 
@@ -93,6 +110,21 @@ def test_ffuf_results_yield_endpoint_deltas_with_status_and_mixed_codes():
     assert edge.node_type == "BaseURL"
     baseurl_delta = next(d for d in deltas if d.type == "BaseURL")
     assert edge.node_identity == baseurl_delta.identity
+
+
+def test_ffuf_tolerates_tool_results_table_prepended_before_json():
+    # ffuf prints its human-readable results table to STDOUT, so a
+    # `ffuf ... && cat file` command hands the parser `<table>\n{JSON}`, which
+    # is not a single JSON document. The parser must still recover the endpoints
+    # from the embedded JSON rather than silently dropping every finding.
+    table = (
+        ".gitattributes      [Status: 200, Size: 1, Words: 1, Lines: 1]\n"
+        "robots.txt          [Status: 200, Size: 2, Words: 1, Lines: 1]\n"
+    )
+    deltas = parse_ffuf(table + FFUF_FIX.read_text())
+
+    endpoints = [d for d in deltas if d.type == "Endpoint"]
+    assert len(endpoints) == 2  # identical to the clean-JSON case
 
 
 def test_ffuf_malformed_input_tolerated():

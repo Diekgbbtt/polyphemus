@@ -26,11 +26,32 @@ def test_ffuf_template_writes_json_to_file_and_cats_it_with_autocalibration():
     template = JOBS["ffuf"].command_template
     assert "-o /work/{session}/ffuf.json" in template
     assert "-of json" in template
-    assert "&& cat /work/{session}/ffuf.json" in template
+    # ffuf ALSO prints its results table to stdout, so its own stdout must be
+    # suppressed (`>/dev/null`) before the `&& cat` - otherwise the parser gets
+    # `<table>\n{JSON}` and json.loads fails, silently dropping every endpoint.
+    # `&&` is kept so a real ffuf failure still propagates a non-zero exit.
+    assert ">/dev/null && cat /work/{session}/ffuf.json" in template
     assert "-ac" in template
     # auth + rate slots preserved
     assert "{auth_header}" in template
     assert "{rate_flags}" in template
+
+
+def test_arjun_template_seeds_default_suppresses_stdout_and_reads_file():
+    # Two coupled faults the template must fix:
+    #  1. arjun writes NO `-oJ` file when it finds zero params, so a bare
+    #     `arjun ... && cat file` makes `cat` fail on a clean zero-finding run;
+    #     the shell chain then exits non-zero and the pod gate misreads a valid
+    #     "found nothing" result as a tool failure (retried to exhaustion).
+    #     Seeding a valid empty-JSON default keeps a zero-finding run at exit 0.
+    #  2. arjun prints its `[!]` progress to stdout, so its own stdout must be
+    #     suppressed (`>/dev/null`) or the parser gets `[!] lines\n{JSON}`.
+    # `&&` is preserved throughout so a real arjun crash still exits non-zero.
+    template = JOBS["arjun"].command_template
+    assert "printf '{}' > /work/{session}/arjun.json" in template
+    assert "-oJ /work/{session}/arjun.json" in template
+    assert ">/dev/null && cat /work/{session}/arjun.json" in template
+    assert "{auth_header}" in template
 
 
 def test_subdomain_takeover_template_has_target_placeholder():

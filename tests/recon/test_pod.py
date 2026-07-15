@@ -1,3 +1,5 @@
+import re
+
 from agent.recon.types import JobSpec, ExecResult, Observation
 from agent.recon import pod
 from agent.recon.curator import curate
@@ -232,9 +234,15 @@ _REPRESENTATIVE_ASSETS = {
 def test_no_job_command_template_leaves_a_residual_placeholder():
     """F1 guard rail: every JOBS entry's command_template must be fully
     fillable by `fill_template` for a representative asset of its `consumes`
-    type (+ session_id, + an auth extra for use_auth jobs) - no `{...}`
+    type (+ session_id, + an auth extra for use_auth jobs) - no `{name}`
     placeholder may survive. Regresses the whole class of "literal
-    {placeholder} shipped to the shell" bugs fleet-wide, not just per-tool."""
+    {placeholder} shipped to the shell" bugs fleet-wide, not just per-tool.
+
+    Matches named `{identifier}` placeholders only, so a legitimate literal
+    like arjun's `printf '{}'` empty-JSON seed is not mistaken for an unfilled
+    slot - every real placeholder ({target}, {session}, {auth_header}, ...) is
+    a lowercase/underscore identifier in braces."""
+    placeholder = re.compile(r"\{[a-z_]+\}")
     for name, job in JOBS.items():
         asset = _REPRESENTATIVE_ASSETS[job.consumes]
         extra = {"_use_auth": job.use_auth}
@@ -243,8 +251,9 @@ def test_no_job_command_template_leaves_a_residual_placeholder():
         cmd = pod.fill_template(
             job.command_template, asset, extra, session_id="sess-guard", tool=job.tool
         )
-        assert "{" not in cmd and "}" not in cmd, (
-            f"job '{name}' left a residual placeholder in: {cmd!r}"
+        residual = placeholder.search(cmd)
+        assert residual is None, (
+            f"job '{name}' left a residual placeholder {residual.group()!r} in: {cmd!r}"
         )
 
 

@@ -131,15 +131,20 @@ JOBS: dict[str, JobSpec] = {
         command_template=(
             # `-of json` only sets the FORMAT of the file written by `-o`; without
             # an `-o` destination ffuf emits its human banner/progress to stdout and
-            # the JSON is never produced, so parse_ffuf silently gets []. Mirror the
-            # arjun pattern: write the JSON to the per-pod /work/{session} dir then
-            # cat it to stdout for the parser. `-ac` (auto-calibration) derives
-            # dynamic size/word filters from baseline junk requests so a SPA
-            # soft-404 catch-all (every path -> 200, uniform body) is filtered while
-            # genuinely-distinct paths like /api still surface.
+            # the JSON is never produced, so parse_ffuf silently gets []. Write the
+            # JSON to the per-pod /work/{session} dir then cat it to stdout for the
+            # parser. ffuf ALSO prints its results table to stdout, so its own
+            # stdout is redirected to /dev/null - otherwise the parser receives
+            # `<results table>\n{JSON}`, json.loads fails, and every endpoint is
+            # silently dropped (the live-run failure). `&&` is kept so a real ffuf
+            # error still propagates a non-zero exit for the pod gate to retry.
+            # `-ac` (auto-calibration) derives dynamic size/word filters from
+            # baseline junk requests so a SPA soft-404 catch-all (every path -> 200,
+            # uniform body) is filtered while genuinely-distinct paths like /api
+            # still surface.
             "ffuf -u {target}/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt "
             "-mc 200,403 -ac -o /work/{session}/ffuf.json -of json {rate_flags} {auth_header} "
-            "&& cat /work/{session}/ffuf.json"
+            ">/dev/null && cat /work/{session}/ffuf.json"
         ),
         produces=["Endpoint"],
         consumes="BaseURL",
@@ -209,8 +214,19 @@ JOBS: dict[str, JobSpec] = {
         tool="arjun",
         skill="param_discovery",
         command_template=(
-            "arjun -u {target} -oJ /work/{session}/arjun.json {auth_header} "
-            "&& cat /work/{session}/arjun.json"
+            # arjun writes NO `-oJ` file when it discovers zero parameters, so a
+            # bare `arjun ... && cat file` makes `cat` fail on a clean
+            # zero-finding run; the chain then exits non-zero and the pod gate
+            # misreads a valid "found nothing" result as a tool failure (retried
+            # to exhaustion). Seed a valid empty-JSON default first so a
+            # zero-finding run stays exit 0 and parses to []. arjun also prints
+            # its `[!]` progress to stdout, so its own stdout is suppressed
+            # (`>/dev/null`) - otherwise the parser gets `[!] lines\n{JSON}` and
+            # drops every parameter. `&&` throughout keeps a real arjun crash
+            # propagating a non-zero exit for the gate to retry.
+            "printf '{}' > /work/{session}/arjun.json "
+            "&& arjun -u {target} -oJ /work/{session}/arjun.json {auth_header} "
+            ">/dev/null && cat /work/{session}/arjun.json"
         ),
         produces=["Parameter"],
         consumes="Endpoint",
