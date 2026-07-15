@@ -70,13 +70,36 @@ _REQUIRED_ENV = ("LANGFUSE_PUBLIC_KEY", "LANGFUSE_SECRET_KEY", "LANGFUSE_HOST")
 # retry/backoff, giving at-least-once delivery (a retried batch may duplicate
 # spans already partially ingested server-side - accepted/expected).
 _EXPORT_TIMEOUT_ENV = "LANGFUSE_EXPORT_TIMEOUT"
-_DEFAULT_EXPORT_TIMEOUT_S = 30.0
+_DEFAULT_EXPORT_TIMEOUT_S = 60.0
 
 _EXPORT_MAX_RETRIES_ENV = "LANGFUSE_EXPORT_MAX_RETRIES"
 _DEFAULT_EXPORT_MAX_RETRIES = 3
 
 _EXPORT_RETRY_BACKOFF_ENV = "LANGFUSE_EXPORT_RETRY_BACKOFF_S"
 _DEFAULT_EXPORT_RETRY_BACKOFF_S = 1.0
+
+# --- Per-attribute payload cap (large-tool-output truncation) -------------
+#
+# Heavy phase-4 tools (katana, ffuf, steel_crawl) attach their full
+# stdout/observation verbatim as a single span input/output attribute. A
+# ~1136-asset katana `-jsonl` dump is hundreds of KB (up to low MB with rich
+# lines); batched together these oversized spans exhaust the OTLP exporter's
+# shared retry/timeout budget and the whole batch is dropped ("Failed to
+# export span batch due to timeout, max retries or shutdown"). Light phases
+# (whois, httpx, naabu, subdomain_takeover) emit small payloads and land fine.
+#
+# We truncate any per-attribute payload above a HIGH cap BEFORE it becomes a
+# span attribute, via the Langfuse `mask` hook (applied synchronously to
+# input/output/metadata of every SDK-created span, which is what the LangChain
+# `CallbackHandler` produces). The cap is sized from measured data: a full
+# 1136-asset katana run is ~180 KB of compact stdout and up to ~570 KB with
+# rich real `-jsonl` lines. 256 KiB sits above a compact full-katana run (so
+# normal payloads pass untouched, structure preserved) while truncating the
+# genuinely huge, rich-output payloads that were exhausting the timeout - and
+# is only ~5% of Langfuse's documented 5 MB request limit, leaving ample
+# headroom for OTLP protobuf/gzip overhead and multiple spans per batch.
+_MAX_ATTRIBUTE_BYTES_ENV = "LANGFUSE_MAX_ATTRIBUTE_BYTES"
+_DEFAULT_MAX_ATTRIBUTE_BYTES = 256 * 1024
 
 # LANGFUSE_FLUSH_INTERVAL / LANGFUSE_FLUSH_AT are native SDK knobs (read
 # directly by `langfuse._client.span_processor.LangfuseSpanProcessor`) that
@@ -163,6 +186,91 @@ class RetryingSpanExporter:
         except Exception:  # noqa: BLE001 - fail-open
             logger.debug("langfuse exporter force_flush raised", exc_info=True)
             return False
+
+
+def _serialize_for_size(data: Any) -> str:
+    """Best-effort textual form used only to MEASURE and truncate a payload.
+
+    Mirrors closely enough what Langfuse serialises to JSON later. Never
+    raises: a non-JSON-serialisable object falls back to `str(data)`.
+    """
+    if isinstance(data, str):
+        return data
+    try:
+        import json
+
+        return json.dumps(data, default=str, ensure_ascii=False)
+    except Exception:  # noqa: BLE001 - fail-open: measurement must never raise
+        return str(data)
+
+
+def _truncate_attribute(data: Any, *, cap_bytes: int) -> Any:
+    """Return `data` unchanged when it fits, else a truncated, marked string.
+
+    Small payloads (the light phases) pass through untouched with their
+    structure preserved. A payload whose serialised UTF-8 size exceeds
+    `cap_bytes` is replaced by its first `cap_bytes` bytes (truncated on a
+    valid UTF-8 boundary) plus a `...[truncated N bytes]` marker naming exactly
+    how many bytes were dropped, so the truncation is obvious in the Langfuse
+    UI. Fail-open: any error returns the original data rather than raising.
+    """
+    try:
+        serialized = _serialize_for_size(data)
+        encoded = serialized.encode("utf-8")
+        if len(encoded) <= cap_bytes:
+            return data
+
+        dropped = len(encoded) - cap_bytes
+        # Decode back on a valid boundary; errors="ignore" drops a partial
+        # trailing multi-byte sequence so the result is always valid UTF-8.
+        head = encoded[:cap_bytes].decode("utf-8", errors="ignore")
+        return f"{head}...[truncated {dropped} bytes]"
+    except Exception:  # noqa: BLE001 - fail-open: masking must never break a run
+        logger.debug("langfuse attribute truncation raised; leaving data as-is", exc_info=True)
+        return data
+
+
+def _make_truncating_mask(*, cap_bytes: int) -> Callable[..., Any]:
+    """Build a Langfuse `mask` callable that caps oversized attributes.
+
+    Langfuse invokes the mask synchronously as `mask(data=<value>, **kwargs)`
+    for the input / output / metadata of every SDK-created span (which is what
+    the LangChain `CallbackHandler` produces), before the value becomes a span
+    attribute - so heavy tool payloads are bounded at the source, not dropped
+    on export. Extra keyword args (e.g. `field=`) are accepted and ignored.
+    """
+
+    def mask(*, data: Any = None, **_kwargs: Any) -> Any:
+        return _truncate_attribute(data, cap_bytes=cap_bytes)
+
+    return mask
+
+
+def _active_span_exporter(client: Any) -> Any:
+    """Return the span exporter actually in effect on a built Langfuse client.
+
+    The exporter lives on the process-wide resource manager singleton
+    (`client._resources.span_exporter`), which is keyed by public key and
+    created on FIRST construction for that key - so this is what lets us detect
+    the singleton hazard where a pre-existing client's exporter, not ours, is
+    the one that will actually export. Fail-open: returns None if the private
+    accessor is unavailable.
+    """
+    try:
+        return client._resources.span_exporter
+    except Exception:  # noqa: BLE001 - private accessor may move across SDK versions
+        return None
+
+
+def _verify_configured_exporter_in_effect(client: Any, expected_exporter: Any) -> bool:
+    """True iff the exporter in effect on `client` is exactly the one we built.
+
+    Guards the resource-manager singleton hazard: if any other code built a
+    Langfuse client for this public key first, our `span_exporter=` (and
+    `mask=`) were silently discarded and a different exporter is live. Returns
+    False (never raises) when it cannot confirm identity.
+    """
+    return _active_span_exporter(client) is expected_exporter
 
 
 def _resolve_base_url() -> str:
@@ -261,12 +369,35 @@ def _build_callbacks() -> list:
         # behavior (5s timeout, no outer retry) - rather than losing tracing
         # entirely.
         client = None
+        span_exporter = None
         try:
             export_timeout_s = float(
                 os.environ.get(_EXPORT_TIMEOUT_ENV, _DEFAULT_EXPORT_TIMEOUT_S)
             )
+            cap_bytes = int(
+                os.environ.get(_MAX_ATTRIBUTE_BYTES_ENV, _DEFAULT_MAX_ATTRIBUTE_BYTES)
+            )
             span_exporter = _build_wrapped_span_exporter(timeout_s=export_timeout_s)
-            client = Langfuse(timeout=int(export_timeout_s), span_exporter=span_exporter)
+            # `mask` truncates oversized tool payloads BEFORE they become span
+            # attributes, so heavy phase-4 spans no longer exhaust the export
+            # timeout budget (see the per-attribute cap note above).
+            client = Langfuse(
+                timeout=int(export_timeout_s),
+                span_exporter=span_exporter,
+                mask=_make_truncating_mask(cap_bytes=cap_bytes),
+            )
+            # Verify our exporter is the one actually in effect. The Langfuse
+            # resource manager is a process-wide singleton keyed by public key
+            # and built on first construction: if any other code built a client
+            # for this key first, our `span_exporter=`/`mask=` were silently
+            # discarded. Log a specific warning so that hazard is diagnosable.
+            if not _verify_configured_exporter_in_effect(client, span_exporter):
+                logger.warning(
+                    "langfuse configured span exporter is NOT in effect - a "
+                    "pre-existing client for this public key won the singleton; "
+                    "the retry/timeout wrapper and payload truncation may be "
+                    "bypassed for exported spans"
+                )
         except Exception:  # noqa: BLE001 - fail-open to the SDK default exporter
             logger.warning(
                 "langfuse retrying-export wrapper could not be built; falling back "
@@ -290,7 +421,10 @@ def _build_callbacks() -> list:
         except Exception:  # noqa: BLE001 - auth_check is advisory only
             logger.debug("langfuse auth_check raised; continuing", exc_info=True)
 
-        handler = CallbackHandler()
+        # Bind the handler explicitly to our public key so it resolves the same
+        # instance we configured above, instead of relying on the SDK's
+        # "single active instance" fallback in `get_client()`.
+        handler = CallbackHandler(public_key=os.environ["LANGFUSE_PUBLIC_KEY"])
         _DISABLED_REASON = None
         logger.info(
             "langfuse tracing enabled (host=%s)", os.environ.get("LANGFUSE_HOST")
