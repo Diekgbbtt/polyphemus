@@ -54,6 +54,10 @@ services:
       - kali-tools:/opt/localbin
       - resolvers:/resolvers
       - work:/work
+    extra_hosts:
+      # Route app.online.orders.com to the Docker host, where nginx publishes :443
+      # and reverse-proxies to the correct backend. host_gateway = host's gateway IP.
+      - "app.onlineorders.com:host-gateway"
     networks: [polymerhus-net]
 
   agent:
