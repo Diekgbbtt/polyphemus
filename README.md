@@ -78,6 +78,9 @@ It has no launch or settings form, so a run always starts through the API above.
     e.g. authn cookies:
     curl -s -X PUT localhost:8080/projects/<id>/settings -H 'Content-Type: application/json' \
       -d '{"recon":{"auth_context":{"cookies":[{"name":"session","value":"..."}]}}}'
+    # or an arbitrary auth header (header-agnostic: any non-reserved key is a request header):
+    curl -s -X PUT localhost:8080/projects/<id>/settings -H 'Content-Type: application/json' \
+      -d '{"recon":{"auth_context":{"Authorization":"Bearer <token>"}}}'
 
     # 3. launch a run (omit "jobs" to run the full phase plan)
     curl -s -X POST localhost:8080/projects/<id>/recon -H 'Content-Type: application/json' -d '{}'
@@ -92,16 +95,20 @@ It has no launch or settings form, so a run always starts through the API above.
 ### Project settings
 
 Settings are the `recon` object sent to `PUT /projects/{id}/settings` and persisted as the
-`settings.recon` JSONB blob. Writes are a **shallow merge**, so a PUT that sets only `auth_context`
-preserves a previously-set `target_domain` (and vice versa). Everything below is optional except
-`target_domain`, which a run requires (a targetless `POST /recon` is rejected 400).
+`settings.recon` JSONB blob. Writes are a **recursive (deep) merge**, so a PUT that sets only
+`auth_context` preserves a previously-set `target_domain`, and a PUT that sets only
+`auth_context.credentials` preserves a previously-set `auth_context.cookies` (nested items are
+independent at any depth; scalars and arrays like the cookies list are replaced wholesale).
+Everything below is optional except `target_domain`, which a run requires (a targetless
+`POST /recon` is rejected 400).
 
 | Setting | Type | Purpose |
 |---|---|---|
 | `target_domain` | string | The recon target. `example.com` / `app.example.com` = exact host (discovery suppressed); `*.example.com` = wildcard/zone (subdomain discovery fans out). See "Exact vs wildcard seed hosts" below. **Required to launch.** |
-| `auth_context` | object | Authentication material, threaded into every `use_auth` job (httpx, katana, ffuf, steel_crawl, arjun). All sub-fields optional; omit `auth_context` entirely for an anonymous run. |
-| `auth_context.cookies` | list of `{name, value}` | Session cookies. Used as the `-H "Cookie: ..."` header by the **request-based** tools, and injected into the Steel browser context for a **non-interactive** authenticated agentic crawl. Each entry may also carry optional `domain`/`path`. |
-| `auth_context.scope` | string | Optional auth scope hint. |
+| `auth_context` | object | Authentication material, threaded into every `use_auth` job (httpx, katana, ffuf, steel_crawl, arjun). **Header-agnostic:** besides the reserved structural keys below (`cookies`, `scope`, `credentials`), any other key is treated as an arbitrary HTTP request header. All sub-fields optional; omit `auth_context` entirely for an anonymous run. |
+| `auth_context.cookies` | list of `{name, value}` | Session cookies. Joined into the `Cookie: k=v; k2=v2` header for the **request-based** tools, and injected into the Steel browser context for a **non-interactive** authenticated agentic crawl. Each entry may also carry optional `domain`/`path`. This is the one source of the `Cookie` header; a literal `Cookie` header key is rejected. |
+| `auth_context.<Header-Name>` | string | Any other key is an **arbitrary request header** sent verbatim by the request-based tools, e.g. `"Authorization": "Bearer <token>"` or `"X-Api-Key": "<key>"`. Header names must be HTTP tokens (letters/digits/hyphen); values are non-empty strings with no CR/LF (header-injection guard). Applies to the request-based tools only (not the Steel browser context yet). |
+| `auth_context.scope` | string | Optional auth scope hint. Reserved structural key, not sent as a header. |
 | `auth_context.credentials` | object | **Autonomous agentic-crawl login (D23).** The Steel crawl agent logs itself in with these before crawling - the credentials channel drives the *agentic* crawl, while `cookies` drive the *request-based* tools. |
 | `auth_context.credentials.username` | string | Login username/email. **Required** inside `credentials`. |
 | `auth_context.credentials.password` | string | Login password. **Required** inside `credentials`. Sent to the target you authorize; may appear in the crawl LLM trace (accepted under the pen-test threat model). |
@@ -151,7 +158,7 @@ whether subdomain discovery runs at all:
 In `exact` mode `subfinder`/`amass`/`dnsx`/`puredns` are dropped from the phase plan and the
 seeded host is injected directly into the post-discovery input set, so `httpx`/`naabu` still
 probe it (D11).
-`subdomain_takeover` and the passive harvesters (`whois`, `gau`, `paramspider`) are never gated
+`subdomain_takeover` and the passive harvesters (`whois`, `paramspider`) are never gated
 by scope mode, since they either take an out-of-scope asset as a parameter or don't enumerate
 subdomains in the first place.
 Use wildcard (`*.example.com`) when you want the whole zone fanned out, and an exact host when
@@ -159,20 +166,66 @@ you already know the target and want a fast, narrow run.
 
 ### Phases
 
-Jobs run in ordered, gated phases (`agent/recon/jobs.py`); a phase is a hard barrier - every job
-in it runs concurrently and the next phase doesn't start until all of them finish.
+Jobs run in ordered, gated phases (`agent/recon/jobs.py`). A phase is a **hard barrier**: the next
+phase does not start until every job in the current phase has finished. **Within a phase, jobs run
+sequentially** (one at a time) - each job still fans its assets out across up to `MAX_PODS`
+concurrent pods, but only one job's fan-out runs at once, so peak concurrency is bounded to a
+single tool's `MAX_PODS` rather than `jobs x MAX_PODS` (the latter exhausted the agent's memory).
 
 | Phase | Jobs | Produces |
 |---|---|---|
-| 0 | `subfinder`, `amass`, `whois` | Subdomain, IP, Domain |
+| 0 | `subfinder`, `amass`†, `whois` | Subdomain, IP, Domain |
 | 1 | `dnsx`, `puredns`, `subdomain_takeover` | IP, DNSRecord, Subdomain, ExternalDomain |
 | 2 | `naabu` | IP, Port, Service |
-| 3 | `httpx` | BaseURL, Endpoint, Technology, Certificate, Header |
-| 4 | `katana`, `ffuf`, `kiterunner`, `graphql-cop`, `gau`, `paramspider`, `steel_crawl` | BaseURL, Endpoint, Parameter |
-| 5 | `jsluice` | Endpoint, Secret |
-| 6 | `arjun` | Parameter |
+| 3 | `httpx` | BaseURL, Endpoint, Technology, Certificate, Header (+ `profile`) |
+| 4 | `katana`, `ffuf`, `paramspider`, `steel_crawl` | BaseURL, Endpoint, Parameter |
+| 5 | `jsluice`◦ | Endpoint, Secret |
+| 6 | `httpx_reprofile` | BaseURL, Endpoint, Technology, Certificate, Header (+ `profile`) |
+| 7 | `kiterunner`◦ *(api enumeration)* | Endpoint |
+| 8 | `arjun` | Parameter |
+| 9 | `graphql-cop`◦ *(static api testing)* | Endpoint |
 
-`jsluice` runs after the phase-4 crawlers on purpose: it consumes the `.js`/`.mjs` Endpoints
-that `katana`/`gau` just discovered, so it needs its own phase to see them.
-In `exact` scope mode, phase 0 and 1 shrink to just `whois` and `subdomain_takeover` - the rest
-of the pipeline is unaffected.
+† `amass` is currently **deferred** (see Tool status below).  ◦ gated on an upstream attribute.
+
+**Profile-based routing (data dependency).** Phase 3 `httpx` tags each BaseURL/Endpoint with a
+`profile` - `webapp`, `restapi`, or `graphql_api` (path heuristic, `noise_filter.classify_profile`).
+But the phase-4 crawlers (`katana`/`ffuf`) and `jsluice` (phase 5) mint **new** BaseURLs - notably
+the JS-derived API hosts `jsluice` recovers from bundles - which `httpx` never probed and so carry
+no `profile`. Phase 6 `httpx_reprofile` re-probes **every** BaseURL (idempotent over
+already-profiled ones) and classifies it via the same `classify_profile` path, so the whole
+discovered surface - not just `httpx`'s originals - is profiled before the API phases. The
+API-surface tools are then **gated** and produce nothing unless a match was tagged: `kiterunner`
+(phase 7, *api enumeration*) consumes only `restapi` BaseURLs, `graphql-cop` (phase 9, *static api
+testing*) only `graphql_api`. `arjun` (phase 8) runs after api enumeration so it discovers
+Parameters on the routes `kiterunner` just found as well as `jsluice`'s recovered Endpoints. These
+gates are real data dependencies: withdraw the upstream producer/attribute and the gated tool has
+an empty input set.
+
+In `exact` scope mode, phases 0 and 1 shrink to just `whois` and `subdomain_takeover` - the rest of
+the pipeline is unaffected.
+
+### Tool status
+
+The pipeline schedules 17 tools (`agent/recon/jobs.py::JOBS`). `auth` tools receive the
+`auth_context` cookies/headers; gated tools consume only a matching upstream asset.
+
+| Tool | Phase | Status | Gating / notes |
+|---|---|---|---|
+| `subfinder` | 0 | active | subdomain discovery |
+| `amass` | 0 | **deferred** | amass v4.2.0 removed the `-json` flag, so it currently degrades; fix pending |
+| `whois` | 0 | active | registrant / nameservers |
+| `dnsx` | 1 | active | DNS resolution |
+| `puredns` | 1 | active | mass DNS resolution |
+| `subdomain_takeover` | 1 | active | dangling-CNAME check |
+| `naabu` | 2 | active | port scan |
+| `httpx` | 3 | active · auth | HTTP probe; sets the `webapp`/`restapi`/`graphql_api` `profile` |
+| `katana` | 4 | active · auth | crawler; mints the `.js`/`.mjs` Endpoints `jsluice` consumes |
+| `ffuf` | 4 | active · auth | content discovery; rate-throttled under WAF steering |
+| `paramspider` | 4 | active | passive URL/param harvest |
+| `steel_crawl` | 4 | active · auth | agentic browser crawl (cookies + autonomous credentialed login) |
+| `jsluice` | 5 | active | gated to `.js`/`.mjs` Endpoints; batched; JS URLs + secrets + sourcemaps |
+| `httpx_reprofile` | 6 | active · auth | re-probes every BaseURL (incl. crawler/JS-minted) to assign `profile`; reuses the `httpx` parser |
+| `kiterunner` | 7 | active · auth | *api enumeration*; gated to `profile == restapi` |
+| `arjun` | 8 | active · auth | parameter discovery (after api enumeration, so it sees `kiterunner` routes) |
+| `graphql-cop` | 9 | active · auth | *static api testing*; gated to `profile == graphql_api` |
+| `gau` | - | **deferred** | passive URL harvest, withdrawn (D-gau, 2026-07-09); to be reintroduced behind a noise filter |

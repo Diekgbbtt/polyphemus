@@ -212,20 +212,28 @@ The D14/Q2 fix (seed `Domain = seed_host` in exact mode) exposes a second-order 
 
 ## D16 - two-stage endpoint discovery + profiling drives downstream routing (NEW work item, may split a phase)
 
-**Current shape:** phase 4 discovers endpoints (katana crawl, ffuf brute, gau passive) and phase 5 (arjun) plus phase-4 kiterunner/paramspider consume them - but **without any webapp-vs-webapi classification**. Every BaseURL/Endpoint is treated identically; api-specific tools (kiterunner, api-mode ffuf) fire against presentational endpoints and param tools fire indiscriminately.
+**Current shape:** phase 4 discovers endpoints (katana crawl, ffuf brute, gau passive) and phase 5 (arjun) plus phase-4 kiterunner/paramspider consume them - but **without any webapp-vs-restapi classification**. Every BaseURL/Endpoint is treated identically; api-specific tools (kiterunner, api-mode ffuf) fire against presentational endpoints and param tools fire indiscriminately.
 
 **Desired shape (operator):**
 1. **Discover** endpoints - crawled by katana, or brute-forced/passively harvested by ffuf/gau.
-2. **Profile** each endpoint as **webapp** (HTML UI) or **webapi** (backend-exposing, e.g. JSON). Classification signals: content-type (`application/json` => api), and more generally the httpx-observable response shape. This profiling can also **prune gau noise**: many passively-harvested URLs are dead (404) and can be dropped by an httpx liveness+profile pass before they reach expensive consumers.
+2. **Profile** each endpoint as **webapp** (HTML UI) or **restapi** (backend-exposing, e.g. JSON). Classification signals: content-type (`application/json` => api), and more generally the httpx-observable response shape. This profiling can also **prune gau noise**: many passively-harvested URLs are dead (404) and can be dropped by an httpx liveness+profile pass before they reach expensive consumers.
 3. **Route by profile:**
-   - **webapi** endpoints -> ffuf (configured for **API** discovery, distinct from content-discovery mode) + kiterunner.
+   - **restapi** endpoints -> ffuf (configured for **API** discovery, distinct from content-discovery mode) + kiterunner.
    - **parameters** -> paramspider + arjun run on **both** classes.
 
-**Feasibility (verified):** the profiling signal is **already collected** - the httpx parser captures `content_type` today (`httpx_parser.py:29,64`). What is missing is (a) a profiling step that persists a webapp/webapi label per endpoint (httpx is the natural home; it could also do the gau-liveness prune), and (b) a router that keys downstream `consumes` on that label rather than on the bare `Endpoint`/`BaseURL` type.
+**Feasibility (verified):** the profiling signal is **already collected** - the httpx parser captures `content_type` today (`httpx_parser.py:29,64`). What is missing is (a) a profiling step that persists a webapp/restapi label per endpoint (httpx is the natural home; it could also do the gau-liveness prune), and (b) a router that keys downstream `consumes` on that label rather than on the bare `Endpoint`/`BaseURL` type.
 
 **Architectural consequence:** this likely **decomposes the current single discovery phase into two** - *discover* then *profile* - with the profile becoming a first-class asset attribute that the phase-5 (and api-specific phase-4) tools consume. This touches the phase DAG (`jobs.py` PHASES + JobSpec.consumes), so it is a structural change, not a tweak; sequence it after D14 (scope) since scope determines the endpoint population being profiled.
 
-**BUILT (minimal, operator-directed 2026-07-11, commit `7c9b995`).** Chose the reuse-first path over a phase split: httpx already runs at phase 3 (before the phase-4 crawlers) and already carries `content_type`, so NO new job/phase was added. `noise_filter.classify_profile(content_type, url) -> "webapp"|"webapi"` (JSON-family content-type, or an api-indicating hostname label -> webapi) is set as a `profile` prop on every httpx BaseURL and its root Endpoint. `kiterunner` is gated to `consumes_where=AssetSelector(field="profile", op="equals", values=["webapi"])` (reusing the D17 selector), so it fires only at the API surface. **Deferred (not built):** the discover->profile split for crawler-minted Endpoints (katana/ffuf endpoints carry no profile yet - only httpx-probed BaseURLs do); an api-mode ffuf variant; the gau-liveness prune (gau withdrawn, D19). Revisit if API-surface coverage needs the crawled-endpoint population profiled too.
+**BUILT (minimal, operator-directed 2026-07-11, commit `7c9b995`).** Chose the reuse-first path over a phase split: httpx already runs at phase 3 (before the phase-4 crawlers) and already carries `content_type`, so NO new job/phase was added. `noise_filter.classify_profile(content_type, url) -> "webapp"|"restapi"` (JSON-family content-type, or an api-indicating hostname label -> restapi) is set as a `profile` prop on every httpx BaseURL and its root Endpoint. `kiterunner` is gated to `consumes_where=AssetSelector(field="profile", op="equals", values=["restapi"])` (reusing the D17 selector), so it fires only at the API surface. **Deferred (not built):** the discover->profile split for crawler-minted Endpoints (katana/ffuf endpoints carry no profile yet - only httpx-probed BaseURLs do); an api-mode ffuf variant; the gau-liveness prune (gau withdrawn, D19). Revisit if API-surface coverage needs the crawled-endpoint population profiled too.
+
+### D16.1 - dedicated `graphql_api` profile + graphql-cop gating (BUILT minimal 2026-07-14; enhancement deferred)
+
+**Problem found (live run f845fd03, 2026-07-13):** `graphql-cop` carried no `consumes_where`, so it fired at ALL 54 BaseURLs (part of the phase-4 concurrency explosion) rather than only the GraphQL surface. Unlike `kiterunner`, it was ungated. There was also no profile to gate it on - D16 profiling only produced `webapp`/`restapi`.
+
+**BUILT (operator-directed):** `classify_profile` now returns a third profile `graphql_api`, derived from a **path heuristic** on the httpx-discovered URL (matches a known GraphQL endpoint path - `/graphql`, `/api/graphql`, `/v1/graphql`, `/query`, `/graphql/console`, `/playground`; slash/case/query-tolerant; false-match-guarded so `/graphql-docs`, `/mygraphql` stay `webapp`). It takes precedence over the restapi/webapp rules and requires **no new network I/O** (reuses the URL httpx already has). `graphql-cop` is regated `consumes_where=profile == "graphql_api"`. Accepted tradeoff: detection miss -> graphql-cop does not fire there.
+
+**ENHANCEMENT (deferred, operator-approved as a future work item):** the path heuristic only catches GraphQL served at a conventional path. A GraphQL API mounted under a **non-obvious path on a generic API host** (e.g. `api.example.com/internal/gw`) classifies as `restapi`, not `graphql_api`, so graphql-cop will not fire there. Closing that gap needs **active GraphQL detection during profiling** - most robustly an **introspection `__schema` probe** (POST a minimal introspection query, e.g. `{__schema{queryType{name}}}`, or a `{__typename}` probe, and classify `graphql_api` on a GraphQL-shaped response), and/or a lightweight content-signal check (an `application/graphql-response+json` content-type, or a GraphQL error envelope on a malformed GET). This introduces **new active HTTP I/O into the profiling stage** (currently pure/no-network), so it is a deliberate structural change: it wants a bounded, rate-limited probe pass (respecting scope + WAF-steering), ideally reusing the httpx pod rather than a fresh fetch, and it must not probe out-of-scope hosts. Sequence it only if a real run shows GraphQL endpoints slipping through under generic API hosts; the path heuristic is the accepted floor until then. Note graphql-cop itself is the deep GraphQL auditor, so this profiling probe only needs to be a cheap **pre-filter** that decides whether graphql-cop runs, not a full GraphQL characterisation.
 
 ## D17 - jsluice JS-analysis is not doing what its parser documents (NEW work item, verified defect)
 
@@ -362,7 +370,7 @@ This decision covers the RECON side (collecting the artifacts that skill assumes
 - New asset/observation types: the captured artifacts become new graph nodes/props (e.g. a `ClientArtifact`/`RuntimeState` family, or props on the existing BaseURL/Endpoint), curated through the single curator gate. The exact schema is an open question below.
 - Consumer: the analyser phase (the same L3-ish re-entrant/synthesis seam sketched in D2-addendum and `recon-pipeline-design.md` §9.5) loads the collected artifacts + the draft skill and emits the semantic model as the deliverable.
 
-**Relationship to existing decisions.** Builds on D3 (external Steel.dev browser), D16 (webapp/webapi profile - only `webapp`-profiled BaseURLs need this deep client-side capture), D17 (jsluice source-artifact analysis - unchanged, feeds category 1), D18/D23 (authenticated crawl - the capture should run post-login), and the D2/L3 analyser seam (the consumer). It does NOT touch the request-based tools.
+**Relationship to existing decisions.** Builds on D3 (external Steel.dev browser), D16 (webapp/restapi profile - only `webapp`-profiled BaseURLs need this deep client-side capture), D17 (jsluice source-artifact analysis - unchanged, feeds category 1), D18/D23 (authenticated crawl - the capture should run post-login), and the D2/L3 analyser seam (the consumer). It does NOT touch the request-based tools.
 
 **Open design questions (to resolve before building).**
 1. Capture volume vs. graph: a full DOM/trace per route is large - store raw artifacts where (blob/object store vs. Neo4j props vs. Postgres), and put only a distilled summary in the graph? The current graph holds compact assets/observations, not blobs.
@@ -372,3 +380,103 @@ This decision covers the RECON side (collecting the artifacts that skill assumes
 5. Determinism: execution traces (category 3) are inherently non-deterministic per crawl run - how are they normalized so the semantic model is stable across runs?
 
 **Status:** DRAFT, deliberately deferred, substantial (a new collection subsystem + schema + the analyser consumer). The item list and the skill are drafts and will be refined; recorded here so the later phase inherits the intent (a browser-collected client-side knowledge base feeding a semantic-model analyser) rather than re-deriving it.
+
+## D26 - ffuf promoted to a REST-API fuzzing role (distinct from its content-discovery role) (NEW work item, DRAFT/deferred, 2026-07-14)
+
+**Operator request (captured faithfully, in full).**
+Promote `ffuf` to a REST-API **testing/fuzzing** tool as well, beside its existing role in the crawling / content-discovery phase.
+In the API-testing role it should fuzz across five dimensions:
+- **URL path** - again, but **narrower and deeper** than the phase-4 content-discovery sweep (targeted extensions of a known API surface, not a broad wordlist against a root).
+- **HTTP method** - vary the verb against a fixed endpoint.
+- **URL parameters** - requires feeding in **endpoints and parameters coupled together** (a real data dependency, see the coupling note below).
+- **HTTP headers** - `Content-Type`, `Origin`, `Referer`, `X-Forwarded-For`, `Accept`, `Accept-Encoding`, and more.
+- **Attribute values of the request body** - fuzz the values inside a structured (e.g. JSON) request body.
+
+The explicit intent: this testing should **probe for weird failures** and **surface insights as triager Observations**; moreover the **payloads must be adapted specifically to the current knowledge of the attack surface**, and for each kind of fuzzing the payload **list should be declared beforehand** (a per-dimension payload set selected from graph state before the ffuf run).
+
+**This is a DISTINCT role from ffuf's current phase-4 job.**
+Today `ffuf` runs one content-discovery job (`jobs.py:107-117`): `ffuf -u {target}/FUZZ -w .../Web-Content/common.txt -mc 200,403 ... consumes="BaseURL"` - a single path-position brute at the origin root, producing `Endpoint`s.
+D26 is a **second, separate job (or job family)** that belongs in a **later API-testing phase**, not in phase-4 discovery: it consumes a *characterised* API surface (profiled endpoints + discovered parameters) rather than bare BaseURLs, and its output is Observations, not merely new Endpoints.
+This cross-refs D16/D16.1 (the `webapp`/`restapi`/`graphql_api` profiles - D26 fuzzing should be gated to `restapi` endpoints, reusing the `consumes_where` profile selector) and the WS2 phase-restructuring direction (D16's "decompose discovery into discover -> profile", extended here with a downstream **test** stage that consumes the profiled surface).
+
+### The five fuzzing dimensions (elaboration - my elaboration below, marked as such)
+
+For each dimension: *what it targets*, *example payloads / wordlists*, and *how the payload set adapts to current attack-surface knowledge in the graph*. The adaptation is the load-bearing part: ffuf's `FUZZ` keyword is filled from a **declared payload list built from graph state before the run** ("list beforehand per fuzzing kind"), not from a static generic wordlist.
+
+| Dimension | Targets | Example payloads / wordlists | Attack-surface adaptation (source in graph) |
+| --- | --- | --- | --- |
+| **URL path** (narrow+deep) | Deeper path segments under a *known* API base (`/api/v1/FUZZ`, `/api/v1/users/FUZZ`), versioned siblings (`/v2/`, `/internal/`), verb-shaped resources | API-flavoured lists (seclists `api/`, `common-api-endpoints`), resource-name mutations derived from observed nouns | Seed from the endpoints already discovered on that host (katana/ffuf/jsluice `Endpoint`s + jsluice-recovered route names); mutate observed path tokens rather than brute a generic tree. Gate to `restapi`-profiled BaseURLs (D16). |
+| **HTTP method** | Verb-tampering / method-override differences on a fixed endpoint | `GET,POST,PUT,PATCH,DELETE,HEAD,OPTIONS,TRACE`, plus override headers (`X-HTTP-Method-Override`) | Enumerate methods only against endpoints already known to exist; prefer methods hinted by the endpoint's observed behaviour (e.g. a `/users/{id}` resource -> try `PUT`/`DELETE`). **See destructive-method grey point Q3.** |
+| **URL parameters** | Hidden/undeclared params, param-value handling, injection-shaped values | Param **names** (arjun/paramspider wordlists) and param **values** (fuzz-vector lists: SQLi/XSS/SSTI/traversal probes) | **Names**: seed from `Parameter` nodes arjun/paramspider already produced for that endpoint; **values**: adapt vector class to the endpoint's tech (httpx `Technology`) - e.g. SSTI vectors where a template engine is fingerprinted. Requires the Endpoint+Parameter coupling below. |
+| **HTTP headers** | Header-driven ACL/routing/cache/content-negotiation behaviour | `Content-Type` (json vs form vs xml), `Origin` (reflected-CORS probes), `Referer`, `X-Forwarded-For`/`X-Real-IP`/`X-Original-URL`/`X-Rewrite-URL` (ACL/routing bypass), `Accept`/`Accept-Encoding` (content-negotiation) | Adapt candidate `Content-Type` values to the endpoint's observed content-type (D16 profile); adapt trust-header probes (`X-Forwarded-For` etc.) to hosts where an upstream proxy/WAF is fingerprinted (httpx `Technology`/`Header`); pull real internal hostnames/paths from the graph for `X-Original-URL`. |
+| **Request body attribute values** | Value handling inside a structured body (type confusion, injection, mass-assignment-shaped keys) | Per-attribute fuzz vectors (type swaps: string<->int<->array<->object; injection vectors; boundary values), extra/unexpected keys | Seed the body **schema** (attribute names + types) from parameters/bodies already observed for that endpoint (arjun/paramspider/katana `Parameter`s, jsluice-recovered request shapes); fuzz one attribute at a time holding the rest valid. Requires the coupling below. |
+
+**"Declare the payload list beforehand per fuzzing kind" (my reading).**
+Before the ffuf run, a selection step reads graph state (the host's `Endpoint`/`Parameter`/`Technology`/`Header`/`profile` assets) and materialises **one explicit payload set per dimension** - a declared wordlist/vector file (or generated list) that ffuf's `FUZZ` keyword is bound to.
+This is the mechanism by which "payloads adapt to the current knowledge of the attack surface": the list is a function of the graph at fuzz-time, not a fixed asset baked into the job template.
+Architecturally this mirrors the D16 profiling seam (a pre-step that reads assets and shapes the downstream tool) and the L1 `job_orchestrator` preprocess seam (`build_job_context` reading graph/registry state before fan-out).
+
+### Weird failures to probe, each becoming a triager Observation (elaboration)
+
+The point of the fuzzing is not the raw responses but the **adversarial insight** the triager derives from anomalies - an Observation is an attack-surface insight, NOT a restatement of the raw HTTP response (memory `observations-vs-attack-surface-primitives`). Concrete failure classes to probe and the Observation each yields:
+- **5xx / crash on malformed input** - a 500 on a type-swapped param or malformed body signals unhandled input -> Observation "endpoint E crashes on non-string `id` (type confusion, likely reaches a backend query unsanitised)".
+- **Reflected input** - a payload echoed in the response -> reflected-XSS / SSTI signal Observation (with the reflection context, not just "200 with my string in it").
+- **Auth/ACL bypass via trust headers** - a resource that 403s directly but 200s with `X-Forwarded-For`/`X-Original-URL`/`X-Rewrite-URL`/`Origin` set -> "ACL enforced at proxy only; `X-Original-URL` bypasses it".
+- **HTTP method / verb tampering** - differing responses across `GET`/`POST`/`PUT`/`PATCH`/`DELETE` on one endpoint (e.g. `PUT` allowed where the UI only issues `GET`) -> "write verb reachable without UI affordance".
+- **CORS misconfiguration** - `Origin` reflected into `Access-Control-Allow-Origin` with credentials -> "reflected-origin CORS with credentials on E".
+- **Cache poisoning via unkeyed headers** - a header that changes the response but is not in the cache key -> "unkeyed `X-Forwarded-Host` influences cached response".
+- **Content-type confusion** - endpoint accepts `application/json` and `application/x-www-form-urlencoded` interchangeably, or parses one as the other -> "content-type confusion on E (form body parsed where JSON expected)".
+- **Parameter pollution** - duplicate/array params handled inconsistently (first vs last vs merged) -> "HPP: last-wins param merging on E".
+
+Each of these is written by the pod triager as an `Observation` anchored on the endpoint (via the existing curator/writing-observations path), so D26 depends on nothing new in the observation-writing machinery - only on the fuzzing job producing the anomalous responses for the triager to reason over.
+
+### Coupling requirement (real data dependency)
+
+Parameter fuzzing and body fuzzing **cannot run on bare BaseURLs** - they need **Endpoint + Parameter pairs fed together**: the specific endpoint AND the parameter names/body attributes that belong to it.
+This is a genuine data dependency on **arjun / paramspider** (`Parameter` producers) and on katana/jsluice-recovered request shapes: the fuzz job must consume a *joined* view (Endpoint with its attached Parameters), not the two asset types independently.
+Concretely this needs either a graph read that returns `(Endpoint)-[:HAS_PARAM]->(Parameter)` groupings, or a `consumes_where` join extension, so a pod is handed one endpoint plus its parameter set as a coherent unit.
+This makes D26 sequence strictly **after** the param-discovery phase (phase 5 arjun / phase-4 paramspider), reinforcing its placement in a later API-testing phase.
+
+### Interactions
+
+- **D16 / D16.1 profiles**: fuzz jobs gate to `restapi` (and possibly `graphql_api`) profiled endpoints via the existing `consumes_where` profile selector - do not fuzz presentational `webapp` endpoints.
+- **WS2 phase restructuring**: this adds a **test** stage downstream of D16's discover -> profile split (discover -> profile -> **test**), a first-class API-testing phase in the DAG (`PHASES` in `jobs.py`), consuming the profiled+parameter-joined surface.
+- **WAF-steering rate throttling**: aggressive multi-dimensional fuzzing is exactly what trips WAF/rate-limit defences; the fuzz jobs must honour the same `{rate_flags}` throttling ffuf already carries and the WAF-steering / `recon_signals` rate-limit awareness (`context-memory-end-to-end.md`) - a host already flagged `rate_limit`/`waf` should throttle harder or be deprioritised by the L1 `job_orchestrator` preprocess, not hammered across five dimensions.
+- **D18/D23 authenticated context**: ffuf is already `use_auth=True`; the API-fuzzing jobs inherit the cookie/header auth channel so they test the **authenticated** API surface (the interesting one).
+
+### Open grey points (unresolved - carried for operator decision, full options in the review return)
+
+1. Job granularity: one mega-job fuzzing all five dimensions, or one job per dimension (path / method / params / headers / body)?
+2. Payload adaptation mechanism: static curated per-dimension lists selected by graph query, LLM-generated-from-attack-surface lists, or both (curated floor + LLM enrichment)?
+3. **Destructive-method safety**: fuzzing HTTP methods can issue `PUT`/`PATCH`/`DELETE` against a live target - real state mutation / data loss risk. Gate to safe-by-default (read-only verbs) with destructive verbs opt-in and scoped? This is the sharpest risk in the spec.
+4. Coupling data path: extend `consumes_where` with an Endpoint->Parameter join, a dedicated joined-read helper, or a pre-step that materialises `(endpoint, params)` units?
+5. Observation volume / dedup: multi-dimensional fuzzing can generate a flood of near-identical anomalies - how are Observations deduped/rate-limited so the graph is not swamped?
+
+**Status:** DRAFT, deliberately deferred, documentation only (no code written). A later API-testing phase inherits the intent (ffuf as an attack-surface-adapted REST-API fuzzer whose anomalies become triager Observations), the coupling and profile-gating constraints, and the open grey points above - rather than re-deriving them.
+
+## D27 - pipeline bidirectionality: feeding crawl-discovered hosts back upstream (NEW work item, substantial bring-forward, 2026-07-14)
+
+**The gap (operator-surfaced).**
+The recon pipeline is a strictly one-way phase DAG: discovery -> resolution -> port scan -> httpx -> crawl -> jsluice -> (api enumeration / testing).
+But the crawl and JS-analysis stages (katana, steel_crawl, jsluice) routinely discover **new hosts / subdomains** that were never seen by phase-0 subdomain discovery - referenced in links, JS bundles, CORS/redirect targets, API base URLs, etc.
+Today those newly-discovered hosts are recorded as graph assets (Subdomain / ExternalDomain / BaseURL) but there is **no backward edge**: they never re-enter the upstream phases, so an in-scope host first seen during the crawl is **never resolved, never port-scanned, never httpx-profiled, never itself crawled or API-tested**.
+The pipeline therefore under-covers exactly the surface that deep crawling is best at finding.
+
+**Open question the operator raised (must be answered by the design).**
+How are subdomains/hosts discovered *throughout* reconnaissance currently handled - are they silently discarded, or automatically treated as out-of-scope?
+This needs an explicit audit: for each producer that can mint a new host (jsluice URLs, katana `new_links`, steel frontier, httpx redirects, whois/dns related-domains), determine what happens to a host that is in-scope but was not in the phase-0 seed set.
+
+**Why this is hard (the bidirectionality/re-entrancy problem).**
+Turning the DAG into a **convergent feedback loop** introduces real complexity:
+- **Scope gating of discovered hosts:** a crawl-discovered host must be classified in-scope vs out-of-scope before it is allowed to re-enter (reuse `agent/recon/scope.py`); out-of-scope hosts are recorded as `ExternalDomain` (attack-relevant context) but NOT re-scanned; in-scope hosts re-enter.
+- **Re-entry point:** an in-scope new host should re-enter at resolution (dnsx/puredns) -> naabu -> httpx -> crawl -> api-testing, i.e. a mini-rerun of the DAG rooted at that host.
+- **Termination / convergence:** the loop must provably terminate - a global visited-set keyed by host (and by asset identity) so a host is processed at most once, plus a max-depth / max-iteration / max-new-hosts budget to bound a pathological fan-out (e.g. a target that references thousands of hosts).
+- **Cycle guard:** A links B links A must not loop.
+- **Concurrency + the run lifecycle:** re-entrant work extends a run's lifetime and interacts with the heartbeat/reaper (see [[recon-run-oom-failure-mode]]) and the sequential-phase model - re-entry likely runs as bounded additional waves rather than unbounded recursion.
+- **Cost:** each re-entering host multiplies scan volume; the budget must be operator-tunable.
+
+**Direction (not yet built).**
+Model it as a **bounded work-queue / fixpoint** rather than literal DAG recursion: a "newly-discovered in-scope host" queue drained in waves after the crawl/JS phases, each wave running the resolution->httpx->crawl sub-pipeline for its hosts, feeding any further new hosts back into the queue, until the queue is empty or a wave/host budget is hit.
+Relates to D14 (scope semantics decide in-scope vs external), D16/D16.1 (re-profiling discovered BaseURLs already generalises "assets minted downstream get processed like first-class ones"), and the paramspider exact-mode gap that surfaced this (a Domain-consumer starved because the seed materialised only as a Subdomain).
+
+**Status:** DRAFT, deferred, documentation only. First actionable sub-task before any build: the audit of what currently happens to crawl/JS-discovered hosts (discarded vs recorded vs scoped), since that determines how much of the loop is greenfield.
