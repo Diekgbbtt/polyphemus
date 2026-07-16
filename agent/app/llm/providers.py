@@ -11,7 +11,7 @@ PROVIDERS: dict[str, str] = {
     "swissai":    "https://api.swissai.svc.cscs.ch/v1",
 }
 
-ROLES: tuple[str, ...] = ("configurator", "triager", "job_orchestrator", "crawler")
+ROLES: tuple[str, ...] = ("configurator", "triager", "job_orchestrator", "crawler", "analyser")
 
 def _key_env(provider: str) -> str:
     return f"API_KEY_{provider.upper()}"
