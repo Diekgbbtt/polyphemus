@@ -148,7 +148,7 @@ def test_run_crawl_authenticated_best_effort_on_precreate_failure():
 
 
 def make_capturing_curate_fn():
-    def curate_fn(assets, observations, project_id):
+    def curate_fn(assets, observations, project_id, scope_domain=None):
         return len(assets), len(observations)
 
     return curate_fn
@@ -187,7 +187,8 @@ def test_auth_job_with_auth_context_calls_precreate_and_records_viewer_url():
     export = result["export"]
 
     assert len(precreate_calls) == 1
-    assert precreate_calls[0] == ("https://app.example.com", ["https://app.example.com"])
+    # scope folds to the registrable domain at the crawl-node resolution point (Change A)
+    assert precreate_calls[0] == ("https://app.example.com", ["example.com"])
     assert export.verdict == "success"
     assert export.stats == {"viewer_url": "https://steel.example/v/abc"}
 
@@ -372,7 +373,8 @@ def test_auth_job_with_cookies_injects_and_skips_precreate():
     result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": cookies}}))
 
     assert precreate_calls == []  # non-interactive path, no human viewer
-    assert run_calls == [("https://app.example.com", ["https://app.example.com"], cookies)]
+    # scope folds to the registrable domain at the crawl-node resolution point (Change A)
+    assert run_calls == [("https://app.example.com", ["example.com"], cookies)]
     assert result["export"].verdict == "success"
 
 

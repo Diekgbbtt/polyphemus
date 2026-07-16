@@ -36,7 +36,6 @@ which URL matters next, how to flush hidden requests, and when coverage is enoug
 | `steel_eval` | Read or set DOM state — **including filling form fields** before submit. Routine, not last-resort. | `steel_eval(crawl_id, "document.querySelector('#email').value='probe@example.com';document.querySelector('#password').value='Probe123!';true")` |
 | `steel_click` | Fire a **real trusted-event click** — submit buttons, JS/router controls that aren't `<a href>`. This is what flushes the request behind the action. | `steel_click(crawl_id, "button[type=submit]")` |
 | `steel_frontier` | **Rarely needed** — every navigate/click already returns the current frontier. Use only to re-check after a `steel_eval` (which returns no frontier) or if you lose track. | `steel_frontier(crawl_id)` |
-| `steel_await_auth` | Wait for a human to finish logging in (auth crawls only — see below). Blocks until authenticated or timeout. | `steel_await_auth(crawl_id)` |
 | `steel_crawl_finish` | End and emit the manifest. **Always call it**, even after errors. | `steel_crawl_finish(crawl_id)` |
 
 **Form pattern (the common case):** `steel_eval` to set field values → `steel_click` the submit
@@ -44,17 +43,6 @@ button. The submit flushes the hidden auth/API endpoint (e.g. `/api/v2/auth/logi
 capture. One benign submission is enough — do not retry credentials. If a page exposes **several
 distinct interactive controls** (e.g. a login form, a social-login button, a search box), exercise
 **each distinct one once** to flush its request, then move on.
-
-## Authenticated crawl (when a session is pre-supplied)
-If your task says a Steel session is **ALREADY STARTED** with a `crawl_id` and a **manual login is in
-progress**:
-- Do **NOT** call `steel_crawl_start` — the session already exists.
-- **FIRST** call `steel_await_auth(crawl_id)` and wait. A human operator is logging in via the live
-  viewer — **you never handle credentials yourself** (no usernames/passwords, no guessing).
-- `authenticated: true` → crawl normally, prioritising the **account/admin/api** surface that was
-  previously gated behind login.
-- `timed_out: true` → the login didn't complete; crawl whatever is reachable, then finish.
-- Always end with `steel_crawl_finish`.
 
 ## Procedure
 1. `steel_crawl_start(target, scope)` once; note `crawl_id` + `viewer_url`.
@@ -94,6 +82,11 @@ progress**:
 - Never navigate a URL outside scope or off the frontier (the harness rejects it anyway).
 - Never wait on `networkidle` — navigation uses `domcontentloaded` by design.
 - A blocked or error-status endpoint is still attack surface — keep crawling the others.
+- **On a captcha / bot-detection interstitial or a 403 IP/session-bound block at ANY page —
+  including the login page — do NOT finish: rotate to a FRESH session via `steel_crawl_start`
+  (new region/IP), up to 3 fresh sessions, before abandoning the target.** A fresh session is a
+  new fingerprint and a new chance against a probabilistic wall; only give up once repeated fresh
+  sessions all hard-block.
 - Always finish with `steel_crawl_finish`.
 
 ## Credentialed login (autonomous)

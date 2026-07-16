@@ -117,6 +117,35 @@ def _host_of(url: str) -> str:
     return (url or "").split("://", 1)[-1].split("/", 1)[0].split(":", 1)[0].lower()
 
 
+def _resolve_crawl_scope(extra: dict, target: str) -> list[str]:
+    """Fold each scope entry to the registrable domain of its host (dedup,
+    order-preserving). Shared by the crawl node (frontier scope) and the
+    curator node (out-of-scope BaseURL drop) so both use ONE scope.
+
+    `_host_of` first strips scheme/path/port (a scheme-prefixed entry from the
+    `[target]` fallback or an upstream `extra["scope"]` would otherwise never
+    match a bare host). The provider's `_registrable_in_scope` admits a host
+    equal to or a subdomain of any scope entry, so scope ["daytona.io"] lets the
+    frontier reach app./docs./api.daytona.io while excluding off-registrable
+    hosts (auth0/stripe/cloudfront) - the operator's "any subdomain of the
+    registrable domain" scope rule. Using this SAME fold as the curator's
+    `scope_domain` (rather than the pipeline's stricter seed-host
+    `extra["scope_domain"]`) keeps the crawled frontier and the BaseURLs the
+    curator retains on one definition, so legitimately-crawled sibling
+    subdomains survive the D14 out-of-scope drop.
+    """
+    raw_scope = extra.get("scope") or ([target] if target else [])
+    scope: list[str] = []
+    for s in raw_scope:
+        h = _host_of(s)
+        if not h:
+            continue
+        reg = registrable_domain(h) or h
+        if reg not in scope:
+            scope.append(reg)
+    return scope
+
+
 def credentials_apply_to_target(credentials: dict, target_url: str) -> bool:
     """D23-7: credentials belong to ONE app. A crawl pod attempts the login only
     when its target host is in the credentials' domain - the explicit
@@ -227,7 +256,11 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
         extra = state.get("extra") or {}
         job = state.get("job")
         target = _input_asset_url(input_asset)
-        scope = extra.get("scope") or ([target] if target else [])
+        # Resolve scope at this authoritative point via the shared helper, which
+        # folds each entry to the REGISTRABLE DOMAIN of its host (dedup,
+        # order-preserving). The curator node resolves the SAME scope so the
+        # crawl frontier and the retained BaseURLs share one definition.
+        scope = _resolve_crawl_scope(extra, target)
 
         auth_context = extra.get("auth_context") or {}
         auth_cookies = auth_context.get("cookies") or []
@@ -261,7 +294,7 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
                 # (see steel_provider._steel_crawl_start). Cookies present takes
                 # precedence over the interactive path below.
                 manifest = run_crawl_fn(target, scope=scope, auth_cookies=auth_cookies)
-            elif use_auth_signal and run_crawl_authenticated_fn is not None:
+            elif use_auth_signal and not credentials and run_crawl_authenticated_fn is not None:
                 # EARLY SURFACING (fixes the SP4 "viewer_url too late" defect):
                 # build a callback bound to this job's registry key and pass it
                 # into the authenticated crawl. `run_crawl_authenticated_fn`
@@ -323,7 +356,20 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
     def curator_node(state: CrawlPodState) -> dict:
         assets = state.get("assets", [])
         observations = state.get("observations", [])
-        assets_merged, observations_merged = curate_fn(assets, observations, state["project_id"])
+        # Thread the SAME registrable-domain scope the crawl frontier used as the
+        # curator's `scope_domain`, so the agnostic noise filter (D14/D15) drops
+        # out-of-scope BaseURLs (js.stripe.com, *.auth0.com, api.us.svix.com,
+        # *.usepylon.com) the crawl surfaces. Only-when-present so injected 3-arg
+        # fake curate_fns stay compatible.
+        extra = state.get("extra") or {}
+        target = _input_asset_url(state.get("input_asset") or {})
+        scope = _resolve_crawl_scope(extra, target)
+        curate_kwargs = {}
+        if scope:
+            curate_kwargs["scope_domain"] = scope[0]
+        assets_merged, observations_merged = curate_fn(
+            assets, observations, state["project_id"], **curate_kwargs
+        )
         viewer_url = state.get("viewer_url")
         export = PodExport(
             input_asset=state["input_asset"],

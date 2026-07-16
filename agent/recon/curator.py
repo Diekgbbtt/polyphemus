@@ -17,7 +17,7 @@ import hashlib
 import json
 import logging
 
-from agent.recon.noise_filter import filter_deltas
+from agent.recon.noise_filter import filter_deltas, filter_observations
 from agent.recon.types import AssetDelta, Edge, Observation
 
 logger = logging.getLogger(__name__)
@@ -255,6 +255,11 @@ def curate(
     assets = filter_deltas(assets, scope_domain=scope_domain)
     if seed_domain:
         assets = _promote_seed_domain(assets, seed_domain)
+    # Symmetric scope gate for observations: a triager anchoring an observation
+    # on an out-of-scope BaseURL (e.g. an Auth0/Svix third-party origin) would
+    # otherwise MERGE-create that off-scope BaseURL anchor node, bypassing the
+    # asset scope filter. Drop those the same way filter_deltas drops assets.
+    observations = filter_observations(observations, scope_domain=scope_domain)
 
     assets_merged = 0
     for delta in assets:

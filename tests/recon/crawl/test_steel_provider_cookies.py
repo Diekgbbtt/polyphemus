@@ -68,6 +68,57 @@ def test_provider_defaults_auth_cookies_to_empty(monkeypatch):
     assert provider._auth_cookies == []
 
 
+def test_looks_non_html_detects_asset_extensions():
+    from agent.recon.crawl.steel_provider import _looks_non_html
+    assert _looks_non_html("https://x.daytona.io/a/app.js") is True
+    assert _looks_non_html("https://x.daytona.io/dashboard/keys") is False
+    assert _looks_non_html("https://x.daytona.io/api/config?x=1") is False
+
+
+def test_is_html_content_type_fails_open():
+    from agent.recon.crawl.steel_provider import _is_html_content_type
+    assert _is_html_content_type("text/html; charset=utf-8") is True
+    assert _is_html_content_type("application/javascript") is False
+    assert _is_html_content_type(None) is True
+
+
+def test_enqueue_skips_non_html_but_keeps_html(monkeypatch):
+    from agent.recon.crawl.steel_provider import _Crawl
+
+    # Construct a bare _Crawl without running __init__ (which attaches page
+    # listeners to a live Playwright page); set only the fields enqueue reads.
+    crawl = _Crawl.__new__(_Crawl)
+    crawl.scope = ["daytona.io"]
+    crawl.max_depth = 3
+    crawl.visited = set()
+    crawl.queued = set()
+    crawl.frontier = []
+
+    crawl.enqueue(
+        [
+            "https://app.daytona.io/static/app.js",
+            "https://app.daytona.io/dashboard/keys",
+        ],
+        depth=1,
+    )
+    queued_urls = {f["url"] for f in crawl.frontier}
+    assert "https://app.daytona.io/dashboard/keys" in queued_urls
+    assert "https://app.daytona.io/static/app.js" not in queued_urls
+
+
+def test_regions_include_eu_datacenters():
+    from agent.recon.crawl.steel_provider import _REGIONS
+    assert {"eu-west", "eu-central"} <= set(_REGIONS)
+    # The US datacenters must not be dropped.
+    assert {"lax", "ord", "iad"} <= set(_REGIONS)
+
+
+def test_random_session_opts_region_is_a_known_region():
+    from agent.recon.crawl.steel_provider import _REGIONS, _random_session_opts
+    for _ in range(20):
+        assert _random_session_opts(False)["region"] in _REGIONS
+
+
 def test_login_succeeded_requires_both_cookie_and_off_login_nav():
     from agent.recon.crawl.steel_provider import login_succeeded
     scope = ["example.com"]

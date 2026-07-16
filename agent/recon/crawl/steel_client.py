@@ -108,10 +108,10 @@ async def get_crawl_tools(*, client_factory=None, auth_cookies=None) -> list:
     The default provider (`_default_client_factory`) exposes
     `async get_tools() -> list`; the result is filtered to `CRAWL_TOOL_NAMES`.
     `auth_cookies` (from the project's `auth_context.cookies`) is threaded to the
-    default provider so the browser context is seeded for non-interactive auth;
-    an injected `client_factory` stays a zero-arg callable (tests build the
-    provider themselves) and does not receive cookies. Raises
-    `SteelNotConfigured` when the steel.dev credential is absent.
+    default provider so the browser context is seeded for non-interactive auth.
+    An injected `client_factory` stays a zero-arg callable (tests build the
+    provider themselves) and receives nothing. Raises `SteelNotConfigured` when
+    the steel.dev credential is absent.
     """
     if not steel_configured():
         raise SteelNotConfigured(

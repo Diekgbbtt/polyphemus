@@ -138,6 +138,9 @@ async def run_crawl_credentialed(
     try:
         resolved_tools = tools
         if resolved_tools is None:
+            # The agent navigates straight to the credentials' login_url; the
+            # navigation gate was removed, so no login-host frontier exception
+            # needs threading through the provider anymore.
             resolved_tools = await steel_client.get_crawl_tools()
         mcp_manager = _ToolsManager(resolved_tools)
 

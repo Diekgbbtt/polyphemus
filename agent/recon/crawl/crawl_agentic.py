@@ -158,7 +158,18 @@ async def _run_agentic_crawl(
 
     llm = build_llm_fn(body.model, body.user_id)
     all_tools = await mcp_manager.get_tools()
-    tools = [t for t in all_tools if getattr(t, "name", "") in CRAWL_TOOL_NAMES]
+    # `steel_await_auth` is the INTERACTIVE (human-in-the-viewer) login tool. It
+    # is bound ONLY on the pre-created interactive path (which explicitly drives
+    # it). Autonomous credentialed / anonymous crawls must NOT see it: with no
+    # human at the viewer it just blocks the whole session until timeout, and
+    # the D23 autonomous flow detects login success itself (an in-scope session
+    # cookie on an in-scope non-login page - see the credentialed user message).
+    # The tool + its predicates stay in steel_provider.py (parked, not deleted)
+    # so the interactive path can be picked up again later.
+    bound_names = set(CRAWL_TOOL_NAMES)
+    if not pre_created_crawl_id:
+        bound_names.discard("steel_await_auth")
+    tools = [t for t in all_tools if getattr(t, "name", "") in bound_names]
     by_name = {t.name: t for t in tools}
     llm_t = llm.bind_tools(tools)
 
@@ -186,13 +197,16 @@ async def _run_agentic_crawl(
             f"Begin by calling steel_crawl_start. You must AUTHENTICATE with these credentials BEFORE "
             f"crawling:\n"
             f"1. steel_navigate to login_url={creds.get('login_url')!r}.\n"
-            f"2. Fill the login form with username={creds.get('username')!r} and the provided password "
+            f"2. Fill the login form with username={creds.get('username')!r} and password={creds.get('password')!r} "
             f"using steel_eval; {sel}.\n"
             f"3. steel_click the submit control EXACTLY ONCE. Do NOT resubmit on failure (account lockout).\n"
             f"4. Verify success: an in-scope session cookie appeared AND you are on an in-scope non-login "
-            f"page. If instead you are redirected off {body.scope} (SSO/OAuth), see a second factor / "
-            f"one-time code / captcha, or find no login form, you are BLOCKED: do NOT loop - call "
-            f"steel_crawl_finish with whatever is reachable and stop.\n"
+            f"page. Genuine AUTH blocks - redirected off {body.scope} (SSO/OAuth), a second factor / "
+            f"one-time code AFTER submit, or no login form - mean you are BLOCKED: do NOT loop, call "
+            f"steel_crawl_finish with whatever is reachable and stop. A page-load / pre-submit CAPTCHA "
+            f"or bot-detection interstitial or a 403 bot wall (IP/session-bound) is NOT a reason to "
+            f"finish: follow the skill's rotation rule - abandon the session and call steel_crawl_start "
+            f"for a FRESH one (new region, new IP), up to 3 fresh sessions, then re-attempt the login.\n"
             f"5. Once authenticated, crawl the now-authenticated routes, then steel_crawl_finish.\n"
             f"max_depth={body.max_depth} max_pages={body.max_pages} wait_ms={body.navigate_wait_ms}"
         )

@@ -57,6 +57,43 @@ def _registrable_in_scope(host: str, scope: list) -> bool:
     return any(host == s.lower() or host.endswith("." + s.lower()) for s in scope)
 
 
+# Non-HTML asset extensions the crawl frontier must never enqueue: only HTML
+# documents belong in the navigation frontier (Change B, content-type fold).
+_NON_HTML_EXTS = frozenset(
+    {
+        "js", "mjs", "cjs", "css", "map", "json", "xml",
+        "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "avif", "bmp",
+        "woff", "woff2", "ttf", "otf", "eot",
+        "pdf", "zip", "gz", "tar",
+        "mp4", "webm", "mp3", "wav",
+        "wasm", "txt", "csv",
+    }
+)
+
+
+def _looks_non_html(url: str) -> bool:
+    """True when the URL path's final segment ends with a known non-HTML asset
+    extension. Query/fragment are ignored (parsed off via urlparse)."""
+    try:
+        path = urlparse(url or "").path or ""
+    except Exception:
+        return False
+    last = path.rsplit("/", 1)[-1]
+    if "." not in last:
+        return False
+    ext = last.rsplit(".", 1)[-1].lower()
+    return ext in _NON_HTML_EXTS
+
+
+def _is_html_content_type(ct: str | None) -> bool:
+    """True when the response Content-Type is HTML (or unknown). Fails OPEN: an
+    absent/unparseable content-type is allowed so we never drop a real page."""
+    if not ct:
+        return True
+    ct = ct.lower()
+    return "text/html" in ct or "application/xhtml" in ct
+
+
 def _is_session_like_cookie(c: dict) -> bool:
     """A cookie that plausibly represents an authenticated session."""
     return bool(_SESSION_COOKIE_RE.search(c.get("name", "") or "")) or bool(c.get("httpOnly"))
@@ -102,8 +139,13 @@ def login_succeeded(baseline_names: set, current_cookies: list, url: str, scope:
 # Per-session fingerprint randomisation - ported verbatim
 # ---------------------------------------------------------------------------
 
-# scl/fra/nrt are deprecated and 400 at create; only lax/ord/iad accept sessions.
-_REGIONS = ["lax", "ord", "iad"]
+# US datacenters (lax/ord/iad) plus the current EU region aliases (eu-west/
+# eu-central). The old scl/fra/nrt codes were deprecated in favor of these
+# aliases; keeping an EU egress in the pool lets fresh-session rotation escape
+# an IP/session-bound bot wall by moving to a different region/IP. If Steel ever
+# rejects a region, `_create_steel_session`'s create fallback ladder retries
+# without it, so an unknown alias degrades gracefully rather than failing.
+_REGIONS = ["lax", "ord", "iad", "eu-west", "eu-central"]
 # Linux-only UAs ON PURPOSE: Steel runs on Linux and does not override
 # navigator.platform, so a Windows/Mac UA would mismatch the platform (a bot tell).
 _UAS = [
@@ -215,6 +257,8 @@ class _Crawl:
             return
         for u in urls:
             if not _registrable_in_scope(urlparse(u).netloc, self.scope):
+                continue
+            if _looks_non_html(u):
                 continue
             if u in self.visited or u in self.queued:
                 continue
@@ -422,9 +466,15 @@ class SteelCrawlProvider:
             return {"error": "unknown crawl_id"}
         if crawl.pages_done >= crawl.max_pages:
             return {"error": "page_cap_reached", **crawl.frontier_view()}
-        if not any(f["url"] == url for f in crawl.frontier):
-            return {"error": "url_not_in_frontier", **crawl.frontier_view()}
-
+        # No navigation allowlist: the agent may navigate to ANY url its
+        # reasoning chooses, on or off the frontier. The operator prefers to
+        # trust the agent's navigation judgment; scope is enforced on what gets
+        # RECORDED (the `enqueue` scope filter on discovered links below, plus
+        # the curator's out-of-scope BaseURL drop), never by refusing a
+        # navigation. Dropping the old exact-string frontier gate also removes
+        # the fragility where a semantically-in-scope URL variant (e.g. a
+        # trailing-slash form of the target) was rejected as `url_not_in_frontier`
+        # and left the anonymous crawl stuck on about:blank.
         crawl.last_active = time.time()
         depth = next((f["depth"] for f in crawl.frontier if f["url"] == url), 0)
         crawl.current_depth = depth
@@ -434,6 +484,7 @@ class SteelCrawlProvider:
         crawl.pages_done += 1
 
         blocked, block_type, status = False, None, 0
+        is_html = True
         try:
             resp = await crawl.page.goto(url, wait_until="domcontentloaded", timeout=20000)
             status = resp.status if resp else 0
@@ -442,11 +493,25 @@ class SteelCrawlProvider:
                 block_type = str(status)
             if "captcha" in (crawl.page.url or "").lower():
                 blocked, block_type = True, "captcha"
+            # Content-Type fold: only extract/enqueue links from HTML responses.
+            # Best-effort - a missing/odd header must never raise (fail open).
+            if resp is not None:
+                try:
+                    headers = resp.headers
+                    ct = None
+                    if isinstance(headers, dict):
+                        ct = next(
+                            (v for k, v in headers.items() if str(k).lower() == "content-type"),
+                            None,
+                        )
+                    is_html = _is_html_content_type(ct)
+                except Exception:
+                    is_html = True
         except Exception as e:
             return {"error": str(e), **crawl.frontier_view()}
 
         new_links: list = []
-        if status not in (401, 403, 404):
+        if status not in (401, 403, 404) and is_html:
             try:
                 for _ in range(random.randint(2, 4)):
                     await crawl.page.mouse.move(

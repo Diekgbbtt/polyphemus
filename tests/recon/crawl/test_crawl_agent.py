@@ -170,6 +170,20 @@ def test_load_skill_reads_file_next_to_module():
     assert "steel_crawl_finish" in text
 
 
+def test_skill_has_fresh_session_rotation_hard_rule():
+    text = crawl_agent._load_skill()
+    lower = text.lower()
+    # The rotation guidance must be promoted to a top-level hard rule.
+    hard_rules_idx = lower.index("## hard rules")
+    hard_rules = lower[hard_rules_idx:]
+    assert "fresh session" in hard_rules
+    assert "steel_crawl_start" in hard_rules
+    assert "rotat" in hard_rules
+    # It must explicitly cover the login page and the 3-session cap.
+    assert "login" in hard_rules
+    assert "3" in hard_rules
+
+
 def test_run_crawl_forwards_auth_cookies_to_get_crawl_tools(monkeypatch):
     # When tools are NOT injected, run_crawl builds them via
     # steel_client.get_crawl_tools and must forward auth_cookies so the default
@@ -223,6 +237,71 @@ def test_credentialed_login_prompt_names_login_url_and_submit_once():
     assert "credentials" in text.lower()
     assert "u" in text
     assert "once" in text.lower()
+
+
+def test_credentialed_login_prompt_routes_captcha_to_fresh_session_rotation():
+    import asyncio
+    from agent.recon.crawl import crawl_agentic
+
+    captured = {}
+
+    class FakeLLM:
+        def bind_tools(self, tools): return self
+        async def ainvoke(self, messages):
+            captured["messages"] = messages
+            from langchain_core.messages import AIMessage
+            return AIMessage(content="", tool_calls=[])  # no tools -> loop ends fast
+
+    class FakeMgr:
+        async def get_tools(self): return []
+
+    body = crawl_agentic.AgenticCrawlRequest(
+        target="https://app.example.com", scope=["example.com"], model="crawler",
+        max_iterations=1,
+        credentials={"username": "u", "password": "pw", "login_url": "https://login.example.com/"},
+    )
+    asyncio.run(crawl_agentic._run_agentic_crawl(body, FakeMgr(), build_llm_fn=lambda m, u: FakeLLM()))
+
+    text = captured["messages"][1].content  # the HumanMessage
+    lower = text.lower()
+    # (a) A page-load / bot-wall captcha or 403 must route to a FRESH-session
+    #     rotation, not an immediate finish.
+    assert "fresh session" in lower or "steel_crawl_start" in text
+    assert "rotat" in lower
+    assert "new ip" in lower
+    # (b) The BLOCKED-and-finish path is still reserved for genuine auth blocks.
+    assert "blocked" in lower
+    assert "sso" in lower or "oauth" in lower
+    assert "second factor" in lower or "one-time" in lower
+    # captcha is no longer in the immediate-finish list; the finish path is for
+    # SSO/OAuth / 2FA / no login form only.
+
+
+def test_credentialed_login_prompt_interpolates_password_value():
+    import asyncio
+    from agent.recon.crawl import crawl_agentic
+
+    captured = {}
+
+    class FakeLLM:
+        def bind_tools(self, tools): return self
+        async def ainvoke(self, messages):
+            captured["messages"] = messages
+            from langchain_core.messages import AIMessage
+            return AIMessage(content="", tool_calls=[])  # no tools -> loop ends fast
+
+    class FakeMgr:
+        async def get_tools(self): return []
+
+    body = crawl_agentic.AgenticCrawlRequest(
+        target="https://app.example.com", scope=["example.com"], model="crawler",
+        max_iterations=1,
+        credentials={"username": "u", "password": "S3ntinelPw!", "login_url": "https://login.example.com/"},
+    )
+    asyncio.run(crawl_agentic._run_agentic_crawl(body, FakeMgr(), build_llm_fn=lambda m, u: FakeLLM()))
+
+    text = captured["messages"][1].content  # the HumanMessage
+    assert "S3ntinelPw!" in text
 
 
 def test_run_crawl_credentialed_threads_credentials_into_request(monkeypatch):

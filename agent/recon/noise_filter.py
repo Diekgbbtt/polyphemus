@@ -29,7 +29,7 @@ import re
 from typing import Literal
 from urllib.parse import urlparse
 
-from agent.recon.types import AssetDelta
+from agent.recon.types import AssetDelta, Observation
 
 # --- D16: webapp/restapi profiling ------------------------------------------
 # Classify a probed URL from httpx-observable signals so API-specific tools
@@ -317,4 +317,39 @@ def filter_deltas(
         if scope_domain and _delta_out_of_scope(delta, scope_domain):
             continue
         kept.append(delta)
+    return kept
+
+
+def filter_observations(
+    observations: list[Observation], scope_domain: str | None = None
+) -> list[Observation]:
+    """Drop observations whose anchor is a URL-hosted node (BaseURL) outside
+    scope_domain, mirroring filter_deltas for assets. Non-URL anchors
+    (Domain/Subdomain/IP/Service) are untouched - their scope is the D14
+    discovery gate, not this URL filter. No-op when scope_domain is falsy.
+
+    Fail-open: an observation whose anchor host cannot be resolved is kept -
+    scope filtering never drops an observation it cannot classify.
+    """
+    if not scope_domain:
+        return observations
+
+    kept: list[Observation] = []
+    for obs in observations:
+        anchor = obs.anchor if isinstance(obs.anchor, dict) else {}
+        # Only BaseURL anchors are URL-hosted (the sole URL-bearing type in
+        # ANCHOR_ALLOWLIST); every other anchor type is out of this filter's scope.
+        if anchor.get("type") == "BaseURL":
+            identity = anchor.get("identity")
+            url = ""
+            if isinstance(identity, dict):
+                for key in ("url", "baseurl", "name"):
+                    val = identity.get(key)
+                    if isinstance(val, str) and val:
+                        url = val
+                        break
+            host = _host_of_url(url)
+            if host and not host_in_scope(host, scope_domain):
+                continue
+        kept.append(obs)
     return kept

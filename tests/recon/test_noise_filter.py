@@ -6,8 +6,13 @@ PRESERVE seed sets, the fingerprint rules, and the delta-level filter behavior
 """
 import pytest
 
-from agent.recon.noise_filter import classify_endpoint, filter_deltas, host_in_scope
-from agent.recon.types import AssetDelta, Edge
+from agent.recon.noise_filter import (
+    classify_endpoint,
+    filter_deltas,
+    filter_observations,
+    host_in_scope,
+)
+from agent.recon.types import AssetDelta, Edge, Observation
 
 
 # --- static-render path segments all drop ---------------------------------
@@ -259,6 +264,80 @@ def test_www_baseurl_and_children_dropped():
     kept = filter_deltas([www_base, www_ep, keep_base])
     assert keep_base in kept
     assert www_base not in kept and www_ep not in kept
+
+
+# --- filter_observations: symmetric scope filter for observation anchors -----
+
+def _observation(anchor, evidence="ev"):
+    return Observation(
+        macro_kind="auth",
+        severity="info",
+        evidence=evidence,
+        rationale="r",
+        anchor=anchor,
+        source_job="job",
+        source_tool="tool",
+    )
+
+
+def _baseurl_anchor(url):
+    return {"type": "BaseURL", "identity": {"url": url}}
+
+
+def test_filter_observations_drops_out_of_scope_baseurl_anchor():
+    obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
+    assert filter_observations([obs], scope_domain="daytona.io") == []
+
+
+@pytest.mark.parametrize("url", [
+    "https://app.daytona.io",
+    "https://docs.daytona.io",
+    "https://daytona.io/callback",
+])
+def test_filter_observations_keeps_in_scope_baseurl_anchor(url):
+    obs = _observation(_baseurl_anchor(url))
+    assert filter_observations([obs], scope_domain="daytona.io") == [obs]
+
+
+@pytest.mark.parametrize("anchor", [
+    {"type": "Subdomain", "identity": {"name": "daytonaio.us.auth0.com"}},
+    {"type": "Domain", "identity": {"name": "auth0.com"}},
+    {"type": "IP", "identity": {"address": "203.0.113.7"}},
+    {"type": "Service", "identity": {"name": "svix"}},
+])
+def test_filter_observations_keeps_non_baseurl_anchors(anchor):
+    """Non-URL anchors are untouched - their scope is the D14 discovery gate."""
+    obs = _observation(anchor)
+    assert filter_observations([obs], scope_domain="daytona.io") == [obs]
+
+
+def test_filter_observations_noop_without_scope_domain():
+    obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
+    assert filter_observations([obs], scope_domain=None) == [obs]
+
+
+def test_filter_observations_fails_open_on_unresolvable_host():
+    """A BaseURL anchor with no resolvable host is kept (fail-open)."""
+    obs = _observation({"type": "BaseURL", "identity": {}})
+    assert filter_observations([obs], scope_domain="daytona.io") == [obs]
+
+
+# --- curate-level integration: observation scope drop ----------------------
+
+def test_curate_drops_out_of_scope_observation_anchor():
+    from agent.recon.curator import curate
+    obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
+    merged = curate([], [obs], "p", merge_fn=lambda cypher, params: None,
+                    scope_domain="daytona.io")
+    assert merged == (0, 0)
+
+
+def test_curate_keeps_observation_when_no_scope_domain():
+    from agent.recon.curator import curate
+    obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
+    merged = curate([], [obs], "p", merge_fn=lambda cypher, params: None,
+                    scope_domain=None)
+    assert merged == (0, 1)
 
 
 # --- D16 webapp/restapi profiling ---
