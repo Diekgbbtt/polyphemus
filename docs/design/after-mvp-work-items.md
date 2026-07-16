@@ -86,4 +86,18 @@ The MVP wires the *general* disciplines and the *interface*; this item supplies 
 
 ---
 
+## AMV-5 — Richer L0 data-surface extraction for field-level DataItem granularity
+
+**Status:** proposed.
+**Raised:** 2026-07-16, from the soupmarket.shop (OWASP Juice Shop) data-rich e2e.
+**Observation:** the analyser lifted 10 faithful, well-named DataItems (`user_identity`, `user_credential`, `payment_card`, `basket_item`, `product`, `order`, `address`, `complaint`, `feedback`, `challenge`) but their `SURFACES_AT` edges land on whole **Endpoints** (e.g. `/api/Cards`), not fine-grained `Parameter`/`Header`/response-field sites as the design intends (§6, L1D-13). Root cause is the L0 surface, not L1: on this run `arjun` recovered only 5 Parameters and `jsluice` recovered 0 (the Angular bundles weren't lifted — katana surfaced no `.js` Endpoints for jsluice to consume, so its consumes_where `.js`/`.mjs` selector matched nothing). With no field-level surface to attach to, the analyser reasonably fell back to endpoint-level surfacing. **Deliverable:** improve the L0 data surface so DataItems can surface at the field level — (a) investigate why katana yields no `.js` Endpoints for jsluice on an SPA (so the client-side JS data model is recovered), (b) response-field/JSON-body extraction (D25 runtime capture) so response data items get typed sites, (c) richer arjun param coverage. This is recon-layer work that raises DataItem fidelity; the L1 substrate already accepts field-level `SURFACES_AT` (any L0 label), so no L1 change is needed.
+
+## AMV-6 — DataRelationship population via phase-B reflection
+
+**Status:** proposed.
+**Raised:** 2026-07-16, same e2e (`data_relationships: 0`).
+**Observation:** the DataRelationship vocabulary + storage are built (FR-ENRICH) and the analyser correctly wrote Tier-1 `CONSUMES` trust assumptions (e.g. `shopping-basket CONSUMES product` *"Basket items reference products by ID"*), but it posited zero `DATA_RELATIONSHIP` functional-dependency edges (`derived_from`/`equals_hash_of`/…) in a single forward pass. These invariants (e.g. an order total derived from basket item price×quantity) need the deeper phase-B reflection loop (spec §7.3/§7.5) over the already-laid data flows, not a first-pass classification. **Deliverable:** the phase-B analyser reflection that, given the DataItems + flows, hypothesises DataRelationships and verifies them via interface-B backward recon (ties to AMV-1). Deferred to the phase-B reasoning area; the substrate is ready.
+
+---
+
 <!-- Append new after-MVP work items below as AMV-n, newest last. Keep each item self-contained: intent, relation to MVP areas, deliverable shape, and why deferred. -->

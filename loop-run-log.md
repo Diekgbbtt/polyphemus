@@ -217,3 +217,17 @@ Append one entry per iteration. Prune entries older than 30 days.
   "notes": "Independent re-verifier APPROVED the 3 e2e-caught fixes (vocabulary_prompt single-sourced+injected both prompts; unified curate_fn(batch,project_id,provenance)+default_curate_with_enrichment_fn wired as default with fail-open+system-provenance intact; _L0_REFERENCE_GUIDE label=type). Ran 36 unit + 9 integration (live neo4j, no skips) + 34 regression itself; denylist (curator.py/schema.py/.env) untouched; MVP-fence honored. One non-blocking note: default_curate_with_enrichment_fn had no end-to-end test (inspection-only). CLOSED by maker: added test_default_curate_with_enrichment_writes_core_and_enrichment (asserts core+enrich both fire, catalogue seeded, run-scoped provenance injected) + test_default_curate_with_enrichment_skips_enrich_when_no_enrichment_deltas. 90-test regression green. All 5 L1 FR areas + the e2e fixes now verified."
 }
 ```
+
+```json
+{
+  "run_id": "2026-07-17T-e2e-soupmarket-datarich",
+  "fr_area": "e2e (data-rich) — DataItem validation",
+  "attempt": 1,
+  "assertions_green": null,
+  "assertions_total": null,
+  "tokens_estimate": 2100000,
+  "escalations": 0,
+  "outcome": "done",
+  "notes": "Data-rich e2e vs soupmarket.shop (= OWASP Juice Shop, Angular SPA + REST API). New project; recon pipeline [httpx,katana,jsluice,httpx_reprofile,arjun] all success (katana 367 assets, arjun 9, jsluice 0). L0 surface: 133 Endpoints, 5 Parameters, 13 Headers. Analyser: 17 services, 7 systems, 55 AGGREGATES, enrichment {data_items:10, surfaces_at:15, data_flows:12, data_relationships:0, system_edges:28}, err=None. DataItem ASSESSMENT: (faithfulness) HIGH - all 10 items map to real Juice Shop endpoints, zero hallucination; (exhaustiveness) GOOD on high-value entities (user_identity, user_credential, payment_card, order, basket_item, product, address, complaint, feedback, challenge), partial on long tail (no review/wallet/quantity as distinct items); (vocabulary) EXCELLENT - semantic consistent snake_case business entities, notably splits user_identity vs user_credential (identity vs secret - an adversarial distinction). Real Tier-1 trust captured: shopping-basket CONSUMES product 'reference products by ID', order-management CONSUMES basket_item 'created from basket items at checkout'. Observations -> AMV-5 (SURFACES_AT lands on Endpoints not fields because arjun/jsluice thin surface; recon-layer, L1 accepts field-level already), AMV-6 (data_relationships=0 needs phase-B reflection). Stale pool: 79/133 endpoints unassigned -> FR-SWEEP well-motivated. Project soup_8b2797ad left in graph for inspection. Next loop phase: FR-TEMPLATE (ratified door D5)."
+}
+```

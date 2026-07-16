@@ -1,6 +1,6 @@
 # Loop State — polymerhus L1-MVP
 
-Last run: 2026-07-16 (Model fixed; repeated e2e. FULL pipeline (bootstrap->recon->analyser) runs clean end-to-end vs live target, err=None. Caught+fixed 3 analyser-prompt/wiring defects; AGGREGATES assignments now land live. 129 mocked tests green. 5 FR areas complete + verified.)
+Last run: 2026-07-17 (Committed 7 components; data-rich e2e vs soupmarket.shop=Juice Shop validated DataItems (10, faithful+well-named); FR-TEMPLATE DONE+verifier-APPROVED. 6 FR areas complete + verified.)
 
 ## Post-verification changes to already-APPROVED areas (re-verification offered)
 
@@ -51,7 +51,7 @@ Order follows the staged build order; do not start a second area until the first
 | FR-ELICIT | 3 | backlog | — | Dep: FR-LCUR, FR-ANALYSER. |
 | FR-ENRICH | 3 | backlog | — | Dep: FR-ELICIT. Blocked-on-unbuilt D25 (rich data-flow). |
 | FR-PODSTREAM | 3 | backlog | — | Dep: FR-ANALYSER. |
-| FR-TEMPLATE | 3 | backlog | — | Lands with FR-ELICIT assignment. |
+| FR-TEMPLATE | 3 | **DONE (verifier-APPROVED)** | — | endpoint_template(path) collapses numeric/uuid segments to {id}, written on the AGGREGATES edge at assignment (L1D-32/door D5). 10 unit + 1 integration green. |
 | FR-SWEEP | 3 | backlog | — | Dep: FR-LCUR, FR-ELICIT. |
 | FR-INDEXCARD | 3 | backlog | — | Dep: FR-LCUR, FR-ENRICH. |
 | FR-SKILLIF | 4 | backlog | — | Precedes anatomy skills; may parallel storage. |
