@@ -59,6 +59,16 @@ CREATE TABLE IF NOT EXISTS recon_jobs (
 );
 ALTER TABLE recon_runs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS recon_runs_status_idx ON recon_runs (status);
+-- Interface agreement B (L1D-26): a targeted AnalyserReconRequest job carries a
+-- correlation_id (result routed back by it), a requester_id (…to this agent
+-- instance), and an origin (analyser|anatomy_skill). Idempotent, mirroring the
+-- last_heartbeat_at ALTER above. Also applied at runtime by
+-- agent/app/clients/pg.py::ensure_recon_schema so the persistent dev DB and CI
+-- self-heal without a volume reset (init.sql only runs on first volume init).
+ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS correlation_id TEXT;
+ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS requester_id   TEXT;
+ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS origin         TEXT;
+CREATE INDEX IF NOT EXISTS recon_jobs_correlation_idx ON recon_jobs (correlation_id);
 CREATE TABLE IF NOT EXISTS ingest_runs (
     ingest_id   TEXT PRIMARY KEY,
     project_id  TEXT NOT NULL,

@@ -20,6 +20,35 @@ async def ensure_checkpoint_tables() -> None:
 _TERMINAL_RUN_STATUSES = {"complete", "failed"}
 _TERMINAL_JOB_STATUSES = {"success", "degraded", "failed", "skipped"}
 
+# Out-of-band phase sentinel: a targeted AnalyserReconRequest job (interface
+# agreement B) runs OUTSIDE the linear phase plan, so it is stored with a
+# negative phase that no pipeline phase index can collide with. The row stays
+# uniquely keyed by the existing UNIQUE(run_id, phase, job) via a
+# correlation-qualified job name (see record_targeted_job).
+TARGETED_PHASE = -1
+
+# Forward, additive migrations applied at runtime so the persistent dev DB and
+# CI self-heal without a volume reset (init.sql's docker-entrypoint-initdb.d
+# mount only runs on first volume init). Each is idempotent (IF NOT EXISTS) and
+# is ALSO present in db/postgres/init.sql as the fresh-clone baseline; keep the
+# two in sync. Applied at startup (agent/app/main.py) and by test fixtures.
+_RECON_SCHEMA_MIGRATIONS = (
+    "ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS correlation_id TEXT",
+    "ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS requester_id TEXT",
+    "ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS origin TEXT",
+    "CREATE INDEX IF NOT EXISTS recon_jobs_correlation_idx ON recon_jobs (correlation_id)",
+)
+
+
+def ensure_recon_schema() -> None:
+    """Apply the idempotent recon-registry migrations. Mirrors
+    neo4j_client.ensure_schema (runtime schema application) for the Postgres
+    side, so an already-initialised DB gains the interface-B columns without a
+    destructive volume reset. Safe to call repeatedly."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        for stmt in _RECON_SCHEMA_MIGRATIONS:
+            cur.execute(stmt)
+
 
 def create_project(project_id: str, name: str) -> None:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
@@ -170,6 +199,64 @@ def touch_run_heartbeat(run_id: str) -> None:
     """Bump last_heartbeat_at to now() to prove the run's process is alive."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute("UPDATE recon_runs SET last_heartbeat_at = now() WHERE run_id = %s", (run_id,))
+
+
+def record_targeted_job(
+    run_id: str,
+    tool: str,
+    status: str,
+    *,
+    correlation_id: str,
+    requester_id: str,
+    origin: str,
+    stats: dict | None = None,
+    error: str | None = None,
+) -> None:
+    """Persist a targeted AnalyserReconRequest job (interface agreement B) into
+    recon_jobs, carrying correlation_id/requester_id/origin so the result is
+    retrievable by correlation_id (get_job_by_correlation) and routable back to
+    requester_id.
+
+    Stored at the out-of-band TARGETED_PHASE with a correlation-qualified job
+    name so it never collides with a linear-phase job of the same tool under the
+    existing UNIQUE(run_id, phase, job); re-recording the same correlation_id is
+    an idempotent upsert of its status/stats."""
+    finished_at_expr = "now()" if status in _TERMINAL_JOB_STATUSES else "NULL"
+    job_name = f"targeted:{tool}:{correlation_id}"
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO recon_jobs (run_id, phase, job, status, started_at, "
+            f"finished_at, stats, error, correlation_id, requester_id, origin) "
+            f"VALUES (%s, %s, %s, %s, now(), {finished_at_expr}, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (run_id, phase, job) DO UPDATE SET "
+            "status = EXCLUDED.status, finished_at = EXCLUDED.finished_at, "
+            "stats = EXCLUDED.stats, error = EXCLUDED.error, "
+            "correlation_id = EXCLUDED.correlation_id, "
+            "requester_id = EXCLUDED.requester_id, origin = EXCLUDED.origin",
+            (run_id, TARGETED_PHASE, job_name, status, json.dumps(stats or {}),
+             error, correlation_id, requester_id, origin),
+        )
+        cur.execute("UPDATE recon_runs SET last_heartbeat_at = now() WHERE run_id = %s", (run_id,))
+
+
+def get_job_by_correlation(correlation_id: str) -> dict | None:
+    """Return the targeted-recon registry row for a correlation_id, or None.
+    The reader half of interface agreement B's routed-result contract."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, run_id, phase, job, status, stats, error, "
+            "correlation_id, requester_id, origin "
+            "FROM recon_jobs WHERE correlation_id = %s ORDER BY id DESC LIMIT 1",
+            (correlation_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "id": row[0], "run_id": row[1], "phase": row[2], "job": row[3],
+            "status": row[4], "stats": row[5], "error": row[6],
+            "correlation_id": row[7], "requester_id": row[8], "origin": row[9],
+        }
 
 
 _JOB_COUNT_KEYS = ("in_progress", "success", "degraded", "skipped", "failed")
