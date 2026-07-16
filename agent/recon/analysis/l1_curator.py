@@ -347,6 +347,26 @@ def l1_curate(
 # keys are interpolated into Cypher; validate them as strict identifiers first.
 _SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
+# Endpoint-template key (L1D-32 / ratified door D5). A path segment that is all
+# digits or a UUID is an instance identifier; collapsing it to `{id}` yields the
+# template key so concretisation can later dedup `/products/1`, `/products/2`, ...
+# to one representative (the full equivalence-class reducer is NM-10). The key
+# MUST be written at assignment time - it cannot be reconstructed from concrete
+# paths after the fact (the spec's assumption that katana already yields
+# templates is false; katana emits concrete paths).
+_UUID_RE = re.compile(r"^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{4}-[0-9a-fA-F]{12}$")
+
+
+def endpoint_template(path: str) -> str:
+    """Pure: derive the endpoint-template key from a concrete path by replacing
+    each numeric or UUID segment with the `{id}` placeholder. Idempotent (a path
+    already templated, or with no id segments, is returned unchanged). Preserves
+    a trailing/leading slash structure by templating per `/`-segment."""
+    if not isinstance(path, str) or not path:
+        return path
+    return "/".join("{id}" if (seg.isdigit() or _UUID_RE.match(seg)) else seg
+                    for seg in path.split("/"))
+
 
 def build_aggregates_cypher(delta: AggregatesDelta) -> tuple[str, dict]:
     """Pure: MERGE the native `(:L1Service)-[:AGGREGATES {envelope}]->(:L0)` edge
@@ -386,7 +406,7 @@ def build_aggregates_cypher(delta: AggregatesDelta) -> tuple[str, dict]:
     for k in id_keys:
         params[f"l0_{k}"] = l0.identity[k]
 
-    cypher = "\n".join([
+    lines = [
         # MATCH (never MERGE) the L0 target: l1_curator must never create L0 nodes.
         f"MATCH (l0:{l0.label} {{{l0_clause}, project_id: $project_id}})",
         # MERGE (not SET) the Service endpoint: this writer references the unit,
@@ -398,8 +418,15 @@ def build_aggregates_cypher(delta: AggregatesDelta) -> tuple[str, dict]:
         "SET r.confidence = $confidence, r.status = $status, r.evidence_refs = $evidence_refs",
         "SET r.prov_job = $prov_job, r.prov_model = $prov_model, r.prov_prompt_id = $prov_prompt_id",
         "SET r.ts = coalesce($ts, toString(datetime()))",
-    ])
-    return cypher, params
+    ]
+    # Endpoint-template key (L1D-32): preserve it on the AGGREGATES edge at
+    # assignment when the aggregated L0 element is an Endpoint with a path. Kept
+    # on the L1-side edge because l1_curator must not write the L0 node.
+    if l0.label == "Endpoint" and isinstance(l0.identity.get("path"), str):
+        params["endpoint_template"] = endpoint_template(l0.identity["path"])
+        lines.append("SET r.endpoint_template = $endpoint_template")
+
+    return "\n".join(lines), params
 
 
 def write_aggregates(

@@ -293,3 +293,28 @@ def test_aggregates_missing_l0_target_is_noop(session, project):
     ).single()["c"]
     assert no_edge == 0  # no edge created
     assert _count(session, "Endpoint", project) == 0  # l1_curator did NOT create an L0 node
+
+
+# --- FR-TEMPLATE (L1D-32): the endpoint-template key is preserved at assignment ---
+
+def test_endpoint_template_key_persisted_and_shared_across_instances(session, project):
+    mf = _merge_fn(session)
+    l1_curator.l1_curate([ServiceDelta(business_function_slug="sales-analysis", provenance=PROV)], [], project, merge_fn=mf)
+    # two concrete instance endpoints of the same template land in L0
+    for sid in ("1", "2"):
+        _write_l0_endpoint(session, project, identity={"path": f"/sellers/{sid}/sales", "method": "GET", "baseurl": "https://a"})
+    # assign both to the service
+    for sid in ("1", "2"):
+        l1_curator.write_aggregates(
+            [AggregatesDelta(service_slug="sales-analysis",
+                             l0=L0Ref(label="Endpoint", identity={"path": f"/sellers/{sid}/sales", "method": "GET", "baseurl": "https://a"}),
+                             envelope=ENV)],
+            project, merge_fn=mf,
+        )
+    # both AGGREGATES edges carry the SAME template key (the concretisation handle)
+    templates = [r["t"] for r in session.run(
+        "MATCH (:L1Service {project_id: $p, business_function_slug: 'sales-analysis'})-[r:AGGREGATES]->(:Endpoint) "
+        "RETURN r.endpoint_template AS t ORDER BY t", p=project)]
+    assert templates == ["/sellers/{id}/sales", "/sellers/{id}/sales"]
+    # the raw member set stays distinct (2 concrete endpoints), the template collapses to 1 class
+    assert len(set(templates)) == 1
