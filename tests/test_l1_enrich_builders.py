@@ -126,9 +126,60 @@ def test_system_edge_typed_label_and_role():
         SystemEdgeDelta(service_slug="sales-analysis", system_kind="AuthorizationSystem",
                         rel="AUTHORIZED_BY", role="seller", provenance=PROV)
     )
-    assert "MERGE (s)-[r:AUTHORIZED_BY]->(sy)" in cy
+    # role is part of the edge IDENTITY (in the MERGE key) so multiple roles coexist
+    assert "MERGE (s)-[r:AUTHORIZED_BY {role: $role}]->(sy)" in cy
     assert "SET r.role = $role" in cy
     assert params["role"] == "seller"
+
+
+def test_system_edge_role_realm_in_merge_key_so_multiple_coexist():
+    """Regression (FR-NFR §15 walkthrough): a rel-ONLY MERGE collapsed multiple
+    AUTHORIZED_BY {role} edges between one Service and the AuthorizationSystem into
+    one (last role wins). role/realm must be in the MERGE key so distinct roles/
+    realms are distinct edges."""
+    cy_role, _ = l1_curator.build_system_edge_cypher(
+        SystemEdgeDelta(service_slug="s", system_kind="AuthenticationMechanism",
+                        rel="AUTHENTICATED_BY", realm="idp", provenance=PROV))
+    assert "MERGE (s)-[r:AUTHENTICATED_BY {realm: $realm}]->(sy)" in cy_role
+    # an edge with BOTH role and realm keys on both
+    cy_both, _ = l1_curator.build_system_edge_cypher(
+        SystemEdgeDelta(service_slug="s", system_kind="AuthorizationSystem",
+                        rel="AUTHORIZED_BY", role="seller", realm="credential", provenance=PROV))
+    assert "role: $role" in cy_both and "realm: $realm" in cy_both
+
+
+def test_system_edge_no_role_realm_keeps_rel_only_merge():
+    """A plain system edge (no role/realm, e.g. EXPOSED_VIA) keeps the rel-only
+    MERGE - one such edge per (service, system) is correct and stays idempotent."""
+    cy, _ = l1_curator.build_system_edge_cypher(
+        SystemEdgeDelta(service_slug="s", system_kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV))
+    assert "MERGE (s)-[r:EXPOSED_VIA]->(sy)" in cy
+    assert "{role:" not in cy and "{realm:" not in cy
+
+
+def test_secondary_writers_stamp_node_provenance_on_create_only():
+    """Regression (FR-NFR §15 walkthrough): the secondary writers MERGE-CREATE L1
+    nodes as a side effect; each must stamp provenance ON CREATE (so a side-effect-
+    minted node is never provenance-less) but NOT unconditionally (so a node its
+    primary writer already made keeps its own provenance). Locks the ON CREATE
+    clause against a regression to unconditional SET."""
+    se, _ = l1_curator.build_system_edge_cypher(
+        SystemEdgeDelta(service_slug="s", system_kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV))
+    assert "ON CREATE SET s.prov_job = $prov_job" in se
+    assert "ON CREATE SET sy.prov_job = $prov_job" in se
+
+    df, _ = l1_curator.build_data_flow_cypher(
+        DataFlowDelta(service_slug="s", item_key="x", direction="produces", provenance=PROV))
+    assert "ON CREATE SET s.prov_job = $prov_job" in df
+    assert "ON CREATE SET d.prov_job = $prov_job" in df
+
+    sa, _ = l1_curator.build_surfaces_at_cypher(
+        SurfacesAtDelta(item_key="x", l0=L0Ref(label="Endpoint", identity={"path": "/a"}), provenance=PROV))
+    assert "ON CREATE SET d.prov_job = $prov_job" in sa
+
+    dr, _ = l1_curator.build_data_relationship_cypher(
+        DataRelationshipDelta(from_item_key="a", to_item_key="b", kind="derived_from", provenance=PROV))
+    assert "ON CREATE SET a.prov_job = $prov_job" in dr and "ON CREATE SET b.prov_job = $prov_job" in dr
 
 
 def test_system_edge_unknown_rel_raises():

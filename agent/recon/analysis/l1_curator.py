@@ -509,6 +509,7 @@ def build_surfaces_at_cypher(delta: SurfacesAtDelta) -> tuple[str, dict]:
     cypher = "\n".join([
         match_clause,
         "MERGE (d:L1DataItem {item_key: $item_key, project_id: $project_id})",
+        "ON CREATE SET d.prov_job = $prov_job, d.first_seen = datetime()",  # provenance-on-mint
         "MERGE (d)-[r:SURFACES_AT]->(l0)",
         "ON CREATE SET r.first_seen = datetime()",
         "SET r.last_seen = datetime()",
@@ -532,7 +533,9 @@ def build_data_flow_cypher(delta: DataFlowDelta) -> tuple[str, dict]:
     params.update(_prov_params(delta.provenance))
     lines = [
         "MERGE (s:L1TestableUnit:L1Service {business_function_slug: $slug, project_id: $project_id})",
+        "ON CREATE SET s.prov_job = $prov_job, s.first_seen = datetime()",  # provenance-on-mint
         "MERGE (d:L1DataItem {item_key: $item_key, project_id: $project_id})",
+        "ON CREATE SET d.prov_job = $prov_job, d.first_seen = datetime()",
         f"MERGE (s)-[r:{rel}]->(d)",
         "ON CREATE SET r.first_seen = datetime()",
         "SET r.last_seen = datetime()",
@@ -560,7 +563,9 @@ def build_data_relationship_cypher(delta: DataRelationshipDelta) -> tuple[str, d
     params.update(_prov_params(delta.provenance))
     cypher = "\n".join([
         "MERGE (a:L1DataItem {item_key: $from_key, project_id: $project_id})",
+        "ON CREATE SET a.prov_job = $prov_job, a.first_seen = datetime()",  # provenance-on-mint
         "MERGE (b:L1DataItem {item_key: $to_key, project_id: $project_id})",
+        "ON CREATE SET b.prov_job = $prov_job, b.first_seen = datetime()",
         "MERGE (a)-[r:DATA_RELATIONSHIP {kind: $kind}]->(b)",
         "ON CREATE SET r.first_seen = datetime()",
         "SET r.last_seen = datetime()",
@@ -588,10 +593,24 @@ def build_system_edge_cypher(delta: SystemEdgeDelta) -> tuple[str, dict]:
         "project_id": _PENDING_PROJECT_ID,
     }
     params.update(_prov_params(delta.provenance))
+    # role/realm are part of the edge IDENTITY, not just props: one Service may be
+    # AUTHORIZED_BY the AuthorizationSystem under several roles (seller AND
+    # seller-admin) and AUTHENTICATED_BY the mechanism across several realms
+    # (credential AND idp) - the §15 multi-role/multi-realm reality. Keying the
+    # MERGE on rel ALONE collapses them to one edge (the last role wins), so the
+    # non-null discriminators are folded into the MERGE relationship-property
+    # pattern. `order` stays a plain prop (positional metadata, not identity).
+    merge_key = {"role": delta.role, "realm": delta.realm}
+    key_frag = ", ".join(f"{k}: ${k}" for k, v in merge_key.items() if v is not None)
+    rel_pattern = f"r:{delta.rel} {{{key_frag}}}" if key_frag else f"r:{delta.rel}"
     lines = [
         "MERGE (s:L1TestableUnit:L1Service {business_function_slug: $slug, project_id: $project_id})",
+        # provenance-on-write: a node this edge writer MINTS carries provenance
+        # (ON CREATE only, so a node its primary writer already made keeps its own).
+        "ON CREATE SET s.prov_job = $prov_job, s.first_seen = datetime()",
         "MERGE (sy:L1TestableUnit:L1System {system_kind: $system_kind, discriminator: $discriminator, project_id: $project_id})",
-        f"MERGE (s)-[r:{delta.rel}]->(sy)",
+        "ON CREATE SET sy.prov_job = $prov_job, sy.first_seen = datetime()",
+        f"MERGE (s)-[{rel_pattern}]->(sy)",
         "ON CREATE SET r.first_seen = datetime()",
         "SET r.last_seen = datetime()",
         "SET r.role = $role, r.realm = $realm, r.order = $order",

@@ -626,6 +626,77 @@ Do not start a second area until the first is verifier-APPROVED.
   status: green
 ```
 
+### FR-NFR — full assertion ledger (cross-cutting invariants + §15 closing walkthrough, authored at area start)
+
+*Goal:* the cross-cutting non-functional invariants that must hold across the WHOLE flow, proven once end-to-end by a deterministic §15-shaped walkthrough test that fires every in-scope primitive through the REAL writers (bootstrap → assignment-with-envelope → enrichment: systems-as-edges (EXPOSED_VIA + perimeter FRONTED_BY/PROTECTED_BY/ROUTED_BY) + a *populated* CDN discriminator + the Tier-1 data flow with assumption-on-CONSUMES + SURFACES_AT → webpage-profile skill (independent SPA/CSR slots) → authorization-pyramid skill (AUTHORIZED_BY{role}/AUTHENTICATED_BY{realm}) → stale-pool + missing-kinds sweeps → token-light index-card) and asserts the invariants hold on the resulting live graph. (The ordered inter-System ON_REQUEST_PATH chain is deferred to AMV-7; interface-B backward recon is covered by its own area, FR-RECONREQ.) The invariants: **sole-writer** (only l1_curator writes :L1*), **MERGE idempotency** (`L1D-22`, run twice → one node/edge), **identity ⊥ membership** (`L1D-11`), **`__singleton__` non-null** (`L1D-9`/`L1R-2`) with a *populated* discriminator coexisting, **provenance on every node/edge**, **fail-open**, and **traversal-then-fetch / token discipline** (`DD-4`). *Non-goals:* the deferred primitives the §15 narrative also shows (SystemAspect/DFS-up `NM-3`; the concretisation reducer `NM-10`; Stage-3/phase-2 signatures) — asserted absent-from-scope, not built.
+
+```yaml
+# FR-NFR assertion ledger
+- id: AST-NFR-01
+  fr_area: FR-NFR
+  kind: nonfunctional
+  requirement_ref: L1D-22
+  statement: "The full §15 walkthrough is idempotent: running the entire bootstrap->assignment->enrichment->skills sequence TWICE yields exactly one of each L1 node and edge (no duplicates)."
+  tier: e2e
+  test: tests/e2e/test_walkthrough_nfr.py::test_walkthrough_is_idempotent
+  langfuse_score: ast_nfr_01
+  status: green
+- id: AST-NFR-02
+  fr_area: FR-NFR
+  kind: nonfunctional
+  requirement_ref: L1D-9
+  statement: "A singleton System (discriminator=__singleton__) and a populated-discriminator System of the SAME kind (CDN {Datadome}) coexist as two distinct nodes; the sentinel is a literal non-null string, never null."
+  tier: e2e
+  test: tests/e2e/test_walkthrough_nfr.py::test_singleton_and_populated_discriminator_coexist
+  langfuse_score: ast_nfr_02
+  status: green
+- id: AST-NFR-03
+  fr_area: FR-NFR
+  kind: nonfunctional
+  requirement_ref: L1D-25
+  statement: "Every L1 node and every cross-layer/System edge written by the walkthrough carries provenance (prov_job); the AGGREGATES edge carries the full judgment envelope."
+  tier: e2e
+  test: tests/e2e/test_walkthrough_nfr.py::test_provenance_on_every_node_and_edge
+  langfuse_score: ast_nfr_03
+  status: green
+- id: AST-NFR-04
+  fr_area: FR-NFR
+  kind: nonfunctional
+  requirement_ref: L1D-11
+  statement: "identity ⊥ membership: re-running assignment with a DIFFERENT (larger) member set does not change a Service's identity/key and creates no second Service node."
+  tier: e2e
+  test: tests/e2e/test_walkthrough_nfr.py::test_identity_independent_of_membership
+  langfuse_score: ast_nfr_04
+  status: green
+- id: AST-NFR-05
+  fr_area: FR-NFR
+  kind: nonfunctional
+  requirement_ref: L1D-1
+  statement: "Sole-writer: the walkthrough writes :L1* nodes ONLY through l1_curator; a static check confirms no other module emits an L1 label write, and the L0 curator never writes :L1*."
+  tier: e2e
+  test: tests/e2e/test_walkthrough_nfr.py::test_sole_writer_discipline
+  langfuse_score: ast_nfr_05
+  status: green
+- id: AST-NFR-06
+  fr_area: FR-NFR
+  kind: functional
+  requirement_ref: DD-4
+  statement: "Every in-scope §15 primitive fired and is present on the live graph: envelope on AGGREGATES, systems-as-edges (EXPOSED_VIA + perimeter FRONTED_BY/PROTECTED_BY/ROUTED_BY), Tier-1 CONSUMES with assumption + SURFACES_AT, independent SPA/CSR spine slots, AUTHORIZED_BY{role}/AUTHENTICATED_BY{realm}, stale pool + missing kinds; the index-card is token-light (edge-degree, no member payload). (The ordered inter-System ON_REQUEST_PATH chain is deferred - AMV-7; interface-B has its own area/tests - FR-RECONREQ.)"
+  tier: e2e
+  test: tests/e2e/test_walkthrough_nfr.py::test_every_inscope_primitive_fired
+  langfuse_score: ast_nfr_06
+  status: green
+- id: AST-NFR-07
+  fr_area: FR-NFR
+  kind: nonfunctional
+  requirement_ref: NM-3
+  statement: "MVP fence: the deferred primitives the §15 narrative also shows are NOT built - no SystemAspect node/label exists, and no Stage-3 signature/risk-scoring module is on the L1 path."
+  tier: e2e
+  test: tests/e2e/test_walkthrough_nfr.py::test_deferred_primitives_absent
+  langfuse_score: ast_nfr_07
+  status: green
+```
+
 ### Headline assertions for the remaining areas (full ledger authored at area start)
 - **FR-ELICIT — DONE** (7 unit + 3 integration, `test_bootstrap*.py`). `operator_kb` = free-text (operator decision; typed template = AMV-4). `bootstrap_from_kb` elicits the Service skeleton via the analyser LLM, always ensures the linchpin `AuthenticationMechanism`/`AuthorizationSystem`, seeds `SystemKind`, writes **no L0 refs** (aggregates dropped — pure business projection), idempotent, fail-open. Bootstrap→assignment flow verified. Live smoke confirmed fail-open on a real LLM 400 (the operator's `LLM_MODEL_ANALYSER` id is currently invalid — see STATE Waiting-on-human).
 - **FR-ENRICH — DONE** (15 unit + 5 integration, `test_l1_enrich_*.py`). **DataItem flexible identity** `(project_id, item_key)` — a semantic key, `identity ⊥ membership` (verified: item survives a growing `SURFACES_AT` set) (operator pulled `L1OP-1` into MVP). **Extensible DataRelationship vocabulary** — `DataRelationshipKind` catalogue (6 seeds) + one `DATA_RELATIONSHIP` edge carrying `{kind, predicate, rationale}` (`L1OP-2` resolved, `L1D-21`). `PRODUCES`/`CONSUMES` with the trust **assumption on CONSUMES** (`L1D-14`); `SURFACES_AT` native cross-layer edge (L0 MATCHed never created); systems as typed §6 edges (`L1D-18`). Analyser can propose all of it in one batch (`default_curate_with_enrichment_fn`); LLM-facing proposals carry no provenance (system-stamped).
