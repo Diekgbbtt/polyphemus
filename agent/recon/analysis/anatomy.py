@@ -65,11 +65,15 @@ class SpineClassification(BaseModel):
 
 class AnatomyResult(BaseModel):
     """The anatomy-skill triple's output: typed `classifications` (-> spine slots),
-    `observations` (-> NL evidence), and `probes` (-> interface-B backward recon)."""
+    `observations` (-> NL evidence), and `probes` (-> interface-B backward recon).
+    `system_edges` carries typed Service->System edges an anatomy skill writes
+    structurally (e.g. the authorization-pyramid skill's `AUTHORIZED_BY {role}` /
+    `AUTHENTICATED_BY {realm}`; L1D-18) - written via the l1_curator sole-writer."""
 
     classifications: list[SpineClassification] = Field(default_factory=list)
     observations: list[Observation] = Field(default_factory=list)
     probes: list = Field(default_factory=list)  # list[AnalyserReconRequest]
+    system_edges: list = Field(default_factory=list)  # list[SystemEdgeDelta]
 
 
 # --- webpage-profile skill (FR-SPINE) -----------------------------------------
@@ -240,11 +244,13 @@ def commit_anatomy(
     provenance=None,
     curate_fn=None,
     observe_fn=None,
+    edge_fn=None,
 ) -> dict:
     """Write the triple: leg 1 (classifications -> spine props on the Service via
-    l1_curator), leg 2 (observations -> the L0 curator seam). Leg 3 (probes) is
-    RETURNED for the caller to dispatch via request_targeted_recon (kept out of the
-    write path so committing never blocks on a live probe). Fail-open per leg."""
+    l1_curator; typed system_edges -> the l1_curator system-edge writer), leg 2
+    (observations -> the L0 curator seam). Leg 3 (probes) is RETURNED for the
+    caller to dispatch via request_targeted_recon (kept out of the write path so
+    committing never blocks on a live probe). Fail-open per leg."""
     from agent.recon.analysis.l1_types import Provenance, ServiceDelta
 
     if provenance is None:
@@ -281,4 +287,122 @@ def commit_anatomy(
         except Exception:  # fail-open
             logger.warning("commit_anatomy: observation write failed for %s", business_function_slug, exc_info=True)
 
+    # leg 1b: typed Service->System edges (e.g. AUTHORIZED_BY {role}) via the L1
+    # sole-writer's system-edge writer - structural, MERGE-idempotent.
+    written["system_edges"] = 0
+    if result.system_edges:
+        if edge_fn is None:
+            from agent.recon.analysis import l1_curator
+            def edge_fn(system_edges, project_id):  # noqa: E306
+                return l1_curator.enrich(project_id, system_edges=system_edges)
+        try:
+            counts = edge_fn(result.system_edges, project_id)
+            written["system_edges"] = (counts or {}).get("system_edges", len(result.system_edges)) \
+                if isinstance(counts, dict) else len(result.system_edges)
+        except Exception:  # fail-open
+            logger.warning("commit_anatomy: system-edge write failed for %s", business_function_slug, exc_info=True)
+
     return written
+
+
+# --- authorization-pyramid skill (FR-AUTHZSKILL) ------------------------------
+
+_AUTHZ_SKILL_ID = "authorization_pyramid"
+# Re-issue the SAME action under each role's credentials; httpx is a use_auth
+# request tool, so the interface-B executor threads scope.auth_context onto it.
+_AUTHZ_PROBE_JOB = "httpx"
+
+
+def _load_authz_skill() -> str:
+    from agent.recon.skills import skill_for
+    return skill_for("analysis/anatomy/authorization-pyramid", fallback=(
+        "You are the authorization-pyramid anatomy skill. Reverse-engineer the "
+        "role->permission structure by probing the SAME service action under "
+        "DIFFERENT roles (the inverse-pyramid probe), carrying each role's own "
+        "auth_context. Record which roles are authorised as typed AUTHORIZED_BY "
+        "{role} edges and each realm as AUTHENTICATED_BY {realm} - structurally, "
+        "never as prose. You record who CAN act, not who SHOULD (that is downstream)."
+    ))
+
+
+def plan_authz_probes(
+    action: str,
+    roles,
+    auth_context: dict | None,
+    *,
+    service_slug: str | None = None,
+    requester_id: str = "anatomy:authorization_pyramid",
+):
+    """The inverse-pyramid probe (leg 3): for EACH role, emit an interface-B
+    request that re-issues the same `action` (a target URL/handle) carrying THAT
+    role's SELECTED credentials (select_auth_context). origin=anatomy_skill so each
+    result routes back to this skill. Returns a list[AnalyserReconRequest]."""
+    from agent.recon.auth import select_auth_context
+    from agent.recon.targeted import AnalyserReconRequest, ReconScope
+
+    probes = []
+    for role in roles:
+        creds = select_auth_context(auth_context, role)
+        probes.append(AnalyserReconRequest(
+            job=_AUTHZ_PROBE_JOB,
+            scope=ReconScope(
+                service_id=service_slug, targets=[action], auth_context=creds or None,
+                note=f"authz inverse-pyramid probe: '{action}' as role '{role}'",
+            ),
+            origin="anatomy_skill", skill_id=_AUTHZ_SKILL_ID, requester_id=requester_id,
+        ))
+    return probes
+
+
+def classify_authz(
+    action: str,
+    results: dict,
+    *,
+    service_slug: str,
+    role_realms: dict | None = None,
+    base_url: str | None = None,
+    provenance=None,
+) -> AnatomyResult:
+    """From per-role outcomes `results` (role -> allowed bool), build the STRUCTURAL
+    authz result: an `AUTHORIZED_BY {role}` typed system-edge (Service ->
+    AuthorizationSystem) for each authorised role, an `AUTHENTICATED_BY {realm}`
+    edge (-> AuthenticationMechanism) per distinct realm, an `authz_model` spine
+    classification, and an evidence Observation recording authorised vs denied
+    roles. Records who CAN act (structural facts); privilege judgment is Stage-3."""
+    from agent.recon.analysis.l1_types import Provenance, SystemEdgeDelta
+
+    if provenance is None:
+        provenance = Provenance(job=f"anatomy:{_AUTHZ_SKILL_ID}", model=None, prompt_id=None)
+    role_realms = role_realms or {}
+
+    authorized = sorted(r for r, ok in results.items() if ok)
+    denied = sorted(r for r, ok in results.items() if not ok)
+
+    system_edges = [
+        SystemEdgeDelta(service_slug=service_slug, system_kind="AuthorizationSystem",
+                        rel="AUTHORIZED_BY", role=role, provenance=provenance)
+        for role in authorized
+    ]
+    for realm in sorted({rl for rl in role_realms.values() if rl}):
+        system_edges.append(SystemEdgeDelta(
+            service_slug=service_slug, system_kind="AuthenticationMechanism",
+            rel="AUTHENTICATED_BY", realm=realm, provenance=provenance))
+
+    # authz_model = a STRUCTURAL fact about the probed role set (not a judgment)
+    if not authorized:
+        model = "locked"           # no probed role could perform it
+    elif not denied:
+        model = "unrestricted"     # every probed role could
+    else:
+        model = "role-restricted"  # some roles gated out
+    evidence = f"action '{action}': authorized={authorized} denied={denied}"
+    classification = SpineClassification(
+        slot="authz_model", value=model, confidence="High", evidence=evidence)
+    obs = Observation(
+        macro_kind="authorization_pyramid", severity="info", evidence=evidence,
+        rationale=f"authz_model := {model}",
+        anchor={"type": "BaseURL", "identity": {"url": base_url or ""}},
+        source_job=f"anatomy:{_AUTHZ_SKILL_ID}", source_tool=_AUTHZ_SKILL_ID)
+
+    return AnatomyResult(classifications=[classification], observations=[obs],
+                         system_edges=system_edges)

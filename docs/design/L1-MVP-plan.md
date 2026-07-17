@@ -564,6 +564,68 @@ Do not start a second area until the first is verifier-APPROVED.
   status: green
 ```
 
+### FR-AUTHZSKILL — full assertion ledger (authorization-pyramid anatomy skill, authored at area start)
+
+*Goal:* the second seed system-anatomy skill (`L1D-31`) — the authorization-pyramid skill — reverse-engineers the role→permission structure by probing the SAME service action under DIFFERENT roles (the "inverse pyramid" probe), then writes the result STRUCTURALLY: `AUTHORIZED_BY {role}` typed system-edges (Service → AuthorizationSystem) for each authorised role and `AUTHENTICATED_BY {realm}` edges (Service → AuthenticationMechanism) per realm — typed edges carrying `role`/`realm` props, NOT prose (`L1D-5`: mechanism/System and policy/role stay separate). It reuses the anatomy triple (`AnatomyResult` extended with `system_edges`), `select_auth_context` (FR-AUTH) for the per-role probe credentials, the interface-B request (FR-RECONREQ), and the `l1_curator` system-edge writer (FR-ENRICH). *Non-goals:* risk scoring / privilege-violation judgment (Stage-3, downstream — the skill records who CAN, not who SHOULD); the global authorization-pyramid composition schema (`L1OP-6`); interpreting raw HTTP responses into allow/deny (the caller/loop supplies the per-role outcome).
+
+```yaml
+# FR-AUTHZSKILL assertion ledger
+- id: AST-AUTHZ-01
+  fr_area: FR-AUTHZSKILL
+  kind: functional
+  requirement_ref: L1D-31
+  statement: "plan_authz_probes emits one interface-B probe PER role, each carrying that role's SELECTED auth_context (origin=anatomy_skill, skill_id=authorization_pyramid, scope.service_id/targets/note set)."
+  tier: unit
+  test: tests/recon/test_authz_pyramid.py::test_plan_probes_one_per_role_with_selected_creds
+  langfuse_score: ast_authz_01
+  status: green
+- id: AST-AUTHZ-02
+  fr_area: FR-AUTHZSKILL
+  kind: functional
+  requirement_ref: L1D-5
+  statement: "classify_authz writes an AUTHORIZED_BY {role} TYPED system-edge (to AuthorizationSystem) for each AUTHORISED role and NONE for a denied role - the role rides an edge prop, not prose."
+  tier: unit
+  test: tests/recon/test_authz_pyramid.py::test_authorized_roles_become_typed_role_edges
+  langfuse_score: ast_authz_02
+  status: green
+- id: AST-AUTHZ-03
+  fr_area: FR-AUTHZSKILL
+  kind: functional
+  requirement_ref: L1D-5
+  statement: "AUTHENTICATED_BY {realm} edges are written per distinct realm (to AuthenticationMechanism); authentication mechanism (System) and authorization policy (role edge) stay separate."
+  tier: unit
+  test: tests/recon/test_authz_pyramid.py::test_realms_become_authenticated_by_edges
+  langfuse_score: ast_authz_03
+  status: green
+- id: AST-AUTHZ-04
+  fr_area: FR-AUTHZSKILL
+  kind: functional
+  requirement_ref: L1D-31
+  statement: "The authz classification (authz_model spine) carries confidence + evidence, and an Observation records the authorised vs denied role set as verbatim evidence."
+  tier: unit
+  test: tests/recon/test_authz_pyramid.py::test_authz_model_classification_and_evidence
+  langfuse_score: ast_authz_04
+  status: green
+- id: AST-AUTHZ-05
+  fr_area: FR-AUTHZSKILL
+  kind: nonfunctional
+  requirement_ref: L1D-22
+  statement: "commit writes the AUTHORIZED_BY/AUTHENTICATED_BY edges via the l1_curator sole-writer (structural MERGE); a write error degrades per-leg (fail-open), never crashing."
+  tier: unit
+  test: tests/recon/test_authz_pyramid.py::test_commit_writes_system_edges_fail_open
+  langfuse_score: ast_authz_05
+  status: green
+- id: AST-AUTHZ-06
+  fr_area: FR-AUTHZSKILL
+  kind: functional
+  requirement_ref: L1D-31
+  statement: "The authorization-pyramid SKILL.md encodes the inverse-pyramid discipline (probe the same action under different roles; carry auth_context per role; role/realm edges are typed and written structurally), loaded via skill_for."
+  tier: unit
+  test: tests/recon/test_authz_pyramid.py::test_authz_skill_encodes_inverse_pyramid
+  langfuse_score: ast_authz_06
+  status: green
+```
+
 ### Headline assertions for the remaining areas (full ledger authored at area start)
 - **FR-ELICIT — DONE** (7 unit + 3 integration, `test_bootstrap*.py`). `operator_kb` = free-text (operator decision; typed template = AMV-4). `bootstrap_from_kb` elicits the Service skeleton via the analyser LLM, always ensures the linchpin `AuthenticationMechanism`/`AuthorizationSystem`, seeds `SystemKind`, writes **no L0 refs** (aggregates dropped — pure business projection), idempotent, fail-open. Bootstrap→assignment flow verified. Live smoke confirmed fail-open on a real LLM 400 (the operator's `LLM_MODEL_ANALYSER` id is currently invalid — see STATE Waiting-on-human).
 - **FR-ENRICH — DONE** (15 unit + 5 integration, `test_l1_enrich_*.py`). **DataItem flexible identity** `(project_id, item_key)` — a semantic key, `identity ⊥ membership` (verified: item survives a growing `SURFACES_AT` set) (operator pulled `L1OP-1` into MVP). **Extensible DataRelationship vocabulary** — `DataRelationshipKind` catalogue (6 seeds) + one `DATA_RELATIONSHIP` edge carrying `{kind, predicate, rationale}` (`L1OP-2` resolved, `L1D-21`). `PRODUCES`/`CONSUMES` with the trust **assumption on CONSUMES** (`L1D-14`); `SURFACES_AT` native cross-layer edge (L0 MATCHed never created); systems as typed §6 edges (`L1D-18`). Analyser can propose all of it in one batch (`default_curate_with_enrichment_fn`); LLM-facing proposals carry no provenance (system-stamped).
