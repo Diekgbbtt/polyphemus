@@ -19,7 +19,8 @@ from __future__ import annotations
 import re
 from collections import Counter
 
-_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# `\Z` (absolute end) not `$`, so a trailing newline cannot slip past the guard.
+_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 # The typed spine slots surfaced on the card (§5.1). Present ones are lifted into
 # `spine`; the rest of the unit's own props become `nl_handles`.

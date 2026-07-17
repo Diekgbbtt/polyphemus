@@ -345,7 +345,9 @@ def l1_curate(
 
 # Neo4j cannot parameterise a label or property name, so the L0 label + identity
 # keys are interpolated into Cypher; validate them as strict identifiers first.
-_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# `\Z` (absolute end) not `$` (which also matches before a trailing newline), so a
+# label/key like "Endpoint\n" cannot slip past the injection guard.
+_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 # Endpoint-template key (L1D-32 / ratified door D5). A path segment that is all
 # digits or a UUID is an instance identifier; collapsing it to `{id}` yields the

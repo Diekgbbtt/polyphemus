@@ -39,6 +39,9 @@ def test_stale_pool_widened_labels():
 def test_stale_pool_rejects_unsafe_label():
     with pytest.raises(ValueError):
         sweep.stale_pool("proj-1", labels=("Endpoint) DETACH DELETE n //",), read_fn=lambda cy, p: [])
+    # a trailing newline must NOT slip past the guard (\Z, not $)
+    with pytest.raises(ValueError):
+        sweep.stale_pool("proj-1", labels=("Endpoint\n",), read_fn=lambda cy, p: [])
 
 
 def test_stale_pool_count_sums_labels():

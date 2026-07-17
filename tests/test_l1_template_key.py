@@ -75,6 +75,15 @@ def test_non_endpoint_aggregate_has_no_template():
     assert "endpoint_template" not in params
 
 
+def test_aggregates_rejects_unsafe_l0_label_with_trailing_newline():
+    import pytest
+    # a trailing newline must NOT slip past the injection guard (\Z, not $)
+    with pytest.raises(ValueError):
+        l1_curator.build_aggregates_cypher(
+            AggregatesDelta(service_slug="s", l0=L0Ref(label="Endpoint\n", identity={"path": "/x"}), envelope=ENV)
+        )
+
+
 def test_two_instance_endpoints_share_one_template_key():
     a = AggregatesDelta(service_slug="s", l0=L0Ref(label="Endpoint", identity={"path": "/sellers/1/sales", "method": "GET", "baseurl": "https://a"}), envelope=ENV)
     b = AggregatesDelta(service_slug="s", l0=L0Ref(label="Endpoint", identity={"path": "/sellers/2/sales", "method": "GET", "baseurl": "https://a"}), envelope=ENV)

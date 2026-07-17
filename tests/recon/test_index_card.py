@@ -75,6 +75,9 @@ def test_dfs_down_query_shape_and_guard():
 def test_dfs_down_rejects_unsafe_rel():
     with pytest.raises(ValueError):
         index_card.dfs_down("p", "s", "EXPOSED_VIA]->() DETACH DELETE m //", read_fn=lambda cy, p: [])
+    # a trailing newline must NOT slip past the guard (\Z, not $)
+    with pytest.raises(ValueError):
+        index_card.dfs_down("p", "s", "EXPOSED_VIA\n", read_fn=lambda cy, p: [])
 
 
 def test_index_cards_maps_all_rows():

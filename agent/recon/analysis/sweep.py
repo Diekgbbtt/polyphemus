@@ -21,7 +21,8 @@ import re
 
 # Interpolated into Cypher (Neo4j cannot parameterise a label), so validate as a
 # strict identifier first - defence in depth, mirroring l1_curator._SAFE_IDENT.
-_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
+# `\Z` (absolute end) not `$`, so a trailing newline cannot slip past the guard.
+_SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 
 # The L0 labels a Service can aggregate. `Endpoint` is the primary assignable
 # asset (the §15 walkthrough assigns endpoints; a stray `/healthz` falls to the
