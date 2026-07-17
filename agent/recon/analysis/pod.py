@@ -191,33 +191,177 @@ def _load_analyser_skill() -> str:
     return _ANALYSER_SKILL
 
 
-def default_analyse_fn(l0_slice: dict, observations: list[dict]) -> L1DeltaBatch:
-    """Real collaborator: ask the analyser LLM to propose L1 deltas. Mirrors
-    default_triage_fn's structured-output pattern (function_calling tolerates the
-    open-ended `dict` props/identity fields the strict json_schema path rejects)."""
+def _slice_repr(l0_slice: dict) -> str:
+    """Token-bounded textual rendering of the L0 slice for the analyser prompt
+    (caps at _MAX_L0_NODES, mirroring pod._MAX_TRIAGE_ASSETS)."""
+    nodes = (l0_slice or {}).get("nodes", [])
+    shown = nodes[:_MAX_L0_NODES]
+    omitted = len(nodes) - len(shown)
+    return (
+        f"L0 slice ({len(nodes)} nodes"
+        + (f", showing first {len(shown)}, {omitted} omitted" if omitted else "")
+        + f"): {shown}"
+    )
+
+
+def _assignment_prompt(l0_slice: dict, observations: list[dict]) -> str:
+    """Pass-1 prompt: the service/system model + surface assignment + topology."""
+    from agent.recon.analysis.l1_curator import vocabulary_prompt
+
+    return (
+        f"{vocabulary_prompt()}\n\n{_L0_REFERENCE_GUIDE}\n\n{_slice_repr(l0_slice)}\n"
+        f"Observations: {observations}\n"
+        "TASK 1 of 2 - SERVICE MODEL & SURFACE ASSIGNMENT. Propose ONLY: `services` "
+        "(business-function Services - REUSE the exact business_function_slug of any "
+        "Service already present in the slice rather than coining a synonym; add a "
+        "new Service only for surface no existing one covers), `systems`, "
+        "`aggregates` (which Service owns each L0 element), and `system_edges`. "
+        "Leave the data-modelling lists (data_items, surfaces_at, data_flows, "
+        "data_relationships) EMPTY - a dedicated second pass produces those."
+    )
+
+
+def _compact_l0_for_data(l0_slice: dict) -> tuple[list[dict], list[dict]]:
+    """Identity-only view of the surface for the data-modelling pass: enough to
+    place SURFACES_AT refs (Endpoint {path,method,baseurl}, Parameter
+    {name,position,endpoint_path,baseurl}) WITHOUT the full node property dump that
+    balloons the prompt to ~123k chars and makes the call slow/unreliable."""
+    endpoints: list[dict] = []
+    parameters: list[dict] = []
+    for n in (l0_slice or {}).get("nodes", []):
+        t = n.get("type")
+        p = n.get("properties") or {}
+        if t == "Endpoint":
+            endpoints.append({"path": p.get("path"), "method": p.get("method"), "baseurl": p.get("baseurl")})
+        elif t == "Parameter":
+            parameters.append({"name": p.get("name"), "position": p.get("position"),
+                               "endpoint_path": p.get("endpoint_path"), "baseurl": p.get("baseurl")})
+    return endpoints, parameters
+
+
+def _data_modelling_prompt(l0_slice: dict, assignment: L1DeltaBatch) -> str:
+    """Pass-2 prompt: the logical DataItems + flows, grounded in pass-1's
+    assignment (each Service + a token-light sample of the endpoints it now owns)
+    plus an IDENTITY-ONLY surface digest (not the full node dump - that made the
+    prompt ~123k chars and pass-2 timed out / returned no structured output)."""
+    from agent.recon.analysis.l1_curator import vocabulary_prompt
+
+    owned: dict[str, list[str]] = {}
+    for a in assignment.aggregates:
+        ident = a.l0.identity or {}
+        ref = ident.get("path") or ident.get("url") or ident.get("name")
+        if ref:
+            bucket = owned.setdefault(a.service_slug, [])
+            if len(bucket) < 8:
+                bucket.append(str(ref))
+    summary = "\n".join(f"  - {s}: {', '.join(p)}" for s, p in sorted(owned.items())) or "  (none assigned)"
+    endpoints, parameters = _compact_l0_for_data(l0_slice)
+    endpoints = endpoints[:_MAX_L0_NODES]
+    # Positive, example-led recipe: state exactly what to fill and show ONE worked
+    # DataItem. A negative framing ("leave the other lists EMPTY") made a weaker
+    # analyser model anchor on the empties and return zero data_items (observed
+    # live: args={'services':[],...} only). The merge keeps ONLY the four data
+    # lists from this pass, so we never mention the others.
+    return (
+        "TASK: LOGICAL DATA MODELLING. List the principal business records (DataItems) "
+        "this application keeps, and how they flow. Fill FOUR lists: `data_items`, "
+        "`surfaces_at`, `data_flows`, `data_relationships`. You MUST return at least "
+        "one data_item; an empty data_items list is a wrong answer for any real "
+        "application.\n\n"
+        "A DataItem is a business record BEHIND the surface (customer account, product "
+        "listing, shopping basket, order, delivery address, payment method, coupon, "
+        "gift card, review, complaint, loyalty points, subscription plan, security "
+        "question), NOT an endpoint or a parameter.\n\n"
+        "WORKED EXAMPLE (copy this shape):\n"
+        '  data_items:   [{"item_key": "shopping_basket"}, {"item_key": "product_listing"}]\n'
+        '  surfaces_at:  [{"item_key": "shopping_basket", "l0": {"label": "Endpoint",'
+        ' "identity": {"path": "/api/BasketItems", "method": "GET", "baseurl": "<baseurl>"}}}]\n'
+        '  data_flows:   [{"service_slug": "cart", "item_key": "shopping_basket", "direction": "produces"},\n'
+        '                 {"service_slug": "cart", "item_key": "product_listing", "direction": "consumes",'
+        ' "assumption": "basket trusts the price is validated server-side",'
+        ' "assumption_rationale": "basket references product by id only"}]\n'
+        '  data_relationships: [{"from_item_key": "shopping_basket", "to_item_key": "product_listing",'
+        ' "kind": "derived_from", "rationale": "a basket line is derived from a product"}]\n\n'
+        "Now do the same for THIS application. Use the services + their endpoints and "
+        "the surface below to ground every item_key in real endpoints/parameters. In "
+        "`data_flows`, set `service_slug` to a slug COPIED VERBATIM from the services "
+        "list below (keep hyphens exactly; do not rename or invent a service).\n\n"
+        f"Services and the endpoints they own:\n{summary}\n\n"
+        f"Endpoints on the surface (identity only, {len(endpoints)}): {endpoints}\n"
+        f"Parameters on the surface ({len(parameters)}): {parameters}\n\n"
+        f"{_L0_REFERENCE_GUIDE}\n\n"
+        f"Allowed data_relationship kinds:\n{vocabulary_prompt()}"
+    )
+
+
+def _invoke_with_retry(invoke_fn, messages, *, attempts: int = 3):
+    """Call a structured-output LLM with a bounded retry. `with_structured_output`
+    returns None (no parseable tool call) on a transient provider hiccup - observed
+    live: a run where BOTH analyser passes returned None and zeroed the whole
+    analysis, though the same call succeeds on retry. Retries on a None return OR an
+    exception; returns the first non-None batch, or None if every attempt failed."""
+    result = None
+    for i in range(attempts):
+        try:
+            result = invoke_fn(messages)
+        except Exception:  # transient provider/parse error: retry, don't crash
+            logger.warning("analyser structured call raised (attempt %d/%d)", i + 1, attempts, exc_info=True)
+            result = None
+        if result is not None:
+            return result
+        logger.warning("analyser structured call returned no tool call (attempt %d/%d)", i + 1, attempts)
+    return result
+
+
+def _two_pass_analyse(invoke_fn, l0_slice: dict, observations: list[dict]) -> L1DeltaBatch:
+    """Two-pass analyse: an assignment pass (services/systems/aggregates/
+    system_edges) then a DEDICATED data-modelling pass (data_items/surfaces_at/
+    data_flows/data_relationships), merged into one batch.
+
+    The passes are split because ONE combined call reliably drops data modelling
+    under assignment load - observed live (finish_reason 'tool_calls', NOT a token
+    cutoff: 150 aggregates + 90 system_edges, 0 data_items). Isolating data
+    modelling into its own call stops the high-volume assignment work from crowding
+    it out. `invoke_fn(messages) -> L1DeltaBatch` is injected so this is
+    unit-testable without a live LLM. Fail-open: if the data-modelling pass raises,
+    the assignment pass survives (enrichment degrades, assignment is never lost)."""
     from langchain_core.messages import SystemMessage, HumanMessage
 
+    skill = _load_analyser_skill()
+    assignment = _invoke_with_retry(invoke_fn, [
+        SystemMessage(content=skill),
+        HumanMessage(content=_assignment_prompt(l0_slice, observations)),
+    ])
+    # structured_output returns None when the model emits no parseable tool call;
+    # after retries, degrade to an empty batch rather than crash (fail-open).
+    if assignment is None:
+        assignment = L1DeltaBatch()
+    data = _invoke_with_retry(invoke_fn, [
+        SystemMessage(content=skill),
+        HumanMessage(content=_data_modelling_prompt(l0_slice, assignment)),
+    ])
+    if data is None:  # data-modelling pass produced no tool call after retries -> assignment-only
+        logger.warning("analyser data-modelling pass produced no structured output; assignment-only")
+        return assignment
+    # merge: assignment's core/topology + the data-modelling pass's data lists
+    return assignment.model_copy(update={
+        "data_items": data.data_items,
+        "surfaces_at": data.surfaces_at,
+        "data_flows": data.data_flows,
+        "data_relationships": data.data_relationships,
+    })
+
+
+def default_analyse_fn(l0_slice: dict, observations: list[dict]) -> L1DeltaBatch:
+    """Real collaborator: ask the analyser LLM to propose L1 deltas in TWO passes
+    (assignment, then a dedicated data-modelling pass - see _two_pass_analyse).
+    Mirrors default_triage_fn's structured-output pattern (function_calling
+    tolerates the open-ended `dict` props/identity fields json_schema rejects)."""
     from agent.app.llm.roles import chat_model_for
 
     llm = chat_model_for("analyser")
     structured_llm = llm.with_structured_output(L1DeltaBatch, method="function_calling")
-    from agent.recon.analysis.l1_curator import vocabulary_prompt
-
-    nodes = (l0_slice or {}).get("nodes", [])
-    shown = nodes[:_MAX_L0_NODES]
-    omitted = len(nodes) - len(shown)
-    prompt = (
-        f"{vocabulary_prompt()}\n\n"
-        f"{_L0_REFERENCE_GUIDE}\n\n"
-        f"L0 slice ({len(nodes)} nodes"
-        + (f", showing first {len(shown)}, {omitted} omitted" if omitted else "")
-        + f"): {shown}\n"
-        f"Observations: {observations}\n"
-        "Propose L1 deltas (services, systems, aggregates, and enrichment: "
-        "data_items, surfaces_at, data_flows, data_relationships, system_edges)."
-    )
-    messages = [SystemMessage(content=_load_analyser_skill()), HumanMessage(content=prompt)]
-    return structured_llm.invoke(messages)
+    return _two_pass_analyse(structured_llm.invoke, l0_slice, observations)
 
 
 def default_curate_fn(services, systems, aggregates, project_id: str) -> AnalyserExport:
