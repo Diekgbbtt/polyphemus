@@ -417,7 +417,8 @@ def test_data_modelling_prompt_uses_identity_only_surface_not_full_dump():
     assert "/api/Orders" in p and "orderId" in p  # identities present
 
 def test_analyser_skill_loads_and_strips_frontmatter():
-    analyser_pod._ANALYSER_SKILL = None  # bypass cache for a clean load
+    from agent.recon import skills
+    skills.clear_cache()  # bypass the shared skill_for cache for a clean load
     skill = analyser_pod._load_analyser_skill()
     assert not skill.startswith("---")  # YAML frontmatter stripped
     # embodies the overthink discipline (deliberate, staged reasoning)
@@ -433,7 +434,8 @@ def test_analyser_skill_loads_and_strips_frontmatter():
 
 
 def test_analyser_skill_is_cached():
-    analyser_pod._ANALYSER_SKILL = None
+    from agent.recon import skills
+    skills.clear_cache()
     first = analyser_pod._load_analyser_skill()
     second = analyser_pod._load_analyser_skill()
     assert first is second  # cached (same object), not re-read
@@ -472,7 +474,8 @@ def test_analyser_skill_degrades_to_fallback_when_missing(monkeypatch):
         raise OSError("no skill mount")
 
     monkeypatch.setattr(pathlib.Path, "read_text", boom)
-    analyser_pod._ANALYSER_SKILL = None  # force a re-read that will fail
+    from agent.recon import skills
+    skills.clear_cache()  # force a re-read that will fail
     skill = analyser_pod._load_analyser_skill()
     assert skill == analyser_pod._ANALYSER_SYSTEM_PROMPT  # graceful degrade, no crash
-    analyser_pod._ANALYSER_SKILL = None  # reset cache so other tests re-load the real file
+    skills.clear_cache()  # reset cache so other tests re-load the real file

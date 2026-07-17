@@ -79,7 +79,7 @@ Order follows the staged build order; do not start a second area until the first
 | FR-TEMPLATE | 3 | **DONE (verifier-APPROVED)** | — | endpoint_template(path) collapses numeric/uuid segments to {id}, written on the AGGREGATES edge at assignment (L1D-32/door D5). 10 unit + 1 integration green. |
 | FR-SWEEP | 3 | **DONE (verifier-APPROVED)** | — | sweep.stale_pool/stale_pool_count (no-inbound-AGGREGATES derived query) + missing_system_kinds over the SystemKind registry (L1D-24). 6 unit + 2 integration green; live-confirmed on soupmarket. |
 | FR-INDEXCARD | 3 | **DONE (verifier-APPROVED)** | — | index_cards token-light projection (edge-degree by family, not member set) + dfs_down one typed hop (L1D-27/DD-4). 6 unit + 3 integration green; DD-4 proven (10k members <500B). |
-| FR-SKILLIF | 4 | backlog | — | Precedes anatomy skills; may parallel storage. |
+| FR-SKILLIF | 4 | **DONE (verifier-APPROVED)** | 5 / 5 | agent/recon/skills.py::skill_for(name, fallback) — one loader (load skills/<name>/SKILL.md, strip frontmatter, cache, degrade to fallback); _load_triager_skill + _load_analyser_skill retro-pointed at it (L1D-31/door D4). 9 unit + 25 analyser + 36 regression green; verifier confirmed byte-for-byte frontmatter parity, no removed-global refs, MVP fence held (no anatomy triple smuggled in). |
 | FR-SPINE | 4 | backlog | — | Dep: FR-SKILLIF, FR-RECONREQ; config-gated on `STEEL_API_KEY`. |
 | FR-AUTH | 4 | backlog | — | Precedes FR-AUTHZSKILL. |
 | FR-AUTHZSKILL | 4 | backlog | — | Dep: FR-SKILLIF, FR-AUTH, FR-RECONREQ. |

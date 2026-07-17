@@ -169,35 +169,16 @@ _L0_REFERENCE_GUIDE = (
     "TYPE. Only reference L0 elements that actually appear in the provided slice."
 )
 
-_ANALYSER_SKILL: str | None = None
-
-
 def _load_analyser_skill() -> str:
     """The analyser system prompt = the analyser-service-system-reasoning skill,
     which synthesises the `overthink` + `critical-thinking-logical-reasoning`
-    disciplines for proposing L1 deltas. Single-sourced from
-    skills/analysis/analyser/SKILL.md (mirrors _load_triager_skill, pod.py:415):
-    YAML frontmatter stripped, cached, and degraded to the inline
-    _ANALYSER_SYSTEM_PROMPT fallback if the file is unavailable, so a missing
-    mount never crashes the analyser.
-
-    (FR-SKILLIF will generalise this + _load_triager_skill into one skill_for.)"""
-    global _ANALYSER_SKILL
-    if _ANALYSER_SKILL is None:
-        from pathlib import Path
-        path = (Path(__file__).resolve().parents[3]
-                / "skills" / "analysis" / "analyser" / "SKILL.md")
-        try:
-            text = path.read_text(encoding="utf-8")
-            if text.startswith("---"):
-                text = text.split("---", 2)[-1].lstrip()  # drop YAML frontmatter
-            _ANALYSER_SKILL = text
-        except OSError:
-            import logging
-            logging.getLogger(__name__).warning(
-                "analyser skill not found at %s; using inline fallback prompt", path)
-            _ANALYSER_SKILL = _ANALYSER_SYSTEM_PROMPT
-    return _ANALYSER_SKILL
+    disciplines for proposing L1 deltas. Loaded via the shared `skill_for`
+    (FR-SKILLIF): single-sourced from skills/analysis/analyser/SKILL.md, YAML
+    frontmatter stripped, cached, and degraded to the inline
+    _ANALYSER_SYSTEM_PROMPT fallback if the mount is unavailable, so a missing
+    mount never crashes the analyser."""
+    from agent.recon.skills import skill_for
+    return skill_for("analysis/analyser", fallback=_ANALYSER_SYSTEM_PROMPT)
 
 
 def _slice_repr(l0_slice: dict) -> str:

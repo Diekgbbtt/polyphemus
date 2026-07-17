@@ -387,6 +387,59 @@ Do not start a second area until the first is verifier-APPROVED.
   status: green
 ```
 
+### FR-SKILLIF — full assertion ledger (skill-loader generalisation, authored at area start)
+
+*Goal:* generalise the two copy-pasted skill loaders (`_load_triager_skill` in `agent/recon/pod.py`, `_load_analyser_skill` in `agent/recon/analysis/pod.py`) into one `agent/recon/skills.py::skill_for(name, *, fallback="")` that loads `skills/<name>/SKILL.md`, strips YAML frontmatter, caches, and degrades to `fallback` on a missing file (`L1D-31`, ratified door D4); retro-point both loaders at it so hardening the loader hardens both. *Non-goals:* the concrete system-anatomy skill *triple* interface + its skills (that is born with its first implementer, FR-SPINE / FR-AUTHZSKILL); the skill catalogue beyond the two seeds (`NM-9`).
+
+```yaml
+# FR-SKILLIF assertion ledger
+- id: AST-SKILLIF-01
+  fr_area: FR-SKILLIF
+  kind: functional
+  requirement_ref: L1D-31
+  statement: "skill_for(name) loads skills/<name>/SKILL.md and returns its body with the YAML frontmatter stripped."
+  tier: unit
+  test: tests/recon/test_skills.py::test_skill_for_loads_and_strips_frontmatter
+  langfuse_score: ast_skillif_01
+  status: green
+- id: AST-SKILLIF-02
+  fr_area: FR-SKILLIF
+  kind: functional
+  requirement_ref: L1D-31
+  statement: "skill_for caches: a second call returns the same object without re-reading; clear_cache() resets it."
+  tier: unit
+  test: tests/recon/test_skills.py::test_skill_for_caches
+  langfuse_score: ast_skillif_02
+  status: green
+- id: AST-SKILLIF-03
+  fr_area: FR-SKILLIF
+  kind: nonfunctional
+  requirement_ref: L1D-31
+  statement: "skill_for degrades to the provided fallback on a missing file and never raises (fail-open)."
+  tier: unit
+  test: tests/recon/test_skills.py::test_skill_for_degrades_to_fallback
+  langfuse_score: ast_skillif_03
+  status: green
+- id: AST-SKILLIF-04
+  fr_area: FR-SKILLIF
+  kind: functional
+  requirement_ref: L1D-31
+  statement: "_load_triager_skill is retro-pointed at skill_for and still returns the writing-observations skill (fallback '')."
+  tier: unit
+  test: tests/recon/test_skills.py::test_triager_loader_retropointed
+  langfuse_score: ast_skillif_04
+  status: green
+- id: AST-SKILLIF-05
+  fr_area: FR-SKILLIF
+  kind: functional
+  requirement_ref: L1D-31
+  statement: "_load_analyser_skill is retro-pointed at skill_for with the inline _ANALYSER_SYSTEM_PROMPT fallback (missing file -> fallback)."
+  tier: unit
+  test: tests/recon/test_skills.py::test_analyser_loader_retropointed
+  langfuse_score: ast_skillif_05
+  status: green
+```
+
 ### Headline assertions for the remaining areas (full ledger authored at area start)
 - **FR-ELICIT — DONE** (7 unit + 3 integration, `test_bootstrap*.py`). `operator_kb` = free-text (operator decision; typed template = AMV-4). `bootstrap_from_kb` elicits the Service skeleton via the analyser LLM, always ensures the linchpin `AuthenticationMechanism`/`AuthorizationSystem`, seeds `SystemKind`, writes **no L0 refs** (aggregates dropped — pure business projection), idempotent, fail-open. Bootstrap→assignment flow verified. Live smoke confirmed fail-open on a real LLM 400 (the operator's `LLM_MODEL_ANALYSER` id is currently invalid — see STATE Waiting-on-human).
 - **FR-ENRICH — DONE** (15 unit + 5 integration, `test_l1_enrich_*.py`). **DataItem flexible identity** `(project_id, item_key)` — a semantic key, `identity ⊥ membership` (verified: item survives a growing `SURFACES_AT` set) (operator pulled `L1OP-1` into MVP). **Extensible DataRelationship vocabulary** — `DataRelationshipKind` catalogue (6 seeds) + one `DATA_RELATIONSHIP` edge carrying `{kind, predicate, rationale}` (`L1OP-2` resolved, `L1D-21`). `PRODUCES`/`CONSUMES` with the trust **assumption on CONSUMES** (`L1D-14`); `SURFACES_AT` native cross-layer edge (L0 MATCHed never created); systems as typed §6 edges (`L1D-18`). Analyser can propose all of it in one batch (`default_curate_with_enrichment_fn`); LLM-facing proposals carry no provenance (system-stamped).

@@ -409,33 +409,13 @@ class _ObservationBatch(BaseModel):
 # Max parsed assets serialized into the triager prompt (see default_triage_fn).
 _MAX_TRIAGE_ASSETS = int(os.environ.get("MAX_TRIAGE_ASSETS", "200"))
 
-_TRIAGER_SKILL: str | None = None
-
-
 def _load_triager_skill() -> str:
-    """The triager system prompt = the writing-observations skill.
-
-    Single-sourced from skills/recon/triager/writing-observations/SKILL.md
-    (mounted at /srv/skills in dev, baked by the Dockerfile in prod) so hardening
-    the skill hardens the live triager with no copy to keep in sync. YAML
-    frontmatter is stripped. Falls back to '' (no system prompt) if unavailable,
-    so a missing mount degrades gracefully instead of crashing the pod."""
-    global _TRIAGER_SKILL
-    if _TRIAGER_SKILL is None:
-        from pathlib import Path
-        path = (Path(__file__).resolve().parents[2]
-                / "skills" / "recon" / "triager" / "writing-observations" / "SKILL.md")
-        try:
-            text = path.read_text(encoding="utf-8")
-            if text.startswith("---"):
-                text = text.split("---", 2)[-1].lstrip()  # drop YAML frontmatter
-            _TRIAGER_SKILL = text
-        except OSError:
-            import logging
-            logging.getLogger(__name__).warning(
-                "triager skill not found at %s; triaging without it", path)
-            _TRIAGER_SKILL = ""
-    return _TRIAGER_SKILL
+    """The triager system prompt = the writing-observations skill, loaded via the
+    shared `skill_for` (FR-SKILLIF): single-sourced from
+    skills/recon/triager/writing-observations/SKILL.md, frontmatter stripped,
+    cached, and degraded to '' (no system prompt) if the mount is unavailable."""
+    from agent.recon.skills import skill_for
+    return skill_for("recon/triager/writing-observations")
 
 
 def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: JobSpec) -> list[Observation]:
