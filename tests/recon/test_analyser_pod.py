@@ -103,7 +103,7 @@ def test_curate_receives_provenance_stamped_deltas():
         analyse_fn=lambda s, o: L1DeltaBatch(services=[ServiceProposal(business_function_slug="x")]),
         curate_fn=fake_curate,
     )
-    run_analyser("proj-9", "run-42", graph=graph)
+    run_analyser("proj-9", "run-42", observations=[], graph=graph)  # explicit [] keeps this unit test hermetic
     assert captured["prov_job"] == "analyser:run-42"  # run-scoped, system-supplied
 
 
@@ -124,7 +124,7 @@ def test_llm_error_degrades_to_empty_no_write_no_crash():
         analyse_fn=exploding_analyse,
         curate_fn=fake_curate,
     )
-    export = run_analyser("proj-1", "run-1", graph=graph)  # must NOT raise
+    export = run_analyser("proj-1", "run-1", observations=[], graph=graph)  # must NOT raise
 
     assert export.error and "LLM 500" in export.error
     assert curate_calls == [(0, 0, 0)]  # curator ran with an EMPTY batch: no write
@@ -140,7 +140,7 @@ def test_read_error_degrades_and_still_completes():
         analyse_fn=lambda s, o: L1DeltaBatch(),
         curate_fn=lambda batch, p, prov: AnalyserExport(),
     )
-    export = run_analyser("proj-1", "run-1", graph=graph)  # must NOT raise
+    export = run_analyser("proj-1", "run-1", observations=[], graph=graph)  # must NOT raise
     assert export.error and "read" in export.error
 
 
@@ -153,7 +153,7 @@ def test_curate_error_degrades_not_raised():
         analyse_fn=lambda s, o: L1DeltaBatch(services=[ServiceProposal(business_function_slug="x")]),
         curate_fn=exploding_curate,
     )
-    export = run_analyser("proj-1", "run-1", graph=graph)  # must NOT raise
+    export = run_analyser("proj-1", "run-1", observations=[], graph=graph)  # must NOT raise
     assert export.error and "curate" in export.error
 
 

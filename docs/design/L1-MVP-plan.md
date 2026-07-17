@@ -332,10 +332,65 @@ Do not start a second area until the first is verifier-APPROVED.
 
 > **§ FR-ANALYSER notes.** (1) **Operator .env gate:** adding `analyser` to `ROLES` makes the app require `LLM_MODEL_ANALYSER=<provider>:<model>` at boot; the operator chose a dedicated role + stronger model and must set it before the next restart (tests mock the LLM). (2) **Proposal/delta split:** the LLM emits provenance-free *proposals*; `proposals_to_deltas` stamps system provenance — the same "LLM can't spoof identity/provenance" discipline as `l1_curator`'s reserved-prop stripping. (3) **Scaffolding only:** the analyser's system prompt is a minimal placeholder; FR-SKILLIF replaces it with a `skill_for`-loaded prompt and FR-ELICIT/FR-ENRICH supply the reasoning behaviours.
 
+### FR-PODSTREAM — full assertion ledger (delivery/completeness, authored at area start)
+
+*Goal:* in the **batch-default** substrate (`L1D-23`), guarantee the analyser's input `f(L0-slice + observations)` is complete and non-duplicating: every curated `AssetDelta` reaches the analyser via the L0-slice read (one node per identity, MERGE-deduped), and every triager `Observation` reaches it via the **dedicated `observations` channel** (deduped by the Observation `id`), delivered on every analyser pull (at-least-once across runs) with idempotent dedup making re-delivery harmless. *Non-goals:* streaming as the default substrate mode (`NM-7`; batch stays default per `L1D-23`); push-at-recon-time from the pod; auto-orchestrating the analyser inside `run_pipeline` (the operator/caller still triggers analysis — this FR guarantees the *delivery*, not the *trigger*); changing the analyser's reasoning.
+
+*Root-cause the FR closes:* today the triager `Observation` nodes are only INCIDENTALLY visible to the analyser — `default_read_fn` (`fetch_project_graph`) returns them mixed into the "L0 slice", while the dedicated `observations` input is always empty in a post-recon batch. That is untested, and adding a delivery channel on top would double-deliver each observation (once in the slice, once in the channel). The FR makes delivery explicit and exactly-once: assets via the slice, observations via the channel, never both.
+
+```yaml
+# FR-PODSTREAM assertion ledger
+- id: AST-PODSTREAM-01
+  fr_area: FR-PODSTREAM
+  kind: functional
+  requirement_ref: L1D-23
+  statement: "collect_observations(project) returns every persisted Observation for the project exactly once, deduped by Observation id (two rows with one id -> one; N distinct ids -> N)."
+  tier: unit
+  test: tests/recon/test_delivery.py::test_collect_observations_dedups_by_id
+  langfuse_score: ast_podstream_01
+  status: green
+- id: AST-PODSTREAM-02
+  fr_area: FR-PODSTREAM
+  kind: functional
+  requirement_ref: L1D-23
+  statement: "The analyser asset slice (default_read_fn) contains every curated AssetDelta node and NO Observation nodes, so an observation is never delivered both in the slice and on the observations channel (exactly once)."
+  tier: unit
+  test: tests/recon/test_delivery.py::test_analyser_slice_excludes_observation_nodes
+  langfuse_score: ast_podstream_02
+  status: green
+- id: AST-PODSTREAM-03
+  fr_area: FR-PODSTREAM
+  kind: functional
+  requirement_ref: L1D-22
+  statement: "run_analyser with observations=None auto-delivers the run's observations from the graph (the analyse step receives them without the caller wiring them); an explicit observations arg is honoured as-is."
+  tier: unit
+  test: tests/recon/test_delivery.py::test_run_analyser_auto_delivers_observations
+  langfuse_score: ast_podstream_03
+  status: green
+- id: AST-PODSTREAM-04
+  fr_area: FR-PODSTREAM
+  kind: nonfunctional
+  requirement_ref: L1D-22
+  statement: "Re-running the analyser re-delivers the same asset+observation set and MERGE-dedups: no duplicate L1 nodes/edges result (idempotent at-least-once)."
+  tier: integration
+  test: tests/integration/test_delivery_merge.py::test_redelivery_is_idempotent
+  langfuse_score: ast_podstream_04
+  status: green
+- id: AST-PODSTREAM-05
+  fr_area: FR-PODSTREAM
+  kind: nonfunctional
+  requirement_ref: L1D-22
+  statement: "A failure reading observations degrades to an empty observations delivery (analyser still runs over the asset slice), never crashing the caller (fail-open)."
+  tier: unit
+  test: tests/recon/test_delivery.py::test_observation_delivery_fail_open
+  langfuse_score: ast_podstream_05
+  status: green
+```
+
 ### Headline assertions for the remaining areas (full ledger authored at area start)
 - **FR-ELICIT — DONE** (7 unit + 3 integration, `test_bootstrap*.py`). `operator_kb` = free-text (operator decision; typed template = AMV-4). `bootstrap_from_kb` elicits the Service skeleton via the analyser LLM, always ensures the linchpin `AuthenticationMechanism`/`AuthorizationSystem`, seeds `SystemKind`, writes **no L0 refs** (aggregates dropped — pure business projection), idempotent, fail-open. Bootstrap→assignment flow verified. Live smoke confirmed fail-open on a real LLM 400 (the operator's `LLM_MODEL_ANALYSER` id is currently invalid — see STATE Waiting-on-human).
 - **FR-ENRICH — DONE** (15 unit + 5 integration, `test_l1_enrich_*.py`). **DataItem flexible identity** `(project_id, item_key)` — a semantic key, `identity ⊥ membership` (verified: item survives a growing `SURFACES_AT` set) (operator pulled `L1OP-1` into MVP). **Extensible DataRelationship vocabulary** — `DataRelationshipKind` catalogue (6 seeds) + one `DATA_RELATIONSHIP` edge carrying `{kind, predicate, rationale}` (`L1OP-2` resolved, `L1D-21`). `PRODUCES`/`CONSUMES` with the trust **assumption on CONSUMES** (`L1D-14`); `SURFACES_AT` native cross-layer edge (L0 MATCHed never created); systems as typed §6 edges (`L1D-18`). Analyser can propose all of it in one batch (`default_curate_with_enrichment_fn`); LLM-facing proposals carry no provenance (system-stamped).
-- **FR-PODSTREAM** — every curated `AssetDelta` and `Observation` reaches the analyser exactly once; at-least-once + dedup semantics defined and tested.
+- **FR-PODSTREAM** — every curated `AssetDelta` and `Observation` reaches the analyser exactly once; at-least-once + dedup semantics defined and tested. Full ledger authored above (AST-PODSTREAM-01..05).
 - **FR-TEMPLATE — DONE** (10 unit + 1 integration, `test_l1_template_key.py` + `test_l1_curator_merge.py::test_endpoint_template_key_persisted_and_shared_across_instances`). `l1_curator.endpoint_template(path)` collapses numeric/UUID segments to `{id}` (idempotent; non-id words like `2fa`/`v2` untouched); written as `r.endpoint_template` on the `AGGREGATES` edge at assignment when the L0 target is an `Endpoint` (kept L1-side since l1_curator must not write L0). Two concrete instance endpoints of one template share the key while the raw member set stays distinct — the concretisation dedup handle (`L1D-32`, ratified door D5). Full equivalence-class reducer stays deferred (`NM-10`).
 - **FR-SWEEP — DONE** (6 unit + 2 integration, `test_sweep.py` + `test_sweep_merge.py`). `sweep.stale_pool(project)` / `stale_pool_count` = assignable L0 nodes (default `Endpoint`) with no inbound `AGGREGATES` (derived query, not a table — `L1D-24`); assigning an endpoint removes it from the pool. `sweep.missing_system_kinds(project)` = `SystemKind` catalogue rows with no instantiated `:L1System` (iterates the registry, so it tracks the extensible vocabulary). **Live-data confirmation:** on the soupmarket project `stale_pool_count == 79` (matches the e2e's 79/133 unassigned; stale items are junk/infra like `.pyc`/`.bak`/`chunk-*.js` — correctly not business members). Note: `missing_system_kinds` is only meaningful after the full catalogue is seeded (`seed_system_kinds`, which bootstrap runs) — without bootstrap only OF_KIND-touched kinds exist.
 - **FR-INDEXCARD — DONE** (6 unit + 3 integration, `test_index_card.py` + `test_index_card_merge.py`). `index_card.index_cards(project)` = one token-light card per L1 unit `{kind, key, label, spine enums, edge_degree by family (COUNTS not members), salience, nl_handles}`; `dfs_down(project, slug, rel)` = one typed hop (injection-guarded). **DD-4 proven**: a card with 10k `AGGREGATES` stays <500 bytes and leaks no member payload. **Live-data confirmation:** on the soupmarket project, 24 cards; busiest service `user-account` (11 aggregates + FRONTED_BY/IDENTIFIED_BY/AUTHENTICATED_BY/EXPOSED_VIA/PRODUCES) is 406 bytes; AGGREGATES degrees sum to 55 (matches the analyser's assignments). DFS-up via `SystemAspect` stays deferred (`NM-3`).

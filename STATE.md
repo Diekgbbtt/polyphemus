@@ -1,6 +1,14 @@
 # Loop State — polymerhus L1-MVP
 
-Last run: 2026-07-17 (Bootstrap-first e2e vs soupmarket.shop=Juice Shop, operator-KB-seeded, LIVE-GREEN. Caught + fixed the analyser's DataItems=0 defect via three fixes: two-pass split, bounded retry, and a positive/example-led data prompt for the weaker analyser model. Re-test: 17 faithful DataItems, all 8 FR/NFR assertions pass.)
+Last run: 2026-07-17 (FR-PODSTREAM DONE + verifier-APPROVED — the analyser batch-delivery guarantee: assets via the slice, Observations via a dedicated id-deduped channel, exactly once, fail-open. Closes Phase 3: all 9 Phase-3 FR areas done. Before that: bootstrap-first e2e vs soupmarket.shop LIVE-GREEN with the DataItems=0 fix.)
+
+## FR-PODSTREAM (2026-07-17) — analyser delivery/completeness, verifier-APPROVED
+
+The last open Phase-3 area. Goal (L1D-22/23, batch-default): the analyser `f(L0-slice+observations)` PULLS a complete, non-duplicating input. **Gap closed**: triager Observations were only incidentally visible (buried in the slice), the dedicated `observations` input was always empty post-recon, and adding a channel would double-deliver. **Fix** (pull-side only; NO streaming — NM-7 stays deferred; NO auto-trigger in run_pipeline — the caller still triggers analysis):
+- `agent/recon/analysis/delivery.py` — `collect_observations(project_id)` id-deduped + `deliver_observations` fail-open wrapper.
+- `default_read_fn` excludes Observation nodes (+ dangling edges) from the analyser slice.
+- `run_analyser` auto-delivers observations when `observations is None`; honours an explicit list as-is.
+Assertions AST-PODSTREAM-01..05 green (7 unit + 1 integration on live neo4j). Independent verifier ran all tests itself (32 unit, 1 integration confirmed not-skipped, 94 regression), live spot-check obs=13/obs_in_slice=False, MVP fence held. Fixed the one regression it flagged: 4 analyser unit tests were silently touching live neo4j via auto-delivery — now pass `observations=[]` to stay hermetic (suite 1.80s→0.28s).
 
 ## Bootstrap-first e2e (2026-07-17) — operator-KB-seeded, the realistic flow
 
@@ -67,12 +75,10 @@ Order follows the staged build order; do not start a second area until the first
 | FR-ANALYSER | 3 | **DONE (verifier-APPROVED)** | 5 / 5 | analyser role; pod.py (read→analyse→curate subgraph, fail-open); analyser_types.py (proposals + L1DeltaBatch, provenance injection). 10 tests green; verifier ran integration on live neo4j. NEEDS operator .env: LLM_MODEL_ANALYSER before app restart. |
 | FR-ELICIT | 3 | **DONE (verifier-APPROVED)** | — | bootstrap.py: operator_kb (free-text) → Service skeleton + linchpin auth Systems, no L0 refs, idempotent, fail-open. 10 tests green; live fail-open confirmed. |
 | FR-ENRICH | 3 | **DONE (verifier-APPROVED)** | — | DataItem flexible identity (project_id,item_key) + extensible DataRelationship vocabulary + PRODUCES/CONSUMES(assumption)/SURFACES_AT/system-edges. 20 tests green. Operator pulled L1OP-1/L1OP-2 into MVP. |
-| FR-ELICIT | 3 | backlog | — | Dep: FR-LCUR, FR-ANALYSER. |
-| FR-ENRICH | 3 | backlog | — | Dep: FR-ELICIT. Blocked-on-unbuilt D25 (rich data-flow). |
-| FR-PODSTREAM | 3 | backlog | — | Dep: FR-ANALYSER. |
+| FR-PODSTREAM | 3 | **DONE (verifier-APPROVED)** | 5 / 5 | delivery.py (collect_observations id-deduped + deliver_observations fail-open); default_read_fn excludes Observation nodes from the analyser slice (no double-delivery); run_analyser auto-delivers observations when caller passes none. 7 unit + 1 integration (live neo4j) green; verifier ran all itself, live spot-check obs=13/obs_in_slice=False, MVP fence held (pull-only, no streaming). Fixed a hermeticity regression it flagged (4 analyser unit tests now pass observations=[]). |
 | FR-TEMPLATE | 3 | **DONE (verifier-APPROVED)** | — | endpoint_template(path) collapses numeric/uuid segments to {id}, written on the AGGREGATES edge at assignment (L1D-32/door D5). 10 unit + 1 integration green. |
-| FR-SWEEP | 3 | backlog | — | Dep: FR-LCUR, FR-ELICIT. |
-| FR-INDEXCARD | 3 | backlog | — | Dep: FR-LCUR, FR-ENRICH. |
+| FR-SWEEP | 3 | **DONE (verifier-APPROVED)** | — | sweep.stale_pool/stale_pool_count (no-inbound-AGGREGATES derived query) + missing_system_kinds over the SystemKind registry (L1D-24). 6 unit + 2 integration green; live-confirmed on soupmarket. |
+| FR-INDEXCARD | 3 | **DONE (verifier-APPROVED)** | — | index_cards token-light projection (edge-degree by family, not member set) + dfs_down one typed hop (L1D-27/DD-4). 6 unit + 3 integration green; DD-4 proven (10k members <500B). |
 | FR-SKILLIF | 4 | backlog | — | Precedes anatomy skills; may parallel storage. |
 | FR-SPINE | 4 | backlog | — | Dep: FR-SKILLIF, FR-RECONREQ; config-gated on `STEEL_API_KEY`. |
 | FR-AUTH | 4 | backlog | — | Precedes FR-AUTHZSKILL. |

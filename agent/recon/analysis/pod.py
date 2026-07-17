@@ -119,12 +119,21 @@ def build_analyser_graph(*, read_fn, analyse_fn, curate_fn):
 # --- default collaborators (real wiring) --------------------------------------
 
 def default_read_fn(project_id: str) -> dict:
-    """Read the project's L0 slice (the attack-surface graph). Reuses
+    """Read the project's L0 asset slice (the attack-surface graph). Reuses
     graph_read.fetch_project_graph (traversal-then-fetch is the analyser's job,
     not this coarse read; the MVP reads the project slice and lets the LLM focus
-    it)."""
+    it).
+
+    FR-PODSTREAM: `Observation` nodes are EXCLUDED here - they reach the analyser
+    on the dedicated `observations` channel (delivery.collect_observations), so
+    delivering them in the slice too would double-deliver each one. Their anchor
+    edges (whose other endpoint is dropped) fall away with them."""
     from agent.recon.graph_read import fetch_project_graph
-    return fetch_project_graph(project_id)
+    slice_ = fetch_project_graph(project_id)
+    nodes = [n for n in slice_.get("nodes", []) if n.get("type") != "Observation"]
+    keep = {n.get("id") for n in nodes}
+    links = [l for l in slice_.get("links", []) if l.get("source") in keep and l.get("target") in keep]
+    return {"nodes": nodes, "links": links}
 
 
 # Fallback analyser system prompt, used only if the skill file is unavailable
@@ -415,12 +424,24 @@ def run_analyser(
     observations: list[dict] | None = None,
     *,
     graph=None,
+    deliver_fn=None,
 ) -> AnalyserExport:
     """Convenience: invoke the compiled analyser pod for a project and return its
     export. Synchronous (no async collaborators in the default wiring); a caller
-    on the event loop should offload via asyncio.to_thread, like run_job."""
+    on the event loop should offload via asyncio.to_thread, like run_job.
+
+    FR-PODSTREAM: when `observations is None` (the default), the run's triager
+    Observations are auto-delivered from the graph (deduped, fail-open) so the
+    batch pull is complete without the caller wiring them. An explicit
+    `observations` list (including `[]`) is honoured as-is (e.g. a streaming
+    caller pushing its own set). `deliver_fn(project_id) -> list[dict]` is
+    injectable for testing."""
+    if observations is None:
+        if deliver_fn is None:
+            from agent.recon.analysis.delivery import deliver_observations as deliver_fn
+        observations = deliver_fn(project_id)
     graph = graph or analyser_graph
     result = graph.invoke(
-        {"project_id": project_id, "run_id": run_id, "observations": observations or []}
+        {"project_id": project_id, "run_id": run_id, "observations": observations}
     )
     return result["export"]
