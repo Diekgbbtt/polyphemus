@@ -29,6 +29,7 @@ The binding guardrails live in `loop-constraints.md`.
 ## Waiting on human
 
 - (resolved 2026-07-16) `LLM_MODEL_ANALYSER` model ID fixed by operator. Live bootstrap smoke now works (9 services elicited + 2 linchpin systems, no L0 refs). Live analyser reasoning unblocked.
+- [ ] **Next e2e must be operator-KB-seeded (bootstrap-first), not from bare surface** (operator correction 2026-07-17). The soupmarket e2e ran the analyser over the bare L0 surface (no operator_kb, no bootstrap) so it elicited services from scratch — unrealistic. Operator will provide a NL "open soup market" solution description before the next e2e; then: set settings.recon.operator_kb -> bootstrap_from_kb -> recon -> run_analyser (assert it enriches the seeded skeleton). See memory [[e2e-operator-kb-seeding]]. Current from-scratch results accepted as sufficiently accurate for now.
 
 ## Operator decisions (2026-07-16, resuming the loop)
 

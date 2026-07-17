@@ -231,3 +231,31 @@ Append one entry per iteration. Prune entries older than 30 days.
   "notes": "Data-rich e2e vs soupmarket.shop (= OWASP Juice Shop, Angular SPA + REST API). New project; recon pipeline [httpx,katana,jsluice,httpx_reprofile,arjun] all success (katana 367 assets, arjun 9, jsluice 0). L0 surface: 133 Endpoints, 5 Parameters, 13 Headers. Analyser: 17 services, 7 systems, 55 AGGREGATES, enrichment {data_items:10, surfaces_at:15, data_flows:12, data_relationships:0, system_edges:28}, err=None. DataItem ASSESSMENT: (faithfulness) HIGH - all 10 items map to real Juice Shop endpoints, zero hallucination; (exhaustiveness) GOOD on high-value entities (user_identity, user_credential, payment_card, order, basket_item, product, address, complaint, feedback, challenge), partial on long tail (no review/wallet/quantity as distinct items); (vocabulary) EXCELLENT - semantic consistent snake_case business entities, notably splits user_identity vs user_credential (identity vs secret - an adversarial distinction). Real Tier-1 trust captured: shopping-basket CONSUMES product 'reference products by ID', order-management CONSUMES basket_item 'created from basket items at checkout'. Observations -> AMV-5 (SURFACES_AT lands on Endpoints not fields because arjun/jsluice thin surface; recon-layer, L1 accepts field-level already), AMV-6 (data_relationships=0 needs phase-B reflection). Stale pool: 79/133 endpoints unassigned -> FR-SWEEP well-motivated. Project soup_8b2797ad left in graph for inspection. Next loop phase: FR-TEMPLATE (ratified door D5)."
 }
 ```
+
+```json
+{
+  "run_id": "2026-07-17T-frtemplate-approved",
+  "fr_area": "FR-TEMPLATE",
+  "attempt": 1,
+  "assertions_green": null,
+  "assertions_total": null,
+  "tokens_estimate": 2200000,
+  "escalations": 0,
+  "outcome": "approved",
+  "notes": "endpoint_template(path) pure per-segment collapse (numeric/uuid -> {id}, idempotent, 2fa/v2 untouched); written on the AGGREGATES edge at assignment when L0 target is Endpoint (l1_curator never writes L0). Independent verifier APPROVED: ran 10 unit + 11 integration (live neo4j, no skip) + 39 regression itself; verified derivation, edge-not-L0 wiring, sole-writer intact, live dedup (two concrete /sellers/{1,2}/sales -> one /sellers/{id}/sales class), denylist clean, MVP-fence (key only, NM-10 reducer deferred). Committed feat(l1-template) + docs. 6 FR areas DONE+verified (LCUR, RECONREQ, ANALYSER, ELICIT, ENRICH, TEMPLATE). Remaining MVP: FR-SWEEP (79/133 stale endpoints on the e2e -> well-motivated), FR-INDEXCARD, FR-PODSTREAM; Phase 4 FR-SKILLIF/SPINE/AUTH/AUTHZSKILL; then the §15 walkthrough."
+}
+```
+
+```json
+{
+  "run_id": "2026-07-17T-frsweep-approved",
+  "fr_area": "FR-SWEEP",
+  "attempt": 1,
+  "assertions_green": null,
+  "assertions_total": null,
+  "tokens_estimate": 2320000,
+  "escalations": 0,
+  "outcome": "approved",
+  "notes": "sweep.py: stale_pool/stale_pool_count (assignable L0 with no inbound AGGREGATES, default Endpoint, injection-guarded) + missing_system_kinds (SystemKind rows with no OF_KIND L1System, registry-driven). Derived queries, no table (L1D-24). Live-data confirmation on soupmarket project: stale_pool_count==79 (matches e2e; stale items are .pyc/.bak/chunk-*.js junk, correctly not business members). Independent verifier APPROVED: ran 6 unit + 2 integration (live neo4j, no skip) itself; verified no-inbound-AGGREGATES/no-OF_KIND queries, live assign->leaves-pool, seed-13-instantiate-1->12-missing, injection guard, read-only, denylist clean, MVP-fence (derived query). 7 FR areas DONE+verified. Realism note: missing_system_kinds only meaningful after bootstrap seeds full catalogue -> reinforces operator-KB-seeded e2e."
+}
+```
