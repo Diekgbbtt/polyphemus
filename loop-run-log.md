@@ -259,3 +259,17 @@ Append one entry per iteration. Prune entries older than 30 days.
   "notes": "sweep.py: stale_pool/stale_pool_count (assignable L0 with no inbound AGGREGATES, default Endpoint, injection-guarded) + missing_system_kinds (SystemKind rows with no OF_KIND L1System, registry-driven). Derived queries, no table (L1D-24). Live-data confirmation on soupmarket project: stale_pool_count==79 (matches e2e; stale items are .pyc/.bak/chunk-*.js junk, correctly not business members). Independent verifier APPROVED: ran 6 unit + 2 integration (live neo4j, no skip) itself; verified no-inbound-AGGREGATES/no-OF_KIND queries, live assign->leaves-pool, seed-13-instantiate-1->12-missing, injection guard, read-only, denylist clean, MVP-fence (derived query). 7 FR areas DONE+verified. Realism note: missing_system_kinds only meaningful after bootstrap seeds full catalogue -> reinforces operator-KB-seeded e2e."
 }
 ```
+
+```json
+{
+  "run_id": "2026-07-17T-frindexcard-approved",
+  "fr_area": "FR-INDEXCARD",
+  "attempt": 1,
+  "assertions_green": null,
+  "assertions_total": null,
+  "tokens_estimate": 2450000,
+  "escalations": 0,
+  "outcome": "approved",
+  "notes": "index_card.py: index_cards (per-unit card {kind,key,spine,edge_degree-by-family,salience,nl_handles} - counts NOT member set, DD-4) + dfs_down (one typed hop, injection-guarded). Live-data: soupmarket 24 cards, busiest user-account 406 bytes w/ 11 aggregates+6 edge families, AGGREGATES degrees sum to 55. Independent verifier APPROVED: ran 6 unit + 3 integration (live) itself; verified degree-not-member-set (collect(type(r)), no member node in query; 10k-member card <500B), dfs-down one hop, injection guard, zero-degree units kept, read-only, denylist clean, MVP-fence (no NM-3 dfs-up). Non-blocking note: _SAFE_IDENT $ matches before trailing \\n (non-exploitable) -> will harden across sweep/index_card/l1_curator. 8 FR areas DONE+verified. Phase 3 complete except FR-PODSTREAM (L1D-23 two-way, batch default)."
+}
+```
