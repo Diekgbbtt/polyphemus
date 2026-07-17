@@ -440,6 +440,68 @@ Do not start a second area until the first is verifier-APPROVED.
   status: green
 ```
 
+### FR-SPINE — full assertion ledger (webpage-profile anatomy skill, authored at area start)
+
+*Goal:* the first system-anatomy skill (`L1D-31`) — the webpage-profile skill — classifies the **two independent** spine dimensions `navigation_model ∈ {SPA,MPA,Hybrid}` and `rendering_model ∈ {CSR,SSR,SSG,StreamingSSR,HydratedSSR}` from runtime signals, emitting the anatomy triple: (1) each classification → a typed **spine slot** (a prop on the L1 unit via `l1_curator`), (2) the corroborating signals → an **NL `Observation`**, (3) deeper probes → an **`AnalyserReconRequest`** on interface-B (`origin=anatomy_skill`, `skill_id=webpage_profile`). The two dimensions are **independent** (`L1D-31a`: neither inferred from the other) and **a framework fingerprint alone is never sufficient** for a confident classification — enforced STRUCTURALLY in the runner (a backstop to the SKILL.md prompt, since a weaker model ignores prose discipline). Each classification carries `confidence` + verbatim `evidence`. Config-gated on `STEEL_API_KEY`: the deeper live probe degrades gracefully (the probe request is still emitted; classification proceeds from passive signals). *Non-goals:* fingerprint-only inference (forbidden, `L1D-31a`); full CDP runtime-artifact capture beyond the two taps (the live tap execution is the unbuilt dep — the skill EMITS the probe request, it does not run it); the Stage-3 threat mapping (CSR→DOM-XSS …) which is downstream reasoning; `RenderingSystem` discriminator sub-classing (a two-way refinement — the MVP writes the slots as unit spine props).
+
+```yaml
+# FR-SPINE assertion ledger
+- id: AST-SPINE-01
+  fr_area: FR-SPINE
+  kind: functional
+  requirement_ref: L1D-31a
+  statement: "The webpage-profile skill sets navigation_model AND rendering_model as SEPARATE spine slots (two classifications), each on its own dimension."
+  tier: unit
+  test: tests/recon/test_anatomy.py::test_webpage_profile_sets_two_independent_slots
+  langfuse_score: ast_spine_01
+  status: green
+- id: AST-SPINE-02
+  fr_area: FR-SPINE
+  kind: functional
+  requirement_ref: L1D-31a
+  statement: "The dimensions are independent: given signals supporting SPA + SSR the skill yields navigation=SPA AND rendering=SSR (a non-CSR SPA), never collapsing one onto the other."
+  tier: unit
+  test: tests/recon/test_anatomy.py::test_dimensions_are_independent_spa_ssr
+  langfuse_score: ast_spine_02
+  status: green
+- id: AST-SPINE-03
+  fr_area: FR-SPINE
+  kind: functional
+  requirement_ref: L1D-31a
+  statement: "A framework fingerprint alone is never sufficient: a fingerprint-only classification is capped below High confidence AND raises a backward-recon probe (structural enforcement)."
+  tier: unit
+  test: tests/recon/test_anatomy.py::test_fingerprint_only_is_capped_and_probes
+  langfuse_score: ast_spine_03
+  status: green
+- id: AST-SPINE-04
+  fr_area: FR-SPINE
+  kind: functional
+  requirement_ref: L1D-31
+  statement: "Each classification carries a confidence and verbatim evidence; the commit maps classification->spine prop (l1_curator ServiceDelta), evidence->Observation, probe->AnalyserReconRequest(origin=anatomy_skill, skill_id=webpage_profile)."
+  tier: unit
+  test: tests/recon/test_anatomy.py::test_triple_lands_on_spine_observation_and_interfaceB
+  langfuse_score: ast_spine_04
+  status: green
+- id: AST-SPINE-05
+  fr_area: FR-SPINE
+  kind: nonfunctional
+  requirement_ref: L1D-31
+  statement: "Fail-open / config-gate: an LLM error degrades to an empty result (no crash); with STEEL_API_KEY absent the deeper probe is still emitted as a request and classification proceeds from passive signals."
+  tier: unit
+  test: tests/recon/test_anatomy.py::test_webpage_profile_fail_open_and_steel_gate
+  langfuse_score: ast_spine_05
+  status: green
+- id: AST-SPINE-06
+  fr_area: FR-SPINE
+  kind: functional
+  requirement_ref: L1D-31
+  statement: "The webpage-profile SKILL.md encodes the L1D-31a discipline (independent dimensions, fingerprints-never-sufficient) and both enum vocabularies, loaded via skill_for."
+  tier: unit
+  test: tests/recon/test_anatomy.py::test_webpage_profile_skill_encodes_discipline
+  langfuse_score: ast_spine_06
+  status: green
+```
+
 ### Headline assertions for the remaining areas (full ledger authored at area start)
 - **FR-ELICIT — DONE** (7 unit + 3 integration, `test_bootstrap*.py`). `operator_kb` = free-text (operator decision; typed template = AMV-4). `bootstrap_from_kb` elicits the Service skeleton via the analyser LLM, always ensures the linchpin `AuthenticationMechanism`/`AuthorizationSystem`, seeds `SystemKind`, writes **no L0 refs** (aggregates dropped — pure business projection), idempotent, fail-open. Bootstrap→assignment flow verified. Live smoke confirmed fail-open on a real LLM 400 (the operator's `LLM_MODEL_ANALYSER` id is currently invalid — see STATE Waiting-on-human).
 - **FR-ENRICH — DONE** (15 unit + 5 integration, `test_l1_enrich_*.py`). **DataItem flexible identity** `(project_id, item_key)` — a semantic key, `identity ⊥ membership` (verified: item survives a growing `SURFACES_AT` set) (operator pulled `L1OP-1` into MVP). **Extensible DataRelationship vocabulary** — `DataRelationshipKind` catalogue (6 seeds) + one `DATA_RELATIONSHIP` edge carrying `{kind, predicate, rationale}` (`L1OP-2` resolved, `L1D-21`). `PRODUCES`/`CONSUMES` with the trust **assumption on CONSUMES** (`L1D-14`); `SURFACES_AT` native cross-layer edge (L0 MATCHed never created); systems as typed §6 edges (`L1D-18`). Analyser can propose all of it in one batch (`default_curate_with_enrichment_fn`); LLM-facing proposals carry no provenance (system-stamped).

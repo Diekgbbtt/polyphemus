@@ -37,11 +37,15 @@ class ReconScope(BaseModel):
     """What a targeted request points at. `targets` are concrete L0 handles the
     probe runs against (URLs/hosts, or already-shaped asset dicts); `service_id`
     names the L1 Service the need arose from; `auth_context` (optional) carries
-    the per-role credentials a skill probe needs (interface-B `auth_context?`)."""
+    the per-role credentials a skill probe needs (interface-B `auth_context?`);
+    `note` (optional) records WHY the probe was raised (e.g. an anatomy skill's
+    fingerprint-only rationale + the spine slot(s) it must settle) so the routed
+    result knows what to refine."""
 
     service_id: str | None = None
     targets: list[str | dict] = Field(default_factory=list)
     auth_context: dict | None = None
+    note: str | None = None
 
 
 class AnalyserReconRequest(BaseModel):
