@@ -45,8 +45,12 @@ class ReconLaunch(BaseModel):
 
 
 # auth_context keys that are structural, NOT HTTP headers. Every other key is
-# treated as an arbitrary request header (name -> string value).
-_RESERVED_AUTH_CONTEXT_KEYS = {"cookies", "scope", "credentials"}
+# treated as an arbitrary request header (name -> string value). `roles` /
+# `default_role` tag multiple credential sets (FR-AUTH); `realm` tags a set's
+# origin (credential vs IdP). This mirrors the header serialiser's reserved set
+# (pod._RESERVED_AUTH_KEYS); the selector's auth._STRUCTURAL_KEYS is deliberately
+# narrower (it keeps `realm` in a selected role's set - see that module's note).
+_RESERVED_AUTH_CONTEXT_KEYS = {"cookies", "scope", "credentials", "roles", "default_role", "realm"}
 # RFC 7230 header field-names are tokens; we accept the realistic subset
 # (letters, digits, hyphen) that covers every auth header (Authorization,
 # X-Api-Key, ...) and excludes shell/CRLF-dangerous characters.
@@ -117,6 +121,31 @@ def _validate_auth_context(auth_context: object) -> None:
             raise ValueError(
                 f"auth_context header {name!r} value must not contain CR or LF"
             )
+
+    # FR-AUTH: optional role/realm-tagged credential sets. Each role's set is
+    # itself a flat credential set, so it is validated by the SAME rules (recurse);
+    # `roles`/`default_role`/`realm` are reserved, so the header loop above already
+    # skipped them. A partial PUT setting one role deep-merges (pg.save_settings),
+    # never wiping a sibling role.
+    roles = auth_context.get("roles")
+    if roles is not None:
+        if not isinstance(roles, dict):
+            raise ValueError("auth_context.roles must be an object mapping role -> credential set")
+        for role_name, role_set in roles.items():
+            if not isinstance(role_set, dict):
+                raise ValueError(f"auth_context.roles.{role_name} must be an object")
+            _validate_auth_context(role_set)  # a role's set is a flat auth_context
+    default_role = auth_context.get("default_role")
+    if default_role is not None:
+        if not isinstance(default_role, str):
+            raise ValueError("auth_context.default_role must be a string")
+        if default_role not in (roles or {}):
+            raise ValueError(
+                f"auth_context.default_role {default_role!r} has no matching entry in roles"
+            )
+    realm = auth_context.get("realm")
+    if realm is not None and not isinstance(realm, str):
+        raise ValueError("auth_context.realm must be a string")
 
 
 @router.post("/projects")

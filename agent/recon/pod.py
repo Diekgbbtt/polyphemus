@@ -125,7 +125,11 @@ _RATE_FLAGS = {"ffuf": "-rate 5 -p 0.2"}
 # auth_context is header-agnostic: `cookies` is the structured source of the
 # `Cookie` header, and every OTHER key (except these reserved structural ones,
 # which are not HTTP headers) is emitted verbatim as its own request header.
-_RESERVED_AUTH_KEYS = {"cookies", "scope", "credentials"}
+# The role/realm structural keys (`roles`, `default_role`, `realm`; FR-AUTH) are
+# reserved too, so even if a caller hands a set that still carries them they can
+# never leak out as HTTP headers (defence in depth - the selector already strips
+# roles/default_role; `realm` is a role's own metadata tag).
+_RESERVED_AUTH_KEYS = {"cookies", "scope", "credentials", "roles", "default_role", "realm"}
 
 
 def _iter_auth_headers(auth_context: dict):

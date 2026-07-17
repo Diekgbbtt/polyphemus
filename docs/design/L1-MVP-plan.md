@@ -502,6 +502,68 @@ Do not start a second area until the first is verifier-APPROVED.
   status: green
 ```
 
+### FR-AUTH — full assertion ledger (role/realm-tagged auth_context, authored at area start)
+
+*Goal:* extend the single flat `auth_context` to hold MULTIPLE role/realm-tagged credential sets — `auth_context.roles = {<role>: <credential-set>}` (+ optional `default_role`, + optional `realm` per set) — via the existing `jsonb_deep_merge` append seam, with a **per-request selector** `agent/recon/auth.py::select_auth_context(auth_context, role)` used at the injection points so a probe/job gets exactly one role's credentials (`L1D-5`, `L1OP-6`). A legacy flat `auth_context` (no `roles`) still works unchanged (the top-level keys are the unroled default set). *Non-goals:* the authorization-pyramid schema / role-node graph model (`L1OP-6`, co-evolves with FR-AUTHZSKILL); writing the `AUTHORIZED_BY {role}` edges (that is FR-AUTHZSKILL); any new login mechanism.
+
+```yaml
+# FR-AUTH assertion ledger
+- id: AST-AUTH-01
+  fr_area: FR-AUTH
+  kind: functional
+  requirement_ref: L1OP-6
+  statement: "select_auth_context(ac, 'admin') returns admin's self-contained credential set (its cookies + headers), not another role's."
+  tier: unit
+  test: tests/recon/test_auth_context.py::test_selector_returns_the_named_roles_credentials
+  langfuse_score: ast_auth_01
+  status: green
+- id: AST-AUTH-02
+  fr_area: FR-AUTH
+  kind: functional
+  requirement_ref: L1OP-6
+  statement: "select_auth_context(ac, None) uses default_role when set, else the flat unroled creds; the structural keys roles/default_role never appear in the selected set."
+  tier: unit
+  test: tests/recon/test_auth_context.py::test_selector_default_role_and_flat_fallback
+  langfuse_score: ast_auth_02
+  status: green
+- id: AST-AUTH-03
+  fr_area: FR-AUTH
+  kind: nonfunctional
+  requirement_ref: L1D-5
+  statement: "A partial PUT setting roles.admin does not wipe a previously-stored roles.shopper (jsonb_deep_merge preserves nested sibling roles)."
+  tier: integration
+  test: tests/integration/test_auth_roles_merge.py::test_partial_role_put_preserves_sibling_roles
+  langfuse_score: ast_auth_03
+  status: green
+- id: AST-AUTH-04
+  fr_area: FR-AUTH
+  kind: functional
+  requirement_ref: L1D-5
+  statement: "Validation accepts a role/realm-tagged auth_context and applies the SAME per-set rules to each role (rejects a bad cookie / a literal Cookie header / a bad header value inside a role); default_role must name an existing role."
+  tier: unit
+  test: tests/recon/test_auth_context.py::test_validation_recurses_into_roles
+  langfuse_score: ast_auth_04
+  status: green
+- id: AST-AUTH-05
+  fr_area: FR-AUTH
+  kind: functional
+  requirement_ref: L1D-5
+  statement: "The selected set serialises to HTTP headers with the structural keys (roles/default_role/realm) NEVER emitted as headers (they are reserved in both the API validator and the pod serialiser)."
+  tier: unit
+  test: tests/recon/test_auth_context.py::test_structural_keys_never_serialised_as_headers
+  langfuse_score: ast_auth_05
+  status: green
+- id: AST-AUTH-06
+  fr_area: FR-AUTH
+  kind: nonfunctional
+  requirement_ref: L1D-5
+  statement: "Backward compat: a legacy flat auth_context (no roles) selects to itself and serialises unchanged (existing single-credential runs are unaffected)."
+  tier: unit
+  test: tests/recon/test_auth_context.py::test_legacy_flat_auth_context_unchanged
+  langfuse_score: ast_auth_06
+  status: green
+```
+
 ### Headline assertions for the remaining areas (full ledger authored at area start)
 - **FR-ELICIT — DONE** (7 unit + 3 integration, `test_bootstrap*.py`). `operator_kb` = free-text (operator decision; typed template = AMV-4). `bootstrap_from_kb` elicits the Service skeleton via the analyser LLM, always ensures the linchpin `AuthenticationMechanism`/`AuthorizationSystem`, seeds `SystemKind`, writes **no L0 refs** (aggregates dropped — pure business projection), idempotent, fail-open. Bootstrap→assignment flow verified. Live smoke confirmed fail-open on a real LLM 400 (the operator's `LLM_MODEL_ANALYSER` id is currently invalid — see STATE Waiting-on-human).
 - **FR-ENRICH — DONE** (15 unit + 5 integration, `test_l1_enrich_*.py`). **DataItem flexible identity** `(project_id, item_key)` — a semantic key, `identity ⊥ membership` (verified: item survives a growing `SURFACES_AT` set) (operator pulled `L1OP-1` into MVP). **Extensible DataRelationship vocabulary** — `DataRelationshipKind` catalogue (6 seeds) + one `DATA_RELATIONSHIP` edge carrying `{kind, predicate, rationale}` (`L1OP-2` resolved, `L1D-21`). `PRODUCES`/`CONSUMES` with the trust **assumption on CONSUMES** (`L1D-14`); `SURFACES_AT` native cross-layer edge (L0 MATCHed never created); systems as typed §6 edges (`L1D-18`). Analyser can propose all of it in one batch (`default_curate_with_enrichment_fn`); LLM-facing proposals carry no provenance (system-stamped).

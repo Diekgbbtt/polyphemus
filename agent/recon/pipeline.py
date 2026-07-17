@@ -29,6 +29,7 @@ import logging
 
 from agent.app.config import config
 from agent.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
+from agent.recon.auth import select_auth_context
 from agent.recon.curator import ALLOWED_LABELS, curate
 from agent.recon.jobs import JOBS, build_phase_plan, validate_job_subset
 from agent.recon.scope import DISCOVERY_JOBS, parse_scope
@@ -309,7 +310,12 @@ async def run_pipeline(
 
                     extra = {"project_id": project_id}
                     if job.use_auth and settings.get("auth_context"):
-                        extra["auth_context"] = settings["auth_context"]
+                        # FR-AUTH: select the DEFAULT role's credential set (honours
+                        # default_role, else the flat unroled creds) so a role/realm-
+                        # tagged auth_context never leaks its `roles` map to the tool.
+                        selected = select_auth_context(settings["auth_context"])
+                        if selected:
+                            extra["auth_context"] = selected
                     # Scope gate for URL-hosted assets (out-of-scope BaseURL
                     # drop in curate): the seed host/apex, only when a target is
                     # actually configured (never the parse_scope placeholder).
