@@ -417,6 +417,15 @@ def run_curation(project_id: str, run_id: str, *, read_fn=None, propose_fn=None)
             report.merged = counts.get("merged", 0)
             report.deleted = counts.get("deleted", 0)
             report.relabelled = counts.get("relabelled", 0)
+            # A destructive op changes the IDENTITY SET, so the stage-1 snapshot is
+            # now stale. Every later stage consumes `context["cards"]`, and stage 5
+            # commits anatomy per card via `commit_anatomy`, which MERGEs the
+            # Service by slug - so a merged-away duplicate in the stale list is
+            # re-created, silently undoing the dedup and leaving curation to report
+            # `merged=1` on every future run while the graph never converges.
+            # Re-read so the post-reconcile stages operate on what actually exists.
+            if report.merged or report.deleted or report.relabelled:
+                context = _read_context(project_id, read_fn, report)
     except Exception as exc:
         logger.warning("curation.reconcile stage failed; fail-open", exc_info=True)
         _note_error(report, f"reconcile: {exc}")

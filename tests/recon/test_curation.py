@@ -390,3 +390,54 @@ def test_curation_proposals_to_ops_maps_keys():
     assert relabels[0].to_label == "L1System"
     assert relabels[0].identity == {"business_function_slug": "graphql-api"}
     assert relabels[0].new_identity == {"system_kind": "GraphQLApi", "discriminator": "__singleton__"}
+
+
+# --- AST-CUR-04: stages after reconcile must see the POST-reconciliation graph ---
+# Regression guard for the FR-CURE2E defect: run_curation read its index-cards ONCE
+# at stage 1 and handed that snapshot to the later stages. Stage 3 merged a duplicate
+# away, then stage 5 (anatomy) iterated the STALE list and commit_anatomy MERGEd the
+# deleted Service back into existence - so curation silently undid its own dedup and
+# reported merged=1 forever. Found by the adversarial dirty-graph probe; invisible to
+# the FR-MERGE integration tests because reconcile is correct in ISOLATION.
+
+def test_curation_does_not_resurrect_a_merged_away_service(monkeypatch):
+    """A Service removed by the reconcile stage must NOT be re-created by any later
+    stage: the post-reconcile stages operate on refreshed context, never the stale
+    pre-merge card list."""
+    live = {"checkout", "check-out"}          # the mutable "graph"
+    anatomy_calls: list[str] = []
+
+    def fake_index_cards(project_id, *, read_fn=None):
+        # Cards always reflect the CURRENT graph, like the real reader would.
+        return [{"kind": "Service", "key": {"business_function_slug": s}, "spine": {}, "edge_degree": {}}
+                for s in sorted(live)]
+
+    def fake_reconcile(project_id, *, merges=None, deletes=None, relabels=None, merge_fn=None):
+        for op in merges or []:
+            live.discard(op.duplicate.get("business_function_slug"))
+        for op in deletes or []:
+            live.discard(op.identity.get("business_function_slug"))
+        return {"merged": len(merges or []), "deleted": len(deletes or []),
+                "relabelled": len(relabels or [])}
+
+    def fake_commit_anatomy(result, project_id, slug, *, provenance=None):
+        anatomy_calls.append(slug)
+        live.add(slug)   # commit_anatomy MERGEs the Service - the resurrection vector
+        return {}
+
+    monkeypatch.setattr(index_card, "index_cards", fake_index_cards)
+    monkeypatch.setattr(l1_curator, "reconcile", fake_reconcile)
+    monkeypatch.setattr(l1_curator, "l1_curate", lambda services, systems, project_id, **k: (len(services), 0))
+    monkeypatch.setattr(anatomy, "webpage_profile", lambda *a, **k: AnatomyResult())
+    monkeypatch.setattr(anatomy, "commit_anatomy", fake_commit_anatomy)
+    monkeypatch.setattr(sweep, "stale_pool_count", lambda *a, **k: 0)
+    monkeypatch.setattr(sweep, "missing_system_kinds", lambda *a, **k: [])
+
+    batch = CurationBatch(merges=[MergeProposal(kind="service", canonical="checkout", duplicate="check-out")])
+    report = curation.run_curation("p", "r", read_fn=_empty_read_fn, propose_fn=lambda ctx: batch)
+
+    assert report.merged == 1
+    assert "check-out" not in anatomy_calls, (
+        f"anatomy ran for the merged-away duplicate (stale context): {anatomy_calls}"
+    )
+    assert live == {"checkout"}, f"the merged-away duplicate was resurrected: {sorted(live)}"
