@@ -36,11 +36,48 @@ def _jsonable(value):
     return value
 
 
+# Prefer the most specific/meaningful label for display + colouring. L1 units are
+# multi-label (`:L1TestableUnit:L1Service`) and Neo4j returns labels in an
+# UNSPECIFIED order, so a naive `labels[0]` can surface the generic supertype -
+# which made every L1 node read as one indistinct type (and one grey colour) in
+# the frontend. Rank the specific subtypes / catalogue labels ahead of the
+# supertype so services, systems, and data items are always distinguishable.
+_LABEL_PRIORITY = (
+    "L1Service", "L1System", "L1DataItem", "SystemKind", "DataRelationshipKind",
+)
+
+# The non-null discriminator sentinel (mirrors l1_types.L1_SINGLETON); inlined so
+# this pure L0-side formatter stays import-light (no analysis-layer dependency).
+_L1_SINGLETON = "__singleton__"
+
+
+def primary_label(labels: list[str] | None) -> str:
+    """The most specific label to represent a node by (type + colour). Prefers a
+    known L1 subtype / catalogue label over the generic `:L1TestableUnit`
+    supertype; falls back to the first label, or 'Unknown' when none."""
+    for pref in _LABEL_PRIORITY:
+        if pref in (labels or []):
+            return pref
+    return (labels or ["Unknown"])[0]
+
+
 def node_name(labels: list[str], props: dict) -> str:
-    label = labels[0] if labels else "Unknown"
+    label = primary_label(labels)
     p = props or {}
     if label == "Observation":
         return str(p.get("macro_kind") or p.get("severity") or "Observation")
+    # L1 units name by their identity slug, not a generic label (the L0 key list
+    # below never matches an L1 node, so without this they showed as bare labels).
+    if label == "L1Service":
+        return str(p.get("business_function_slug") or "L1Service")
+    if label == "L1System":
+        kind = p.get("system_kind") or "L1System"
+        disc = p.get("discriminator")
+        return f"{kind}:{disc}" if disc and disc != _L1_SINGLETON else str(kind)
+    if label == "L1DataItem":
+        return str(p.get("item_key") or "L1DataItem")
+    if label in ("SystemKind", "DataRelationshipKind"):
+        return str(p.get("id") or label)
     for key in ("name", "url", "path", "address", "value", "number"):
         if p.get(key) is not None:
             return str(p[key])
@@ -59,7 +96,7 @@ def format_graph_records(records: list[dict]) -> dict:
             nodes[nid] = {
                 "id": nid,
                 "name": node_name(node.get("labels", []), node.get("props", {})),
-                "type": (node.get("labels") or ["Unknown"])[0],
+                "type": primary_label(node.get("labels")),
                 "properties": _jsonable(dict(node.get("props", {}))),
             }
 
