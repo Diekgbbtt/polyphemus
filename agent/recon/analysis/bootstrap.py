@@ -51,19 +51,27 @@ _BOOTSTRAP_INSTRUCTION = (
 )
 
 
-def default_elicit_fn(operator_kb: str) -> L1DeltaBatch:
+def default_elicit_fn(operator_kb: str, *, service_slugs: list[str] | None = None) -> L1DeltaBatch:
     """Real collaborator: ask the analyser LLM to elicit the Service skeleton from
     the operator KB. Reuses the analyser role + skill (same structured-output
-    pattern as default_analyse_fn); the KB text is the whole input."""
+    pattern as default_analyse_fn); the KB text is the whole input.
+
+    FR-INVENTORY: `service_slugs` are the CURRENT L1 Service identities; rendered
+    as the un-truncated EXISTING L1 IDENTITIES reuse block at the top so a
+    re-bootstrap reuses an existing slug instead of coining a synonym."""
     from langchain_core.messages import SystemMessage, HumanMessage
 
     from agent.app.llm.roles import chat_model_for
     from agent.recon.analysis.l1_curator import vocabulary_prompt
-    from agent.recon.analysis.pod import _load_analyser_skill
+    from agent.recon.analysis.pod import _inventory_block, _load_analyser_skill
 
     llm = chat_model_for("analyser")
     structured_llm = llm.with_structured_output(L1DeltaBatch, method="function_calling")
-    prompt = f"{_BOOTSTRAP_INSTRUCTION}\n\n{vocabulary_prompt()}\n\nOperator KB (free text):\n{operator_kb}"
+    inventory = {"services": service_slugs or [], "systems": [], "data_items": []}
+    prompt = (
+        f"{_inventory_block(inventory)}\n\n{_BOOTSTRAP_INSTRUCTION}\n\n"
+        f"{vocabulary_prompt()}\n\nOperator KB (free text):\n{operator_kb}"
+    )
     messages = [SystemMessage(content=_load_analyser_skill()), HumanMessage(content=prompt)]
     return structured_llm.invoke(messages)
 
@@ -91,7 +99,14 @@ def bootstrap_from_kb(
         batch = L1DeltaBatch()
     else:
         if elicit_fn is None:
-            elicit_fn = default_elicit_fn
+            # FR-INVENTORY: seed the default elicitation with the CURRENT service
+            # slugs so a re-bootstrap reuses existing identities instead of coining
+            # synonyms. read_l1_inventory is fail-open (empty on any read error).
+            from agent.recon.analysis.l1_inventory import read_l1_inventory
+            _slugs = read_l1_inventory(project_id).get("services", [])
+
+            def elicit_fn(kb):
+                return default_elicit_fn(kb, service_slugs=_slugs)
         try:
             batch = elicit_fn(operator_kb)
         except Exception as exc:  # fail-open: an LLM error degrades to no elicited skeleton

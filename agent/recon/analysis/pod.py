@@ -194,16 +194,77 @@ def _slice_repr(l0_slice: dict) -> str:
     )
 
 
-def _assignment_prompt(l0_slice: dict, observations: list[dict]) -> str:
-    """Pass-1 prompt: the service/system model + surface assignment + topology."""
+# FR-INVENTORY: the "reuse these exact keys" duplicate-prevention rule. Rendered
+# from the CURRENT L1 identity inventory (read once per run) and injected at the
+# TOP of every analyser prompt - OUTSIDE the _MAX_L0_NODES truncation, so it is
+# never dropped the way the old "reuse the slug already in the slice" hint was
+# (that hint leaned on L1 nodes buried in a 400-capped slice the data pass drops).
+def _inventory_block(inventory: dict | None) -> str:
+    """Render the CURRENT L1 identities as an explicit, machine-legible reuse
+    block (a bullet list of the exact keys) for the TOP of an analyser prompt.
+    Never truncated. An empty category renders `(none yet)` so the block shape is
+    deterministic on the very first pass."""
+    inv = inventory or {}
+
+    def _render(heading: str, keys) -> str:
+        keys = list(keys or [])
+        if not keys:
+            return f"  {heading}: (none yet)"
+        return f"  {heading}:\n" + "\n".join(f"    - {k}" for k in keys)
+
+    return (
+        "EXISTING L1 IDENTITIES - reuse these EXACT keys, do NOT coin a synonym.\n"
+        "These identities are already in the graph from earlier passes. Sign-in / "
+        "signin / login are ONE identity: pick the key already listed here rather "
+        "than minting a near-duplicate. Add a NEW Service / System / DataItem ONLY "
+        "for surface no existing key below covers.\n"
+        f"{_render('Services (business_function_slug)', inv.get('services'))}\n"
+        f"{_render('Systems (system_kind[:discriminator])', inv.get('systems'))}\n"
+        f"{_render('DataItems (item_key)', inv.get('data_items'))}"
+    )
+
+
+# FR-TYPESEP-a: a service's rendering / navigation / API-paradigm / perimeter are
+# cross-cutting SYSTEMS reached by a typed edge, never Service props. Positive,
+# example-led recipe (mirrors the data-modelling worked example) with the exact
+# `system_edges` JSON shape, plus the Stage-3 DFS rationale that motivates it.
+_SYSTEM_FACTS_ARE_EDGES_RULE = (
+    "SYSTEM FACTS ARE EDGES, NOT SERVICE PROPS. A service's rendering, navigation, "
+    "API paradigm, and perimeter are cross-cutting Systems reached by a typed "
+    "`system_edges` entry - NEVER a property on the Service. The Stage-3 attack "
+    "engineer discovers a service's systems by a depth-first (DFS) traversal of "
+    "its System edges, so a fact stranded as a Service prop is invisible to it. "
+    "Map each spine fact to a `system_edges` entry:\n"
+    "- rendering_model / navigation_model -> an `EXPOSED_VIA` edge to ONE "
+    "`WebPresentation` System that carries rendering_model AND navigation_model as "
+    "INDEPENDENT props (never infer one from the other - a SPA may be SSR).\n"
+    "- api_paradigm -> an `EXPOSED_VIA` edge to a `RESTApi` / `GraphQLApi` System.\n"
+    "- perimeter (WAF / CDN / reverse proxy / gateway) -> a `FRONTED_BY`, "
+    "`PROTECTED_BY`, or `ROUTED_BY` edge to the matching perimeter System.\n"
+    "WORKED EXAMPLE (copy this shape) - a client-rendered single-page checkout is:\n"
+    '  systems: [{"system_kind": "WebPresentation", "props": '
+    '{"rendering_model": "CSR", "navigation_model": "SPA"}}]\n'
+    '  system_edges: [{"service_slug": "checkout", "system_kind": '
+    '"WebPresentation", "rel": "EXPOSED_VIA"}]\n'
+    'NOT services: [{"business_function_slug": "checkout", "props": '
+    '{"rendering_model": "CSR"}}] - a rendering_model prop on the Service is wrong.'
+)
+
+
+def _assignment_prompt(l0_slice: dict, observations: list[dict], inventory: dict | None = None) -> str:
+    """Pass-1 prompt: the service/system model + surface assignment + topology.
+    The EXISTING L1 IDENTITIES reuse block (FR-INVENTORY) leads, un-truncated, so
+    the analyser reuses existing identities instead of coining synonyms."""
     from agent.recon.analysis.l1_curator import vocabulary_prompt
 
     return (
+        f"{_inventory_block(inventory)}\n\n"
         f"{vocabulary_prompt()}\n\n{_L0_REFERENCE_GUIDE}\n\n{_slice_repr(l0_slice)}\n"
         f"Observations: {observations}\n"
+        f"{_SYSTEM_FACTS_ARE_EDGES_RULE}\n\n"
         "TASK 1 of 2 - SERVICE MODEL & SURFACE ASSIGNMENT. Propose ONLY: `services` "
         "(business-function Services - REUSE the exact business_function_slug of any "
-        "Service already present in the slice rather than coining a synonym; add a "
+        "Service already listed above rather than coining a synonym; add a "
         "new Service only for surface no existing one covers), `systems`, "
         "`aggregates` (which Service owns each L0 element), and `system_edges`. "
         "Leave the data-modelling lists (data_items, surfaces_at, data_flows, "
@@ -229,11 +290,14 @@ def _compact_l0_for_data(l0_slice: dict) -> tuple[list[dict], list[dict]]:
     return endpoints, parameters
 
 
-def _data_modelling_prompt(l0_slice: dict, assignment: L1DeltaBatch) -> str:
+def _data_modelling_prompt(l0_slice: dict, assignment: L1DeltaBatch, inventory: dict | None = None) -> str:
     """Pass-2 prompt: the logical DataItems + flows, grounded in pass-1's
     assignment (each Service + a token-light sample of the endpoints it now owns)
     plus an IDENTITY-ONLY surface digest (not the full node dump - that made the
-    prompt ~123k chars and pass-2 timed out / returned no structured output)."""
+    prompt ~123k chars and pass-2 timed out / returned no structured output).
+    The EXISTING L1 IDENTITIES reuse block (FR-INVENTORY) leads, un-truncated -
+    this pass otherwise drops the L0 slice entirely, so without it an existing
+    DataItem identity would be invisible and the analyser would coin a synonym."""
     from agent.recon.analysis.l1_curator import vocabulary_prompt
 
     owned: dict[str, list[str]] = {}
@@ -253,6 +317,7 @@ def _data_modelling_prompt(l0_slice: dict, assignment: L1DeltaBatch) -> str:
     # live: args={'services':[],...} only). The merge keeps ONLY the four data
     # lists from this pass, so we never mention the others.
     return (
+        f"{_inventory_block(inventory)}\n\n"
         "TASK: LOGICAL DATA MODELLING. List the principal business records (DataItems) "
         "this application keeps, and how they flow. Fill FOUR lists: `data_items`, "
         "`surfaces_at`, `data_flows`, `data_relationships`. You MUST return at least "
@@ -262,8 +327,14 @@ def _data_modelling_prompt(l0_slice: dict, assignment: L1DeltaBatch) -> str:
         "listing, shopping basket, order, delivery address, payment method, coupon, "
         "gift card, review, complaint, loyalty points, subscription plan, security "
         "question), NOT an endpoint or a parameter.\n\n"
+        "FIELDS (evidence-bound only): a DataItem MAY carry a `fields` list in its "
+        "`props` naming ONLY the concrete fields you OBSERVED for it in the surface "
+        "below (parameter names on its endpoints, keys present in the evidence). Record "
+        "observed fields under `fields`; do NOT guess or emit a speculative field list - "
+        "unobserved attributes are identified later in a dedicated enrichment activity. "
+        "Omit `fields` entirely when you observed none.\n\n"
         "WORKED EXAMPLE (copy this shape):\n"
-        '  data_items:   [{"item_key": "shopping_basket"}, {"item_key": "product_listing"}]\n'
+        '  data_items:   [{"item_key": "shopping_basket", "props": {"fields": ["ProductId", "quantity"]}}, {"item_key": "product_listing"}]\n'
         '  surfaces_at:  [{"item_key": "shopping_basket", "l0": {"label": "Endpoint",'
         ' "identity": {"path": "/api/BasketItems", "method": "GET", "baseurl": "<baseurl>"}}}]\n'
         '  data_flows:   [{"service_slug": "cart", "item_key": "shopping_basket", "direction": "produces"},\n'
@@ -303,7 +374,9 @@ def _invoke_with_retry(invoke_fn, messages, *, attempts: int = 3):
     return result
 
 
-def _two_pass_analyse(invoke_fn, l0_slice: dict, observations: list[dict]) -> L1DeltaBatch:
+def _two_pass_analyse(
+    invoke_fn, l0_slice: dict, observations: list[dict], inventory: dict | None = None
+) -> L1DeltaBatch:
     """Two-pass analyse: an assignment pass (services/systems/aggregates/
     system_edges) then a DEDICATED data-modelling pass (data_items/surfaces_at/
     data_flows/data_relationships), merged into one batch.
@@ -320,7 +393,7 @@ def _two_pass_analyse(invoke_fn, l0_slice: dict, observations: list[dict]) -> L1
     skill = _load_analyser_skill()
     assignment = _invoke_with_retry(invoke_fn, [
         SystemMessage(content=skill),
-        HumanMessage(content=_assignment_prompt(l0_slice, observations)),
+        HumanMessage(content=_assignment_prompt(l0_slice, observations, inventory)),
     ])
     # structured_output returns None when the model emits no parseable tool call;
     # after retries, degrade to an empty batch rather than crash (fail-open).
@@ -328,7 +401,7 @@ def _two_pass_analyse(invoke_fn, l0_slice: dict, observations: list[dict]) -> L1
         assignment = L1DeltaBatch()
     data = _invoke_with_retry(invoke_fn, [
         SystemMessage(content=skill),
-        HumanMessage(content=_data_modelling_prompt(l0_slice, assignment)),
+        HumanMessage(content=_data_modelling_prompt(l0_slice, assignment, inventory)),
     ])
     if data is None:  # data-modelling pass produced no tool call after retries -> assignment-only
         logger.warning("analyser data-modelling pass produced no structured output; assignment-only")
@@ -346,12 +419,27 @@ def default_analyse_fn(l0_slice: dict, observations: list[dict]) -> L1DeltaBatch
     """Real collaborator: ask the analyser LLM to propose L1 deltas in TWO passes
     (assignment, then a dedicated data-modelling pass - see _two_pass_analyse).
     Mirrors default_triage_fn's structured-output pattern (function_calling
-    tolerates the open-ended `dict` props/identity fields json_schema rejects)."""
+    tolerates the open-ended `dict` props/identity fields json_schema rejects).
+
+    FR-INVENTORY: reads the CURRENT L1 identity inventory ONCE (project_id is
+    carried on every L0 node's properties) and threads it into both passes so the
+    analyser reuses existing identities instead of coining synonyms. Fail-open:
+    read_l1_inventory degrades to the empty inventory on any read error, and an
+    undetermined project_id (empty slice) simply skips the read."""
     from agent.app.llm.roles import chat_model_for
+    from agent.recon.analysis.l1_inventory import read_l1_inventory
 
     llm = chat_model_for("analyser")
     structured_llm = llm.with_structured_output(L1DeltaBatch, method="function_calling")
-    return _two_pass_analyse(structured_llm.invoke, l0_slice, observations)
+
+    project_id = None
+    for n in (l0_slice or {}).get("nodes", []):
+        pid = (n.get("properties") or {}).get("project_id")
+        if pid:
+            project_id = pid
+            break
+    inventory = read_l1_inventory(project_id) if project_id else None
+    return _two_pass_analyse(structured_llm.invoke, l0_slice, observations, inventory)
 
 
 def default_curate_fn(services, systems, aggregates, project_id: str) -> AnalyserExport:

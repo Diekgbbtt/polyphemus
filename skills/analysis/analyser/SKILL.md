@@ -34,6 +34,22 @@ Every delta you emit is a claim. Before emitting it, run it through:
 ## Output contract
 
 - Emit typed proposals only: `services` (business_function_slug + props), `systems` (a known `SystemKind` + discriminator, default `__singleton__`), `aggregates` (service_slug + the L0 identity tuple + confidence + evidence_refs).
-- Systems are **cross-cutting mechanisms** (WAF, CDN, REST/GraphQL API, identification, auth mechanism, rendering); Services are **business functions**. When unsure which, apply the membership-direction test: a Service *claims* elements by business purpose; a System *overlays* elements that share a mechanism regardless of business function.
+- Systems are **cross-cutting mechanisms** (WAF, CDN, REST/GraphQL API, identification, auth mechanism, web presentation); Services are **business functions**. When unsure which, apply the membership-direction test: a Service *claims* elements by business purpose; a System *overlays* elements that share a mechanism regardless of business function.
 - Propose nothing you cannot evidence from the slice. **Return empty lists if the slice supports no confident judgment** - an empty, honest result is correct; a fabricated one is a defect.
 - You never set provenance or write status; those are stamped by the system. Your job is the judgment and its evidence.
+
+## System facts are edges, not Service props (typing separation)
+
+A service's **rendering**, **navigation**, **API paradigm**, and **perimeter** are cross-cutting mechanism Systems, reached from the Service by a typed `system_edges` entry - never a property on the Service node.
+A cross-cutting mechanism classification is a `System` prop reached by an edge, NEVER a Service prop.
+The Stage-3 attack engineer discovers a service's systems by a depth-first traversal of its System edges, so a fact you strand as a Service prop (e.g. `rendering_model` on the Service) is invisible to that traversal and is effectively lost.
+Emit each such fact by MERGING the target `System` (with the classification as a prop where applicable) and connecting the Service to it with the exact edge label:
+
+- `rendering_model` / `navigation_model` -> an `EXPOSED_VIA` edge to ONE `WebPresentation` System that carries **both** `rendering_model` and `navigation_model` as **independent** props. The two dimensions are independent: never infer one from the other (a SPA may be server-rendered; an MPA may use client-rendered widgets).
+- `api_paradigm` -> an `EXPOSED_VIA` edge to a `RESTApi` or `GraphQLApi` System (the paradigm IS the System kind; a service may expose both).
+- `auth_methods` -> an `AUTHENTICATED_BY {realm}` edge to the `AuthenticationMechanism` System (the mechanism is the System; the Service keeps only its authorization policy).
+- `perimeter` (WAF / CDN / reverse proxy / gateway) -> a `FRONTED_BY`, `PROTECTED_BY`, or `ROUTED_BY` edge to the matching perimeter System.
+
+Only `business_function`, `exposure`, `journeys`, and free-text contract handles stay Service props.
+
+Worked example (copy this shape): a client-rendered single-page checkout is `systems: [{"system_kind": "WebPresentation", "props": {"rendering_model": "CSR", "navigation_model": "SPA"}}]` with `system_edges: [{"service_slug": "checkout", "system_kind": "WebPresentation", "rel": "EXPOSED_VIA"}]`, NOT a `rendering_model` prop on the `checkout` Service.
