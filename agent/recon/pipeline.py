@@ -204,6 +204,7 @@ async def run_pipeline(
     read_assets=None,
     read_steering_signals=None,
     decide_routing=None,
+    stream_fn=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -223,12 +224,19 @@ async def run_pipeline(
         read_steering_signals = globals()["read_steering_signals"]
     if decide_routing is None:
         from agent.recon.orchestrator_agent import decide_routing as decide_routing  # noqa: PLC0414
+    if stream_fn is None:
+        from agent.recon.analysis.streaming import stream_analyser_step as stream_fn  # noqa: PLC0414
 
     # All DB helpers below (pg + neo4j) are synchronous/blocking. run_pipeline
     # runs on the API event loop, so every one is offloaded via asyncio.to_thread
     # - otherwise a single slow query stalls the whole API (health, polls,
     # /graph) and starves the heartbeat under concurrent runs (Defect C).
     settings = (await asyncio.to_thread(load_settings, project_id)) or {}
+
+    # FR-STREAM (NM-7, operator-pulled 2026-07-17): when enabled, the analyser is
+    # fed each recon job's freshly-curated surface AS RECON PROCEEDS, so L1 is
+    # integrated progressively. Default OFF -> batch stays the default (L1D-23).
+    streaming = bool(settings.get("streaming_analysis"))
 
     if job_subset is not None:
         validate_job_subset(job_subset)
@@ -430,6 +438,22 @@ async def run_pipeline(
                     status,
                     stats=job_stats,
                 )
+
+                # FR-STREAM (NM-7): feed this job's freshly-curated surface to the
+                # analyser NOW, so L1 grows progressively during recon. Only when
+                # the job actually produced surface (else the pass is redundant),
+                # and synchronously here (jobs run sequentially) so peak memory
+                # stays one analyser pass - no concurrent consumer (OOM-safe).
+                # stream_fn is fail-open; guard the call too so streaming can
+                # never fail a healthy recon run.
+                if streaming and (produced_assets or produced_observations):
+                    try:
+                        await asyncio.to_thread(stream_fn, project_id, run_id)
+                    except Exception:  # best-effort: streaming never aborts recon
+                        logger.warning(
+                            "streaming analyser step raised for run %s job %s (recon continues)",
+                            run_id, name, exc_info=True,
+                        )
 
             await asyncio.to_thread(
                 registry.set_run_status, run_id, "running", current_phase=phase_idx
