@@ -273,3 +273,45 @@ Append one entry per iteration. Prune entries older than 30 days.
   "notes": "index_card.py: index_cards (per-unit card {kind,key,spine,edge_degree-by-family,salience,nl_handles} - counts NOT member set, DD-4) + dfs_down (one typed hop, injection-guarded). Live-data: soupmarket 24 cards, busiest user-account 406 bytes w/ 11 aggregates+6 edge families, AGGREGATES degrees sum to 55. Independent verifier APPROVED: ran 6 unit + 3 integration (live) itself; verified degree-not-member-set (collect(type(r)), no member node in query; 10k-member card <500B), dfs-down one hop, injection guard, zero-degree units kept, read-only, denylist clean, MVP-fence (no NM-3 dfs-up). Non-blocking note: _SAFE_IDENT $ matches before trailing \\n (non-exploitable) -> will harden across sweep/index_card/l1_curator. 8 FR areas DONE+verified. Phase 3 complete except FR-PODSTREAM (L1D-23 two-way, batch default)."
 }
 ```
+
+```
+{
+  "run_id": "2026-07-17T-exhaustive-soupmarket-e2e",
+  "fr_area": "ALL-15 (recon + attack-surface-analysis e2e)",
+  "attempt": 2,
+  "assertions_green": 222,
+  "assertions_total": 222,
+  "tokens_estimate": 3600000,
+  "escalations": 0,
+  "outcome": "approved",
+  "notes": "Exhaustive live e2e vs DOMAIN soupmarket.shop (OWASP Juice Shop behind nginx; system blind to local/vuln identity), project soup_9b876a3c. 172 code-level ASA assertions (0 skips) + 50 live-graph FR/NFR assertions across all 15 FR areas. Flow: bootstrap(FR-ELICIT 7/7) -> recon[httpx,katana(341),jsluice(543),httpx_reprofile,arjun] -> analyser two-pass enrich(18 DataItems, 9 CONSUMES all w/ Tier-1 trust assumptions, 37 typed system-edges, envelope+prov on all AGGREGATES) -> sweep/index-card -> interface-B(httpx 16 assets) -> anatomy skills(FR-SPINE 2 independent SPA/CSR slots; FR-AUTH flat role/realm select+serialise; FR-AUTHZSKILL real guest401/shopper200 pyramid -> AUTHORIZED_BY{shopper}/AUTHENTICATED_BY{jwt}). Independent verifier ran baseline+graph itself. ATTEMPT 1 REJECTED: my anomaly-(B) narrative was materially FALSE ('3 noise endpoints, web-frontend only, unpolluted'); truth = 58/182 (31%; ~70 inclusive) noise across 5 services incl. genuine web3-wallet (soljson blobs) + file-server (node_modules). ATTEMPT 2 APPROVED after honest correction + AMV-8 (L0 crawl/parse noise) + AMV-9 (analyser assignment-confidence/stale = live-evidenced L1OP-5) registered. Root finding: stronger model (deepseek-v4-pro) OVER-assigns (0 stale vs prior weaker-model 79); empty stale pool is a NEGATIVE signal. No in-scope FR/NFR violated (assignment faithfulness = deferred L1OP-5, out of fence). Infra: agent RestartCount=0 (no OOM) - curated tool set avoided steel_crawl/ffuf/kiterunner. FR-AUTH driver bug (mine, fixed): role cred set is FLAT (Authorization top-level, not nested under 'headers'); selector keeps realm, serialiser strips it."
+}
+```
+
+```
+{
+  "run_id": "2026-07-18T-fr-stream-nm7-approved",
+  "fr_area": "FR-STREAM (NM-7 streaming analyser)",
+  "attempt": 1,
+  "assertions_green": 6,
+  "assertions_total": 6,
+  "tokens_estimate": 5200000,
+  "escalations": 1,
+  "outcome": "approved",
+  "notes": "Operator-pulled NM-7 into scope after observing (confirmed via code+Langfuse traces) that L1 was only built post-recon batch, never progressively during recon - which was BY DESIGN (L1D-23 batch default), not a bug; escalated as a design decision (AskUserQuestion), operator chose Full streaming. Built streaming.py::stream_analyser_step (fail-open, stable stream-<run_id>, auto-deliver) + per-job pipeline hook gated on settings.recon.streaming_analysis, synchronous between sequential jobs (OOM-safe, no persistent consumer). Batch stays DEFAULT (two-way door). Unit 26 passed/0 skips. Live: clean artifact soupstream_faf091e0 (100% analyser:stream- prov, 0 dup identities) + scale growth [0,77,142,143,143] w/ idempotent convergence. Independent verifier APPROVED (ran unit+graph itself, reviewed code contract). VERIFICATION RESTARTED after operator teardown destroyed agent context (persisted data survived): root-caused a muddied artifact (my batch-verify convergence pass clobbered stream provenance -> fixed driver to use idempotent stream-step convergence) and a false 'kill' (detached python survived; relaunched via docker exec -d to container file, immune to exec-kill). Findings out-of-scope for FR-STREAM: infra flakiness (constrained host) + high analyser assignment variance (143 vs 11 same target) -> folded into AMV-9. NM-7 marked implemented (opt-in) in spec + L1D-23 two-way-door note."
+}
+```
+
+```
+{
+  "run_id": "2026-07-19T-post-recon-curation-6-areas-approved",
+  "fr_area": "FR-INVENTORY + FR-MERGE + FR-JOURNEY + FR-TYPESEP + FR-CURATE + FR-MODELFIX",
+  "attempt": 1,
+  "assertions_green": 16,
+  "assertions_total": 16,
+  "tokens_estimate": 6400000,
+  "escalations": 3,
+  "outcome": "approved",
+  "notes": "Post-MVP curation + L1 remediation, plan docs/design/post-recon-curation-and-l1-remediation-plan.md, run with the MVP fence DOWN (operator, recorded in loop-constraints.md: destructive reconciliation + NM-1/NM-4 now in scope). SIX areas built via subagents and each independently verifier-APPROVED: FR-INVENTORY (read_l1_inventory + un-truncated EXISTING L1 IDENTITIES block atop both analyser prompts and bootstrap - kills synonym-slug drift at WRITE time; the old reuse hint was toothless because identities sat in a 400-capped slice the data pass dropped), FR-MERGE (l1_curator merge/delete/relabel: idempotent, provenance-stamped, edges re-pointed never orphaned, fail-open per op, :L1*-only), FR-JOURNEY (journeys prop + services_in_journey, identity independent of membership; ordered promotion registered as AMV-11 not pre-built), FR-TYPESEP a+b (prompt rule + structural re-homing backstop), FR-CURATE (run_curation: propose -> reconcile -> journeys -> anatomy -> sweep -> report, fail-open per stage, driver-invoked and deliberately NOT wired into run_pipeline to protect the 3.8GiB host), FR-MODELFIX (mechanism-as-System: ONE WebPresentation System carrying rendering_model + navigation_model as INDEPENDENT props via EXPOSED_VIA; RENDERED_BY + both RenderingSystem_* kinds deleted; api_paradigm/auth_methods re-homed off the Service). FR-MODELFIX exists because review of FR-CURATE caught the re-homing inferring rendering from navigation (SPA->CSR), violating L1D-31a; the audit then found the identical conflation for api_paradigm and auth_methods. THIS ITERATION was a resume-and-consolidate pass, not new build: the previous session left ALL of it UNCOMMITTED with STATE.md and this log never updated past FR-STREAM and every plan checkbox unchecked while the ledgers read green. Committed in 9 commits (7c8e31f gitignore hygiene, 5fec65b FR-STREAM, 221ee85 WI-1 viz, 43a8629 FR-INVENTORY+TYPESEP-a, a5b05f6 FR-JOURNEY, c782df6 FR-MERGE+FR-MODELFIX, b39d20b FR-CURATE+TYPESEP-b, 58ae4b6 jsluice, df9fdb4 skills). FR-MERGE and FR-MODELFIX share l1_curator.py so they could not be split without a red intermediate; the commit names both. HONESTY NOTE: this is a retro-split of one already-verified increment - the 827-test green baseline was measured on the FINAL tree, not re-measured at each intermediate commit. Baseline: 827 unit pass, 46 of them this plan (incl 4 live-neo4j integration, 0 skips), 4 frontend colour tests. ONE failure test_pipeline_e2e_httpx_to_arjun_prop_dependent_target is PRE-EXISTING - reproduced byte-identically at ce5e351 with .env present via a throwaway baseline worktree, so NOT curation fallout; separately a hermeticity defect (a tests/recon/ unit-tier test reaches live neo4j via read_steering_signals, fails open, leaves arjun unexecuted) -> escalated, not masked. Also corrected a stale FR-CURE2E assertion that still named RENDERED_BY (deleted by FR-MODELFIX) -> now EXPOSED_VIA a WebPresentation. 3 escalations landed in STATE.md Waiting-on-human: the non-hermetic test, the un-gated jsluice fix (no ledger, no verifier), and FR-CURE2E needing an operator go-ahead before it burns budget on a host with prior memory pressure. NEXT: FR-CURE2E is the only open area; no e2e_curation.py driver exists yet."
+}
+```

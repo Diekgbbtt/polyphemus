@@ -68,7 +68,7 @@ Each area's full assertion ledger is authored (and reviewed) at the moment that 
 | **FR-RECONREQ** | 2 | Synchronous `AnalyserReconRequest` + `request_targeted_recon` reusing `run_job` outside the phase barrier; `recon_jobs` correlation/requester/origin columns; result routed back in-process. | async dispatch + block-and-reuse (`NM-2`); unbounded scan loops (enforce a per-run cap). | L1D-26 + forward-decisions D2 | — (recon-side; may parallel FR-LCUR) | extend |
 | **FR-ANALYSER** | 3 | New compiled analyser subgraph mirroring `build_pod_graph` (`configurator/gate/fail` reused; `execute→L0-slice read`, `triager→analyser LLM emitting `_L1DeltaBatch``, `curator→l1_curator`); add the `analyser` LLM role. | streaming analyser (`NM-7`); phase-2 abduction. | L1D-22/23 | FR-LCUR, FR-RECONREQ | reuse (pattern) + net-new (nodes) |
 | **FR-ELICIT** | 3 | Bootstrap: operator-KB → Service skeleton (`MERGE (project_id, business_function_slug)`, no L0 refs) + linchpin authN/authZ Systems; assignment judgment writes `AGGREGATES` with envelope or falls to the stale pool. | web OSINT tool (deferred entirely); confidence-threshold numeric policy (`L1OP-5`). | L1D-4/5/12/25 | FR-LCUR, FR-ANALYSER | net-new |
-| **FR-ENRICH** | 3 | Enrichment: Systems as **edges not strings** (`EXPOSED_VIA`/`FRONTED_BY`/…), `DataItem` nodes + `PRODUCES`/`CONSUMES` with assumption predicate, `SystemKind` `OF_KIND`, contract `AUTHORIZED_BY {role}` edges. | `DataRelationship` vocabulary (`L1OP-2`); `DataItem` identity key (`L1OP-1`); full runtime data-flow capture (D25). | L1D-13/14/15/16/18/21 | FR-ELICIT | net-new + blocked-on-unbuilt-dep (D25) |
+| **FR-3H** | 3 | Enrichment: Systems as **edges not strings** (`EXPOSED_VIA`/`FRONTED_BY`/…), `DataItem` nodes + `PRODUCES`/`CONSUMES` with assumption predicate, `SystemKind` `OF_KIND`, contract `AUTHORIZED_BY {role}` edges. | `DataRelationship` vocabulary (`L1OP-2`); `DataItem` identity key (`L1OP-1`); full runtime data-flow capture (D25). | L1D-13/14/15/16/18/21 | FR-ELICIT | net-new + blocked-on-unbuilt-dep (D25) |
 | **FR-PODSTREAM** | 3 | Extend the recon pod/pipeline so every curated `AssetDelta` + triager `Observation` reaches the analyser exactly once. | streaming as the default substrate mode (batch stays default, `L1D-23`). | L1D-22/23 | FR-ANALYSER | extend |
 | **FR-TEMPLATE** | 3 | Preserve the derived `endpoint_template` key on the L0 `Endpoint` / `AGGREGATES` ref at assignment. | the equivalence-class reducer engine (`NM-10`/`L1OP-7`). | L1D-32 | FR-LCUR (lands with FR-ELICIT assignment) | net-new |
 | **FR-SWEEP** | 3 | End-of-phase stale-pool derived query (L0 nodes with no inbound `AGGREGATES`) + missing-systems sweep over the `SystemKind` registry. | numeric stale-pool resolution policy (`L1OP-5`). | L1D-24 | FR-LCUR, FR-ELICIT | reuse (derived query) |
@@ -694,6 +694,72 @@ Do not start a second area until the first is verifier-APPROVED.
   tier: e2e
   test: tests/e2e/test_walkthrough_nfr.py::test_deferred_primitives_absent
   langfuse_score: ast_nfr_07
+  status: green
+```
+
+### FR-STREAM — full assertion ledger (NM-7 streaming analyser, operator-pulled into scope 2026-07-17)
+
+*Context:* the operator explicitly pulled **NM-7 (streaming analyser)** into scope after observing that the L1 attack surface was built only as a post-recon batch, never progressively during recon (confirmed via code + Langfuse traces - not a hallucination). This reverses nothing in the substrate: L1D-23 states push (stream) and pull (batch) "produce identical reads and writes" and are interchangeable *because* the analyser is a pure `f(L0-slice+observations) -> L1-deltas` written by idempotent MERGE. Streaming = invoking that same pure function at each recon increment; repeated passes over the growing slice converge to the batch result.
+
+*Goal:* when `settings.recon.streaming_analysis` is set, the pipeline feeds each recon job's freshly-curated surface (assets already in Neo4j) + all current triager Observations to the analyser AS RECON PROCEEDS, so L1 is integrated progressively during recon rather than only after. **Batch stays the DEFAULT (L1D-23 two-way door):** with the flag unset the pipeline behaves exactly as before (no analyser invocation). *Non-goals:* a concurrent long-lived analyser consumer task (memory-unsafe on the constrained host - the OOM failure mode); per-individual-pod granularity below the job-completion boundary; incremental-delta analysis that skips re-reading settled surface (an efficiency optimisation - the MVP re-reads the full current slice each step, which is what guarantees the final streamed pass == the batch pass); changing the analyser's reasoning.
+
+*Files delivered:* `agent/recon/analysis/streaming.py` (`stream_analyser_step`, fail-open); `agent/recon/pipeline.py` (`stream_fn` injectable + the per-job streaming hook gated on `settings.recon.streaming_analysis`); tests `tests/recon/test_streaming.py`.
+
+```yaml
+# FR-STREAM assertion ledger
+- id: AST-STREAM-01
+  fr_area: FR-STREAM
+  kind: functional
+  requirement_ref: NM-7 + L1D-23
+  statement: "When streaming_analysis is enabled, the pipeline invokes the analyser after each recon job that produced surface (assets/observations), DURING recon - not only post-recon."
+  tier: unit + e2e
+  test: tests/recon/test_streaming.py::test_pipeline_streams_after_each_producing_job_when_enabled
+  langfuse_score: ast_stream_01
+  status: green
+- id: AST-STREAM-02
+  fr_area: FR-STREAM
+  kind: functional
+  requirement_ref: L1D-22 + L1D-23
+  statement: "Each streaming step runs the analyser on the CURRENT cumulative slice + all current observations (auto-deliver) under a STABLE per-run analyser id (stream-<run_id>), so re-assertion across steps MERGEs idempotently (no duplicate identities)."
+  tier: unit
+  test: tests/recon/test_streaming.py::test_stream_step_uses_stable_stream_id_and_autodelivers
+  langfuse_score: ast_stream_02
+  status: green
+- id: AST-STREAM-03
+  fr_area: FR-STREAM
+  kind: nonfunctional
+  requirement_ref: L1R (fail-open)
+  statement: "A streaming-step error degrades that step (returns None) and NEVER raises into the recon run (mirrors the pipeline best-effort discipline)."
+  tier: unit
+  test: tests/recon/test_streaming.py::test_stream_step_fail_open
+  langfuse_score: ast_stream_03
+  status: green
+- id: AST-STREAM-04
+  fr_area: FR-STREAM
+  kind: nonfunctional
+  requirement_ref: L1D-23 (batch is the default)
+  statement: "With streaming_analysis unset/false the pipeline performs ZERO analyser invocations - batch remains the default and existing recon behaviour is unchanged."
+  tier: unit
+  test: tests/recon/test_streaming.py::test_pipeline_does_not_stream_when_disabled
+  langfuse_score: ast_stream_04
+  status: green
+- id: AST-STREAM-05
+  fr_area: FR-STREAM
+  kind: functional
+  requirement_ref: NM-7 + L1D-23
+  statement: "On a live streaming recon, L1 is built PROGRESSIVELY (AGGREGATES exist after an early phase and grow monotonically) and the final streamed L1 is valid; a follow-up batch pass on the same final slice adds NO new Service/System/DataItem identities (idempotent convergence)."
+  tier: e2e
+  test: (live driver) e2e_soup_stream.py assertions
+  langfuse_score: ast_stream_05
+  status: green
+- id: AST-STREAM-06
+  fr_area: FR-STREAM
+  kind: nonfunctional
+  requirement_ref: L1D-25 + curator.py:4
+  statement: "Streaming preserves the cross-cutting invariants: no duplicate L1 identities, every streamed L1 node/edge carries analyser: provenance, and the slice still excludes Observation nodes (no double-delivery)."
+  tier: e2e
+  test: (live driver) e2e_soup_stream.py assertions
+  langfuse_score: ast_stream_06
   status: green
 ```
 

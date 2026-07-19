@@ -3,12 +3,13 @@
 > Binding. The loop reads this file at the start of every iteration and must follow it verbatim.
 > Source of scope truth: `docs/design/service-system-model-L1-implementation-bridge.md` (the bridge) and `docs/design/L1-MVP-plan.md`.
 
-## MVP fence (Over-Reach guard — the load-bearing rule)
+## Scope (post-MVP - the MVP fence is DOWN as of 2026-07-19, operator decision)
 
-- Build only what the bridge marks in-scope for the MVP.
-- Denylisted for implementation (forward-compat constraint only): everything `NM-n`; every `L1OP-n` engine; and anything behind the Stage-3 fence — the projection algorithm, the signature-evaluation engine (`NM-8`), risk scoring, and phase-2 abduction.
-- If the shortest path to a green assertion tempts you into deferred machinery, **escalate instead** — do not build it.
-- The `FR-INGEST` `/ingest` content pipeline is out of scope (bridge §5); the operator KB enters via a `settings.recon.operator_kb` field, not the ingest pipeline.
+- The L1-MVP is built + verifier-APPROVED; the system has been exhaustively e2e-tested and blocking/important defects emerged that must be fixed. The operator has officially TAKEN THE MVP FENCE DOWN. We are in post-MVP defect-remediation.
+- Previously-deferred identity machinery is now IN SCOPE where a confirmed defect requires it: notably `NM-1` (superseding/reified assignment provenance) and `NM-4` (service-splitting / node merge), and **destructive reconciliation** in the L1 sole-writer (merge / delete / relabel duplicate or off-role nodes). The operator chose FULL DESTRUCTIVE MERGE for post-recon curation.
+- Still out of scope unless a confirmed defect forces it (surface with options, do not silently build): the Stage-3 projection algorithm, the signature-evaluation engine (`NM-8`), risk scoring, and phase-2 abduction. These remain forward-compat constraints, not build targets.
+- The `FR-INGEST` `/ingest` content pipeline stays out of scope (bridge §5); the operator KB enters via a `settings.recon.operator_kb` field, not the ingest pipeline.
+- Every new capability still goes through the loop discipline below (assertions first, maker/checker, minimal-fix) and the sole-writer discipline (all `:L1*` writes, including the new destructive ops, go ONLY through `l1_curator`, carrying provenance).
 
 ## Sole-writer & denylist paths (escalate, never edit)
 
@@ -24,6 +25,7 @@
 - Provenance on every node/edge/ref write (`L1D-25`).
 - Fail-open / graceful degrade: a steering / skill / LLM / targeted-job error degrades to an empty-or-error result; it never crashes the caller.
 - Traversal-then-fetch / token discipline (`DD-4`): BFS reads index-cards, never the raw member set; concretisation enters only through typed projections.
+- Destructive reconciliation (merge / delete / relabel) is now permitted in `l1_curator` ONLY; it must be idempotent, provenance-stamped, and re-point (never orphan) the edges of any node it removes or relabels.
 
 ## Code & loop discipline
 
