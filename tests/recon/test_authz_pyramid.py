@@ -99,7 +99,7 @@ def test_commit_writes_system_edges_fail_open():
         return {"system_edges": len(system_edges)}
 
     written = commit_anatomy(res, "proj-1", "orders",
-                             curate_fn=lambda s, p: (len(s), 0),
+                             curate_fn=lambda s, sys, p: (len(s), len(sys)),
                              observe_fn=lambda o, p: (0, len(o)),
                              edge_fn=fake_edge_fn)
     # AUTHORIZED_BY(admin) + AUTHENTICATED_BY(credential) written via the sole-writer
@@ -112,7 +112,7 @@ def test_commit_writes_system_edges_fail_open():
         raise RuntimeError("neo4j down")
 
     written2 = commit_anatomy(res, "proj-1", "orders",
-                              curate_fn=lambda s, p: (len(s), 0),
+                              curate_fn=lambda s, sys, p: (len(s), len(sys)),
                               observe_fn=lambda o, p: (0, len(o)),
                               edge_fn=boom)
     assert written2["system_edges"] == 0  # degraded, no crash

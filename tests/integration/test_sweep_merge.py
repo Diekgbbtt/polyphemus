@@ -107,14 +107,14 @@ def test_stale_pool_reflects_unassigned_endpoints(session, project):
 def test_missing_system_kinds_after_seeding_and_one_instance(session, project):
     mf, read_fn = _mf(session), _read_fn(session)
     seeded = l1_curator.seed_system_kinds(project, merge_fn=mf)
-    assert seeded == 13
+    assert seeded == 12
 
-    # nothing instantiated yet: all 13 kinds are missing
-    assert len(sweep.missing_system_kinds(project, read_fn=read_fn)) == 13
+    # nothing instantiated yet: all 12 kinds are missing
+    assert len(sweep.missing_system_kinds(project, read_fn=read_fn)) == 12
 
     # instantiate a RESTApi System -> it drops out of the missing set
     l1_curator.l1_curate([], [SystemDelta(system_kind="RESTApi", provenance=PROV)], project, merge_fn=mf)
     missing = sweep.missing_system_kinds(project, read_fn=read_fn)
     assert "RESTApi" not in missing
-    assert len(missing) == 12
+    assert len(missing) == 11
     assert "GraphQLApi" in missing  # an unrepresented kind is still reported

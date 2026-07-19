@@ -137,15 +137,16 @@ def _run_walkthrough(session, project, *, member_endpoints=(CAT_EP, SALES_EP)):
                              rendering_evidence="empty shell, DOM built post-JS"),
                          steel_available=True)
     commit_anatomy(wp, project, "sales-analysis",
-                   curate_fn=lambda svc, pid: l1_curator.l1_curate(svc, [], pid, merge_fn=mf),
-                   observe_fn=lambda obs, pid: curator.curate([], obs, pid, merge_fn=mf))
+                   curate_fn=lambda svc, sys, pid: l1_curator.l1_curate(svc, sys, pid, merge_fn=mf),
+                   observe_fn=lambda obs, pid: curator.curate([], obs, pid, merge_fn=mf),
+                   edge_fn=lambda edges, pid: l1_curator.enrich(pid, system_edges=edges, merge_fn=mf))
 
     # 6. authorization-pyramid skill: AUTHORIZED_BY{role} + AUTHENTICATED_BY{realm} typed edges
     az = classify_authz("view-seller-sales", {"seller": True, "seller-admin": True, "guest": False},
                         service_slug="sales-analysis", base_url=BASEURL,
                         role_realms={"seller": "credential", "seller-admin": "idp"})
     commit_anatomy(az, project, "sales-analysis",
-                   curate_fn=lambda svc, pid: l1_curator.l1_curate(svc, [], pid, merge_fn=mf),
+                   curate_fn=lambda svc, sys, pid: l1_curator.l1_curate(svc, sys, pid, merge_fn=mf),
                    observe_fn=lambda obs, pid: curator.curate([], obs, pid, merge_fn=mf),
                    edge_fn=lambda edges, pid: l1_curator.enrich(pid, system_edges=edges, merge_fn=mf))
 
@@ -271,10 +272,15 @@ def test_every_inscope_primitive_fired(session, project):
     assumption = session.run("MATCH (:L1Service {project_id:$p})-[r:CONSUMES]->() RETURN r.assumption AS a", p=project).single()["a"]
     assert assumption and "authorized" in assumption  # assumption predicate on CONSUMES
     assert c("MATCH (:L1DataItem {project_id:$p})-[r:SURFACES_AT]->() RETURN count(r) AS c") == 1
-    # independent SPA + CSR spine slots on the service
-    spine = session.run("MATCH (s:L1Service {project_id:$p, business_function_slug:'sales-analysis'}) "
-                        "RETURN s.navigation_model AS nav, s.rendering_model AS ren", p=project).single()
-    assert spine["nav"] == "SPA" and spine["ren"] == "CSR"  # set independently
+    # independent SPA + CSR props on the WebPresentation System the service is
+    # EXPOSED_VIA (the mechanism-as-System correction) - NOT stranded as Service props
+    wp = session.run("MATCH (:L1Service {project_id:$p, business_function_slug:'sales-analysis'})"
+                     "-[:EXPOSED_VIA]->(w:L1System {project_id:$p, system_kind:'WebPresentation'}) "
+                     "RETURN w.navigation_model AS nav, w.rendering_model AS ren", p=project).single()
+    assert wp["nav"] == "SPA" and wp["ren"] == "CSR"  # independent props on the WebPresentation
+    svc = session.run("MATCH (s:L1Service {project_id:$p, business_function_slug:'sales-analysis'}) "
+                      "RETURN s.navigation_model AS nav, s.rendering_model AS ren", p=project).single()
+    assert svc["nav"] is None and svc["ren"] is None  # never stranded on the Service
     # AUTHORIZED_BY{role} + AUTHENTICATED_BY{realm}
     roles = {r["role"] for r in session.run("MATCH (:L1Service {project_id:$p})-[r:AUTHORIZED_BY]->() RETURN r.role AS role", p=project)}
     realms = {r["realm"] for r in session.run("MATCH (:L1Service {project_id:$p})-[r:AUTHENTICATED_BY]->() RETURN r.realm AS realm", p=project)}

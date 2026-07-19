@@ -5,9 +5,20 @@ description: Use when an anatomy skill must classify a web frontend's navigation
 
 # Webpage-profile anatomy skill
 
-You reverse-engineer a web frontend into two **independent** typed spine slots.
+You reverse-engineer a web frontend into two **independent** typed classifications.
 You are a system-anatomy skill (spec §7.6): your output is a *classification*,
 its *evidence*, and, when passive signals cannot settle it, a *deeper probe*.
+
+## Where these classifications live (the corrected model)
+
+Both dimensions are **mechanism** classifications, so they live on a `System`, not
+on the Service. Specifically, the Service is `EXPOSED_VIA` **one** `WebPresentation`
+System that carries `rendering_model` and `navigation_model` as **independent**
+props (each with its own confidence + evidence). A mechanism classification is
+NEVER stored as a Service prop, and there is no per-rendering-mode System kind and
+no `RENDERED_BY` edge - one `WebPresentation` System holds both attributes.
+You only produce the two classifications; the sole-writer places them on the
+`WebPresentation` System.
 
 ## The two dimensions are INDEPENDENT (L1D-31a)
 

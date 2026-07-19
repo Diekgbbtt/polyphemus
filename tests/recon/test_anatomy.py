@@ -106,24 +106,38 @@ def test_triple_lands_on_spine_observation_and_interfaceB():
     assert probe.scope.service_id == "svc-1" and probe.requester_id == "req-1"
     assert probe.job == "steel_crawl"  # the deeper probe rides the Steel/CDP path
 
-    # leg 1 (commit): classifications -> spine props on the Service via l1_curator
+    # leg 1 (commit): AST-MODEL-02 - the web-presentation classifications land as
+    # props on a WebPresentation System reached by EXPOSED_VIA, NOT as Service props
     captured = {}
 
-    def fake_curate(services, project_id):
+    def fake_curate(services, systems, project_id):
         captured["services"] = services
+        captured["systems"] = systems
         captured["project_id"] = project_id
-        return (len(services), 0)
+        return (len(services), len(systems))
 
     def fake_observe(observations, project_id):
         captured["observations"] = observations
         return (0, len(observations))
 
-    written = commit_anatomy(res, "proj-1", "storefront", curate_fn=fake_curate, observe_fn=fake_observe)
-    svc = captured["services"][0]
-    assert svc.business_function_slug == "storefront"
-    assert svc.props["navigation_model"] == "SPA"
-    assert svc.props["rendering_model"] == "CSR"
-    assert "navigation_model_evidence" in svc.props and "rendering_model_confidence" in svc.props
+    def fake_edge(system_edges, project_id):
+        captured["edges"] = system_edges
+        return {"system_edges": len(system_edges)}
+
+    written = commit_anatomy(res, "proj-1", "storefront",
+                             curate_fn=fake_curate, observe_fn=fake_observe, edge_fn=fake_edge)
+    # both dimensions are System props, so NO Service delta is written for them
+    assert captured["services"] == []
+    # the WebPresentation System carries both dimensions as INDEPENDENT props
+    sysd = captured["systems"][0]
+    assert sysd.system_kind == "WebPresentation"
+    assert sysd.props["navigation_model"] == "SPA"
+    assert sysd.props["rendering_model"] == "CSR"  # not inferred from the SPA nav
+    assert "navigation_model_evidence" in sysd.props and "rendering_model_confidence" in sysd.props
+    # and the Service reaches it via a single EXPOSED_VIA edge to the WebPresentation
+    edge = captured["edges"][0]
+    assert edge.service_slug == "storefront"
+    assert edge.rel == "EXPOSED_VIA" and edge.system_kind == "WebPresentation"
     assert written["classifications"] == 2 and written["observations"] == 2 and written["probes"] == 1
 
 
@@ -148,12 +162,13 @@ def test_webpage_profile_fail_open_and_steel_gate():
 def test_commit_anatomy_fail_open_on_write_error():
     res = webpage_profile({"base_url": "https://a"}, profile_fn=lambda s: _proposal(), steel_available=True)
 
-    def exploding_curate(services, project_id):
+    def exploding_curate(services, systems, project_id):
         raise RuntimeError("neo4j down")
 
     # a write failure degrades per-leg, never crashes
     written = commit_anatomy(res, "proj-1", "storefront",
-                             curate_fn=exploding_curate, observe_fn=lambda o, p: (0, len(o)))
+                             curate_fn=exploding_curate, observe_fn=lambda o, p: (0, len(o)),
+                             edge_fn=lambda edges, pid: {"system_edges": len(edges)})
     assert written["classifications"] == 0  # leg 1 degraded
     assert written["observations"] == 2     # leg 2 still ran
 

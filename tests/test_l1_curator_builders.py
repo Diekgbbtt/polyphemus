@@ -123,7 +123,7 @@ def test_reserved_props_are_stripped_so_they_cannot_spoof_identity_or_provenance
     assert params["id_business_function_slug"] == "cart"
 
 
-# --- AST-LCUR-06: SystemKind controlled-vocabulary catalogue (13 seeds) ---
+# --- AST-LCUR-06: SystemKind controlled-vocabulary catalogue (12 seeds) ---
 
 def test_systemkind_builder_shape():
     cy, params = l1_curator.build_systemkind_cypher("RESTApi", "REST paradigm")
@@ -132,16 +132,36 @@ def test_systemkind_builder_shape():
     assert params["description"] == "REST paradigm"
 
 
-def test_all_thirteen_seed_kinds_present():
+def test_all_twelve_seed_kinds_present():
     ids = {kind_id for kind_id, _desc in l1_curator.SYSTEM_KINDS}
-    assert len(l1_curator.SYSTEM_KINDS) == 13
+    assert len(l1_curator.SYSTEM_KINDS) == 12
     for expected in (
         "WAF", "CDN", "ReverseProxy", "APIGateway", "RESTApi", "GraphQLApi",
         "IdentificationSystem", "IntegrationSystem", "AuthenticationMechanism",
-        "AuthorizationSystem", "RenderingSystem_SSR_UI", "RenderingSystem_CSR_JSMap",
-        "Sitemap",
+        "AuthorizationSystem", "WebPresentation", "Sitemap",
     ):
         assert expected in ids
+
+
+# --- AST-MODEL-01: the mechanism-as-System correction (WebPresentation replaces
+# the two RenderingSystem_* kinds; RENDERED_BY leaves the edge taxonomy) ---
+
+def test_webpresentation_replaces_rendering_systems():
+    ids = {kind_id for kind_id, _desc in l1_curator.SYSTEM_KINDS}
+    # the single WebPresentation kind carries rendering_model + navigation_model props
+    assert "WebPresentation" in ids
+    # the two per-rendering-mode kinds are gone (merged into WebPresentation)
+    assert "RenderingSystem_SSR_UI" not in ids
+    assert "RenderingSystem_CSR_JSMap" not in ids
+
+
+def test_rendered_by_removed_from_edge_taxonomy():
+    # RENDERED_BY is deleted; a Service reaches its web presentation via EXPOSED_VIA
+    assert "RENDERED_BY" not in l1_curator.SYSTEM_EDGE_RELS
+    assert "EXPOSED_VIA" in l1_curator.SYSTEM_EDGE_RELS
+    # the merge re-point allowlist is DERIVED from SYSTEM_EDGE_RELS, so it drops
+    # RENDERED_BY automatically (the edge no longer exists to re-point)
+    assert "RENDERED_BY" not in l1_curator._REPOINT_REL_TYPES
 
 
 # --- AST-LCUR-08 / FR-NFR: sole-writer wiring + fail-open batching ---

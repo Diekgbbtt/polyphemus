@@ -141,8 +141,8 @@ def test_systemkind_seed_idempotent_and_of_kind(session, project):
     mf = _merge_fn(session)
     for _ in range(2):
         seeded = l1_curator.seed_system_kinds(project, merge_fn=mf)
-    assert seeded == 13
-    assert _count(session, "SystemKind", project) == 13
+    assert seeded == 12
+    assert _count(session, "SystemKind", project) == 12
     # catalogue rows are provenance'd (spec §2.3) + carry description/timestamps
     krec = session.run(
         "MATCH (k:SystemKind {project_id: $p, id: 'RESTApi'}) "
@@ -159,7 +159,7 @@ def test_systemkind_seed_idempotent_and_of_kind(session, project):
         p=project,
     ).single()["c"]
     assert linked == 1
-    assert _count(session, "SystemKind", project) == 13  # OF_KIND MERGE did not duplicate
+    assert _count(session, "SystemKind", project) == 12  # OF_KIND MERGE did not duplicate
 
 
 # --- AST-LCUR-07: L1 constraints present and enforced ---

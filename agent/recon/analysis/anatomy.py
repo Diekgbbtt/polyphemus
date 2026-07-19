@@ -41,6 +41,14 @@ NAVIGATION_MODELS = ("SPA", "MPA", "Hybrid")
 RENDERING_MODELS = ("CSR", "SSR", "SSG", "StreamingSSR", "HydratedSSR")
 CONFIDENCE_LEVELS = ("High", "Medium", "Low")
 
+# The System kind + the classification slots that make up the web-presentation
+# channel. A cross-cutting MECHANISM classification is a System prop reached by a
+# typed edge, NEVER a Service prop (the L1 domain-model correction): these two
+# slots are written as INDEPENDENT props on a `WebPresentation` System the Service
+# is `EXPOSED_VIA`, not as props on the Service itself.
+WEB_PRESENTATION_KIND = "WebPresentation"
+_WEBPRESENTATION_SLOTS = frozenset({"navigation_model", "rendering_model"})
+
 # The deeper webpage-profile probe needs live CDP interaction (Document-vs-Fetch,
 # Page.frameNavigated), which rides the Steel/CDP crawl - hence the STEEL_API_KEY
 # config gate. The probe REQUEST is emitted regardless; its live execution is the
@@ -246,34 +254,60 @@ def commit_anatomy(
     observe_fn=None,
     edge_fn=None,
 ) -> dict:
-    """Write the triple: leg 1 (classifications -> spine props on the Service via
-    l1_curator; typed system_edges -> the l1_curator system-edge writer), leg 2
-    (observations -> the L0 curator seam). Leg 3 (probes) is RETURNED for the
-    caller to dispatch via request_targeted_recon (kept out of the write path so
-    committing never blocks on a live probe). Fail-open per leg."""
-    from agent.recon.analysis.l1_types import Provenance, ServiceDelta
+    """Write the triple: leg 1 (classifications -> their correct L1 home via the
+    l1_curator sole-writer; typed system_edges -> the l1_curator system-edge
+    writer), leg 2 (observations -> the L0 curator seam). Leg 3 (probes) is
+    RETURNED for the caller to dispatch via request_targeted_recon (kept out of the
+    write path so committing never blocks on a live probe). Fail-open per leg.
+
+    Leg 1 routing (the mechanism-as-System correction): the web-presentation
+    dimensions (`rendering_model`, `navigation_model`) are cross-cutting MECHANISM
+    classifications, so they are written as INDEPENDENT props on a `WebPresentation`
+    System the Service is `EXPOSED_VIA` - NEVER as Service props, and neither is
+    inferred from the other (L1D-31a). Any other classification (e.g. the authz
+    skill's `authz_model`, a Service-level contract facet) stays a Service prop."""
+    from agent.recon.analysis.l1_types import (
+        Provenance, ServiceDelta, SystemDelta, SystemEdgeDelta,
+    )
 
     if provenance is None:
         provenance = Provenance(job=f"anatomy:{_SKILL_ID}", model=None, prompt_id=None)
 
-    # leg 1: the two spine slots become props on the Service (+ their evidence/conf)
-    props: dict = {}
+    # partition the classifications by their correct L1 home.
+    webpres_props: dict = {}
+    service_props: dict = {}
     for c in result.classifications:
-        props[c.slot] = c.value
-        props[f"{c.slot}_confidence"] = c.confidence
-        props[f"{c.slot}_evidence"] = c.evidence
+        bucket = webpres_props if c.slot in _WEBPRESENTATION_SLOTS else service_props
+        bucket[c.slot] = c.value
+        bucket[f"{c.slot}_confidence"] = c.confidence
+        bucket[f"{c.slot}_evidence"] = c.evidence
+
+    service_deltas: list = []
+    system_deltas: list = []
+    presentation_edges: list = []
+    if service_props:
+        service_deltas.append(ServiceDelta(
+            business_function_slug=business_function_slug, props=service_props, provenance=provenance))
+    if webpres_props:
+        system_deltas.append(SystemDelta(
+            system_kind=WEB_PRESENTATION_KIND, props=webpres_props, provenance=provenance))
+        presentation_edges.append(SystemEdgeDelta(
+            service_slug=business_function_slug, system_kind=WEB_PRESENTATION_KIND,
+            rel="EXPOSED_VIA", provenance=provenance))
+
     written = {"classifications": 0, "observations": 0, "probes": len(result.probes)}
-    if props:
+
+    # leg 1: classifications -> Service facets AND/OR WebPresentation System props.
+    if service_deltas or system_deltas:
         if curate_fn is None:
             from agent.recon.analysis import l1_curator
-            def curate_fn(services, project_id):  # noqa: E306
-                return l1_curator.l1_curate(services, [], project_id)
+            def curate_fn(services, systems, project_id):  # noqa: E306
+                return l1_curator.l1_curate(services, systems, project_id)
         try:
-            sw, _ = curate_fn([ServiceDelta(business_function_slug=business_function_slug,
-                                            props=props, provenance=provenance)], project_id)
+            curate_fn(service_deltas, system_deltas, project_id)
             written["classifications"] = len(result.classifications)
         except Exception:  # fail-open
-            logger.warning("commit_anatomy: spine-slot write failed for %s", business_function_slug, exc_info=True)
+            logger.warning("commit_anatomy: classification write failed for %s", business_function_slug, exc_info=True)
 
     # leg 2: evidence observations via the L0 curator seam
     if result.observations:
@@ -287,18 +321,20 @@ def commit_anatomy(
         except Exception:  # fail-open
             logger.warning("commit_anatomy: observation write failed for %s", business_function_slug, exc_info=True)
 
-    # leg 1b: typed Service->System edges (e.g. AUTHORIZED_BY {role}) via the L1
-    # sole-writer's system-edge writer - structural, MERGE-idempotent.
+    # leg 1b: typed Service->System edges (the authz skill's AUTHORIZED_BY {role} /
+    # AUTHENTICATED_BY {realm} edges PLUS the WebPresentation EXPOSED_VIA edge) via
+    # the L1 sole-writer's system-edge writer - structural, MERGE-idempotent.
+    edges = list(result.system_edges) + presentation_edges
     written["system_edges"] = 0
-    if result.system_edges:
+    if edges:
         if edge_fn is None:
             from agent.recon.analysis import l1_curator
             def edge_fn(system_edges, project_id):  # noqa: E306
                 return l1_curator.enrich(project_id, system_edges=system_edges)
         try:
-            counts = edge_fn(result.system_edges, project_id)
-            written["system_edges"] = (counts or {}).get("system_edges", len(result.system_edges)) \
-                if isinstance(counts, dict) else len(result.system_edges)
+            counts = edge_fn(edges, project_id)
+            written["system_edges"] = (counts or {}).get("system_edges", len(edges)) \
+                if isinstance(counts, dict) else len(edges)
         except Exception:  # fail-open
             logger.warning("commit_anatomy: system-edge write failed for %s", business_function_slug, exc_info=True)
 

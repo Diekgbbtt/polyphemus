@@ -42,9 +42,13 @@ from agent.recon.analysis.l1_types import (
     DataFlowDelta,
     DataItemDelta,
     DataRelationshipDelta,
+    DeleteOp,
     L0Ref,
+    MergeOp,
     Provenance,
+    RelabelOp,
     ServiceDelta,
+    StripPropsOp,
     SurfacesAtDelta,
     SystemDelta,
     SystemEdgeDelta,
@@ -56,6 +60,12 @@ logger = logging.getLogger(__name__)
 # Every unit also carries the `:L1TestableUnit` supertype label (L1D-3) so BFS can
 # enumerate "every unit" in one query (FR-INDEXCARD) regardless of subtype.
 L1_ALLOWED_LABELS = frozenset({"L1Service", "L1System"})
+
+# FR-MERGE: the L1 unit labels a destructive reconciliation op (merge/delete) may
+# target. Superset of L1_ALLOWED_LABELS by the flexible-identity `L1DataItem`
+# (also a reconcilable unit). It NEVER contains an L0 label, so a reconciliation
+# op can never DETACH DELETE / re-key an L0 node (the sole-writer boundary).
+L1_RECONCILE_LABELS = L1_ALLOWED_LABELS | {"L1DataItem"}
 
 # The seed SystemKind controlled vocabulary (L1D-6, spec §2.3). Extensible by
 # adding rows here — never a schema migration. Kept per-project (keyed
@@ -72,8 +82,8 @@ SYSTEM_KINDS: tuple[tuple[str, str], ...] = (
     ("IntegrationSystem", "Cross-origin integration system (CSP / CORS)."),
     ("AuthenticationMechanism", "How credentials / tokens are minted and validated."),
     ("AuthorizationSystem", "Role / permission policy enforcement system."),
-    ("RenderingSystem_SSR_UI", "Server-side-rendered UI rendering system."),
-    ("RenderingSystem_CSR_JSMap", "Client-side-rendered JS-map rendering system."),
+    ("WebPresentation", "Web presentation channel: how the app renders views and navigates "
+                        "between them (rendering_model + navigation_model attributes)."),
     ("Sitemap", "Site structure / navigation map system."),
 )
 _KNOWN_KINDS = frozenset(kind_id for kind_id, _desc in SYSTEM_KINDS)
@@ -95,9 +105,12 @@ _KNOWN_DATA_REL_KINDS = frozenset(k for k, _d in DATA_RELATIONSHIP_KINDS)
 # validated against these fixed sets - defence in depth, like _SAFE_IDENT).
 _DATA_FLOW_RELS = {"produces": "PRODUCES", "consumes": "CONSUMES"}
 # The §6 System-edge taxonomy (L1D-18/L1D-21); sub-granularity rides on props.
+# NOTE: RENDERED_BY is deliberately ABSENT - a Service reaches its web-presentation
+# channel via EXPOSED_VIA (the WebPresentation System, carrying rendering_model +
+# navigation_model as independent props), exactly as it reaches a REST/GraphQL API.
 SYSTEM_EDGE_RELS = frozenset({
     "EXPOSED_VIA", "IDENTIFIED_BY", "AUTHENTICATED_BY", "AUTHORIZED_BY",
-    "FRONTED_BY", "PROTECTED_BY", "ROUTED_BY", "SHAPES_DATA_OF", "RENDERED_BY",
+    "FRONTED_BY", "PROTECTED_BY", "ROUTED_BY", "SHAPES_DATA_OF",
     "ON_REQUEST_PATH", "DEPENDS_ON",
 })
 
@@ -681,3 +694,382 @@ def enrich(
         "data_relationships": _write_each(build_data_relationship_cypher, data_relationships or [], project_id, merge_fn, "enrich.data_relationship"),
         "system_edges": _write_each(build_system_edge_cypher, system_edges or [], project_id, merge_fn, "enrich.system_edge"),
     }
+
+
+# --- FR-MERGE: destructive reconciliation (merge / delete / relabel) -----------
+# The three destructive ops the post-recon curation pass needs, permitted in this
+# sole-writer ONLY (loop-constraints §"Sole-writer"). Each is idempotent,
+# provenance-stamped, and re-points (never orphans) the edges of a node it
+# removes or re-kinds. APOC is NOT available on the target Neo4j (5.26-community,
+# 0 apoc procedures), so re-pointing is explicit per-rel-type over a FIXED
+# allowlist rather than `apoc.refactor.mergeNodes`.
+
+# EVIDENCED_BY: a System's cross-layer evidence edge - the semantic a mis-typed
+# Service's AGGREGATES becomes when the unit is re-kinded to a System (§3 relabel
+# mapping). Interpolated, so it is a safe identifier by construction.
+_EVIDENCED_BY = "EVIDENCED_BY"
+
+# The FIXED rel-type allowlist a merge re-points, both directions. Covers every
+# L1 edge type the sole-writer emits: the §6 System taxonomy (SYSTEM_EDGE_RELS)
+# plus the cross-layer / data-flow / data-relationship / catalogue edges, plus
+# EVIDENCED_BY so a System produced by an earlier relabel also merges cleanly.
+# Sorted for deterministic Cypher. Every entry is an uppercase identifier (safe).
+_REPOINT_REL_TYPES: tuple[str, ...] = tuple(sorted(
+    {"AGGREGATES", "SURFACES_AT", "PRODUCES", "CONSUMES", "DATA_RELATIONSHIP", "OF_KIND", _EVIDENCED_BY}
+    | set(SYSTEM_EDGE_RELS)
+))
+
+# Explicit relabel edge-remap table (L1D-18/§3): edges whose SEMANTICS change with
+# a unit's type. Keyed (from_label, to_label) -> {old_rel: new_rel}. Extend here,
+# never in Cypher. Both rel labels are trusted uppercase identifiers.
+_RELABEL_EDGE_REMAP: dict[tuple[str, str], dict[str, str]] = {
+    ("L1Service", "L1System"): {"AGGREGATES": _EVIDENCED_BY},
+}
+
+
+def _reconcile_identity_clause(identity: dict, prefix: str) -> tuple[str, dict]:
+    """Build a `{k: $<prefix>_k, ...}` clause + params for a reconciliation MATCH.
+
+    Identity KEYS are interpolated into Cypher, so each is validated as a safe
+    identifier first (`_SAFE_IDENT`, the same Cypher-injection guard the cross-
+    layer writers use); identity VALUES are always parameters. Rejects an empty
+    map and any null/empty value (identity keys are non-null composites, mirroring
+    every L0/L1 key). Keys sorted for deterministic Cypher."""
+    if not isinstance(identity, dict) or not identity:
+        raise ValueError("reconcile op requires a non-empty identity map")
+    if not all(isinstance(k, str) and _SAFE_IDENT.match(k) for k in identity):
+        raise ValueError(f"reconcile identity keys must be safe identifiers: {list(identity)}")
+    for key, value in identity.items():
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError(f"reconcile identity value for {key!r} must be non-null/non-empty, got {value!r}")
+    keys = sorted(identity)
+    clause = ", ".join(f"{k}: ${prefix}_{k}" for k in keys)
+    params = {f"{prefix}_{k}": identity[k] for k in keys}
+    return clause, params
+
+
+def _identity_marker(label: str, identity: dict) -> str:
+    """A stable provenance string for a superseded / relabelled identity."""
+    return f"{label}:" + ",".join(f"{k}={identity[k]}" for k in sorted(identity))
+
+
+def build_merge_units_cypher(
+    label: str, canonical_identity: dict, duplicate_identity: dict, provenance: Provenance
+) -> tuple[str, dict]:
+    """Pure: fold duplicate unit B into canonical A (both `:{label}`).
+
+    Re-points EVERY in/out relationship of B onto A over the FIXED
+    `_REPOINT_REL_TYPES` allowlist (both directions), then DETACH DELETEs B, then
+    copies B's non-identity props A lacks and stamps a `superseded_from` marker.
+
+    Ordering is deliberate: re-point and DELETE the duplicate BEFORE copying its
+    props. Copying props includes the duplicate's identity-key value transiently;
+    doing it while B still exists collides with B on the `IS UNIQUE` constraint
+    (verified failure mode on the live 5.26 container). With B already gone, the
+    two-SET idiom (`SET a += dupProps` then `SET a += canonProps`) yields: A keeps
+    all its own prop values, gains B's B-only props, identity preserved.
+
+    Idempotent: a second run cannot MATCH the (already-deleted) duplicate, so the
+    statement matches nothing and is a no-op. Degenerate self-merge
+    (canonical == duplicate) is filtered by the `elementId` guard - A is never
+    deleted. Raises ValueError on a non-L1 label or a bad/unsafe identity."""
+    if label not in L1_RECONCILE_LABELS:
+        raise ValueError(
+            f"merge label must be an L1 unit label ({sorted(L1_RECONCILE_LABELS)}), got {label!r}"
+        )
+    canon_clause, params = _reconcile_identity_clause(canonical_identity, "canon")
+    dup_clause, dup_params = _reconcile_identity_clause(duplicate_identity, "dup")
+    params.update(dup_params)
+    params["project_id"] = _PENDING_PROJECT_ID
+    params["dup_marker"] = _identity_marker(label, duplicate_identity)
+    params.update(_prov_params(provenance))
+
+    lines = [
+        f"MATCH (canon:{label} {{{canon_clause}, project_id: $project_id}})",
+        f"MATCH (dup:{label} {{{dup_clause}, project_id: $project_id}})",
+        # never delete the canonical when canonical == duplicate (safe no-op)
+        "WHERE elementId(canon) <> elementId(dup)",
+        "WITH canon, dup, properties(canon) AS canonProps, properties(dup) AS dupProps",
+    ]
+    # re-point every allowlisted rel type, both directions, BEFORE deleting dup.
+    # Unit CALL subqueries preserve the outer (single) row's cardinality. MERGE (not
+    # CREATE) onto the canonical means a parallel same-type-same-target edge dedups
+    # rather than duplicates (the intended merge semantics); its props are copied.
+    for rel in _REPOINT_REL_TYPES:
+        lines.append(
+            f"CALL {{ WITH canon, dup MATCH (dup)-[r:{rel}]->(x) "
+            f"MERGE (canon)-[nr:{rel}]->(x) SET nr += properties(r) DELETE r }}"
+        )
+        lines.append(
+            f"CALL {{ WITH canon, dup MATCH (x)-[r:{rel}]->(dup) "
+            f"MERGE (x)-[nr:{rel}]->(canon) SET nr += properties(r) DELETE r }}"
+        )
+    lines += [
+        # DETACH DELETE drops any leftover non-allowlisted edge too; every L1 edge
+        # type is in the allowlist, so nothing meaningful is ever orphaned.
+        "DETACH DELETE dup",
+        "WITH canon, canonProps, dupProps",
+        "SET canon += dupProps",
+        "SET canon += canonProps",
+        "SET canon.superseded_from = coalesce(canon.superseded_from, []) + [$dup_marker]",
+        "SET canon.superseded_prov_job = $prov_job",
+        "SET canon.last_seen = datetime()",
+    ]
+    return "\n".join(lines), params
+
+
+def build_delete_unit_cypher(
+    label: str, identity: dict, provenance: Provenance
+) -> tuple[str, dict]:
+    """Pure: DETACH DELETE one L1 node keyed by (`label`, `identity`).
+
+    `label` MUST be an L1 unit label (`L1_RECONCILE_LABELS`) - this guard is what
+    keeps a delete op from ever touching an L0 node. A missing node is a safe
+    no-op (the MATCH yields nothing). Deletion is terminal, so no provenance /
+    audit row is written (out of scope per §3); `provenance` is accepted for a
+    uniform op signature and logged by the caller. Raises ValueError on a non-L1
+    label or a bad/unsafe identity."""
+    if label not in L1_RECONCILE_LABELS:
+        raise ValueError(
+            f"delete label must be an L1 unit label ({sorted(L1_RECONCILE_LABELS)}), got {label!r}"
+        )
+    clause, params = _reconcile_identity_clause(identity, "id")
+    params["project_id"] = _PENDING_PROJECT_ID
+    cypher = "\n".join([
+        f"MATCH (n:{label} {{{clause}, project_id: $project_id}})",
+        "DETACH DELETE n",
+    ])
+    return cypher, params
+
+
+def build_relabel_unit_cypher(
+    from_label: str, to_label: str, identity: dict, new_identity: dict, provenance: Provenance
+) -> tuple[str, dict]:
+    """Pure: re-kind a mis-typed unit `:{from_label}` -> `:{to_label}`.
+
+    Swaps the subtype label (the shared `:L1TestableUnit` supertype is untouched,
+    since both operative subtypes carry it), re-keys identity (`identity` keys not
+    in `new_identity` are REMOVEd; `new_identity` keys are SET), re-points edges
+    whose semantics change with the type per `_RELABEL_EDGE_REMAP` (e.g. a
+    mis-typed Service's `AGGREGATES` becomes the System's `EVIDENCED_BY`), and -
+    when the target is a System - MERGEs the controlled-vocabulary `SystemKind`
+    catalogue row + `OF_KIND` edge (like `build_system_cypher`). Provenance +
+    `relabelled_from` stamped.
+
+    Idempotent: a second run cannot re-MATCH the old label/key and is a no-op.
+    Raises ValueError on a non-L1 (or equal) from/to label, an unsafe identity,
+    or a System target with an unknown `system_kind`. A blank System discriminator
+    is coerced to the `__singleton__` sentinel (never null, L1D-9)."""
+    if from_label not in L1_ALLOWED_LABELS:
+        raise ValueError(f"relabel from_label must be an operative L1 unit label, got {from_label!r}")
+    if to_label not in L1_ALLOWED_LABELS:
+        raise ValueError(f"relabel to_label must be an operative L1 unit label, got {to_label!r}")
+    if from_label == to_label:
+        raise ValueError(f"relabel from_label and to_label must differ, both {from_label!r}")
+
+    working_new = dict(new_identity or {})
+    if to_label == "L1System":
+        kind = working_new.get("system_kind")
+        if kind not in _KNOWN_KINDS:
+            raise ValueError(f"relabel to L1System requires a known system_kind, got {kind!r}")
+        disc = working_new.get("discriminator")
+        if not isinstance(disc, str) or not disc.strip():
+            working_new["discriminator"] = L1_SINGLETON
+
+    old_clause, params = _reconcile_identity_clause(identity, "id")
+    # validate the new identity keys/values with the same guard (they are both
+    # interpolated as property names AND parameterised as values below).
+    if not isinstance(working_new, dict) or not working_new:
+        raise ValueError("relabel requires a non-empty new_identity map")
+    if not all(isinstance(k, str) and _SAFE_IDENT.match(k) for k in working_new):
+        raise ValueError(f"relabel new_identity keys must be safe identifiers: {list(working_new)}")
+    for key, value in working_new.items():
+        if value is None or (isinstance(value, str) and not value.strip()):
+            raise ValueError(f"relabel new_identity value for {key!r} must be non-null/non-empty, got {value!r}")
+
+    old_keys_to_remove = sorted(k for k in identity if k not in working_new)
+    new_keys = sorted(working_new)
+
+    lines = [
+        f"MATCH (n:{from_label} {{{old_clause}, project_id: $project_id}})",
+        f"REMOVE n:{from_label}",
+        f"SET n:{to_label}",
+    ]
+    if old_keys_to_remove:
+        lines.append("REMOVE " + ", ".join(f"n.{k}" for k in old_keys_to_remove))
+    lines.append("SET " + ", ".join(f"n.{k} = $newid_{k}" for k in new_keys))
+    lines.append("SET n.relabelled_from = $relabelled_from")
+    lines.append("SET n.prov_job = $prov_job, n.prov_model = $prov_model, n.prov_prompt_id = $prov_prompt_id")
+    lines.append("SET n.last_seen = datetime()")
+
+    for old_rel, new_rel in sorted(_RELABEL_EDGE_REMAP.get((from_label, to_label), {}).items()):
+        if not (_SAFE_IDENT.match(old_rel) and _SAFE_IDENT.match(new_rel)):  # defence in depth
+            raise ValueError(f"unsafe relabel rel remap {old_rel!r}->{new_rel!r}")
+        lines.append("WITH n")
+        lines.append(
+            f"CALL {{ WITH n MATCH (n)-[r:{old_rel}]->(x) "
+            f"MERGE (n)-[nr:{new_rel}]->(x) SET nr += properties(r) DELETE r }}"
+        )
+
+    if to_label == "L1System":
+        lines += [
+            "WITH n",
+            "MERGE (k:SystemKind {id: $system_kind_id, project_id: $project_id})",
+            "ON CREATE SET k.first_seen = datetime(), k.prov_job = $ofkind_prov_job",
+            "MERGE (n)-[:OF_KIND]->(k)",
+        ]
+
+    params["project_id"] = _PENDING_PROJECT_ID
+    params["relabelled_from"] = _identity_marker(from_label, identity)
+    params.update(_prov_params(provenance))
+    for k in new_keys:
+        params[f"newid_{k}"] = working_new[k]
+    if to_label == "L1System":
+        params["system_kind_id"] = working_new["system_kind"]
+        params["ofkind_prov_job"] = _OFKIND_PROV_JOB
+    return "\n".join(lines), params
+
+
+def reconcile(
+    project_id: str,
+    *,
+    merges: list[MergeOp] | None = None,
+    deletes: list[DeleteOp] | None = None,
+    relabels: list[RelabelOp] | None = None,
+    merge_fn=None,
+) -> dict:
+    """Execute a batch of destructive reconciliation ops (FR-MERGE), fail-open per
+    op: one bad op (a bad/unsafe identity, a non-L1 or unknown label/kind, or a
+    `merge_fn` exception) is skipped+logged and the batch continues - exactly like
+    `enrich`. Returns per-category counts `{"merged", "deleted", "relabelled"}`.
+
+    Every write is `:L1*` only (the builders reject any non-L1 label), so
+    `reconcile` can never emit an L0 MERGE/DELETE."""
+    merge_fn = _resolve_merge_fn(merge_fn)
+
+    merged = 0
+    for op in merges or []:
+        try:
+            cypher, params = build_merge_units_cypher(op.label, op.canonical, op.duplicate, op.provenance)
+        except ValueError:
+            logger.warning("reconcile.merge: skipping invalid op label=%r", getattr(op, "label", None), exc_info=True)
+            continue
+        params["project_id"] = project_id
+        try:
+            merge_fn(cypher, params)
+        except Exception:
+            logger.warning("reconcile.merge: merge failed", exc_info=True)
+            continue
+        merged += 1
+
+    deleted = 0
+    for op in deletes or []:
+        try:
+            cypher, params = build_delete_unit_cypher(op.label, op.identity, op.provenance)
+        except ValueError:
+            logger.warning("reconcile.delete: skipping invalid op label=%r", getattr(op, "label", None), exc_info=True)
+            continue
+        params["project_id"] = project_id
+        try:
+            merge_fn(cypher, params)
+        except Exception:
+            logger.warning("reconcile.delete: delete failed", exc_info=True)
+            continue
+        deleted += 1
+
+    relabelled = 0
+    for op in relabels or []:
+        try:
+            cypher, params = build_relabel_unit_cypher(
+                op.from_label, op.to_label, op.identity, op.new_identity, op.provenance
+            )
+        except ValueError:
+            logger.warning(
+                "reconcile.relabel: skipping invalid op from=%r to=%r",
+                getattr(op, "from_label", None), getattr(op, "to_label", None), exc_info=True,
+            )
+            continue
+        params["project_id"] = project_id
+        try:
+            merge_fn(cypher, params)
+        except Exception:
+            logger.warning("reconcile.relabel: relabel failed", exc_info=True)
+            continue
+        relabelled += 1
+
+    return {"merged": merged, "deleted": deleted, "relabelled": relabelled}
+
+
+# --- FR-TYPESEP-b: prop-strip (the re-homing backstop's second leg) ------------
+# When a spine fact wrongly set on a Service (rendering_model / navigation_model /
+# api_paradigm / perimeter) is re-homed to the correct System via a typed edge,
+# the stale Service prop must be removed. A prop removal is an `:L1*` write, so
+# the sole-writer discipline forces it to live HERE (not in curation.py). The prop
+# keys are interpolated into the REMOVE clause (Neo4j cannot parameterise a
+# property name), so each is validated as a safe identifier AND rejected if it is
+# an identity / curator-managed key (`_RESERVED_PROPS`) - a strip can never orphan
+# a node by dropping its identity, nor spoof provenance.
+
+
+def build_strip_props_cypher(
+    label: str, identity: dict, prop_keys, provenance: Provenance
+) -> tuple[str, dict]:
+    """Pure: REMOVE a fixed, validated set of non-identity props from one L1 unit.
+
+    `label` MUST be an operative L1 unit label (`L1_ALLOWED_LABELS`) - the guard
+    that keeps a strip from ever touching an L0 node (or the flexible-identity
+    DataItem). `prop_keys` are each validated as a safe identifier (`_SAFE_IDENT`,
+    the Cypher-injection guard) and rejected if reserved/identity
+    (`_RESERVED_PROPS`), so an identity key can never be stripped. Keys are sorted
+    + deduped for deterministic Cypher; provenance + `last_seen` are stamped.
+    Idempotent: REMOVEing an absent prop is a no-op, and a missing node MATCHes
+    nothing. Raises ValueError on a non-L1 label, an empty/unsafe identity, or an
+    empty / unsafe / reserved prop-key set."""
+    if label not in L1_ALLOWED_LABELS:
+        raise ValueError(
+            f"strip_props label must be an operative L1 unit label ({sorted(L1_ALLOWED_LABELS)}), got {label!r}"
+        )
+    clause, params = _reconcile_identity_clause(identity, "id")
+    keys = list(prop_keys or [])
+    if not keys:
+        raise ValueError("strip_props requires at least one prop key")
+    for key in keys:
+        if not (isinstance(key, str) and _SAFE_IDENT.match(key)):
+            raise ValueError(f"strip_props: unsafe prop key {key!r}")
+        if key in _RESERVED_PROPS:
+            raise ValueError(f"strip_props: cannot strip reserved/identity prop {key!r}")
+    unique_keys = sorted(set(keys))
+    params["project_id"] = _PENDING_PROJECT_ID
+    params.update(_prov_params(provenance))
+    cypher = "\n".join([
+        f"MATCH (n:{label} {{{clause}, project_id: $project_id}})",
+        "REMOVE " + ", ".join(f"n.{k}" for k in unique_keys),
+        "SET n.last_seen = datetime()",
+        "SET n.prov_job = $prov_job, n.prov_model = $prov_model, n.prov_prompt_id = $prov_prompt_id",
+    ])
+    return cypher, params
+
+
+def strip_props(
+    project_id: str, ops: list[StripPropsOp] | None, *, merge_fn=None
+) -> int:
+    """Execute a batch of prop-strip ops (FR-TYPESEP-b), fail-open per op: one bad
+    op (a non-L1 label, a bad/unsafe identity, a reserved/unsafe prop key, or a
+    `merge_fn` exception) is skipped+logged and the batch continues - exactly like
+    `reconcile`. Returns the count stripped. Every write is `:L1*` only."""
+    merge_fn = _resolve_merge_fn(merge_fn)
+    stripped = 0
+    for op in ops or []:
+        try:
+            cypher, params = build_strip_props_cypher(op.label, op.identity, op.prop_keys, op.provenance)
+        except ValueError:
+            logger.warning("strip_props: skipping invalid op label=%r", getattr(op, "label", None), exc_info=True)
+            continue
+        params["project_id"] = project_id
+        try:
+            merge_fn(cypher, params)
+        except Exception:
+            logger.warning("strip_props: strip failed", exc_info=True)
+            continue
+        stripped += 1
+    return stripped
