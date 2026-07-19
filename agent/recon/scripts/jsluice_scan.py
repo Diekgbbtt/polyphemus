@@ -193,11 +193,22 @@ def scan_bundles(bundle_urls, *, fetch, run_jsluice, emit) -> None:
 # Real collaborators (used only when executed as a script inside the pod).     #
 # --------------------------------------------------------------------------- #
 def _real_fetch(url: str) -> str | None:
+    import ssl
     import urllib.request
+
+    # Recon egress fetches bundles from arbitrary, often-misconfigured targets
+    # (a local vuln-by-design app with a self-signed cert, a mis-issued prod
+    # cert). A TLS verification failure must NOT silently turn every https
+    # bundle into a None fetch - the Go crawlers (katana/httpx) already ignore
+    # cert errors, so this fetch would otherwise be the one link in the JS chain
+    # that refuses a self-signed target. Disable verification for the fetch.
+    ctx = ssl.create_default_context()
+    ctx.check_hostname = False
+    ctx.verify_mode = ssl.CERT_NONE
 
     try:
         req = urllib.request.Request(url, headers={"User-Agent": "polymerhus-recon/jsluice"})
-        with urllib.request.urlopen(req, timeout=20) as resp:  # noqa: S310 (recon egress)
+        with urllib.request.urlopen(req, timeout=20, context=ctx) as resp:  # noqa: S310 (recon egress)
             raw = resp.read()
         return raw.decode("utf-8", "replace")
     except Exception:  # best-effort: an unreachable bundle/map degrades to skip
@@ -207,7 +218,12 @@ def _real_fetch(url: str) -> str | None:
 def _real_run_jsluice(mode: str, text: str, baseurl: str) -> str:
     import subprocess
 
-    args = ["jsluice", mode]
+    # `-j`/`--raw-input`: read the JS body from stdin. Without it jsluice treats
+    # each stdin token as a FILENAME to open, so the piped bundle source is
+    # scanned as zero files and jsluice emits nothing (the D17-rewrite
+    # regression: the pre-D17 template was `jsluice urls -j -R <base>`; the `-j`
+    # was lost when the job moved to this fetch-then-pipe scanner).
+    args = ["jsluice", mode, "-j"]
     if mode == "urls" and baseurl:
         args += ["-R", baseurl]
     try:
