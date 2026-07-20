@@ -317,6 +317,12 @@ Note `seller-payouts` vs `seller-payout`: a bare plural, which the A1 normaliser
 **Assignment PRECISION - streaming's extra coverage is mostly noise (measured, not assumed).**
 Same classifier shape as the 2026-07-17 baseline, so numbers are comparable.
 
+> **Measurement ordering (verifier-flagged).** The run-B row below is a **pre-A5-controlled SNAPSHOT** and is NO LONGER RE-DERIVABLE from the live graph.
+> `a5_controlled.py` runs the batch analyser OVER `soupcure_pro_stream` - that is a WRITE, and it added +8 assignments after this table was taken (disclosed below as 168 -> 176).
+> Re-running the classifier today yields **155 assigned / 107 business / 18.7% strict / 31.0% inclusive**, i.e. 65 extra of which 17 business and 48 noise = **74% junk** (not 84%).
+> The two are reconcilable exactly: 176 total AGGREGATES minus 21 non-Endpoint edges (13 Header, 6 Parameter, 1 Technology, 1 BaseURL) = 147, the figure published here.
+> The run-A row IS still re-derivable. The qualitative conclusion is unaffected under either measurement: streaming buys a lower stale pool with substantial noise, batch carries none, batch stays the default.
+
 | | A (batch) | B (streaming) |
 |---|---|---|
 | Assigned endpoint edges | 90 | 147 |
@@ -325,7 +331,7 @@ Same classifier shape as the 2026-07-17 baseline, so numbers are comparable.
 | Noise share (strict / inclusive) | **0% / 0%** | **19.7% / 32.7%** |
 | Stale pool | 92/182 (50.5%) | 37/182 (20.3%) |
 
-Of streaming's 57 extra assignments, 9 are business and **48 are noise** (84% junk): `/chunk-*.js`, `/ethers.js`, `/juice-shop/build/lib/insecurity.js`, concentrated in `admin` (29) and `challenges` (17).
+Of streaming's 57 extra assignments, 9 are business and **48 are noise** (84% junk; 74% on the post-A5 re-measurement above): `/chunk-*.js`, `/ethers.js`, `/juice-shop/build/lib/insecurity.js`, concentrated in `admin` (29) and `challenges` (17).
 Streaming's lower stale pool was BOUGHT with over-assignment - precisely the AMV-9 failure direction.
 Plausible mechanism: streaming runs the analyser once per producing job against a PARTIAL surface, and MERGE accumulates monotonically with no retraction, so every speculative early assignment is permanent; batch sees the complete surface once and can be selective. That is precision decay by construction, not a tuning problem.
 **This settles NM-7's original deferral question in the opposite direction from the hope:** the deferral asked for streaming to be adopted only once a noise-reduction win was MEASURED. Measured on one identical pipeline, streaming *increases* noise 0% -> 19.7%, costs 2.6x recon wall-clock (927s -> 2421s), and buys +9 business assignments. The mechanism is sound and provably idempotent, but it is not the quality lever it was hoped to be. Batch remains the right default.

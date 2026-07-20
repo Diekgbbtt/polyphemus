@@ -243,4 +243,24 @@ Captured as a clean two-way extension so the ordered structure is picked up as i
 
 ---
 
+
+## AMV-15 - journey slugs are coined at an inconsistent ALTITUDE across runs
+
+**Intent:** make journey membership a usable grouping in every run, not just the lucky ones.
+
+**Live evidence (FR-CURE2E, verifier-surfaced).** The journey grouping quality varies wildly across three runs of the same pipeline on the same target:
+- `soupcure_pro_batch` (A): genuine business journeys that group properly - `shopper-checkout -> [cart, checkout, delivery, orders]`, `seller-sell -> 3 members`, 5 multi-member journeys.
+- `soupcure_pro_stream` (B): most slugs are full ENGLISH SENTENCES ("Basket is converted into a placed order" -> `['checkout']`), each grouping a SINGLE service; only `shopping-flow` and `seller-flow` group anything.
+- `soupcure_flash_batch` (C): every journey is a bare phrase ("add to basket" -> `['cart']`) with no high-level grouping at all.
+
+A journey naming one service is not a grouping - it is a restatement of the service. The whole adversarial value of journey membership (plan §1.1: concentrating cross-service trust reflection on same-journey pairs) evaporates when each journey has one member.
+
+**Relation to MVP areas:** FR-JOURNEY (the light membership model) and FR-CURATE (which writes the memberships). The MECHANISM is correct and verified - `services_in_journey` agrees with stored membership in all three runs, and identity never churns. What varies is the LLM's chosen granularity. Same family as AMV-12 (cross-run identity instability): both are "the LLM picks a different naming altitude each run".
+
+**Deliverable shape:** constrain the altitude rather than hope for it - a slug-shape contract in the curation/bootstrap prompt (kebab-case, 2-4 tokens, names a multi-step BUSINESS journey not a single action), a worked example set at the right altitude (the plan §1 examples `checkout-flow`/`signup-flow`/`password-reset-flow` are already the right shape and should be IN the prompt), and a post-write validity check that flags single-member journeys and sentence-shaped slugs for re-proposal.
+
+**Why deferred:** it degrades the QUALITY of a working feature rather than breaking it, and the fix is prompt-shaping plus a validation pass - a bounded area of its own. Recorded now because FR-CURE2E's A3 assertion is only honestly claimable for run A, and a future run could regress to the run-C shape without any test noticing.
+
+---
+
 <!-- Append new after-MVP work items below as AMV-n, newest last. Keep each item self-contained: intent, relation to MVP areas, deliverable shape, and why deferred. -->
