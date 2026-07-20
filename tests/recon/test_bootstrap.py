@@ -131,3 +131,41 @@ def test_curate_error_is_degraded_not_raised():
 
     export = bootstrap.bootstrap_from_kb("proj-1", "kb", elicit_fn=elicit_fn, curate_fn=boom_curate)
     assert export.error and "curate" in export.error
+
+
+# --- AST-ELICIT-05: the elicitation LLM call is retried, like the analyser's ---
+# Regression guard for a defect FR-CURE2E hit live: deepseek returned truncated
+# JSON ("Expecting value: line 1109 column 1") and default_elicit_fn, which called
+# structured_llm.invoke() with NO retry, fail-opened to services=0 - zeroing the
+# whole bootstrap skeleton so every downstream stage ran against an empty L1.
+# The analyser pod was hardened against exactly this transient with
+# _invoke_with_retry(attempts=3); bootstrap has the same exposure and was missed.
+
+def test_elicit_retries_a_transient_structured_output_failure(monkeypatch):
+    """A transient JSONDecodeError from the provider must be retried, not silently
+    collapsed into an empty skeleton."""
+    import json as _json
+
+    from agent.app.llm import roles as _roles
+
+    good = L1DeltaBatch(services=[ServiceProposal(business_function_slug="checkout")])
+    calls = {"n": 0}
+
+    class _FakeStructured:
+        def invoke(self, messages):
+            calls["n"] += 1
+            if calls["n"] < 3:      # fail twice, succeed on the third
+                raise _json.JSONDecodeError("Expecting value", "doc", 6094)
+            return good
+
+    class _FakeLLM:
+        def with_structured_output(self, schema, method=None):
+            return _FakeStructured()
+
+    monkeypatch.setattr(_roles, "chat_model_for", lambda role: _FakeLLM())
+
+    batch = bootstrap.default_elicit_fn("an online juice marketplace")
+
+    assert calls["n"] == 3, f"expected 3 attempts (bounded retry), got {calls['n']}"
+    assert batch is not None and batch.services, "a retried success must return the batch"
+    assert batch.services[0].business_function_slug == "checkout"

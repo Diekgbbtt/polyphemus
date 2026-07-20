@@ -63,7 +63,11 @@ def default_elicit_fn(operator_kb: str, *, service_slugs: list[str] | None = Non
 
     from agent.app.llm.roles import chat_model_for
     from agent.recon.analysis.l1_curator import vocabulary_prompt
-    from agent.recon.analysis.pod import _inventory_block, _load_analyser_skill
+    from agent.recon.analysis.pod import (
+        _invoke_with_retry,
+        _inventory_block,
+        _load_analyser_skill,
+    )
 
     llm = chat_model_for("analyser")
     structured_llm = llm.with_structured_output(L1DeltaBatch, method="function_calling")
@@ -73,7 +77,13 @@ def default_elicit_fn(operator_kb: str, *, service_slugs: list[str] | None = Non
         f"{vocabulary_prompt()}\n\nOperator KB (free text):\n{operator_kb}"
     )
     messages = [SystemMessage(content=_load_analyser_skill()), HumanMessage(content=prompt)]
-    return structured_llm.invoke(messages)
+    # Bounded retry, exactly as the analyser pod does. `with_structured_output`
+    # intermittently returns None or raises on a truncated provider response
+    # (observed live: deepseek returned malformed JSON mid-elicitation). Without
+    # the retry a single transient zeroes the ENTIRE bootstrap skeleton - the
+    # fail-open then yields services=0 and every downstream stage runs against an
+    # empty L1, which looks like a modelling failure rather than a provider blip.
+    return _invoke_with_retry(structured_llm.invoke, messages)
 
 
 def bootstrap_from_kb(
