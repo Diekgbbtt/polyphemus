@@ -169,3 +169,17 @@ def test_elicit_retries_a_transient_structured_output_failure(monkeypatch):
     assert calls["n"] == 3, f"expected 3 attempts (bounded retry), got {calls['n']}"
     assert batch is not None and batch.services, "a retried success must return the batch"
     assert batch.services[0].business_function_slug == "checkout"
+
+
+def test_elicit_exhausting_its_retries_is_fail_open_with_a_clear_error():
+    """When every retry attempt fails, _invoke_with_retry returns None. That must
+    degrade to a reported error, NOT crash the caller (fail-open) and NOT look like
+    a successful empty elicitation."""
+    exp = bootstrap_from_kb_none = bootstrap.bootstrap_from_kb(
+        "p_none", "an online juice marketplace",
+        elicit_fn=lambda kb: None,
+        curate_fn=lambda services, systems, project_id: (len(services), len(systems)),
+    )
+    assert exp.error, "an exhausted-retry elicitation must report an error, not a silent empty skeleton"
+    assert "elicit" in exp.error.lower()
+    assert exp.services_written == 0

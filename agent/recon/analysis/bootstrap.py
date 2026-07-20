@@ -122,6 +122,17 @@ def bootstrap_from_kb(
         except Exception as exc:  # fail-open: an LLM error degrades to no elicited skeleton
             logger.warning("bootstrap_from_kb: elicit (LLM) failed for project=%s", project_id, exc_info=True)
             return BootstrapExport(error=f"elicit: {exc}")
+        if batch is None:
+            # The bounded retry returns None when EVERY attempt failed. Without this
+            # guard that None reaches `batch.systems` below and raises AttributeError
+            # straight out of a function contracted to be fail-open. It must also not
+            # be mistaken for a successful-but-empty elicitation: an exhausted retry
+            # is a provider failure and has to say so, or a run silently proceeds on
+            # an empty skeleton and the emptiness gets blamed on the model.
+            logger.warning(
+                "bootstrap_from_kb: elicit returned no batch after retries for project=%s", project_id
+            )
+            return BootstrapExport(error="elicit: LLM returned no parseable batch after retries")
 
     # Always ensure the two linchpin auth Systems exist, whether or not the LLM
     # elicited them (dedup is handled by the singleton MERGE, so adding them when
