@@ -2,7 +2,8 @@ osu# Post-Recon Curation and L1 Remediation Implementation Plan
 
 > **For agentic workers:** REQUIRED SUB-SKILL: use `superpowers:subagent-driven-development` (recommended) or `superpowers:executing-plans` to implement this plan task-by-task. Steps use checkbox (`- [ ]`) syntax for tracking. Follow `loop-constraints.md` verbatim and the maker/checker discipline (a SEPARATE verifier runs each area's assertions; the implementer never self-approves).
 
-> **STATUS (2026-07-19): every BUILD area is verifier-APPROVED and committed. `FR-CURE2E` (§7) is the ONLY open area.**
+> **STATUS (2026-07-20): ALL areas verifier-APPROVED, including `FR-CURE2E`. This plan is COMPLETE.**
+> FR-CURE2E caught two blocking defects that unit + integration tiers structurally could not (see §7).
 > Approved and landed: FR-INVENTORY, FR-MERGE, FR-JOURNEY, FR-TYPESEP (a+b), FR-CURATE, FR-MODELFIX.
 > Green baseline at handoff: 827 unit tests pass, 46 of them this plan's tests (including 4 live-Neo4j integration, 0 skips), plus 4 frontend colour tests.
 > One PRE-EXISTING failure is unrelated to this plan and must not be read as curation fallout: `tests/recon/test_pipeline_e2e.py::test_pipeline_e2e_httpx_to_arjun_prop_dependent_target` reproduces identically at `ce5e351` (the commit before this plan's work) with `.env` present. It is separately a hermeticity defect - a `tests/recon/` unit-tier test reaches live Neo4j via `read_steering_signals`, fails open, and leaves arjun unexecuted. Tracked in `STATE.md`.
@@ -320,7 +321,7 @@ Same classifier shape as the 2026-07-17 baseline, so numbers are comparable.
 > **Measurement ordering (verifier-flagged).** The run-B row below is a **pre-A5-controlled SNAPSHOT** and is NO LONGER RE-DERIVABLE from the live graph.
 > `a5_controlled.py` runs the batch analyser OVER `soupcure_pro_stream` - that is a WRITE, and it added +8 assignments after this table was taken (disclosed below as 168 -> 176).
 > Re-running the classifier today yields **155 assigned / 107 business / 18.7% strict / 31.0% inclusive**, i.e. 65 extra of which 17 business and 48 noise = **74% junk** (not 84%).
-> The two are reconcilable exactly: 176 total AGGREGATES minus 21 non-Endpoint edges (13 Header, 6 Parameter, 1 Technology, 1 BaseURL) = 147, the figure published here.
+> The two are reconcilable exactly, against the PRE-A5 total: **168** total AGGREGATES minus 21 non-Endpoint edges (13 Header, 6 Parameter, 1 Technology, 1 BaseURL) = **147**, the figure published here; post-A5 the same arithmetic is 176 - 21 = **155**, today's re-measurement.
 > The run-A row IS still re-derivable. The qualitative conclusion is unaffected under either measurement: streaming buys a lower stale pool with substantial noise, batch carries none, batch stays the default.
 
 | | A (batch) | B (streaming) |
@@ -344,12 +345,12 @@ Batch reaching **0% noise** is itself a large improvement on the 2026-07-17 base
 4. **The target died mid-experiment and the pipeline did not notice.** The Juice Shop container exited (133) at ~23:07. The first run C then reported every job `success` and the run `complete` in 39.7s with **1 endpoint** - a DEAD-TARGET result that would have been reported as "flash produces a thinner graph". Invalidated and re-run against a restored target. Root gap: `run_pipeline` is best-effort, so a job whose tool returns nothing is indistinguishable from one that worked. Registered as AMV-14; the driver now carries a surface-sanity gate that aborts below 20 endpoints.
 
 **Assertions (live):**
-- [ ] No two `L1Service` share a normalised business function (dedup rate reported; zero synonym pairs after curation).
-- [ ] No `L1Service` carries a rendering/navigation/paradigm/perimeter prop (all are System edges); every service with a UI is `EXPOSED_VIA` a `WebPresentation` System carrying `rendering_model` + `navigation_model` as independent props. (Corrected 2026-07-19 by FR-MODELFIX: this assertion previously named `RENDERED_BY` a RenderingSystem, an edge and kind the correction deleted.)
-- [ ] Journey memberships present and coherent (checkout/signup/etc.); `services_in_journey` returns sensible groups.
-- [ ] Stale pool + missing-systems sweep run; noise nodes are pruned/reclassed, not business-assigned (ties to AMV-8/AMV-9).
-- [ ] Streaming-final L1 == batch-final L1 after curation (idempotent convergence holds through curation), OR the divergence is explained.
-- [ ] Independent verifier re-runs the driver + graph queries and APPROVEs.
+- [x] No two `L1Service` share a normalised business function (dedup rate reported; zero synonym pairs after curation).
+- [x] No `L1Service` carries a rendering/navigation/paradigm/perimeter prop (all are System edges); every service with a UI is `EXPOSED_VIA` a `WebPresentation` System carrying `rendering_model` + `navigation_model` as independent props. (Corrected 2026-07-19 by FR-MODELFIX: this assertion previously named `RENDERED_BY` a RenderingSystem, an edge and kind the correction deleted.)
+- [x] Journey memberships present and coherent (run A; runs B/C coin degenerate single-member journeys -> AMV-15) (checkout/signup/etc.); `services_in_journey` returns sensible groups.
+- [x] Stale pool + missing-systems sweep run; noise nodes are pruned/reclassed, not business-assigned (ties to AMV-8/AMV-9).
+- [x] Streaming-final L1 == batch-final L1 after curation (A5-controlled PASS; observational divergence explained) (idempotent convergence holds through curation), OR the divergence is explained.
+- [x] Independent verifier re-runs the driver + graph queries and APPROVEs. **APPROVED 2026-07-20** (rejected once on documentation overstatement; both items corrected).
 
 ---
 

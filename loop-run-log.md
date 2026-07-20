@@ -330,3 +330,17 @@ Append one entry per iteration. Prune entries older than 30 days.
 }
 ```
 
+```
+{
+  "run_id": "2026-07-20T-fr-cure2e-verifier-APPROVED",
+  "fr_area": "FR-CURE2E (verifier gate)",
+  "attempt": 2,
+  "assertions_green": 12,
+  "assertions_total": 12,
+  "tokens_estimate": 9800000,
+  "escalations": 4,
+  "outcome": "approved",
+  "notes": "Independent verifier APPROVED; FR-CURE2E closes and the post-recon-curation plan is COMPLETE. ATTEMPT 1 REJECTED - code sound, DOCUMENTATION overstated, on two counts both correct: (1) the streaming precision table was no longer re-derivable because a5_controlled.py WRITES into run B's project (+8 assignments) after the table was measured, while my text claimed every graph was still re-queryable; (2) the A3 journey claim was unqualified but holds only for run A - run B coins sentence-shaped slugs grouping ONE service each ('Basket is converted into a placed order' -> ['checkout']) and run C bare phrases with no grouping, so services_in_journey agrees with stored membership in all three runs (mechanism sound) but 'returns sensible groups' is true only of A -> AMV-15. Fixed in 883bc92. The verifier then caught an ARITHMETIC TRANSPOSITION in my own correction (I wrote 176-21=147; correct is 168-21=147 pre-A5, 176-21=155 post-A5) - a sentence written so a skeptical reader could check the arithmetic, which instead made a CORRECT claim look false; fixed. The verifier re-derived every load-bearing number with its OWN Cypher and ran a counter-factual I had NOT: the adversarial probe against REVERTED code, reproducing the entire before-fix column including the wrongly-passing ADV-4 (merged=1 forever) - stronger evidence for the resurrection defect than I produced myself. It also confirmed all three regression guards FAIL on revert (a guard that passes either way is worthless), the arjun failure pre-exists at ce5e351, 830 unit + 44 integration/e2e pass with 0 unexpected failures and the new live-neo4j reconcile tests genuinely running (15 passed, 0 skipped), and curator.py/schema.py/.env untouched with the sole-writer intact. Verifier verdict on the model finding: 'the most operationally urgent item in the package, should not wait on this verdict' - LLM_MODEL_ANALYSER=deepseek-v4-flash yields an L1 graph with ZERO assignments (182 endpoints -> 0 AGGREGATES, 100% stale), independently confirmed. Lesson worth keeping: the gate caught two overstatements in a write-up already written to be honest, including one where I congratulated myself on disclosing the 168->176 caveat without noticing that same caveat invalidated a table three paragraphs earlier - the argument for maker/checker being a SEPARATE agent rather than a self-review pass."
+}
+```
+
