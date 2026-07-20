@@ -200,4 +200,47 @@ Captured as a clean two-way extension so the ordered structure is picked up as i
 
 ---
 
+
+## AMV-12 - cross-run identity stability for `business_function_slug`
+
+**Intent:** make the L1 business-function identity reproducible across independent runs against the SAME target.
+
+**Live evidence (FR-CURE2E, 2026-07-19/20).** Two runs of the identical pipeline, same target, same model produced only **41% identity overlap** (Jaccard 0.407, 18 vs 20 services). The "disjoint" sets are the SAME business functions under differently-coined slugs: `account-management`/`account`, `admin-panel`/`admin`, `reward-points`/`loyalty`, `support-desk`/`support`, `training-challenges`/`challenges`, `juice-club`/`subscription`. Bootstrap alone varied 15/18/17 services across three runs from an identical operator KB.
+
+**Relation to MVP areas:** FR-INVENTORY solved the WITHIN-project case by injecting the current inventory into every analyser prompt - each run is internally clean (0 synonym pairs in all three runs). A FRESH project has an empty inventory, so the LLM coins fresh names with nothing to anchor on.
+
+**Deliverable shape:** an anchor for first-write naming - a controlled business-function vocabulary seeded from the operator KB (the KB already names the journeys and records), and/or embedding-nearest-slug reuse at bootstrap, and/or a canonical-slug normaliser applied at write time.
+
+**Why deferred:** operationally a project IS the accumulation unit, so within-project stability (already achieved) is what production needs. This bites cross-run graph COMPARISON - benchmarking, regression-diffing a target over time, and the observational half of the streaming-vs-batch check - not day-to-day operation.
+
+---
+
+## AMV-13 - dedup normaliser needs light stemming
+
+**Intent:** catch morphological synonym pairs the current duplicate check misses.
+
+**Live evidence:** FR-CURE2E surfaced `seller-payouts` vs `seller-payout` - a bare plural. The A1 normaliser (casefold + strip non-alphanumerics) maps these to `sellerpayouts` / `sellerpayout`, which do not collide, so the pair passes as distinct identities.
+
+**Relation to MVP areas:** FR-INVENTORY (prevention, the reuse prompt) and FR-CURATE (the LLM's merge judgment). Both currently rely on exact-key reasoning.
+
+**Deliverable shape:** light stemming (plural/singular, gerund) in the normaliser used by the dedup assertion and the curation prompt's duplicate hint. Deliberately NOT full embedding similarity - the plan already rejected that in favour of LLM-judged reuse; this is only the cheap morphological layer.
+
+**Why deferred:** a single observed instance, and the curation LLM catches most such pairs semantically. Worth fixing when a dedup-precision pass is next opened.
+
+---
+
+## AMV-14 - a recon job that returns NOTHING is indistinguishable from one that worked
+
+**Intent:** make an empty/failed tool result observable instead of silently succeeding.
+
+**Live evidence (FR-CURE2E, near-miss).** The Juice Shop target container exited (133) mid-experiment. The next full run reported **every job `success`** and the run **`complete` in 39.7s** (against ~927s for a healthy run) while producing **1 endpoint** instead of 182. Nothing in the run status, job status, or logs distinguished a dead target from a clean run. Had the implausible 23x speedup not been questioned, this would have been written up as a MODEL QUALITY finding ("flash produces a far thinner graph than pro") when it was purely an infrastructure failure.
+
+**Relation to MVP areas:** `run_pipeline` is deliberately best-effort (a job whose pods all fail is marked `degraded` and the pipeline still reaches terminal `complete`) - correct for resilience, but it means yield is never asserted. Compounds AMV-8 (crawl/parse scope): both concern trusting what recon returns.
+
+**Deliverable shape:** per-job yield expectations (a job that historically returns N assets returning ~0 is `degraded`, not `success`); a run-level surface-sanity gate; and a target-liveness precondition checked BEFORE a run rather than inferred afterwards. The FR-CURE2E driver now carries an interim gate (abort below 20 endpoints) - that belongs in the pipeline, not a scratchpad driver.
+
+**Why deferred:** it is an observability/quality-gate change to the recon pipeline, outside the curation plan's scope, and the interim driver gate covers the immediate e2e need. It should be picked up with AMV-8/AMV-9 as one "trust what recon returns" area.
+
+---
+
 <!-- Append new after-MVP work items below as AMV-n, newest last. Keep each item self-contained: intent, relation to MVP areas, deliverable shape, and why deferred. -->

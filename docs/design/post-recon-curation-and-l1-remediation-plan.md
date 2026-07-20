@@ -270,6 +270,73 @@ This limitation is registered as a follow-up (AMV-11) rather than pre-built.
 - Create: `scratchpad` driver `e2e_curation.py` (bootstrap-first per the operator-KB seeding memory; idempotent stream-step convergence; run curation; dump metrics).
 - Doc: append the run to `STATE.md` + `loop-run-log.md`; update memory.
 
+### FR-CURE2E results (2026-07-19/20, target `soupmarket.shop`)
+
+Run matrix (sequential, never parallel - the 3.83GiB host).
+Streaming-vs-batch convergence is a SUBSTRATE property (L1D-23), so it is proven once on the baseline model; the model comparison runs on batch, the default mode.
+
+| Run | Project | Model | Mode | Recon | Total |
+|---|---|---|---|---|---|
+| A | `soupcure_pro_batch` | v4-pro | batch | 927s | 1690s |
+| B | `soupcure_pro_stream` | v4-pro | streaming | 2421s | 3486s |
+| C | `soupcure_flash_batch` | v4-flash | batch | see below | - |
+
+**The headline finding: the e2e caught a BLOCKING defect that unit + integration tiers could not.**
+Post-recon curation could not deduplicate at all.
+`run_curation` read its index-cards ONCE at stage 1 and passed that snapshot to every later stage; stage 3 merged a duplicate away, then stage 5 iterated the stale pre-merge list and `commit_anatomy` MERGEd the Service back by slug.
+Curation silently undid its own dedup, reported `merged=1` (true when `reconcile` ran), and never converged - every subsequent run repeated the cycle forever.
+`reconcile` and the FR-MERGE builders are correct in ISOLATION, which is exactly why the four live-Neo4j integration tests pass and never saw it: it is an INTERACTION defect, only reachable in the integrated flow.
+Fixed at root cause (re-read the context after any destructive op, which also covers the journey and re-home stages); guarded by `test_curation_does_not_resurrect_a_merged_away_service`.
+
+**Why it was nearly missed: runs A and B passed A1/A2 VACUOUSLY.**
+Both reported `merged=0, deleted=0, relabelled=0, rehomed=0` - not because reconciliation worked, but because upstream PREVENTION (FR-INVENTORY identity pinning + FR-TYPESEP-a prompt rule) meant no duplicate and no stranded mechanism prop was ever written (`mech_props_pre_curation` was already 0).
+A green A1/A2 on a clean graph says nothing about the destructive path.
+This is the `stale_pool=0 is a NEGATIVE signal` lesson in a new form, and it motivated the adversarial probe below.
+
+**The adversarial (dirty-graph) probe - the test that actually exercises reconciliation.**
+Plants two synonym Services each AGGREGATING distinct real L0 Endpoints, plus one Service carrying stranded `rendering_model`/`navigation_model`/`api_paradigm`/`auth_methods`, then runs the REAL `run_curation` (real LLM proposal pass, real sole-writer, live Neo4j).
+
+| Assertion | Before fix | After fix |
+|---|---|---|
+| ADV-1 synonyms merge into one | FAIL (3 services, both survived) | **PASS** (3 -> 2) |
+| ADV-2 merge orphans no edges | PASS | **PASS** (4/4 endpoints keep inbound AGGREGATES) |
+| ADV-3 stranded props re-homed + stripped | PASS | **PASS** (`svc_mech_props` 1 -> 0, `rehomed`=4) |
+| ADV-4 idempotent second pass | PASS (wrongly - nothing ever changed) | **PASS** (2nd run `merged=0`, was `merged=1` forever) |
+
+**A5 as written is CONFOUNDED and was split in two.**
+Bootstrap is an LLM call: the same KB + same model seeded 15 services (A), 18 (B), 17 (C).
+The arms therefore diverge BEFORE the analyser runs, so a cross-project set-difference measures bootstrap non-determinism, not the delivery mode.
+- **A5-controlled (the real L1D-23 test, PASS):** run the BATCH analyser over the settled STREAMED project - same seed, same surface, both modes. Result: **0 new services / systems / data items, 0 lost.** Identity converged exactly. Honest caveat: AGGREGATES moved 168 -> 176 (+8), so identity converged while MEMBERSHIP accreted slightly - consistent with `identity ⊥ membership` (L1D-11) plus analyser non-determinism (AMV-9), not a delivery-mode difference.
+- **A5-observational (FAIL, divergence EXPLAINED):** batch 18 vs streaming 20 services, Jaccard 0.407. The "disjoint" sets are the SAME business functions under differently-coined slugs: `account-management`/`account`, `admin-panel`/`admin`, `reward-points`/`loyalty`, `seller-payouts`/`seller-payout`, `support-desk`/`support`, `training-challenges`/`challenges`, `juice-club`/`subscription`.
+
+**New finding - `business_function_slug` is stable WITHIN a project but not ACROSS runs.**
+FR-INVENTORY pins identities by injecting the current inventory, so each project stays internally clean (0 synonym pairs in every run); a FRESH project starts from nothing and the LLM coins fresh names.
+Operationally acceptable (a project is the accumulation unit) but it makes cross-run graph comparison unreliable. Registered as AMV-12.
+Note `seller-payouts` vs `seller-payout`: a bare plural, which the A1 normaliser (casefold + strip non-alphanumerics) does NOT collapse - the dedup check wants light stemming. Registered as AMV-13.
+
+**Assignment PRECISION - streaming's extra coverage is mostly noise (measured, not assumed).**
+Same classifier shape as the 2026-07-17 baseline, so numbers are comparable.
+
+| | A (batch) | B (streaming) |
+|---|---|---|
+| Assigned endpoint edges | 90 | 147 |
+| **Business** assignments | 90 | 99 (+9) |
+| **Noise** assignments | **0** | **48** |
+| Noise share (strict / inclusive) | **0% / 0%** | **19.7% / 32.7%** |
+| Stale pool | 92/182 (50.5%) | 37/182 (20.3%) |
+
+Of streaming's 57 extra assignments, 9 are business and **48 are noise** (84% junk): `/chunk-*.js`, `/ethers.js`, `/juice-shop/build/lib/insecurity.js`, concentrated in `admin` (29) and `challenges` (17).
+Streaming's lower stale pool was BOUGHT with over-assignment - precisely the AMV-9 failure direction.
+Plausible mechanism: streaming runs the analyser once per producing job against a PARTIAL surface, and MERGE accumulates monotonically with no retraction, so every speculative early assignment is permanent; batch sees the complete surface once and can be selective. That is precision decay by construction, not a tuning problem.
+**This settles NM-7's original deferral question in the opposite direction from the hope:** the deferral asked for streaming to be adopted only once a noise-reduction win was MEASURED. Measured on one identical pipeline, streaming *increases* noise 0% -> 19.7%, costs 2.6x recon wall-clock (927s -> 2421s), and buys +9 business assignments. The mechanism is sound and provably idempotent, but it is not the quality lever it was hoped to be. Batch remains the right default.
+Batch reaching **0% noise** is itself a large improvement on the 2026-07-17 baseline's 31-38%, attributable to the FR-INVENTORY identity pinning tightening assignment discipline.
+
+**Infrastructure failures encountered (recorded, none masked):**
+1. Postgres entered recovery mode mid-run-A ("database system was not properly shut down", auto-recovered in ~14s). The run SURVIVED: the heartbeat loop is fail-open. Not container OOM (`RestartCount=0`, `OOMKilled=false`, ~1.8GiB of 3.83GiB in use) - consistent with the documented Docker Desktop VM I/O fault.
+2. The agent container was RECREATED at 23:47:39, wiping `/srv/.cure2e` (only `./agent`, `./db`, `./skills` are bind-mounted). All JSON artifacts were lost; the Neo4j/Postgres volumes survived, so every figure was re-derivable from the live graphs. Artifacts must be copied host-side immediately.
+3. macOS Docker file-sharing CACHE LAG meant a host edit to `curation.py` was not visible in the container for minutes, which briefly made a correct fix look like it had failed. Hash both sides before concluding a fix did not work.
+4. **The target died mid-experiment and the pipeline did not notice.** The Juice Shop container exited (133) at ~23:07. The first run C then reported every job `success` and the run `complete` in 39.7s with **1 endpoint** - a DEAD-TARGET result that would have been reported as "flash produces a thinner graph". Invalidated and re-run against a restored target. Root gap: `run_pipeline` is best-effort, so a job whose tool returns nothing is indistinguishable from one that worked. Registered as AMV-14; the driver now carries a surface-sanity gate that aborts below 20 endpoints.
+
 **Assertions (live):**
 - [ ] No two `L1Service` share a normalised business function (dedup rate reported; zero synonym pairs after curation).
 - [ ] No `L1Service` carries a rendering/navigation/paradigm/perimeter prop (all are System edges); every service with a UI is `EXPOSED_VIA` a `WebPresentation` System carrying `rendering_model` + `navigation_model` as independent props. (Corrected 2026-07-19 by FR-MODELFIX: this assertion previously named `RENDERED_BY` a RenderingSystem, an edge and kind the correction deleted.)
