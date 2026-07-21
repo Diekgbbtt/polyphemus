@@ -83,3 +83,13 @@ CREATE TABLE IF NOT EXISTS doc_chunks (
 CREATE INDEX IF NOT EXISTS doc_chunks_hnsw    ON doc_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS doc_chunks_doc_ref ON doc_chunks (doc_ref);
 CREATE INDEX IF NOT EXISTS doc_chunks_anchor  ON doc_chunks USING gin (anchor);
+CREATE TABLE IF NOT EXISTS methodology_bundles (
+    id         BIGSERIAL PRIMARY KEY,
+    run_id     TEXT NOT NULL,
+    query_id   TEXT NOT NULL,
+    query      JSONB NOT NULL,
+    bundle     JSONB NOT NULL,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS methodology_bundles_run_id_idx ON methodology_bundles (run_id);
+CREATE INDEX IF NOT EXISTS methodology_bundles_query_id_idx ON methodology_bundles (query_id);

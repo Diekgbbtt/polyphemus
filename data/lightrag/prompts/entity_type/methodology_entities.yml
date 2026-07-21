@@ -1,0 +1,76 @@
+entity_types_guidance: |
+  Classify each methodology entity using one of the following types. If no type
+  fits, use `Other`.
+
+  - VulnerabilityClass: A reusable category of weakness or security failure that
+    an attacker may test or exploit, such as SQL injection, insecure direct
+    object reference, or authentication bypass.
+  - DefensiveTechnology: A control, validation layer, security mechanism, policy,
+    or detection capability that prevents, mitigates, blocks, or observes a
+    technique or weakness.
+  - EnvironmentalCondition: A target state, prerequisite, capability, privilege,
+    data-flow condition, side channel, or application behavior that changes
+    whether a technique is applicable.
+  - AttackTechnique: A reusable attacker or tester method, probe, exploit
+    approach, bypass method, chaining step, or payload strategy.
+
+  Keep document titles, WSTG identifiers, section names, URLs, and source paths as
+  provenance context unless the text describes them as methodology concepts.
+  Prefer source-grounded relation keywords such as requires, exploits, enables,
+  mitigates, detects, detectedBy, bypasses, blocks, and depends on.
+
+entity_extraction_examples:
+  - |
+    entity{tuple_delimiter}Alternate Encoding Probe{tuple_delimiter}AttackTechnique{tuple_delimiter}A testing method that varies payload encoding to observe whether a request-filtering control normalizes input consistently.
+    entity{tuple_delimiter}Web Application Firewall{tuple_delimiter}DefensiveTechnology{tuple_delimiter}A request-filtering control that blocks suspicious input patterns before they reach application logic.
+    entity{tuple_delimiter}Normalization Mismatch{tuple_delimiter}EnvironmentalCondition{tuple_delimiter}A condition where two processing stages decode or normalize input differently.
+    relation{tuple_delimiter}Alternate Encoding Probe{tuple_delimiter}Web Application Firewall{tuple_delimiter}bypasses{tuple_delimiter}The probe may bypass the firewall when normalization mismatch is present.
+    relation{tuple_delimiter}Alternate Encoding Probe{tuple_delimiter}Normalization Mismatch{tuple_delimiter}requires{tuple_delimiter}The technique is applicable when normalization mismatch exists.
+    {completion_delimiter}
+
+entity_extraction_json_examples:
+  - |
+    {
+      "entities": [
+        {
+          "name": "Parameter Tampering",
+          "type": "AttackTechnique",
+          "description": "A testing method that changes request parameters to observe whether application behavior depends on user-controlled input."
+        },
+        {
+          "name": "SQL Injection",
+          "type": "VulnerabilityClass",
+          "description": "A weakness class where user-controlled data affects SQL query construction or execution."
+        },
+        {
+          "name": "User-Controlled SQL Input",
+          "type": "EnvironmentalCondition",
+          "description": "A target condition where input supplied by a user can influence a SQL query path."
+        },
+        {
+          "name": "Parameterized Query Enforcement",
+          "type": "DefensiveTechnology",
+          "description": "A defensive implementation pattern that separates SQL code from supplied data."
+        }
+      ],
+      "relationships": [
+        {
+          "source": "Parameter Tampering",
+          "target": "User-Controlled SQL Input",
+          "keywords": "requires",
+          "description": "Parameter tampering is relevant when user-controlled input reaches SQL query construction or execution."
+        },
+        {
+          "source": "Parameter Tampering",
+          "target": "SQL Injection",
+          "keywords": "exploits",
+          "description": "Parameter tampering can be used to test or exploit SQL injection weaknesses."
+        },
+        {
+          "source": "Parameterized Query Enforcement",
+          "target": "SQL Injection",
+          "keywords": "mitigates",
+          "description": "Parameterized query enforcement mitigates SQL injection by separating query structure from data values."
+        }
+      ]
+    }

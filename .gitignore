@@ -7,4 +7,11 @@ __pycache__/
 .superpowers/
 .DS_Store
 .venv/
+data/lightrag/rag_storage/
+data/lightrag/inputs/*
+!data/lightrag/inputs/.gitkeep
+data/lightrag/prompts/*
+!data/lightrag/prompts/.gitkeep
+!data/lightrag/prompts/entity_type/
+!data/lightrag/prompts/entity_type/*.yml
 docs/.DS_Store

@@ -234,3 +234,51 @@ def test_save_settings_merges_rather_than_replaces(monkeypatch):
     assert "jsonb_deep_merge(settings.recon, EXCLUDED.recon)" in query
     assert "settings.recon || EXCLUDED.recon" not in query
     assert params[0] == "proj1"
+
+
+def test_save_methodology_bundle_inserts_append_only_json(monkeypatch):
+    cur = patch_connect(monkeypatch, FakeCursor(fetch_result=(42,)))
+    artifact_id = pg.save_methodology_bundle(
+        "run1",
+        {"query_id": "q1", "pattern": "target_state"},
+        {"query_id": "q1", "summary": "Retrieved methodology"},
+    )
+
+    query, params = cur.executed[0]
+    assert artifact_id == 42
+    assert "INSERT INTO methodology_bundles" in query
+    assert "ON CONFLICT" not in query
+    assert "RETURNING id" in query
+    assert params[0] == "run1"
+    assert params[1] == "q1"
+    assert json.loads(params[2]) == {"query_id": "q1", "pattern": "target_state"}
+    assert json.loads(params[3]) == {"query_id": "q1", "summary": "Retrieved methodology"}
+
+
+def test_get_methodology_bundles_returns_rows_for_run(monkeypatch):
+    rows = [
+        (
+            7,
+            "run1",
+            "q1",
+            {"query_id": "q1", "pattern": "target_state"},
+            {"query_id": "q1", "summary": "Retrieved methodology"},
+            "t1",
+        )
+    ]
+    cur = patch_connect(monkeypatch, FakeCursor(fetch_result=rows))
+    result = pg.get_methodology_bundles("run1")
+
+    assert result == [
+        {
+            "id": 7,
+            "run_id": "run1",
+            "query_id": "q1",
+            "query": {"query_id": "q1", "pattern": "target_state"},
+            "bundle": {"query_id": "q1", "summary": "Retrieved methodology"},
+            "created_at": "t1",
+        }
+    ]
+    query, params = cur.executed[0]
+    assert "FROM methodology_bundles WHERE run_id = %s ORDER BY id" in query
+    assert params == ("run1",)

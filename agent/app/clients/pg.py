@@ -1,4 +1,5 @@
 import json
+from typing import Any
 
 import psycopg
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
@@ -224,3 +225,47 @@ def list_projects() -> list[dict]:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute("SELECT project_id, name, created_at FROM projects ORDER BY created_at DESC")
         return [{"project_id": r[0], "name": r[1], "created_at": r[2]} for r in cur.fetchall()]
+
+
+def _jsonable(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if hasattr(value, "dict"):
+        return value.dict()
+    return value
+
+
+def save_methodology_bundle(run_id: str, query, bundle) -> int | None:
+    query_payload = _jsonable(query)
+    bundle_payload = _jsonable(bundle)
+    query_id = query_payload.get("query_id") or bundle_payload.get("query_id")
+    if not query_id:
+        raise ValueError("methodology bundle persistence requires query_id")
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO methodology_bundles (run_id, query_id, query, bundle) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            (run_id, query_id, json.dumps(query_payload), json.dumps(bundle_payload)),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def get_methodology_bundles(run_id: str) -> list[dict]:
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, run_id, query_id, query, bundle, created_at "
+            "FROM methodology_bundles WHERE run_id = %s ORDER BY id",
+            (run_id,),
+        )
+        return [
+            {
+                "id": r[0],
+                "run_id": r[1],
+                "query_id": r[2],
+                "query": r[3],
+                "bundle": r[4],
+                "created_at": r[5],
+            }
+            for r in cur.fetchall()
+        ]
