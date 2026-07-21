@@ -1,6 +1,8 @@
+import { useMemo } from "react"
 import ForceGraph2D from "react-force-graph-2d"
 import type { GraphNode, GraphLink } from "../api/types"
 import { nodeColor } from "./colors"
+import { projectGraph, type GraphView } from "./projection"
 
 // Bookkeeping keys that carry no attack-surface meaning for a viewer.
 const HIDDEN_KEYS = new Set(["project_id", "id", "element_id"])
@@ -47,10 +49,33 @@ function nodeTooltip(n: object): string {
   )
 }
 
-export function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphLink[] }) {
+export function GraphCanvas({
+  nodes,
+  links,
+  view = "both",
+}: {
+  nodes: GraphNode[]
+  links: GraphLink[]
+  view?: GraphView
+}) {
+  // Project to the selected layer and hand ForceGraph FRESH object copies:
+  // react-force-graph rewrites each link's source/target from an id string to a
+  // node reference in place, so reusing the pristine arrays would corrupt them
+  // for the next projection. Copying per view keeps the source data intact.
+  const graphData = useMemo(() => {
+    const projected = projectGraph({ project_id: "", nodes, links }, view)
+    return {
+      nodes: projected.nodes.map((n) => ({ ...n })),
+      links: projected.links.map((l) => ({ ...l })),
+    }
+  }, [nodes, links, view])
+
   return (
     <ForceGraph2D
-      graphData={{ nodes: nodes as object[], links: links as object[] }}
+      // Remount on view change so the simulation restarts from the fresh copies
+      // rather than the previous view's already-mutated ones.
+      key={view}
+      graphData={graphData as { nodes: object[]; links: object[] }}
       nodeId="id"
       nodeLabel={nodeTooltip}
       nodeColor={(n: object) => nodeColor((n as GraphNode).type)}
