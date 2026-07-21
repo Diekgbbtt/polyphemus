@@ -24,9 +24,12 @@ test("L1 colours are disjoint from the Layer-0 palette", () => {
   }
 })
 
-test("controlled-vocabulary catalogues are muted (and share one reference tone)", () => {
-  expect(nodeColor("SystemKind")).toBe(nodeColor("DataRelationshipKind"))
-  expect(nodeColor("SystemKind")).not.toBe(NODE_COLORS.Default)
+test("the removed catalogue labels are no longer coloured (they fall back to grey)", () => {
+  // Operator correction 2026-07-20: SystemKind / DataRelationshipKind node labels
+  // are gone (kind is an attribute; a data-relationship kind is the edge type), so
+  // they carry no dedicated colour and read as the default like any unknown type.
+  expect(nodeColor("SystemKind")).toBe(NODE_COLORS.Default)
+  expect(nodeColor("DataRelationshipKind")).toBe(NODE_COLORS.Default)
 })
 
 test("an unknown type still falls back to the default grey", () => {

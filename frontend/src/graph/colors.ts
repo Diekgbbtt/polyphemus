@@ -13,11 +13,9 @@ export const NODE_COLORS: Record<string, string> = {
   L1System: "#f97316",        // orange - cross-cutting technical systems
   L1DataItem: "#facc15",      // yellow - the Tier-1 data (the crown jewel)
   L1TestableUnit: "#ec4899",  // supertype fallback (should resolve to a subtype)
-  // Controlled-vocabulary catalogues (SystemKind / DataRelationshipKind) are
-  // registry/reference data, not model nodes - muted so they recede behind the
-  // actual services/systems/data items.
-  SystemKind: "#a1a1aa",
-  DataRelationshipKind: "#a1a1aa",
+  // (Operator correction 2026-07-20: the SystemKind / DataRelationshipKind
+  // catalogue node labels are removed from the model - a System's kind is a plain
+  // attribute and a data-relationship kind IS the edge type - so no colour entry.)
   Default: "#6b7280",
 }
 
