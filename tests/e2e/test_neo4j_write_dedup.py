@@ -5,7 +5,13 @@ from neo4j import GraphDatabase
 from tests.conftest import wait_for
 from db.neo4j.init_schema import init_schema
 
-URI, AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+# Single source of truth (tests/conftest.py::neo4j_target): env-driven so this
+# file works BOTH in-network (bolt://neo4j:7687) and from the host against the
+# published port. Was a hardcoded localhost constant, which cannot resolve
+# inside the Docker network.
+URI, AUTH = neo4j_target()
 MERGE = ("MERGE (d:Domain {name:$name, project_id:$pid}) "
          "ON CREATE SET d.first_seen = datetime() "
          "SET d.last_seen = datetime()")

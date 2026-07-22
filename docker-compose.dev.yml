@@ -1,6 +1,9 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 # agent: live source + uvicorn --reload (edits apply instantly)
 # kali : mcp_server.py/postrun.sh already bind-mounted in base — `docker restart kali` to reload
+#
+# tests: the LIVE (integration/e2e) tier, run INSIDE the compose network so it
+#        resolves `neo4j` by service DNS exactly as the agent does. See below.
 services:
   agent:
     volumes:
@@ -9,3 +12,51 @@ services:
       - ./skills:/srv/skills   # triager loads writing-observations SKILL.md at runtime
     command: ["uvicorn", "agent.app.main:app", "--host", "0.0.0.0", "--port", "8080",
               "--reload", "--reload-dir", "/srv"]
+
+  # The live-tier test runner.
+  #
+  #   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+  #     run --rm tests tests/integration -q
+  #
+  # Why a service rather than running pytest on the host: the live tiers used to
+  # hardcode `bolt://localhost:7687`, which cannot resolve inside the Docker
+  # network, so they could only ever run from the host against the published
+  # port - a different configuration from the one the agent actually uses. This
+  # runs them against the SAME service DNS the agent resolves, so the tier
+  # exercises the real config path instead of a host-only substitute.
+  #
+  # It REUSES the agent image (no second Dockerfile to drift): the base image
+  # already carries neo4j, psycopg, httpx and fastmcp, so only pytest is
+  # missing, installed at start from requirements-dev.txt. `profiles` keeps it
+  # out of `up` - it is a one-shot runner, not a long-lived service.
+  tests:
+    image: polymerhus-agent:latest
+    profiles: [test]
+    working_dir: /srv
+    # Mount the WHOLE repo (not just agent/db/skills like the agent service):
+    # the tier needs tests/ and conftest.py, and mounting the working tree is
+    # the point - we test the edited source, never the baked image layer.
+    volumes:
+      - .:/srv
+    environment:
+      # In-network view. `neo4j_target()` reads these, so the same test files
+      # work unchanged here and from the host.
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+      PROJECT_ID: test
+      PYTHONPATH: /srv
+    env_file:
+      - path: .env
+        required: false
+    entrypoint:
+      - sh
+      - -c
+      - 'pip install --no-cache-dir -q -r requirements-dev.txt && exec python -m pytest "$@"'
+      - --
+    depends_on:
+      neo4j: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    networks: [polymerhus-net]

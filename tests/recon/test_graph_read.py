@@ -74,17 +74,3 @@ def test_neo4j_temporal_props_are_json_serializable():
     assert props["first_seen"] == "2026-07-07T15:33:17.994165"
     assert props["ttl"] == "P1DT30S"
     assert props["seen_at"] == ["2026-07-07T15:33:17.994165"]
-
-
-from tests.conftest import neo4j_live
-
-
-@pytest.mark.skipif(not neo4j_live(), reason="live neo4j not reachable")
-def test_fetch_project_graph_includes_isolated_seed():
-    from agent.app.clients import neo4j_client
-    from agent.recon.graph_read import fetch_project_graph
-    pid = "graphtest-" + os.urandom(4).hex()
-    neo4j_client.merge(
-        "MERGE (n:Domain {name:$name, project_id:$pid})", {"name": "lone.example", "pid": pid})
-    g = fetch_project_graph(pid)
-    assert any(n["type"] == "Domain" and n["name"] == "lone.example" for n in g["nodes"])

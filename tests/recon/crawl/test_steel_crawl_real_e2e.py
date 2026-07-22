@@ -36,6 +36,11 @@ import uuid
 
 import pytest
 
+import pytest as _pytest_live
+
+# Real-infra e2e: live Neo4j + Steel.
+pytestmark = _pytest_live.mark.live_neo4j
+
 # Stable public scraping sandbox. A query-string seed guarantees the manifest
 # carries an endpoint with query params, so the Parameter merge path is covered.
 TARGET_HOST = "books.toscrape.com"

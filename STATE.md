@@ -2,6 +2,37 @@
 
 Last run: 2026-07-19 (**post-MVP curation + L1 remediation - 6 of 7 FR areas verifier-APPROVED and COMMITTED; only FR-CURE2E remains.** See the section directly below. Before: FR-STREAM (NM-7), the exhaustive soupmarket.shop e2e, and L1-MVP COMPLETE.)
 
+## AMENDMENT 2026-07-22 - FR-JOURNEY WITHDRAWN; arjun rate cap replaces `--stable`
+
+Two operator decisions taken after the plan closed. Everything below this block is the record of what was built and stays as written; this block is what is now TRUE.
+
+**1. Journey grouping is WITHDRAWN and removed from the codebase.**
+It was built and verifier-APPROVED (FR-JOURNEY, AST-JRNY-01) - it is retired, not failed. The reason is the AMV-15 altitude defect: in 2 of 3 FR-CURE2E runs the LLM coined journeys that grouped a single service each, which is a restatement of the service, not a grouping - and the whole adversarial rationale depends on multi-member groups. Removed in full with no shim: `CurationBatch.journeys`, `CurationReport.journeys_written`, `curation._write_journeys` + its stage (curation is now 6 stages: read -> propose -> reconcile -> anatomy -> re-home -> sweep), `l1_read.services_in_journey`, `tests/recon/test_l1_journey.py`, and the journey text in the curation/analyser skills and the model catalogue. AST-JRNY-01 and AST-CUR-02 are annotated SUPERSEDED in the plan rather than deleted. AMV-15 is folded into **AMV-11**, which is now the single durable record (removal rationale + altitude contract + ordered-promotion path).
+
+**2. arjun uses `--rate-limit 5`, not `--stable`.**
+`--stable` was proposed for the non-determinism (58 params one run, 5 the next) and REJECTED by the operator. It was the wrong fix and would have been worse than the defect: it forces threads=1 AND injects a random 3-10s delay before EVERY request, i.e. 13-43 min for the ~260 requests one URL takes - roughly 10x over `EXEC_TIMEOUT_S=300`, so every arjun pod would have timed out and the job would have yielded nothing. Measured on a local Juice Shop (`/api/Products`, 2 runs per rung): request count ~260/URL, wall-clock exactly linear in the cap - unlimited 4s, `20` 13s, `10` 26s, `5` 52s, `2` 132s - with the identical 10 parameters recovered at every rung. 5 rps gives ~6x headroom under the exec timeout while cutting the per-process burst ~13x from the unlimited default's measured ~65 rps (and, since arjun is unbatched at `MAX_PODS=20`, the aggregate against one host from ~1300 rps to ~100 rps). Caveat recorded honestly: the local target does not rate-limit, so this measured the COST of the cap, not that it fixes the flip - the causal claim still rests on the FR-CURE2E forensics. The adaptive ladder that would actually track a target's real budget is **AMV-17**.
+
+## AMENDMENT 2026-07-22 (b) - test framework repaired; the suite is now FULLY GREEN
+
+**Reference: `docs/design/testing-strategy.md` (tiers, discipline, how to run each). Binding rules are in `loop-constraints.md`.**
+
+The long-standing `test_pipeline_e2e_httpx_to_arjun_prop_dependent_target` failure is FIXED, and the diagnosis previously recorded for it (in this file and in the curation plan's header) was WRONG. Correcting it here because it misled for months:
+
+- **Recorded cause (wrong):** a hermeticity defect - the test reaches live Neo4j via `read_steering_signals`, fails open, leaves arjun unexecuted.
+- **Actual cause:** the arjun template gained a `printf '{}' > … && arjun …` prefix in `77dc0c2` (the contaminated-stdout fix), while the test still dispatched and filtered on `command.startswith("arjun")`. The filter went VACUOUSLY EMPTY and the test reported `no arjun command was executed` while arjun was wired correctly all along. Same failure family as the FR-CURE2E dedup defect: a check that quietly stops checking and reports the absence of its own coverage as a product failure.
+- The hermeticity leak was REAL but a separate, second bug, and fixing it alone did not make the test pass.
+
+**What the investigation found and fixed** (all verified, see the strategy doc for the reasoning):
+1. `tests/conftest.py` aimed its "safe dummy" at `bolt://localhost:7687` with password `test`. Compose PUBLISHES Bolt to the host, so the dummy hit the REAL database with wrong credentials; Neo4j's 3-strikes lockout then returned `AuthenticationRateLimit`, which reads like throttling but is wrong-password lockout. Dummies are now un-resolvable `*.invalid` hosts.
+2. A unit-tier guard now RAISES on any live Neo4j access, including via the raw `_driver` (the helper-level patch alone missed `read_steering_signals`, which is how the leak hid).
+3. `neo4j_live()` gated through the broken config path, returning `False` against a healthy database - so live tests skipped under a plausible "live neo4j not reachable" message. One live test in `tests/recon/test_graph_read.py` had **never executed once**; moved to `tests/integration/test_graph_read_live.py`.
+4. The hardcoded `bolt://localhost:7687` + `("neo4j","polymerhus")` constant is gone from **14 files**, replaced by env-driven `tests/conftest.py::neo4j_target()` - the single source of truth, so the same file works in-network and from the host.
+5. `docker-compose.dev.yml` gains a `tests` service (`profiles: [test]`) reusing the agent image, so the live tiers run INSIDE the compose network against the same service DNS the agent uses.
+
+**Green baseline 2026-07-22:** host `tests/` = **892 passed, 37 skipped, 0 failed** (no known-failure carve-out remains); in-network `tests/integration` = **41 passed, 0 skipped** (was 32 passed / 8 skipped from the host, and those 8 skips were bogus).
+
+**Open, flagged not fixed:** the test container is Python 3.11 vs the host venv's 3.13 (in-network-only CI would drop 3.13 coverage); and `tests/e2e/test_stack_smoke.py` runs `docker compose up -d --build`, rebuilding the stack as a side effect of a plain test run.
+
 ## Post-recon curation + L1 remediation (2026-07-19) - MVP fence DOWN, 6/7 areas APPROVED
 
 Plan: `docs/design/post-recon-curation-and-l1-remediation-plan.md`. Model authority: `docs/design/l1-domain-model-catalogue.md`.

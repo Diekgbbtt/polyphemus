@@ -23,7 +23,9 @@ from tests.conftest import pg_live_dsn, wait_for
 DSN = pg_live_dsn()
 pytestmark = pytest.mark.skipif(not DSN, reason="live PG not reachable")
 
-NEO4J_URI, NEO4J_AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+NEO4J_URI, NEO4J_AUTH = neo4j_target()
 
 
 def _run(coro):
