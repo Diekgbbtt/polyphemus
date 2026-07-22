@@ -51,7 +51,7 @@
 ## Communication & irreversible actions
 
 - Tell the human what you are about to do before doing something outward-facing or hard to reverse.
-- Commit/push only when the user asks; branch first if on the default branch. Never auto-merge to `main`.
+- Integration follows the discipline in `docs/agents/issue-tracker.md`: branch first if on the default branch, one PR per `workflow` ticket against `main`, a verifier APPROVAL authorises pushing the branch and opening the PR, and merging to `main` is a human action.
 - Escalation must actually reach a human: land it in `STATE.md` `High Priority` (`Waiting on human`) and notify.
 
 ## Budget & kill switch
