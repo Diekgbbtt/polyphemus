@@ -9,8 +9,14 @@ the L1 business `Service` never collides with the L0 network `:Service`
 
 Identity keys (ratified one-way door D2):
   * L1Service  -> (project_id, business_function_slug)                 [L1D-12]
-  * L1System   -> (project_id, system_kind, discriminator)            [L1D-9]
-  * SystemKind -> (id, project_id)  controlled-vocab catalogue         [L1D-6]
+  * L1System   -> (project_id, kind, discriminator)                    [L1D-9]
+
+Operator correction 2026-07-20: a System's kind is a plain identity ATTRIBUTE
+named `kind` (the identity key was renamed `system_kind` -> `kind`), NOT a
+`:SystemKind` catalogue node reached by `OF_KIND`; and a DataRelationship's kind
+IS the (uppercased) relationship TYPE from a fixed allowlist, NOT a
+`:DataRelationshipKind` catalogue node. Both catalogue-node constraints are
+therefore removed. Old project graphs are disposable (re-derived, not migrated).
 
 Interface agreement A (the `AGGREGATES` cross-layer reference, L1D-25) is a
 NATIVE edge `(:L1Service)-[:AGGREGATES {envelope}]->(:L0 node)` to the
@@ -26,23 +32,17 @@ Every key is a non-null composite `IS UNIQUE`, exactly like the L0 keys, so the
 
 L1_CONSTRAINTS = [
     "CREATE CONSTRAINT l1service_unique IF NOT EXISTS FOR (s:L1Service) REQUIRE (s.project_id, s.business_function_slug) IS UNIQUE",
-    "CREATE CONSTRAINT l1system_unique IF NOT EXISTS FOR (sy:L1System) REQUIRE (sy.project_id, sy.system_kind, sy.discriminator) IS UNIQUE",
-    "CREATE CONSTRAINT systemkind_unique IF NOT EXISTS FOR (k:SystemKind) REQUIRE (k.id, k.project_id) IS UNIQUE",
+    "CREATE CONSTRAINT l1system_unique IF NOT EXISTS FOR (sy:L1System) REQUIRE (sy.project_id, sy.kind, sy.discriminator) IS UNIQUE",
     # FR-ENRICH: DataItem flexible identity (project_id, item_key) - a semantic
     # key, identity independent of the L0 sites it surfaces at (L1D-13/L1OP-1).
     "CREATE CONSTRAINT l1dataitem_unique IF NOT EXISTS FOR (d:L1DataItem) REQUIRE (d.project_id, d.item_key) IS UNIQUE",
-    # FR-ENRICH: DataRelationship controlled-vocabulary catalogue, extensible by
-    # rows (L1OP-2), same shape as SystemKind.
-    "CREATE CONSTRAINT datarelationshipkind_unique IF NOT EXISTS FOR (k:DataRelationshipKind) REQUIRE (k.id, k.project_id) IS UNIQUE",
 ]
 
 L1_INDEXES = [
     "CREATE INDEX idx_l1service_tenant IF NOT EXISTS FOR (s:L1Service) ON (s.project_id)",
     "CREATE INDEX idx_l1system_tenant IF NOT EXISTS FOR (sy:L1System) ON (sy.project_id)",
     "CREATE INDEX idx_l1testableunit_tenant IF NOT EXISTS FOR (u:L1TestableUnit) ON (u.project_id)",
-    "CREATE INDEX idx_systemkind_tenant IF NOT EXISTS FOR (k:SystemKind) ON (k.project_id)",
     "CREATE INDEX idx_l1dataitem_tenant IF NOT EXISTS FOR (d:L1DataItem) ON (d.project_id)",
-    "CREATE INDEX idx_datarelationshipkind_tenant IF NOT EXISTS FOR (k:DataRelationshipKind) ON (k.project_id)",
 ]
 
 

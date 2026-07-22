@@ -22,10 +22,12 @@ from agent.recon.analysis.l1_types import (
 PROV = Provenance(job="curation", model="m", prompt_id="p")
 
 # The rel types the merge builder MUST re-point (task allowlist): the §6 System
-# taxonomy plus the cross-layer / data / catalogue edges.
+# taxonomy plus the cross-layer / data-flow edges plus the SIX typed data-
+# relationship edges (the kind IS the edge type; operator correction 2026-07-20).
 _REQUIRED_REPOINT_RELS = (
-    {"AGGREGATES", "SURFACES_AT", "PRODUCES", "CONSUMES", "DATA_RELATIONSHIP", "OF_KIND"}
+    {"AGGREGATES", "SURFACES_AT", "PRODUCES", "CONSUMES", "EVIDENCED_BY"}
     | set(l1_curator.SYSTEM_EDGE_RELS)
+    | {k.upper() for k, _d in l1_curator.DATA_RELATIONSHIP_KINDS}
 )
 
 
@@ -66,8 +68,8 @@ def test_merge_builder_copies_missing_props_after_delete():
     of the duplicate's identity key can never collide with the still-present
     duplicate on the uniqueness constraint (the live-container failure mode)."""
     cy, _ = l1_curator.build_merge_units_cypher(
-        "L1System", {"system_kind": "WAF", "discriminator": "__singleton__"},
-        {"system_kind": "WAF", "discriminator": "dup"}, PROV,
+        "L1System", {"kind": "WAF", "discriminator": "__singleton__"},
+        {"kind": "WAF", "discriminator": "dup"}, PROV,
     )
     assert cy.index("DETACH DELETE dup") < cy.index("SET canon += dupProps")
     # canon keeps its own props (second SET restores them), gains dup-only props
@@ -83,20 +85,20 @@ def test_no_l0_writes():
         with pytest.raises(ValueError):
             l1_curator.build_merge_units_cypher(l0_label, {"path": "/a"}, {"path": "/b"}, PROV)
         with pytest.raises(ValueError):
-            l1_curator.build_relabel_unit_cypher(l0_label, "L1System", {"path": "/x"}, {"system_kind": "WAF"}, PROV)
+            l1_curator.build_relabel_unit_cypher(l0_label, "L1System", {"path": "/x"}, {"kind": "WAF"}, PROV)
         with pytest.raises(ValueError):
             l1_curator.build_relabel_unit_cypher("L1Service", l0_label, {"business_function_slug": "s"}, {"path": "/x"}, PROV)
     # a valid delete only ever DETACH DELETEs an :L1* node; no L0 node label appears
-    cy, _ = l1_curator.build_delete_unit_cypher("L1System", {"system_kind": "WAF", "discriminator": "__singleton__"}, PROV)
+    cy, _ = l1_curator.build_delete_unit_cypher("L1System", {"kind": "WAF", "discriminator": "__singleton__"}, PROV)
     assert "DETACH DELETE n" in cy
     assert "MATCH (n:L1System {" in cy
-    # no builder ever MERGEs/CREATEs a bare L0 node label (the only new nodes are
-    # the L1-side SystemKind catalogue row on a System relabel)
+    # no builder ever MERGEs/CREATEs a bare L0 node label (a System relabel now
+    # just SETs the `kind` attribute - no catalogue node is created either)
     node_write = re.compile(r"(MERGE|CREATE)\s*\(\s*\w*:(Endpoint|Parameter|Header)\b")
     for builder_cy in (
         cy,
         l1_curator.build_merge_units_cypher("L1Service", {"business_function_slug": "a"}, {"business_function_slug": "b"}, PROV)[0],
-        l1_curator.build_relabel_unit_cypher("L1Service", "L1System", {"business_function_slug": "s"}, {"system_kind": "RESTApi"}, PROV)[0],
+        l1_curator.build_relabel_unit_cypher("L1Service", "L1System", {"business_function_slug": "s"}, {"kind": "RESTApi"}, PROV)[0],
     ):
         assert not node_write.search(builder_cy)
 
@@ -107,22 +109,22 @@ def test_relabel_builder_swaps_label_rekeys_and_remaps_edge():
     cy, params = l1_curator.build_relabel_unit_cypher(
         "L1Service", "L1System",
         identity={"business_function_slug": "graphql-api"},
-        new_identity={"system_kind": "GraphQLApi", "discriminator": "__singleton__"},
+        new_identity={"kind": "GraphQLApi", "discriminator": "__singleton__"},
         provenance=PROV,
     )
     assert "MATCH (n:L1Service {business_function_slug: $id_business_function_slug, project_id: $project_id})" in cy
     assert "REMOVE n:L1Service" in cy and "SET n:L1System" in cy
     assert "REMOVE n.business_function_slug" in cy            # old key dropped
-    assert "n.system_kind = $newid_system_kind" in cy         # new keys set
+    assert "n.kind = $newid_kind" in cy                       # new keys set
     assert "n.discriminator = $newid_discriminator" in cy
-    assert params["newid_system_kind"] == "GraphQLApi"
+    assert params["newid_kind"] == "GraphQLApi"
     assert params["newid_discriminator"] == "__singleton__"
     # AGGREGATES -> EVIDENCED_BY re-point (semantics change with the type)
     assert "MATCH (n)-[r:AGGREGATES]->(x) MERGE (n)-[nr:EVIDENCED_BY]->(x)" in cy
-    # a System is OF_KIND its controlled-vocabulary catalogue row
-    assert "MERGE (k:SystemKind {id: $system_kind_id, project_id: $project_id})" in cy
-    assert "MERGE (n)-[:OF_KIND]->(k)" in cy
-    assert params["system_kind_id"] == "GraphQLApi"
+    # operator correction 2026-07-20: no catalogue node, no OF_KIND edge - the
+    # `kind` attribute is simply SET on the re-kinded node
+    assert "SystemKind" not in cy
+    assert "OF_KIND" not in cy
     # provenance stamped
     assert params["relabelled_from"] == "L1Service:business_function_slug=graphql-api"
     assert "SET n.prov_job = $prov_job" in cy
@@ -131,12 +133,12 @@ def test_relabel_builder_swaps_label_rekeys_and_remaps_edge():
 def test_relabel_to_system_requires_known_kind_and_coerces_blank_discriminator():
     with pytest.raises(ValueError):
         l1_curator.build_relabel_unit_cypher(
-            "L1Service", "L1System", {"business_function_slug": "s"}, {"system_kind": "NotAKind"}, PROV
+            "L1Service", "L1System", {"business_function_slug": "s"}, {"kind": "NotAKind"}, PROV
         )
     # blank discriminator coerced to the non-null singleton sentinel (L1D-9)
     _, params = l1_curator.build_relabel_unit_cypher(
         "L1Service", "L1System", {"business_function_slug": "s"},
-        {"system_kind": "WAF", "discriminator": "   "}, PROV,
+        {"kind": "WAF", "discriminator": "   "}, PROV,
     )
     assert params["newid_discriminator"] == "__singleton__"
 
@@ -163,12 +165,12 @@ def test_reconcile_fail_open():
         MergeOp(label="Endpoint", canonical={"path": "/a"}, duplicate={"path": "/b"}, provenance=PROV),  # L0 label -> skipped at build
     ]
     deletes = [
-        DeleteOp(label="L1System", identity={"system_kind": "WAF", "discriminator": "__singleton__"}, provenance=PROV),
+        DeleteOp(label="L1System", identity={"kind": "WAF", "discriminator": "__singleton__"}, provenance=PROV),
         DeleteOp(label="L1Service", identity={}, provenance=PROV),  # empty identity -> skipped at build
     ]
     relabels = [
-        RelabelOp(from_label="L1Service", to_label="L1System", identity={"business_function_slug": "s"}, new_identity={"system_kind": "RESTApi"}, provenance=PROV),
-        RelabelOp(from_label="L1Service", to_label="L1System", identity={"business_function_slug": "s2"}, new_identity={"system_kind": "Bogus"}, provenance=PROV),  # unknown kind -> skipped
+        RelabelOp(from_label="L1Service", to_label="L1System", identity={"business_function_slug": "s"}, new_identity={"kind": "RESTApi"}, provenance=PROV),
+        RelabelOp(from_label="L1Service", to_label="L1System", identity={"business_function_slug": "s2"}, new_identity={"kind": "Bogus"}, provenance=PROV),  # unknown kind -> skipped
     ]
     out = l1_curator.reconcile(
         "proj1", merges=merges, deletes=deletes, relabels=relabels,

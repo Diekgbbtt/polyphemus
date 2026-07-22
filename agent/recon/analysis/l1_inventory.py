@@ -61,7 +61,7 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
         )
         system_rows = read_fn(
             "MATCH (n:L1System) WHERE n.project_id = $project_id "
-            "RETURN n.system_kind AS kind, n.discriminator AS disc",
+            "RETURN n.kind AS kind, n.discriminator AS disc",
             {"project_id": project_id},
         )
         data_rows = read_fn(

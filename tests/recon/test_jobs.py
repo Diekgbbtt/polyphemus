@@ -54,6 +54,37 @@ def test_arjun_template_seeds_default_suppresses_stdout_and_reads_file():
     assert "{auth_header}" in template
 
 
+def test_arjun_template_caps_request_rate_for_deterministic_yield():
+    # FR-CURE2E trace forensics: arjun's parameter detection is non-deterministic
+    # run-to-run on the IDENTICAL surface (one e2e drew 58 Parameters, another only
+    # 5), rooted in the target throttling the request burst - arjun reads a
+    # throttled response as an anomaly, so it invents or misses parameters.
+    # Capping the request rate removes the burst that provokes it.
+    # Guard the cap so it cannot be silently dropped.
+    template = JOBS["arjun"].command_template
+    assert "--rate-limit" in template
+
+    # And guard the VALUE stays in the band the measurement justified (operator
+    # decision 2026-07-22). arjun issues ~260 requests per URL and its wall-clock
+    # is exactly linear in the cap, so the rung is bounded on both sides:
+    #   * too high and the burst that caused the defect returns;
+    #   * too low and a single URL exceeds EXEC_TIMEOUT_S=300 (at 1 rps a pod is
+    #     already at ~260s, with no headroom for a slower remote target), which
+    #     turns the fix into a total yield loss.
+    rate = int(template.split("--rate-limit", 1)[1].split()[0])
+    assert 2 <= rate <= 10, f"arjun --rate-limit {rate} is outside the justified band"
+
+
+def test_arjun_template_does_not_use_stable_mode():
+    # `--stable` was REJECTED as the fix (operator, 2026-07-22). It forces
+    # threads=1 AND injects a random 3-10s delay before EVERY request
+    # (arjun/core/requester.py), i.e. 13-43 min for the ~260 requests one URL
+    # takes - roughly 10x over EXEC_TIMEOUT_S=300. Every arjun pod would time out
+    # and the job would yield nothing, so this "reliability" flag is a silent
+    # total-loss switch here. Guard it against being reintroduced.
+    assert "--stable" not in JOBS["arjun"].command_template
+
+
 def test_subdomain_takeover_template_has_target_placeholder():
     # A placeholder-less template gives the pod nothing to scan (silent
     # zero deltas). Guard against that regression.

@@ -130,14 +130,14 @@ def test_triple_lands_on_spine_observation_and_interfaceB():
     assert captured["services"] == []
     # the WebPresentation System carries both dimensions as INDEPENDENT props
     sysd = captured["systems"][0]
-    assert sysd.system_kind == "WebPresentation"
+    assert sysd.kind == "WebPresentation"
     assert sysd.props["navigation_model"] == "SPA"
     assert sysd.props["rendering_model"] == "CSR"  # not inferred from the SPA nav
     assert "navigation_model_evidence" in sysd.props and "rendering_model_confidence" in sysd.props
     # and the Service reaches it via a single EXPOSED_VIA edge to the WebPresentation
     edge = captured["edges"][0]
     assert edge.service_slug == "storefront"
-    assert edge.rel == "EXPOSED_VIA" and edge.system_kind == "WebPresentation"
+    assert edge.rel == "EXPOSED_VIA" and edge.kind == "WebPresentation"
     assert written["classifications"] == 2 and written["observations"] == 2 and written["probes"] == 1
 
 

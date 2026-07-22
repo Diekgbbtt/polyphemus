@@ -2,7 +2,7 @@
 mapping to the `l1_curator` reconciliation ops.
 
 The curation LLM emits *proposals* - its judgment about which accumulated L1 nodes
-are duplicates, noise, mis-typed, journey-grouped, or carry a System fact stranded
+are duplicates, noise, mis-typed, or carry a System fact stranded
 as a Service prop - but it must NOT set provenance: that is system-controlled,
 exactly as `analyser_types` omits provenance from its proposals and injects it at
 the curate boundary. So the proposal models deliberately omit `provenance`, and
@@ -35,10 +35,12 @@ logger = logging.getLogger(__name__)
 class MergeProposal(BaseModel):
     """Two units that are the SAME identity: fold `duplicate` into `canonical`.
     `kind` selects the identity shape: a `service` pair is keyed by
-    `business_function_slug`; a `system` pair by `system_kind[:discriminator]`
-    (a bare kind is the `__singleton__` System). Dedup is identity reuse: two
-    services are the same iff they share a business-function intent; two systems
-    iff they share a `system_kind:discriminator`."""
+    `business_function_slug`; a `system` pair by `kind[:discriminator]`
+    (a bare kind is the `__singleton__` System). Dedup is SEMANTIC equivalence:
+    two services are the same when they denote the same business function even
+    under a different slug or synonym (account == account-management); two systems
+    when they are the same cross-cutting mechanism instance. The slug is a label,
+    not the identity test."""
 
     kind: Literal["service", "system"] = "service"
     canonical: str
@@ -47,7 +49,7 @@ class MergeProposal(BaseModel):
 
 class DeleteProposal(BaseModel):
     """An off-role / noise node to prune. `key` is the unit's identity string
-    (a `business_function_slug`, or `system_kind[:discriminator]`), `kind` its
+    (a `business_function_slug`, or `kind[:discriminator]`), `kind` its
     type. `reason` is optional NL for the audit trail."""
 
     kind: Literal["service", "system"] = "service"
@@ -82,13 +84,11 @@ class CurationBatch(BaseModel):
     """The curation LLM's structured output: the typed reconciliation it proposes
     over the accumulated L1 graph. Every field defaults empty so an honest
     'nothing to reconcile' judgment is a valid, well-typed result (mirrors
-    `L1DeltaBatch`). `journeys` is a `{journey_slug: [service_slug,...]}` grouping
-    (the light membership model, plan §1)."""
+    `L1DeltaBatch`)."""
 
     merges: list[MergeProposal] = Field(default_factory=list)
     deletes: list[DeleteProposal] = Field(default_factory=list)
     relabels: list[RelabelProposal] = Field(default_factory=list)
-    journeys: dict[str, list[str]] = Field(default_factory=dict)
     rehome: list[RehomeProposal] = Field(default_factory=list)
 
 
@@ -100,10 +100,12 @@ class CurationReport(BaseModel):
     merged: int = 0
     deleted: int = 0
     relabelled: int = 0
-    journeys_written: int = 0
     rehomed: int = 0
     stale_count: int = 0
-    missing_kinds: list[str] = Field(default_factory=list)
+    # The redesigned missing-systems sweep (operator correction 2026-07-20): the
+    # stale-L0-asset ownership proposals the LLM produced (each an owner grounded in
+    # the existing inventory + known-kinds enumeration). Replaces `missing_kinds`.
+    stale_owners: list[dict] = Field(default_factory=list)
     anatomy: dict = Field(default_factory=dict)
     error: str | None = None
 
@@ -117,15 +119,17 @@ def _kind_to_label(kind: str) -> str:
 
 def _key_to_identity(kind: str, key: str) -> dict:
     """Parse a proposal identity string into the reconcile-op identity map. A
-    service key is a `business_function_slug`; a system key is `system_kind` or
-    `system_kind:discriminator` (a bare kind is the `__singleton__` System)."""
+    service key is a `business_function_slug`; a system key is `kind` or
+    `kind:discriminator` (a bare kind is the `__singleton__` System). The System
+    identity attribute is `kind` (operator correction 2026-07-20)."""
     if kind == "system":
         if ":" in key:
             system_kind, _, disc = key.partition(":")
             disc = disc.strip() or L1_SINGLETON
         else:
             system_kind, disc = key, L1_SINGLETON
-        return {"system_kind": system_kind.strip(), "discriminator": disc}
+        # System identity attribute is `kind` (operator correction 2026-07-20).
+        return {"kind": system_kind.strip(), "discriminator": disc}
     return {"business_function_slug": key.strip()}
 
 

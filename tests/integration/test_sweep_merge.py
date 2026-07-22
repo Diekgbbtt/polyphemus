@@ -1,8 +1,11 @@
 """FR-SWEEP integration tier — the derived sweeps against live Neo4j.
 
 Encodes L1D-24: the stale pool is exactly the assignable L0 nodes with no inbound
-AGGREGATES (assigning one removes it from the pool), and the missing-systems
-sweep is the SystemKind catalogue rows with no instantiated :L1System.
+AGGREGATES (assigning one removes it from the pool). The redesigned missing-systems
+sweep (operator correction 2026-07-20) is stale-L0-asset-driven ownership
+resolution over the stale pool + existing inventory - a fail-open seam that is
+unit-tested with an injected fake LLM (tests/recon/test_l1_domain_model_refactor.py);
+here we only assert the live stale-pool reads it consumes.
 """
 import subprocess
 import uuid
@@ -25,7 +28,13 @@ from agent.recon.analysis.l1_types import (
 from agent.recon.types import AssetDelta
 from tests.conftest import wait_for
 
-URI, AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+# Single source of truth (tests/conftest.py::neo4j_target): env-driven so this
+# file works BOTH in-network (bolt://neo4j:7687) and from the host against the
+# published port. Was a hardcoded localhost constant, which cannot resolve
+# inside the Docker network.
+URI, AUTH = neo4j_target()
 PROV = Provenance(job="it", model="m", prompt_id="p")
 ENV = JudgmentEnvelope(confidence=0.8, status="committed", evidence_refs=["o"], provenance=PROV)
 
@@ -102,19 +111,39 @@ def test_stale_pool_reflects_unassigned_endpoints(session, project):
     assert rows[0]["_label"] == "Endpoint"
 
 
-# --- L1D-24: missing-systems sweep over the SystemKind registry ---
+# --- L1D-24 (redesigned): stale-asset-driven ownership resolution over live data ---
 
-def test_missing_system_kinds_after_seeding_and_one_instance(session, project):
+def test_resolve_stale_owners_reads_live_stale_pool_and_inventory(session, project):
+    """The redesigned sweep reads the live stale pool + existing inventory and
+    grounds an injected propose_fn in them; it proposes owners without writing
+    them back (seam). Uses a fake propose_fn so no live LLM is needed."""
     mf, read_fn = _mf(session), _read_fn(session)
-    seeded = l1_curator.seed_system_kinds(project, merge_fn=mf)
-    assert seeded == 12
+    _write_endpoint(session, project, "/healthz")  # a stale, unassigned asset
+    l1_curator.l1_curate([ServiceDelta(business_function_slug="catalog", provenance=PROV)], [], project, merge_fn=mf)
 
-    # nothing instantiated yet: all 12 kinds are missing
-    assert len(sweep.missing_system_kinds(project, read_fn=read_fn)) == 12
+    seen = {}
 
-    # instantiate a RESTApi System -> it drops out of the missing set
-    l1_curator.l1_curate([], [SystemDelta(system_kind="RESTApi", provenance=PROV)], project, merge_fn=mf)
-    missing = sweep.missing_system_kinds(project, read_fn=read_fn)
-    assert "RESTApi" not in missing
-    assert len(missing) == 11
-    assert "GraphQLApi" in missing  # an unrepresented kind is still reported
+    def fake_propose(context):
+        seen["context"] = context
+        return sweep.StaleOwnershipBatch(proposals=[
+            sweep.StaleAssetOwnership(asset_ref={"path": "/healthz"}, service_slug="catalog"),
+        ])
+
+    batch = sweep.resolve_stale_owners(project, read_fn=read_fn, propose_fn=fake_propose)
+    # the live stale pool + existing inventory reached the prompt context
+    assert any(a.get("path") == "/healthz" for a in seen["context"]["stale_pool"])
+    assert "catalog" in seen["context"]["inventory"]["services"]
+    assert "WebPresentation" in seen["context"]["known_kinds"]
+    # the proposal is returned (not written back - that leg is unbuilt by design)
+    assert batch.proposals[0].service_slug == "catalog"
+
+
+def test_resolve_stale_owners_no_stale_skips_llm(session, project):
+    """No stale assets -> the LLM is never invoked and an empty batch is returned."""
+    _, read_fn = _mf(session), _read_fn(session)
+
+    def boom(context):  # must never be called
+        raise AssertionError("propose_fn invoked despite empty stale pool")
+
+    batch = sweep.resolve_stale_owners(project, read_fn=read_fn, propose_fn=boom)
+    assert batch.proposals == []

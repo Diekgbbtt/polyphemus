@@ -35,7 +35,7 @@ PROV = Provenance(job="analyser:run-1", model="strong-model", prompt_id=None)
 def test_proposals_to_deltas_injects_provenance_llm_cannot_set():
     batch = L1DeltaBatch(
         services=[ServiceProposal(business_function_slug="checkout", props={"label": "Checkout"})],
-        systems=[SystemProposal(system_kind="RESTApi")],
+        systems=[SystemProposal(kind="RESTApi")],
         aggregates=[AggregatesProposal(
             service_slug="checkout", confidence=0.8, evidence_refs=["obs:1"],
             l0=L0Ref(label="Endpoint", identity={"path": "/pay", "method": "POST", "baseurl": "https://a"}),
@@ -189,9 +189,10 @@ def test_default_curate_fn_calls_l1_curator_and_assembles_counts(monkeypatch):
 
 def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
     """The default analyser curate collaborator must map+write BOTH the core
-    deltas AND the FR-ENRICH deltas from one batch, with system provenance, and
-    seed the DataRelationship catalogue when enrichment is present. Guards the
-    load-bearing FIX 2 wiring end-to-end (was inspection-only)."""
+    deltas AND the FR-ENRICH deltas from one batch, with system provenance. No
+    catalogue seeding fires (operator correction 2026-07-20: a DataRelationship
+    kind IS its edge type, so there is no :DataRelationshipKind catalogue). Guards
+    the load-bearing FIX 2 wiring end-to-end (was inspection-only)."""
     calls = {}
 
     def fake_l1_curate(services, systems, project_id):
@@ -202,9 +203,6 @@ def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
         calls["write_aggregates"] = len(aggregates)
         return len(aggregates)
 
-    def fake_seed(project_id):
-        calls["seeded"] = project_id
-
     def fake_enrich(project_id, **enrich_deltas):
         # capture the per-category delta counts + that provenance was injected
         calls["enrich"] = {k: len(v) for k, v in enrich_deltas.items()}
@@ -213,18 +211,17 @@ def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
 
     monkeypatch.setattr(real_l1_curator, "l1_curate", fake_l1_curate)
     monkeypatch.setattr(real_l1_curator, "write_aggregates", fake_write_aggregates)
-    monkeypatch.setattr(real_l1_curator, "seed_data_relationship_kinds", fake_seed)
     monkeypatch.setattr(real_l1_curator, "enrich", fake_enrich)
 
     batch = L1DeltaBatch(
         services=[ServiceProposal(business_function_slug="sales-analysis")],
-        systems=[SystemProposal(system_kind="RESTApi")],
+        systems=[SystemProposal(kind="RESTApi")],
         aggregates=[AggregatesProposal(service_slug="sales-analysis",
                                        l0=L0Ref(label="Endpoint", identity={"path": "/s", "method": "GET", "baseurl": "https://a"}))],
         data_items=[DataItemProposal(item_key="sales_figure")],
         data_flows=[DataFlowProposal(service_slug="sales-analysis", item_key="sales_figure", direction="consumes",
                                      assumption="authorized for THIS user")],
-        system_edges=[SystemEdgeProposal(service_slug="sales-analysis", system_kind="RESTApi", rel="EXPOSED_VIA")],
+        system_edges=[SystemEdgeProposal(service_slug="sales-analysis", kind="RESTApi", rel="EXPOSED_VIA")],
     )
     prov = Provenance(job="analyser:run-77", model="m", prompt_id=None)
     export = default_curate_with_enrichment_fn(batch, "proj-1", prov)
@@ -233,7 +230,6 @@ def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
     assert calls["l1_curate"] == (1, 1)
     assert calls["write_aggregates"] == 1
     # enrichment written (the FIX 2 seam) with the right per-category counts
-    assert calls["seeded"] == "proj-1"  # catalogue seeded because enrichment present
     assert calls["enrich"]["data_items"] == 1
     assert calls["enrich"]["data_flows"] == 1
     assert calls["enrich"]["system_edges"] == 1
@@ -245,17 +241,16 @@ def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
 
 
 def test_default_curate_with_enrichment_skips_enrich_when_no_enrichment_deltas(monkeypatch):
-    """When the batch has no enrichment deltas, the enrich path (and its catalogue
-    seed) must NOT fire - only the core write runs."""
-    calls = {"enrich": False, "seeded": False}
+    """When the batch has no enrichment deltas, the enrich path must NOT fire -
+    only the core write runs."""
+    calls = {"enrich": False}
     monkeypatch.setattr(real_l1_curator, "l1_curate", lambda s, sy, p: (len(s), len(sy)))
     monkeypatch.setattr(real_l1_curator, "write_aggregates", lambda a, p: len(a))
-    monkeypatch.setattr(real_l1_curator, "seed_data_relationship_kinds", lambda p: calls.__setitem__("seeded", True))
     monkeypatch.setattr(real_l1_curator, "enrich", lambda p, **k: calls.__setitem__("enrich", True))
 
     batch = L1DeltaBatch(services=[ServiceProposal(business_function_slug="x")])  # core only
     export = default_curate_with_enrichment_fn(batch, "proj-1", PROV)
-    assert calls["enrich"] is False and calls["seeded"] is False  # no enrichment -> no enrich/seed
+    assert calls["enrich"] is False  # no enrichment -> no enrich fired
     assert export.enrichment is None
     assert export.services_written == 1
 
@@ -279,7 +274,7 @@ def test_two_pass_analyse_runs_dedicated_data_modelling_pass():
                 aggregates=[AggregatesProposal(
                     service_slug="orders",
                     l0=L0Ref(label="Endpoint", identity={"path": "/api/Orders", "method": "GET", "baseurl": "https://a"}))],
-                system_edges=[SystemEdgeProposal(service_slug="orders", system_kind="RESTApi", rel="EXPOSED_VIA")],
+                system_edges=[SystemEdgeProposal(service_slug="orders", kind="RESTApi", rel="EXPOSED_VIA")],
             )
         # dedicated data-modelling pass supplies the DataItems + flows
         return L1DeltaBatch(

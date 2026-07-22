@@ -38,7 +38,13 @@ from agent.recon.analysis.l1_types import (
 from agent.recon.types import AssetDelta
 from tests.conftest import wait_for
 
-URI, AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+# Single source of truth (tests/conftest.py::neo4j_target): env-driven so this
+# file works BOTH in-network (bolt://neo4j:7687) and from the host against the
+# published port. Was a hardcoded localhost constant, which cannot resolve
+# inside the Docker network.
+URI, AUTH = neo4j_target()
 PROV = Provenance(job="curation", model="m", prompt_id="p")
 ENV = JudgmentEnvelope(confidence=0.9, status="committed", evidence_refs=["obs:x"], provenance=PROV)
 
@@ -120,7 +126,7 @@ def test_merge_repoints_all_edges(session, project):
     l1_curator.enrich(
         project,
         data_flows=[DataFlowDelta(service_slug="check-out", item_key="session_token", direction="produces", provenance=PROV)],
-        system_edges=[SystemEdgeDelta(service_slug="check-out", system_kind="AuthenticationMechanism", rel="AUTHENTICATED_BY", provenance=PROV)],
+        system_edges=[SystemEdgeDelta(service_slug="check-out", kind="AuthenticationMechanism", rel="AUTHENTICATED_BY", provenance=PROV)],
         merge_fn=mf,
     )
 
@@ -140,7 +146,7 @@ def test_merge_repoints_all_edges(session, project):
         "RETURN a.label AS label, a.note AS note, a.superseded_from AS sup, a.superseded_prov_job AS spj, "
         "count { (a)-[:AGGREGATES]->(:Endpoint) } AS aggs, "
         "count { (a)-[:PRODUCES]->(:L1DataItem {item_key: 'session_token'}) } AS produces, "
-        "count { (a)-[:AUTHENTICATED_BY]->(:L1System {system_kind: 'AuthenticationMechanism'}) } AS authn",
+        "count { (a)-[:AUTHENTICATED_BY]->(:L1System {kind: 'AuthenticationMechanism'}) } AS authn",
         p=project,
     ).single()
     assert rec["aggs"] == 2       # BOTH endpoints now hang off the canonical
@@ -185,15 +191,15 @@ def test_merge_idempotent(session, project):
 
 def test_delete_l1_only(session, project):
     mf = _merge_fn(session)
-    l1_curator.l1_curate([], [SystemDelta(system_kind="WAF", provenance=PROV)], project, merge_fn=mf)
+    l1_curator.l1_curate([], [SystemDelta(kind="WAF", provenance=PROV)], project, merge_fn=mf)
     _write_l0_endpoint(session, project, _ep("/keep"))
-    assert _count(session, "L1System", project, system_kind="WAF") == 1
+    assert _count(session, "L1System", project, kind="WAF") == 1
     assert _count(session, "Endpoint", project) == 1
 
     out = l1_curator.reconcile(
         project,
         deletes=[
-            DeleteOp(label="L1System", identity={"system_kind": "WAF", "discriminator": "__singleton__"}, provenance=PROV),
+            DeleteOp(label="L1System", identity={"kind": "WAF", "discriminator": "__singleton__"}, provenance=PROV),
             DeleteOp(label="Endpoint", identity=_ep("/keep"), provenance=PROV),  # L0 -> skipped fail-open at build
             DeleteOp(label="L1Service", identity={"business_function_slug": "ghost"}, provenance=PROV),  # missing -> safe no-op
         ],
@@ -201,10 +207,10 @@ def test_delete_l1_only(session, project):
     )
     # only the two L1 ops dispatched (the L0 op was skipped at build time)
     assert out == {"merged": 0, "deleted": 2, "relabelled": 0}
-    assert _count(session, "L1System", project, system_kind="WAF") == 0  # L1 node deleted
+    assert _count(session, "L1System", project, kind="WAF") == 0  # L1 node deleted
     assert _count(session, "Endpoint", project) == 1                     # L0 node UNTOUCHED
-    # DETACH DELETE removed the System + its OF_KIND edge, but not the shared catalogue row
-    assert _count(session, "SystemKind", project, id="WAF") == 1
+    # no catalogue nodes exist in the model any more (operator correction 2026-07-20)
+    assert _count(session, "SystemKind", project) == 0
 
 
 # --- AST-MERGE-03: relabel a mis-typed Service to a System (the de-risking finding) ---
@@ -220,7 +226,7 @@ def test_relabel_service_to_system(session, project):
         relabels=[RelabelOp(
             from_label="L1Service", to_label="L1System",
             identity={"business_function_slug": "graphql-api"},
-            new_identity={"system_kind": "GraphQLApi", "discriminator": "__singleton__"},
+            new_identity={"kind": "GraphQLApi", "discriminator": "__singleton__"},
             provenance=PROV,
         )],
         merge_fn=mf,
@@ -228,24 +234,24 @@ def test_relabel_service_to_system(session, project):
     assert out == {"merged": 0, "deleted": 0, "relabelled": 1}
 
     rec = session.run(
-        "MATCH (n {project_id: $p, system_kind: 'GraphQLApi'}) "
+        "MATCH (n {project_id: $p, kind: 'GraphQLApi'}) "
         "RETURN labels(n) AS labels, n.business_function_slug AS old_slug, n.discriminator AS disc, "
-        "n.label AS keptprop, n.relabelled_from AS rf, n.prov_job AS pj, "
+        "n.label AS keptprop, n.relabelled_from AS rf, n.prov_job AS pj, n.kind AS kind, "
         "count { (n)-[:EVIDENCED_BY]->(:Endpoint) } AS evidenced, "
-        "count { (n)-[:AGGREGATES]->() } AS aggs, "
-        "count { (n)-[:OF_KIND]->(:SystemKind {id: 'GraphQLApi'}) } AS ofkind",
+        "count { (n)-[:AGGREGATES]->() } AS aggs",
         p=project,
     ).single()
     # re-keyed to a System: labels swapped, old identity key removed, System key set
     assert set(rec["labels"]) == {"L1System", "L1TestableUnit"}
     assert rec["old_slug"] is None                 # business_function_slug removed
     assert rec["disc"] == "__singleton__"          # re-keyed identity
+    assert rec["kind"] == "GraphQLApi"             # kind attribute set on relabel
     assert rec["keptprop"] == "GQL"                # non-identity props preserved
     # AGGREGATES -> EVIDENCED_BY (semantics change with the type)
     assert rec["evidenced"] == 1
     assert rec["aggs"] == 0
-    # a System is OF_KIND its controlled-vocabulary catalogue row (auto-created)
-    assert rec["ofkind"] == 1
+    # operator correction 2026-07-20: no catalogue node / OF_KIND edge is created
+    assert _count(session, "SystemKind", project) == 0
     # provenance stamped
     assert rec["rf"] == "L1Service:business_function_slug=graphql-api"
     assert rec["pj"] == "curation"
@@ -255,8 +261,8 @@ def test_relabel_service_to_system(session, project):
         project,
         relabels=[RelabelOp(from_label="L1Service", to_label="L1System",
                             identity={"business_function_slug": "graphql-api"},
-                            new_identity={"system_kind": "GraphQLApi", "discriminator": "__singleton__"},
+                            new_identity={"kind": "GraphQLApi", "discriminator": "__singleton__"},
                             provenance=PROV)],
         merge_fn=mf,
     )
-    assert _count(session, "L1System", project, system_kind="GraphQLApi") == 1  # still exactly one
+    assert _count(session, "L1System", project, kind="GraphQLApi") == 1  # still exactly one

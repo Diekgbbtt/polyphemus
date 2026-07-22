@@ -5,12 +5,17 @@ osu# Post-Recon Curation and L1 Remediation Implementation Plan
 > **STATUS (2026-07-20): ALL areas verifier-APPROVED, including `FR-CURE2E`. This plan is COMPLETE.**
 > FR-CURE2E caught two blocking defects that unit + integration tiers structurally could not (see §7).
 > Approved and landed: FR-INVENTORY, FR-MERGE, FR-JOURNEY, FR-TYPESEP (a+b), FR-CURATE, FR-MODELFIX.
+>
+> **AMENDMENT (2026-07-22): FR-JOURNEY is WITHDRAWN by operator decision and removed from the codebase.** It was built and verifier-APPROVED; it is retired, not failed. AST-JRNY-01 and AST-CUR-02 are annotated SUPERSEDED in place. Everything below that specifies journey grouping (the §Goal, §Architecture, the Global Constraint on light membership, FR-CURATE's stage-4 journey writer, and the §7 A3 run record) is preserved as the HISTORICAL record of what was built - it no longer describes the code. See §1, §6, and AMV-11.
 > Green baseline at handoff: 827 unit tests pass, 46 of them this plan's tests (including 4 live-Neo4j integration, 0 skips), plus 4 frontend colour tests.
-> One PRE-EXISTING failure is unrelated to this plan and must not be read as curation fallout: `tests/recon/test_pipeline_e2e.py::test_pipeline_e2e_httpx_to_arjun_prop_dependent_target` reproduces identically at `ce5e351` (the commit before this plan's work) with `.env` present. It is separately a hermeticity defect - a `tests/recon/` unit-tier test reaches live Neo4j via `read_steering_signals`, fails open, and leaves arjun unexecuted. Tracked in `STATE.md`.
+> ~~One PRE-EXISTING failure is unrelated to this plan and must not be read as curation fallout: `tests/recon/test_pipeline_e2e.py::test_pipeline_e2e_httpx_to_arjun_prop_dependent_target` reproduces identically at `ce5e351` (the commit before this plan's work) with `.env` present. It is separately a hermeticity defect - a `tests/recon/` unit-tier test reaches live Neo4j via `read_steering_signals`, fails open, and leaves arjun unexecuted. Tracked in `STATE.md`.~~
+>
+> **RESOLVED 2026-07-22, and the diagnosis above was WRONG.** The test is fixed and the suite has NO known-failure carve-out (host `tests/` = 892 passed, 0 failed). The hermeticity leak was real but a SEPARATE second bug; fixing it alone did not make the test pass. The actual cause: the arjun template gained a `printf '{}' > … && arjun …` prefix in `77dc0c2`, while the test still filtered executed commands with `command.startswith("arjun")` - so the filter went VACUOUSLY EMPTY and reported `no arjun command was executed` while arjun was wired correctly all along. This is the same vacuous-assertion family as §7's headline dedup defect. See `docs/design/testing-strategy.md` §6 and `STATE.md`.
+> Re-confirmed 2026-07-22 and the root cause now OBSERVED directly: the live read raises `Neo.ClientError.Security.AuthenticationRateLimit` ("incorrect authentication details too many times in a row"), the steering read fails open, and the assertion that trips is `no arjun command was executed` - arjun never runs at all. Verified independent of the `--rate-limit` change by stashing `agent/recon/jobs.py` back to HEAD and reproducing identically. Note the test asserts nothing about the arjun template's CONTENT, so no template edit can cause or fix it.
 
-**Goal:** build the post-recon curation phase (a driver-invoked module) that consolidates the accumulated L1 graph - deduplicating, pruning, and transforming nodes destructively through the sole-writer - plus at-write duplicate prevention, a light journey membership model, and Service/System typing separation, then re-run the exhaustive pipeline+curation e2e.
+**Goal:** build the post-recon curation phase (a driver-invoked module) that consolidates the accumulated L1 graph - deduplicating, pruning, and transforming nodes destructively through the sole-writer - plus at-write duplicate prevention, a light journey membership model (WITHDRAWN 2026-07-22, see §1), and Service/System typing separation, then re-run the exhaustive pipeline+curation e2e.
 
-**Architecture:** the analyser stays a pure `f(L0-slice+observations) -> L1-deltas` written by idempotent MERGE (`l1_curator`, L1D-22). This plan adds a second phase after recon: a curation LLM pass proposes typed *reconciliation* operations (merge / prune / transform / journey-grouping) over the whole accumulated L1+L0 graph, and the `l1_curator` sole-writer executes them destructively (re-pointing edges, deleting/relabelling nodes) with provenance. Duplicate *prevention* is added upstream by injecting the current L1 identity inventory into every analyser prompt. Curation is orchestrated by a new driver-invoked module (`agent/recon/analysis/curation.py`), not wired into the request pipeline (operator decision).
+**Architecture:** the analyser stays a pure `f(L0-slice+observations) -> L1-deltas` written by idempotent MERGE (`l1_curator`, L1D-22). This plan adds a second phase after recon: a curation LLM pass proposes typed *reconciliation* operations (merge / prune / transform / journey-grouping - the last WITHDRAWN 2026-07-22) over the whole accumulated L1+L0 graph, and the `l1_curator` sole-writer executes them destructively (re-pointing edges, deleting/relabelling nodes) with provenance. Duplicate *prevention* is added upstream by injecting the current L1 identity inventory into every analyser prompt. Curation is orchestrated by a new driver-invoked module (`agent/recon/analysis/curation.py`), not wired into the request pipeline (operator decision).
 
 **Tech Stack:** Python 3.13, LangGraph, pydantic, Neo4j 5.26-community (single physical DB, disjoint `:L1*` namespace), pytest (`.venv/bin/python -m pytest`), the analyser LLM role.
 
@@ -21,7 +26,7 @@ osu# Post-Recon Curation and L1 Remediation Implementation Plan
 - Provenance on every node/edge/ref write (L1D-25). `discriminator` defaults to the non-null string `"__singleton__"` (L1D-9/L1R-2). `identity ⊥ membership` (L1D-11).
 - Fail-open / graceful degrade: an LLM / read / write error degrades to an empty-or-error result; it never crashes the caller (mirror the analyser pod).
 - Curation is a SEPARATE driver-invoked module; do NOT wire it into `run_pipeline` (operator decision - protects the 3.8GiB host from a heavier terminal phase).
-- Journey is a LIGHT MEMBERSHIP prop (a `journeys: list[str]` on each Service), not a node and not ordered (operator decision). Order is a documented two-way extension, not built now.
+- ~~Journey is a LIGHT MEMBERSHIP prop (a `journeys: list[str]` on each Service), not a node and not ordered (operator decision). Order is a documented two-way extension, not built now.~~ **WITHDRAWN 2026-07-22:** journey grouping is removed entirely (§1, AMV-11).
 - Loop discipline: assertions first, one area = one bounded goal in its own worktree, maker/checker, minimal-fix, max 3 attempts then escalate, never weaken a test to go green. Do not start a second area until the first is verifier-APPROVED.
 - Never use the em dash; use a plain dash. Never auto-add a co-author to commits. Commit only when the operator asks.
 
@@ -51,29 +56,15 @@ FR-CURATE is the integrator and must wait for FR-MERGE + FR-JOURNEY + FR-TYPESEP
 
 ---
 
-## 1. The `journey` attribute - role, mechanism, and adversarial leverage
+## 1. The `journey` attribute - WITHDRAWN (2026-07-22)
 
-The operator chose a LIGHT MEMBERSHIP shape: each `L1Service` carries `journeys: list[str]` naming the business journeys it participates in (e.g. `"checkout-flow"`, `"signup-flow"`, `"password-reset-flow"`).
-"Services in the same journey" is then a single property-match query (services sharing a `journeys` entry) - no new node, no new edge, no schema migration (props are an open map already).
-Journey membership is assigned by the curation pass (§4), not the recon-time analyser, because it is a whole-solution judgment best made once the service set has stabilised.
+This section specified a LIGHT MEMBERSHIP journey model (`journeys: list[str]` on each `L1Service`, assigned by the curation pass) and set out its adversarial rationale: concentrating cross-service trust reflection on same-journey pairs, posing step-skip / replay hypotheses, surfacing trust-boundary discontinuities across a flow, marking journey-carried DataItems, and bounding concretisation scope.
 
-### 1.1 How journey membership drives adversarial reasoning (brainstorm)
+**The operator withdrew journey grouping on 2026-07-22.**
+It is complex to get right and did not yield a significant improvement to the L1 model: the mechanism was verified correct, but in 2 of the 3 FR-CURE2E runs the LLM coined journeys at an altitude that grouped a single service each, which is a restatement of the service rather than a grouping - and that is exactly the altitude the whole adversarial rationale above depends on.
 
-The membership grouping is a *prior* that concentrates the analyser's trust-boundary reflection where the impactful faults cluster:
-
-1. **Cross-service trust within a journey.** Same-journey services pass state between steps (basket -> checkout -> payment -> order), so the Tier-1 `PRODUCES`/`CONSUMES` data-flow trust (L1D-14/15) concentrates on same-journey pairs. The grouping tells phase-B to reflect on those pairs first, not all-pairs.
-2. **Unintended unfolding = step skipping / reordering / replay.** Even without explicit order, membership lets the analyser pose falsifiable business-logic hypotheses: can a later step be invoked without completing an earlier one (reach order-confirmation without payment)? can a step be replayed (re-apply a coupon, double-submit)? Each is a `define-hypothesis` claim -> an interface-B backward-recon probe.
-3. **Trust-boundary discontinuities across a journey.** A journey that crosses auth realms/roles mid-flow (anonymous cart -> authenticated checkout) is a high-value boundary; grouping surfaces where same-journey services differ in `auth_methods`/realm - a structural signal for context/privilege confusion.
-4. **State/secret carriage across steps.** A DataItem produced at step 1 and consumed at step 3 (coupon token, cart signature, price snapshot) is a journey-scoped trust assumption ("the price computed at add-to-cart is still valid at checkout") - the classic business-logic fault locus. Membership marks which DataItems are journey-carried vs step-local.
-5. **Journey as a concretisation scope.** For a whole-journey abstract test (coupon reuse across checkout), the membership set bounds which services'/DataItems' L0 sites to concretise against - a coarser sibling of the DataItem selector for the L1R-8 noise hazard.
-
-### 1.2 Caveat (recorded honestly)
-
-Light membership cannot express ORDER, so "unintended unfolding" is reasoned as hypotheses over an unordered set, not a precise state-machine reachability query.
-If order-based reasoning proves necessary, promote to an ordered structure (a `Journey` node with `STEP_OF`/`PRECEDES` edges) - a two-way extension, since the membership prop is a subset of that model.
-This limitation is registered as a follow-up (AMV-11) rather than pre-built.
-
----
+The implementation is removed in full (no compatibility shim): the `journeys` prop writer and curation stage, `CurationBatch.journeys`, `CurationReport.journeys_written`, `l1_read.services_in_journey`, `tests/recon/test_l1_journey.py`, and the journey instructions in the curation and analyser skills.
+The rationale above, the order caveat, the measured altitude defect, and the three-step reinstatement path (altitude contract -> light membership -> ordered `Journey` node) are preserved in **AMV-11**, which now absorbs the former AMV-15.
 
 ## 2. FR-INVENTORY - at-write duplicate prevention
 
@@ -168,6 +159,8 @@ This limitation is registered as a follow-up (AMV-11) rather than pre-built.
 
 ## 4. FR-CURATE - the curation pass + driver-invoked orchestrator
 
+> **Amended 2026-07-22:** the journey-assignment stage specified below was built, then removed with FR-JOURNEY. `run_curation` now runs six stages (read -> propose -> reconcile -> anatomy -> re-home -> sweep); `CurationBatch.journeys` and `CurationReport.journeys_written` no longer exist. The text below is the original spec, kept as the build record.
+
 *Goal:* a curation LLM pass reads the whole accumulated L1 (index-cards + inventory) plus the L0 stale/noise signals, proposes typed reconciliation (merge duplicates, prune/transform off-role nodes, assign journeys), executes them via FR-MERGE, runs the anatomy skills (webpage-profile / authz) and the stale+missing-systems sweep, and returns a report. Orchestrated by a new driver-invoked module.
 *Non-goals:* wiring into `run_pipeline`; the signature engine (NM-8); risk scoring.
 
@@ -199,8 +192,10 @@ This limitation is registered as a follow-up (AMV-11) rather than pre-built.
   status: green (verifier-APPROVED 2026-07-19)
 - id: AST-CUR-02
   statement: "Same-journey services share a journeys entry after curation (light membership); querying by journey returns the group."
-  test: tests/recon/test_curation.py::test_curation_groups_same_journey_services
-  status: green (verifier-APPROVED 2026-07-19)
+  test: REMOVED (was tests/recon/test_curation.py::test_curation_groups_same_journey_services)
+  status: SUPERSEDED 2026-07-22 - see AST-JRNY-01. Curation stage 4 (the journey
+    writer) is deleted and the later stages renumbered; the remaining AST-CUR
+    assertions are unaffected.
 - id: AST-CUR-03
   statement: "Curation invokes the anatomy skills (rendering/nav land on Systems, not Service props) and the stale + missing-systems sweeps; results are in the report."
   test: tests/recon/test_curation.py::test_curation_invokes_anatomy_and_sweep
@@ -238,29 +233,11 @@ This limitation is registered as a follow-up (AMV-11) rather than pre-built.
 
 ---
 
-## 6. FR-JOURNEY - light membership prop
+## 6. FR-JOURNEY - light membership prop (BUILT, then WITHDRAWN 2026-07-22)
 
-*Goal:* the `journeys: list[str]` prop on `L1Service`, its curation-pass assignment (in FR-CURATE), the same-journey query helper, and the §1 adversarial rationale documented.
-*Non-goals:* ordered journeys / `Journey` node / `PRECEDES` edges (AMV-11).
-
-**Files:**
-- Modify: `agent/recon/analysis/l1_read.py` (or `l1_inventory.py`) - `services_in_journey(project_id, journey_slug) -> list[str]`.
-- Modify: `curation.py` - the journey writer (§4).
-- Doc: this plan §1 + an `AMV-11` in `after-mvp-work-items.md` for the ordered-journey promotion path.
-- Test: `tests/recon/test_l1_journey.py`.
-
-- [x] **Step 1: failing test** `test_services_in_journey_returns_members` (fake read_fn). **Step 2:** fail. **Step 3:** implement the query (`MATCH (s:L1Service) WHERE $j IN s.journeys ...`). **Step 4:** green.
-- [x] **Step 5:** add `AMV-11` (ordered-journey promotion) to `after-mvp-work-items.md`.
-
-```yaml
-# FR-JOURNEY assertion ledger
-- id: AST-JRNY-01
-  statement: "A Service can carry a journeys list; services_in_journey returns all services sharing a journey slug; membership never churns Service identity (identity ⊥ membership)."
-  test: tests/recon/test_l1_journey.py::test_services_in_journey_returns_members ; ::test_journey_prop_does_not_change_identity
-  status: green (verifier-APPROVED 2026-07-19)
-```
-
----
+This area shipped and was verifier-APPROVED on 2026-07-19: the `journeys: list[str]` prop on `L1Service`, its curation-pass assignment, `services_in_journey`, and the §1 rationale.
+The operator withdrew journey grouping on 2026-07-22 and the area is removed in full; AST-JRNY-01 is annotated SUPERSEDED (retired, not failed) rather than deleted.
+See §1 and AMV-11 for the evidence and the reinstatement path.
 
 ## 7. FR-CURE2E - full pipeline + curation e2e re-run
 
@@ -347,7 +324,7 @@ Batch reaching **0% noise** is itself a large improvement on the 2026-07-17 base
 **Assertions (live):**
 - [x] No two `L1Service` share a normalised business function (dedup rate reported; zero synonym pairs after curation).
 - [x] No `L1Service` carries a rendering/navigation/paradigm/perimeter prop (all are System edges); every service with a UI is `EXPOSED_VIA` a `WebPresentation` System carrying `rendering_model` + `navigation_model` as independent props. (Corrected 2026-07-19 by FR-MODELFIX: this assertion previously named `RENDERED_BY` a RenderingSystem, an edge and kind the correction deleted.)
-- [x] Journey memberships present and coherent (run A; runs B/C coin degenerate single-member journeys -> AMV-15) (checkout/signup/etc.); `services_in_journey` returns sensible groups.
+- [x] Journey memberships present and coherent (run A; runs B/C coin degenerate single-member journeys -> AMV-11, formerly AMV-15) (checkout/signup/etc.); `services_in_journey` returns sensible groups. **This finding is what motivated withdrawing journey grouping on 2026-07-22.**
 - [x] Stale pool + missing-systems sweep run; noise nodes are pruned/reclassed, not business-assigned (ties to AMV-8/AMV-9).
 - [x] Streaming-final L1 == batch-final L1 after curation (A5-controlled PASS; observational divergence explained) (idempotent convergence holds through curation), OR the divergence is explained.
 - [x] Independent verifier re-runs the driver + graph queries and APPROVEs. **APPROVED 2026-07-20** (rejected once on documentation overstatement; both items corrected).
@@ -367,15 +344,19 @@ Specifically: merge rendering + navigation into ONE `WebPresentation` System car
 # FR-MODELFIX assertion ledger
 - id: AST-MODEL-01
   statement: "SYSTEM_KINDS contains WebPresentation and NOT RenderingSystem_SSR_UI/_CSR_JSMap; SYSTEM_EDGE_RELS does NOT contain RENDERED_BY."
+  test: tests/test_l1_curator_builders.py::test_webpresentation_replaces_rendering_systems ; ::test_rendered_by_removed_from_edge_taxonomy
   status: green (verifier-APPROVED 2026-07-19)
 - id: AST-MODEL-02
   statement: "commit_anatomy writes rendering_model + navigation_model as INDEPENDENT props on the WebPresentation System (via SystemDelta + EXPOSED_VIA edge), never as Service props; neither is inferred from the other."
+  test: tests/recon/test_anatomy.py::test_webpage_profile_sets_two_independent_slots ; ::test_dimensions_are_independent_spa_ssr
   status: green (verifier-APPROVED 2026-07-19)
 - id: AST-MODEL-03
   statement: "Curation re-homing moves rendering_model/navigation_model to WebPresentation props (EXPOSED_VIA), api_paradigm to the API System (EXPOSED_VIA), and auth_methods to AUTHENTICATED_BY; the Service prop is stripped in every case; no SPA->CSR (or any cross-dimension) inference remains."
+  test: tests/recon/test_curation.py::test_curation_rehomes_rendering_prop_to_system ; ::test_curation_rehomes_navigation_without_cross_dimension_inference ; ::test_curation_rehomes_auth_methods_to_authenticated_by ; ::test_curation_rehomes_llm_proposed_prop
   status: green (verifier-APPROVED 2026-07-19)
 - id: AST-MODEL-04
   statement: "The analyser/webpage-profile/curation SKILL prompts state the corrected model (Service EXPOSED_VIA a WebPresentation carrying rendering + navigation; no mechanism classification on a Service). Existing FR-MERGE/anatomy tests are updated to the corrected model and the full regression stays green."
+  test: tests/recon/test_analyser_prompts.py::test_assignment_prompt_forbids_system_facts_on_service (asserts RENDERED_BY absent)
   status: green (verifier-APPROVED 2026-07-19)
 ```
 
@@ -384,7 +365,7 @@ Specifically: merge rendering + navigation into ONE `WebPresentation` System car
 - Dedupe services/systems + related nodes -> FR-MERGE (executor) + FR-CURATE (judgment) + FR-INVENTORY (prevention). Covered.
 - Prune off-role nodes / transform kind / merge into existing -> FR-MERGE (delete/relabel/merge) + FR-CURATE (proposal). Covered.
 - Prevent dup by consulting existing slugs / system_kind:discriminator before creating -> FR-INVENTORY. Covered.
-- Journey role + mechanism + same-journey identification + adversarial brainstorm -> §1 + FR-JOURNEY + FR-CURATE. Covered.
+- Journey role + mechanism + same-journey identification + adversarial brainstorm -> §1 + FR-JOURNEY + FR-CURATE. Covered, then WITHDRAWN 2026-07-22 (§1, AMV-11).
 - Service/System typing separation (webpage facts -> System, DFS traversal) -> FR-TYPESEP. Covered.
 - Feedback 1 (L1 node colours) -> landed (WI-1, verifier-gated). Feedback 2 (likely_fields -> observed fields + AMV-10) -> landed (WI-2). Feedback 3 (SystemKind/DataRelationshipKind as nodes) -> answered (controlled-vocab registry, L1D-6); no change beyond viz muting.
 - Post-recon curation actually runs (was never wired) -> FR-CURATE driver module + FR-CURE2E. Covered.

@@ -43,7 +43,7 @@ def _jsonable(value):
 # the frontend. Rank the specific subtypes / catalogue labels ahead of the
 # supertype so services, systems, and data items are always distinguishable.
 _LABEL_PRIORITY = (
-    "L1Service", "L1System", "L1DataItem", "SystemKind", "DataRelationshipKind",
+    "L1Service", "L1System", "L1DataItem",
 )
 
 # The non-null discriminator sentinel (mirrors l1_types.L1_SINGLETON); inlined so
@@ -71,13 +71,11 @@ def node_name(labels: list[str], props: dict) -> str:
     if label == "L1Service":
         return str(p.get("business_function_slug") or "L1Service")
     if label == "L1System":
-        kind = p.get("system_kind") or "L1System"
+        kind = p.get("kind") or "L1System"
         disc = p.get("discriminator")
         return f"{kind}:{disc}" if disc and disc != _L1_SINGLETON else str(kind)
     if label == "L1DataItem":
         return str(p.get("item_key") or "L1DataItem")
-    if label in ("SystemKind", "DataRelationshipKind"):
-        return str(p.get("id") or label)
     for key in ("name", "url", "path", "address", "value", "number"):
         if p.get(key) is not None:
             return str(p[key])

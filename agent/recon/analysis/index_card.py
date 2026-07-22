@@ -31,7 +31,7 @@ _SPINE_KEYS = (
 
 # Identity + curator-managed keys, never surfaced as NL handles.
 _MANAGED_KEYS = frozenset({
-    "project_id", "business_function_slug", "system_kind", "discriminator",
+    "project_id", "business_function_slug", "kind", "discriminator",
     "first_seen", "last_seen", "prov_job", "prov_model", "prov_prompt_id",
 })
 
@@ -57,8 +57,8 @@ def _card_from_row(row: dict) -> dict:
         key: dict = {"business_function_slug": props.get("business_function_slug")}
         label = props.get("business_function_slug")
     elif kind == "System":
-        key = {"system_kind": props.get("system_kind"), "discriminator": props.get("discriminator")}
-        label = props.get("system_kind")
+        key = {"kind": props.get("kind"), "discriminator": props.get("discriminator")}
+        label = props.get("kind")
     else:
         key, label = {}, None
 

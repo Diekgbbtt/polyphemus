@@ -51,18 +51,5 @@ def test_stale_pool_count_sums_labels():
     assert sweep.stale_pool_count("proj-1", labels=("Endpoint", "Parameter"), read_fn=fake_read) == 14
 
 
-def test_missing_system_kinds_query_shape():
-    captured = {}
-
-    def fake_read(cy, params):
-        captured["cy"] = cy
-        return [{"id": "GraphQLApi"}, {"id": "WAF"}]
-
-    missing = sweep.missing_system_kinds("proj-1", read_fn=fake_read)
-    assert "MATCH (k:SystemKind)" in captured["cy"]
-    assert "NOT ( (:L1System)-[:OF_KIND]->(k) )" in captured["cy"]
-    assert missing == ["GraphQLApi", "WAF"]
-
-
 def test_default_assignable_labels_is_endpoint():
     assert sweep.DEFAULT_ASSIGNABLE_LABELS == ("Endpoint",)

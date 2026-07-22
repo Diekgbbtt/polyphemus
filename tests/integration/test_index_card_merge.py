@@ -24,7 +24,13 @@ from agent.recon.analysis.l1_types import (
 from agent.recon.types import AssetDelta
 from tests.conftest import wait_for
 
-URI, AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+# Single source of truth (tests/conftest.py::neo4j_target): env-driven so this
+# file works BOTH in-network (bolt://neo4j:7687) and from the host against the
+# published port. Was a hardcoded localhost constant, which cannot resolve
+# inside the Docker network.
+URI, AUTH = neo4j_target()
 PROV = Provenance(job="it", model="m", prompt_id="p")
 ENV = JudgmentEnvelope(confidence=0.8, status="committed", evidence_refs=["o"], provenance=PROV)
 
@@ -69,7 +75,6 @@ def _read_fn(session):
 
 def test_service_card_degree_not_member_set(session, project):
     mf, read_fn = _mf(session), _read_fn(session)
-    l1_curator.seed_system_kinds(project, merge_fn=mf)
     l1_curator.l1_curate([ServiceDelta(business_function_slug="catalog", props={"api_paradigm": "REST"}, provenance=PROV)], [], project, merge_fn=mf)
     # aggregate 5 distinct concrete endpoints to the service
     for i in range(5):
@@ -79,7 +84,7 @@ def test_service_card_degree_not_member_set(session, project):
         session.run(cy, **params).consume()
         l1_curator.write_aggregates([AggregatesDelta(service_slug="catalog", l0=L0Ref(label="Endpoint", identity={"path": path, "method": "GET", "baseurl": "https://a"}), envelope=ENV)], project, merge_fn=mf)
     # also a typed system edge
-    l1_curator.enrich(project, system_edges=[SystemEdgeDelta(service_slug="catalog", system_kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV)], merge_fn=mf)
+    l1_curator.enrich(project, system_edges=[SystemEdgeDelta(service_slug="catalog", kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV)], merge_fn=mf)
 
     cards = index_card.index_cards(project, read_fn=read_fn)
     catalog = next(c for c in cards if c["label"] == "catalog")
@@ -95,19 +100,18 @@ def test_service_card_degree_not_member_set(session, project):
 
 def test_dfs_down_one_typed_hop(session, project):
     mf, read_fn = _mf(session), _read_fn(session)
-    l1_curator.seed_system_kinds(project, merge_fn=mf)
     l1_curator.l1_curate([ServiceDelta(business_function_slug="sales", provenance=PROV)], [], project, merge_fn=mf)
     l1_curator.enrich(project, system_edges=[
-        SystemEdgeDelta(service_slug="sales", system_kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV),
-        SystemEdgeDelta(service_slug="sales", system_kind="AuthorizationSystem", rel="AUTHORIZED_BY", role="seller", provenance=PROV),
+        SystemEdgeDelta(service_slug="sales", kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV),
+        SystemEdgeDelta(service_slug="sales", kind="AuthorizationSystem", rel="AUTHORIZED_BY", role="seller", provenance=PROV),
     ], merge_fn=mf)
 
     exposed = index_card.dfs_down(project, "sales", "EXPOSED_VIA", read_fn=read_fn)
     assert len(exposed) == 1
-    assert exposed[0]["props"]["system_kind"] == "RESTApi"
+    assert exposed[0]["props"]["kind"] == "RESTApi"
     # a different edge family returns a different neighbour (one typed hop each)
     authz = index_card.dfs_down(project, "sales", "AUTHORIZED_BY", read_fn=read_fn)
-    assert authz[0]["props"]["system_kind"] == "AuthorizationSystem"
+    assert authz[0]["props"]["kind"] == "AuthorizationSystem"
 
 
 def test_bootstrapped_service_has_zero_degree_card(session, project):

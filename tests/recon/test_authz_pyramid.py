@@ -43,7 +43,7 @@ def test_authorized_roles_become_typed_role_edges():
     assert len(authz_edges) == 1  # only the authorised role
     e = authz_edges[0]
     assert e.role == "admin"  # the role rides an edge PROP (typed), not prose
-    assert e.system_kind == "AuthorizationSystem" and e.service_slug == "orders"
+    assert e.kind == "AuthorizationSystem" and e.service_slug == "orders"
     # denied roles get NO edge
     assert {e.role for e in authz_edges} == {"admin"}
 
@@ -63,10 +63,10 @@ def test_realms_become_authenticated_by_edges():
                          role_realms={"support": "credential", "admin": "idp"})
     authn = [e for e in res.system_edges if e.rel == "AUTHENTICATED_BY"]
     assert {e.realm for e in authn} == {"credential", "idp"}  # one per distinct realm
-    assert all(e.system_kind == "AuthenticationMechanism" for e in authn)  # mechanism = System
+    assert all(e.kind == "AuthenticationMechanism" for e in authn)  # mechanism = System
     # policy (role) and mechanism (realm) are on SEPARATE edges/systems (L1D-5)
     authz = [e for e in res.system_edges if e.rel == "AUTHORIZED_BY"]
-    assert all(e.system_kind == "AuthorizationSystem" for e in authz)
+    assert all(e.kind == "AuthorizationSystem" for e in authz)
 
 
 # --- AST-AUTHZ-04: authz_model classification + evidence ---

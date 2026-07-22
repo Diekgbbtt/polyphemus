@@ -4,6 +4,11 @@
 
 *Companion to `evolution-paradigm.md` (paradigm layer), `threat-modeling-system-design.md` (phase-2 target), and `recon-mvp-design.md` (iteration-1 recon, which produces Layer 0). It cross-references their tags: `DD-n` / `OP-n` / `R-n` refer to the phase-2 doc. This document's own decisions are tagged `L1D-n`, open points `L1OP-n`, risks `L1R-n`, and non-MVP implementation decisions `NM-n`.*
 
+> **Correction note (2026-07-20) - two `L1D-6` controlled-vocabulary catalogues became intrinsic.** The operator ratified two model corrections that supersede parts of this spec. They do NOT rewrite the history below; the authoritative up-to-date model is `l1-domain-model-catalogue.md` §0.
+> 1. **`SystemKind` is no longer a catalogue node.** A System's kind is a plain identity ATTRIBUTE named `kind`; System identity is now `(project_id, kind, discriminator)` (the key was renamed `SystemKind` -> `kind`). The `:SystemKind` node and the `OF_KIND` edge are removed; the known kinds live in a `l1_curator.SYSTEM_KINDS` Python constant. So every `[L1D-6]` / `[L1D-9]` reference below to a `SystemKind` catalogue row or `(project_id, SystemKind, discriminator)` key should be read as the intrinsic `kind` attribute.
+> 2. **`DataRelationshipKind` is no longer a catalogue node.** A functional-dependency kind IS the (uppercased) relationship type from a fixed six-value allowlist (`DERIVED_FROM`, `EQUALS_HASH_OF`, ...); the generic `DATA_RELATIONSHIP` edge and the `:DataRelationshipKind` node are removed, and an unknown kind is hard-rejected.
+> 3. **The §7.2/§262 "missing-systems over `SystemKind`" sweep** is redesigned to be stale-L0-asset-driven ownership resolution grounded in the existing inventory (primary) + the known-kinds constant (secondary); see `sweep.resolve_stale_owners`.
+
 ---
 
 ## 1. Purpose, scope, and the single load-bearing correction

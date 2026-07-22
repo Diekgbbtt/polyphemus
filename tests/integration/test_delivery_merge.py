@@ -25,7 +25,13 @@ from agent.recon.analysis.l1_types import L0Ref
 from agent.recon.types import AssetDelta, Observation
 from tests.conftest import wait_for
 
-URI, AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+# Single source of truth (tests/conftest.py::neo4j_target): env-driven so this
+# file works BOTH in-network (bolt://neo4j:7687) and from the host against the
+# published port. Was a hardcoded localhost constant, which cannot resolve
+# inside the Docker network.
+URI, AUTH = neo4j_target()
 
 
 def _driver():
@@ -101,7 +107,7 @@ def test_redelivery_is_idempotent(session, project):
         assert any(o["macro_kind"] == "reflected_input" for o in observations)
         return L1DeltaBatch(
             services=[ServiceProposal(business_function_slug="orders")],
-            systems=[SystemProposal(system_kind="RESTApi")],
+            systems=[SystemProposal(kind="RESTApi")],
             aggregates=[AggregatesProposal(service_slug="orders", confidence=0.9,
                         l0=L0Ref(label="Endpoint", identity=dict(endpoint_id)))],
         )

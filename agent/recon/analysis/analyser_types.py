@@ -42,10 +42,10 @@ class ServiceProposal(BaseModel):
 
 
 class SystemProposal(BaseModel):
-    """A cross-cutting System the analyser judges to exist (L1D-4). `system_kind`
-    must be a known `SystemKind` (the curator rejects unknown kinds)."""
+    """A cross-cutting System the analyser judges to exist (L1D-4). `kind` must be
+    a known system kind (the curator rejects kinds outside `SYSTEM_KINDS`)."""
 
-    system_kind: str
+    kind: str
     discriminator: str = L1_SINGLETON
     props: dict = Field(default_factory=dict)
 
@@ -91,8 +91,8 @@ class DataFlowProposal(BaseModel):
 
 
 class DataRelationshipProposal(BaseModel):
-    """A functional-dependency relationship between two DataItems; `kind` is a
-    known DataRelationshipKind, carrying a machine-checkable predicate + NL."""
+    """A functional-dependency relationship between two DataItems; `kind` is one of
+    the fixed allowlist (it becomes the edge type), carrying a predicate + NL."""
 
     from_item_key: str
     to_item_key: str
@@ -105,7 +105,7 @@ class SystemEdgeProposal(BaseModel):
     """A typed Service->System edge (systems are edges, not strings, L1D-18)."""
 
     service_slug: str
-    system_kind: str
+    kind: str
     discriminator: str = L1_SINGLETON
     rel: str
     role: str | None = None
@@ -142,7 +142,7 @@ def proposals_to_deltas(
         for s in batch.services
     ]
     systems = [
-        SystemDelta(system_kind=s.system_kind, discriminator=s.discriminator, props=s.props, provenance=provenance)
+        SystemDelta(kind=s.kind, discriminator=s.discriminator, props=s.props, provenance=provenance)
         for s in batch.systems
     ]
     aggregates = [
@@ -191,7 +191,7 @@ def enrichment_proposals_to_deltas(batch: L1DeltaBatch, provenance: Provenance) 
         ],
         "system_edges": [
             SystemEdgeDelta(
-                service_slug=e.service_slug, system_kind=e.system_kind,
+                service_slug=e.service_slug, kind=e.kind,
                 discriminator=e.discriminator, rel=e.rel, role=e.role, realm=e.realm,
                 order=e.order, provenance=provenance,
             )
