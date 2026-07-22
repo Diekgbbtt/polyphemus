@@ -21,6 +21,8 @@ from __future__ import annotations
 import asyncio
 import re
 import uuid
+
+import pytest
 from pathlib import Path
 
 from agent.recon import pipeline
@@ -30,6 +32,25 @@ from agent.recon.pod import build_pod_graph
 from agent.recon.types import ExecResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
+
+
+@pytest.fixture(autouse=True)
+def _no_live_steering(monkeypatch):
+    """Stub the ONE remaining live-database reach in this unit-tier e2e.
+
+    `run_pipeline` calls `read_steering_signals` at each phase boundary, and that
+    helper grabs `neo4j_client._driver` directly rather than going through an
+    injectable seam. Unstubbed it hit a real database, and because the helper is
+    deliberately fail-open the error was SWALLOWED - the run continued with no
+    steering, arjun never executed, and the test failed on
+    `no arjun command was executed`, an assertion that points nowhere near the
+    real cause. It cost a full forensic session to trace that to a wrong dummy
+    password in tests/conftest.py.
+
+    Returning [] is also the semantically correct value here: these fixtures
+    carry no WAF observations, so "no steering signals" is what a real read of
+    this graph would yield."""
+    monkeypatch.setattr(pipeline, "read_steering_signals", lambda project_id, **kw: [])
 
 SUBFINDER_STDOUT = (FIXTURES / "subfinder.jsonl").read_text()
 DNSX_STDOUT = (FIXTURES / "dnsx.jsonl").read_text()
@@ -47,7 +68,12 @@ def fake_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult:
         stdout = DNSX_STDOUT
     elif command.startswith("httpx"):
         stdout = HTTPX_STDOUT
-    elif command.startswith("arjun"):
+    elif "arjun" in command:
+        # NOT `startswith`: the arjun template is a CHAIN that begins with
+        # `printf '{}' > ... && arjun ...` (the zero-findings seed added in
+        # 77dc0c2 so a clean run stays exit 0). Matching on the leading token
+        # silently stopped matching when that prefix landed, and this branch
+        # fell through to the `unexpected command` AssertionError below.
         stdout = ARJUN_STDOUT
     else:
         raise AssertionError(f"unexpected command in e2e test: {command!r}")
@@ -305,10 +331,19 @@ def test_pipeline_e2e_httpx_to_arjun_prop_dependent_target():
 
     # The real command sent to exec_fn has {target} resolved to that real
     # url, not left blank - proves the prop actually reached fill_template.
-    arjun_commands = [c for c in exec_fn.commands if c.startswith("arjun")]
+    # Match anywhere, not at the start: the template is a `printf ... && arjun`
+    # chain (see fake_exec_fn). This assertion read `startswith("arjun")` and so
+    # went vacuously empty the moment the printf seed was added in 77dc0c2,
+    # failing as `no arjun command was executed` while arjun was in fact wired
+    # correctly all along.
+    arjun_commands = [c for c in exec_fn.commands if "arjun" in c]
     assert arjun_commands, "no arjun command was executed"
     assert any("-u https://" in c for c in arjun_commands)
-    assert not any("{" in c for c in arjun_commands)
+    # No UNRESOLVED placeholder survives into the real command. Checking for a
+    # bare "{" is wrong now: the template legitimately contains a literal `{}`
+    # (the printf-seeded empty JSON), so match the `{name}` placeholder shape.
+    unresolved = [c for c in arjun_commands if re.search(r"\{[a-z_]+\}", c)]
+    assert not unresolved, f"unresolved placeholders survived into: {unresolved!r}"
 
     final_status = {call["job"]: call["status"] for call in registry.upsert_job_calls}
     assert final_status["arjun"] == "success"

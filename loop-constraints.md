@@ -35,6 +35,16 @@
 - Debug with `loop-engineering/skills/minimal-fix`: reproduce → minimal root cause → smallest diff → rerun. One problem per fix. No drive-by refactors.
 - Always run the tests before proposing a fix. Never disable, skip, or weaken a test/assertion to go green ("no cheating").
 - No flake-masking: quarantine a flaky test and escalate the infra cause; never paper over it with retries.
+
+## Testing tiers (full reference: `docs/design/testing-strategy.md`)
+
+- The UNIT tier (`tests/`, `tests/recon/**`) must NOT touch a real database. This is enforced: `tests/conftest.py` raises on any live Neo4j access from an unmarked test, including via the raw `_driver`. Inject a fake `read_fn`/`merge_fn` - every module supports it.
+- A test that genuinely needs a live database goes in `tests/integration/` or `tests/e2e/` (auto-marked by path), never in the unit tree behind a `skipif` gate. That is how a test ends up never running and nobody noticing - it happened, to a test that had executed zero times.
+- Live tests take their connection from `tests/conftest.py::neo4j_target()`. Never write a connection literal into a test file.
+- Run unit: `.venv/bin/python -m pytest tests/ -q`. Run live tiers IN-NETWORK: `docker compose -f docker-compose.yml -f docker-compose.dev.yml run --rm tests tests/integration -q`.
+- Do not run the host suite and an in-network run at the same time: `tests/e2e/test_stack_smoke.py` rebuilds the stack, and the restart makes the concurrent run's infra-gated tests skip - looks like a regression, is not.
+- A SKIP is a silent failure with good manners. When a gated test skips, verify the gate is telling the truth before believing it - a broken gate hid a whole tier and a permanently-dead test.
+- When a test asserts over a FILTERED collection, make sure the filter cannot go vacuously empty. A filter that silently stops matching reports the absence of its own coverage as a product failure (this is what made the arjun pipeline e2e "fail" for months).
 - Max 3 fix attempts per FR area; escalate after with full context in `STATE.md` `High Priority`.
 - Do not start a second FR area until the first is verifier-APPROVED.
 

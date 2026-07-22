@@ -29,6 +29,11 @@ import uuid
 
 import pytest
 
+import pytest as _pytest_live
+
+# Real-infra e2e: live full stack.
+pytestmark = _pytest_live.mark.live_neo4j
+
 TARGET_DOMAIN = "allegro.cz.allegrosandbox.pl"
 
 # Cheap tool-calling model + a real DeepSeek reasoner (resolved live from

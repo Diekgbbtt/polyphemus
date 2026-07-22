@@ -16,8 +16,26 @@ Two base images must exist locally (reused, not rebuilt):
 Services: agent `:8080/health` · kali fastmcp `:8000/mcp` · neo4j `:7474`/`:7687` (neo4j/polymerhus) · postgres `:5432`.
 
 ## Verify
-    python -m pytest tests/ -v          # integration + e2e
-    python -m pytest tests/e2e/ -v      # deep e2e + observability only
+
+Tests are tiered. Full reference: `docs/design/testing-strategy.md`.
+
+    # UNIT tier - needs nothing running. Must never touch a real database
+    # (enforced: tests/conftest.py raises on any live Neo4j access).
+    .venv/bin/python -m pytest tests/ -q
+
+    # INTEGRATION / E2E tier - run INSIDE the compose network, so it resolves
+    # `neo4j` by service DNS exactly as the agent does.
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+      run --rm tests tests/integration -q
+
+    .venv/bin/python -m pytest tests/e2e/ -q   # deep e2e + observability
+
+Expected (2026-07-22): unit tier 892 passed / 37 skipped / 0 failed; in-network
+integration 41 passed / 0 skipped.
+
+Note `tests/e2e/test_stack_smoke.py` runs `docker compose up -d --build`, so a
+plain suite run rebuilds your stack - do not run it concurrently with an
+in-network run.
 
 `tests/e2e/` covers real work + failure paths: a live jsluice URL-extraction run,
 idempotent neo4j MERGE, pgvector cosine search, checkpoint persistence, and the
