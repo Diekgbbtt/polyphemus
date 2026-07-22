@@ -28,18 +28,14 @@ def test_node_name_service_uses_business_slug():
 
 
 def test_node_name_system_shows_kind_and_only_nonsingleton_discriminator():
-    assert node_name(["L1System", "L1TestableUnit"], {"system_kind": "CDN", "discriminator": "Datadome"}) == "CDN:Datadome"
+    assert node_name(["L1System", "L1TestableUnit"], {"kind": "CDN", "discriminator": "Datadome"}) == "CDN:Datadome"
     # a singleton system shows just its kind (the sentinel is not display noise)
-    assert node_name(["L1System"], {"system_kind": "RESTApi", "discriminator": "__singleton__"}) == "RESTApi"
-    assert node_name(["L1System"], {"system_kind": "AuthorizationSystem"}) == "AuthorizationSystem"
+    assert node_name(["L1System"], {"kind": "RESTApi", "discriminator": "__singleton__"}) == "RESTApi"
+    assert node_name(["L1System"], {"kind": "AuthorizationSystem"}) == "AuthorizationSystem"
 
 
 def test_node_name_dataitem_uses_item_key():
     assert node_name(["L1DataItem"], {"item_key": "shopping_basket"}) == "shopping_basket"
-
-
-def test_node_name_catalogue_uses_id():
-    assert node_name(["SystemKind"], {"id": "WAF"}) == "WAF"
 
 
 def test_node_name_l0_endpoint_unchanged():

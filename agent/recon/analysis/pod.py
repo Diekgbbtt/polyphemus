@@ -219,7 +219,7 @@ def _inventory_block(inventory: dict | None) -> str:
         "than minting a near-duplicate. Add a NEW Service / System / DataItem ONLY "
         "for surface no existing key below covers.\n"
         f"{_render('Services (business_function_slug)', inv.get('services'))}\n"
-        f"{_render('Systems (system_kind[:discriminator])', inv.get('systems'))}\n"
+        f"{_render('Systems (kind[:discriminator])', inv.get('systems'))}\n"
         f"{_render('DataItems (item_key)', inv.get('data_items'))}"
     )
 
@@ -242,9 +242,9 @@ _SYSTEM_FACTS_ARE_EDGES_RULE = (
     "- perimeter (WAF / CDN / reverse proxy / gateway) -> a `FRONTED_BY`, "
     "`PROTECTED_BY`, or `ROUTED_BY` edge to the matching perimeter System.\n"
     "WORKED EXAMPLE (copy this shape) - a client-rendered single-page checkout is:\n"
-    '  systems: [{"system_kind": "WebPresentation", "props": '
+    '  systems: [{"kind": "WebPresentation", "props": '
     '{"rendering_model": "CSR", "navigation_model": "SPA"}}]\n'
-    '  system_edges: [{"service_slug": "checkout", "system_kind": '
+    '  system_edges: [{"service_slug": "checkout", "kind": '
     '"WebPresentation", "rel": "EXPOSED_VIA"}]\n'
     'NOT services: [{"business_function_slug": "checkout", "props": '
     '{"rendering_model": "CSR"}}] - a rendering_model prop on the Service is wrong.'
@@ -473,7 +473,9 @@ def default_curate_with_enrichment_fn(batch, project_id: str, provenance) -> Ana
 
     enrich_deltas = enrichment_proposals_to_deltas(batch, provenance)
     if any(enrich_deltas.values()):
-        l1_curator.seed_data_relationship_kinds(project_id)
+        # No catalogue seeding: a DataRelationship's kind IS its (allowlisted) edge
+        # type now (operator correction 2026-07-20), so there is no
+        # `:DataRelationshipKind` catalogue to seed.
         counts = l1_curator.enrich(project_id, **enrich_deltas)
         export = export.model_copy(update={"enrichment": counts})
     return export

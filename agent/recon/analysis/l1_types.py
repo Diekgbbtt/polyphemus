@@ -13,9 +13,15 @@ Design anchors:
     resolves it only at concretisation (traversal-then-fetch, DD-4).
   * `ServiceDelta` / `SystemDelta` are the two operative `TestableUnit` subtypes
     (L1D-3); their identity keys are `(project_id, business_function_slug)`
-    (L1D-12) and `(project_id, system_kind, discriminator=__singleton__)`
-    (L1D-9). `identity ⊥ membership` (L1D-11): a unit is never keyed on its
-    member set, so `props`/refs may change freely without churning identity.
+    (L1D-12) and `(project_id, kind, discriminator=__singleton__)` (L1D-9).
+    `identity ⊥ membership` (L1D-11): a unit is never keyed on its member set,
+    so `props`/refs may change freely without churning identity.
+
+Operator-ratified 2026-07-20 domain-model correction: a System's kind is a plain
+identity ATTRIBUTE named `kind` on the System node (NOT a `:SystemKind` catalogue
+node reached by `OF_KIND`), and a DataRelationship's kind IS the relationship type
+(a fixed uppercase allowlist), NOT a `:DataRelationshipKind` node + generic
+`DATA_RELATIONSHIP` edge. See docs/design/l1-domain-model-catalogue.md.
 """
 from __future__ import annotations
 
@@ -73,11 +79,12 @@ class ServiceDelta(BaseModel):
 
 class SystemDelta(BaseModel):
     """A cross-cutting technical `System` (L1D-3/L1D-4). Keyed `(project_id,
-    system_kind, discriminator)` with `discriminator` defaulting to the
-    non-null `__singleton__` sentinel (L1D-9). `system_kind` must be a known
-    `SystemKind` id (controlled vocabulary, L1D-6)."""
+    kind, discriminator)` with `discriminator` defaulting to the non-null
+    `__singleton__` sentinel (L1D-9). `kind` is a plain identity ATTRIBUTE
+    (operator correction 2026-07-20) that must be a known system kind from the
+    fixed `l1_curator.SYSTEM_KINDS` enumeration - no catalogue node, no OF_KIND."""
 
-    system_kind: str
+    kind: str
     discriminator: str = L1_SINGLETON
     props: dict = Field(default_factory=dict)
     provenance: Provenance
@@ -146,16 +153,17 @@ class DataFlowDelta(BaseModel):
 
 
 class DataRelationshipDelta(BaseModel):
-    """A `DATA_RELATIONSHIP` edge between two DataItems (L1D-13): the functional-
-    dependency invariants whose violation hides the trickiest faults.
+    """A functional-dependency edge between two DataItems (L1D-13): the invariants
+    whose violation hides the trickiest faults.
 
-    **Flexible/extensible vocabulary** (operator decision, resolving L1OP-2):
-    `kind` references the `DataRelationshipKind` controlled-vocabulary catalogue
-    (extensible by rows, like SystemKind), and sub-granularity rides on the
-    `kind`/`predicate` props rather than on ever-more edge labels (L1D-21). The
-    edge carries a machine-checkable `predicate` (e.g. `client_id = md5(email+id)`)
-    + NL `rationale` (the predicate grammar/evaluation is deferred to the
-    signature engine, NM-8; here the predicate is stored as text)."""
+    **The kind IS the relationship type** (operator correction 2026-07-20): `kind`
+    must be one of the FIXED allowlist in `l1_curator.DATA_RELATIONSHIP_KINDS`
+    (`derived_from`, `reflected_in`, `equals_hash_of`, `copy_of`,
+    `concatenation_of`, `subset_of`); the sole-writer emits it uppercased as the
+    edge TYPE (e.g. `-[:DERIVED_FROM]->`). An unknown kind is HARD-REJECTED (no
+    fallback to a generic type; no catalogue node). The edge carries a machine-
+    checkable `predicate` (e.g. `client_id = md5(email+id)`) + NL `rationale` (the
+    predicate grammar/evaluation is deferred to the signature engine, NM-8)."""
 
     from_item_key: str
     to_item_key: str
@@ -170,10 +178,10 @@ class SystemEdgeDelta(BaseModel):
     strings). `rel` is one of the §6 taxonomy labels (EXPOSED_VIA, FRONTED_BY,
     AUTHENTICATED_BY, AUTHORIZED_BY, …); sub-granularity (role/realm/order) rides
     on props (L1D-21). Both endpoints are MERGEd by identity (the sole-writer owns
-    L1 nodes); the System's kind must be known."""
+    L1 nodes); the System's `kind` must be a known system kind."""
 
     service_slug: str
-    system_kind: str
+    kind: str
     discriminator: str = L1_SINGLETON
     rel: str
     role: str | None = None
@@ -217,7 +225,7 @@ class DeleteOp(BaseModel):
 class RelabelOp(BaseModel):
     """Re-kind a mis-typed unit: swap the subtype label `from_label`->`to_label`,
     re-key identity `identity`->`new_identity` (e.g. a `Service` that is really a
-    `System` moves from `(business_function_slug)` to `(system_kind,
+    `System` moves from `(business_function_slug)` to `(kind,
     discriminator)`), and re-point edges whose semantics change with the type
     (e.g. the mis-typed Service's `AGGREGATES` becomes the System's
     `EVIDENCED_BY`) per an explicit mapping. Provenance stamped. Idempotent: a

@@ -24,7 +24,13 @@ from agent.recon.analysis.l1_types import (
 from agent.recon.types import AssetDelta
 from tests.conftest import wait_for
 
-URI, AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+# Single source of truth (tests/conftest.py::neo4j_target): env-driven so this
+# file works BOTH in-network (bolt://neo4j:7687) and from the host against the
+# published port. Was a hardcoded localhost constant, which cannot resolve
+# inside the Docker network.
+URI, AUTH = neo4j_target()
 
 
 def _driver():
@@ -71,7 +77,7 @@ def _canned_skeleton():
     return L1DeltaBatch(
         services=[ServiceProposal(business_function_slug="checkout"),
                   ServiceProposal(business_function_slug="product-introspection")],
-        systems=[SystemProposal(system_kind="RESTApi")],
+        systems=[SystemProposal(kind="RESTApi")],
     )
 
 
@@ -84,7 +90,6 @@ def _session_curate(session):
 # --- AST-ELICIT-01/02/03: skeleton written, linchpins present, NO AGGREGATES ---
 
 def test_bootstrap_writes_skeleton_with_no_l0_refs(session, project):
-    l1_curator.seed_system_kinds(project, merge_fn=_mf(session))
     export = bootstrap.bootstrap_from_kb(
         project, "marketplace with checkout and product introspection",
         elicit_fn=lambda kb: _canned_skeleton(), curate_fn=_session_curate(session),
@@ -93,8 +98,8 @@ def test_bootstrap_writes_skeleton_with_no_l0_refs(session, project):
     assert _count(session, "L1Service", project, business_function_slug="checkout") == 1
     assert _count(session, "L1Service", project, business_function_slug="product-introspection") == 1
     # linchpin auth Systems present
-    assert _count(session, "L1System", project, system_kind="AuthenticationMechanism") == 1
-    assert _count(session, "L1System", project, system_kind="AuthorizationSystem") == 1
+    assert _count(session, "L1System", project, kind="AuthenticationMechanism") == 1
+    assert _count(session, "L1System", project, kind="AuthorizationSystem") == 1
     # PURE business projection: no AGGREGATES edge exists anywhere for this project
     agg = session.run(
         "MATCH (:L1Service {project_id: $p})-[r:AGGREGATES]->() RETURN count(r) AS c", p=project,
@@ -107,7 +112,7 @@ def test_bootstrap_is_idempotent(session, project):
     for _ in range(2):
         bootstrap.bootstrap_from_kb(project, "kb", elicit_fn=lambda kb: _canned_skeleton(), curate_fn=cf)
     assert _count(session, "L1Service", project, business_function_slug="checkout") == 1
-    assert _count(session, "L1System", project, system_kind="AuthenticationMechanism") == 1
+    assert _count(session, "L1System", project, kind="AuthenticationMechanism") == 1
 
 
 # --- bootstrap -> assignment flow: an elicited Service receives an AGGREGATES edge ---

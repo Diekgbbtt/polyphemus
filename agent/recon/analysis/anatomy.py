@@ -290,9 +290,9 @@ def commit_anatomy(
             business_function_slug=business_function_slug, props=service_props, provenance=provenance))
     if webpres_props:
         system_deltas.append(SystemDelta(
-            system_kind=WEB_PRESENTATION_KIND, props=webpres_props, provenance=provenance))
+            kind=WEB_PRESENTATION_KIND, props=webpres_props, provenance=provenance))
         presentation_edges.append(SystemEdgeDelta(
-            service_slug=business_function_slug, system_kind=WEB_PRESENTATION_KIND,
+            service_slug=business_function_slug, kind=WEB_PRESENTATION_KIND,
             rel="EXPOSED_VIA", provenance=provenance))
 
     written = {"classifications": 0, "observations": 0, "probes": len(result.probes)}
@@ -415,13 +415,13 @@ def classify_authz(
     denied = sorted(r for r, ok in results.items() if not ok)
 
     system_edges = [
-        SystemEdgeDelta(service_slug=service_slug, system_kind="AuthorizationSystem",
+        SystemEdgeDelta(service_slug=service_slug, kind="AuthorizationSystem",
                         rel="AUTHORIZED_BY", role=role, provenance=provenance)
         for role in authorized
     ]
     for realm in sorted({rl for rl in role_realms.values() if rl}):
         system_edges.append(SystemEdgeDelta(
-            service_slug=service_slug, system_kind="AuthenticationMechanism",
+            service_slug=service_slug, kind="AuthenticationMechanism",
             rel="AUTHENTICATED_BY", realm=realm, provenance=provenance))
 
     # authz_model = a STRUCTURAL fact about the probed role set (not a judgment)

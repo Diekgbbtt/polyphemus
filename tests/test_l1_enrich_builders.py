@@ -96,14 +96,16 @@ def test_bad_direction_raises():
 
 # --- DataRelationship: extensible vocabulary, kind validated, predicate carried ---
 
-def test_data_relationship_known_kind_and_predicate():
+def test_data_relationship_known_kind_becomes_typed_edge():
+    # operator correction 2026-07-20: the kind IS the (uppercased) edge type; no
+    # generic DATA_RELATIONSHIP edge and no :DataRelationshipKind catalogue node.
     cy, params = l1_curator.build_data_relationship_cypher(
         DataRelationshipDelta(from_item_key="client_id", to_item_key="email", kind="equals_hash_of",
                               predicate="client_id = md5(email+id)", rationale="derivation", provenance=PROV)
     )
-    assert "MERGE (a)-[r:DATA_RELATIONSHIP {kind: $kind}]->(b)" in cy
-    assert "MERGE (k:DataRelationshipKind {id: $kind, project_id: $project_id})" in cy  # catalogue row ensured
-    assert params["kind"] == "equals_hash_of"
+    assert "MERGE (a)-[r:EQUALS_HASH_OF]->(b)" in cy
+    assert "DataRelationshipKind" not in cy
+    assert "{kind:" not in cy  # kind is not an edge property anymore
     assert params["predicate"] == "client_id = md5(email+id)"
 
 
@@ -114,16 +116,17 @@ def test_data_relationship_unknown_kind_raises():
         )
 
 
-def test_relationship_vocabulary_is_extensible_catalogue():
+def test_relationship_allowlist_is_the_six_fixed_kinds():
     ids = {k for k, _d in l1_curator.DATA_RELATIONSHIP_KINDS}
-    assert {"derived_from", "reflected_in", "equals_hash_of"} <= ids  # seeded, extensible by adding rows
+    assert ids == {"derived_from", "reflected_in", "equals_hash_of",
+                   "copy_of", "concatenation_of", "subset_of"}  # FIXED allowlist
 
 
 # --- System edges: §6 taxonomy label validated, role/realm/order on props ---
 
 def test_system_edge_typed_label_and_role():
     cy, params = l1_curator.build_system_edge_cypher(
-        SystemEdgeDelta(service_slug="sales-analysis", system_kind="AuthorizationSystem",
+        SystemEdgeDelta(service_slug="sales-analysis", kind="AuthorizationSystem",
                         rel="AUTHORIZED_BY", role="seller", provenance=PROV)
     )
     # role is part of the edge IDENTITY (in the MERGE key) so multiple roles coexist
@@ -138,12 +141,12 @@ def test_system_edge_role_realm_in_merge_key_so_multiple_coexist():
     one (last role wins). role/realm must be in the MERGE key so distinct roles/
     realms are distinct edges."""
     cy_role, _ = l1_curator.build_system_edge_cypher(
-        SystemEdgeDelta(service_slug="s", system_kind="AuthenticationMechanism",
+        SystemEdgeDelta(service_slug="s", kind="AuthenticationMechanism",
                         rel="AUTHENTICATED_BY", realm="idp", provenance=PROV))
     assert "MERGE (s)-[r:AUTHENTICATED_BY {realm: $realm}]->(sy)" in cy_role
     # an edge with BOTH role and realm keys on both
     cy_both, _ = l1_curator.build_system_edge_cypher(
-        SystemEdgeDelta(service_slug="s", system_kind="AuthorizationSystem",
+        SystemEdgeDelta(service_slug="s", kind="AuthorizationSystem",
                         rel="AUTHORIZED_BY", role="seller", realm="credential", provenance=PROV))
     assert "role: $role" in cy_both and "realm: $realm" in cy_both
 
@@ -152,7 +155,7 @@ def test_system_edge_no_role_realm_keeps_rel_only_merge():
     """A plain system edge (no role/realm, e.g. EXPOSED_VIA) keeps the rel-only
     MERGE - one such edge per (service, system) is correct and stays idempotent."""
     cy, _ = l1_curator.build_system_edge_cypher(
-        SystemEdgeDelta(service_slug="s", system_kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV))
+        SystemEdgeDelta(service_slug="s", kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV))
     assert "MERGE (s)-[r:EXPOSED_VIA]->(sy)" in cy
     assert "{role:" not in cy and "{realm:" not in cy
 
@@ -164,7 +167,7 @@ def test_secondary_writers_stamp_node_provenance_on_create_only():
     primary writer already made keeps its own provenance). Locks the ON CREATE
     clause against a regression to unconditional SET."""
     se, _ = l1_curator.build_system_edge_cypher(
-        SystemEdgeDelta(service_slug="s", system_kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV))
+        SystemEdgeDelta(service_slug="s", kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV))
     assert "ON CREATE SET s.prov_job = $prov_job" in se
     assert "ON CREATE SET sy.prov_job = $prov_job" in se
 
@@ -185,14 +188,14 @@ def test_secondary_writers_stamp_node_provenance_on_create_only():
 def test_system_edge_unknown_rel_raises():
     with pytest.raises(ValueError):
         l1_curator.build_system_edge_cypher(
-            SystemEdgeDelta(service_slug="s", system_kind="RESTApi", rel="TELEPORTS_VIA", provenance=PROV)
+            SystemEdgeDelta(service_slug="s", kind="RESTApi", rel="TELEPORTS_VIA", provenance=PROV)
         )
 
 
 def test_system_edge_unknown_kind_raises():
     with pytest.raises(ValueError):
         l1_curator.build_system_edge_cypher(
-            SystemEdgeDelta(service_slug="s", system_kind="NotAKind", rel="EXPOSED_VIA", provenance=PROV)
+            SystemEdgeDelta(service_slug="s", kind="NotAKind", rel="EXPOSED_VIA", provenance=PROV)
         )
 
 
@@ -204,7 +207,7 @@ def test_enrichment_mapping_injects_provenance():
         surfaces_at=[SurfacesAtProposal(item_key="sales_figure", l0=L0Ref(label="Parameter", identity={"name": "f"}))],
         data_flows=[DataFlowProposal(service_slug="sales-analysis", item_key="sales_figure", direction="consumes")],
         data_relationships=[DataRelationshipProposal(from_item_key="a", to_item_key="b", kind="derived_from")],
-        system_edges=[SystemEdgeProposal(service_slug="s", system_kind="RESTApi", rel="EXPOSED_VIA")],
+        system_edges=[SystemEdgeProposal(service_slug="s", kind="RESTApi", rel="EXPOSED_VIA")],
     )
     deltas = enrichment_proposals_to_deltas(batch, PROV)
     assert set(deltas) == {"data_items", "surfaces_at", "data_flows", "data_relationships", "system_edges"}

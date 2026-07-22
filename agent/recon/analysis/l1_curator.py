@@ -3,8 +3,8 @@ Cypher over the disjoint `:L1*` label namespace, and executes them.
 
 This module is the ONLY graph-write path for the Layer-1 service/system model,
 the exact mirror of `agent/recon/curator.py` for Layer 0 (design §10.6 / L1D-22).
-The pure builders (`build_*_cypher`) never touch a driver; `l1_curate` /
-`seed_system_kinds` are the impure orchestrators that inject `project_id`, call
+The pure builders (`build_*_cypher`) never touch a driver; `l1_curate` / `enrich`
+/ `reconcile` are the impure orchestrators that inject `project_id`, call
 `merge_fn` per item, and skip+log single-item failures so one bad delta never
 aborts a whole batch (fail-open, mirroring curator).
 
@@ -18,9 +18,16 @@ Invariants enforced here (see docs/design/L1-MVP-plan.md §5):
     never on its member set, so `props` may change without churning identity;
   * `discriminator` defaults to the non-null `__singleton__` sentinel (L1D-9);
   * provenance + first/last_seen stamped on every write (L1D-25);
-  * `SystemKind` is a controlled-vocabulary catalogue (L1D-6): a System's kind
-    must be a known row, and adding a kind is a data write (a new seed row), not
-    a schema migration.
+  * a System's kind is a plain identity ATTRIBUTE named `kind` (operator
+    correction 2026-07-20), validated against the fixed `SYSTEM_KINDS`
+    enumeration below - NO `:SystemKind` catalogue node and NO `OF_KIND` edge;
+  * a DataRelationship's kind IS the relationship TYPE, drawn from the fixed
+    `DATA_RELATIONSHIP_KINDS` allowlist and emitted uppercased (e.g.
+    `-[:DERIVED_FROM]->`); an unknown kind is HARD-REJECTED, never a generic
+    `DATA_RELATIONSHIP` edge and never a `:DataRelationshipKind` node. Relationship
+    types cannot be parameterised in Cypher, so the value is interpolated - the
+    `_SAFE_IDENT` guard PLUS the allowlist are load-bearing (mirrors how
+    `SYSTEM_EDGE_RELS` is validated).
 
 Interface agreement A (the `AGGREGATES` cross-layer reference + judgment
 envelope, L1D-25) is written by `build_aggregates_cypher` / `write_aggregates`
@@ -67,10 +74,12 @@ L1_ALLOWED_LABELS = frozenset({"L1Service", "L1System"})
 # op can never DETACH DELETE / re-key an L0 node (the sole-writer boundary).
 L1_RECONCILE_LABELS = L1_ALLOWED_LABELS | {"L1DataItem"}
 
-# The seed SystemKind controlled vocabulary (L1D-6, spec §2.3). Extensible by
-# adding rows here — never a schema migration. Kept per-project (keyed
-# (id, project_id)) for tenant isolation and uniformity with every other
-# project-scoped node; a later globalisation is a two-way door.
+# The known system-kinds enumeration (operator correction 2026-07-20: the
+# `:SystemKind` catalogue nodes are gone; the kind is a plain `kind` attribute on
+# the System, validated against THIS module-level constant). Single source of
+# truth: reused both to VALIDATE a System's `kind` (typo guard) and to enumerate
+# the kinds for the stale-asset-ownership sweep prompt (sweep.py). Extending it is
+# a one-line data edit here - never a schema migration.
 SYSTEM_KINDS: tuple[tuple[str, str], ...] = (
     ("WAF", "Web application firewall; perimeter request inspection/blocking."),
     ("CDN", "Content delivery / edge network fronting origin traffic."),
@@ -88,9 +97,11 @@ SYSTEM_KINDS: tuple[tuple[str, str], ...] = (
 )
 _KNOWN_KINDS = frozenset(kind_id for kind_id, _desc in SYSTEM_KINDS)
 
-# FR-ENRICH: the DataRelationship controlled vocabulary (L1D-13/L1OP-2), the
-# functional-dependency invariants between DataItems. Extensible by adding rows
-# here - never a schema migration (same discipline as SYSTEM_KINDS).
+# FR-ENRICH: the FIXED DataRelationship allowlist (L1D-13/L1OP-2). Operator
+# correction 2026-07-20: the kind IS the relationship TYPE (uppercased), so this
+# allowlist is a hard security boundary - the value is interpolated into Cypher
+# (Neo4j cannot parameterise a rel type), and a miss is a HARD REJECT (never a
+# fallback to a generic edge). Only these six may become edge types.
 DATA_RELATIONSHIP_KINDS: tuple[tuple[str, str], ...] = (
     ("derived_from", "The source item is computed/derived from the target item."),
     ("reflected_in", "The source item's value is reflected back in the target item."),
@@ -100,6 +111,9 @@ DATA_RELATIONSHIP_KINDS: tuple[tuple[str, str], ...] = (
     ("subset_of", "The source item is a subset/projection of the target item."),
 )
 _KNOWN_DATA_REL_KINDS = frozenset(k for k, _d in DATA_RELATIONSHIP_KINDS)
+# kind -> the uppercase edge TYPE it becomes. Single source; reused by the builder
+# and the merge re-point allowlist. Every value is a safe identifier by construction.
+_DATA_REL_EDGE_TYPES: dict[str, str] = {k: k.upper() for k, _d in DATA_RELATIONSHIP_KINDS}
 
 # Edge-label allowlists (rel labels are interpolated into Cypher, so they are
 # validated against these fixed sets - defence in depth, like _SAFE_IDENT).
@@ -123,17 +137,9 @@ _PENDING_PROJECT_ID = "__pending_project_id__"
 # L0 props from deterministic parsers), so they must never spoof identity or
 # provenance.
 _RESERVED_PROPS = frozenset({
-    "project_id", "business_function_slug", "system_kind", "discriminator",
+    "project_id", "business_function_slug", "kind", "discriminator",
     "first_seen", "last_seen", "prov_job", "prov_model", "prov_prompt_id",
 })
-
-# Provenance markers for the SystemKind catalogue. Catalogue rows are
-# deterministic controlled-vocabulary reference data (not LLM-produced), so their
-# provenance is the curator function that wrote them rather than a model/prompt;
-# they still carry a prov_job + first/last_seen so "provenance on every L1 node"
-# (L1D-25) holds uniformly, incl. a kind auto-created as an OF_KIND target.
-_SEED_PROV_JOB = "l1_curator:seed_system_kinds"
-_OFKIND_PROV_JOB = "l1_curator:of_kind_autocreate"
 
 
 def _resolve_merge_fn(merge_fn):
@@ -153,11 +159,12 @@ def vocabulary_prompt() -> str:
     sys_rels = ", ".join(sorted(SYSTEM_EDGE_RELS))
     return (
         "CONTROLLED VOCABULARIES - use these EXACT values only:\n"
-        f"- `system_kind` (for systems / system_edges) must be one of: {kinds}. "
+        f"- a System's `kind` (for systems / system_edges) must be one of: {kinds}. "
         "e.g. the authentication mechanism is `AuthenticationMechanism` (NOT "
         "'Authentication'); the authorization system is `AuthorizationSystem`.\n"
         f"- System-edge `rel` must be one of: {sys_rels}.\n"
-        f"- DataRelationship `kind` must be one of: {rel_kinds}.\n"
+        f"- a DataRelationship `kind` must be one of: {rel_kinds} (the kind becomes "
+        "the edge type; anything else is rejected).\n"
         "- A System's `discriminator` defaults to the literal string "
         "'__singleton__' unless the target genuinely has multiple instances of "
         "that kind (e.g. two different CDN products)."
@@ -231,69 +238,27 @@ def build_service_cypher(delta: ServiceDelta) -> tuple[str, dict]:
 
 
 def build_system_cypher(delta: SystemDelta) -> tuple[str, dict]:
-    """Pure: MERGE one `System` on (project_id, system_kind, discriminator) plus
-    its `OF_KIND` edge to the controlled-vocabulary `SystemKind` catalogue node.
+    """Pure: MERGE one `System` on (project_id, kind, discriminator).
 
-    Raises ValueError if `system_kind` is not a known kind (typo guard — an
+    The kind is a plain identity ATTRIBUTE named `kind` (operator correction
+    2026-07-20) - no `:SystemKind` catalogue node, no `OF_KIND` edge. Raises
+    ValueError if `kind` is not in the `SYSTEM_KINDS` enumeration (typo guard - an
     unrecognised kind would fragment the overlay). A null/empty discriminator is
     coerced to the `__singleton__` sentinel (never null, L1D-9)."""
-    if delta.system_kind not in _KNOWN_KINDS:
+    if delta.kind not in _KNOWN_KINDS:
         raise ValueError(
-            f"Unknown SystemKind {delta.system_kind!r}; known: {sorted(_KNOWN_KINDS)}"
+            f"Unknown system kind {delta.kind!r}; known: {sorted(_KNOWN_KINDS)}"
         )
     discriminator = delta.discriminator
     if not isinstance(discriminator, str) or not discriminator.strip():
         discriminator = L1_SINGLETON
 
-    cypher, params = build_unit_cypher(
+    return build_unit_cypher(
         "L1System",
-        {"system_kind": delta.system_kind, "discriminator": discriminator},
+        {"kind": delta.kind, "discriminator": discriminator},
         delta.props,
         delta.provenance,
     )
-    cypher += "\n" + "\n".join([
-        "MERGE (k:SystemKind {id: $system_kind_id, project_id: $project_id})",
-        "ON CREATE SET k.first_seen = datetime(), k.prov_job = $ofkind_prov_job",
-        "MERGE (n)-[:OF_KIND]->(k)",
-    ])
-    params["system_kind_id"] = delta.system_kind
-    params["ofkind_prov_job"] = _OFKIND_PROV_JOB
-    return cypher, params
-
-
-def build_systemkind_cypher(kind_id: str, description: str) -> tuple[str, dict]:
-    """Pure: MERGE one `SystemKind` catalogue row on (id, project_id)."""
-    if kind_id not in _KNOWN_KINDS:
-        raise ValueError(f"Unknown SystemKind {kind_id!r}; known: {sorted(_KNOWN_KINDS)}")
-    params = {
-        "id": kind_id, "description": description,
-        "project_id": _PENDING_PROJECT_ID, "prov_job": _SEED_PROV_JOB,
-    }
-    cypher = "\n".join([
-        "MERGE (k:SystemKind {id: $id, project_id: $project_id})",
-        "ON CREATE SET k.first_seen = datetime()",
-        "SET k.description = $description",
-        "SET k.last_seen = datetime()",
-        "SET k.prov_job = $prov_job",
-    ])
-    return cypher, params
-
-
-def seed_system_kinds(project_id: str, *, merge_fn=None) -> int:
-    """Seed the controlled-vocabulary catalogue for a project. Idempotent
-    (MERGE); returns the count of kinds written. Fail-open per row."""
-    merge_fn = _resolve_merge_fn(merge_fn)
-    seeded = 0
-    for kind_id, description in SYSTEM_KINDS:
-        cypher, params = build_systemkind_cypher(kind_id, description)
-        params["project_id"] = project_id
-        try:
-            merge_fn(cypher, params)
-        except Exception:
-            logger.warning("seed_system_kinds: failed for kind=%r", kind_id, exc_info=True)
-            continue
-        seeded += 1
-    return seeded
 
 
 def l1_curate(
@@ -333,7 +298,7 @@ def l1_curate(
         except ValueError:
             logger.warning(
                 "l1_curate: skipping system delta kind=%r",
-                getattr(delta, "system_kind", None), exc_info=True,
+                getattr(delta, "kind", None), exc_info=True,
             )
             continue
         params["project_id"] = project_id
@@ -560,16 +525,26 @@ def build_data_flow_cypher(delta: DataFlowDelta) -> tuple[str, dict]:
 
 
 def build_data_relationship_cypher(delta: DataRelationshipDelta) -> tuple[str, dict]:
-    """Pure: MERGE a `(:L1DataItem)-[:DATA_RELATIONSHIP {kind}]->(:L1DataItem)`
-    edge carrying the machine-checkable `predicate` + NL `rationale`, and ensure
-    the `kind`'s controlled-vocabulary catalogue row exists. `kind` must be known
-    (extend via DATA_RELATIONSHIP_KINDS, not schema)."""
+    """Pure: MERGE a `(:L1DataItem)-[:<KIND>]->(:L1DataItem)` edge whose TYPE is the
+    kind (operator correction 2026-07-20), carrying the machine-checkable
+    `predicate` + NL `rationale`.
+
+    `kind` MUST be in the fixed `DATA_RELATIONSHIP_KINDS` allowlist; the uppercased
+    value is interpolated as the relationship type (Neo4j cannot parameterise a rel
+    type). An allowlist miss is a HARD REJECT (ValueError) - never a fallback to a
+    generic edge and never a catalogue node. `_SAFE_IDENT` re-checks the derived
+    label as defence in depth (mirrors `SYSTEM_EDGE_RELS`)."""
     from_key = _require_slug(delta.from_item_key, "DataRelationship from_item_key")
     to_key = _require_slug(delta.to_item_key, "DataRelationship to_item_key")
-    if delta.kind not in _KNOWN_DATA_REL_KINDS:
-        raise ValueError(f"Unknown DataRelationship kind {delta.kind!r}; known: {sorted(_KNOWN_DATA_REL_KINDS)}")
+    rel = _DATA_REL_EDGE_TYPES.get(delta.kind)
+    if rel is None:
+        raise ValueError(
+            f"Unknown DataRelationship kind {delta.kind!r}; allowed: {sorted(_KNOWN_DATA_REL_KINDS)}"
+        )
+    if not _SAFE_IDENT.match(rel):  # defence in depth: the label is interpolated
+        raise ValueError(f"unsafe DataRelationship edge type {rel!r}")
     params = {
-        "from_key": from_key, "to_key": to_key, "kind": delta.kind,
+        "from_key": from_key, "to_key": to_key,
         "predicate": delta.predicate, "rationale": delta.rationale,
         "project_id": _PENDING_PROJECT_ID,
     }
@@ -579,29 +554,27 @@ def build_data_relationship_cypher(delta: DataRelationshipDelta) -> tuple[str, d
         "ON CREATE SET a.prov_job = $prov_job, a.first_seen = datetime()",  # provenance-on-mint
         "MERGE (b:L1DataItem {item_key: $to_key, project_id: $project_id})",
         "ON CREATE SET b.prov_job = $prov_job, b.first_seen = datetime()",
-        "MERGE (a)-[r:DATA_RELATIONSHIP {kind: $kind}]->(b)",
+        f"MERGE (a)-[r:{rel}]->(b)",
         "ON CREATE SET r.first_seen = datetime()",
         "SET r.last_seen = datetime()",
         "SET r.predicate = $predicate, r.rationale = $rationale",
         "SET r.prov_job = $prov_job",
-        "MERGE (k:DataRelationshipKind {id: $kind, project_id: $project_id})",
-        "ON CREATE SET k.first_seen = datetime(), k.prov_job = $prov_job",
     ])
     return cypher, params
 
 
 def build_system_edge_cypher(delta: SystemEdgeDelta) -> tuple[str, dict]:
     """Pure: MERGE a typed `(:L1Service)-[:<REL>]->(:L1System)` edge from the §6
-    taxonomy (L1D-18). `rel` must be an allowed System-edge label; `system_kind`
-    must be known; role/realm/order ride on props (L1D-21) when present."""
+    taxonomy (L1D-18). `rel` must be an allowed System-edge label; `kind`
+    must be a known system kind; role/realm/order ride on props (L1D-21)."""
     slug = _require_slug(delta.service_slug, "SystemEdge service_slug")
     if delta.rel not in SYSTEM_EDGE_RELS:
         raise ValueError(f"Unknown System-edge rel {delta.rel!r}; known: {sorted(SYSTEM_EDGE_RELS)}")
-    if delta.system_kind not in _KNOWN_KINDS:
-        raise ValueError(f"Unknown SystemKind {delta.system_kind!r}")
+    if delta.kind not in _KNOWN_KINDS:
+        raise ValueError(f"Unknown system kind {delta.kind!r}")
     discriminator = delta.discriminator if (isinstance(delta.discriminator, str) and delta.discriminator.strip()) else L1_SINGLETON
     params = {
-        "slug": slug, "system_kind": delta.system_kind, "discriminator": discriminator,
+        "slug": slug, "kind": delta.kind, "discriminator": discriminator,
         "role": delta.role, "realm": delta.realm, "order": delta.order,
         "project_id": _PENDING_PROJECT_ID,
     }
@@ -621,7 +594,7 @@ def build_system_edge_cypher(delta: SystemEdgeDelta) -> tuple[str, dict]:
         # provenance-on-write: a node this edge writer MINTS carries provenance
         # (ON CREATE only, so a node its primary writer already made keeps its own).
         "ON CREATE SET s.prov_job = $prov_job, s.first_seen = datetime()",
-        "MERGE (sy:L1TestableUnit:L1System {system_kind: $system_kind, discriminator: $discriminator, project_id: $project_id})",
+        "MERGE (sy:L1TestableUnit:L1System {kind: $kind, discriminator: $discriminator, project_id: $project_id})",
         "ON CREATE SET sy.prov_job = $prov_job, sy.first_seen = datetime()",
         f"MERGE (s)-[{rel_pattern}]->(sy)",
         "ON CREATE SET r.first_seen = datetime()",
@@ -630,27 +603,6 @@ def build_system_edge_cypher(delta: SystemEdgeDelta) -> tuple[str, dict]:
         "SET r.prov_job = $prov_job",
     ]
     return "\n".join(lines), params
-
-
-def seed_data_relationship_kinds(project_id: str, *, merge_fn=None) -> int:
-    """Seed the DataRelationship controlled-vocabulary catalogue (idempotent)."""
-    merge_fn = _resolve_merge_fn(merge_fn)
-    seeded = 0
-    for kind_id, description in DATA_RELATIONSHIP_KINDS:
-        cypher = "\n".join([
-            "MERGE (k:DataRelationshipKind {id: $id, project_id: $project_id})",
-            "ON CREATE SET k.first_seen = datetime()",
-            "SET k.description = $description, k.last_seen = datetime(), k.prov_job = $prov_job",
-        ])
-        params = {"id": kind_id, "description": description, "project_id": project_id,
-                  "prov_job": "l1_curator:seed_data_relationship_kinds"}
-        try:
-            merge_fn(cypher, params)
-        except Exception:
-            logger.warning("seed_data_relationship_kinds: failed for kind=%r", kind_id, exc_info=True)
-            continue
-        seeded += 1
-    return seeded
 
 
 def _write_each(builder, deltas, project_id, merge_fn, what: str) -> int:
@@ -711,12 +663,16 @@ _EVIDENCED_BY = "EVIDENCED_BY"
 
 # The FIXED rel-type allowlist a merge re-points, both directions. Covers every
 # L1 edge type the sole-writer emits: the §6 System taxonomy (SYSTEM_EDGE_RELS)
-# plus the cross-layer / data-flow / data-relationship / catalogue edges, plus
-# EVIDENCED_BY so a System produced by an earlier relabel also merges cleanly.
-# Sorted for deterministic Cypher. Every entry is an uppercase identifier (safe).
+# plus the cross-layer / data-flow / data-relationship edges, plus EVIDENCED_BY so
+# a System produced by an earlier relabel also merges cleanly. The data-relationship
+# edges are now the SIX typed edge labels (the kind IS the type, operator correction
+# 2026-07-20), NOT a single generic DATA_RELATIONSHIP; OF_KIND is gone with the
+# `:SystemKind` catalogue. Sorted for deterministic Cypher; every entry is a safe
+# uppercase identifier.
 _REPOINT_REL_TYPES: tuple[str, ...] = tuple(sorted(
-    {"AGGREGATES", "SURFACES_AT", "PRODUCES", "CONSUMES", "DATA_RELATIONSHIP", "OF_KIND", _EVIDENCED_BY}
+    {"AGGREGATES", "SURFACES_AT", "PRODUCES", "CONSUMES", _EVIDENCED_BY}
     | set(SYSTEM_EDGE_RELS)
+    | set(_DATA_REL_EDGE_TYPES.values())
 ))
 
 # Explicit relabel edge-remap table (L1D-18/§3): edges whose SEMANTICS change with
@@ -849,17 +805,17 @@ def build_relabel_unit_cypher(
 
     Swaps the subtype label (the shared `:L1TestableUnit` supertype is untouched,
     since both operative subtypes carry it), re-keys identity (`identity` keys not
-    in `new_identity` are REMOVEd; `new_identity` keys are SET), re-points edges
+    in `new_identity` are REMOVEd; `new_identity` keys are SET), and re-points edges
     whose semantics change with the type per `_RELABEL_EDGE_REMAP` (e.g. a
-    mis-typed Service's `AGGREGATES` becomes the System's `EVIDENCED_BY`), and -
-    when the target is a System - MERGEs the controlled-vocabulary `SystemKind`
-    catalogue row + `OF_KIND` edge (like `build_system_cypher`). Provenance +
+    mis-typed Service's `AGGREGATES` becomes the System's `EVIDENCED_BY`). When the
+    target is a System, the `kind` identity attribute is simply SET (no catalogue
+    node, no `OF_KIND` edge - operator correction 2026-07-20). Provenance +
     `relabelled_from` stamped.
 
     Idempotent: a second run cannot re-MATCH the old label/key and is a no-op.
     Raises ValueError on a non-L1 (or equal) from/to label, an unsafe identity,
-    or a System target with an unknown `system_kind`. A blank System discriminator
-    is coerced to the `__singleton__` sentinel (never null, L1D-9)."""
+    or a System target with an unknown `kind`. A blank System discriminator is
+    coerced to the `__singleton__` sentinel (never null, L1D-9)."""
     if from_label not in L1_ALLOWED_LABELS:
         raise ValueError(f"relabel from_label must be an operative L1 unit label, got {from_label!r}")
     if to_label not in L1_ALLOWED_LABELS:
@@ -869,9 +825,9 @@ def build_relabel_unit_cypher(
 
     working_new = dict(new_identity or {})
     if to_label == "L1System":
-        kind = working_new.get("system_kind")
+        kind = working_new.get("kind")
         if kind not in _KNOWN_KINDS:
-            raise ValueError(f"relabel to L1System requires a known system_kind, got {kind!r}")
+            raise ValueError(f"relabel to L1System requires a known kind, got {kind!r}")
         disc = working_new.get("discriminator")
         if not isinstance(disc, str) or not disc.strip():
             working_new["discriminator"] = L1_SINGLETON
@@ -911,22 +867,11 @@ def build_relabel_unit_cypher(
             f"MERGE (n)-[nr:{new_rel}]->(x) SET nr += properties(r) DELETE r }}"
         )
 
-    if to_label == "L1System":
-        lines += [
-            "WITH n",
-            "MERGE (k:SystemKind {id: $system_kind_id, project_id: $project_id})",
-            "ON CREATE SET k.first_seen = datetime(), k.prov_job = $ofkind_prov_job",
-            "MERGE (n)-[:OF_KIND]->(k)",
-        ]
-
     params["project_id"] = _PENDING_PROJECT_ID
     params["relabelled_from"] = _identity_marker(from_label, identity)
     params.update(_prov_params(provenance))
     for k in new_keys:
         params[f"newid_{k}"] = working_new[k]
-    if to_label == "L1System":
-        params["system_kind_id"] = working_new["system_kind"]
-        params["ofkind_prov_job"] = _OFKIND_PROV_JOB
     return "\n".join(lines), params
 
 

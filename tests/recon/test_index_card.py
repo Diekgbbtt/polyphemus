@@ -29,12 +29,12 @@ def test_service_card_shape():
 def test_system_card_shape():
     row = {
         "labels": ["L1TestableUnit", "L1System"],
-        "props": {"system_kind": "CDN", "discriminator": "Datadome", "project_id": "p"},
+        "props": {"kind": "CDN", "discriminator": "Datadome", "project_id": "p"},
         "rels": [],
     }
     card = index_card._card_from_row(row)
     assert card["kind"] == "System"
-    assert card["key"] == {"system_kind": "CDN", "discriminator": "Datadome"}
+    assert card["key"] == {"kind": "CDN", "discriminator": "Datadome"}
     assert card["label"] == "CDN"
     assert card["edge_degree"] == {}  # zero-degree unit kept
 
@@ -64,12 +64,12 @@ def test_dfs_down_query_shape_and_guard():
     def fake_read(cy, params):
         captured["cy"] = cy
         captured["params"] = params
-        return [{"labels": ["L1TestableUnit", "L1System"], "props": {"system_kind": "RESTApi"}}]
+        return [{"labels": ["L1TestableUnit", "L1System"], "props": {"kind": "RESTApi"}}]
 
     out = index_card.dfs_down("p", "sales-analysis", "EXPOSED_VIA", read_fn=fake_read)
     assert "-[r:EXPOSED_VIA]->(m)" in captured["cy"]
     assert captured["params"] == {"slug": "sales-analysis", "project_id": "p"}
-    assert out == [{"labels": ["L1TestableUnit", "L1System"], "props": {"system_kind": "RESTApi"}}]
+    assert out == [{"labels": ["L1TestableUnit", "L1System"], "props": {"kind": "RESTApi"}}]
 
 
 def test_dfs_down_rejects_unsafe_rel():
@@ -86,7 +86,7 @@ def test_index_cards_maps_all_rows():
         assert "collect(type(r))" in cy  # edge-degree projection, not member expansion
         return [
             {"labels": ["L1TestableUnit", "L1Service"], "props": {"business_function_slug": "a", "project_id": "p"}, "rels": ["AGGREGATES"]},
-            {"labels": ["L1TestableUnit", "L1System"], "props": {"system_kind": "WAF", "discriminator": "__singleton__", "project_id": "p"}, "rels": []},
+            {"labels": ["L1TestableUnit", "L1System"], "props": {"kind": "WAF", "discriminator": "__singleton__", "project_id": "p"}, "rels": []},
         ]
 
     cards = index_card.index_cards("p", read_fn=fake_read)

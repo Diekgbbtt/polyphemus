@@ -1,8 +1,9 @@
 """FR-LCUR integration tier — the L1 sole-writer against the REAL neo4j:5.26
 container. Encodes the store-level assertions (docs/design/L1-MVP-plan.md §5):
-idempotent MERGE, singleton dedup, identity ⊥ membership, SystemKind seed +
-OF_KIND, constraints enforced, provenance persisted, and the :L1* namespace
-disjoint from the L0 :Service label.
+idempotent MERGE, singleton dedup, identity ⊥ membership, the System `kind`
+identity attribute (no catalogue node - operator correction 2026-07-20),
+constraints enforced, provenance persisted, and the :L1* namespace disjoint from
+the L0 :Service label.
 
 Mirrors the live-graph convention already used by tests/e2e/test_neo4j_write_dedup.py
 and tests/test_neo4j_schema.py: connect from the host to the published bolt port,
@@ -33,7 +34,13 @@ from agent.recon.analysis.l1_types import (
 from agent.recon.types import AssetDelta
 from tests.conftest import wait_for
 
-URI, AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+# Single source of truth (tests/conftest.py::neo4j_target): env-driven so this
+# file works BOTH in-network (bolt://neo4j:7687) and from the host against the
+# published port. Was a hardcoded localhost constant, which cannot resolve
+# inside the Docker network.
+URI, AUTH = neo4j_target()
 PROV = Provenance(job="it", model="m", prompt_id="p")
 ENV = JudgmentEnvelope(confidence=0.82, status="committed", evidence_refs=["obs:cat-params"], provenance=PROV)
 ENDPOINT_ID = {"path": "/categories/{id}/parameters", "method": "GET", "baseurl": "https://a"}
@@ -106,12 +113,12 @@ def test_service_merge_twice_one_node(session, project):
 # --- AST-LCUR-02: two singleton Systems of one kind MERGE to one node; never null ---
 
 def test_singleton_system_dedup(session, project):
-    d = SystemDelta(system_kind="AuthenticationMechanism", provenance=PROV)
+    d = SystemDelta(kind="AuthenticationMechanism", provenance=PROV)
     for _ in range(2):
         l1_curator.l1_curate([], [d], project, merge_fn=_merge_fn(session))
     assert _count(
         session, "L1System", project,
-        system_kind="AuthenticationMechanism", discriminator="__singleton__",
+        kind="AuthenticationMechanism", discriminator="__singleton__",
     ) == 1
     nulls = session.run(
         "MATCH (n:L1System) WHERE n.project_id = $p AND n.discriminator IS NULL RETURN count(n) AS c",
@@ -135,31 +142,27 @@ def test_identity_independent_of_members(session, project):
     assert rec["m"] == "a,b,c"  # props updated, identity unchanged, no duplicate
 
 
-# --- AST-LCUR-06: SystemKind seed idempotent + a System OF_KIND its catalogue row ---
+# --- AST-LCUR-06: System kind is a plain identity attribute; no catalogue node ---
 
-def test_systemkind_seed_idempotent_and_of_kind(session, project):
+def test_system_kind_is_attribute_no_catalogue_node(session, project):
+    """Operator correction 2026-07-20: a System carries its kind as the `kind`
+    identity attribute - no `:SystemKind` catalogue node and no `OF_KIND` edge is
+    ever written."""
     mf = _merge_fn(session)
-    for _ in range(2):
-        seeded = l1_curator.seed_system_kinds(project, merge_fn=mf)
-    assert seeded == 12
-    assert _count(session, "SystemKind", project) == 12
-    # catalogue rows are provenance'd (spec §2.3) + carry description/timestamps
-    krec = session.run(
-        "MATCH (k:SystemKind {project_id: $p, id: 'RESTApi'}) "
-        "RETURN k.prov_job AS j, k.first_seen AS f, k.description AS d",
+    l1_curator.l1_curate([], [SystemDelta(kind="RESTApi", provenance=PROV)], project, merge_fn=mf)
+    rec = session.run(
+        "MATCH (n:L1System {project_id: $p, kind: 'RESTApi', discriminator: '__singleton__'}) "
+        "RETURN n.kind AS kind, n.prov_job AS j",
         p=project,
     ).single()
-    assert krec["j"] == "l1_curator:seed_system_kinds"
-    assert krec["f"] is not None
-    assert krec["d"]
-    l1_curator.l1_curate([], [SystemDelta(system_kind="RESTApi", provenance=PROV)], project, merge_fn=mf)
-    linked = session.run(
-        "MATCH (:L1System {project_id: $p, system_kind: 'RESTApi'})-[:OF_KIND]->"
-        "(k:SystemKind {project_id: $p, id: 'RESTApi'}) RETURN count(*) AS c",
-        p=project,
+    assert rec["kind"] == "RESTApi"
+    assert rec["j"] == "it"  # provenance stamped
+    # no catalogue node, no OF_KIND edge exists anywhere for this project
+    assert _count(session, "SystemKind", project) == 0
+    ofkind = session.run(
+        "MATCH (:L1System {project_id: $p})-[r:OF_KIND]->() RETURN count(r) AS c", p=project,
     ).single()["c"]
-    assert linked == 1
-    assert _count(session, "SystemKind", project) == 12  # OF_KIND MERGE did not duplicate
+    assert ofkind == 0
 
 
 # --- AST-LCUR-07: L1 constraints present and enforced ---

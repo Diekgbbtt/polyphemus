@@ -32,14 +32,14 @@ def test_bootstrap_writes_services_and_linchpin_systems():
         return L1DeltaBatch(
             services=[ServiceProposal(business_function_slug="checkout"),
                       ServiceProposal(business_function_slug="orders")],
-            systems=[SystemProposal(system_kind="RESTApi")],
+            systems=[SystemProposal(kind="RESTApi")],
         )
 
     export = bootstrap.bootstrap_from_kb("proj-1", "we sell things; users check out and view orders",
                                          elicit_fn=elicit_fn, curate_fn=curate_fn)
 
     slugs = {s.business_function_slug for s in captured["services"]}
-    kinds = {s.system_kind for s in captured["systems"]}
+    kinds = {s.kind for s in captured["systems"]}
     assert slugs == {"checkout", "orders"}
     # linchpin auth Systems are ALWAYS present, even though the LLM only elicited RESTApi
     assert {"AuthenticationMechanism", "AuthorizationSystem"} <= kinds
@@ -51,10 +51,10 @@ def test_linchpins_not_duplicated_when_llm_elicits_them():
     captured, curate_fn = _capture_curate()
 
     def elicit_fn(kb):
-        return L1DeltaBatch(systems=[SystemProposal(system_kind="AuthenticationMechanism")])
+        return L1DeltaBatch(systems=[SystemProposal(kind="AuthenticationMechanism")])
 
     bootstrap.bootstrap_from_kb("proj-1", "kb", elicit_fn=elicit_fn, curate_fn=curate_fn)
-    kinds = [s.system_kind for s in captured["systems"]]
+    kinds = [s.kind for s in captured["systems"]]
     assert kinds.count("AuthenticationMechanism") == 1  # not doubled
     assert "AuthorizationSystem" in kinds
 
@@ -103,7 +103,7 @@ def test_empty_operator_kb_still_ensures_linchpins():
     captured, curate_fn = _capture_curate()
     # empty KB -> no elicited services, but the linchpin systems must still be ensured
     export = bootstrap.bootstrap_from_kb("proj-1", "   ", curate_fn=curate_fn)
-    kinds = {s.system_kind for s in captured["systems"]}
+    kinds = {s.kind for s in captured["systems"]}
     assert {"AuthenticationMechanism", "AuthorizationSystem"} <= kinds
     assert captured["services"] == []
     assert export.error is None

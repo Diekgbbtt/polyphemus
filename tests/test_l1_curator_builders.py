@@ -45,30 +45,30 @@ def test_service_merge_builder_is_pure_and_keyed():
 # --- AST-LCUR-02: discriminator defaults to the non-null __singleton__ string ---
 
 def test_discriminator_defaults_to_singleton_string():
-    d = SystemDelta(system_kind="AuthenticationMechanism", provenance=PROV)
+    d = SystemDelta(kind="AuthenticationMechanism", provenance=PROV)
     assert d.discriminator == L1_SINGLETON == "__singleton__"
     _, params = l1_curator.build_system_cypher(d)
     assert params["id_discriminator"] == "__singleton__"
     assert params["id_discriminator"] is not None
     # a blank discriminator is coerced to the sentinel, never left null/empty
-    _, p2 = l1_curator.build_system_cypher(SystemDelta(system_kind="WAF", discriminator="   ", provenance=PROV))
+    _, p2 = l1_curator.build_system_cypher(SystemDelta(kind="WAF", discriminator="   ", provenance=PROV))
     assert p2["id_discriminator"] == "__singleton__"
 
 
-# --- AST-LCUR-07: System key shape (project_id, system_kind, discriminator) + OF_KIND ---
+# --- AST-LCUR-07: System key shape (project_id, kind, discriminator); no catalogue node ---
 
-def test_system_key_shape_and_of_kind_edge():
-    d = SystemDelta(system_kind="CDN", discriminator="Datadome", provenance=PROV)
+def test_system_key_shape_and_no_catalogue_node():
+    d = SystemDelta(kind="CDN", discriminator="Datadome", provenance=PROV)
     cy, params = l1_curator.build_system_cypher(d)
     assert (
         "MERGE (n:L1TestableUnit:L1System "
-        "{discriminator: $id_discriminator, system_kind: $id_system_kind, project_id: $project_id})"
+        "{discriminator: $id_discriminator, kind: $id_kind, project_id: $project_id})"
     ) in cy
-    assert params["id_system_kind"] == "CDN"
+    assert params["id_kind"] == "CDN"
     assert params["id_discriminator"] == "Datadome"
-    assert "MERGE (k:SystemKind {id: $system_kind_id, project_id: $project_id})" in cy
-    assert "MERGE (n)-[:OF_KIND]->(k)" in cy
-    assert params["system_kind_id"] == "CDN"
+    # operator correction 2026-07-20: no :SystemKind catalogue node, no OF_KIND edge
+    assert "SystemKind" not in cy
+    assert "OF_KIND" not in cy
 
 
 # --- AST-LCUR-08: guards — disallowed labels / unknown kinds / bad identity raise ---
@@ -82,9 +82,7 @@ def test_disallowed_unit_label_raises():
 
 def test_unknown_system_kind_raises():
     with pytest.raises(ValueError):
-        l1_curator.build_system_cypher(SystemDelta(system_kind="NotAKind", provenance=PROV))
-    with pytest.raises(ValueError):
-        l1_curator.build_systemkind_cypher("NotAKind", "desc")
+        l1_curator.build_system_cypher(SystemDelta(kind="NotAKind", provenance=PROV))
 
 
 def test_empty_service_slug_raises():
@@ -123,14 +121,7 @@ def test_reserved_props_are_stripped_so_they_cannot_spoof_identity_or_provenance
     assert params["id_business_function_slug"] == "cart"
 
 
-# --- AST-LCUR-06: SystemKind controlled-vocabulary catalogue (12 seeds) ---
-
-def test_systemkind_builder_shape():
-    cy, params = l1_curator.build_systemkind_cypher("RESTApi", "REST paradigm")
-    assert "MERGE (k:SystemKind {id: $id, project_id: $project_id})" in cy
-    assert params["id"] == "RESTApi"
-    assert params["description"] == "REST paradigm"
-
+# --- AST-LCUR-06: the known-system-kinds enumeration (12 kinds; no catalogue) ---
 
 def test_all_twelve_seed_kinds_present():
     ids = {kind_id for kind_id, _desc in l1_curator.SYSTEM_KINDS}
@@ -185,8 +176,8 @@ def test_l1_curate_skips_bad_and_continues():
         ServiceDelta(business_function_slug="   ", provenance=PROV),  # bad -> skipped
     ]
     systems = [
-        SystemDelta(system_kind="WAF", provenance=PROV),
-        SystemDelta(system_kind="Bogus", provenance=PROV),  # unknown -> skipped
+        SystemDelta(kind="WAF", provenance=PROV),
+        SystemDelta(kind="Bogus", provenance=PROV),  # unknown -> skipped
     ]
     n_s, n_sy = l1_curator.l1_curate(services, systems, "proj1", merge_fn=lambda cy, p: calls.append((cy, p)))
     assert (n_s, n_sy) == (1, 1)

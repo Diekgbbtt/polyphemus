@@ -32,7 +32,13 @@ from agent.recon.analysis.l1_types import (
 from agent.recon.types import AssetDelta
 from tests.conftest import wait_for
 
-URI, AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+# Single source of truth (tests/conftest.py::neo4j_target): env-driven so this
+# file works BOTH in-network (bolt://neo4j:7687) and from the host against the
+# published port. Was a hardcoded localhost constant, which cannot resolve
+# inside the Docker network.
+URI, AUTH = neo4j_target()
 
 PROV = Provenance(job="analyser:walkthrough", model="m", prompt_id="p")
 BOOTSTRAP_PROV = Provenance(job="bootstrap:walkthrough", model=None, prompt_id=None)
@@ -83,17 +89,17 @@ def _run_walkthrough(session, project, *, member_endpoints=(CAT_EP, SALES_EP)):
     mf = lambda cy, p: session.run(cy, **p).consume()
     read_fn = lambda cy, p: [r.data() for r in session.run(cy, **p)]
 
-    # 0. seed the controlled-vocabulary catalogues
-    l1_curator.seed_system_kinds(project, merge_fn=mf)
-    l1_curator.seed_data_relationship_kinds(project, merge_fn=mf)
+    # 0. no catalogue seeding (operator correction 2026-07-20): a System's kind is a
+    # plain `kind` attribute and a DataRelationship kind IS its edge type - no
+    # :SystemKind / :DataRelationshipKind catalogue nodes exist to seed.
 
     # 1. bootstrap: the business Service skeleton + linchpin auth Systems, no L0 refs
     services = [ServiceDelta(business_function_slug=s, props={"label": s}, provenance=BOOTSTRAP_PROV)
                 for s in SERVICES]
-    systems = [SystemDelta(system_kind=k, provenance=BOOTSTRAP_PROV)
+    systems = [SystemDelta(kind=k, provenance=BOOTSTRAP_PROV)
                for k in ("AuthenticationMechanism", "AuthorizationSystem")]
     # also a SINGLETON CDN so it can coexist with the populated-discriminator CDN below
-    systems.append(SystemDelta(system_kind="CDN", provenance=BOOTSTRAP_PROV))
+    systems.append(SystemDelta(kind="CDN", provenance=BOOTSTRAP_PROV))
     l1_curator.l1_curate(services, systems, project, merge_fn=mf)
 
     # 2. recon lands L0 endpoints (via the L0 curator; AGGREGATES MATCHes them)
@@ -112,10 +118,10 @@ def _run_walkthrough(session, project, *, member_endpoints=(CAT_EP, SALES_EP)):
 
     # 4. enrichment: systems-as-edges (incl a POPULATED CDN discriminator), Tier-1 flow
     system_edges = [
-        SystemEdgeDelta(service_slug="sales-analysis", system_kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV),
-        SystemEdgeDelta(service_slug="sales-analysis", system_kind="CDN", discriminator="Datadome", rel="FRONTED_BY", provenance=PROV),
-        SystemEdgeDelta(service_slug="sales-analysis", system_kind="WAF", rel="PROTECTED_BY", provenance=PROV),
-        SystemEdgeDelta(service_slug="sales-analysis", system_kind="ReverseProxy", discriminator="Varnish", rel="ROUTED_BY", provenance=PROV),
+        SystemEdgeDelta(service_slug="sales-analysis", kind="RESTApi", rel="EXPOSED_VIA", provenance=PROV),
+        SystemEdgeDelta(service_slug="sales-analysis", kind="CDN", discriminator="Datadome", rel="FRONTED_BY", provenance=PROV),
+        SystemEdgeDelta(service_slug="sales-analysis", kind="WAF", rel="PROTECTED_BY", provenance=PROV),
+        SystemEdgeDelta(service_slug="sales-analysis", kind="ReverseProxy", discriminator="Varnish", rel="ROUTED_BY", provenance=PROV),
     ]
     data_items = [DataItemDelta(item_key="sales_figure", props={"label": "sales figure"}, provenance=PROV)]
     surfaces_at = [SurfacesAtDelta(item_key="sales_figure", l0=L0Ref(label="Endpoint", identity=dict(SALES_EP)), provenance=PROV)]
@@ -180,7 +186,7 @@ def test_walkthrough_is_idempotent(session, project):
 
 def test_singleton_and_populated_discriminator_coexist(session, project):
     _run_walkthrough(session, project)
-    cdns = session.run("MATCH (y:L1System {project_id:$p, system_kind:'CDN'}) "
+    cdns = session.run("MATCH (y:L1System {project_id:$p, kind:'CDN'}) "
                        "RETURN y.discriminator AS d ORDER BY d", p=project)
     discs = [r["d"] for r in cdns]
     assert discs == ["Datadome", "__singleton__"]  # two DISTINCT CDN nodes coexist
@@ -268,14 +274,14 @@ def test_every_inscope_primitive_fired(session, project):
 
     # assignment envelope, systems-as-edges, Tier-1 flow with assumption, SURFACES_AT
     assert c("MATCH (:L1Service {project_id:$p})-[r:AGGREGATES]->() WHERE r.confidence IS NOT NULL RETURN count(r) AS c") >= 1
-    assert c("MATCH (:L1Service {project_id:$p})-[r:EXPOSED_VIA]->(:L1System {system_kind:'RESTApi'}) RETURN count(r) AS c") == 1
+    assert c("MATCH (:L1Service {project_id:$p})-[r:EXPOSED_VIA]->(:L1System {kind:'RESTApi'}) RETURN count(r) AS c") == 1
     assumption = session.run("MATCH (:L1Service {project_id:$p})-[r:CONSUMES]->() RETURN r.assumption AS a", p=project).single()["a"]
     assert assumption and "authorized" in assumption  # assumption predicate on CONSUMES
     assert c("MATCH (:L1DataItem {project_id:$p})-[r:SURFACES_AT]->() RETURN count(r) AS c") == 1
     # independent SPA + CSR props on the WebPresentation System the service is
     # EXPOSED_VIA (the mechanism-as-System correction) - NOT stranded as Service props
     wp = session.run("MATCH (:L1Service {project_id:$p, business_function_slug:'sales-analysis'})"
-                     "-[:EXPOSED_VIA]->(w:L1System {project_id:$p, system_kind:'WebPresentation'}) "
+                     "-[:EXPOSED_VIA]->(w:L1System {project_id:$p, kind:'WebPresentation'}) "
                      "RETURN w.navigation_model AS nav, w.rendering_model AS ren", p=project).single()
     assert wp["nav"] == "SPA" and wp["ren"] == "CSR"  # independent props on the WebPresentation
     svc = session.run("MATCH (s:L1Service {project_id:$p, business_function_slug:'sales-analysis'}) "
@@ -285,10 +291,19 @@ def test_every_inscope_primitive_fired(session, project):
     roles = {r["role"] for r in session.run("MATCH (:L1Service {project_id:$p})-[r:AUTHORIZED_BY]->() RETURN r.role AS role", p=project)}
     realms = {r["realm"] for r in session.run("MATCH (:L1Service {project_id:$p})-[r:AUTHENTICATED_BY]->() RETURN r.realm AS realm", p=project)}
     assert roles == {"seller", "seller-admin"} and realms == {"credential", "idp"}
-    # sweeps: /healthz in the stale pool; missing kinds derivable
+    # sweeps: /healthz in the stale pool; stale-owner resolution is a fail-open seam
     stale_paths = {row["path"] for row in sweep.stale_pool(project, read_fn=read_fn)}
     assert "/healthz" in stale_paths
-    assert isinstance(sweep.missing_system_kinds(project, read_fn=read_fn), list)
+    # the redesigned sweep proposes owners for the stale pool (injected fake LLM here);
+    # it is a seam that does not write back (operator correction 2026-07-20).
+    owners = sweep.resolve_stale_owners(
+        project, read_fn=read_fn,
+        propose_fn=lambda ctx: sweep.StaleOwnershipBatch(proposals=[
+            sweep.StaleAssetOwnership(asset_ref={"path": "/healthz"}, kind="AuthorizationSystem"),
+        ]),
+    )
+    assert isinstance(owners, sweep.StaleOwnershipBatch)
+    assert owners.proposals[0].kind == "AuthorizationSystem"
     # index-card is token-light: edge-degree, no raw member payload leaked
     cards = index_card.index_cards(project, read_fn=read_fn)
     sales_card = next(c for c in cards if c.get("key", {}).get("business_function_slug") == "sales-analysis")

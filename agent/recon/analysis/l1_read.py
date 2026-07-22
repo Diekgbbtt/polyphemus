@@ -42,32 +42,3 @@ def read_aggregated_l0(service_slug: str, project_id: str, *, read_fn=None) -> l
         props["_labels"] = list(row.get("labels") or [])
         out.append(props)
     return out
-
-
-def services_in_journey(project_id: str, journey_slug: str, *, read_fn=None) -> list[str]:
-    """Return the `business_function_slug`s of the Services participating in a
-    business journey - the read side of the LIGHT journey-membership model (plan
-    §1). Membership is a `journeys: list[str]` prop on each `L1Service`, so
-    "services in the same journey" is a single property-match (`$j IN s.journeys`),
-    no `Journey` node and no order.
-
-    The query filters on `journeys` (membership, a queryable prop) but returns
-    `business_function_slug` (the Service identity), so it keys nothing on the
-    member set - `identity ⊥ membership` (L1D-11): assigning/removing a journey is
-    a prop write that never churns Service identity. Sorted + deduped, and
-    fail-open to `[]` on a read error (a read failure never crashes the caller)."""
-    read_fn = _resolve_read_fn(read_fn)
-    try:
-        rows = read_fn(
-            "MATCH (s:L1Service) "
-            "WHERE s.project_id = $p AND $j IN s.journeys "
-            "RETURN s.business_function_slug AS slug",
-            {"p": project_id, "j": journey_slug},
-        )
-    except Exception:  # fail-open: a read error degrades to no members, never crashes
-        logger.warning(
-            "services_in_journey: read failed for project=%s journey=%s; "
-            "degrading to empty membership", project_id, journey_slug, exc_info=True
-        )
-        return []
-    return sorted({r.get("slug") for r in rows if r.get("slug") is not None})

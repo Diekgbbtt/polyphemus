@@ -42,7 +42,7 @@ def test_build_strip_props_cypher_removes_keys_and_stamps_prov():
 
 def test_build_strip_props_dedups_keys():
     cy, _ = l1_curator.build_strip_props_cypher(
-        "L1System", {"system_kind": "WAF", "discriminator": "__singleton__"},
+        "L1System", {"kind": "WAF", "discriminator": "__singleton__"},
         ["exposure", "exposure"], PROV,
     )
     assert cy.count("n.exposure") == 1  # deduped, not removed twice
@@ -52,7 +52,7 @@ def test_build_strip_props_dedups_keys():
 
 def test_build_strip_props_rejects_reserved_identity_and_unsafe_keys():
     # identity + curator-managed keys must never be stripped (they would orphan/spoof)
-    for reserved in ("business_function_slug", "project_id", "system_kind",
+    for reserved in ("business_function_slug", "project_id", "kind",
                      "discriminator", "prov_job", "first_seen", "last_seen"):
         with pytest.raises(ValueError):
             l1_curator.build_strip_props_cypher(

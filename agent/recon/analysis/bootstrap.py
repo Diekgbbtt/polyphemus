@@ -137,8 +137,8 @@ def bootstrap_from_kb(
     # Always ensure the two linchpin auth Systems exist, whether or not the LLM
     # elicited them (dedup is handled by the singleton MERGE, so adding them when
     # the LLM already proposed them is harmless).
-    elicited_kinds = {s.system_kind for s in batch.systems}
-    linchpins = [SystemProposal(system_kind=k) for k in _LINCHPIN_SYSTEMS if k not in elicited_kinds]
+    elicited_kinds = {s.kind for s in batch.systems}
+    linchpins = [SystemProposal(kind=k) for k in _LINCHPIN_SYSTEMS if k not in elicited_kinds]
     batch = batch.model_copy(update={"systems": list(batch.systems) + linchpins})
 
     provenance = Provenance(job=f"bootstrap:{run_id}", model=None, prompt_id=None)
@@ -148,13 +148,9 @@ def bootstrap_from_kb(
 
     if curate_fn is None:
         from agent.recon.analysis import l1_curator
-        # seed the SystemKind catalogue so elicited/linchpin Systems have their
-        # controlled-vocabulary rows (idempotent).
-        try:
-            l1_curator.seed_system_kinds(project_id)
-        except Exception:
-            logger.warning("bootstrap_from_kb: SystemKind seed failed for project=%s", project_id, exc_info=True)
-
+        # No catalogue seeding: a System's kind is a plain `kind` attribute validated
+        # against l1_curator.SYSTEM_KINDS (operator correction 2026-07-20), so there
+        # is no `:SystemKind` catalogue to seed.
         def curate_fn(svc, sysd, pid):
             return l1_curator.l1_curate(svc, sysd, pid)
 

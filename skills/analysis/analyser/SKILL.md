@@ -33,7 +33,7 @@ Every delta you emit is a claim. Before emitting it, run it through:
 
 ## Output contract
 
-- Emit typed proposals only: `services` (business_function_slug + props), `systems` (a known `SystemKind` + discriminator, default `__singleton__`), `aggregates` (service_slug + the L0 identity tuple + confidence + evidence_refs).
+- Emit typed proposals only: `services` (business_function_slug + props), `systems` (a known `kind` + discriminator, default `__singleton__`), `aggregates` (service_slug + the L0 identity tuple + confidence + evidence_refs). A System's `kind` is a plain attribute (one of the known kinds); there is no separate catalogue object.
 - Systems are **cross-cutting mechanisms** (WAF, CDN, REST/GraphQL API, identification, auth mechanism, web presentation); Services are **business functions**. When unsure which, apply the membership-direction test: a Service *claims* elements by business purpose; a System *overlays* elements that share a mechanism regardless of business function.
 - Propose nothing you cannot evidence from the slice. **Return empty lists if the slice supports no confident judgment** - an empty, honest result is correct; a fabricated one is a defect.
 - You never set provenance or write status; those are stamped by the system. Your job is the judgment and its evidence.
@@ -50,6 +50,8 @@ Emit each such fact by MERGING the target `System` (with the classification as a
 - `auth_methods` -> an `AUTHENTICATED_BY {realm}` edge to the `AuthenticationMechanism` System (the mechanism is the System; the Service keeps only its authorization policy).
 - `perimeter` (WAF / CDN / reverse proxy / gateway) -> a `FRONTED_BY`, `PROTECTED_BY`, or `ROUTED_BY` edge to the matching perimeter System.
 
-Only `business_function`, `exposure`, `journeys`, and free-text contract handles stay Service props.
+Only `business_function`, `exposure`, and free-text contract handles stay Service props.
 
-Worked example (copy this shape): a client-rendered single-page checkout is `systems: [{"system_kind": "WebPresentation", "props": {"rendering_model": "CSR", "navigation_model": "SPA"}}]` with `system_edges: [{"service_slug": "checkout", "system_kind": "WebPresentation", "rel": "EXPOSED_VIA"}]`, NOT a `rendering_model` prop on the `checkout` Service.
+Worked example (copy this shape): a client-rendered single-page checkout is `systems: [{"kind": "WebPresentation", "props": {"rendering_model": "CSR", "navigation_model": "SPA"}}]` with `system_edges: [{"service_slug": "checkout", "kind": "WebPresentation", "rel": "EXPOSED_VIA"}]`, NOT a `rendering_model` prop on the `checkout` Service.
+
+Data-relationship note: when you posit a functional dependency between two `DataItem`s, `kind` must be one of the fixed allowlist (`derived_from`, `reflected_in`, `equals_hash_of`, `copy_of`, `concatenation_of`, `subset_of`) - it becomes the typed edge itself; any other value is rejected.

@@ -24,7 +24,13 @@ from agent.recon.analysis.pod import AnalyserExport, build_analyser_graph, run_a
 from agent.recon.types import AssetDelta
 from tests.conftest import wait_for
 
-URI, AUTH = "bolt://localhost:7687", ("neo4j", "polymerhus")
+from tests.conftest import neo4j_target
+
+# Single source of truth (tests/conftest.py::neo4j_target): env-driven so this
+# file works BOTH in-network (bolt://neo4j:7687) and from the host against the
+# published port. Was a hardcoded localhost constant, which cannot resolve
+# inside the Docker network.
+URI, AUTH = neo4j_target()
 
 
 def _driver():
@@ -60,7 +66,7 @@ def project(session):
 def _canned_batch(endpoint_id):
     return L1DeltaBatch(
         services=[ServiceProposal(business_function_slug="product-introspection", props={"label": "Introspection"})],
-        systems=[SystemProposal(system_kind="RESTApi")],
+        systems=[SystemProposal(kind="RESTApi")],
         aggregates=[AggregatesProposal(
             service_slug="product-introspection", confidence=0.82, evidence_refs=["obs:cat"],
             l0=L0Ref_dict(endpoint_id),
@@ -113,7 +119,7 @@ def test_analyser_writes_l1_idempotently_via_curator(session, project):
 
     # idempotent: one Service, one System, one AGGREGATES edge — no duplicates
     assert _count("L1Service", business_function_slug="product-introspection") == 1
-    assert _count("L1System", system_kind="RESTApi") == 1
+    assert _count("L1System", kind="RESTApi") == 1
     edges = session.run(
         "MATCH (:L1Service {project_id: $p})-[r:AGGREGATES]->(:Endpoint {project_id: $p}) RETURN count(r) AS c",
         p=project,

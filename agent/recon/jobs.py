@@ -224,8 +224,30 @@ JOBS: dict[str, JobSpec] = {
             # (`>/dev/null`) - otherwise the parser gets `[!] lines\n{JSON}` and
             # drops every parameter. `&&` throughout keeps a real arjun crash
             # propagating a non-zero exit for the gate to retry.
+            # `--rate-limit 5`: arjun's parameter detection is non-deterministic
+            # run-to-run on the IDENTICAL surface (an e2e drew 58 params one run, 5
+            # the next, FR-CURE2E forensics), rooted in the target throttling the
+            # request burst - arjun's own error handler reads a rate-limited target
+            # as an anomaly, so throttled responses become phantom (or missed)
+            # parameters. Capping the request rate removes the burst that provokes
+            # it. Measured against a local Juice Shop (`/api/Products`, 2 runs per
+            # setting): arjun issues ~260 requests per URL and the wall-clock is
+            # exactly linear in the cap - unlimited 4s, `--rate-limit 20` 13s,
+            # `10` 26s, `5` 52s, all recovering the identical 10 parameters.
+            # 5 rps is the chosen point: ~52s per URL leaves ~6x headroom under
+            # EXEC_TIMEOUT_S=300, while cutting the per-process burst ~13x from the
+            # measured ~65 rps of the unlimited default. That default matters more
+            # than it looks - arjun is unbatched and runs MAX_PODS=20 pods at once,
+            # so the aggregate burst against a single host is ~1300 rps unlimited
+            # vs ~100 rps here.
+            # NOT `--stable`: it forces threads=1 AND injects a random 3-10s delay
+            # before EVERY request (arjun/core/requester.py), i.e. 13-43 min per URL
+            # at ~260 requests - roughly 10x over EXEC_TIMEOUT_S, so every arjun pod
+            # would time out and the job would yield nothing at all.
+            # A fixed cap is still a guess at the target's real budget; the adaptive
+            # ladder (degrade on an observed 429/403, with a pause) is AMV-17.
             "printf '{}' > /work/{session}/arjun.json "
-            "&& arjun -u {target} -oJ /work/{session}/arjun.json {auth_header} "
+            "&& arjun -u {target} --rate-limit 5 -oJ /work/{session}/arjun.json {auth_header} "
             ">/dev/null && cat /work/{session}/arjun.json"
         ),
         produces=["Parameter"],
