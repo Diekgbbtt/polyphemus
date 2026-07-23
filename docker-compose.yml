@@ -62,7 +62,7 @@ services:
     networks: [polymerhus-net]
 
   agent:
-    build: { context: ., dockerfile: agent/Dockerfile }
+    build: { context: ., dockerfile: Dockerfile }
     image: polymerhus-agent:latest
     environment:               # in-network defaults so a clean clone works without .env (I2)
       NEO4J_URI: bolt://neo4j:7687

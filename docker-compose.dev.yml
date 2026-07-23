@@ -7,11 +7,11 @@
 services:
   agent:
     volumes:
-      - ./agent:/srv/agent
+      - ./src:/srv/src
       - ./db:/srv/db
       - ./skills:/srv/skills   # triager loads writing-observations SKILL.md at runtime
-    command: ["uvicorn", "agent.app.main:app", "--host", "0.0.0.0", "--port", "8080",
-              "--reload", "--reload-dir", "/srv"]
+    command: ["uvicorn", "polymerhus.app.main:app", "--host", "0.0.0.0", "--port", "8080",
+              "--reload", "--reload-dir", "/srv/src"]
 
   # The live-tier test runner.
   #
@@ -47,7 +47,7 @@ services:
       POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
       KALI_MCP_URL: http://kali:8000/mcp
       PROJECT_ID: test
-      PYTHONPATH: /srv
+      PYTHONPATH: /srv/src
     env_file:
       - path: .env
         required: false
