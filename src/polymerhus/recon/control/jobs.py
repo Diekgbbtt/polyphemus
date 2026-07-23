@@ -118,8 +118,20 @@ JOBS: dict[str, JobSpec] = {
         tool="katana",
         skill="crawl",
         command_template=(
+            # AMV-8 ticket 6 (source-side belt to the curator-gate noise filter):
+            # `-ef` filters presentational static assets (stylesheets, fonts,
+            # sourcemaps, images, media, archives) from crawl OUTPUT at the
+            # source, so they never become Endpoints even before the gate sees
+            # them. `.js`/`.mjs` are deliberately NOT filtered - they are
+            # jsluice's input (D17). `-cos` excludes installed-dependency source
+            # trees and ftp/backup artefacts from being crawled at all. The
+            # curator gate (noise_filter) still catches anything that slips
+            # through, incl. generated JS these coarse flags cannot express.
             "katana -u {target} -d 3 -jc -kf robotstxt -c 10 -rl 50 "
-            "-ef css,woff,woff2,ttf -silent -jsonl {auth_header}"
+            "-ef css,scss,less,woff,woff2,ttf,eot,otf,map,"
+            "png,jpg,jpeg,gif,svg,webp,ico,bmp,mp3,wav,mp4,webm,mov,pdf,zip "
+            "-cos 'node_modules/|bower_components/|\\.(bak|old|swp|orig|tmp)($|\\?)' "
+            "-silent -jsonl {auth_header}"
         ),
         produces=["BaseURL", "Endpoint", "Parameter"],
         consumes="BaseURL",

@@ -27,9 +27,20 @@ from __future__ import annotations
 
 import re
 from typing import Literal
-from urllib.parse import urlparse
+from urllib.parse import parse_qs, unquote, urlparse
 
 from polymerhus.recon.domain.types import AssetDelta, Observation
+
+# Cache-busting query keys (AMV-8 category 3): a `?v=15` / `?hash=abc` / `?t=...`
+# is a version stamp on an otherwise-identical resource, never a real request
+# parameter. Letting one satisfy the has-params check would let a static asset
+# escape the static drop, and minting a `Parameter` for one pollutes the
+# surface. Shared with `parsers._urls` (which strips these when minting
+# Parameters) so both sites use the same list. Lower-cased; membership is exact
+# on the key name.
+CACHE_BUST_KEYS = frozenset({
+    "v", "ver", "version", "hash", "t", "ts", "timestamp", "cache", "cb", "_",
+})
 
 # --- D16: webapp/restapi profiling ------------------------------------------
 # Classify a probed URL from httpx-observable signals so API-specific tools
@@ -86,6 +97,7 @@ Classification = Literal["static", "surface", "ambiguous"]
 DROP_SEGMENTS = frozenset({
     "assets", "static", "styles", "css", "fonts",
     "dist", "build", "node_modules", "vendor",
+    "_next", "chunks", "bower_components",
 })
 
 # Extensions that are NEVER user-controllable surface (stylesheets, fonts,
@@ -100,14 +112,78 @@ IMAGE_EXTS = frozenset({
     "png", "jpg", "jpeg", "gif", "svg", "webp", "ico", "bmp",
 })
 
-# JavaScript is NEVER dropped as noise: a `.js`/`.mjs` bundle is prime attack
-# surface (it is the input jsluice fetches to recover endpoints + secrets and
-# to discover sourcemaps - forward decision D17). This exemption wins over the
-# static-path and fingerprint drops below, so a fingerprinted SPA bundle under
-# `/static` or `/assets` still reaches the graph for D17 to analyze. Without it
-# D15 would starve D17 of its primary input (the two features collide - the
-# bundles D15 calls "noise" for surface-mapping are D17's gold for extraction).
+# Media / archive / document extensions (AMV-8 category 1). Like images, these
+# MAY be user-uploaded content (a `/downloads/report.pdf`, a `/upload/clip.mp4`
+# is real SSRF / stored-file / path-traversal surface), so they take the SAME
+# recall-biased treatment: dropped only under a DROP_SEGMENT, else kept as
+# ambiguous. A blanket extension drop would lose that surface (D15's recall
+# bias). Truly-presentational families (fonts, stylesheets, sourcemaps) stay in
+# the hard-static STATIC_EXTS above.
+MEDIA_EXTS = frozenset({
+    "mp3", "wav", "mp4", "webm", "mov", "avi", "mkv", "flac", "ogg",
+    "pdf", "zip", "tar", "gz", "tgz", "rar", "7z", "bz2",
+})
+
+# JavaScript is PRIME attack surface: a `.js`/`.mjs` bundle is the input jsluice
+# fetches to recover endpoints + secrets and to discover sourcemaps (forward
+# decision D17), so a PRIMARY application bundle is never dropped - a
+# fingerprinted SPA bundle (`main.8f3a2b1c.js`) under `/static` or `/assets`
+# still reaches the graph for D17 to analyze. Without that exemption D15 would
+# starve D17 of its primary input.
+#
+# AMV-8 category 2 refines the exemption: GENERATED JS - framework runtime,
+# lazy-loaded chunks, installed deps, and vendored library bundles - are NOT
+# application surface (the operator's "the JS files are the recon target, the
+# generated chunk URLs are not application endpoints"). A `.js` is dropped when
+# it carries a generated signal (a framework segment, a bundler/chunk/runtime
+# marker, or a known vendor-library name). A content hash ALONE never drops a
+# JS file, because the primary app bundle is itself fingerprinted.
 JS_EXTS = frozenset({"js", "mjs"})
+
+# Path segments that mint GENERATED JS (framework internals, code-split chunks,
+# installed deps). A `.js` under one is a generated asset, not a primary bundle,
+# so the keep-JS exemption does not apply. A subset of DROP_SEGMENTS - the
+# framework/dependency dirs specifically, not the presentational ones (`/static`,
+# `/assets` legitimately host the primary fingerprinted bundle, so JS there is
+# still kept).
+GENERATED_JS_SEGMENTS = frozenset({
+    "node_modules", "_next", "chunks", "bower_components",
+})
+
+# Bundler / framework-runtime filename markers (optional plural), matched as a
+# delimited token: `runtime.js`, `polyfills.js`, `chunk-3458.js`, `vendor.js`,
+# `main-es2015.chunk.js`.
+_GENERATED_JS_MARKER_RE = re.compile(
+    r"(?:^|[.\-_])(?:chunk|runtime|polyfill|vendor)s?(?:[.\-_]|$)"
+)
+
+# Third-party library bundles pulled into a page (web3 / crypto / framework
+# libs). Matched on the filename STEM prefix so versioned blobs collapse
+# (`soljson-v0.8.21+commit.<hash>.js`, `ethers-5.7.2.js`). Deliberately a short,
+# high-confidence list of names that are essentially never a first-party route
+# file; extend as evidence accrues.
+VENDOR_JS_PREFIXES = (
+    "soljson", "ethers", "web3", "jquery", "bootstrap", "lodash", "moment",
+    "angular", "react", "react-dom", "vue", "three", "d3",
+)
+
+# Browser-generated well-known files (AMV-8 category 6): a browser requests
+# these automatically; they are not application surface. Matched on the exact
+# BASENAME (the last path segment), lower-cased.
+BROWSER_BASENAMES = frozenset({
+    "favicon.ico", "robots.txt", "manifest.json", "site.webmanifest",
+    "browserconfig.xml", "apple-touch-icon.png",
+    "apple-touch-icon-precomposed.png",
+})
+
+# Analytics / telemetry path segments (AMV-8 category 4): first-party analytics
+# collection endpoints (Google Analytics `/collect`, `gtag`, tracking pixels,
+# beacons). A path containing one of these segments is telemetry, not
+# application surface. High-confidence conventions only - generic `/events`,
+# `/log` are deliberately excluded (too likely to be real API surface).
+ANALYTICS_SEGMENTS = frozenset({
+    "collect", "beacon", "pixel", "gtag", "analytics",
+})
 
 # Path segments that affirmatively mark user-controllable / user-uploaded
 # content. Any of these forces PRESERVE regardless of extension.
@@ -148,6 +224,20 @@ def _is_fingerprinted_bundle(filename: str) -> bool:
     return False
 
 
+def _is_generated_js(filename: str, seg_set: set[str]) -> bool:
+    """True when a `.js`/`.mjs` file is GENERATED (framework runtime, code-split
+    chunk, installed dep, or vendored library) rather than a primary application
+    bundle - so the D17 keep-JS exemption must NOT apply. A content hash alone is
+    deliberately NOT a signal here (the primary bundle is fingerprinted too)."""
+    if seg_set & GENERATED_JS_SEGMENTS:
+        return True
+    if _GENERATED_JS_MARKER_RE.search(filename):
+        return True
+    stem = filename.rpartition(".")[0].lower()
+    return any(stem == p or stem.startswith(p + "-") or stem.startswith(p + ".")
+               for p in VENDOR_JS_PREFIXES)
+
+
 def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
     """Classify an endpoint path as static noise, user-controllable surface, or
     ambiguous (kept by recall bias).
@@ -155,13 +245,14 @@ def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
     Precedence (PRESERVE beats DROP so the recall bias always wins):
       1. a query parameter present            -> "surface"
       2. a user-content path segment          -> "surface"
-      3. a JavaScript extension (.js/.mjs)     -> "surface" (D17 attack surface)
-      4. a never-surface extension            -> "static"
-      5. a fingerprinted / bundler filename   -> "static"
-      6. an image extension                   -> "static" iff under a drop-path,
-                                                 else "ambiguous"
-      7. any static-render path segment       -> "static"
-      8. otherwise                            -> "ambiguous"
+      3. a browser well-known / analytics path -> "static" (never app surface)
+      4. a JavaScript extension (.js/.mjs)     -> "surface" unless generated
+      5. a never-surface extension            -> "static"
+      6. a fingerprinted / bundler filename   -> "static"
+      7. an image / media / archive extension -> "static" iff under a drop-path,
+                                                 else "ambiguous" (recall bias)
+      8. any static-render path segment       -> "static"
+      9. otherwise                            -> "ambiguous"
     """
     if has_params:
         return "surface"
@@ -173,23 +264,59 @@ def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
         return "surface"
 
     filename = segments[-1] if segments else ""
+
+    # Browser well-known files and analytics/telemetry paths are never
+    # application surface - drop before the JS exemption so `/gtag/js` drops.
+    if filename in BROWSER_BASENAMES or (seg_set & ANALYTICS_SEGMENTS):
+        return "static"
+
     ext = _extension(filename)
     under_drop_path = bool(seg_set & DROP_SEGMENTS)
 
-    # JavaScript is attack surface for D17 (jsluice), never presentational
-    # noise - keep it even when fingerprinted or under a static drop-path.
+    # JavaScript is attack surface for D17 (jsluice): a PRIMARY bundle is kept
+    # even when fingerprinted or under a presentational drop-path. GENERATED JS
+    # (framework runtime, code-split chunks, installed deps, vendor libs) is not
+    # application surface and drops (AMV-8 category 2).
     if ext in JS_EXTS:
-        return "surface"
+        return "static" if _is_generated_js(filename, seg_set) else "surface"
 
     if ext in STATIC_EXTS:
         return "static"
     if _is_fingerprinted_bundle(filename):
         return "static"
-    if ext in IMAGE_EXTS:
+    if ext in IMAGE_EXTS or ext in MEDIA_EXTS:
         return "static" if under_drop_path else "ambiguous"
     if under_drop_path:
         return "static"
     return "ambiguous"
+
+
+def is_malformed_concat_path(path: str) -> bool:
+    """True when a path is a JS string-concatenation fragment, not a real path
+    (AMV-8 ticket 5).
+
+    jsluice mis-reads source like `fetch('/api/'+id)` and emits a "URL" such as
+    `/'+_(i[8])+'` or its percent-encoded form `/%27+_%28i%5B11%5D`. These must
+    never become Endpoints. Detection is high-precision on markers essentially
+    never in a real URL path: a literal quote/backtick, the concatenation marker
+    `+_(`, or unbalanced brackets/parens. The path is percent-decoded first so
+    the encoded form is caught by the same rules. A real path (even one with a
+    `+`, e.g. a versioned filename) has none of these, so it is not affected.
+
+    Enforced at BOTH parse time (`parsers._urls.url_to_deltas`, so no delta is
+    minted) and the curator gate (`filter_deltas`, so a fragment from any source
+    is dropped) - defense in depth."""
+    if not isinstance(path, str) or not path:
+        return False
+    decoded = unquote(path)
+    if any(q in decoded for q in ("'", '"', "`")):
+        return True
+    if "+_(" in decoded:
+        return True
+    for open_c, close_c in (("(", ")"), ("[", "]"), ("{", "}")):
+        if decoded.count(open_c) != decoded.count(close_c):
+            return True
+    return False
 
 
 def _netloc_host(netloc: str) -> str:
@@ -270,18 +397,33 @@ def _delta_is_www_redundant(delta: AssetDelta) -> bool:
     return any(h.startswith("www.") for h in _referenced_base_hosts(delta))
 
 
+def _has_meaningful_query(url: str) -> bool:
+    """True when the URL carries a query with at least one NON-cache-bust key.
+
+    A `?v=15` / `?hash=abc` is a version stamp, not a real parameter (AMV-8
+    category 3), so it must not count as "has params" - otherwise a cache-busted
+    static asset (`/main.css?v=15`) would satisfy the has-params short-circuit
+    and escape the static drop."""
+    try:
+        query = urlparse(url).query
+    except ValueError:
+        return False
+    if not query:
+        return False
+    keys = parse_qs(query, keep_blank_values=True).keys()
+    return any(k.lower() not in CACHE_BUST_KEYS for k in keys)
+
+
 def _endpoint_has_params(delta: AssetDelta) -> bool:
-    """True when the endpoint's recorded URL carries a query string. The URL in
-    `props` already reflects the discovered query (parsers build Parameter
-    deltas FROM it), so it is the authoritative signal without cross-referencing
-    sibling Parameter deltas."""
+    """True when the endpoint's recorded URL carries a MEANINGFUL query string.
+    The URL in `props` already reflects the discovered query (parsers build
+    Parameter deltas FROM it), so it is the authoritative signal without
+    cross-referencing sibling Parameter deltas. Cache-bust-only queries do not
+    count (see `_has_meaningful_query`)."""
     url = delta.props.get("url")
     if not isinstance(url, str) or not url:
         return False
-    try:
-        return bool(urlparse(url).query)
-    except ValueError:
-        return False
+    return _has_meaningful_query(url)
 
 
 def filter_deltas(
@@ -308,6 +450,10 @@ def filter_deltas(
     for delta in deltas:
         if delta.type == "Endpoint":
             path = delta.identity.get("path", "/")
+            # A JS string-concatenation fragment is not a real path (AMV-8) -
+            # drop it whatever its params look like.
+            if is_malformed_concat_path(path):
+                continue
             if classify_endpoint(path, has_params=_endpoint_has_params(delta)) == "static":
                 continue
         # www.<host> dedups to <host> (unconditional - the www convention holds

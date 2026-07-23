@@ -99,6 +99,59 @@ def test_user_controllable_images_kept(path):
     assert classify_endpoint(path) != "static"
 
 
+# --- media / archive recall bias (AMV-8 category 1) ------------------------
+
+@pytest.mark.parametrize("ext", [
+    "mp3", "wav", "mp4", "webm", "mov", "avi", "mkv", "flac", "ogg",
+    "pdf", "zip", "tar", "gz", "tgz", "rar", "7z", "bz2",
+])
+def test_media_archive_under_drop_path_drops(ext):
+    assert classify_endpoint(f"/assets/file.{ext}") == "static"
+
+
+@pytest.mark.parametrize("path", [
+    "/report.pdf",             # root, ambiguous -> kept
+    "/clip.webm",              # ambiguous -> kept
+    "/downloads/report.pdf",   # user-content -> kept (surface)
+    "/upload/promo.mp4",       # user-content -> kept (surface)
+])
+def test_user_controllable_media_kept(path):
+    assert classify_endpoint(path) != "static"
+
+
+# --- AMV-8 categories 4 + 6: browser well-known + analytics drop -----------
+
+@pytest.mark.parametrize("path", [
+    "/favicon.ico",
+    "/robots.txt",
+    "/manifest.json",
+    "/site.webmanifest",
+    "/browserconfig.xml",
+    "/apple-touch-icon.png",
+    "/static/favicon.ico",     # basename match regardless of directory
+])
+def test_browser_wellknown_basenames_drop(path):
+    assert classify_endpoint(path) == "static"
+
+
+@pytest.mark.parametrize("path", [
+    "/collect",
+    "/g/collect",
+    "/gtag/js",                # analytics segment beats the JS exemption
+    "/beacon",
+    "/pixel",
+    "/analytics/track",
+])
+def test_analytics_segments_drop(path):
+    assert classify_endpoint(path) == "static"
+
+
+def test_generic_events_and_log_are_not_analytics():
+    """`/events`, `/log` are too likely to be real API surface - not dropped."""
+    assert classify_endpoint("/events") == "ambiguous"
+    assert classify_endpoint("/api/log") == "ambiguous"
+
+
 # --- ambiguous / real endpoints kept --------------------------------------
 
 @pytest.mark.parametrize("path", [
@@ -115,17 +168,37 @@ def test_ambiguous_paths_kept(path):
 
 @pytest.mark.parametrize("path", [
     "/js/app.js",
-    "/static/bundle.js",                 # under a drop-path but still JS
-    "/static/js/main.8f3a2b1c.js",       # fingerprinted AND under /static
-    "/bundle.abc123ef.js",               # fingerprinted at root
-    "/assets/index-a1b2c3d4.js",         # fingerprinted under /assets
-    "/vendor.js",                        # bundler marker
+    "/main.js",                          # primary application bundle
+    "/static/bundle.js",                 # under a drop-path but still primary JS
+    "/static/js/main.8f3a2b1c.js",       # fingerprinted AND under /static -> kept
+    "/bundle.abc123ef.js",               # fingerprinted at root -> kept
+    "/assets/index-a1b2c3d4.js",         # fingerprinted under /assets -> kept
     "/app.mjs",
 ])
-def test_javascript_always_surface_for_jsluice(path):
-    # D15/D17 reconciliation: JS bundles are jsluice's input, never dropped as
-    # presentational noise - the exemption wins over static-path + fingerprint.
+def test_primary_javascript_is_surface_for_jsluice(path):
+    # D15/D17 reconciliation: a PRIMARY JS bundle is jsluice's input, never
+    # dropped as presentational noise - kept even fingerprinted / under /static.
+    # A content hash ALONE is not a "generated" signal (the primary bundle is
+    # fingerprinted too), so these all survive.
     assert classify_endpoint(path) == "surface"
+
+
+# --- AMV-8 category 2: GENERATED JS drops (D17 exemption refined) -----------
+
+@pytest.mark.parametrize("path", [
+    "/chunks/3458.js",                   # code-split chunk under /chunks
+    "/_next/static/chunks/abc.js",       # framework-generated segment
+    "/runtime.js",                       # framework-runtime marker
+    "/polyfills.js",                     # bundler marker (plural)
+    "/chunk-3458.js",                    # chunk marker at root
+    "/vendor.js",                        # vendor marker (was surface pre-AMV-8)
+    "/main-es2015.chunk.js",             # embedded chunk marker
+    "/node_modules/express/lib/router/index.js",  # installed dependency source
+    "/ethers.js",                        # vendored library bundle
+    "/soljson-v0.8.21+commit.a1b2c3d4.js",        # versioned vendor blob
+])
+def test_generated_javascript_drops(path):
+    assert classify_endpoint(path) == "static"
 
 
 def test_empty_path_kept():
