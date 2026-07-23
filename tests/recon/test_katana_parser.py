@@ -1,7 +1,7 @@
 # tests/recon/test_katana_parser.py
 from pathlib import Path
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.katana_parser import parse
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.katana_parser import parse
 
 FIX = Path(__file__).parent / "fixtures" / "katana.jsonl"
 

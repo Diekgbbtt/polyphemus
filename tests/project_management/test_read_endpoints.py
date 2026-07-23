@@ -12,12 +12,12 @@ pytestmark = pytest.mark.skipif(not DSN, reason="live PG not reachable")
 
 @pytest.fixture(scope="module")
 def client():
-    from agent.app.main import app
+    from polymerhus.app.main import app
     return TestClient(app)
 
 
 def test_get_projects_lists_created_project(client):
-    from agent.app.clients import pg
+    from polymerhus.app.clients import pg
     pid = str(uuid.uuid4())
     pg.create_project(pid, "list-test")
     r = client.get("/projects")
@@ -33,7 +33,7 @@ def test_get_runs_requires_running_status(client):
 
 def test_get_runs_marks_stalled(client):
     import psycopg
-    from agent.app.clients import pg
+    from polymerhus.app.clients import pg
     pid, rid = str(uuid.uuid4()), str(uuid.uuid4())
     pg.create_project(pid, "live-test")
     pg.create_run(rid, pid)
@@ -48,7 +48,7 @@ def test_get_runs_marks_stalled(client):
 
 
 def test_get_runs_marks_live(client):
-    from agent.app.clients import pg
+    from polymerhus.app.clients import pg
     pid, rid = str(uuid.uuid4()), str(uuid.uuid4())
     pg.create_project(pid, "live-test")
     pg.create_run(rid, pid)  # heartbeat now()
@@ -61,7 +61,7 @@ def test_graph_404_unknown_project(client):
 
 
 def test_graph_shape_for_known_project(client):
-    from agent.app.clients import pg
+    from polymerhus.app.clients import pg
     pid = str(uuid.uuid4())
     pg.create_project(pid, "graph-shape")
     r = client.get(f"/projects/{pid}/graph")

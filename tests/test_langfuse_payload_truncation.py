@@ -23,7 +23,7 @@ from __future__ import annotations
 
 import json
 
-from agent.app.observability.langfuse_tracing import (
+from polymerhus.app.observability.langfuse_tracing import (
     _DEFAULT_EXPORT_TIMEOUT_S,
     _DEFAULT_MAX_ATTRIBUTE_BYTES,
     _active_span_exporter,

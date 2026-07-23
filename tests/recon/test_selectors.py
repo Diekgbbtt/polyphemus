@@ -1,5 +1,5 @@
-from agent.recon.selectors import apply_selector, selector_matches
-from agent.recon.types import AssetSelector
+from polymerhus.recon.domain.selectors import apply_selector, selector_matches
+from polymerhus.recon.domain.types import AssetSelector
 
 JS = AssetSelector(field="path", op="ends_with", values=[".js", ".mjs"])
 

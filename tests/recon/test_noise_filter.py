@@ -6,13 +6,13 @@ PRESERVE seed sets, the fingerprint rules, and the delta-level filter behavior
 """
 import pytest
 
-from agent.recon.noise_filter import (
+from polymerhus.recon.domain.noise_filter import (
     classify_endpoint,
     filter_deltas,
     filter_observations,
     host_in_scope,
 )
-from agent.recon.types import AssetDelta, Edge, Observation
+from polymerhus.recon.domain.types import AssetDelta, Edge, Observation
 
 
 # --- static-render path segments all drop ---------------------------------
@@ -325,7 +325,7 @@ def test_filter_observations_fails_open_on_unresolvable_host():
 # --- curate-level integration: observation scope drop ----------------------
 
 def test_curate_drops_out_of_scope_observation_anchor():
-    from agent.recon.curator import curate
+    from polymerhus.recon.domain.curator import curate
     obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
     merged = curate([], [obs], "p", merge_fn=lambda cypher, params: None,
                     scope_domain="daytona.io")
@@ -333,7 +333,7 @@ def test_curate_drops_out_of_scope_observation_anchor():
 
 
 def test_curate_keeps_observation_when_no_scope_domain():
-    from agent.recon.curator import curate
+    from polymerhus.recon.domain.curator import curate
     obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
     merged = curate([], [obs], "p", merge_fn=lambda cypher, params: None,
                     scope_domain=None)
@@ -344,20 +344,20 @@ def test_curate_keeps_observation_when_no_scope_domain():
 
 
 def test_classify_profile_json_content_type_is_restapi():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     assert classify_profile("application/json") == "restapi"
     assert classify_profile("application/hal+json; charset=utf-8") == "restapi"
 
 
 def test_classify_profile_html_or_missing_is_webapp():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     assert classify_profile("text/html; charset=utf-8") == "webapp"
     assert classify_profile(None) == "webapp"
     assert classify_profile("", "https://www.example.com") == "webapp"
 
 
 def test_classify_profile_api_hostname_label_is_restapi():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     # host label match, even with a non-JSON content-type
     assert classify_profile("text/html", "https://api.example.com") == "restapi"
     assert classify_profile("text/html", "https://graphql.example.com/") == "restapi"
@@ -381,13 +381,13 @@ def test_classify_profile_api_hostname_label_is_restapi():
     "https://example.com/graphql?query=x",     # query string ignored
 ])
 def test_classify_profile_graphql_path_is_graphql_api(url):
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     # A JSON content-type would otherwise say restapi - the graphql path wins.
     assert classify_profile("application/json", url) == "graphql_api"
 
 
 def test_graphql_api_takes_precedence_over_restapi_and_webapp():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     # graphql path beats a plain HTML app (would be webapp) ...
     assert classify_profile("text/html", "https://example.com/graphql") == "graphql_api"
     # ... and beats an api hostname label (would be restapi).
@@ -398,7 +398,7 @@ def test_graphql_api_takes_precedence_over_restapi_and_webapp():
 
 
 def test_non_graphql_paths_do_not_false_match():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     # substrings / near-misses must not match (path-exact, not substring)
     assert classify_profile("text/html", "https://example.com/graphql-docs") == "webapp"
     assert classify_profile("text/html", "https://example.com/mygraphql") == "webapp"

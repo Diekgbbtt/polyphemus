@@ -1,4 +1,4 @@
-"""Tests for `agent.recon.async_bridge.run_coro_blocking` - the fix for the
+"""Tests for `polymerhus.recon.control.async_bridge.run_coro_blocking` - the fix for the
 platform-wide bug where a sync pod node (`default_exec_fn`/
 `default_run_crawl_fn`) called `asyncio.run(...)` while already running
 inside the pipeline's event loop (routes.py -> asyncio.create_task ->
@@ -14,7 +14,7 @@ import asyncio
 
 import pytest
 
-from agent.recon.async_bridge import run_coro_blocking
+from polymerhus.recon.control.async_bridge import run_coro_blocking
 
 
 async def _return_value(value):
@@ -79,7 +79,7 @@ def test_default_exec_fn_works_when_called_from_within_running_loop(monkeypatch)
     does not catch itself, but production code paths further up did swallow
     it, silently degrading the job. Here we assert the call surfaces a
     normal `ExecResult` instead of raising."""
-    import agent.recon.pod as pod_module
+    import polymerhus.recon.domain.pod as pod_module
 
     class _FakeToolMessage:
         def __init__(self, artifact):
@@ -120,7 +120,7 @@ def test_default_exec_fn_works_when_called_from_within_running_loop(monkeypatch)
 
     result = asyncio.run(outer())
 
-    from agent.recon.types import ExecResult
+    from polymerhus.recon.domain.types import ExecResult
 
     assert isinstance(result, ExecResult)
     assert result.returncode == 0

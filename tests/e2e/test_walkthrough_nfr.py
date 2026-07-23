@@ -21,15 +21,15 @@ from neo4j import GraphDatabase
 
 from db.neo4j.init_schema import init_schema
 from db.neo4j.l1_schema import init_l1_schema
-from agent.recon import curator
-from agent.recon.analysis import l1_curator, sweep, index_card
-from agent.recon.analysis import anatomy
-from agent.recon.analysis.anatomy import webpage_profile, classify_authz, commit_anatomy, WebpageProfileProposal
-from agent.recon.analysis.l1_types import (
+from polymerhus.recon.domain import curator
+from polymerhus.analysis import l1_curator, sweep, index_card
+from polymerhus.analysis import anatomy
+from polymerhus.analysis.anatomy import webpage_profile, classify_authz, commit_anatomy, WebpageProfileProposal
+from polymerhus.analysis.l1_types import (
     AggregatesDelta, DataFlowDelta, DataItemDelta, JudgmentEnvelope, L0Ref,
     Provenance, ServiceDelta, SurfacesAtDelta, SystemDelta, SystemEdgeDelta,
 )
-from agent.recon.types import AssetDelta
+from polymerhus.recon.domain.types import AssetDelta
 from tests.conftest import wait_for
 
 from tests.conftest import neo4j_target

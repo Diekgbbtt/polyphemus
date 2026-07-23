@@ -1,5 +1,5 @@
 # tests/recon/test_types.py
-from agent.recon.types import AssetDelta, Edge, Observation, JobSpec, ExecResult
+from polymerhus.recon.domain.types import AssetDelta, Edge, Observation, JobSpec, ExecResult
 
 def test_asset_delta_with_edge_roundtrips():
     d = AssetDelta(

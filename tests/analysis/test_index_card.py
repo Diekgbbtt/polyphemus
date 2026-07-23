@@ -3,7 +3,7 @@ with an injected read_fn (no live DB).
 """
 import pytest
 
-from agent.recon.analysis import index_card
+from polymerhus.analysis import index_card
 
 
 def test_service_card_shape():

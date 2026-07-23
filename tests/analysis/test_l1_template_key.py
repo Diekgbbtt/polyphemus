@@ -1,8 +1,8 @@
 """FR-TEMPLATE unit tier — the endpoint-template derivation (L1D-32 / door D5)
 and its wiring onto the AGGREGATES edge at assignment.
 """
-from agent.recon.analysis import l1_curator
-from agent.recon.analysis.l1_types import (
+from polymerhus.analysis import l1_curator
+from polymerhus.analysis.l1_types import (
     AggregatesDelta,
     JudgmentEnvelope,
     L0Ref,

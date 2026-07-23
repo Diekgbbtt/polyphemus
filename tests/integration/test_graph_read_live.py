@@ -17,8 +17,8 @@ from tests.conftest import neo4j_live
 @pytest.mark.skipif(not neo4j_live(), reason="live neo4j not reachable")
 def test_fetch_project_graph_includes_isolated_seed():
     """An isolated seed node (no edges) must still surface in the project graph."""
-    from agent.app.clients import neo4j_client
-    from agent.recon.graph_read import fetch_project_graph
+    from polymerhus.app.clients import neo4j_client
+    from polymerhus.recon.domain.graph_read import fetch_project_graph
     pid = "graphtest-" + os.urandom(4).hex()
     neo4j_client.merge(
         "MERGE (n:Domain {name:$name, project_id:$pid})", {"name": "lone.example", "pid": pid})

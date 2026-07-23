@@ -4,8 +4,8 @@ AUTHENTICATED_BY {realm} typed edges it writes from per-role outcomes.
 
 Each test names the assertion it encodes (docs/design/L1-MVP-plan.md FR-AUTHZSKILL ledger).
 """
-from agent.recon.analysis import anatomy
-from agent.recon.analysis.anatomy import plan_authz_probes, classify_authz, commit_anatomy
+from polymerhus.analysis import anatomy
+from polymerhus.analysis.anatomy import plan_authz_probes, classify_authz, commit_anatomy
 
 
 _AUTH_CTX = {
@@ -122,7 +122,7 @@ def test_commit_writes_system_edges_fail_open():
 # --- AST-AUTHZ-06: the SKILL.md encodes the inverse-pyramid discipline ---
 
 def test_authz_skill_encodes_inverse_pyramid():
-    from agent.recon import skills
+    from polymerhus.recon.domain import skills
     skills.clear_cache()
     text = skills.skill_for("analysis/anatomy/authorization-pyramid")
     assert not text.startswith("---")  # frontmatter stripped

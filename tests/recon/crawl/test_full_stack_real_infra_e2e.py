@@ -1,13 +1,13 @@
 """Full-stack REAL-infra recon e2e (Stream-B loop deliverable).
 
 Unlike `test_full_stack_live_llm_e2e.py` (which fakes the Kali exec + graph),
-this drives `agent.recon.pipeline.run_pipeline` with its PRODUCTION defaults
+this drives `polymerhus.recon.control.pipeline.run_pipeline` with its PRODUCTION defaults
 against the live compose stack and a real target:
 
   - real `default_exec_fn` -> Kali MCP `execute_command` over streamable-http
   - real `default_triage_fn` -> OpenRouter (reasoning model) triager LLM
   - real `curate` -> `neo4j_client.merge` writing into the live Neo4j
-  - real Postgres registry (`agent.app.clients.pg`)
+  - real Postgres registry (`polymerhus.app.clients.pg`)
 
 Nothing is mocked. It runs a bounded, reliable subset (subfinder -> dnsx ->
 httpx) so the assertion surface is deterministic-ish while still exercising
@@ -16,7 +16,7 @@ three live tool families, the real triager, and real graph writes.
 Gated + skippable: skips cleanly when the OpenRouter key is absent OR the
 live stack (Kali MCP / Neo4j / Postgres) is not reachable, so it never breaks
 the offline suite and never requires network/infra by default. It runs from
-the HOST, so it rebinds `agent.app.config` + `neo4j_client` to the localhost
+the HOST, so it rebinds `polymerhus.app.config` + `neo4j_client` to the localhost
 service ports (the compose-internal hostnames in `.env` only resolve inside
 the network).
 """
@@ -73,9 +73,9 @@ def _bridge_env_to_localhost() -> None:
     os.environ["KALI_MCP_URL"] = "http://localhost:8000/mcp"
     os.environ.setdefault("MAX_POD_ITERS", "2")
 
-    import agent.app.config as config_mod
+    import polymerhus.app.config as config_mod
     importlib.reload(config_mod)
-    from agent.app.clients import neo4j_client
+    from polymerhus.app.clients import neo4j_client
     importlib.reload(neo4j_client)
 
 
@@ -87,11 +87,11 @@ def test_full_stack_real_infra_pipeline():
 
     import asyncio
 
-    from agent.app.clients import neo4j_client, pg
-    from agent.recon import pipeline
+    from polymerhus.app.clients import neo4j_client, pg
+    from polymerhus.recon.control import pipeline
 
     # Fail-fast: the Kali MCP execute_command tool actually runs a command.
-    from agent.recon.pod import default_exec_fn
+    from polymerhus.recon.domain.pod import default_exec_fn
     echo = default_exec_fn("echo real-infra-e2e", "preflight", 30)
     assert echo.returncode == 0 and "real-infra-e2e" in echo.stdout, echo
 

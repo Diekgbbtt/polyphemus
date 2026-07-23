@@ -3,7 +3,7 @@ import uuid
 import psycopg
 import pytest
 
-from agent.app.clients import pg
+from polymerhus.app.clients import pg
 
 from tests.conftest import pg_live_dsn
 

@@ -1,7 +1,7 @@
 # tests/recon/test_whois_parser.py
 from pathlib import Path
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.whois_parser import parse
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.whois_parser import parse
 
 WHOIS_FIX = Path(__file__).parent / "fixtures" / "whois.txt"
 

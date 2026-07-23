@@ -1,7 +1,7 @@
 import pytest
 
-from agent.recon.parsers import PARSERS
-from agent.recon.jobs import JOBS, PHASES, build_phase_plan, validate_job_subset
+from polymerhus.recon.domain.parsers import PARSERS
+from polymerhus.recon.control.jobs import JOBS, PHASES, build_phase_plan, validate_job_subset
 
 
 def test_every_job_tool_has_a_parser():

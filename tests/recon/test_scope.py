@@ -1,5 +1,5 @@
 """Scope descriptor parsing (forward decision D14 / D11)."""
-from agent.recon.scope import DISCOVERY_JOBS, parse_scope
+from polymerhus.recon.control.scope import DISCOVERY_JOBS, parse_scope
 
 
 def test_bare_apex_is_exact_host():

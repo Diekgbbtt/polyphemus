@@ -4,7 +4,7 @@ Encodes the FR-INVENTORY assertion ledger (AST-INV-01): the reader returns the
 project's current service slugs, system `kind:disc` keys, and data-item keys
 (sorted, deduped), and fails open to the empty shape on a read error.
 """
-from agent.recon.analysis.l1_inventory import read_l1_inventory
+from polymerhus.analysis.l1_inventory import read_l1_inventory
 
 
 def test_reads_service_slugs_systems_dataitems():

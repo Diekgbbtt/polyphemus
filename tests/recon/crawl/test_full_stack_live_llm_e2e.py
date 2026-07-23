@@ -7,14 +7,14 @@ LLM seams - the triager (`fake_triage_fn` -> `[]`) and the crawler
 tests do (real `run_pipeline`, real `job_agent`/`run_job`, real pod graphs,
 real parsers, real curator writing into an in-memory graph, canned kali
 stdout, a fake Steel toolset) but swaps in the REAL triager LLM
-(`agent.recon.pod.default_triage_fn`, unmodified) for the httpx job and the
-REAL crawler LLM (`agent.recon.crawl.crawl_agent.run_crawl`'s ReAct loop,
+(`polymerhus.recon.domain.pod.default_triage_fn`, unmodified) for the httpx job and the
+REAL crawler LLM (`polymerhus.recon.crawl.crawl_agent.run_crawl`'s ReAct loop,
 via `chat_model_for("crawler")`) driving a fake-but-real-`StructuredTool`
 Steel toolset.
 
 Requires a live OpenRouter key. The operator's `.env` carries the OpenRouter
 key under `OPENAI_API_KEY` (not `API_KEY_OPENROUTER`, which is what
-`agent.app.llm.providers` actually reads) - `_bridge_openrouter_env` below
+`polymerhus.app.llm.providers` actually reads) - `_bridge_openrouter_env` below
 does that one-time env-var rename for the test process only; nothing is
 written back to `.env`.
 
@@ -30,15 +30,15 @@ import pytest
 from langchain_core.tools import StructuredTool
 from pydantic import BaseModel, Field
 
-from agent.recon import pipeline
-from agent.recon.crawl import crawl_agent
-from agent.recon.crawl import crawl_pod as crawl_pod_module
-from agent.recon.crawl.crawl_pod import build_crawl_pod
-from agent.recon.curator import ANCHOR_ALLOWLIST, curate
-from agent.recon.pod import default_triage_fn
-from agent.recon import pod as pod_module
-from agent.recon.pod import build_pod_graph
-from agent.recon.types import ExecResult
+from polymerhus.recon.control import pipeline
+from polymerhus.recon.crawl import crawl_agent
+from polymerhus.recon.crawl import crawl_pod as crawl_pod_module
+from polymerhus.recon.crawl.crawl_pod import build_crawl_pod
+from polymerhus.recon.domain.curator import ANCHOR_ALLOWLIST, curate
+from polymerhus.recon.domain.pod import default_triage_fn
+from polymerhus.recon.domain import pod as pod_module
+from polymerhus.recon.domain.pod import build_pod_graph
+from polymerhus.recon.domain.types import ExecResult
 
 from tests.recon.test_pipeline_e2e import (
     FakeRegistry,
@@ -65,7 +65,7 @@ _CRAWL_MAX_ITERS = 6
 
 def _bridge_openrouter_env():
     """Bridge the operator's `.env` OpenRouter key (stored as OPENAI_API_KEY)
-    into the names `agent.app.llm.providers` actually reads
+    into the names `polymerhus.app.llm.providers` actually reads
     (`API_KEY_OPENROUTER` + `LLM_MODEL_<ROLE>="openrouter:<model>"`). Only
     touches this process's os.environ - never writes to .env."""
     key = os.environ.get("API_KEY_OPENROUTER") or os.environ.get("OPENAI_API_KEY")
@@ -222,7 +222,7 @@ def test_full_stack_live_llm_happy_path():
     # worth of live calls: build the triager role and fire one trivial
     # prompt. If this fails (bad key/network/model), fail loudly and early
     # rather than let the real assertions below produce a confusing trace.
-    from agent.app.llm.roles import chat_model_for
+    from polymerhus.app.llm.roles import chat_model_for
 
     smoke = chat_model_for("triager").invoke("Reply with exactly the word: pong")
     assert "pong" in smoke.content.lower(), (
@@ -247,7 +247,7 @@ def test_full_stack_live_llm_happy_path():
     crawl_pod_fixture = build_crawl_pod(
         run_crawl_fn=_run_crawl_fn_factory(steel_tools),
         parse_fn=__import__(
-            "agent.recon.parsers.steel_parser", fromlist=["parse"]
+            "polymerhus.recon.domain.parsers.steel_parser", fromlist=["parse"]
         ).parse,
         triage_fn=lambda exec_result, assets, job: [],  # crawl-pod's own post-crawl triage stays deterministic
         curate_fn=curate_fn,
@@ -268,7 +268,7 @@ def test_full_stack_live_llm_happy_path():
                 "proj-live-llm-e2e",
                 run_id="run-live-llm-e2e",
                 job_subset=["subfinder", "dnsx", "httpx", "steel_crawl"],
-                run_job=None,  # real agent.recon.job_agent.run_job -> real default_pod_invoke dispatch
+                run_job=None,  # real polymerhus.recon.control.job_agent.run_job -> real default_pod_invoke dispatch
                 load_settings=load_settings,
                 registry=registry,
                 read_assets=graph.read_assets,

@@ -7,10 +7,10 @@ AssetDelta decomposition end to end.
 """
 import json
 
-from agent.recon.crawl import crawl_pod
-from agent.recon.crawl.steel_client import SteelNotConfigured
-from agent.recon.parsers.steel_parser import parse as steel_parse
-from agent.recon.types import JobSpec
+from polymerhus.recon.crawl import crawl_pod
+from polymerhus.recon.crawl.steel_client import SteelNotConfigured
+from polymerhus.recon.domain.parsers.steel_parser import parse as steel_parse
+from polymerhus.recon.domain.types import JobSpec
 
 STEEL_CRAWL_JOB = JobSpec(
     tool="steel_crawl",
@@ -154,7 +154,7 @@ def test_crawl_pod_invoke_builds_pod_state_and_scopes_project_id(monkeypatch):
     class FakeCrawlPod:
         def invoke(self, state, config=None):
             captured.update(state)
-            from agent.recon.types import PodExport
+            from polymerhus.recon.domain.types import PodExport
             return {"export": PodExport(input_asset=state["input_asset"], verdict="success")}
 
     monkeypatch.setattr(crawl_pod, "crawl_pod", FakeCrawlPod())
@@ -179,8 +179,8 @@ def test_default_crawl_pod_module_level_instance_is_import_safe():
 
 
 def test_crawl_pod_fires_notify_on_awaiting_auth():
-    from agent.recon.crawl.crawl_pod import build_crawl_pod
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.crawl.crawl_pod import build_crawl_pod
+    from polymerhus.recon.domain.types import JobSpec
 
     notified = []
 
@@ -208,7 +208,7 @@ def test_crawl_pod_fires_notify_on_awaiting_auth():
 
 
 def test_credentials_apply_to_target_gates_on_host():
-    from agent.recon.crawl.crawl_pod import credentials_apply_to_target
+    from polymerhus.recon.crawl.crawl_pod import credentials_apply_to_target
     creds = {"login_url": "https://login.example.com/", "domain": "example.com"}
     assert credentials_apply_to_target(creds, "https://app.example.com") is True
     assert credentials_apply_to_target(creds, "https://other.org") is False
@@ -220,8 +220,8 @@ def test_credentials_apply_to_target_gates_on_host():
 def test_crawl_scope_folds_to_registrable_domain_of_seed_host():
     """Change A: scope entries are folded to the registrable domain of the
     seed host, so the crawl frontier admits any subdomain of it."""
-    from agent.recon.crawl.crawl_pod import build_crawl_pod
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.crawl.crawl_pod import build_crawl_pod
+    from polymerhus.recon.domain.types import JobSpec
 
     captured = {}
 
@@ -278,8 +278,8 @@ def test_crawl_node_falls_back_to_anonymous_when_credentials_off_target():
     """Change C: credentials present but for a DIFFERENT registrable domain
     (and no cookies) must fall through to the anonymous run_crawl_fn, not
     block on the interactive human-viewer path."""
-    from agent.recon.crawl.crawl_pod import build_crawl_pod
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.crawl.crawl_pod import build_crawl_pod
+    from polymerhus.recon.domain.types import JobSpec
 
     anon_called = {}
     interactive_called = {"hit": False}
@@ -316,8 +316,8 @@ def test_crawl_node_falls_back_to_anonymous_when_credentials_off_target():
 def test_crawl_node_takes_interactive_path_with_no_credentials():
     """Change C (unchanged behavior): use_auth signalled with NO credentials
     and NO cookies still runs the interactive human-viewer path."""
-    from agent.recon.crawl.crawl_pod import build_crawl_pod
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.crawl.crawl_pod import build_crawl_pod
+    from polymerhus.recon.domain.types import JobSpec
 
     interactive_called = {"hit": False}
     anon_called = {"hit": False}
@@ -349,8 +349,8 @@ def test_crawl_node_takes_interactive_path_with_no_credentials():
 
 
 def test_crawl_node_takes_credentialed_path_for_matching_host():
-    from agent.recon.crawl.crawl_pod import build_crawl_pod
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.crawl.crawl_pod import build_crawl_pod
+    from polymerhus.recon.domain.types import JobSpec
 
     called = {}
 

@@ -1,9 +1,9 @@
 import re
 
-from agent.recon.types import JobSpec, ExecResult, Observation
-from agent.recon import pod
-from agent.recon.curator import curate
-from agent.recon.jobs import JOBS
+from polymerhus.recon.domain.types import JobSpec, ExecResult, Observation
+from polymerhus.recon.domain import pod
+from polymerhus.recon.domain.curator import curate
+from polymerhus.recon.control.jobs import JOBS
 
 HTTPX_JOB = JobSpec(tool="httpx", skill="http_probe",
                     command_template="httpx -u {target} -json -silent",
@@ -429,7 +429,7 @@ def test_triage_caps_assets_to_avoid_llm_context_overflow(monkeypatch):
     400'd the triager, failed the pod BEFORE the curator, and silently dropped
     every parsed asset (0 nodes persisted). The prompt must be capped to a
     sample + the true total."""
-    from agent.recon.types import AssetDelta
+    from polymerhus.recon.domain.types import AssetDelta
 
     captured = {}
 
@@ -442,7 +442,7 @@ def test_triage_caps_assets_to_avoid_llm_context_overflow(monkeypatch):
         def with_structured_output(self, schema, method=None):
             return FakeStructured()
 
-    import agent.app.llm.roles as roles
+    import polymerhus.app.llm.roles as roles
     monkeypatch.setattr(roles, "chat_model_for", lambda role: FakeLLM())
 
     n = pod._MAX_TRIAGE_ASSETS + 300
@@ -503,7 +503,7 @@ def test_batched_jsluice_parser_emits_endpoint_and_redacted_secret():
     """The parser side already handles the batch scanner's interleaved output:
     a urls line -> Endpoint, a base_url-annotated secrets line -> redacted
     Secret with a HAS_SECRET edge to the bundle's BaseURL."""
-    from agent.recon.parsers.jsluice_parser import parse
+    from polymerhus.recon.domain.parsers.jsluice_parser import parse
 
     stdout = (
         '{"url":"https://h.example.com/api/hidden","base_url":"https://h.example.com"}\n'
@@ -548,8 +548,8 @@ def test_curator_node_omits_scope_domain_when_absent():
 
 
 def test_pod_export_records_executed_command():
-    from agent.recon.pod import build_pod_graph
-    from agent.recon.types import ExecResult, JobSpec
+    from polymerhus.recon.domain.pod import build_pod_graph
+    from polymerhus.recon.domain.types import ExecResult, JobSpec
 
     def fake_exec(command, session_id, timeout_s):
         return ExecResult(stdout="", stderr="", returncode=0)
@@ -569,7 +569,7 @@ def test_pod_export_records_executed_command():
 
 
 def test_fill_template_rate_flags_gated_on_rate_profile():
-    from agent.recon.pod import fill_template
+    from polymerhus.recon.domain.pod import fill_template
     tmpl = "ffuf -u {target}/FUZZ -of json {rate_flags}"
     on = fill_template(tmpl, {"url": "https://x"}, {"rate_profile": "throttle"}, tool="ffuf")
     off = fill_template(tmpl, {"url": "https://x"}, {}, tool="ffuf")

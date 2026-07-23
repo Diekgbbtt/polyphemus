@@ -1,5 +1,5 @@
-from agent.recon.types import AssetDelta, Edge, Observation
-from agent.recon import curator
+from polymerhus.recon.domain.types import AssetDelta, Edge, Observation
+from polymerhus.recon.domain import curator
 
 def test_asset_cypher_merges_on_identity_plus_project():
     d = AssetDelta(type="Endpoint",

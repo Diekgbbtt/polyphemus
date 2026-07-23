@@ -4,11 +4,11 @@
 Fully mocked - `psycopg.connect` is monkeypatched to a fake connection/cursor
 pair that records every executed statement, mirroring the sync
 `with psycopg.connect(...) as conn, conn.cursor() as cur:` pattern already
-used by `agent.app.clients.pg.check()`. No live Postgres involved.
+used by `polymerhus.app.clients.pg.check()`. No live Postgres involved.
 """
 import json
 
-from agent.app.clients import pg
+from polymerhus.app.clients import pg
 
 
 class FakeCursor:

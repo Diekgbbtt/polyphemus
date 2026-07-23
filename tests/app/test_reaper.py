@@ -1,5 +1,5 @@
 import os, uuid, psycopg, pytest
-from agent.app.clients import pg
+from polymerhus.app.clients import pg
 from tests.conftest import pg_live_dsn
 
 DSN = pg_live_dsn()

@@ -14,8 +14,8 @@ These are pure-builder / seam unit tests (no live DB / LLM).
 """
 import pytest
 
-from agent.recon.analysis import l1_curator, sweep
-from agent.recon.analysis.l1_types import (
+from polymerhus.analysis import l1_curator, sweep
+from polymerhus.analysis.l1_types import (
     L1_SINGLETON,
     DataRelationshipDelta,
     Provenance,
@@ -190,5 +190,5 @@ def test_resolve_stale_owners_fail_open_on_read_error():
 def test_known_kinds_enumeration_is_the_single_source():
     """The kinds enumeration the sweep uses is the SAME constant the curator
     validates against (single source of truth)."""
-    from agent.recon.analysis.l1_curator import SYSTEM_KINDS
+    from polymerhus.analysis.l1_curator import SYSTEM_KINDS
     assert set(sweep.known_system_kind_ids()) == {k for k, _ in SYSTEM_KINDS}

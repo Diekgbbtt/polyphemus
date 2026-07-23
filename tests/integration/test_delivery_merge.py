@@ -14,15 +14,15 @@ from neo4j import GraphDatabase
 
 from db.neo4j.init_schema import init_schema
 from db.neo4j.l1_schema import init_l1_schema
-from agent.recon import curator
-from agent.recon.analysis import delivery
-from agent.recon.analysis.analyser_types import (
+from polymerhus.recon.domain import curator
+from polymerhus.analysis import delivery
+from polymerhus.analysis.analyser_types import (
     AggregatesProposal, L1DeltaBatch, ServiceProposal, SystemProposal, proposals_to_deltas,
 )
-from agent.recon.analysis import l1_curator
-from agent.recon.analysis.pod import AnalyserExport, build_analyser_graph, run_analyser
-from agent.recon.analysis.l1_types import L0Ref
-from agent.recon.types import AssetDelta, Observation
+from polymerhus.analysis import l1_curator
+from polymerhus.analysis.pod import AnalyserExport, build_analyser_graph, run_analyser
+from polymerhus.analysis.l1_types import L0Ref
+from polymerhus.recon.domain.types import AssetDelta, Observation
 from tests.conftest import wait_for
 
 from tests.conftest import neo4j_target

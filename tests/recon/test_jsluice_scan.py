@@ -3,7 +3,7 @@ import ssl
 import subprocess
 import urllib.request
 
-from agent.recon.scripts import jsluice_scan as js
+from polymerhus.recon.scripts import jsluice_scan as js
 
 
 # --------------------------- identification ------------------------------- #

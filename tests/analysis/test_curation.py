@@ -7,10 +7,10 @@ monkeypatched so every test is hermetic. Each test names the assertion it encode
 """
 import pytest
 
-from agent.recon.analysis import curation
-from agent.recon.analysis import anatomy, index_card, l1_curator, sweep
-from agent.recon.analysis.anatomy import AnatomyResult
-from agent.recon.analysis.curation_types import (
+from polymerhus.analysis import curation
+from polymerhus.analysis import anatomy, index_card, l1_curator, sweep
+from polymerhus.analysis.anatomy import AnatomyResult
+from polymerhus.analysis.curation_types import (
     CurationBatch,
     DeleteProposal,
     MergeProposal,
@@ -18,7 +18,7 @@ from agent.recon.analysis.curation_types import (
     RehomeProposal,
     curation_proposals_to_ops,
 )
-from agent.recon.analysis.l1_types import Provenance
+from polymerhus.analysis.l1_types import Provenance
 
 
 def _empty_read_fn(query, params):
@@ -437,7 +437,7 @@ def test_curation_skill_defines_dedup_as_semantic_not_identity_reuse():
     contract: retitled away from `Dedup is identity reuse`, a meaning-based test,
     a pairwise-before-empty rule, the precision guard, a worked example, and NONE
     of the old exact-key `iff` rule."""
-    from agent.recon import skills
+    from polymerhus.recon.domain import skills
     skills.clear_cache()
     text = skills.skill_for("analysis/curation")
     low = text.lower()

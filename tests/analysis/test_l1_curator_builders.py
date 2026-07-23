@@ -10,8 +10,8 @@ import re
 
 import pytest
 
-from agent.recon.analysis import l1_curator
-from agent.recon.analysis.l1_types import (
+from polymerhus.analysis import l1_curator
+from polymerhus.analysis.l1_types import (
     L1_SINGLETON,
     AggregatesDelta,
     JudgmentEnvelope,
@@ -161,7 +161,7 @@ def test_l1_curate_defaults_to_neo4j_client_merge(monkeypatch):
     """When no merge_fn is injected, the sole-writer dispatches through
     neo4j_client.merge (the same driver seam L0's curator uses)."""
     calls = []
-    import agent.app.clients.neo4j_client as nc
+    import polymerhus.app.clients.neo4j_client as nc
     monkeypatch.setattr(nc, "merge", lambda cy, p: calls.append((cy, p)))
     n_s, n_sy = l1_curator.l1_curate([ServiceDelta(business_function_slug="x", provenance=PROV)], [], "proj1")
     assert (n_s, n_sy) == (1, 0)

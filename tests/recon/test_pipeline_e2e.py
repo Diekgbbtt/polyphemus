@@ -1,9 +1,9 @@
 """End-to-end pipeline integration test (SP3 Task 7).
 
-Wires the REAL per-job agent (`agent.recon.job_agent.run_job`) + REAL pod
-graph (`agent.recon.pod.build_pod_graph`) + REAL parsers
-(`agent.recon.parsers`) + REAL curator (`agent.recon.curator.curate`) + REAL
-pipeline (`agent.recon.pipeline.run_pipeline`) together. The only fakes are
+Wires the REAL per-job agent (`polymerhus.recon.control.job_agent.run_job`) + REAL pod
+graph (`polymerhus.recon.domain.pod.build_pod_graph`) + REAL parsers
+(`polymerhus.recon.domain.parsers`) + REAL curator (`polymerhus.recon.domain.curator.curate`) + REAL
+pipeline (`polymerhus.recon.control.pipeline.run_pipeline`) together. The only fakes are
 the two true externals - tool execution (`exec_fn`) and the LLM nodes
 (deterministic `default_preprocess_fn` stands in for the preprocess LLM seam;
 a `triage_fn` returning `[]` stands in for the triager LLM) - plus the
@@ -25,11 +25,11 @@ import uuid
 import pytest
 from pathlib import Path
 
-from agent.recon import pipeline
-from agent.recon.curator import curate
-from agent.recon.job_agent import build_job_agent, default_preprocess_fn, run_job as real_run_job
-from agent.recon.pod import build_pod_graph
-from agent.recon.types import ExecResult
+from polymerhus.recon.control import pipeline
+from polymerhus.recon.domain.curator import curate
+from polymerhus.recon.control.job_agent import build_job_agent, default_preprocess_fn, run_job as real_run_job
+from polymerhus.recon.domain.pod import build_pod_graph
+from polymerhus.recon.domain.types import ExecResult
 
 FIXTURES = Path(__file__).parent / "fixtures"
 
