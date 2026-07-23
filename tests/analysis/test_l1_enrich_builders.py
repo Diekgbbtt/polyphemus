@@ -4,8 +4,8 @@ proposal->delta mapping. Store-level behaviour is the integration tier
 """
 import pytest
 
-from agent.recon.analysis import l1_curator
-from agent.recon.analysis.analyser_types import (
+from polymerhus.analysis import l1_curator
+from polymerhus.analysis.analyser_types import (
     DataFlowProposal,
     DataItemProposal,
     DataRelationshipProposal,
@@ -14,7 +14,7 @@ from agent.recon.analysis.analyser_types import (
     SystemEdgeProposal,
     enrichment_proposals_to_deltas,
 )
-from agent.recon.analysis.l1_types import (
+from polymerhus.analysis.l1_types import (
     DataFlowDelta,
     DataItemDelta,
     DataRelationshipDelta,

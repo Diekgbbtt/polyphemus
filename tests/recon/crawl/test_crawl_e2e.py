@@ -1,9 +1,9 @@
 """End-to-end agentic-crawl integration test (Sub-plan 4 Task 6).
 
-Wires the REAL crawl pod (`agent.recon.crawl.crawl_pod.build_crawl_pod`) ->
-REAL steel parser (`agent.recon.parsers.steel_parser.parse`) -> REAL curator
-(`agent.recon.curator.curate`, captured in-memory) -> REAL
-`agent.recon.job_agent`/`agent.recon.pipeline` dispatch, exactly mirroring
+Wires the REAL crawl pod (`polymerhus.recon.crawl.crawl_pod.build_crawl_pod`) ->
+REAL steel parser (`polymerhus.recon.domain.parsers.steel_parser.parse`) -> REAL curator
+(`polymerhus.recon.domain.curator.curate`, captured in-memory) -> REAL
+`polymerhus.recon.control.job_agent`/`polymerhus.recon.control.pipeline` dispatch, exactly mirroring
 `tests/recon/test_pipeline_e2e.py`'s pattern for the deterministic-tool
 chain, but extended one phase into the `steel_crawl` (`configurator_mode
 == "agent"`) job.
@@ -23,7 +23,7 @@ The ONLY fakes are:
     real curate() -> read_assets() seam is exercised, not a stub).
 
 `run_crawl_fn`, wired into a `build_crawl_pod` instance, calls the REAL
-`agent.recon.crawl.crawl_agent.run_crawl` ReAct loop synchronously with the
+`polymerhus.recon.crawl.crawl_agent.run_crawl` ReAct loop synchronously with the
 fake `tools`/`llm` injected - so the real bounded tool-call loop, not just
 its return value, is exercised end to end. Both the crawl-pod's and the
 deterministic pod's module-level compiled graphs are monkeypatched (same
@@ -36,16 +36,16 @@ from __future__ import annotations
 import asyncio
 import json
 
-from agent.recon import pipeline
-from agent.recon.crawl import crawl_agent
-from agent.recon.crawl import crawl_pod as crawl_pod_module
-from agent.recon.crawl.crawl_pod import build_crawl_pod
-from agent.recon.curator import curate
-from agent.recon.job_agent import default_preprocess_fn, run_job as real_run_job
-from agent.recon.parsers.steel_parser import parse as steel_parse
-from agent.recon import pod as pod_module
-from agent.recon.pod import build_pod_graph
-from agent.recon.types import ExecResult
+from polymerhus.recon.control import pipeline
+from polymerhus.recon.crawl import crawl_agent
+from polymerhus.recon.crawl import crawl_pod as crawl_pod_module
+from polymerhus.recon.crawl.crawl_pod import build_crawl_pod
+from polymerhus.recon.domain.curator import curate
+from polymerhus.recon.control.job_agent import default_preprocess_fn, run_job as real_run_job
+from polymerhus.recon.domain.parsers.steel_parser import parse as steel_parse
+from polymerhus.recon.domain import pod as pod_module
+from polymerhus.recon.domain.pod import build_pod_graph
+from polymerhus.recon.domain.types import ExecResult
 
 from tests.recon.test_pipeline_e2e import (
     FakeRegistry,
@@ -204,7 +204,7 @@ def _run_recon_pipeline(*, crawl_tools, crawl_llm):
                 "proj-crawl-e2e",
                 run_id="run-crawl-e2e",
                 job_subset=["subfinder", "dnsx", "httpx", "steel_crawl"],
-                run_job=None,  # real agent.recon.job_agent.run_job -> real default_pod_invoke dispatch
+                run_job=None,  # real polymerhus.recon.control.job_agent.run_job -> real default_pod_invoke dispatch
                 load_settings=load_settings,
                 registry=registry,
                 read_assets=graph.read_assets,

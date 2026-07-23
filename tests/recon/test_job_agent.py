@@ -8,9 +8,9 @@ Foundation `pod_graph` and `chat_model_for("job_orchestrator")`.
 """
 import asyncio
 
-from agent.recon import job_agent as ja
-from agent.recon.jobs import JOBS
-from agent.recon.types import PodExport
+from polymerhus.recon.control import job_agent as ja
+from polymerhus.recon.control.jobs import JOBS
+from polymerhus.recon.domain.types import PodExport
 
 
 def make_recording_pod_invoke(fail_on_index: int | None = None):
@@ -215,8 +215,8 @@ def test_run_job_offloads_blocking_invoke_so_gather_is_concurrent():
 
 
 def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(monkeypatch):
-    from agent.recon.crawl import crawl_pod as crawl_pod_module
-    from agent.recon.types import JobSpec, PodExport
+    from polymerhus.recon.crawl import crawl_pod as crawl_pod_module
+    from polymerhus.recon.domain.types import JobSpec, PodExport
 
     calls = []
 
@@ -238,8 +238,8 @@ def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(mon
 
 
 def test_default_pod_invoke_uses_template_pod_for_deterministic_jobs(monkeypatch):
-    from agent.recon import pod as pod_module
-    from agent.recon.types import PodExport
+    from polymerhus.recon.domain import pod as pod_module
+    from polymerhus.recon.domain.types import PodExport
 
     class FakePodGraph:
         def invoke(self, state, config=None):
@@ -267,13 +267,13 @@ def test_default_job_agent_is_import_safe_module_level_instance():
 
 
 def test_steering_preprocess_applies_throttle(monkeypatch):
-    from agent.recon import job_agent
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.control import job_agent
+    from polymerhus.recon.domain.types import JobSpec
 
     # The job agent decides ONLY throttling now; it returns a set of throttle urls
     # and NEVER drops an asset.
     monkeypatch.setattr(
-        "agent.recon.job_agent.decide_pod_selection",
+        "polymerhus.recon.control.job_agent.decide_pod_selection",
         lambda signals, job_name, assets, llm=None: {"https://a"},
     )
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
@@ -296,11 +296,11 @@ def test_steering_preprocess_never_drops_assets(monkeypatch):
     # present, the recon-job agent must build a pod for EVERY budget-capped asset
     # - asset selection belongs to the orchestrator (decide_routing), not here.
     # Even a flagged host still runs; only its rate_profile differs.
-    from agent.recon import job_agent
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.control import job_agent
+    from polymerhus.recon.domain.types import JobSpec
 
     monkeypatch.setattr(
-        "agent.recon.job_agent.decide_pod_selection",
+        "polymerhus.recon.control.job_agent.decide_pod_selection",
         lambda signals, job_name, assets, llm=None: {"https://a"},
     )
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
@@ -318,8 +318,8 @@ def test_steering_preprocess_never_drops_assets(monkeypatch):
 
 
 def test_steering_preprocess_no_signal_falls_back_to_default():
-    from agent.recon import job_agent
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.control import job_agent
+    from polymerhus.recon.domain.types import JobSpec
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
                   produces=["Endpoint"], consumes="BaseURL")
     pod_inputs = job_agent.steering_preprocess_fn(
@@ -344,7 +344,7 @@ class _FakeLLM:
 
 
 def test_decide_pod_selection_returns_throttle_set():
-    from agent.recon.job_agent import decide_pod_selection, PodThrottlePlan, _AssetPlan
+    from polymerhus.recon.control.job_agent import decide_pod_selection, PodThrottlePlan, _AssetPlan
     result = PodThrottlePlan(plan=[
         _AssetPlan(url="https://a", throttle=True),
         _AssetPlan(url="https://b", throttle=False),
@@ -360,7 +360,7 @@ def test_decide_pod_selection_never_drops_asset_omitted_from_plan():
     # Contract regression: the job agent decides ONLY throttling. An asset the LLM
     # does not mention is simply not throttled; it is NEVER dropped (selection is
     # the orchestrator's decide_routing concern). Only 'a' is in the plan.
-    from agent.recon.job_agent import decide_pod_selection, PodThrottlePlan, _AssetPlan
+    from polymerhus.recon.control.job_agent import decide_pod_selection, PodThrottlePlan, _AssetPlan
     result = PodThrottlePlan(plan=[_AssetPlan(url="https://a", throttle=True)])
     throttle = decide_pod_selection(
         [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
@@ -370,7 +370,7 @@ def test_decide_pod_selection_never_drops_asset_omitted_from_plan():
 
 
 def test_decide_pod_selection_fail_open_throttles_nothing():
-    from agent.recon.job_agent import decide_pod_selection
+    from polymerhus.recon.control.job_agent import decide_pod_selection
 
     class Boom:
         def with_structured_output(self, *a, **k): raise RuntimeError("llm down")

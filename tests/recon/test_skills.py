@@ -5,7 +5,7 @@ Each test names the assertion it encodes (docs/design/L1-MVP-plan.md FR-SKILLIF 
 """
 import pytest
 
-from agent.recon import skills
+from polymerhus.recon.domain import skills
 
 
 @pytest.fixture(autouse=True)
@@ -80,7 +80,7 @@ def test_skill_for_never_raises_on_unreadable(monkeypatch):
 # --- AST-SKILLIF-04: triager loader retro-pointed at skill_for ---
 
 def test_triager_loader_retropointed():
-    from agent.recon.pod import _load_triager_skill
+    from polymerhus.recon.domain.pod import _load_triager_skill
     skill = _load_triager_skill()
     # the real writing-observations skill (frontmatter stripped); non-empty here
     # because the skills/ mount is present in the repo
@@ -99,14 +99,14 @@ def test_triager_loader_degrades_to_empty(monkeypatch):
 
     monkeypatch.setattr(pathlib.Path, "read_text", boom)
     skills.clear_cache()
-    from agent.recon.pod import _load_triager_skill
+    from polymerhus.recon.domain.pod import _load_triager_skill
     assert _load_triager_skill() == ""  # triager fallback is '' (no system prompt)
 
 
 # --- AST-SKILLIF-05: analyser loader retro-pointed with the inline fallback ---
 
 def test_analyser_loader_retropointed():
-    from agent.recon.analysis.pod import _load_analyser_skill
+    from polymerhus.analysis.pod import _load_analyser_skill
     skill = _load_analyser_skill()
     assert skill  # the real analyser skill is present (mount is in the repo)
     assert not skill.startswith("---")
@@ -115,7 +115,7 @@ def test_analyser_loader_retropointed():
 
 def test_analyser_loader_degrades_to_inline_fallback(monkeypatch):
     import pathlib
-    from agent.recon.analysis import pod as analyser_pod
+    from polymerhus.analysis import pod as analyser_pod
 
     def boom(self, *a, **k):
         raise OSError("no mount")

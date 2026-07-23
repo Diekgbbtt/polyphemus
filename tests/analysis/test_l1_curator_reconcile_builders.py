@@ -11,8 +11,8 @@ import re
 
 import pytest
 
-from agent.recon.analysis import l1_curator
-from agent.recon.analysis.l1_types import (
+from polymerhus.analysis import l1_curator
+from polymerhus.analysis.l1_types import (
     DeleteOp,
     MergeOp,
     Provenance,
@@ -202,7 +202,7 @@ def test_reconcile_merge_fn_exception_does_not_abort_batch():
 
 def test_reconcile_defaults_to_neo4j_client_merge(monkeypatch):
     calls = []
-    import agent.app.clients.neo4j_client as nc
+    import polymerhus.app.clients.neo4j_client as nc
     monkeypatch.setattr(nc, "merge", lambda cy, p: calls.append((cy, p)))
     out = l1_curator.reconcile(
         "proj1",

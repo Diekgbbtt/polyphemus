@@ -3,7 +3,7 @@ import time
 
 import pytest
 
-# Unit tests import config-backed modules (agent.app.config eager-reads these
+# Unit tests import config-backed modules (polymerhus.app.config eager-reads these
 # env vars at import time). setdefault fills dummies ONLY when the var is
 # absent, so a real sourced .env / the in-network compose env is never
 # overridden, while a clean-env unit run (CI / fresh clone) can still import.
@@ -85,14 +85,14 @@ def _no_live_neo4j_in_unit_tier(request, monkeypatch):
     opt out with `@pytest.mark.live_neo4j` (auto-applied to integration/ and
     e2e/); a unit test that needs graph data injects a fake `read_fn`/`merge_fn`,
     which every module in this codebase already supports."""
-    from agent.app.clients import neo4j_client
+    from polymerhus.app.clients import neo4j_client
 
     if request.node.get_closest_marker("live_neo4j"):
         # Live tier: point the config-backed client at the SAME target the
         # self-built drivers use.
         #
         # Without this there are two sources of truth again. `neo4j_client`
-        # binds its driver at import from `agent.app.config`, which reads the
+        # binds its driver at import from `polymerhus.app.config`, which reads the
         # unit-tier dummy when no real env is exported - so a live test calling
         # `neo4j_client.merge()` died on `Cannot resolve neo4j.invalid` from the
         # host while a sibling test that built its own driver from

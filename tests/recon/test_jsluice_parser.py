@@ -2,8 +2,8 @@
 import hashlib
 from pathlib import Path
 
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.jsluice_parser import parse
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.jsluice_parser import parse
 
 FIX = Path(__file__).parent / "fixtures" / "jsluice.jsonl"
 

@@ -1,7 +1,7 @@
 # tests/recon/test_dns_parser.py
 from pathlib import Path
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.dns_parser import parse_dnsx, parse_puredns
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.dns_parser import parse_dnsx, parse_puredns
 
 DNSX_FIX = Path(__file__).parent / "fixtures" / "dnsx.jsonl"
 PUREDNS_FIX = Path(__file__).parent / "fixtures" / "puredns.txt"

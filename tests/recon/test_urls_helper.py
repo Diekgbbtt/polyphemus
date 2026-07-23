@@ -1,5 +1,5 @@
 # tests/recon/test_urls_helper.py
-from agent.recon.parsers._urls import base_and_path, registrable_domain, url_to_deltas
+from polymerhus.recon.domain.parsers._urls import base_and_path, registrable_domain, url_to_deltas
 
 
 def test_base_and_path_normal_url_with_path():

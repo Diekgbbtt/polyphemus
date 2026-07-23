@@ -7,10 +7,10 @@ injected analyse_fn, and the pipeline hook with the existing injected-fakes styl
 """
 import asyncio
 
-from agent.recon import pipeline
-from agent.recon.analysis import streaming
-from agent.recon.analysis.pod import AnalyserExport
-from agent.recon.types import PodExport
+from polymerhus.recon.control import pipeline
+from polymerhus.analysis import streaming
+from polymerhus.analysis.pod import AnalyserExport
+from polymerhus.recon.domain.types import PodExport
 
 
 # --- stream_analyser_step (the per-increment invocation) ----------------------

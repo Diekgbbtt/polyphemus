@@ -5,9 +5,9 @@ Each test names the assertion it encodes (docs/design/L1-MVP-plan.md FR-AUTH led
 """
 import pytest
 
-from agent.recon.auth import select_auth_context
-from agent.recon.pod import _iter_auth_headers
-from agent.app.routes import _validate_auth_context
+from polymerhus.recon.control.auth import select_auth_context
+from polymerhus.recon.domain.pod import _iter_auth_headers
+from polymerhus.project_management.auth_context import validate_auth_context
 
 
 _ROLE_TAGGED = {
@@ -51,26 +51,26 @@ def test_selector_default_role_and_flat_fallback():
 
 def test_validation_recurses_into_roles():
     # a valid role-tagged context passes
-    _validate_auth_context(_ROLE_TAGGED)
+    validate_auth_context(_ROLE_TAGGED)
 
     # a bad cookie INSIDE a role is rejected (same per-set rules)
     with pytest.raises(ValueError):
-        _validate_auth_context({"roles": {"admin": {"cookies": [{"name": "x"}]}}})  # missing value
+        validate_auth_context({"roles": {"admin": {"cookies": [{"name": "x"}]}}})  # missing value
     # a literal Cookie header inside a role is rejected
     with pytest.raises(ValueError):
-        _validate_auth_context({"roles": {"admin": {"Cookie": "sid=1"}}})
+        validate_auth_context({"roles": {"admin": {"Cookie": "sid=1"}}})
     # a non-string header value inside a role is rejected
     with pytest.raises(ValueError):
-        _validate_auth_context({"roles": {"admin": {"Authorization": 123}}})
+        validate_auth_context({"roles": {"admin": {"Authorization": 123}}})
     # roles must be an object
     with pytest.raises(ValueError):
-        _validate_auth_context({"roles": ["admin"]})
+        validate_auth_context({"roles": ["admin"]})
     # default_role must name a configured role
     with pytest.raises(ValueError):
-        _validate_auth_context({"roles": {"admin": {}}, "default_role": "nobody"})
+        validate_auth_context({"roles": {"admin": {}}, "default_role": "nobody"})
     # realm must be a string
     with pytest.raises(ValueError):
-        _validate_auth_context({"roles": {"admin": {"realm": 5}}})
+        validate_auth_context({"roles": {"admin": {"realm": 5}}})
 
 
 # --- AST-AUTH-05: structural keys NEVER serialise as HTTP headers ---
@@ -96,7 +96,7 @@ def test_legacy_flat_auth_context_unchanged():
     legacy = {"cookies": [{"name": "sid", "value": "L"}], "Authorization": "Bearer LEGACY"}
     # selects to itself (no roles) and validates
     assert select_auth_context(legacy, None) == legacy
-    _validate_auth_context(legacy)
+    validate_auth_context(legacy)
     # serialises exactly as before
     names = {name for name, _ in _iter_auth_headers(select_auth_context(legacy, None))}
     assert names == {"Cookie", "Authorization"}

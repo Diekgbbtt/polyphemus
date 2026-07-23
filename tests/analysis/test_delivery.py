@@ -5,10 +5,10 @@ Store-level idempotency is the integration tier (tests/integration/test_delivery
 
 Each test names the assertion it encodes (docs/design/L1-MVP-plan.md FR-PODSTREAM ledger).
 """
-from agent.recon.analysis import delivery
-from agent.recon.analysis import pod as analyser_pod
-from agent.recon.analysis.analyser_types import L1DeltaBatch, ServiceProposal
-from agent.recon.analysis.pod import AnalyserExport, build_analyser_graph, run_analyser
+from polymerhus.analysis import delivery
+from polymerhus.analysis import pod as analyser_pod
+from polymerhus.analysis.analyser_types import L1DeltaBatch, ServiceProposal
+from polymerhus.analysis.pod import AnalyserExport, build_analyser_graph, run_analyser
 
 
 # --- AST-PODSTREAM-01: collect_observations returns each Observation once, id-deduped ---
@@ -58,7 +58,7 @@ def test_analyser_slice_excludes_observation_nodes(monkeypatch):
             {"source": "p1", "target": "e1", "type": "PARAM_OF"},
         ],
     }
-    import agent.recon.graph_read as graph_read
+    import polymerhus.recon.domain.graph_read as graph_read
     monkeypatch.setattr(graph_read, "fetch_project_graph", lambda pid: canned)
 
     slice_ = analyser_pod.default_read_fn("proj-1")

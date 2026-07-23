@@ -2,7 +2,7 @@ import os
 
 import pytest
 
-from agent.recon import graph_read
+from polymerhus.recon.domain import graph_read
 
 
 def test_format_builds_nodes_and_links():

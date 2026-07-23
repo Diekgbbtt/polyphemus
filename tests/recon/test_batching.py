@@ -1,6 +1,6 @@
 import base64
 
-from agent.recon.batching import (
+from polymerhus.recon.control.batching import (
     build_batch_assets,
     build_batch_command,
     build_batches,
@@ -9,7 +9,7 @@ from agent.recon.batching import (
     is_first_party,
     reduce_bundles,
 )
-from agent.recon.jobs import JOBS
+from polymerhus.recon.control.jobs import JOBS
 
 
 def _ep(url=None, baseurl=None, path=None):

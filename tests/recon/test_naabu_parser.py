@@ -1,7 +1,7 @@
 # tests/recon/test_naabu_parser.py
 from pathlib import Path
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.naabu_parser import parse, get_service_name
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.naabu_parser import parse, get_service_name
 
 FIX = Path(__file__).parent / "fixtures" / "naabu.jsonl"
 

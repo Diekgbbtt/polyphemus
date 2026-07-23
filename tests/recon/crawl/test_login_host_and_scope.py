@@ -73,7 +73,7 @@ class _FakePage:
 
 
 def _make_crawl(scope=None, page=None):
-    from agent.recon.crawl.steel_provider import _Crawl
+    from polymerhus.recon.crawl.steel_provider import _Crawl
 
     crawl = _Crawl(
         "cid", scope or ["app.example.com"], 3, 50,
@@ -84,7 +84,7 @@ def _make_crawl(scope=None, page=None):
 
 
 def _provider_with(crawl):
-    from agent.recon.crawl.steel_provider import SteelCrawlProvider
+    from polymerhus.recon.crawl.steel_provider import SteelCrawlProvider
 
     p = SteelCrawlProvider(api_key="k")
     p._crawls[crawl.id] = crawl
@@ -157,7 +157,7 @@ def test_out_of_scope_discovered_links_are_not_enqueued():
 
 
 def _build_pod(run_crawl_fn):
-    from agent.recon.crawl import crawl_pod
+    from polymerhus.recon.crawl import crawl_pod
 
     return crawl_pod.build_crawl_pod(
         run_crawl_fn=run_crawl_fn,
@@ -168,7 +168,7 @@ def _build_pod(run_crawl_fn):
 
 
 def _pod_state(url, extra=None):
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.domain.types import JobSpec
 
     job = JobSpec(
         tool="steel_crawl", skill="agentic_crawl", command_template="",

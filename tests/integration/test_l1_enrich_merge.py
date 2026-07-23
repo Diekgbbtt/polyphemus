@@ -10,9 +10,9 @@ from neo4j import GraphDatabase
 
 from db.neo4j.init_schema import init_schema
 from db.neo4j.l1_schema import init_l1_schema
-from agent.recon import curator
-from agent.recon.analysis import l1_curator
-from agent.recon.analysis.l1_types import (
+from polymerhus.recon.domain import curator
+from polymerhus.analysis import l1_curator
+from polymerhus.analysis.l1_types import (
     DataFlowDelta,
     DataItemDelta,
     DataRelationshipDelta,
@@ -22,7 +22,7 @@ from agent.recon.analysis.l1_types import (
     SurfacesAtDelta,
     SystemEdgeDelta,
 )
-from agent.recon.types import AssetDelta
+from polymerhus.recon.domain.types import AssetDelta
 from tests.conftest import wait_for
 
 from tests.conftest import neo4j_target

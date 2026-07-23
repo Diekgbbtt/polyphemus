@@ -2,9 +2,9 @@ import asyncio
 
 import pytest
 
-from agent.app.llm import providers as P
-from agent.recon import config
-from agent.recon.crawl import steel_client as SC
+from polymerhus.app.llm import providers as P
+from polymerhus.recon import config
+from polymerhus.recon.crawl import steel_client as SC
 
 
 class _FakeTool:
@@ -101,7 +101,7 @@ def test_default_factory_passes_auth_cookies_to_provider(monkeypatch):
         async def get_tools(self):
             return []
 
-    import agent.recon.crawl.steel_provider as SP
+    import polymerhus.recon.crawl.steel_provider as SP
     monkeypatch.setattr(SP, "SteelCrawlProvider", _FakeProvider)
 
     SC._default_client_factory(auth_cookies=[{"name": "a", "value": "b"}])

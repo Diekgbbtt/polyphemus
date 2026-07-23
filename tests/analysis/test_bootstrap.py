@@ -1,14 +1,14 @@
 """FR-ELICIT unit tier — the bootstrap logic with injected fakes (no LLM/DB).
 Encodes the FR-ELICIT ledger (docs/design/L1-MVP-plan.md).
 """
-from agent.recon.analysis import bootstrap
-from agent.recon.analysis.analyser_types import (
+from polymerhus.analysis import bootstrap
+from polymerhus.analysis.analyser_types import (
     AggregatesProposal,
     L1DeltaBatch,
     ServiceProposal,
     SystemProposal,
 )
-from agent.recon.analysis.l1_types import L0Ref
+from polymerhus.analysis.l1_types import L0Ref
 
 
 def _capture_curate():
@@ -146,7 +146,7 @@ def test_elicit_retries_a_transient_structured_output_failure(monkeypatch):
     collapsed into an empty skeleton."""
     import json as _json
 
-    from agent.app.llm import roles as _roles
+    from polymerhus.app.llm import roles as _roles
 
     good = L1DeltaBatch(services=[ServiceProposal(business_function_slug="checkout")])
     calls = {"n": 0}

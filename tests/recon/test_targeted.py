@@ -9,13 +9,13 @@ import asyncio
 
 import pytest
 
-from agent.recon.targeted import (
+from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
     ReconScope,
     TargetedReconResult,
     request_targeted_recon,
 )
-from agent.recon.types import PodExport
+from polymerhus.recon.domain.types import PodExport
 
 
 class _FakeRegistry:

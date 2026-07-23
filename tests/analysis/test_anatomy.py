@@ -5,8 +5,8 @@ Injected fakes (no live LLM/DB).
 
 Each test names the assertion it encodes (docs/design/L1-MVP-plan.md FR-SPINE ledger).
 """
-from agent.recon.analysis import anatomy
-from agent.recon.analysis.anatomy import (
+from polymerhus.analysis import anatomy
+from polymerhus.analysis.anatomy import (
     AnatomyResult, SpineClassification, WebpageProfileProposal, webpage_profile, commit_anatomy,
 )
 
@@ -176,7 +176,7 @@ def test_commit_anatomy_fail_open_on_write_error():
 # --- AST-SPINE-06: the SKILL.md encodes the L1D-31a discipline + both vocabularies ---
 
 def test_webpage_profile_skill_encodes_discipline():
-    from agent.recon import skills
+    from polymerhus.recon.domain import skills
     skills.clear_cache()
     text = skills.skill_for("analysis/anatomy/webpage-profile")
     assert not text.startswith("---")  # frontmatter stripped

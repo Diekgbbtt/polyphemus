@@ -18,9 +18,9 @@ Fully mocked - no live Steel/LLM. Covers three seams:
 """
 import asyncio
 
-from agent.recon import pipeline
-from agent.recon.crawl import crawl_agent, crawl_pod
-from agent.recon.types import JobSpec, PodExport
+from polymerhus.recon.control import pipeline
+from polymerhus.recon.crawl import crawl_agent, crawl_pod
+from polymerhus.recon.domain.types import JobSpec, PodExport
 
 AUTH_JOB = JobSpec(
     tool="steel_crawl",

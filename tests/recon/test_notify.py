@@ -2,7 +2,7 @@ import json
 
 
 def test_notify_posts_content_with_viewer_url():
-    from agent.recon import notify
+    from polymerhus.recon.crawl import notify
     sent = {}
 
     class _Resp:
@@ -26,7 +26,7 @@ def test_notify_posts_content_with_viewer_url():
 
 
 def test_notify_noop_when_unconfigured():
-    from agent.recon import notify
+    from polymerhus.recon.crawl import notify
     called = []
     ok = notify.notify_awaiting_auth(
         "run-1", 4, "steel_crawl", "https://v", webhook_url="",
@@ -37,7 +37,7 @@ def test_notify_noop_when_unconfigured():
 
 
 def test_notify_swallows_post_errors():
-    from agent.recon import notify
+    from polymerhus.recon.crawl import notify
 
     def boom(req, timeout=None):
         raise OSError("network down")

@@ -4,7 +4,7 @@
 """
 import pytest
 
-from agent.recon.analysis import sweep
+from polymerhus.analysis import sweep
 
 
 def test_stale_pool_query_shape_and_label_filter():

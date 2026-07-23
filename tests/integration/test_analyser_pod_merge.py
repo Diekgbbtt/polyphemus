@@ -12,16 +12,16 @@ from neo4j import GraphDatabase
 
 from db.neo4j.init_schema import init_schema
 from db.neo4j.l1_schema import init_l1_schema
-from agent.recon import curator
-from agent.recon.analysis.analyser_types import (
+from polymerhus.recon.domain import curator
+from polymerhus.analysis.analyser_types import (
     AggregatesProposal,
     L1DeltaBatch,
     ServiceProposal,
     SystemProposal,
 )
-from agent.recon.analysis import l1_curator
-from agent.recon.analysis.pod import AnalyserExport, build_analyser_graph, run_analyser
-from agent.recon.types import AssetDelta
+from polymerhus.analysis import l1_curator
+from polymerhus.analysis.pod import AnalyserExport, build_analyser_graph, run_analyser
+from polymerhus.recon.domain.types import AssetDelta
 from tests.conftest import wait_for
 
 from tests.conftest import neo4j_target
@@ -75,7 +75,7 @@ def _canned_batch(endpoint_id):
 
 
 def L0Ref_dict(identity):
-    from agent.recon.analysis.l1_types import L0Ref
+    from polymerhus.analysis.l1_types import L0Ref
     return L0Ref(label="Endpoint", identity=dict(identity))
 
 
@@ -94,7 +94,7 @@ def test_analyser_writes_l1_idempotently_via_curator(session, project):
     # path (correct auth) instead of neo4j_client (which would read the dummy
     # NEO4J_PASSWORD in a bare run). Mirrors the FR-LCUR integration pattern.
     def session_curate_fn(batch, project_id, provenance):
-        from agent.recon.analysis.analyser_types import proposals_to_deltas
+        from polymerhus.analysis.analyser_types import proposals_to_deltas
         services, systems, aggregates = proposals_to_deltas(batch, provenance)
         mf = lambda cy, p: session.run(cy, **p).consume()
         sw, syw = l1_curator.l1_curate(services, systems, project_id, merge_fn=mf)

@@ -1,8 +1,8 @@
 from fastapi.testclient import TestClient
 
-from agent.app import routes
-from agent.app.clients import pg
-from agent.app.main import app
+from polymerhus.project_management import api as routes
+from polymerhus.app.clients import pg
+from polymerhus.app.main import app
 
 client = TestClient(app)
 
@@ -357,7 +357,7 @@ def test_post_recon_with_removed_gau_job_returns_error(monkeypatch):
 def test_post_recon_baseline_pipeline_still_launches_without_gau(monkeypatch):
     """The baseline (default, no explicit jobs) pipeline still launches after
     gau's removal - the full phase plan no longer contains it."""
-    from agent.recon.jobs import PHASES
+    from polymerhus.recon.control.jobs import PHASES
     assert not any("gau" in phase for phase in PHASES)
 
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)

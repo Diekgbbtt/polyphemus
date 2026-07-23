@@ -20,7 +20,7 @@ Fully mocked - no live Steel/LLM (mirrors test_crawl_agent.py's fakes).
 """
 import asyncio
 
-from agent.recon.crawl import crawl_agent
+from polymerhus.recon.crawl import crawl_agent
 
 
 class _AIMessage:

@@ -11,8 +11,8 @@ post-recon-curation-and-l1-remediation-plan.md §5 FR-TYPESEP-b).
 """
 import pytest
 
-from agent.recon.analysis import l1_curator
-from agent.recon.analysis.l1_types import Provenance, StripPropsOp
+from polymerhus.analysis import l1_curator
+from polymerhus.analysis.l1_types import Provenance, StripPropsOp
 
 PROV = Provenance(job="curation", model="m", prompt_id="p")
 

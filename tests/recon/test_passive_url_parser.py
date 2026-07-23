@@ -1,8 +1,8 @@
 # tests/recon/test_passive_url_parser.py
 from pathlib import Path
 
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.passive_url_parser import parse_gau, parse_paramspider
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.passive_url_parser import parse_gau, parse_paramspider
 
 GAU_FIX = Path(__file__).parent / "fixtures" / "gau.txt"
 PARAMSPIDER_FIX = Path(__file__).parent / "fixtures" / "paramspider.txt"

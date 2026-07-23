@@ -1,5 +1,5 @@
 import pytest
-from agent.app.llm import providers as P
+from polymerhus.app.llm import providers as P
 
 def test_known_providers_have_base_urls():
     assert P.PROVIDERS["openai"].startswith("https://")

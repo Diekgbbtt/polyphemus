@@ -1,4 +1,4 @@
-"""TDD for the agentic-crawl adapter (`agent/recon/crawl/crawl_agent.py`).
+"""TDD for the agentic-crawl adapter (`src/polymerhus/recon/crawl/crawl_agent.py`).
 
 Fully mocked: no live Steel MCP client, no live LLM. The fake `llm`/`tools`
 mirror the exact interface the vendored `crawl_agentic._run_agentic_crawl`
@@ -17,7 +17,7 @@ import asyncio
 
 import pytest
 
-from agent.recon.crawl import crawl_agent
+from polymerhus.recon.crawl import crawl_agent
 
 
 class _AIMessage:
@@ -188,7 +188,7 @@ def test_run_crawl_forwards_auth_cookies_to_get_crawl_tools(monkeypatch):
     # When tools are NOT injected, run_crawl builds them via
     # steel_client.get_crawl_tools and must forward auth_cookies so the default
     # provider seeds the browser context for non-interactive auth.
-    from agent.recon.crawl import steel_client
+    from polymerhus.recon.crawl import steel_client
 
     seen = {}
 
@@ -211,7 +211,7 @@ def test_run_crawl_forwards_auth_cookies_to_get_crawl_tools(monkeypatch):
 
 def test_credentialed_login_prompt_names_login_url_and_submit_once():
     import asyncio
-    from agent.recon.crawl import crawl_agentic
+    from polymerhus.recon.crawl import crawl_agentic
 
     captured = {}
 
@@ -241,7 +241,7 @@ def test_credentialed_login_prompt_names_login_url_and_submit_once():
 
 def test_credentialed_login_prompt_routes_captcha_to_fresh_session_rotation():
     import asyncio
-    from agent.recon.crawl import crawl_agentic
+    from polymerhus.recon.crawl import crawl_agentic
 
     captured = {}
 
@@ -279,7 +279,7 @@ def test_credentialed_login_prompt_routes_captcha_to_fresh_session_rotation():
 
 def test_credentialed_login_prompt_interpolates_password_value():
     import asyncio
-    from agent.recon.crawl import crawl_agentic
+    from polymerhus.recon.crawl import crawl_agentic
 
     captured = {}
 
@@ -306,7 +306,7 @@ def test_credentialed_login_prompt_interpolates_password_value():
 
 def test_run_crawl_credentialed_threads_credentials_into_request(monkeypatch):
     import asyncio
-    from agent.recon.crawl import crawl_agent
+    from polymerhus.recon.crawl import crawl_agent
 
     seen = {}
 
@@ -328,7 +328,7 @@ def test_run_crawl_credentialed_threads_credentials_into_request(monkeypatch):
 
 def test_run_crawl_credentialed_best_effort_on_error(monkeypatch):
     import asyncio
-    from agent.recon.crawl import crawl_agent
+    from polymerhus.recon.crawl import crawl_agent
 
     async def boom(*a, **k): raise RuntimeError("steel down")
     monkeypatch.setattr(crawl_agent, "_run_agentic_crawl", boom)

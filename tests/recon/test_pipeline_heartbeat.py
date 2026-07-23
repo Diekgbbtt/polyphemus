@@ -1,6 +1,6 @@
 import asyncio
 
-from agent.recon import pipeline
+from polymerhus.recon.control import pipeline
 
 
 def test_heartbeat_tick_fires_and_is_cancelled(monkeypatch):

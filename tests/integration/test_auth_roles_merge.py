@@ -49,15 +49,15 @@ def pg_mod():
     if not dsn:
         pytest.skip("no reachable Postgres for the auth-roles merge integration test")
     # override the config instance's cached (dummy) DSN so pg uses the live one
-    from agent.app.config import config
+    from polymerhus.app.config import config
     config.POSTGRES_DSN = dsn
-    from agent.app.clients import pg
+    from polymerhus.app.clients import pg
     return pg
 
 
 @pytest.fixture
 def project(pg_mod):
-    from agent.app.config import config
+    from polymerhus.app.config import config
     import psycopg
     pid = str(uuid.uuid4())
     pg_mod.create_project(pid, "auth-roles-merge")

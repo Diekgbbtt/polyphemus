@@ -5,7 +5,7 @@ Store-level idempotency is the integration tier
 
 Each test names the assertion it encodes (docs/design/L1-MVP-plan.md §5).
 """
-from agent.recon.analysis.analyser_types import (
+from polymerhus.analysis.analyser_types import (
     AggregatesProposal,
     DataFlowProposal,
     DataItemProposal,
@@ -15,10 +15,10 @@ from agent.recon.analysis.analyser_types import (
     SystemProposal,
     proposals_to_deltas,
 )
-from agent.recon.analysis import l1_curator as real_l1_curator
-from agent.recon.analysis import pod as analyser_pod
-from agent.recon.analysis.l1_types import L0Ref, Provenance
-from agent.recon.analysis.pod import (
+from polymerhus.analysis import l1_curator as real_l1_curator
+from polymerhus.analysis import pod as analyser_pod
+from polymerhus.analysis.l1_types import L0Ref, Provenance
+from polymerhus.analysis.pod import (
     AnalyserExport,
     build_analyser_graph,
     default_curate_fn,
@@ -170,7 +170,7 @@ def test_default_curate_fn_calls_l1_curator_and_assembles_counts(monkeypatch):
         calls["write_aggregates"] = (len(aggregates), project_id)
         return len(aggregates)
 
-    # default_curate_fn does `from agent.recon.analysis import l1_curator` at call
+    # default_curate_fn does `from polymerhus.analysis import l1_curator` at call
     # time; patch that module's attrs (the same object it resolves via sys.modules).
     monkeypatch.setattr(real_l1_curator, "l1_curate", fake_l1_curate)
     monkeypatch.setattr(real_l1_curator, "write_aggregates", fake_write_aggregates)
@@ -384,7 +384,7 @@ def test_data_modelling_prompt_is_positive_recipe_with_example():
     assert "EMPTY" not in p and "leave" not in p.lower()
     # the worked example must use a REAL controlled DataRelationship kind (a bogus
     # example kind would teach the model to emit deltas the curator drops)
-    from agent.recon.analysis.l1_curator import _KNOWN_DATA_REL_KINDS
+    from polymerhus.analysis.l1_curator import _KNOWN_DATA_REL_KINDS
     import re as _re
     example_kinds = set(_re.findall(r'"kind":\s*"([a-z_]+)"', p))
     assert example_kinds and example_kinds <= _KNOWN_DATA_REL_KINDS, example_kinds
@@ -412,7 +412,7 @@ def test_data_modelling_prompt_uses_identity_only_surface_not_full_dump():
     assert "/api/Orders" in p and "orderId" in p  # identities present
 
 def test_analyser_skill_loads_and_strips_frontmatter():
-    from agent.recon import skills
+    from polymerhus.recon.domain import skills
     skills.clear_cache()  # bypass the shared skill_for cache for a clean load
     skill = analyser_pod._load_analyser_skill()
     assert not skill.startswith("---")  # YAML frontmatter stripped
@@ -429,7 +429,7 @@ def test_analyser_skill_loads_and_strips_frontmatter():
 
 
 def test_analyser_skill_is_cached():
-    from agent.recon import skills
+    from polymerhus.recon.domain import skills
     skills.clear_cache()
     first = analyser_pod._load_analyser_skill()
     second = analyser_pod._load_analyser_skill()
@@ -440,7 +440,7 @@ def test_vocabulary_prompt_lists_controlled_values():
     """Regression for an e2e-caught defect: the LLM proposed 'Authentication'
     (not the canonical 'AuthenticationMechanism') and the delta was silently
     dropped. The prompt must enumerate the exact allowed vocabularies."""
-    from agent.recon.analysis.l1_curator import vocabulary_prompt
+    from polymerhus.analysis.l1_curator import vocabulary_prompt
 
     v = vocabulary_prompt()
     assert "AuthenticationMechanism" in v and "AuthorizationSystem" in v
@@ -469,7 +469,7 @@ def test_analyser_skill_degrades_to_fallback_when_missing(monkeypatch):
         raise OSError("no skill mount")
 
     monkeypatch.setattr(pathlib.Path, "read_text", boom)
-    from agent.recon import skills
+    from polymerhus.recon.domain import skills
     skills.clear_cache()  # force a re-read that will fail
     skill = analyser_pod._load_analyser_skill()
     assert skill == analyser_pod._ANALYSER_SYSTEM_PROMPT  # graceful degrade, no crash

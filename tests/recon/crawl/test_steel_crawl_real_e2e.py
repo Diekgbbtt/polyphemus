@@ -62,18 +62,18 @@ def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
 
 def _bridge_neo4j_to_localhost():
     """Bind the recon config + neo4j_client to the host-reachable Neo4j and set
-    the steel credential on `agent.recon.config` (compose hostnames only resolve
+    the steel credential on `polymerhus.recon.config` (compose hostnames only resolve
     inside the network; conftest may have frozen dummy values at collection)."""
     os.environ["NEO4J_URI"] = "bolt://localhost:7687"
     os.environ["NEO4J_USER"] = "neo4j"
     os.environ["NEO4J_PASSWORD"] = os.environ.get("SB_NEO4J_PASSWORD", "polymerhus")
 
-    import agent.app.config as app_config
+    import polymerhus.app.config as app_config
     importlib.reload(app_config)
-    from agent.app.clients import neo4j_client
+    from polymerhus.app.clients import neo4j_client
     importlib.reload(neo4j_client)
 
-    import agent.recon.config as recon_config
+    import polymerhus.recon.config as recon_config
     recon_config.STEEL_API_KEY = os.environ["STEEL_API_KEY"]
     return neo4j_client
 
@@ -97,7 +97,7 @@ def _cleanup(neo4j_client, project_id: str):
 
 async def _drive_real_crawl(seed: str, scope: list[str]) -> dict:
     """Drive the real steel_* tools (from the production factory) to a manifest."""
-    from agent.recon.crawl import steel_client
+    from polymerhus.recon.crawl import steel_client
 
     tools = {t.name: t for t in await steel_client.get_crawl_tools()}
     start = await tools["steel_crawl_start"].ainvoke(
@@ -118,8 +118,8 @@ async def _drive_real_crawl(seed: str, scope: list[str]) -> dict:
 
 
 def _parse_curate_and_verify(neo4j_client, manifest: dict, project_id: str):
-    from agent.recon.curator import curate
-    from agent.recon.parsers import get_parser
+    from polymerhus.recon.domain.curator import curate
+    from polymerhus.recon.domain.parsers import get_parser
 
     assets = get_parser("steel_crawl")(json.dumps(manifest))
     types = {a.type for a in assets}
@@ -164,7 +164,7 @@ def test_steel_crawl_agentic_loop_flows_to_neo4j():
     neo4j_client = _bridge_neo4j_to_localhost()
     neo4j_client.ensure_schema()
 
-    from agent.recon.crawl import crawl_agent
+    from polymerhus.recon.crawl import crawl_agent
 
     project_id = f"steel-agentic-e2e-{uuid.uuid4().hex[:8]}"
     try:
@@ -201,8 +201,8 @@ def test_steel_crawl_authenticated_manual():
     host = target.split("://", 1)[-1].split("/", 1)[0]
 
     async def _run():
-        from agent.recon.crawl import steel_client
-        from agent.recon.crawl.crawl_agentic import AgenticCrawlRequest, precreate_auth_session
+        from polymerhus.recon.crawl import steel_client
+        from polymerhus.recon.crawl.crawl_agentic import AgenticCrawlRequest, precreate_auth_session
 
         tools = await steel_client.get_crawl_tools()
 

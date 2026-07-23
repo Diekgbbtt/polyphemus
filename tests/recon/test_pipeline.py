@@ -7,8 +7,8 @@ all injected fakes. No live Neo4j/Postgres/pod graph involved.
 """
 import asyncio
 
-from agent.recon import pipeline
-from agent.recon.types import PodExport
+from polymerhus.recon.control import pipeline
+from polymerhus.recon.domain.types import PodExport
 
 
 class FakeRegistry:
@@ -412,7 +412,7 @@ def test_batched_jsluice_job_gets_filtered_read_and_apex_for_downstream_batching
         assets = [{"path": "/app.css", "url": "https://a.houseofhr.com/app.css"}]
         for i in range(60):
             assets.append({"path": f"/b{i}.js", "url": f"https://a.houseofhr.com/b{i}.js"})
-        from agent.recon.selectors import apply_selector
+        from polymerhus.recon.domain.selectors import apply_selector
         return apply_selector(assets, where)
 
     registry = FakeRegistry()
@@ -562,7 +562,7 @@ def test_exact_mode_logs_discovery_suppression(caplog):
     """D14 Q1: an exact-scope run records why it is small at run start."""
     import logging
 
-    with caplog.at_level(logging.INFO, logger="agent.recon.pipeline"):
+    with caplog.at_level(logging.INFO, logger="polymerhus.recon.control.pipeline"):
         _run_and_capture({"target_domain": "app.t.com"})
 
     suppression_logs = [
@@ -578,8 +578,8 @@ def test_exact_mode_logs_discovery_suppression(caplog):
 
 def test_job_stats_include_per_pod_commands(monkeypatch):
     import asyncio
-    from agent.recon import pipeline
-    from agent.recon.types import PodExport
+    from polymerhus.recon.control import pipeline
+    from polymerhus.recon.domain.types import PodExport
 
     captured = {}
 
@@ -611,7 +611,7 @@ def test_job_stats_include_per_pod_commands(monkeypatch):
 
 def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch):
     import asyncio
-    from agent.recon import pipeline
+    from polymerhus.recon.control import pipeline
 
     X = "https://ib.example.com"
     Y = "https://app.example.com"

@@ -13,10 +13,10 @@ import psycopg
 import pytest
 from neo4j import GraphDatabase
 
-from agent.app.clients import pg
-from agent.recon import curator
-from agent.recon.targeted import AnalyserReconRequest, ReconScope, request_targeted_recon
-from agent.recon.types import AssetDelta, PodExport
+from polymerhus.app.clients import pg
+from polymerhus.recon.domain import curator
+from polymerhus.recon.control.targeted import AnalyserReconRequest, ReconScope, request_targeted_recon
+from polymerhus.recon.domain.types import AssetDelta, PodExport
 from db.neo4j.init_schema import init_schema
 from tests.conftest import pg_live_dsn, wait_for
 

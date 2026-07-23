@@ -1,8 +1,8 @@
 # tests/recon/test_active_param_parser.py
 from pathlib import Path
 
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.active_param_parser import (
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.active_param_parser import (
     parse_arjun,
     parse_ffuf,
     parse_kiterunner,

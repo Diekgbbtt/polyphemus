@@ -6,7 +6,7 @@ generic supertype - making every L1 node read as one type (and one grey colour)
 in the frontend. `primary_label` fixes this by preferring the specific subtype,
 and `node_name` names L1 units by their identity slug instead of a bare label.
 """
-from agent.recon.graph_read import node_name, primary_label
+from polymerhus.recon.domain.graph_read import node_name, primary_label
 
 
 def test_primary_label_prefers_l1_subtype_over_supertype():

@@ -5,8 +5,8 @@ fields go into an evidence-bound `fields` list, and further attribute discovery 
 deferred to a dedicated enrichment activity (AMV-10). These assertions encode that
 prompt contract so a future edit cannot silently reintroduce guessed fields.
 """
-from agent.recon.analysis.analyser_types import L1DeltaBatch
-from agent.recon.analysis.pod import _assignment_prompt, _data_modelling_prompt
+from polymerhus.analysis.analyser_types import L1DeltaBatch
+from polymerhus.analysis.pod import _assignment_prompt, _data_modelling_prompt
 
 
 def test_data_modelling_prompt_asks_for_observed_fields_only():
