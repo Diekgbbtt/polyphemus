@@ -18,6 +18,24 @@ def test_dnsx_template_has_json():
     assert "-json" in JOBS["dnsx"].command_template
 
 
+def test_katana_template_excludes_static_assets_but_keeps_js():
+    """AMV-8 ticket 6: katana filters presentational static extensions and
+    excludes dependency/backup trees from the crawl at the source, but never
+    filters `.js`/`.mjs` (jsluice's D17 input) and still emits JSONL."""
+    template = JOBS["katana"].command_template
+    # static assets filtered from crawl output via -ef ...
+    for ext in ("css", "woff2", "map", "png", "svg", "mp4", "pdf", "zip"):
+        assert f",{ext}" in template or f"-ef {ext}" in template or f" {ext}," in template
+    # ... but JS is NEVER in the extension filter (it is jsluice's input).
+    ef_segment = template.split("-ef ", 1)[1].split(" ", 1)[0]
+    assert "js" not in ef_segment.split(",")
+    assert "mjs" not in ef_segment.split(",")
+    # dependency / backup trees excluded from crawl scope.
+    assert "-cos" in template and "node_modules/" in template
+    # output contract preserved.
+    assert "-jsonl" in template
+
+
 def test_ffuf_template_writes_json_to_file_and_cats_it_with_autocalibration():
     # `-of json` alone (no `-o` destination) makes ffuf emit its human banner to
     # stdout and never produce JSON, so parse_ffuf silently gets []. The template

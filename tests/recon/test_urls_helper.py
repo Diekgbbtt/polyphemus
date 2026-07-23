@@ -1,5 +1,12 @@
 # tests/recon/test_urls_helper.py
-from polymerhus.recon.domain.parsers._urls import base_and_path, registrable_domain, url_to_deltas
+import pytest
+
+from polymerhus.recon.domain.parsers._urls import (
+    base_and_path,
+    is_malformed_concat_path,
+    registrable_domain,
+    url_to_deltas,
+)
 
 
 def test_base_and_path_normal_url_with_path():
@@ -94,6 +101,36 @@ def test_url_to_deltas_invalid_url_returns_empty_list():
     assert url_to_deltas("not-a-url", source="t") == []
     assert url_to_deltas("", source="t") == []
     assert url_to_deltas(None, source="t") == []
+
+
+# --- AMV-8 ticket 5: JS string-concatenation fragment guard ----------------
+
+@pytest.mark.parametrize("path", [
+    "/'+_(i[8])+'",                 # raw concat fragment
+    "/%27+_%28i%5B11%5D",           # percent-encoded form
+    "/api/'+id+'",                  # embedded quote
+    "/x(unbalanced",                # unbalanced paren
+    "/y[0]extra]",                  # unbalanced bracket
+    '/"+token+"',                   # double-quote concat
+])
+def test_is_malformed_concat_path_true(path):
+    assert is_malformed_concat_path(path) is True
+
+
+@pytest.mark.parametrize("path", [
+    "/api/v1/users",
+    "/",
+    "/soljson-v0.8.21+commit.a1b2c3d4.js",   # a `+` is fine when balanced/quoteless
+    "/search+results",
+    "/api/(v1)/x",                            # balanced parens are not malformed
+])
+def test_is_malformed_concat_path_false(path):
+    assert is_malformed_concat_path(path) is False
+
+
+def test_url_to_deltas_drops_concat_fragment():
+    assert url_to_deltas("https://h.example.com/'+_(i[8])+'", source="jsluice") == []
+    assert url_to_deltas("https://h.example.com/%27+_%28x", source="jsluice") == []
 
 
 def test_registrable_domain_strips_subdomains():

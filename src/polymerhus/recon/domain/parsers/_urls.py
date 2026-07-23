@@ -15,6 +15,10 @@ Pure, deterministic, tolerant of malformed input - never raises.
 """
 from urllib.parse import parse_qs, urlparse
 
+from polymerhus.recon.domain.noise_filter import (
+    CACHE_BUST_KEYS,
+    is_malformed_concat_path,
+)
 from polymerhus.recon.domain.types import AssetDelta, Edge
 
 
@@ -65,6 +69,11 @@ def url_to_deltas(
 
     baseurl, path = split
 
+    # A JS string-concatenation fragment is not a real path - drop the whole
+    # URL (endpoint + any params) so it never becomes an Endpoint (AMV-8).
+    if is_malformed_concat_path(path):
+        return []
+
     if not isinstance(method, str) or not method:
         method = "GET"
     method = method.upper()
@@ -96,6 +105,8 @@ def url_to_deltas(
 
     query_params = parse_qs(urlparse(url).query, keep_blank_values=True)
     for name in query_params:
+        if name.lower() in CACHE_BUST_KEYS:
+            continue  # a cache-bust stamp is not a request parameter (AMV-8)
         deltas.append(
             AssetDelta(
                 type="Parameter",
