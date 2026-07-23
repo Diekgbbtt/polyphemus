@@ -163,7 +163,7 @@ Example with credentials:
 
 ### Exact vs wildcard seed hosts
 
-`target_domain` is parsed into a scope (`agent/recon/scope.py`, decision D14) that decides
+`target_domain` is parsed into a scope (`src/polymerhus/recon/control/scope.py`, decision D14) that decides
 whether subdomain discovery runs at all:
 
 | `target_domain` value        | mode       | seeded host          | subdomain discovery |
@@ -184,7 +184,7 @@ you already know the target and want a fast, narrow run.
 
 ### Phases
 
-Jobs run in ordered, gated phases (`agent/recon/jobs.py`). A phase is a **hard barrier**: the next
+Jobs run in ordered, gated phases (`src/polymerhus/recon/control/jobs.py`). A phase is a **hard barrier**: the next
 phase does not start until every job in the current phase has finished. **Within a phase, jobs run
 sequentially** (one at a time) - each job still fans its assets out across up to `MAX_PODS`
 concurrent pods, but only one job's fan-out runs at once, so peak concurrency is bounded to a
@@ -224,7 +224,7 @@ the pipeline is unaffected.
 
 ### Tool status
 
-The pipeline schedules 17 tools (`agent/recon/jobs.py::JOBS`). `auth` tools receive the
+The pipeline schedules 17 tools (`src/polymerhus/recon/control/jobs.py::JOBS`). `auth` tools receive the
 `auth_context` cookies/headers; gated tools consume only a matching upstream asset.
 
 | Tool | Phase | Status | Gating / notes |

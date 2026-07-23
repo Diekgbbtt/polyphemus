@@ -9,7 +9,7 @@ This is a **multi-context** repo: a `CONTEXT-MAP.md` at the root points to one `
 - **`CONTEXT-MAP.md`** at the repo root - the map of bounded contexts and how they relate.
   Read it first; it tells you which `CONTEXT.md` covers the area you are about to work in.
 - **The relevant `CONTEXT.md`** - the per-context domain glossary (the ubiquitous language for that context).
-  Today: `agent/recon/CONTEXT.md` (L0 attack-surface discovery) and `agent/recon/analysis/CONTEXT.md` (L1 service/system abstraction).
+  Today: `src/polymerhus/recon/CONTEXT.md` (L0 attack-surface discovery), `src/polymerhus/analysis/CONTEXT.md` (L1 service/system abstraction), and `src/polymerhus/project_management/CONTEXT.md` (the operator-intent surface).
 - **`docs/design/domain-model.md`** - the reasoned ontology the glossaries derive from.
   Read it when you need the WHY behind a term, not just its definition.
 - **`docs/design/`** - read the design specifications that touch the area you're about to work in.
@@ -29,7 +29,7 @@ See the `## Agent skills` block in `CLAUDE.md` for the binding statement of this
 ## Anticipated contexts (named, not yet minted)
 
 `CONTEXT-MAP.md` records contexts that need a codebase refactor before they physically exist: a project-management module, and the neo4j / postgres / mcp / llm-client client modules.
-The `analysis` context is placed at `agent/recon/analysis/CONTEXT.md` now even though analysis is not yet an independent module - the file is the anchor for that scheduled refactor.
+The `analysis` context is now an independent module at `src/polymerhus/analysis/` (extracted in the 2026-07 `src/` restructure, `docs/design/module-restructure.md`).
 Do not treat an anticipated context as live; do not invent its glossary ahead of the refactor.
 
 ## Architectural decisions live in `docs/design/`

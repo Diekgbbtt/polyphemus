@@ -10,7 +10,7 @@ This standard is the "how we build".
 It cross-references, rather than restates, the three documents that own the other truths:
 
 - `docs/design/domain-model.md` - the canonical ontology (the "what is true"): the reasoning every domain term derives from.
-- `CONTEXT-MAP.md` plus `agent/recon/CONTEXT.md` and `agent/recon/analysis/CONTEXT.md` - the bounded contexts and their per-context glossaries (the "what things mean").
+- `CONTEXT-MAP.md` plus `src/polymerhus/recon/CONTEXT.md`, `src/polymerhus/analysis/CONTEXT.md`, and `src/polymerhus/project_management/CONTEXT.md` - the bounded contexts and their per-context glossaries (the "what things mean").
 - `loop-constraints.md` - the binding invariants enforced on every write (the "what must hold").
 - `docs/design/testing-strategy.md` - the testing tiers and their boundaries (the "what is tested").
 
@@ -79,10 +79,11 @@ The two contexts share no identity keys (`L1D-2`), so either can be re-derived w
 A new judgment anchors onto L0 by `MATCH`; it never creates an L0 node.
 Cross-context terms get their full definition in the owning context and at most a one-line pointer in the other (`CONTEXT-MAP.md`).
 
-**Honest debt.**
-Analysis is not yet a physically independent module - it lives under `agent/recon/analysis/` and is scheduled for extraction (`CONTEXT.md` Analysis, line 6).
-Likewise Run/Job/Pod/Project are ruled to live inside Recon today though Project-management is a future context of its own, and neo4j/postgres/mcp/llm-client are anticipated-but-not-minted contexts whose vocabulary is still threaded through the pipeline (`CONTEXT-MAP.md`, "Anticipated contexts").
-Respect the intended boundaries in new code even where the physical module split has not landed.
+**Realised (2026-07).**
+Analysis is now a physically independent module at `src/polymerhus/analysis/`, extracted from under `recon/` in the `src/` restructure (`docs/design/module-restructure.md`), and Project-management is minted as `src/polymerhus/project_management/`.
+Recon itself is now internally layered - a `control` sub-package (orchestration) over a `domain` sub-package (the model and sole-writer). Run/Job/Pod stay recon vocabulary (ruled elements of the recon pipeline); project-management owns the operator's intent over runs, not their execution.
+neo4j/postgres/mcp/llm-client remain shared helper infrastructure, never their own context (`CONTEXT-MAP.md`, "Helper modules"); their vocabulary is still threaded through the pipeline and both curators.
+Respect the one-directional dependency arrows (`project_management -> recon -> app`, `analysis -> recon.domain.types` as the ACL) in new code.
 
 ---
 
@@ -307,7 +308,7 @@ This standard is prescriptive; these documents are where the rules are checked o
 | Binding write invariants (idempotent MERGE, `identity ⊥ membership`, provenance, fail-open, traversal-then-fetch, sole-writer) | `loop-constraints.md` |
 | Testing tiers and the DB boundary | `docs/design/testing-strategy.md` |
 | The reasoned ontology every term derives from | `docs/design/domain-model.md` |
-| Bounded contexts and per-context glossaries | `CONTEXT-MAP.md`, `agent/recon/CONTEXT.md`, `agent/recon/analysis/CONTEXT.md` |
+| Bounded contexts and per-context glossaries | `CONTEXT-MAP.md`, `src/polymerhus/recon/CONTEXT.md`, `src/polymerhus/analysis/CONTEXT.md`, `src/polymerhus/project_management/CONTEXT.md` |
 | Layer-0 pipeline architecture | `docs/design/recon-pipeline-design.md` |
 | Layer-1 model catalogue | `docs/design/l1-domain-model-catalogue.md` |
 | Development-workflow ledger (what was built, learned, deferred) | `STATE.md` |
