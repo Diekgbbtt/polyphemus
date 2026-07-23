@@ -4,10 +4,12 @@ polymerhus is an autonomous web-application vulnerability-discovery system.
 Its domain vocabulary splits along one hinge: the boundary between what the tooling **observes** about a target's attack surface (Layer 0) and what an analyst-role LLM **judges** that surface to mean (Layer 1).
 The per-context glossaries below are terse lookups derived from the canonical ontology in `docs/design/domain-model.md`; the ontology is the reasoning, each `CONTEXT.md` is the index.
 
-## Contexts
+All three contexts are now physical modules under `src/polymerhus/`.
 
-- [Recon](./agent/recon/CONTEXT.md) - Layer-0 descriptive attack-surface discovery: the observed node types, the adversarial Observation, and the pipeline that produces them (Run, Job, Phase, Pod, Project, the L0 curator, the triager, the configurator).
-- [Analysis](./agent/recon/analysis/CONTEXT.md) - Layer-1 interpretive abstraction: the reconstructed Service / System / DataItem model, the typed cross-layer and intra-L1 edges, the L1 sole-writer, and the reasoning vocabulary (provenance, confidence, the judgment envelope, the escalating epistemic ladder).
+- [Recon](./src/polymerhus/recon/CONTEXT.md) - Layer-0 descriptive attack-surface discovery: the observed node types, the adversarial Observation, and the pipeline that produces them (Run, Job, Phase, Pod, the L0 curator, the triager, the configurator).
+  Internally layered into a **control** sub-package (the orchestration: pipeline, jobs, job_agent, orchestrator_agent, auth, batching, async_bridge, scope, steering, targeted) over a **domain** sub-package (the model and the L0 sole-writer: curator, types, findings, pod, graph_read, selectors, noise_filter, skills, parsers), plus `crawl/`.
+- [Analysis](./src/polymerhus/analysis/CONTEXT.md) - Layer-1 interpretive abstraction: the reconstructed Service / System / DataItem model, the typed cross-layer and intra-L1 edges, the L1 sole-writer, and the reasoning vocabulary (provenance, confidence, the judgment envelope, the escalating epistemic ladder).
+- [Project-management](./src/polymerhus/project_management/CONTEXT.md) - the operator-intent surface: the Project / settings / run-request lifecycle. It LAUNCHES recon (a lazy call, never an eager import) and reads/writes Project and settings state through the shared Postgres gateway; it never sits under recon.
 
 ## Relationships
 
@@ -18,14 +20,13 @@ The per-context glossaries below are terse lookups derived from the canonical on
 - **Shared but context-owned**: cross-context terms get their full entry in the owning context and at most a one-line pointer in the other.
   `Observation`, `Project`, `Domain`/`Endpoint`/`Parameter` and the rest of the L0 node set, and the sole-writer principle are owned by Recon; the epistemic-reasoning cluster (provenance, confidence, evidence, identity, staleness, defeasibility) is owned by Analysis even where the L0 curator also stamps provenance and merges on identity.
 
-## Anticipated context (named, not yet minted)
+## Context boundaries realised (2026-07)
 
-**Project-management** is a genuine future bounded context with its own ubiquitous language: the Project/Run/settings/scope lifecycle and the operator's intent surface.
-It currently lives inside Recon (Run, Job, Phase, Project are ruled elements of the recon pipeline), but the project-lifecycle vocabulary is a context of its own once the codebase is refactored to separate it (operator's explicit ruling).
-No `CONTEXT.md` is minted for it yet; it is recorded here so the terms have a forward home.
+The three contexts above are now physically separate packages under `src/polymerhus/` (the `src/` restructure, `docs/design/module-restructure.md`).
+Two boundaries that this map long anticipated have landed:
 
-`analysis` is not yet a physically independent module - it lives under `agent/recon/analysis/` - but is scheduled to be refactored into one.
-Its `CONTEXT.md` is placed now as the anchor for that refactor.
+- **Analysis** was extracted from under `recon/analysis/` to its own top-level module; its only structural tie to recon is the published L0 vocabulary in `recon.domain.types` (the anti-corruption seam).
+- **Project-management** was minted from the operator surface that had been scattered across the API layer and the Postgres gateway. Run/Job/Phase remain recon vocabulary (they are elements of the recon pipeline, per the operator's ruling); project-management owns the operator's INTENT over runs (create project, configure settings, request a run, poll status), not the pipeline that executes them.
 
 ## Helper modules (shared infrastructure, never their own context)
 

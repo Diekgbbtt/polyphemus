@@ -16,7 +16,7 @@ See `docs/agents/triage-labels.md`.
 
 ### Domain docs
 
-Multi-context. `CONTEXT-MAP.md` at the root maps the bounded contexts (recon, analysis) to their per-context `CONTEXT.md` glossaries.
+Multi-context. `CONTEXT-MAP.md` at the root maps the bounded contexts (recon, analysis, project-management) to their per-context `CONTEXT.md` glossaries under `src/polymerhus/`.
 The reasoned ontology is `docs/design/domain-model.md`; the design principles are `CODING_STANDARD.md`; architectural decisions live in `docs/design/`.
 See `docs/agents/domain.md`.
 

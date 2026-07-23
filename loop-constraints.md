@@ -13,9 +13,9 @@
 
 ## Sole-writer & denylist paths (escalate, never edit)
 
-- L0 graph writes go ONLY through `agent/recon/curator.py`; L1 graph writes go ONLY through the new `agent/recon/analysis/l1_curator.py`. Never emit `:L1*` MERGE Cypher from anywhere else.
+- L0 graph writes go ONLY through `src/polymerhus/recon/domain/curator.py`; L1 graph writes go ONLY through the new `src/polymerhus/analysis/l1_curator.py`. Never emit `:L1*` MERGE Cypher from anywhere else.
 - Never edit `.env`, `.env.*`, secrets, credentials, or infrastructure configs without human approval.
-- Never edit the L0 sole-writer guarantees — `agent/recon/curator.py` and `db/neo4j/schema.py` — except through a sanctioned L1 seam (new `l1_schema.py` / `l1_curator.py`). If a change seems to require touching them, escalate.
+- Never edit the L0 sole-writer guarantees — `src/polymerhus/recon/domain/curator.py` and `db/neo4j/schema.py` — except through a sanctioned L1 seam (new `l1_schema.py` / `l1_curator.py`). If a change seems to require touching them, escalate.
 
 ## Invariants that must hold on every write (FR-NFR)
 
