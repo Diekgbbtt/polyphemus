@@ -570,7 +570,7 @@ def test_exact_mode_logs_discovery_suppression(caplog):
     ]
     assert suppression_logs, "expected an exact-scope suppression log line"
     msg = suppression_logs[0]
-    assert "subdomain discovery suppressed" in msg
+    assert "discovery suppressed" in msg
     assert "app.t.com" in msg
     for job in ("subfinder", "amass", "puredns", "dnsx"):
         assert job in msg

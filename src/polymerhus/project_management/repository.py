@@ -21,6 +21,7 @@ from polymerhus.app.clients import pg
 from polymerhus.app.config import config
 from polymerhus.project_management.auth_context import validate_auth_context
 from polymerhus.recon.control.jobs import JOBS, validate_job_subset
+from polymerhus.recon.control.scope import resolve_seed, seed_kind
 from polymerhus.recon.domain.graph_read import fetch_project_graph
 
 
@@ -77,11 +78,13 @@ def save_project_settings(project_id: str, recon: dict) -> None:
 
 def validate_launch(project_id: str, jobs: list[str] | None) -> None:
     """Guard a recon launch. Raises ProjectNotFound if unknown, ValueError for
-    unknown/invalid job subsets or a missing target_domain.
+    unknown/invalid job subsets, a missing target seed, or an IPv6 seed (D-HS3).
 
-    Refusing a targetless run is deliberate: without target_domain the pipeline
+    Refusing a targetless run is deliberate: without a target seed the pipeline
     silently falls back to the example.com placeholder and scans an unrelated
-    third party, so a wiped/omitted target is caught here rather than in prod."""
+    third party, so a wiped/omitted target is caught here rather than in prod.
+    The seed is read via `resolve_seed` (canonical `target_seed`, legacy
+    `target_domain` alias), so already-persisted projects still launch."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
     if jobs is not None:
@@ -89,10 +92,17 @@ def validate_launch(project_id: str, jobs: list[str] | None) -> None:
         if unknown:
             raise ValueError(f"unknown job(s): {unknown}")
         validate_job_subset(jobs)  # ValueError on an incoherent subset
-    if not (pg.load_settings(project_id) or {}).get("target_domain"):
+    seed = resolve_seed(pg.load_settings(project_id) or {})
+    if not seed:
         raise ValueError(
-            "no target_domain configured; PUT /projects/{id}/settings "
-            "with recon.target_domain before launching recon"
+            "no target_seed configured; PUT /projects/{id}/settings "
+            "with recon.target_seed before launching recon"
+        )
+    # D-HS3: IPv6 seeding is designed-not-built. Reject it here rather than let
+    # parse_scope's host-mode safety net reach an unbracketed URL-synthesis path.
+    if seed_kind(seed) == "ipv6":
+        raise ValueError(
+            "IPv6 seeding is not supported yet; provide an IPv4 address or a domain"
         )
 
 

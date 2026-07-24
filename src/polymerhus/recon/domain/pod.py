@@ -278,6 +278,8 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             curate_kwargs["scope_domain"] = extra["scope_domain"]
         if extra.get("seed_domain"):
             curate_kwargs["seed_domain"] = extra["seed_domain"]
+        if extra.get("seed_root_type"):
+            curate_kwargs["seed_root_type"] = extra["seed_root_type"]
         assets_merged, observations_merged = curate_fn(
             assets, observations, state["project_id"], **curate_kwargs
         )
