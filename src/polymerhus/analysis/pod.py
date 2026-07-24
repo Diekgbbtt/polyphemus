@@ -496,10 +496,21 @@ def run_analyser(
     *,
     graph=None,
     deliver_fn=None,
+    supervisor_enabled: bool | None = None,
+    run_supervisor_fn=None,
 ) -> AnalyserExport:
     """Convenience: invoke the compiled analyser pod for a project and return its
     export. Synchronous (no async collaborators in the default wiring); a caller
     on the event loop should offload via asyncio.to_thread, like run_job.
+
+    COEXISTENCE SEAM (#22, increment 0): the orthogonal `analysis.supervisor_enabled`
+    flag selects legacy-pod (default OFF -> the linear read->analyse->curate graph
+    below, byte-for-byte unchanged) vs the born-async supervisor control plane
+    (ON). This is the SINGLE seam - both callers (`streaming.py` and the batch
+    path) keep calling `run_analyser`, so streaming-vs-batch settings, curation,
+    and sweep are untouched and rollback is a flag flip. `supervisor_enabled` and
+    `run_supervisor_fn` are injectable for testing; when the flag is None it is
+    resolved from project settings (fail-open OFF).
 
     FR-PODSTREAM: when `observations is None` (the default), the run's triager
     Observations are auto-delivered from the graph (deduped, fail-open) so the
@@ -507,6 +518,16 @@ def run_analyser(
     `observations` list (including `[]`) is honoured as-is (e.g. a streaming
     caller pushing its own set). `deliver_fn(project_id) -> list[dict]` is
     injectable for testing."""
+    from polymerhus.analysis.supervisor import (
+        resolve_supervisor_enabled, run_analyser_supervised,
+    )
+    if supervisor_enabled is None:
+        supervisor_enabled = resolve_supervisor_enabled(project_id)
+    if supervisor_enabled:
+        run_supervisor_fn = run_supervisor_fn or run_analyser_supervised
+        return run_supervisor_fn(project_id, run_id, observations)
+
+    # --- legacy analyser pod (the default path; unchanged) --------------------
     if observations is None:
         if deliver_fn is None:
             from polymerhus.analysis.delivery import deliver_observations as deliver_fn
