@@ -24,6 +24,7 @@ from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.anatomy import AnatomyResult
+from polymerhus.analysis.chunking import Chunk  # the real #13 Chunk (increment 1)
 from polymerhus.analysis.curation_types import CurationBatch
 
 # The five DISPATCHABLE proposer roles plus the auditor (the fixed checker stage,
@@ -43,19 +44,6 @@ PROPOSER_ROLES: tuple[Role, ...] = (
 # Roles that carry NEITHER a chunk nor a sweep_cursor: they re-derive the whole
 # live L1 rather than working a bounded slice (#17).
 _SLICELESS_ROLES: frozenset[Role] = frozenset({"bootstrapper", "anti_cluttering"})
-
-
-class Chunk(BaseModel):
-    """PLACEHOLDER for the #13 `Chunk` (increment 1 owns `analysis/chunking.py`).
-
-    Increment 0 needs `Chunk` only as the TYPE an `AgentDispatch` may carry, so
-    this is a minimal immutable stand-in. #13 replaces it with the real bounded
-    L0 slice (nodes/links + batch-overflow cursor); nothing here depends on its
-    internals."""
-
-    model_config = ConfigDict(frozen=True)
-
-    chunk_id: str
 
 
 class SweepCursor(BaseModel):
