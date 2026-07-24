@@ -323,6 +323,15 @@ def bootstrap_reasoned(
         def curate_fn(svc, sysd, pid):
             return l1_curator.l1_curate(svc, sysd, pid)
 
+    if service_slugs is None:
+        # FR-INVENTORY: thread the CURRENT Service slugs into call 1 so a re-bootstrap
+        # REUSES existing identities instead of coining synonyms (suppresses the AMV-12
+        # drift a non-deterministic LLM otherwise accumulates run-to-run).
+        # read_l1_inventory is fail-open (empty on any read error).
+        from polymerhus.analysis.l1_inventory import read_l1_inventory
+
+        service_slugs = read_l1_inventory(project_id).get("services", [])
+
     service_shells: list[ServiceShell] = []
     system_shells: list[SystemShell] = []
 
