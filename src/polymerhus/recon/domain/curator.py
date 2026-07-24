@@ -204,22 +204,40 @@ def build_observation_cypher(obs: Observation) -> tuple[str, dict]:
     return "\n".join(lines), params
 
 
-def _promote_seed_domain(assets: list[AssetDelta], seed_domain: str) -> list[AssetDelta]:
-    """Model the exact-mode seed host as a Domain, never a Subdomain (D28).
+def _promote_seed_root(
+    assets: list[AssetDelta], seed: str, root_type: str = "Domain"
+) -> list[AssetDelta]:
+    """Model the seed host/IP as the engagement root, never a Subdomain (D28,
+    generalised for host mode by D-HS S3).
 
-    In exact mode the seed host is the engagement root, so it must be a single
-    `Domain` node - but tools that produce it (httpx's BaseURL back-link,
-    subdomain_takeover, dns) type it as a `Subdomain`, which would duplicate the
-    deterministically-seeded Domain. Rewrite any `Subdomain` node whose name
-    equals `seed_domain` - whether a top-level delta or an edge target - to
-    `Domain`, at this single curator chokepoint so every tool is covered."""
-    seed = seed_domain.strip().lower()
+    The seed is the engagement root, so it must be a single root node - but tools
+    that produce it (httpx's BaseURL back-link, subdomain_takeover, dns) type it
+    as a `Subdomain`, which would duplicate the deterministically-seeded root.
+    Rewrite any `Subdomain` node whose name equals `seed` - whether a top-level
+    delta or an edge target - to `root_type`, at this single curator chokepoint
+    so every tool is covered.
+
+    `root_type` is `Domain` for domain seeds (D28, unchanged) and `IP` for a bare
+    IP seed (host mode). An IP node is keyed on `address`, not `name`, so the
+    identity key is remapped when promoting to `IP`."""
+    seed_l = seed.strip().lower()
+    id_key = "address" if root_type == "IP" else "name"
+
+    def _remap(identity: dict) -> dict:
+        if id_key == "name":
+            return identity
+        remapped = {k: v for k, v in identity.items() if k != "name"}
+        remapped[id_key] = identity.get("name")
+        return remapped
+
     for delta in assets:
-        if delta.type == "Subdomain" and str(delta.identity.get("name", "")).lower() == seed:
-            delta.type = "Domain"
+        if delta.type == "Subdomain" and str(delta.identity.get("name", "")).lower() == seed_l:
+            delta.type = root_type
+            delta.identity = _remap(delta.identity)
         for edge in delta.edges:
-            if edge.node_type == "Subdomain" and str(edge.node_identity.get("name", "")).lower() == seed:
-                edge.node_type = "Domain"
+            if edge.node_type == "Subdomain" and str(edge.node_identity.get("name", "")).lower() == seed_l:
+                edge.node_type = root_type
+                edge.node_identity = _remap(edge.node_identity)
     return assets
 
 
@@ -231,20 +249,22 @@ def curate(
     merge_fn=None,
     scope_domain: str | None = None,
     seed_domain: str | None = None,
+    seed_root_type: str = "Domain",
 ) -> tuple[int, int]:
     """Execute each asset/observation MERGE, skipping+logging single-item
     failures (bad label, bad anchor, or a merge_fn exception) and continuing.
 
     Returns (assets_merged, observations_merged) counts of successful merges.
 
-    `scope_domain` (the seeded target host/apex, D14) drops out-of-scope
+    `scope_domain` (the seeded target host/apex/IP, D14) drops out-of-scope
     BaseURLs and everything anchored to them - the social/analytics origins
     httpx and katana surface from page links.
 
-    `seed_domain` (exact mode only, D28) is the seed host to model as a `Domain`
-    rather than a `Subdomain`, so the engagement root is a single first-class
-    Domain node instead of being duplicated as a Subdomain by its producers.
-    """
+    `seed_domain` (exact and host mode, D28 / D-HS S3) is the seed host/IP to
+    model as the engagement root rather than a `Subdomain`, so the root is a
+    single first-class node instead of being duplicated by its producers.
+    `seed_root_type` is that root's label: `Domain` for a domain seed (default,
+    unchanged), `IP` for a bare-IP seed."""
     if merge_fn is None:
         from polymerhus.app.clients import neo4j_client
         merge_fn = neo4j_client.merge
@@ -254,7 +274,7 @@ def curate(
     # AssetDeltas through curate, so one rule here covers ALL tools.
     assets = filter_deltas(assets, scope_domain=scope_domain)
     if seed_domain:
-        assets = _promote_seed_domain(assets, seed_domain)
+        assets = _promote_seed_root(assets, seed_domain, seed_root_type)
     # Symmetric scope gate for observations: a triager anchoring an observation
     # on an out-of-scope BaseURL (e.g. an Auth0/Svix third-party origin) would
     # otherwise MERGE-create that off-scope BaseURL anchor node, bypassing the

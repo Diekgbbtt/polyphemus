@@ -19,6 +19,9 @@ PARSERS: dict[str, Callable[[str], list[AssetDelta]]] = {
     # Reprofile job (D27): same parser as httpx, so the re-probed BaseURLs get a
     # `profile` via the identical classify_profile path. Reuse, not duplication.
     "httpx_reprofile": parse_httpx,
+    # Service->BaseURL bridge (D-HS S5): httpx re-run against naabu's non-default
+    # web ports. Same parser (same classify_profile path); reuse, not duplication.
+    "httpx_services": parse_httpx,
     "subfinder": parse_subfinder,
     "amass": parse_amass,
     "dnsx": parse_dnsx,

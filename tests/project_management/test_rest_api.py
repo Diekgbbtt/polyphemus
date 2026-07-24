@@ -233,7 +233,7 @@ def test_post_recon_no_target_domain_400(monkeypatch):
     resp = client.post("/projects/p1/recon", json={"jobs": ["subfinder", "dnsx"]})
 
     assert resp.status_code == 400
-    assert "target_domain" in resp.json()["detail"]
+    assert "target_seed" in resp.json()["detail"]
     assert launched == []  # never launched
 
 

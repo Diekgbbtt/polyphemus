@@ -228,6 +228,10 @@ _REPRESENTATIVE_ASSETS = {
         "baseurl": "https://app.example.com",
         "url": "https://app.example.com/api/v1/users",
     },
+    # httpx_services (D-HS) consumes Service, but its pods receive the
+    # scheme-less `<ip>:<port>` target the pipeline synthesizes from each Service
+    # node (pipeline._services_to_probe_targets), not the raw Service dict.
+    "Service": {"url": "93.184.216.34:8080", "target": "93.184.216.34:8080"},
 }
 
 
