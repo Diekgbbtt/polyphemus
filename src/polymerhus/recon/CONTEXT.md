@@ -56,6 +56,16 @@ The operator-scoped unit of work: a target, its scope, the free-text `operator_k
 It is the boundary at which identity and idempotency currently hold.
 _Avoid_: engagement, target (target is the thing under test, not the record).
 
+**Seed** (`target_seed`):
+The single string that names what a Project probes, seed-type-agnostic (D-HS): a domain (`example.com`, `*.example.com`) or a bare IPv4 (`93.184.216.34`).
+`resolve_seed` reads it, falling back to the deprecated `target_domain` alias so already-persisted projects still launch.
+_Avoid_: target_domain (the legacy, domain-only name).
+
+**Scope mode**:
+The shape `parse_scope` gives a seed, driving which jobs run: `wildcard` (a zone, discovery runs), `exact` (one host, discovery suppressed), or `host` (a bare IP - discovery and the passive harvesters suppressed, the IP probed directly).
+An IP's engagement root is an `IP` node, never a `Domain`; the whole web-discovery chain then unfolds from httpx's `BaseURL`s exactly as for a domain (D-HS).
+_Avoid_: treating a mode as an asset type (it is a routing decision, not an L0 label).
+
 **Run**:
 One execution of the pipeline over a Project's phase plan, keyed by `run_id`.
 Re-running re-derives the graph rather than duplicating it.

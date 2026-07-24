@@ -32,7 +32,13 @@ from polymerhus.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
 from polymerhus.recon.control.auth import select_auth_context
 from polymerhus.recon.domain.curator import ALLOWED_LABELS, curate
 from polymerhus.recon.control.jobs import JOBS, build_phase_plan, validate_job_subset
-from polymerhus.recon.control.scope import DISCOVERY_JOBS, parse_scope
+from polymerhus.recon.control.scope import (
+    DISCOVERY_JOBS,
+    HOST_MODE_ONLY_JOBS,
+    HOST_MODE_SUPPRESSED,
+    parse_scope,
+    resolve_seed,
+)
 from polymerhus.recon.domain.types import AssetDelta
 
 logger = logging.getLogger(__name__)
@@ -54,21 +60,58 @@ def seed_assets(settings: dict) -> list[dict]:
       (gau/paramspider); seeding the exact host keeps them confined to the
       in-scope host instead of harvesting the whole zone. (whois also consumes
       the exact host in exact-subdomain mode - accepted as low-signal, D14b.)"""
-    scope = parse_scope(settings.get("target_domain"))
+    scope = parse_scope(resolve_seed(settings))
     name = scope["seed_host"] if scope["mode"] == "exact" else scope["apex"]
     return [{"name": name}]
 
 
 def _gate_plan_by_scope(plan: list[list[str]], scope: dict) -> list[list[str]]:
-    """Apply the D14 scope gate: in `exact` mode, drop the subdomain-discovery
-    jobs (`DISCOVERY_JOBS`) from every phase and drop any phase left empty. In
-    `wildcard` mode the plan is returned unchanged (discovery runs as today).
+    """Apply the scope gate, dropping jobs a mode must not run and any phase left
+    empty:
 
-    `subdomain_takeover` is not in `DISCOVERY_JOBS`, so it survives the gate."""
-    if scope["mode"] != "exact":
-        return plan
-    gated = [[j for j in phase if j not in DISCOVERY_JOBS] for phase in plan]
+    - `exact` (D14): drop `DISCOVERY_JOBS` (subdomain enumeration is moot for a
+      single host) and `HOST_MODE_ONLY_JOBS` (never run outside host mode).
+    - `host` (D-HS S2): drop `DISCOVERY_JOBS` and `HOST_MODE_SUPPRESSED`
+      (whois/paramspider are low-signal on a bare IP); KEEP `HOST_MODE_ONLY_JOBS`
+      (the httpx_services bridge).
+    - `wildcard`: keep everything except `HOST_MODE_ONLY_JOBS`.
+
+    `subdomain_takeover` is in none of these sets, so it survives every mode
+    (the D14 carve-out)."""
+    mode = scope.get("mode")
+    if mode == "host":
+        drop = DISCOVERY_JOBS | HOST_MODE_SUPPRESSED
+    elif mode == "exact":
+        drop = DISCOVERY_JOBS | HOST_MODE_ONLY_JOBS
+    else:  # wildcard (and any unknown mode): only fence off the host-only jobs
+        drop = HOST_MODE_ONLY_JOBS
+    gated = [[j for j in phase if j not in drop] for phase in plan]
     return [phase for phase in gated if phase]
+
+
+def _services_to_probe_targets(input_assets: list[dict]) -> list[dict]:
+    """Map naabu `Service` nodes to scheme-less httpx probe targets, one per
+    non-default web port (D-HS S5a).
+
+    Ports 80/443 are skipped: the phase-3 httpx probe already mints their
+    (portless, canonical) BaseURLs, so re-probing them here would create a
+    `:80`/`:443` alias (D-HS Trap 1). The target is scheme-less `<ip>:<port>` so
+    httpx is the protocol detector - a service naabu labelled `unknown` (its
+    naming is port-number-based) is still probed, and a non-web port simply
+    yields no BaseURL. Deduped on the synthesized target."""
+    targets: list[dict] = []
+    seen: set[str] = set()
+    for svc in input_assets or []:
+        ip = svc.get("ip_address")
+        port = svc.get("port_number")
+        if not ip or port in (None, 80, 443):
+            continue
+        target = f"{ip}:{port}"
+        if target in seen:
+            continue
+        seen.add(target)
+        targets.append({"url": target, "target": target})
+    return targets
 
 
 def _inject_seed_host(input_assets: list[dict], scope: dict) -> list[dict]:
@@ -241,38 +284,41 @@ async def run_pipeline(
     if job_subset is not None:
         validate_job_subset(job_subset)
 
-    scope = parse_scope(settings.get("target_domain"))
-    # D14: suppress subdomain discovery when the target is an exact host. The
-    # gate is applied to the resolved plan (not re-validated) - the seed-host
-    # injection below is what satisfies the Subdomain-consuming jobs at runtime
-    # once their discovery producers are gone.
+    scope = parse_scope(resolve_seed(settings))
+    # D14: suppress subdomain discovery when the target is an exact host (and
+    # additionally the passive harvesters in host mode, D-HS S2). The gate is
+    # applied to the resolved plan (not re-validated) - the seed-host injection
+    # below is what satisfies the Subdomain-consuming jobs at runtime once their
+    # discovery producers are gone.
     plan = _gate_plan_by_scope(build_phase_plan(job_subset), scope)
 
-    # D14 Q1: an exact-scope run is deliberately small (no subdomain fan-out).
-    # Record why at run start so an otherwise near-empty run is self-explaining
-    # rather than looking silently broken. recon_runs/recon_jobs carry no
-    # run-level note column, so this is a structured log (no schema change).
-    if scope["mode"] == "exact":
+    # D14 Q1 / D-HS: an exact- or host-scope run is deliberately small (no
+    # subdomain fan-out). Record why at run start so an otherwise near-empty run
+    # is self-explaining rather than looking silently broken. recon_runs/
+    # recon_jobs carry no run-level note column, so this is a structured log.
+    if scope["mode"] in ("exact", "host"):
+        suppressed = DISCOVERY_JOBS | (HOST_MODE_SUPPRESSED if scope["mode"] == "host" else frozenset())
         logger.info(
-            "run %s scope=exact target=%s; subdomain discovery suppressed (%s)",
+            "run %s scope=%s target=%s; discovery suppressed (%s)",
             run_id,
+            scope["mode"],
             scope["seed_host"],
-            "/".join(sorted(DISCOVERY_JOBS)),
+            "/".join(sorted(suppressed)),
         )
 
     await asyncio.to_thread(registry.create_run, run_id, project_id)
 
-    # D28: in exact mode, deterministically materialize the seed host as a
-    # Domain node up front - the engagement root must be on the attack surface
-    # even if httpx never probes it (host down, timeout). curate is idempotent
-    # (MERGE), so a later probe of the same host just re-asserts it.
-    if scope["mode"] == "exact" and settings.get("target_domain"):
-        await asyncio.to_thread(
-            curate,
-            [AssetDelta(type="Domain", identity={"name": scope["seed_host"]})],
-            [],
-            project_id,
-        )
+    # D28 / D-HS S3: in exact and host mode, deterministically materialize the
+    # seed as the engagement root up front - it must be on the attack surface
+    # even if httpx never probes it (host down, timeout). A domain seed is a
+    # `Domain{name}`; a bare-IP seed is an `IP{address}`. curate is idempotent
+    # (MERGE), so a later probe of the same seed just re-asserts it.
+    if scope["mode"] in ("exact", "host") and resolve_seed(settings):
+        if scope["mode"] == "host":
+            root = AssetDelta(type="IP", identity={"address": scope["seed_host"]})
+        else:
+            root = AssetDelta(type="Domain", identity={"name": scope["seed_host"]})
+        await asyncio.to_thread(curate, [root], [], project_id)
 
     hb = asyncio.create_task(_heartbeat_loop(run_id))
     signals: list[dict] = []
@@ -311,6 +357,13 @@ async def run_pipeline(
                         # the later-phase harvesters (paramspider today).
                         elif job.consumes == "Domain":
                             input_assets = _seed_domain_host(scope)
+                        # D-HS S5a: the httpx_services bridge consumes naabu's
+                        # Service nodes; synthesize a scheme-less `<ip>:<port>`
+                        # probe target per non-default web port (80/443 skipped -
+                        # the phase-3 httpx probe owns those, portlessly). httpx
+                        # then mints the BaseURL for whatever responds.
+                        elif job.consumes == "Service":
+                            input_assets = _services_to_probe_targets(input_assets)
 
                     excluded = set(exclusions.get(name, []))
                     if excluded:
@@ -325,27 +378,36 @@ async def run_pipeline(
                         if selected:
                             extra["auth_context"] = selected
                     # Scope gate for URL-hosted assets (out-of-scope BaseURL
-                    # drop in curate): the seed host/apex, only when a target is
-                    # actually configured (never the parse_scope placeholder).
-                    if settings.get("target_domain"):
+                    # drop in curate): the seed host/apex/IP, only when a target
+                    # is actually configured (never the parse_scope placeholder).
+                    seed = resolve_seed(settings)
+                    if seed:
                         extra["scope_domain"] = scope["seed_host"]
-                        # D28: in exact mode the seed host is the engagement
-                        # root - a first-class Domain node, not a Subdomain.
-                        # Tell curate to promote any Subdomain the tools mint
-                        # for it (httpx's BaseURL back-link etc.) to Domain, so
-                        # the deterministically-seeded Domain is not duplicated.
-                        if scope["mode"] == "exact":
+                        # D28 / D-HS S3: in exact and host mode the seed is the
+                        # engagement root, not a Subdomain. Tell curate to promote
+                        # any Subdomain the tools mint for it (httpx's BaseURL
+                        # back-link etc.) to the root type, so the
+                        # deterministically-seeded root is not duplicated: a
+                        # `Domain` for a domain seed, an `IP` for a bare-IP seed.
+                        if scope["mode"] in ("exact", "host"):
                             extra["seed_domain"] = scope["seed_host"]
+                            if scope["mode"] == "host":
+                                extra["seed_root_type"] = "IP"
                         # C3: batching (reduce + pack bundles into <= MAX_PODS
                         # pods) is the recon-JOB agent's concern, not the
                         # orchestrator's - the pipeline only supplies the one
                         # datum the reduction needs (the target's registrable
                         # apex, for the first-party filter), and only to the
                         # batched job that consumes it. The job agent's preprocess
-                        # reads extra["apex_registrable"] and batches.
+                        # reads extra["apex_registrable"] and batches. In host mode
+                        # the IP itself is the first-party key (registrable_domain
+                        # on an IP is garbage).
                         if job.batch:
                             from polymerhus.recon.domain.parsers._urls import registrable_domain
-                            extra["apex_registrable"] = registrable_domain(settings["target_domain"])
+                            extra["apex_registrable"] = (
+                                scope["seed_host"] if scope["mode"] == "host"
+                                else registrable_domain(seed)
+                            )
                     if signals:
                         extra["steering"] = signals
 

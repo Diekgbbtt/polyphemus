@@ -490,3 +490,24 @@ Model it as a **bounded work-queue / fixpoint** rather than literal DAG recursio
 Relates to D14 (scope semantics decide in-scope vs external), D16/D16.1 (re-profiling discovered BaseURLs already generalises "assets minted downstream get processed like first-class ones"), and the paramspider exact-mode gap that surfaced this (a Domain-consumer starved because the seed materialised only as a Subdomain).
 
 **Status:** DRAFT, deferred, documentation only. First actionable sub-task before any build: the audit of what currently happens to crawl/JS-discovered hosts (discarded vs recorded vs scoped), since that determines how much of the loop is greenfield.
+
+## D-HS - host (bare-IP) seeding: seed-type-agnostic recon (implemented on branch `host-seeding`, 2026-07-24)
+
+**The gap.**
+The pipeline could only be seeded with a domain: `parse_scope` computed a registrable apex (garbage for an IP), the engagement root was hard-typed `Domain`, and no path existed for a bare-IP target to unfold web recon.
+
+**Decision.**
+A Project can be seeded with a bare IPv4 and unfolds the same webapp recon as a domain, seed-type-agnostic.
+The agnosticism is fenced to one narrow layer - `parse_scope` (new `host` mode), the root-node materialization (an `IP{address}` root), the discovery/harvester gate, and one `resolve_seed` resolver - while every web-discovery tool downstream (httpx and the whole `BaseURL` crawl chain) is reused unchanged.
+No new asset type: only the existing L0 labels, a new scope *mode* value, and one new *job*.
+
+**Ratified sub-decisions.**
+- D-HS1: the project key is generalised to `target_seed`, with `target_domain` kept as a deprecated read-time alias (regression safety for persisted projects).
+- D-HS2: Part A (IP -> httpx on 80/443 -> existing chain) plus Part B (the `httpx_services` Service -> BaseURL bridge), the latter fenced to `host` mode and non-standard ports only.
+- D-HS3: IPv6 is designed-not-built - rejected at the launch guard, never silently mis-parsed.
+
+**Alias safety (the core correctness argument).**
+Two traps, both fenced: the default-port alias (`http://<ip>:80` vs the canonical portless `http://<ip>`) is avoided by skipping ports 80/443 in the Service transform; the host-vs-IP / vhost alias is avoided by running `httpx_services` only in `host` mode (an IP-addressed BaseURL would alias a host-addressed one in a domain run).
+naabu names services by port number, so an HTTP service on a non-standard port can be labelled `unknown`; the bridge therefore feeds httpx a scheme-less `<ip>:<port>` and lets httpx be the protocol detector rather than trusting naabu's name.
+
+**Status:** built + unit-green on `host-seeding`; the full grounding is `docs/design/host-seeding-spec.md` and `docs/design/host-seeding-assertions.md`. Integration (I) and e2e (E) tiers pend a real target.
