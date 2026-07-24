@@ -48,6 +48,15 @@ services:
     image: redamon-kali-sandbox:latest
     entrypoint: ["bash", "-lc", "/opt/postrun.sh && /opt/venv/bin/python /opt/mcp_server.py"]
     ports: ["8000:8000"]
+    # VPN-in-container (D-HS e2e): OpenVPN needs to create a tun interface so
+    # recon pods can reach a target that lives only on a VPN route. Least
+    # privilege - NET_ADMIN + the tun device, deliberately NOT --privileged.
+    # This replaces routing pod traffic through the host's tun, which does not
+    # scale. postrun.sh self-heals the /dev/net/tun node if the host lacks it.
+    cap_add:
+      - NET_ADMIN
+    devices:
+      - /dev/net/tun:/dev/net/tun
     volumes:
       - ./kali/mcp_server.py:/opt/mcp_server.py:ro
       - ./kali/postrun.sh:/opt/postrun.sh:ro
