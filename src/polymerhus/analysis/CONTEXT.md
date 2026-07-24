@@ -217,6 +217,30 @@ The supervisor's LangGraph state - `project_id`, `run_id`, `schedule`, `dispatch
 The single orthogonal flag, read inside `run_analyser`, that selects legacy-pod (default OFF) vs the supervisor (ON) at the one analyser entry.
 A two-way door: rollback is a flag flip; the legacy path stays byte-for-byte unchanged and is the runnable default until the acceptance gate is green.
 
+## Chunk feeding + delivery gate (increment 1)
+
+The chunk-builder (`analysis/chunking.py`, `#13`/`#14`, increment 1) turns a recon job's L0 delta into type-coherent slices for the proposers.
+Built standalone (not yet wired); a pure function whose reads are injected.
+
+**Chunk**:
+The slim immutable Value Object carrying an immutable per-job L0 DELTA for ONE concern - the pure-function input a proposer reasons over.
+It carries only the L0 delta; all L1 context is re-derived LIVE at the proposer, never frozen on the chunk (the live-graph invariant).
+_Avoid_: slice, batch (a batch is the overflow unit, below), payload.
+
+**Concern (concern tag)**:
+The routing key an asset TYPE maps to: `service` (BaseURL / Endpoint / Technology / Certificate, + Header) -> the Assigner + Mechanism-typist; `data` (Parameter / Secret, + Header) -> the Data-modeller.
+Every chunk is type-coherent (its assets map to ONE concern); pre-HTTP types (Subdomain / IP / Port / DNS / Domain) carry no concern.
+
+**Chunk-builder**:
+`chunks_for_job` - partitions a job's `AssetDelta` list by concern, applies the profile gate, and size-bounds by batch-overflow, emitting the chunk list.
+
+**Batch-overflow**:
+The sizing lever: a concern with more than the per-concern asset budget splits into ordered chunks (`batch_index` / `batch_total`), same concern and verbatim, the tail never dropped - replacing the retired silent 400-cap truncation.
+
+**httpx-profile delivery gate**:
+The `#14` rule (reuse-first on D16): an Endpoint (and, per `#13`, a Parameter) is admitted to its chunk only when its BaseURL carries an httpx `profile`; an un-profiled one is WITHHELD at delivery until phase-6 `httpx_reprofile` sets the profile, and delivered FLAGGED at the phase-barrier (the AMV-14 fail-open backstop - never silently dropped).
+The profiled-origin set reuses `selectors.apply_selector`.
+
 ## Provisional and designed-not-built terms
 
 **Fault-hypothesis**:
