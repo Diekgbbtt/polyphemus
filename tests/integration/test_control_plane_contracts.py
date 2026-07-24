@@ -22,7 +22,7 @@ from polymerhus.analysis.messages import (
 )
 from polymerhus.analysis.supervisor import (
     SupervisorState,
-    _curator,
+    _make_curator,
     _make_proposer,
     merge_receipts,
 )
@@ -87,7 +87,7 @@ def test_C3_merge_receipts_dedups_by_dispatch_id_replaying_replaces_in_place():
 
 def test_C4_curator_maps_empty_envelope_to_empty_receipt_zero_counts():
     env = ProposalEnvelope(dispatch_id="d1", role="assigner", phase="A1", status="empty")
-    out = _curator({"inflight": env})
+    out = _make_curator(None)({"inflight": env})  # hollow curator (increment 0)
     (receipt,) = out["receipts"]
     assert isinstance(receipt, StepReceipt)
     assert receipt.status == "empty"
