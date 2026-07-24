@@ -178,8 +178,44 @@ The pass that derives the stale pool (the L0 assets with no inbound `AGGREGATES`
 Dedicated procedures (`webpage-profile`, `authorization-pyramid`) that *classify* spine slots that cannot be read off the surface, emitting the triple typed-classification -> spine slot, evidence -> Observation, deeper probe -> backward-recon request.
 
 **Auditor**:
-A designed-not-built checker that would vet proposals *before* they are written (a confidence gate, a noise classifier, an identity-reuse check), moving the maker/checker discipline upstream from repair to prevention.
-_Status_: designed-not-built (`AMV-16`); the natural home for the orphaned confidence and absence policies.
+The checker that vets proposals *before* they are written (a confidence gate, a noise classifier, an identity-reuse check), moving the maker/checker discipline upstream from repair to prevention.
+It is the FIXED stage after every proposer in the control-plane pipeline (never itself dispatched), not one of the routed proposers.
+_Status_: the hollow stub exists as of increment 0 (score-and-annotate mode is increment 3, `AMV-16`); the natural home for the orphaned confidence and absence policies.
+
+## Control plane (the redesigned analyser, increment 0)
+
+The redesigned analyser dissolves the two-pass `Analyser` into responsibility-scoped proposer agents behind a central **supervisor**, exchanging typed messages.
+Increment 0 (`#22`, realising `#20` increment 0) builds the control plane with HOLLOW agents behind the `analysis.supervisor_enabled` flag; the terms below are its ubiquitous language.
+
+**Supervisor**:
+The central node that holds a `schedule` of `AgentDispatch`es and sequences through them one super-step at a time, routing to a proposer with `Command(goto=role)` and reading back the `StepReceipt` outcome.
+It is born async-native (async compile + `ainvoke`).
+_Avoid_: orchestrator (that is the Recon term), controller.
+
+**AgentDispatch**:
+The immutable work order the supervisor sends DOWN to a proposer: `dispatch_id`, `role`, `phase`, `mode`, and exactly one of `chunk` / `sweep_cursor` (or NEITHER, for the slice-less bootstrapper / anti-cluttering roles).
+Wraps the existing shapes by composition; carries routing intent, while `Command(goto)` carries the routing itself.
+
+**ProposalEnvelope**:
+The single-step baton passed across `proposer -> auditor -> curator`.
+Carries SEPARATE optional cargo (`deltas` / `anatomy` / `curation`) - never a `Union`, because the mechanism-typist emits both `deltas` and `anatomy` - plus the `verdicts` trail and a `status`.
+_Avoid_: proposal (that is the un-enveloped LLM output), message.
+
+**StepReceipt**:
+The outcome a proposer's step yields UP to the supervisor: `status` in `{written, empty, degraded}` + `WriteCounts`.
+The supervisor sequences on this outcome, NEVER on the (already written and discarded) batch.
+
+**inflight baton / receipts trail**:
+`inflight` is the current `ProposalEnvelope` on the supervisor state (last-write - one logical writer per sequential super-step).
+`receipts` is the ONE reducer channel, merging `StepReceipt`s with dedup-by-`dispatch_id` (the state-level mirror of the idempotent `MERGE`).
+There is NO accumulated-proposals channel: the live graph is the accumulator.
+
+**SupervisorState**:
+The supervisor's LangGraph state - `project_id`, `run_id`, `schedule`, `dispatch`, `inflight`, `steer` (all last-write) plus the `receipts` reducer channel.
+
+**analysis.supervisor_enabled (coexistence flag)**:
+The single orthogonal flag, read inside `run_analyser`, that selects legacy-pod (default OFF) vs the supervisor (ON) at the one analyser entry.
+A two-way door: rollback is a flag flip; the legacy path stays byte-for-byte unchanged and is the runnable default until the acceptance gate is green.
 
 ## Provisional and designed-not-built terms
 
