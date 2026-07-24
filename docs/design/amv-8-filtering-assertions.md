@@ -65,7 +65,14 @@ C7  curate, scope composition regression (ticket coverage of category 5): a CDN 
     category drops compose with it - within-scope junk still drops, in-scope real
     surface still survives. curate returns merged==(count of in-scope survivors).
 
-## Walkthrough predicates (end-to-end: real parser -> gate -> census)
+## Walkthrough predicates (real parser -> gate -> census)
+
+> NOTE (corrected): E1-E3 are parser->gate INTEGRATION predicates driven by
+> synthetic tool stdout, not a live end-to-end run. The live e2e against
+> `soupmarket.shop` (Juice Shop) is recorded separately in
+> `amv-8-e2e-diagnosis.md`; it confirmed 0/100 targeted-taxonomy noise and
+> surfaced the residual dotted-JS-fragment class handled by the ticket-5
+> extension.
 
 E1  grounds AMV-8 "junk never becomes an Endpoint", katana path.
     Input: a katana `-jsonl` stdout of 12 crawled requests against

@@ -112,6 +112,15 @@ def test_url_to_deltas_invalid_url_returns_empty_list():
     "/x(unbalanced",                # unbalanced paren
     "/y[0]extra]",                  # unbalanced bracket
     '/"+token+"',                   # double-quote concat
+    # AMV-8 e2e residuals: minified JS member-expression segments mis-read as
+    # paths (single-letter root + dotted properties) ...
+    "/i.document.do",
+    "/l.number/e.do",
+    "/r.dom.offsetHeight/r.do",
+    "/i.visualViewport.scale/i.document.do",
+    # ... and template placeholders (raw + percent-encoded {{href}}).
+    "/{{href}}",
+    "/%7B%7Bhref%7D%7D",
 ])
 def test_is_malformed_concat_path_true(path):
     assert is_malformed_concat_path(path) is True
@@ -123,6 +132,12 @@ def test_is_malformed_concat_path_true(path):
     "/soljson-v0.8.21+commit.a1b2c3d4.js",   # a `+` is fine when balanced/quoteless
     "/search+results",
     "/api/(v1)/x",                            # balanced parens are not malformed
+    # real multi-char dotted filenames/segments must NOT be flagged
+    "/juice-shop/build/routes/verify.js",    # verify.js: root is not a single letter
+    "/login.do",                             # a real Struts endpoint (multi-char root)
+    "/api/Products",
+    "/rest/user/whoami",
+    "/v3/",
 ])
 def test_is_malformed_concat_path_false(path):
     assert is_malformed_concat_path(path) is False
