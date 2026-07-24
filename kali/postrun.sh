@@ -61,5 +61,12 @@ fi
 # is `postrun.sh && mcp_server.py`). Idempotent + root-native, matching whois.
 command -v openvpn >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq --no-install-recommends openvpn iproute2; }
 
+# Self-heal the TUN device node in case the host device is not mapped in: the
+# container keeps the default CAP_MKNOD, and NET_ADMIN (granted in compose) lets
+# OpenVPN configure the interface. No-op when compose already mapped /dev/net/tun.
+if [ ! -c /dev/net/tun ]; then
+  mkdir -p /dev/net && mknod /dev/net/tun c 10 200 && chmod 600 /dev/net/tun
+fi
+
 echo "[postrun] gap-fill complete"
 exit 0
