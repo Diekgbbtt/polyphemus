@@ -291,17 +291,33 @@ def classify_endpoint(path: str, *, has_params: bool = False) -> Classification:
     return "ambiguous"
 
 
-def is_malformed_concat_path(path: str) -> bool:
-    """True when a path is a JS string-concatenation fragment, not a real path
-    (AMV-8 ticket 5).
+# A minified JS member-expression mis-read as a path SEGMENT: a single-letter
+# root (a minified variable name like `i`, `l`, `r`, `e`) followed by one or
+# more dotted properties, matching the WHOLE segment. Catches the AMV-8 e2e
+# residuals `i.document`, `l.number`, `r.dom.offsetHeight`, `e.do`,
+# `i.visualViewport.scale`. Anchored + single-letter-root so real dotted
+# filenames (`verify.js`, `login.do`, `main.8f3a2b1c.js`) never match - their
+# root component is multi-character.
+_JS_EXPR_SEGMENT_RE = re.compile(r"^[a-z]\.[a-zA-Z0-9]+(?:\.[a-zA-Z0-9]+)*$")
 
-    jsluice mis-reads source like `fetch('/api/'+id)` and emits a "URL" such as
-    `/'+_(i[8])+'` or its percent-encoded form `/%27+_%28i%5B11%5D`. These must
-    never become Endpoints. Detection is high-precision on markers essentially
-    never in a real URL path: a literal quote/backtick, the concatenation marker
-    `+_(`, or unbalanced brackets/parens. The path is percent-decoded first so
-    the encoded form is caught by the same rules. A real path (even one with a
-    `+`, e.g. a versioned filename) has none of these, so it is not affected.
+
+def is_malformed_concat_path(path: str) -> bool:
+    """True when a path is a JS source fragment / templating artifact, not a
+    real path (AMV-8 ticket 5, extended by the live e2e).
+
+    Categories, all high-precision on markers essentially never in a real URL
+    path (the path is percent-decoded first, so encoded forms are caught too):
+
+    - **string-concatenation fragments** - jsluice/katana mis-read source like
+      `fetch('/api/'+id)` and emit `/'+_(i[8])+'` / `/%27+_%28i%5B11%5D`:
+      a literal quote/backtick, the `+_(` marker, or unbalanced brackets/parens.
+    - **minified member-expression segments** - katana's JS crawl emits
+      `/i.document.do`, `/l.number/e.do`, `/r.dom.offsetHeight`: a path segment
+      that is entirely a single-letter-rooted dotted expression.
+    - **template placeholders** - `/{{href}}` / `/%7B%7Bhref%7D%7D`: `{{`/`}}`.
+
+    A real path (a `+` in a versioned filename, a multi-char dotted filename like
+    `verify.js`, a real `/login.do`) has none of these, so it is not affected.
 
     Enforced at BOTH parse time (`parsers._urls.url_to_deltas`, so no delta is
     minted) and the curator gate (`filter_deltas`, so a fragment from any source
@@ -313,8 +329,13 @@ def is_malformed_concat_path(path: str) -> bool:
         return True
     if "+_(" in decoded:
         return True
+    if "{{" in decoded or "}}" in decoded:  # templating placeholder
+        return True
     for open_c, close_c in (("(", ")"), ("[", "]"), ("{", "}")):
         if decoded.count(open_c) != decoded.count(close_c):
+            return True
+    for seg in decoded.split("/"):
+        if seg and _JS_EXPR_SEGMENT_RE.match(seg):
             return True
     return False
 
