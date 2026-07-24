@@ -219,6 +219,22 @@ A proposer body may return an `L1DeltaBatch` that rides the envelope; the curato
 The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgresSaver`, and attaches the #18 Langfuse callbacks + a correct session id, flushing at run end.
 2a wraps the LEGACY two-pass as one transitional `assigner` node (output-identical); the per-responsibility, chunk-fed decomposition is increment 2b.
 
+## Proposer decomposition (increment 2b)
+
+The `_two_pass_analyse` monolith dissolves into responsibility-scoped proposers, each consuming a concern-typed `Chunk` and writing through the sole-writer. Built as standalone slices (flag OFF) then wired.
+
+**Assigner**:
+The sole owner of the `AGGREGATES` hinge (agent spec #8) - HIGH-PRECISION assignment of an L0 element to its owning Service, A.1-only (no re-assignment, no retraction).
+Emits a narrowed `L1DeltaBatch{services, aggregates}`.
+_Avoid_: analyser (the whole-model term), classifier.
+
+**Withholding gate**:
+The Assigner's crux (AMV-14): a below-bar ownership judgment (confidence < the provisional 0.75 bar) yields NO `AGGREGATES` entry - the L0 element stays in the stale pool.
+The withholding is a SHAPING rule (absence IS the withholding; no "withheld" edge exists), lives in the Assigner seam not the shared sole-writer, and is the Assigner's SELF-check (maker); the Auditor is the separate check over survivors (checker).
+
+**Exposure-only baseline**:
+A MINTED Service carries only a validated `exposure` prop (public/authenticated); a REUSED Service is emitted with EMPTY props so the idempotent MERGE never clobbers the Bootstrapper's exposure (mirrors #7; suppresses AMV-12 drift).
+
 **analysis.supervisor_enabled (coexistence flag)**:
 The single orthogonal flag, read inside `run_analyser`, that selects legacy-pod (default OFF) vs the supervisor (ON) at the one analyser entry.
 A two-way door: rollback is a flag flip; the legacy path stays byte-for-byte unchanged and is the runnable default until the acceptance gate is green.
