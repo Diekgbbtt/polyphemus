@@ -161,6 +161,14 @@ The L1 counterpart of the Recon `curator`.
 
 **Bootstrap**:
 The pre-analysis step that seeds the operator KB so an analyser run starts from a framed target rather than the bare surface (the bootstrap-first e2e discipline).
+The redesigned Bootstrapper (#26) elicits the skeleton in TWO calls - a free-text 5-step reasoning (architect-decompose -> expand -> hypothesis+KB-ground -> critical-withhold -> decide) then a structured shell extraction - taught by 2 divergent-domain few-shot exemplars, and is FAIL-CLOSED: on retry-exhaustion or a write failure it BLOCKS the analysis rather than degrading to an empty skeleton (an empty KB stays a valid linchpins-only proceed).
+
+**Proposer-reasoning pattern**:
+The reusable prompt fragments every analyser proposer composes (`proposer_reasoning.py`): a role/goal header, a chain-of-thought scaffold, a few-shot CoT block, and a bounded-retry two-call runner - the "optimal prompt pattern" (system-prompt role design + CoT + few-shot + structured extraction) minus the example-pollution pitfall (no hardcoded domain slugs).
+
+**ServiceShell / SystemShell**:
+The Bootstrapper's call-2 elicitation template: a per-Service / per-System shell whose phase-A.1 attributes are PRESENT but EMPTIED (bootstrap fills only slug + exposure, or kind + discriminator), mapped down to `L1DeltaBatch` for the sole-writer (the empty A.1 slots are not persisted - absence means not-yet-filled).
+The 3 forced linchpins are the identify/authenticate/authorize triad (IdentificationSystem, AuthenticationMechanism, AuthorizationSystem); the AuthorizationSystem alone keeps a shallow KB-sourced role/realm vocabulary, with no edges.
 
 **Curation / reconciliation**:
 The curation-time repair authority (`merge` / `delete` / `relabel` / `rehome`) that corrects the L1 graph with a later global pass.
