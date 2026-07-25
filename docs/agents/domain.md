@@ -92,3 +92,21 @@ If your output contradicts an existing design spec, surface it explicitly rather
 Several of these decisions are also restated as binding invariants in `loop-constraints.md`.
 Where the two agree, they are one rule.
 Where they appear to disagree, `loop-constraints.md` wins for anything an agent is about to write, and the discrepancy is an escalation.
+
+## Eval-time technique: bare-IP vhost resolution
+
+When a Project is seeded by bare IP (recon `host` scope mode), a web target routinely 301-redirects the IP to a name-based virtual host (e.g. `10.129.x.x` -> `https://fireflow.htb/`).
+On a routing-only VPN the vhost is not in DNS (HTB `.htb` names are an `/etc/hosts` convention), so `httpx -fr` follows the redirect into NXDOMAIN and records nothing, and every downstream web tool that would target the vhost fails to resolve it - the eval under-reports the surface even though the host-seeding control plane is correct.
+
+The eval agent MUST interpose to restore the vhost, and the lever is **name resolution, not routing**.
+Virtual-host and TLS-SNI selection are name decisions the origin makes at L7/TLS *after* the packet arrives, so no L3 route or DNAT can pick the vhost - the client must present the name.
+Two interpositions, in preference order:
+
+- **Resolution write (preferred):** add `<vhost> <seed-ip>` to the kali container's `/etc/hosts`.
+  Every tool then resolves the vhost to the IP and sets DNS + TLS SNI + `Host:` correctly by construction - one write, all tools, present and future.
+- **Host-header injection (fallback):** direct each web tool to send `Host: <vhost>` while connecting to the IP.
+  Weaker: it needs a flag per tool (no single chokepoint) and does not fix TLS SNI, so an SNI-routing origin still serves the wrong vhost over HTTPS.
+
+This belongs natively in the pipeline orchestrator, not the eval agent.
+The seamless form is one "vhost-resolution" step that auto-populates the container-local name map from signals httpx already witnesses - primarily the TLS **certificate CN/SAN** (present at probe time, before any redirect), plus the 301 `Location` and absolute body URLs - so every subordinate web tool inherits it at a single chokepoint.
+Until that exists, the eval agent performs the `/etc/hosts` write after httpx; header injection is the fallback only where writing hosts is impossible.
