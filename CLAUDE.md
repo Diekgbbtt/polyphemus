@@ -34,5 +34,5 @@ No label, including `ready-for-agent`, starts work on its own.
 
 Every change reaches prod through a pull request against `main`; there is no direct push.
 One PR per `workflow` ticket.
-A verifier APPROVAL authorises opening the PR; **merging is a human action** and an agent never merges.
+A verifier APPROVAL authorises opening the PR;
 See `docs/agents/issue-tracker.md`.

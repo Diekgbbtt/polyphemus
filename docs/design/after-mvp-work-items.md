@@ -356,14 +356,7 @@ Consolidating it into one agent removes the scatter and the "the analyser should
 Its `fingerprint_only -> forced-Low-confidence + forced-probe` rule (`anatomy.py:_enforce_fingerprint_insufficiency`, `anatomy.py:113`) is already a working *micro-auditor*: a deterministic structural rule that caps an over-confident classification and demands corroborating evidence.
 The auditor below generalises exactly this proven pattern.
 
-4. **Journey grouper** - responsibility: whole-graph journey membership.
-Input: the WHOLE settled Service set (index-cards).
-Output: `journeys` memberships (light membership prop, plan §1).
-**Inherently global**: it cannot be a per-slice creator because a flow spans services that a single recon-job slice never co-observes.
-This is the one responsibility that genuinely justifies a global pass, and it is the natural residual home of the shrunken curation.
-It also owns the AMV-15 altitude contract (kebab-case, 2-4 tokens, multi-step business journey, reject single-member journeys).
-
-5. **Identity reconciler (residual, global)** - responsibility: only the dedup that prevention structurally cannot reach.
+4. **Identity reconciler (residual, global)** - responsibility: only the dedup that prevention structurally cannot reach.
 Prevention (agents 1-4 consulting the shared inventory at creation, FR-INVENTORY) already keeps a project internally clean (0 synonym pairs in every FR-CURE2E run, §7).
 What it cannot reach is the FRESH-project case (empty inventory, nothing to anchor on -> AMV-12) and morphological collisions (`seller-payouts` vs `seller-payout` -> AMV-13).
 So this agent shrinks to a controlled-vocabulary anchor + a stemming-aware normaliser, not a full cross-service merge engine.

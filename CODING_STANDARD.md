@@ -54,7 +54,7 @@ When the model learns that a concept was mis-homed - a category error - the corr
 **Grounded example - a live correction.**
 The mechanism-classification principle (`domain-model.md` §2.3, `CONTEXT` glossary "Mechanism-as-System") is a responsibility model being *fixed in flight*.
 The operator twice corrected the placement of mechanism attributes: a `rendering_model`, a `navigation_model`, an `api_paradigm`, an `auth_methods` set is a property of the *mechanism-System*, never of the *target-Service* that uses it - storing it on a Service is a category error that both hides the fault's transferability and duplicates state (`l1-domain-model-catalogue.md` §1).
-The correction is now enforced in code as an explicit re-homing authority: `curation._REHOME_RULES` (`curation.py:107-113`) maps each mis-placed Service prop to the `EXPOSED_VIA` / `AUTHENTICATED_BY` edge and System that should carry it, and `_navigation_target` deliberately deletes the old `SPA -> CSR` inference (`curation.py:71-72`, `FR-MODELFIX`) because `navigation_model` and `rendering_model` are ontologically independent (`L1D-31a`).
+The correction is now enforced in code as an explicit re-homing authority: `curation._REHOME_RULES` (`src/polymerhus/analysis/curation.py:107-113`) maps each mis-placed Service prop to the `EXPOSED_VIA` / `AUTHENTICATED_BY` edge and System that should carry it, and `_navigation_target` deliberately deletes the old `SPA -> CSR` inference (`src/polymerhus/analysis/curation.py:71-72`, `FR-MODELFIX`) because `navigation_model` and `rendering_model` are ontologically independent (`L1D-31a`).
 
 **Standard.**
 When you find a prop, an edge, or a function on the wrong unit, do not widen the reader to tolerate it - re-home it, and add the rule to the reconciliation authority so the correction is mechanical and idempotent.
@@ -71,7 +71,7 @@ Recon never reads Layer 1; Analysis treats Layer 0 as a published, read-only sub
 The same word means different things across the boundary - `Service` is a network service on a port in Recon and a business target in Analysis (`CONTEXT.md` both glossaries) - and that is fine precisely because the boundary is explicit.
 
 **Grounded example - the anti-corruption layer.**
-The three cross-layer edges `AGGREGATES` / `SURFACES_AT` / `EVIDENCED_BY` are the only crossing, and they always `MATCH` the L0 node and never `MERGE` it (`l1_curator.py:315-322`, `build_aggregates_cypher` at `l1_curator.py:351`).
+The three cross-layer edges `AGGREGATES` / `SURFACES_AT` / `EVIDENCED_BY` are the only crossing, and they always `MATCH` the L0 node and never `MERGE` it (`src/polymerhus/analysis/l1_curator.py:315-322`, `build_aggregates_cypher` at `src/polymerhus/analysis/l1_curator.py:351`).
 This is the ACL: the interpretive writer can never mint a descriptive node, so an L1 judgment can anchor onto L0 evidence but can never corrupt the observed store.
 The two contexts share no identity keys (`L1D-2`), so either can be re-derived without churning the other.
 
@@ -97,9 +97,9 @@ Business logic never mixes with persistence, so the model stays testable in memo
 
 **Grounded example.**
 In both curators the split is explicit and documented at the top of the module.
-`build_asset_cypher` / `build_observation_cypher` (`curator.py:119, 151`) are pure - "they never touch a driver" (`curator.py:5-8`) - and `curate` (`curator.py:226`) is "the impure orchestrator: it injects `project_id`, calls `merge_fn` per item, and skips+logs single-item failures".
-The Layer-1 mirror is `build_service_cypher` / `build_system_cypher` / `build_aggregates_cypher` (pure) versus `l1_curate` / `enrich` / `reconcile` (impure), stated verbatim at `l1_curator.py:5-9`.
-Even the D8 re-anchor repair keeps this discipline: `broaden_anchor` (`curator.py:72`) derives a broadened anchor "by identity key ONLY - no graph/driver access, so this stays pure and unit-testable".
+`build_asset_cypher` / `build_observation_cypher` (`src/polymerhus/recon/domain/curator.py:119, 151`) are pure - "they never touch a driver" (`src/polymerhus/recon/domain/curator.py:5-8`) - and `curate` (`src/polymerhus/recon/domain/curator.py:226`) is "the impure orchestrator: it injects `project_id`, calls `merge_fn` per item, and skips+logs single-item failures".
+The Layer-1 mirror is `build_service_cypher` / `build_system_cypher` / `build_aggregates_cypher` (pure) versus `l1_curate` / `enrich` / `reconcile` (impure), stated verbatim at `src/polymerhus/analysis/l1_curator.py:5-9`.
+Even the D8 re-anchor repair keeps this discipline: `broaden_anchor` (`src/polymerhus/recon/domain/curator.py:72`) derives a broadened anchor "by identity key ONLY - no graph/driver access, so this stays pure and unit-testable".
 
 **Standard.**
 A `build_*` function is pure: input value in, `(cypher, params)` out, `ValueError` on a shape it refuses.
@@ -117,14 +117,14 @@ That module is the boundary between "proposed" and "true in the graph".
 Without it, "true in the graph" stops being a well-defined predicate (`domain-model.md` §7.1).
 
 **Grounded example.**
-L0 writes go only through `curator.py`; L1 writes go only through `l1_curator.py` (`loop-constraints.md`, "Sole-writer & denylist paths").
-The writer validates labels against `ALLOWED_LABELS` (`curator.py:27-31`) and `L1_ALLOWED_LABELS` (`l1_curator.py:69`), and it is where the maker/checker discipline lives at the data boundary: the proposer is the maker, the writer is the mechanical checker of shape and identity.
-The proposer is *structurally forbidden* from setting reserved fields - `_clean_props` strips any attempt to set identity or provenance keys from LLM-originated props (`l1_curator.py:139-142, 174-181`), and the proposal models deliberately omit provenance (`analyser_types.py:37-63`), which `proposals_to_deltas` injects at the curate boundary (`analyser_types.py:133-161`).
-Even destructive reconciliation (`merge`/`delete`/`relabel`) is admitted only inside `l1_curator` and only over `:L1*` labels (`l1_curator.py:75`, `reconcile` at `l1_curator.py:878-895`), so a repair op can never touch an L0 node.
+L0 writes go only through `src/polymerhus/recon/domain/curator.py`; L1 writes go only through `src/polymerhus/analysis/l1_curator.py` (`loop-constraints.md`, "Sole-writer & denylist paths").
+The writer validates labels against `ALLOWED_LABELS` (`src/polymerhus/recon/domain/curator.py:27-31`) and `L1_ALLOWED_LABELS` (`src/polymerhus/analysis/l1_curator.py:69`), and it is where the maker/checker discipline lives at the data boundary: the proposer is the maker, the writer is the mechanical checker of shape and identity.
+The proposer is *structurally forbidden* from setting reserved fields - `_clean_props` strips any attempt to set identity or provenance keys from LLM-originated props (`src/polymerhus/analysis/l1_curator.py:139-142, 174-181`), and the proposal models deliberately omit provenance (`src/polymerhus/analysis/analyser_types.py:37-63`), which `proposals_to_deltas` injects at the curate boundary (`src/polymerhus/analysis/analyser_types.py:133-161`).
+Even destructive reconciliation (`merge`/`delete`/`relabel`) is admitted only inside `l1_curator` and only over `:L1*` labels (`src/polymerhus/analysis/l1_curator.py:75`, `reconcile` at `src/polymerhus/analysis/l1_curator.py:878-895`), so a repair op can never touch an L0 node.
 
 **Standard.**
 Never emit `:L1*` (or L0) MERGE Cypher from anywhere but its sole-writer; if a change seems to need it, escalate (`loop-constraints.md`).
-A relationship type or label interpolated into Cypher (Neo4j cannot parameterise it) must pass both `_SAFE_IDENT` (`l1_curator.py:328`) and a fixed allowlist - the two together are the injection boundary.
+A relationship type or label interpolated into Cypher (Neo4j cannot parameterise it) must pass both `_SAFE_IDENT` (`src/polymerhus/analysis/l1_curator.py:328`) and a fixed allowlist - the two together are the injection boundary.
 
 ---
 
@@ -136,28 +136,28 @@ A relationship type or label interpolated into Cypher (Neo4j cannot parameterise
 Slim so it is easy to honour; total so a caller never meets an unhandled outcome.
 
 **Grounded examples - the contracts.**
-The interface agreements are deliberately narrow typed shapes in `types.py` and `analyser_types.py`:
+The interface agreements are deliberately narrow typed shapes in `src/polymerhus/recon/domain/types.py` and `src/polymerhus/analysis/analyser_types.py`:
 
-- The parser contract: `stdout -> list[AssetDelta]`, i.e. `Callable[[str], list[AssetDelta]]` (`parsers/__init__.py:17`).
-- The curate contract: `curate(assets, observations, project_id, *, merge_fn=...)` returning `(assets_merged, observations_merged)` (`curator.py:226-234`), mirrored by `l1_curate` returning `(services_merged, systems_merged)` (`l1_curator.py:264`).
-- Interface agreement A (assignment): `AGGREGATES` carrying the full judgment envelope `{confidence, status, evidence_refs, provenance, ts}` (`l1_curator.py:32-39`, `L1D-25`).
+- The parser contract: `stdout -> list[AssetDelta]`, i.e. `Callable[[str], list[AssetDelta]]` (`src/polymerhus/recon/domain/parsers/__init__.py:17`).
+- The curate contract: `curate(assets, observations, project_id, *, merge_fn=...)` returning `(assets_merged, observations_merged)` (`src/polymerhus/recon/domain/curator.py:226-234`), mirrored by `l1_curate` returning `(services_merged, systems_merged)` (`src/polymerhus/analysis/l1_curator.py:264`).
+- Interface agreement A (assignment): `AGGREGATES` carrying the full judgment envelope `{confidence, status, evidence_refs, provenance, ts}` (`src/polymerhus/analysis/l1_curator.py:32-39`, `L1D-25`).
 - Interface agreement B (targeted recon / probe): a backward-recon request routed to the requesting agent (`domain-model.md` §2.6, `L1D-26`).
-- The analyser's pure contract: `f(L0-slice + observations) -> L1-deltas` (`analyser_types.py:11-13`), whose proposals omit provenance and identity by design.
+- The analyser's pure contract: `f(L0-slice + observations) -> L1-deltas` (`src/polymerhus/analysis/analyser_types.py:11-13`), whose proposals omit provenance and identity by design.
 
 **Grounded example - all delivery semantics handled.**
 The recon pipeline is the exemplar of total delivery semantics, layered as three fail-open rings that always terminate:
 
-- Per item: one bad delta is skipped and logged, never aborting the batch (`curate`, `curator.py:264-292`; `_write_each`, `l1_curator.py:608-624`).
-- Per pod: one pod's exception degrades to a `verdict="failed"` export, never aborting its siblings (`pod_runner_node`, `job_agent.py:270-277`).
-- Per job and per run: a job whose pods all fail is marked `degraded` and the run always reaches a terminal `set_run_status(run_id, "complete")` (`pipeline.py:9-11, 369-384, 474`).
+- Per item: one bad delta is skipped and logged, never aborting the batch (`curate`, `src/polymerhus/recon/domain/curator.py:264-292`; `_write_each`, `src/polymerhus/analysis/l1_curator.py:608-624`).
+- Per pod: one pod's exception degrades to a `verdict="failed"` export, never aborting its siblings (`pod_runner_node`, `src/polymerhus/recon/control/job_agent.py:270-277`).
+- Per job and per run: a job whose pods all fail is marked `degraded` and the run always reaches a terminal `set_run_status(run_id, "complete")` (`src/polymerhus/recon/control/pipeline.py:9-11, 369-384, 474`).
 
-The gate node makes the empty-but-clean semantic explicit: `returncode == 0` is success even with empty stdout, only a non-zero exit is a failure (`pod.py:223-236`).
-The exec-artifact reader makes the *absence* of evidence a failure, never an assumed success ("No structured result: treat as FAILURE, never assume success", `pod.py:357-363`).
+The gate node makes the empty-but-clean semantic explicit: `returncode == 0` is success even with empty stdout, only a non-zero exit is a failure (`src/polymerhus/recon/domain/pod.py:223-236`).
+The exec-artifact reader makes the *absence* of evidence a failure, never an assumed success ("No structured result: treat as FAILURE, never assume success", `src/polymerhus/recon/domain/pod.py:357-363`).
 
 **Standard.**
 An interface is a typed model with a documented success shape and a documented failure shape.
 Handle every branch: exit code, empty result, missing collaborator, malformed proposal.
-A "nothing to add" result is a valid, well-typed value (every proposal list defaults empty, `analyser_types.py:116-130`), not an error.
+A "nothing to add" result is a valid, well-typed value (every proposal list defaults empty, `src/polymerhus/analysis/analyser_types.py:116-130`), not an error.
 
 **Honest debt.**
 Fail-open *silently drops*: a dropped judgment and a never-made judgment are indistinguishable downstream (`domain-model.md` §7.4).
@@ -173,8 +173,8 @@ This is an accepted operational trade, not an ontological defect, because absenc
 Injection is how the repository/gateway seam stays out of the model.
 
 **Grounded example.**
-The seams are pervasive and uniform: `build_pod_graph(*, exec_fn, curate_fn, triage_fn)` (`pod.py:189`), `build_job_agent(*, pod_invoke, preprocess_fn)` (`job_agent.py:235`), `run_pipeline(..., run_job=None, load_settings=None, registry=None, read_assets=None, ...)` (`pipeline.py:196-208`), and `merge_fn`/`read_fn` on every curator and reader.
-Real collaborators resolve their clients *lazily on first call*, never at import - "Importing this module must never perform network I/O" (`pod.py:8-12`), and `curate` resolves `neo4j_client.merge` inside the function body (`curator.py:248-250`).
+The seams are pervasive and uniform: `build_pod_graph(*, exec_fn, curate_fn, triage_fn)` (`src/polymerhus/recon/domain/pod.py:189`), `build_job_agent(*, pod_invoke, preprocess_fn)` (`src/polymerhus/recon/control/job_agent.py:235`), `run_pipeline(..., run_job=None, load_settings=None, registry=None, read_assets=None, ...)` (`src/polymerhus/recon/control/pipeline.py:196-208`), and `merge_fn`/`read_fn` on every curator and reader.
+Real collaborators resolve their clients *lazily on first call*, never at import - "Importing this module must never perform network I/O" (`src/polymerhus/recon/domain/pod.py:8-12`), and `curate` resolves `neo4j_client.merge` inside the function body (`src/polymerhus/recon/domain/curator.py:248-250`).
 
 **Standard.**
 A module that talks to Neo4j, an LLM, or the execution substrate exposes that collaborator as an injectable parameter with a lazily-resolved production default.
@@ -192,10 +192,10 @@ An extension point is where the ubiquitous language admits a new term cheaply.
 
 **Grounded examples.**
 
-- **A parser**: add one entry to the `PARSERS` registry (`parsers/__init__.py:17-38`); `get_parser(tool)` and the whole pod path pick it up. The signature-aware dispatch means a findings-parser that wants `target_url` is handled without touching the caller (`pod.py:55-63`).
-- **A System kind**: add one `(kind, description)` tuple to `SYSTEM_KINDS` (`l1_curator.py:83-97`) - "Extending it is a one-line data edit here - never a schema migration". The same constant validates a proposal, drives the sweep prompt, and renders into the analyser's `vocabulary_prompt` (`l1_curator.py:152-171`), so it never drifts.
-- **A data-relationship edge type**: add one tuple to `DATA_RELATIONSHIP_KINDS` (`l1_curator.py:105-112`); the kind *is* the uppercased edge type, single-sourced into `_DATA_REL_EDGE_TYPES` (`l1_curator.py:116`).
-- **A findings tool**: add one entry to `_FINDINGS_MODULES` (`pod.py:39-42`).
+- **A parser**: add one entry to the `PARSERS` registry (`src/polymerhus/recon/domain/parsers/__init__.py:17-38`); `get_parser(tool)` and the whole pod path pick it up. The signature-aware dispatch means a findings-parser that wants `target_url` is handled without touching the caller (`src/polymerhus/recon/domain/pod.py:55-63`).
+- **A System kind**: add one `(kind, description)` tuple to `SYSTEM_KINDS` (`src/polymerhus/analysis/l1_curator.py:83-97`) - "Extending it is a one-line data edit here - never a schema migration". The same constant validates a proposal, drives the sweep prompt, and renders into the analyser's `vocabulary_prompt` (`src/polymerhus/analysis/l1_curator.py:152-171`), so it never drifts.
+- **A data-relationship edge type**: add one tuple to `DATA_RELATIONSHIP_KINDS` (`src/polymerhus/analysis/l1_curator.py:105-112`); the kind *is* the uppercased edge type, single-sourced into `_DATA_REL_EDGE_TYPES` (`src/polymerhus/analysis/l1_curator.py:116`).
+- **A findings tool**: add one entry to `_FINDINGS_MODULES` (`src/polymerhus/recon/domain/pod.py:39-42`).
 
 **Standard.**
 When you add a term to a controlled vocabulary, add it to the *single source of truth* constant so validation, the LLM prompt, and any sweep all update together.
@@ -211,11 +211,11 @@ If adding a kind requires editing more than one place, the vocabulary is not yet
 
 **Grounded examples.**
 
-- The `httpx_reprofile` job reuses `parse_httpx` verbatim - "Reuse, not duplication" (`parsers/__init__.py:19-21`).
-- `_write_each` (`l1_curator.py:608-624`) is the one fail-open write loop reused by every enrichment builder (`l1_curator.py:643-647`).
-- `_identity_clause` builds the deterministic sorted-key MERGE fragment reused across both curators (`curator.py:111`, `l1_curator.py:188`).
-- `vocabulary_prompt` (`l1_curator.py:152`) renders the same allowlist constants the builders validate against, so the LLM is told exactly the values the writer will accept.
-- The scope filter runs once at the curator chokepoint so "one rule here covers ALL tools" (`curator.py:254-255`, `_promote_seed_domain` at `curator.py:207-223`).
+- The `httpx_reprofile` job reuses `parse_httpx` verbatim - "Reuse, not duplication" (`src/polymerhus/recon/domain/parsers/__init__.py:19-21`).
+- `_write_each` (`src/polymerhus/analysis/l1_curator.py:608-624`) is the one fail-open write loop reused by every enrichment builder (`src/polymerhus/analysis/l1_curator.py:643-647`).
+- `_identity_clause` builds the deterministic sorted-key MERGE fragment reused across both curators (`src/polymerhus/recon/domain/curator.py:111`, `src/polymerhus/analysis/l1_curator.py:188`).
+- `vocabulary_prompt` (`src/polymerhus/analysis/l1_curator.py:152`) renders the same allowlist constants the builders validate against, so the LLM is told exactly the values the writer will accept.
+- The scope filter runs once at the curator chokepoint so "one rule here covers ALL tools" (`src/polymerhus/recon/domain/curator.py:254-255`, `_promote_seed_domain` at `src/polymerhus/recon/domain/curator.py:207-223`).
 
 **Standard.**
 Before writing a loop, a clause builder, or a prompt fragment, look for the existing one.
@@ -231,14 +231,14 @@ A single chokepoint that every caller funnels through (the curator, `_write_each
 Provenance is what lets "an LLM said so" and "a tool measured it" be different kinds of fact in one graph (`domain-model.md` §3.1).
 
 **Grounded example.**
-`identity ⊥ membership` (`L1D-11`): a unit is keyed on what it *is* (business function, mechanism kind), never on what it *contains* (`l1_curator.py:15-19`).
+`identity ⊥ membership` (`L1D-11`): a unit is keyed on what it *is* (business function, mechanism kind), never on what it *contains* (`src/polymerhus/analysis/l1_curator.py:15-19`).
 A Service is keyed on `(project_id, business_function_slug)`; a System on `(project_id, kind, discriminator)` with the non-null `__singleton__` sentinel so a null discriminator cannot silently duplicate a singleton (`L1D-9`).
-Provenance (`prov_job`/`prov_model`/`prov_prompt_id`) and `first_seen`/`last_seen` are stamped on every write, `ON CREATE` for first-seen and refreshed on every touch (`l1_curator.py:184-185, 220-226`), which is what lets the stores be re-derived rather than migrated.
+Provenance (`prov_job`/`prov_model`/`prov_prompt_id`) and `first_seen`/`last_seen` are stamped on every write, `ON CREATE` for first-seen and refreshed on every touch (`src/polymerhus/analysis/l1_curator.py:184-185, 220-226`), which is what lets the stores be re-derived rather than migrated.
 
 **Standard.**
 Every `MERGE` keys on identity, never on the member set.
 `discriminator` defaults to the literal `"__singleton__"`, never null.
-The writer stamps provenance; if a proposal tries to set a reserved key it is stripped (`_RESERVED_PROPS`, `l1_curator.py:139-142`).
+The writer stamps provenance; if a proposal tries to set a reserved key it is stripped (`_RESERVED_PROPS`, `src/polymerhus/analysis/l1_curator.py:139-142`).
 These are binding invariants - see `loop-constraints.md`, "Invariants that must hold on every write (FR-NFR)".
 
 **Honest debt.**
@@ -291,7 +291,7 @@ Integration follows `docs/agents/issue-tracker.md`: a verifier approval authoris
 **DDD rationale.** An honest model names its holes; false closure is worse than an open question (`domain-model.md` §8).
 
 **Grounded example.**
-`configurator`/`job_orchestrator` are registered but dormant proposer seams (`providers.py:14`, `CONTEXT.md` Recon); `asset_context` is threaded end-to-end but is always the empty string (`CONTEXT.md` Recon, line 109-111); the `FaultHypothesis` node and its `POSITS_FAULT_AT` edge are modelled in the ontology but designed-not-built and name-not-ratified (`CONTEXT.md` Analysis, `NM-8`); `SystemAspect` is designed but the MVP fence asserts no such node exists (`L1D-16`, `NM-3`).
+`configurator`/`job_orchestrator` are registered but dormant proposer seams (`src/polymerhus/app/llm/providers.py:14`, `CONTEXT.md` Recon); `asset_context` is threaded end-to-end but is always the empty string (`CONTEXT.md` Recon, line 109-111); the `FaultHypothesis` node and its `POSITS_FAULT_AT` edge are modelled in the ontology but designed-not-built and name-not-ratified (`CONTEXT.md` Analysis, `NM-8`); `SystemAspect` is designed but the MVP fence asserts no such node exists (`L1D-16`, `NM-3`).
 
 **Standard.**
 When you scaffold ahead of a capability, mark the seam `designed-not-built` in code and in the relevant CONTEXT/STATE record, and make the dormant path inert (an empty string, a no-op default), never a silent half-implementation.
