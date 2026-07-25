@@ -17,11 +17,22 @@ def _bare_host(value: str) -> str:
     `httpx_reprofile` job consumes BaseURLs, so its `input` is a full URL
     (`scheme://host[/path]`). Strip any scheme/path so the back-linked node is
     `app.example.com`, never `https://app.example.com` (which would mint a
-    malformed scheme-prefixed Subdomain node)."""
+    malformed scheme-prefixed Subdomain node).
+
+    Also strip a trailing `:port` so a port-bearing input (the `httpx_services`
+    Service bridge probes `<ip>:<port>`) back-links to the bare host `<ip>`, not
+    `<ip>:<port>` - a malformed node that would defeat the seed-root promotion
+    keyed on the bare host (D-HS S6). IPv4/hostname only; only a purely-numeric
+    trailing segment is treated as a port, so a bare host is left untouched.
+    IPv6 bracket forms are out of scope (D-HS3)."""
     host = value.strip().lower()
     if "://" in host:
         host = urlparse(host).netloc or host
-    return host.split("/", 1)[0]
+    host = host.split("/", 1)[0]
+    head, sep, tail = host.rpartition(":")
+    if sep and tail.isdigit():
+        host = head
+    return host
 
 
 def _first(entry: dict, *keys):

@@ -82,6 +82,27 @@ JOBS: dict[str, JobSpec] = {
         consumes="Subdomain",
         use_auth=True,
     ),
+    "httpx_services": JobSpec(
+        tool="httpx_services",
+        skill="http_probe",
+        # Same httpx probe as the phase-3 job, but pointed at the scheme-less
+        # `<ip>:<port>` targets the pipeline synthesizes from naabu's Service
+        # nodes (D-HS S5/S5a). Reuses parse_httpx (registered under this tool
+        # name in PARSERS), so the BaseURL is minted and profiled via the
+        # identical noise_filter.classify_profile path - no duplicated logic.
+        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_header}",
+        produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
+        # Consumes naabu's Service nodes; the pipeline's Service->probe-target
+        # transform drops the default web ports (80/443, already covered by the
+        # phase-3 httpx probe) and feeds only the non-standard ports here. httpx
+        # is the protocol detector: a non-web port yields no HTTP response, hence
+        # no BaseURL, so naabu's port-number-based naming cannot cause a miss.
+        # Host-mode only (see HOST_MODE_ONLY_JOBS): in a domain run an
+        # IP-addressed BaseURL would alias the host-addressed one and break vhost
+        # routing (D-HS Trap 2), so this job never runs outside bare-IP seeding.
+        consumes="Service",
+        use_auth=True,
+    ),
     "httpx_reprofile": JobSpec(
         tool="httpx_reprofile",
         skill="http_probe",
@@ -265,6 +286,13 @@ PHASES: list[list[str]] = [
     ["dnsx", "puredns", "subdomain_takeover"],
     ["naabu"],
     ["httpx"],
+    # Service->BaseURL bridge (D-HS S5), host-mode only: re-probe naabu's
+    # non-default web ports so a bare-IP target reaches web apps on 8080/8443/etc
+    # that the phase-3 httpx probe (default 80/443 only) never hits. MUST sit
+    # after naabu (its Service producer) and before the crawl phase, so its
+    # BaseURLs feed katana/ffuf/steel exactly like httpx's. Dropped by
+    # _gate_plan_by_scope in every non-host mode (HOST_MODE_ONLY_JOBS).
+    ["httpx_services"],
     # Crawl phase. kiterunner + graphql-cop were moved OUT of this phase (D27):
     # they now run after the reprofile pass so they can gate on the JS-derived
     # API surface, not just httpx's originals.
