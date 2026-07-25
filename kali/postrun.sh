@@ -52,5 +52,14 @@ fi
 
 [ -f /resolvers/resolvers.txt ] || curl -sL https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt -o /resolvers/resolvers.txt
 
+# OpenVPN + iproute2, for targets reachable only over a VPN. iproute2 is
+# REQUIRED, not optional: OpenVPN configures the tun interface via `ip`, and this
+# Kali base ships without it, so a bare `openvpn` install (esp. with
+# --no-install-recommends) connects then dies at "Linux ip addr add failed". The
+# guard requires BOTH. Install only - the connection is a separate, backgrounded
+# step (a foreground openvpn here would block mcp_server.py, since the entrypoint
+# is `postrun.sh && mcp_server.py`). Idempotent + root-native, matching whois.
+command -v openvpn >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq --no-install-recommends openvpn iproute2; }
+
 echo "[postrun] gap-fill complete"
 exit 0

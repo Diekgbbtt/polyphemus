@@ -26,11 +26,17 @@ When a change alters the reasoned model (a new primitive, a corrected relationsh
 This is the progressive-update discipline: the map, the glossaries, and the ontology track the code as it evolves, so they never drift into fiction.
 See the `## Agent skills` block in `CLAUDE.md` for the binding statement of this rule.
 
-## Anticipated contexts (named, not yet minted)
+## Contexts are now physical modules
 
-`CONTEXT-MAP.md` records contexts that need a codebase refactor before they physically exist: a project-management module, and the neo4j / postgres / mcp / llm-client client modules.
-The `analysis` context is now an independent module at `src/polymerhus/analysis/` (extracted in the 2026-07 `src/` restructure, `docs/design/module-restructure.md`).
-Do not treat an anticipated context as live; do not invent its glossary ahead of the refactor.
+The three bounded contexts are live packages under `src/polymerhus/` after the 2026-07 `src/` restructure (`docs/design/module-restructure.md`): `recon/`, `analysis/`, and `project_management/`.
+`analysis` was extracted from under `recon/analysis/` to its own top-level module; `project_management` was minted from the operator surface previously scattered across the API layer and the Postgres gateway.
+Run/Job/Phase remain recon vocabulary (they are elements of the recon pipeline, per the operator's ruling); project-management owns the operator's intent over runs, not the pipeline that executes them.
+
+## Helper modules never get a glossary
+
+`neo4j`, `postgres`, `mcp`, and `llm-client` are NOT bounded contexts and will not become independent modules.
+They are shared/helper infrastructure (a shared kernel), inherently coupled to the domain modules that consume them, carrying no independent ubiquitous language.
+Do not mint a `CONTEXT.md` for any of them, and do not invent a glossary for them (`CONTEXT-MAP.md`, operator's explicit ruling).
 
 ## Architectural decisions live in `docs/design/`
 
@@ -49,14 +55,22 @@ When citing one, cite the decision id where the document provides one, not just 
 ├── CODING_STANDARD.md                ← the design principles (DDD)
 ├── docs/design/
 │   ├── domain-model.md               ← the reasoned ontology (glossaries derive from it)
+│   ├── module-restructure.md         ← the 2026-07 src/ restructure decision
 │   ├── service-system-model-design_1.md
 │   ├── l1-domain-model-catalogue.md
 │   └── ...                           ← design specifications; the ADR equivalent
-├── agent/
-│   └── recon/
-│       ├── CONTEXT.md                ← recon context glossary (L0)
-│       └── analysis/
-│           └── CONTEXT.md            ← analysis context glossary (L1)
+├── src/polymerhus/
+│   ├── recon/
+│   │   ├── CONTEXT.md                ← recon context glossary (L0)
+│   │   ├── control/                  ← orchestration (pipeline, jobs, job_agent, ...)
+│   │   ├── domain/                   ← the L0 model + sole-writer (curator, types, pod, ...)
+│   │   └── crawl/
+│   ├── analysis/
+│   │   ├── CONTEXT.md                ← analysis context glossary (L1)
+│   │   └── l1_curator.py, pod.py, anatomy.py, ...
+│   ├── project_management/
+│   │   └── CONTEXT.md                ← project-management glossary (operator intent)
+│   └── app/                          ← REST API + llm/ provider helpers
 ├── db/
 └── frontend/
 ```
