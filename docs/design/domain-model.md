@@ -36,7 +36,7 @@ The atom of attack surface is not "the application" and not "an endpoint" alone.
 
 The irreducible unit is a **locus where externally-controllable input crosses into the system and the system acts on it**: an endpoint together with the parameter or header that carries the input.
 
-The Layer-0 store realises this atom as a small fixed set of typed node labels (`curator.py:27-31`): `Domain, Subdomain, IP, Port, Service, DNSRecord, BaseURL, Endpoint, Parameter, Header, Certificate, Technology, Secret, Traceroute, ExternalDomain`.
+The Layer-0 store realises this atom as a small fixed set of typed node labels (`src/polymerhus/recon/domain/curator.py:27-31`): `Domain, Subdomain, IP, Port, Service, DNSRecord, BaseURL, Endpoint, Parameter, Header, Certificate, Technology, Secret, Traceroute, ExternalDomain`.
 
 A bare `Endpoint` is a reachability fact; input-carrying capability is expressed by the `Parameter`/`Header` nodes that hang off it, which is exactly why a fault signature keys on the *reachability of a user-controllable input into a sink*, not on a lone endpoint (`service-system-model-design_1.md` §9.5).
 
@@ -52,7 +52,7 @@ An **inference** is a claim about structure that was never directly visible and 
 
 A **hypothesis** is a falsifiable claim about a *fault* that has not yet been tested: "this service trusts that field to have been authorised for this user, and role R can violate that".
 
-The project's node named `Observation` (`types.py:18-25`) is, confusingly, not an observation in this sense - it is a *low inference*: an adversarial natural-language insight the triager reads out of tool output, explicitly not a restatement of a primitive (the writing-observations discipline, memory `observations-vs-attack-surface-primitives`).
+The project's node named `Observation` (`src/polymerhus/recon/domain/types.py:18-25`) is, confusingly, not an observation in this sense - it is a *low inference*: an adversarial natural-language insight the triager reads out of tool output, explicitly not a restatement of a primitive (the writing-observations discipline, memory `observations-vs-attack-surface-primitives`).
 
 Genuine observations live below it, as the typed L0 nodes themselves.
 
@@ -66,7 +66,7 @@ It is a **phase-3 primitive**, not graph structure: the fault-hypothesis lives i
 
 The operator has deliberately chosen to let the ontology name and lead this primitive even though the phase that would exercise it is not yet built (`NM-8`).
 
-Its nearest *built* realisation today is a single concrete instance of the primitive - the trust-assumption predicate carried on a `CONSUMES` edge (`l1_types.py:139-153`, `L1D-14`), a falsifiable claim ranging over a typed data object - but that instance is not the whole of the concept, as Section 2.6 makes explicit.
+Its nearest *built* realisation today is a single concrete instance of the primitive - the trust-assumption predicate carried on a `CONSUMES` edge (`src/polymerhus/analysis/l1_types.py:139-153`, `L1D-14`), a falsifiable claim ranging over a typed data object - but that instance is not the whole of the concept, as Section 2.6 makes explicit.
 
 ### 2.3 Target, boundary, mechanism - the load-bearing tripartition
 
@@ -74,11 +74,11 @@ Not everything on the surface plays the same role in an attack, and the model's 
 
 A **target** is a thing the attacker wants to break, individuated by *business purpose*: the checkout, the sign-in, the reward-points ledger.
 
-In L1 this is the `Service` (`l1_types.py:70-77`, `L1D-3/L1D-4`); a Service *claims* surface elements by asking "what business function does this serve?".
+In L1 this is the `Service` (`src/polymerhus/analysis/l1_types.py:70-77`, `L1D-3/L1D-4`); a Service *claims* surface elements by asking "what business function does this serve?".
 
 A **mechanism** is a cross-cutting technical capability that many targets lie on: a WAF, a CDN, an API paradigm, the authentication machinery, the web-presentation channel.
 
-In L1 this is the `System` (`l1_types.py:80-90`); a System *overlays* elements that share a mechanism, regardless of their business function.
+In L1 this is the `System` (`src/polymerhus/analysis/l1_types.py:80-90`); a System *overlays* elements that share a mechanism, regardless of their business function.
 
 The single test that decides Service versus System is **membership direction** (`L1D-4`): partition-by-purpose is a Service, overlay-a-shared-mechanism is a System.
 
@@ -112,7 +112,7 @@ This second trust relation is the reason the automation-forced primitives of Sec
 
 **Analysis coverage** is interpretive coverage: has every seen asset been *judged* - assigned to a service or deliberately set aside.
 
-The two are joined by the **stale pool**, which is not a structure but a derived query: the L0 assets with no inbound `AGGREGATES` edge (`L1D-24`, `sweep.py`).
+The two are joined by the **stale pool**, which is not a structure but a derived query: the L0 assets with no inbound `AGGREGATES` edge (`L1D-24`, `src/polymerhus/analysis/sweep.py`).
 
 The stale pool is precisely the ledger of "seen but not yet judged", and its size is a coverage signal - which is why an *empty* stale pool is ambiguous and, as Section 3.5 shows, was empirically a negative signal, not a positive one.
 
@@ -167,9 +167,9 @@ The one exception is the absence distinction, which the operator has deliberatel
 
 Without provenance, an LLM's guess is indistinguishable from a parser's deterministic reading, and no claim can be trusted, attributed, or retracted.
 
-The model makes provenance mandatory on every write: every L1 node and edge carries `prov_job`/`prov_model`/`prov_prompt_id` (`l1_types.py:39-45`, `l1_curator.py:184-185`, `L1D-25`), stamped by the system, never by the proposer.
+The model makes provenance mandatory on every write: every L1 node and edge carries `prov_job`/`prov_model`/`prov_prompt_id` (`src/polymerhus/analysis/l1_types.py:39-45`, `src/polymerhus/analysis/l1_curator.py:184-185`, `L1D-25`), stamped by the system, never by the proposer.
 
-The proposer is *structurally forbidden* from setting it: the analyser's proposal models deliberately omit provenance and it is injected at the curate boundary (`analyser_types.py:1-14, 133-161`), and the sole-writer strips any attempt to set a reserved key from LLM-originated props (`l1_curator.py:139-142, 174-181`).
+The proposer is *structurally forbidden* from setting it: the analyser's proposal models deliberately omit provenance and it is injected at the curate boundary (`src/polymerhus/analysis/analyser_types.py:1-14, 133-161`), and the sole-writer strips any attempt to set a reserved key from LLM-originated props (`src/polymerhus/analysis/l1_curator.py:139-142, 174-181`).
 
 Provenance is therefore not metadata; it is the concept that lets "an LLM said so" and "a tool measured it" be different kinds of fact in the same graph.
 
@@ -177,7 +177,7 @@ Provenance is therefore not metadata; it is the concept that lets "an LLM said s
 
 An inference is not a fact, and a model that records only the inference loses the one thing that lets a reader weigh it.
 
-The `AGGREGATES` assignment edge carries a **judgment envelope** from day one - `{confidence, status, evidence_refs, provenance, ts}` (`l1_types.py:48-58`, `L1D-25`) - even though the MVP only ever writes `status="committed"`.
+The `AGGREGATES` assignment edge carries a **judgment envelope** from day one - `{confidence, status, evidence_refs, provenance, ts}` (`src/polymerhus/analysis/l1_types.py:48-58`, `L1D-25`) - even though the MVP only ever writes `status="committed"`.
 
 The stated reason is exactly the failure it prevents: without a carried confidence, a low-confidence assignment can masquerade as authoritative (`L1R-4`).
 
@@ -187,7 +187,7 @@ Confidence is also the missing *policy* that the project's worst assignment defe
 
 A claim about a live target decays; the model must be able to say when a fact was last true.
 
-Every node and edge carries `first_seen`/`last_seen` datetimes, set `ON CREATE` and refreshed on every touch (`l1_curator.py:220-226`).
+Every node and edge carries `first_seen`/`last_seen` datetimes, set `ON CREATE` and refreshed on every touch (`src/polymerhus/analysis/l1_curator.py:220-226`).
 
 This is what lets the two stores be *re-derived* rather than migrated: a re-run refreshes `last_seen` on what still holds and leaves stale timestamps on what no longer surfaces, without churning identity.
 
@@ -197,9 +197,9 @@ Staleness is the temporal companion to identity: identity says "this is the same
 
 A human re-testing a target next week silently knows it is the same target; a machine must be *told* what makes two things the same, or every re-run duplicates the graph into a useless duplicate tree (`L1R-5`).
 
-The model's answer is a single principle applied everywhere: **identity is a stable intrinsic key, and every write is an idempotent MERGE on it** (`L1D-22`, `l1_curator.py:15-19`).
+The model's answer is a single principle applied everywhere: **identity is a stable intrinsic key, and every write is an idempotent MERGE on it** (`L1D-22`, `src/polymerhus/analysis/l1_curator.py:15-19`).
 
-A Service is keyed on `(project_id, business_function_slug)` (`L1D-12`); a System on `(project_id, kind, discriminator)` with a non-null `__singleton__` sentinel so a null discriminator cannot silently duplicate a singleton (`L1D-9`, `l1_types.py:32-36`); an L0 Observation on a deterministic SHA1 of its content so the same finding converges rather than duplicating (`curator.py:90-93` per recon design §4.1).
+A Service is keyed on `(project_id, business_function_slug)` (`L1D-12`); a System on `(project_id, kind, discriminator)` with a non-null `__singleton__` sentinel so a null discriminator cannot silently duplicate a singleton (`L1D-9`, `src/polymerhus/analysis/l1_types.py:32-36`); an L0 Observation on a deterministic SHA1 of its content so the same finding converges rather than duplicating (`src/polymerhus/recon/domain/curator.py:176-177` per recon design §4.1).
 
 This primitive is realised only at the project boundary, and closing the gap beyond it is a stated goal, not a curiosity.
 
@@ -213,7 +213,7 @@ The model does not yet have what it needs to reach that end-state: a canonical b
 
 ### 3.5 Absence - deliberately an operational concern, not an ontological one
 
-There is a genuine distinction between a probe that *ran and found nothing* and one that *never effectively ran*, and the project has collided with it repeatedly: a clean empty tool result was once mislabelled a failure (fixed in commit `aabd156`, so the gate now treats `returncode == 0` as success regardless of stdout, `pod.py:160-161`); an *empty stale pool* was a negative signal because a stronger model over-assigned ~31-38% junk into services rather than judging cleanly (`AMV-9`); and a dead target once reported every job `success` and reached `complete` in 39.7s with 1 endpoint instead of 182, indistinguishable from a healthy run (`AMV-14`).
+There is a genuine distinction between a probe that *ran and found nothing* and one that *never effectively ran*, and the project has collided with it repeatedly: a clean empty tool result was once mislabelled a failure (fixed in commit `aabd156`, so the gate now treats `returncode == 0` as success regardless of stdout, `src/polymerhus/recon/domain/pod.py:223-236`); an *empty stale pool* was a negative signal because a stronger model over-assigned ~31-38% junk into services rather than judging cleanly (`AMV-9`); and a dead target once reported every job `success` and reached `complete` in 39.7s with 1 endpoint instead of 182, indistinguishable from a healthy run (`AMV-14`).
 
 The operator has ruled that this distinction is **not a domain-model primitive**: the ontology models what *is* discovered - the observed surface and the inferences over it - not what was not looked at.
 
@@ -235,7 +235,7 @@ The MVP is monotonic: it only ever appends via MERGE, and the single true retrac
 
 Streaming inherits this monotonicity as a defect: every speculative early assignment over a partial surface is permanent because there is no retraction, which is the measured cause of streaming's precision decay versus batch (`AMV-16` thesis; streaming 19.7% noise versus batch 0%).
 
-Destructive reconciliation (`merge`/`delete`/`relabel`, `l1_curator.py:651-945`) exists, but it is a *curation-time repair* authority, not a *reasoning-time retraction* - the model can be corrected by a later global pass, but a single judgment cannot yet defease itself as fuller evidence arrives.
+Destructive reconciliation (`merge`/`delete`/`relabel`, `src/polymerhus/analysis/l1_curator.py:651-945`) exists, but it is a *curation-time repair* authority, not a *reasoning-time retraction* - the model can be corrected by a later global pass, but a single judgment cannot yet defease itself as fuller evidence arrives.
 
 ---
 
@@ -243,7 +243,7 @@ Destructive reconciliation (`merge`/`delete`/`relabel`, `l1_curator.py:651-945`)
 
 ### 4.1 Two stores, two epistemic species
 
-Layer 0 and Layer 1 are two physically co-resident but logically separate stores, independently navigable, joined only by cross-layer edges (`L1D-1`), and they never share identity keys so either can be re-derived without churning the other (`L1D-2`, `l1_curator.py:32-39`).
+Layer 0 and Layer 1 are two physically co-resident but logically separate stores, independently navigable, joined only by cross-layer edges (`L1D-1`), and they never share identity keys so either can be re-derived without churning the other (`L1D-2`, `src/polymerhus/analysis/l1_curator.py:32-39`).
 
 The separation is not an implementation detail; it is the boundary between two kinds of claim.
 
@@ -253,7 +253,7 @@ An **L1 node is an interpretive claim** whose truth condition is "an analyst-rol
 
 A Service is never observed - no tool emits "checkout service"; it is *reconstructed* from the endpoints, data, and behaviour the tools did observe.
 
-That is why the analyser is the only producer of L1 nodes and why its outputs are called proposals, not readings (`analyser_types.py:1-14`).
+That is why the analyser is the only producer of L1 nodes and why its outputs are called proposals, not readings (`src/polymerhus/analysis/analyser_types.py:1-14`).
 
 ### 4.2 The hinge - crossing the boundary is crossing from "what is there" to "what it means"
 
@@ -261,13 +261,13 @@ Three cross-layer edges carry claims from the observed store into the judged sto
 
 | Edge | From -> To | Carries | Epistemic role |
 |---|---|---|---|
-| `AGGREGATES` | `L1Service` -> L0 node | full judgment envelope `{confidence, status, evidence_refs, prov_*, ts, endpoint_template?}` | the assignment judgment: "I judge element e belongs to service S, this confident, on this evidence" (`L1D-25`, `l1_curator.py:351-409`) |
-| `SURFACES_AT` | `L1DataItem` -> L0 Parameter/Header/field | `prov_job`, `first/last_seen` | where a judged logical data item appears on the observed surface (`l1_curator.py:478-496`) |
+| `AGGREGATES` | `L1Service` -> L0 node | full judgment envelope `{confidence, status, evidence_refs, prov_*, ts, endpoint_template?}` | the assignment judgment: "I judge element e belongs to service S, this confident, on this evidence" (`L1D-25`, `src/polymerhus/analysis/l1_curator.py:351-409`) |
+| `SURFACES_AT` | `L1DataItem` -> L0 Parameter/Header/field | `prov_job`, `first/last_seen` | where a judged logical data item appears on the observed surface (`src/polymerhus/analysis/l1_curator.py:478-496`) |
 | `EVIDENCED_BY` | `L1System` -> L0 node | `prov_job`, `first/last_seen` | the observed fingerprint that grounds a judged mechanism (a `Server:` header, a cookie) (`l1-domain-model-catalogue.md` §5.1) |
 
 Crossing this boundary means an inference is being anchored to the observations that license it, which is what keeps L1 defeasible: pull the evidence and the judgment loses its ground.
 
-The L0 target of every cross-layer edge is `MATCH`ed and never `MERGE`d (`l1_curator.py:390-391`), so the interpretive writer can never mint a descriptive node - the two stores' sole-writers stay disjoint (Section 5, Section 7.1).
+The L0 target of every cross-layer edge is `MATCH`ed and never `MERGE`d (`src/polymerhus/analysis/l1_curator.py:390-391`), so the interpretive writer can never mint a descriptive node - the two stores' sole-writers stay disjoint (Section 5, Section 7.1).
 
 The cross-layer edge is also the *lazy fetch hop*: L1 is navigated natively for all reasoning, and L0 is fetched across `AGGREGATES` only at concretisation, never in the hot loop (`L1D-1`, traversal-then-fetch, Section 7.5).
 
@@ -293,7 +293,7 @@ Some spine slots are not read off the surface at all but *classified* by a dedic
 
 ### 4.5 DataItem - data as a first-class node, the crown-jewel locus
 
-A logical data record (a session token, an order, a `sales_figure`) is a first-class L1 node keyed on a flexible semantic `item_key`, identity independent of the many L0 sites it surfaces at (`L1D-13`, `l1_types.py:110-125`).
+A logical data record (a session token, an order, a `sales_figure`) is a first-class L1 node keyed on a flexible semantic `item_key`, identity independent of the many L0 sites it surfaces at (`L1D-13`, `src/polymerhus/analysis/l1_types.py:110-125`).
 
 This is decided against two alternatives - edges between L0 parameters (which re-entangles the stores and fragments one logical item into dozens of parameters) and prose in a security profile (which no symbolic reader can query) - and the decisive argument is that machine-checkable trust assumptions are literally unimplementable without typed data objects for the predicates to range over (`DD-18`).
 
@@ -313,15 +313,15 @@ Crucially the system is deliberately kept blind to the target's true identity - 
 
 **The proposer roles** are LLM agents that hold judgment but not write authority.
 
-The `triager` reads L0 tool output into adversarial `Observation` insights (`pod.py`, recon design §4.5); the `analyser` reconstructs the L1 service/system model in two passes - an assignment pass and a dedicated data-modelling pass, split because one combined call systematically starved data modelling (`pod.py:_two_pass_analyse`; STATE.md DataItems=0 defect); the anatomy skills (`webpage-profile`, `authorization-pyramid`) classify spine slots that cannot be read off the surface and emit the triple *typed classification -> spine slot, evidence -> Observation, deeper probe -> backward-recon request* (`L1D-31`, `anatomy.py:60-86`).
+The `triager` reads L0 tool output into adversarial `Observation` insights (`src/polymerhus/recon/domain/pod.py`, recon design §4.5); the `analyser` reconstructs the L1 service/system model in two passes - an assignment pass and a dedicated data-modelling pass, split because one combined call systematically starved data modelling (`src/polymerhus/analysis/pod.py:_two_pass_analyse`; STATE.md DataItems=0 defect); the anatomy skills (`webpage-profile`, `authorization-pyramid`) classify spine slots that cannot be read off the surface and emit the triple *typed classification -> spine slot, evidence -> Observation, deeper probe -> backward-recon request* (`L1D-31`, `src/polymerhus/analysis/anatomy.py:60-86`).
 
-Two roles are registered but dormant (`configurator`, `job_orchestrator`, `providers.py:14`), reserved seams for the designed-not-built context-memory scaffold (recon design §9).
+Two roles are registered but dormant (`configurator`, `job_orchestrator`, `src/polymerhus/app/llm/providers.py:14`), reserved seams for the designed-not-built context-memory scaffold (recon design §9).
 
-Every proposer emits proposals that omit provenance and identity, which the write boundary injects and guards - the proposer can never spoof who it is or what a node's identity is (`analyser_types.py:1-14`, `l1_curator.py:139-142`).
+Every proposer emits proposals that omit provenance and identity, which the write boundary injects and guards - the proposer can never spoof who it is or what a node's identity is (`src/polymerhus/analysis/analyser_types.py:1-14`, `src/polymerhus/analysis/l1_curator.py:139-142`).
 
 **The sole-writer** is the single authority that turns a proposal into a fact-in-the-graph.
 
-There is exactly one per store - `curator.py` for L0, `l1_curator.py` for L1 - and it is the ontological boundary between "proposed" and "true here": it enforces identity, stamps provenance, validates every label and edge type against a fixed allowlist, and interpolates nothing unvalidated into Cypher (`l1_curator.py:69-129, 328`).
+There is exactly one per store - `src/polymerhus/recon/domain/curator.py` for L0, `src/polymerhus/analysis/l1_curator.py` for L1 - and it is the ontological boundary between "proposed" and "true here": it enforces identity, stamps provenance, validates every label and edge type against a fixed allowlist, and interpolates nothing unvalidated into Cypher (`src/polymerhus/analysis/l1_curator.py:69-129, 328`).
 
 The sole-writer is where the maker/checker discipline lives at the data boundary: the maker proposes, the writer is the mechanical checker of shape and identity.
 
@@ -363,7 +363,7 @@ These are not coding conventions; each is a commitment about what the model *mea
 
 ### 7.1 Sole-writer - there is exactly one authority that makes a claim true
 
-Commitment: for each store, one and only one module may write it, and it is the boundary between proposed and true (`curator.py:1-13`, `l1_curator.py:1-40`).
+Commitment: for each store, one and only one module may write it, and it is the boundary between proposed and true (`src/polymerhus/recon/domain/curator.py:1-13`, `src/polymerhus/analysis/l1_curator.py:1-40`).
 
 Consequence if violated: identity, provenance, and label allowlists can be bypassed, so "true in the graph" stops being a well-defined predicate - unprovenanced nodes, duplicate identities, and injected labels become possible, and no reader can trust any node's origin.
 
@@ -379,13 +379,13 @@ This is the one-way door of the whole model (`L1D-11` is explicitly decide-now).
 
 ### 7.3 Provenance-on-write - no claim is anonymous
 
-Commitment: every node and edge records who or what produced it, stamped by the writer, never the proposer (`L1D-25`, `l1_curator.py:220-226`, and the `ON CREATE` node-provenance fix in `FR-NFR`).
+Commitment: every node and edge records who or what produced it, stamped by the writer, never the proposer (`L1D-25`, `src/polymerhus/analysis/l1_curator.py:220-226`, and the `ON CREATE` node-provenance fix in `FR-NFR`).
 
 Consequence if violated: an LLM guess and a tool measurement become the same kind of fact, and a wrong claim can be neither attributed nor retracted - the tester-target trust boundary (Section 2.4) collapses because the graph forgets who was speaking.
 
 ### 7.4 Fail-open - partial knowledge beats no knowledge, at a cost
 
-Commitment: one bad delta never aborts a batch, and a missing collaborator degrades rather than crashes - every layer catches and converts (recon design §5; `l1_curator.py:_write_each`, per-item skip-and-log).
+Commitment: one bad delta never aborts a batch, and a missing collaborator degrades rather than crashes - every layer catches and converts (recon design §5; `src/polymerhus/analysis/l1_curator.py:_write_each`, per-item skip-and-log).
 
 Consequence if violated: a single malformed proposal or a transient Neo4j blip would lose an entire run's work.
 
@@ -395,7 +395,7 @@ This is an accepted operational trade of visibility-of-absence for liveness, not
 
 ### 7.5 Traversal-then-fetch - reason over the light projection, fetch the heavy detail lazily
 
-Commitment: reasoning navigates L1 natively over token-light index-cards, and crosses into L0 only at concretisation, through small typed selectors, never over a raw member set (`L1D-27/L1D-32`, `index_card.py`).
+Commitment: reasoning navigates L1 natively over token-light index-cards, and crosses into L0 only at concretisation, through small typed selectors, never over a raw member set (`L1D-27/L1D-32`, `src/polymerhus/analysis/index_card.py`).
 
 Consequence if violated: the member-set explosion bites - a single service can aggregate tens of thousands of L0 elements, and a naive concretiser that fans out over all of them drowns the handful of real targets in noise (`L1R-8`), negating the abstraction's whole promise of reduced testing noise.
 
@@ -429,12 +429,12 @@ An honest ontology names its holes; false closure here would be worse than an op
 
 The code is the tiebreaker; these are the places it overruled a design document, recorded so a reader of the older docs is not misled.
 
-The `SystemKind` and `DataRelationshipKind` controlled-vocabulary *catalogue nodes* of `service-system-model-design_1.md` §2.3/§5.1 no longer exist: a System's kind is an intrinsic identity attribute `kind` validated against the `SYSTEM_KINDS` Python constant (`l1_curator.py:83-98`), and a DataRelationship's kind *is* the uppercased edge type from a fixed six-value allowlist (`l1_curator.py:105-116`) - the operator's 2026-07-20 correction, which `l1-domain-model-catalogue.md` §0 carries and the code implements.
+The `SystemKind` and `DataRelationshipKind` controlled-vocabulary *catalogue nodes* of `service-system-model-design_1.md` §2.3/§5.1 no longer exist: a System's kind is an intrinsic identity attribute `kind` validated against the `SYSTEM_KINDS` Python constant (`src/polymerhus/analysis/l1_curator.py:83-98`), and a DataRelationship's kind *is* the uppercased edge type from a fixed six-value allowlist (`src/polymerhus/analysis/l1_curator.py:105-116`) - the operator's 2026-07-20 correction, which `l1-domain-model-catalogue.md` §0 carries and the code implements.
 
-`RENDERED_BY` and the two `RenderingSystem_*` kinds of the spec's §6/§7.6/§9.5 are deleted: a service reaches its presentation channel via `EXPOSED_VIA` a single `WebPresentation` System carrying `rendering_model` and `navigation_model` as independent props (`l1_curator.py:94-95, 122-129`; `FR-MODELFIX`).
+`RENDERED_BY` and the two `RenderingSystem_*` kinds of the spec's §6/§7.6/§9.5 are deleted: a service reaches its presentation channel via `EXPOSED_VIA` a single `WebPresentation` System carrying `rendering_model` and `navigation_model` as independent props (`src/polymerhus/analysis/l1_curator.py:94-95, 122-129`; `FR-MODELFIX`).
 
 Journeys, though a DONE FR area (`FR-JOURNEY`) and still discussed in the catalogue, were withdrawn from the codebase on 2026-07-22 for judgment-quality reasons - the LLM coined single-member "journeys" that restate a service rather than group services (`AMV-11`); `CurationBatch.journeys` and its stage are removed, so the ontology treats journeys as an unbuilt, deferred extension, not a live primitive.
 
-The spec's §9.6 assumption that "katana already yields path templates in L0" is false - katana emits concrete paths, so the endpoint-template key must be computed at assignment time and cannot be reconstructed afterward (`l1_curator.py:330-348`, whose comment records the correction directly).
+The spec's §9.6 assumption that "katana already yields path templates in L0" is false - katana emits concrete paths, so the endpoint-template key must be computed at assignment time and cannot be reconstructed afterward (`src/polymerhus/analysis/l1_curator.py:330-348`, whose comment records the correction directly).
 
 Several recon-design corrections against the superseded `recon-mvp-design.md` are folded in above by reference: empty-clean-output is success not failure (commit `aabd156`), no reduced-coverage Observation is emitted for an unauthenticated `use_auth` job (recon design §6), and no explicit `recursion_limit` is configured (recon design §6).

@@ -76,7 +76,7 @@ _Avoid_: patch, diff.
 ## Actors and authority
 
 **Curator (L0 sole-writer)**:
-The single module (`curator.py`) authorised to write the L0 store: it enforces identity, stamps provenance, validates every label and edge against a fixed allowlist, and is the boundary between "proposed" and "true in the graph".
+The single module (`src/polymerhus/recon/domain/curator.py`) authorised to write the L0 store: it enforces identity, stamps provenance, validates every label and edge against a fixed allowlist, and is the boundary between "proposed" and "true in the graph".
 _Avoid_: writer, persister.
 
 **Sole-writer**:
