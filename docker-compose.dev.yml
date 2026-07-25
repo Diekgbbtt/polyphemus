@@ -5,6 +5,16 @@
 # tests: the LIVE (integration/e2e) tier, run INSIDE the compose network so it
 #        resolves `neo4j` by service DNS exactly as the agent does. See below.
 services:
+  # kali: the base already grants NET_ADMIN + maps /dev/net/tun so an agent-driven
+  # eval harness can open VPN interfaces and write /etc/hosts records at will.
+  # Re-declaring the cap here is explicit belt-and-suspenders for a dev bring-up;
+  # the tun DEVICE is deliberately NOT repeated - compose concatenates `devices`
+  # across `-f base -f dev`, so a second /dev/net/tun mapping would double-map the
+  # node and break the merged up. cap_add de-dupes, the device is inherited.
+  kali:
+    cap_add:
+      - NET_ADMIN
+
   agent:
     volumes:
       - ./src:/srv/src
