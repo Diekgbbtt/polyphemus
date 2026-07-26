@@ -511,3 +511,31 @@ Two traps, both fenced: the default-port alias (`http://<ip>:80` vs the canonica
 naabu names services by port number, so an HTTP service on a non-standard port can be labelled `unknown`; the bridge therefore feeds httpx a scheme-less `<ip>:<port>` and lets httpx be the protocol detector rather than trusting naabu's name.
 
 **Status:** built + unit-green on `host-seeding`; the full grounding is `docs/design/host-seeding-spec.md` and `docs/design/host-seeding-assertions.md`. Integration (I) and e2e (E) tiers pend a real target.
+
+## D-SVCLINK - the web-origin subgraph is disconnected from the network-service subgraph (NEW work item, DEFERRED, 2026-07-26)
+
+**The gap (e2e-surfaced).**
+On the FireFlow e2e a `BaseURL` (`https://fireflow.htb`) had no relationship to the `https` `Service` on port 443 it plainly runs over.
+It is not a stray edge but a structural split: `exists((BaseURL)-[*1..4]-(Service))` is FALSE, so the observed store holds two disjoint components.
+- naabu (network view): `IP -HAS_PORT-> Port -RUNS_SERVICE-> Service`, keyed on `ip_address`.
+- httpx (web view): `Domain <-BELONGS_TO- BaseURL -HAS_ENDPOINT/HAS_HEADER/USES_TECHNOLOGY-> ...`, keyed on `url`.
+
+**Root cause.**
+No producer emits a `BaseURL` <-> `Service` (or `BaseURL` <-> `Port`) edge.
+`httpx_parser` back-links a BaseURL only to its host (`BELONGS_TO` -> Subdomain, promoted to Domain, D28); `naabu_parser` links a Service only to its Port/IP; and the L0 model defines no `BaseURL`-`Service` relationship.
+The curator writes only the edges parsers hand it, so the web-origin branch and the network-service branch are never joined.
+This is the same "two disconnected subgraphs" gap noted for the terminal naabu Port/Service branch (D27 territory), seen from the web side: the store never expresses that a web origin *runs over* a specific network service.
+
+**Not a timing or data-availability problem.**
+The join information is already present in httpx's own JSON - `scheme` (`https`), `port` (`443`), and `host_ip` (`10.129.244.214`) are exactly the `Service` identity `{name, port_number, ip_address}` - httpx_parser simply does not use those fields to emit the edge.
+Ordering is not the blocker either: naabu (phase 0) mints the `Service` before httpx (phase 1) mints the `BaseURL`, so a `MERGE` edge would match the existing node.
+
+**Why a fix is non-trivial (why it is deferred, not done inline).**
+- Join-key namespace mismatch: the BaseURL's host is the hostname (`fireflow.htb`) while the `Service` is keyed on the IP (`10.129.244.214`); the edge can only be built from httpx's `host_ip`, not from the BaseURL's own host - name-space vs IP-space.
+- The host-level bridge is also absent: `Domain(fireflow.htb)` and `IP(10.129.244.214)` are unlinked because `dnsx` (the `Domain->IP` resolution producer) was excluded as passive, so the two components share no node at all in an IP/vhost run.
+- A correct link therefore touches identity/edge modeling across two parsers (or a new curator-side join), and the ontology question of *which* edge (`SERVED_BY`? `RUNS_ON`? direction? whether it is a first-class L0 edge or a derived one) is unratified.
+
+**Decision.**
+DEFERRED, documentation only.
+The provisional shape of a future fix: have `httpx_parser` emit an edge from the `BaseURL` to the `Service` identity it reconstructs from `host_ip` + `port` + scheme-derived name (idempotent `MERGE`, matching naabu's already-present node), or perform the join once at the curator chokepoint; ratify the edge type and direction against `domain-model.md` first, and pair it with the `Domain <-> IP` resolution edge so the two components fuse rather than gaining a single hop.
+The edge type name and direction stay provisional until the operator ratifies them.
