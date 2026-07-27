@@ -49,6 +49,8 @@ def url_to_deltas(
     method: str = "GET",
     source: str,
     extra_endpoint_props: dict | None = None,
+    query_params: list[str] | None = None,
+    body_params: list[str] | None = None,
 ) -> list[AssetDelta]:
     """Decompose one discovered URL into BaseURL + Endpoint(+edge) + Parameters(+edges).
 
@@ -103,29 +105,47 @@ def url_to_deltas(
         )
     )
 
-    query_params = parse_qs(urlparse(url).query, keep_blank_values=True)
-    for name in query_params:
-        if name.lower() in CACHE_BUST_KEYS:
-            continue  # a cache-bust stamp is not a request parameter (AMV-8)
-        deltas.append(
-            AssetDelta(
-                type="Parameter",
-                identity={
-                    "name": name,
-                    "position": "query",
-                    "endpoint_path": path,
-                    "baseurl": baseurl,
-                },
-                edges=[
-                    Edge(
-                        rel="HAS_PARAMETER",
-                        dir="in",
-                        node_type="Endpoint",
-                        node_identity=endpoint_identity,
-                    )
-                ],
-            )
+    def _param(name: str, position: str) -> AssetDelta:
+        return AssetDelta(
+            type="Parameter",
+            identity={
+                "name": name,
+                "position": position,
+                "endpoint_path": path,
+                "baseurl": baseurl,
+            },
+            edges=[
+                Edge(
+                    rel="HAS_PARAMETER",
+                    dir="in",
+                    node_type="Endpoint",
+                    node_identity=endpoint_identity,
+                )
+            ],
         )
+
+    # Query parameters: the URL's own query string PLUS any explicit
+    # `query_params` a caller passes (jsluice's `queryParams`, katana GET-form
+    # fields). Body parameters (`body_params`: jsluice `bodyParams`, katana
+    # POST-form fields) are never in the query string. Deduped on (name,
+    # position) so a name appearing in both the URL and the explicit list is one
+    # node. Cache-bust stamps are still never parameters (AMV-8).
+    seen: set[tuple[str, str]] = set()
+    url_query = parse_qs(urlparse(url).query, keep_blank_values=True)
+    for name in list(url_query) + list(query_params or []):
+        if name.lower() in CACHE_BUST_KEYS:
+            continue
+        key = (name, "query")
+        if key in seen:
+            continue
+        seen.add(key)
+        deltas.append(_param(name, "query"))
+    for name in body_params or []:
+        key = (name, "body")
+        if key in seen:
+            continue
+        seen.add(key)
+        deltas.append(_param(name, "body"))
 
     return deltas
 

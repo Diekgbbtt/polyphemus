@@ -6,9 +6,12 @@ discovers - and, via the sourcemap-extraction wrapper
 original sources recovered from each bundle's `.map`. Both modes' output can be
 interleaved line-by-line in this parser's input:
 
-  - `jsluice urls` lines: `{"url": "...", "method": "GET", "type": "..."}`
-    -> discovered endpoint, decomposed into BaseURL + Endpoint (+HAS_ENDPOINT
-    edge) the same way `katana_parser` does.
+  - `jsluice urls` lines: `{"url": "...", "method": "GET", "type": "...",
+    "queryParams": [...], "bodyParams": [...]}` -> discovered endpoint,
+    decomposed into BaseURL + Endpoint (+HAS_ENDPOINT edge) the same way
+    `katana_parser` does, PLUS a Parameter per queryParams entry (position
+    query) and per bodyParams entry (position body), each with a HAS_PARAMETER
+    edge from the Endpoint (jsluice's built-in param discovery).
 
   - `jsluice secrets` lines: `{"kind": "aws-access-key", "secret": "AKIA...",
     ...}` -> a redacted `Secret` node. The raw secret value is NEVER stored;
@@ -47,10 +50,19 @@ def _parse_url_entry(entry: dict) -> list[AssetDelta]:
 
     method = entry.get("method") or "GET"
 
-    # jsluice's `urls` mode never derives Parameters from the discovered
-    # URL's query string - only keep the BaseURL+Endpoint deltas from the
-    # shared helper.
-    return url_to_deltas(url, method=method, source="jsluice")[:2]
+    # Param discovery: jsluice `urls` mode emits `queryParams`/`bodyParams`
+    # arrays per discovered URL (built-in). Feed them to the shared helper so
+    # they become Parameter deltas (query params at position=query, body params
+    # at position=body) anchored to the Endpoint - no longer dropped.
+    query_params = entry.get("queryParams")
+    body_params = entry.get("bodyParams")
+    return url_to_deltas(
+        url,
+        method=method,
+        source="jsluice",
+        query_params=query_params if isinstance(query_params, list) else None,
+        body_params=body_params if isinstance(body_params, list) else None,
+    )
 
 
 def _extract_secret_value(entry: dict) -> str | None:
