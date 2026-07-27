@@ -85,20 +85,22 @@ JOBS: dict[str, JobSpec] = {
     "httpx_reprofile": JobSpec(
         tool="httpx_reprofile",
         skill="http_probe",
-        # Same httpx probe as the phase-3 job, but pointed at BaseURLs instead of
+        # Same httpx probe as the phase-3 job, but pointed at ENDPOINTS instead of
         # Subdomains. Reuses parse_httpx (registered under this tool name in
-        # PARSERS), so the profile is assigned via the identical
+        # PARSERS), so each Endpoint's profile is assigned via the identical
         # noise_filter.classify_profile path - no duplicated classify logic.
         command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_header}",
         produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
-        # Re-probes every discovered BaseURL - the crawler-minted ones
-        # (katana/ffuf) and, crucially, the JS-derived API hosts jsluice recovers
-        # from bundles - which httpx never probed directly and so carry no
-        # `profile`. Consumes ALL BaseURLs because AssetSelector cannot express
-        # "profile is unset"; re-probing an already-profiled BaseURL is
-        # idempotent (it re-derives and rewrites the same profile), so no
-        # consumes_where narrowing is needed and none is safe to add.
-        consumes="BaseURL",
+        # D16 per-endpoint split: profile EVERY produced Endpoint, not just
+        # BaseURL roots. `{target}` resolves to the Endpoint's own `url`, so httpx
+        # probes each endpoint (incl. crawler/JS-minted `/api/...` under a webapp
+        # root) and parse_httpx stamps that Endpoint's own `profile`; the root `/`
+        # probe additionally mirrors onto `BaseURL.profile`. The input set is
+        # prepared by `batching.prepare_endpoint_profile_assets` (dedup dynamic
+        # routes + materialise a root `/` per BaseURL) via the endpoint_profiling
+        # flag - the same seam `batch` uses for jsluice.
+        consumes="Endpoint",
+        endpoint_profiling=True,
         use_auth=True,
     ),
     # gau removed from the pipeline (forward decision D-gau, 2026-07-09):

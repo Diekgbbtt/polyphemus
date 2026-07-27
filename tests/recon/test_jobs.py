@@ -290,14 +290,15 @@ def test_httpx_reprofile_reuses_the_httpx_parser():
     assert PARSERS["httpx_reprofile"] is PARSERS["httpx"]
 
 
-def test_httpx_reprofile_consumes_all_baseurls_idempotently():
-    # It consumes BaseURL with NO consumes_where: AssetSelector cannot express
-    # "profile is unset", so it re-probes every BaseURL (idempotent - a re-probe
-    # just rewrites the same profile). It is also an authenticated probe, so
-    # behind-auth API hosts classify correctly.
+def test_httpx_reprofile_consumes_endpoints_for_per_endpoint_profiling():
+    # D16 per-endpoint split: it consumes the ENDPOINT population (each endpoint's
+    # own URL becomes {target}), not just BaseURL roots, and flags
+    # endpoint_profiling so its input set gets dedup + root-`/`-materialisation
+    # prep. It is an authenticated probe so behind-auth endpoints classify right.
     job = JOBS["httpx_reprofile"]
-    assert job.consumes == "BaseURL"
+    assert job.consumes == "Endpoint"
     assert job.consumes_where is None
+    assert job.endpoint_profiling is True
     assert job.use_auth is True
     assert "{target}" in job.command_template
     assert "{auth_header}" in job.command_template
