@@ -170,7 +170,7 @@ The base layer is always the system message in every arm.
 
 **Service contract**:
 A brief functional profile of a business-function Service - what it DOES and what it OWNS - written in the application's own domain nouns and action verbs, and persisted as the `service_contract` prop.
-Written by the Bootstrapper for every Service (and by the Assigner on a Service it MINTS); it is the PRIMARY evidence the cross-layer Assigner consumes, matching the nouns and actions in an observed endpoint path against it to judge ownership.
+Written by the Bootstrapper for every Service, and by the Bootstrapper alone since #34 D4 retired Assigner minting; it is the PRIMARY evidence the cross-layer Assigner consumes, matching the nouns and actions in an observed endpoint path against it to judge ownership.
 It must DISCRIMINATE between business functions (a profile true of every Service is useless to a matcher) and must contain NO path, URL, route or parameter name: the operator KB states none, so a path in a contract is a model's guess that would then be read as evidence.
 Its richness is bounded by the KB's own vocabulary - a thin KB gets a thin honest contract.
 _Not to be confused with_: `label` (an NL display name) or `salience` (a one-line adversarial summary), both Phase-B concerns the Bootstrapper leaves empty.
@@ -262,21 +262,36 @@ The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgre
 
 ## Proposer decomposition (increment 2b)
 
-The `_two_pass_analyse` monolith dissolves into responsibility-scoped proposers, each consuming a concern-typed `Chunk` and writing through the sole-writer. Built as standalone slices (flag OFF) then wired.
+The `_two_pass_analyse` monolith dissolves into responsibility-scoped proposers, each consuming a `Chunk` narrowed by its own admission set and writing through the sole-writer. Built as standalone slices (flag OFF) then wired.
 
 **Assigner**:
-The sole owner of the `AGGREGATES` hinge (agent spec #8) - HIGH-PRECISION assignment of an L0 element to its owning Service, A.1-only (no re-assignment, no retraction).
-Emits a narrowed `L1DeltaBatch{services, aggregates}`.
-_Avoid_: analyser (the whole-model term), classifier.
+The sole owner of the `AGGREGATES` hinge (agent spec #8) - HIGH-PRECISION assignment of an Endpoint to its owning Service, A.1-only (no re-assignment, no retraction).
+Emits a narrowed `L1DeltaBatch{aggregates}` (#34 D4: `services` left the output when minting was retired).
+_Avoid_: analyser (the whole-model term).
+
+**Three "no edge is written" mechanisms** (named apart 2026-07-27, #34 - one word for all three hid a decision never taken behind a decision taken and declined):
+- **Gate** (input side): the element never reaches the agent, so no judgment is formed. The per-role admission set, and the profile gate on the data path.
+- **Narrow** (output side, structural): the agent may not emit a class of delta at all, whatever the model returned.
+- **Withhold** (output side, epistemic): the agent looked, judged, and declined below the bar.
 
 **Withholding gate**:
-The Assigner's crux (AMV-14): a below-bar ownership judgment (confidence < the provisional 0.75 bar) yields NO `AGGREGATES` entry - the L0 element stays in the stale pool.
+The Assigner's crux (AMV-14): a below-bar ownership judgment (confidence < the 0.75 bar) yields NO `AGGREGATES` entry - the L0 element stays in the stale pool.
 The withholding is a SHAPING rule (absence IS the withholding; no "withheld" edge exists), lives in the Assigner seam not the shared sole-writer, and is the Assigner's SELF-check (maker); the Auditor is the separate check over survivors (checker).
+The bar is an EMPIRICAL PLACEHOLDER (#34): an OUTPUT of the assertion suite that a run sweeps, not a reasoned input.
 
-**Service props baseline** (was "exposure-only baseline", widened 2026-07-27 by #29):
-A MINTED Service carries a validated `exposure` prop (public/authenticated) and its `service_contract`, and nothing else - label, salience and every A.1 slot are dropped at creation by a POSITIVE allowlist.
-A REUSED Service is emitted with EMPTY props so the idempotent MERGE never clobbers the Bootstrapper's exposure or contract (mirrors #7; suppresses AMV-12 drift): the Bootstrapper read the whole architecture to write that contract, while an Assigner sees only one chunk of surface, so it is never the better source for a Service that already exists.
-A minted Service needs its own contract precisely because it was minted - no existing identity covered the surface, so without one the next chunk meets it in the inventory with nothing to route on.
+**Validation gate** (#34 D9):
+An aggregate whose `service_slug` is not a live L1 identity is dropped BEFORE the confidence gate - an owner that does not exist is a reference to nothing, not a weak judgment to be scored, so a confident hallucination must not be scoreable.
+The reach is retained as a **backlog description**: ONE short sentence naming the business function that may be missing, with the candidate slug embedded inline.
+Carried, not transported (#34 D6): no envelope field carries it upward yet.
+
+**Shared ownership** (#34 D3):
+There is no single-owner invariant - several Services may aggregate the same L0 asset.
+Each genuine owner is emitted with its own independent confidence, and the bar filters each edge separately.
+
+**Service minting** (RETIRED from the Assigner 2026-07-27, #34 D4):
+The Bootstrapper is the sole source of the Service population and of `service_contract`.
+An Assigner sees one chunk of surface while the Bootstrapper read the whole architecture, so a chunk-local mint competes with a far better-informed source and is the measured origin of cross-run identity drift (AMV-12).
+The Assigner's `existing_slugs` is therefore a VALIDATION set, never a mint discriminator.
 
 **analysis.supervisor_enabled (coexistence flag)**:
 The single orthogonal flag, read inside `run_analyser`, that selects legacy-pod (default OFF) vs the supervisor (ON) at the one analyser entry.
@@ -284,27 +299,33 @@ A two-way door: rollback is a flag flip; the legacy path stays byte-for-byte unc
 
 ## Chunk feeding + delivery gate (increment 1)
 
-The chunk-builder (`analysis/chunking.py`, `#13`/`#14`, increment 1) turns a recon job's L0 delta into type-coherent slices for the proposers.
-Built standalone (not yet wired); a pure function whose reads are injected.
+The chunk-builder (`analysis/chunking.py`, `#13`/`#14`, increment 1) streams a recon job's L0 delta to the proposers.
+A pure function whose reads are injected.
 
 **Chunk**:
-The slim immutable Value Object carrying an immutable per-job L0 DELTA for ONE concern - the pure-function input a proposer reasons over.
+The slim immutable Value Object carrying an immutable per-job L0 DELTA - the pure-function input a proposer reasons over.
 It carries only the L0 delta; all L1 context is re-derived LIVE at the proposer, never frozen on the chunk (the live-graph invariant).
-_Avoid_: slice, batch (a batch is the overflow unit, below), payload.
+_Avoid_: batch (a batch is the overflow unit, below), payload.
 
-**Concern (concern tag)**:
-The routing key an asset TYPE maps to: `service` (BaseURL / Endpoint / Technology / Certificate, + Header) -> the Assigner + Mechanism-typist; `data` (Parameter / Secret, + Header) -> the Data-modeller.
-Every chunk is type-coherent (its assets map to ONE concern); pre-HTTP types (Subdomain / IP / Port / DNS / Domain) carry no concern.
+**Role admission set** (`ROLE_ADMITS` / `admit_for_role`, #34 D2/D7 - the lever #15 called asset-type-driven agent scoping):
+Every asset type a recon job produces is STREAMED; each proposer role then narrows the stream to the types it can meaningfully consume.
+`assigner` admits `Endpoint` alone; `data_modeller` admits `Parameter` + `Header`; `mechanism_typist` holds the `ADMIT_ALL` sentinel.
+The sentinel is load-bearing, not shorthand: with three allow-sets an asset type no role names would be admitted by nobody and silently dropped, losing the fork-H guarantee, so the generalist role always catches a new recon tool's output.
+A role admitting nothing from a chunk yields an empty batch, which is a valid outcome rather than an error.
+
+**Concern (concern tag)** - RETIRED 2026-07-27 (#34 D8).
+The two-way `service` / `data` partition fixed "which asset types matter" once and globally, when the real constraint is per-agent; the role admission set replaced it, and `Chunk.concern` / `CONCERN_ROLES` are gone.
 
 **Chunk-builder**:
-`chunks_for_job` - partitions a job's `AssetDelta` list by concern, applies the profile gate, and size-bounds by batch-overflow, emitting the chunk list.
+`chunks_for_job` - streams a job's `AssetDelta` list into ONE ordered sequence, applying the profile gate and size-bounding by batch-overflow.
 
 **Batch-overflow**:
-The sizing lever: a concern with more than the per-concern asset budget splits into ordered chunks (`batch_index` / `batch_total`), same concern and verbatim, the tail never dropped - replacing the retired silent 400-cap truncation.
+The sizing lever: a stream longer than the per-chunk asset budget splits into ordered chunks (`batch_index` / `batch_total`), the tail never dropped - replacing the retired silent 400-cap truncation.
 
 **httpx-profile delivery gate**:
-The `#14` rule (reuse-first on D16): an Endpoint (and, per `#13`, a Parameter) is admitted to its chunk only when its BaseURL carries an httpx `profile`; an un-profiled one is WITHHELD at delivery until phase-6 `httpx_reprofile` sets the profile, and delivered FLAGGED at the phase-barrier (the AMV-14 fail-open backstop - never silently dropped).
+The `#13` fork-G rule (reuse-first on D16): a Parameter is admitted only when its BaseURL carries an httpx `profile`; an un-profiled one is WITHHELD at delivery until phase-6 `httpx_reprofile` sets the profile, and delivered FLAGGED at the phase-barrier (the AMV-14 fail-open backstop - never silently dropped).
 The profiled-origin set reuses `selectors.apply_selector`.
+The gate covered Endpoint too (`#14`) until #34 D1 dropped it: withholding an unprofiled Endpoint made a never-profiled target produce an ownerless attack surface indistinguishable from one with nothing to own.
 
 ## Provisional and designed-not-built terms
 
