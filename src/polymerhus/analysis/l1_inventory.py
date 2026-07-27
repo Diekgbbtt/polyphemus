@@ -31,7 +31,7 @@ def _resolve_read_fn(read_fn):
 
 
 def _empty() -> dict:
-    return {"services": [], "systems": [], "data_items": []}
+    return {"services": [], "systems": [], "data_items": [], "service_contracts": {}}
 
 
 def _render_system(row: dict) -> str:
@@ -48,15 +48,22 @@ def _render_system(row: dict) -> str:
 def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
     """Return the project's current L1 identities as
     `{"services": [business_function_slug,...], "systems": ["kind" | "kind:disc",...],
-    "data_items": [item_key,...]}`, each list sorted and deduped.
+    "data_items": [item_key,...], "service_contracts": {slug: service_contract}}`,
+    each list sorted and deduped.
 
-    Fail-open: any read error degrades to `{"services": [], "systems": [],
-    "data_items": []}` and never raises into the caller."""
+    `service_contracts` is ADDITIVE (#29): `services` stays a plain list of slugs, so
+    the six existing call sites and the four prompts fed by `_inventory_block` are
+    untouched, and a consumer that wants the routing profile reads the parallel map.
+    Only Services that actually carry a contract appear in it - absence keeps meaning
+    not-yet-filled.
+
+    Fail-open: any read error degrades to the empty inventory shape and never raises
+    into the caller."""
     read_fn = _resolve_read_fn(read_fn)
     try:
         service_rows = read_fn(
             "MATCH (n:L1Service) WHERE n.project_id = $project_id "
-            "RETURN n.business_function_slug AS slug",
+            "RETURN n.business_function_slug AS slug, n.service_contract AS contract",
             {"project_id": project_id},
         )
         system_rows = read_fn(
@@ -76,4 +83,14 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
     services = sorted({r.get("slug") for r in service_rows if r.get("slug")})
     systems = sorted({_render_system(r) for r in system_rows if r.get("kind")})
     data_items = sorted({r.get("item_key") for r in data_rows if r.get("item_key")})
-    return {"services": services, "systems": systems, "data_items": data_items}
+    contracts = {
+        r["slug"]: r["contract"]
+        for r in service_rows
+        if r.get("slug") and (r.get("contract") or "").strip()
+    }
+    return {
+        "services": services,
+        "systems": systems,
+        "data_items": data_items,
+        "service_contracts": contracts,
+    }

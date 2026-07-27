@@ -1,185 +1,290 @@
-"""FR-ELICIT unit tier — the bootstrap logic with injected fakes (no LLM/DB).
-Encodes the FR-ELICIT ledger (docs/design/L1-MVP-plan.md).
+"""FR-ELICIT unit tier - the Bootstrapper's PURE units, with injected fakes (no LLM/DB).
+
+Scope split: the delivery semantics of the whole two-call runner (fail-closed, call
+ordering, linchpin forcing, idempotence) are the integration catalogue's job
+(`tests/integration/test_bootstrap_reasoned_contracts.py`, C1-C18). This tier covers
+what is purely local: the props allowlist and contract cleaning, the shared bounded
+retry, the skill seam, and the settings-reading entry point.
+
+This file previously tested `bootstrap_from_kb`, the superseded single-call path
+retired in #29; every behaviour it asserted is covered against the reasoned path by
+the C-catalogue.
 """
+import json
+
+import pytest
+
 from polymerhus.analysis import bootstrap
-from polymerhus.analysis.analyser_types import (
-    AggregatesProposal,
-    L1DeltaBatch,
-    ServiceProposal,
-    SystemProposal,
+from polymerhus.analysis.bootstrap import (
+    ServiceShell,
+    SystemShell,
+    _clean_contract,
+    _service_props,
+    shells_to_batch,
 )
-from polymerhus.analysis.l1_types import L0Ref
+from polymerhus.analysis.proposer_reasoning import bounded_retry
 
 
-def _capture_curate():
+def _svc_props(batch):
+    return {s.business_function_slug: s.props for s in batch.services}
+
+
+# --- the props allowlist + contract cleaning (#29) -----------------------------
+
+def test_service_props_keeps_only_exposure_and_contract():
+    shell = ServiceShell(
+        business_function_slug="checkout", exposure="public",
+        service_contract="Take a basket to a paid order.",
+        label="Checkout", salience="high", aggregates=[{"x": 1}], data_flows=[{"y": 2}],
+    )
+    assert _service_props(shell) == {
+        "exposure": "public",
+        "service_contract": "Take a basket to a paid order.",
+    }
+
+
+def test_service_props_drops_an_out_of_enum_exposure_but_keeps_the_contract():
+    """The two props are validated INDEPENDENTLY: a strayed exposure must not take a
+    perfectly good contract down with it (the contract is the routing evidence)."""
+    shell = ServiceShell(
+        business_function_slug="x", exposure="semi-public",
+        service_contract="Browse the catalogue.",
+    )
+    assert _service_props(shell) == {"service_contract": "Browse the catalogue."}
+
+
+@pytest.mark.parametrize("raw", [None, "", "   ", "\n\t "])
+def test_blank_contract_is_omitted_not_persisted_as_empty(raw):
+    """`absence means not-yet-filled` is the convention every consumer reads. An
+    empty-string prop would satisfy a presence check while telling the Assigner
+    nothing, so blank must normalise to omitted."""
+    assert _clean_contract(raw) is None
+    assert "service_contract" not in _service_props(
+        ServiceShell(business_function_slug="x", service_contract=raw)
+    )
+
+
+def test_contract_whitespace_is_collapsed():
+    assert _clean_contract("Pay for\n  an   order.\n\nDeals in payments.") == (
+        "Pay for an order. Deals in payments."
+    )
+
+
+def test_contract_over_the_cap_is_trimmed_not_dropped():
+    """A too-long contract still carries its discriminating nouns up front, so it is
+    trimmed rather than discarded - dropping it would lose all routing signal."""
+    long = "word " * 400
+    cleaned = _clean_contract(long)
+    assert cleaned is not None
+    assert len(cleaned) <= bootstrap._CONTRACT_MAX_CHARS
+
+
+# --- forced service linchpins carry a contract (#29) ---------------------------
+
+def test_forced_linchpins_are_minted_with_their_single_sourced_contract():
+    props = _svc_props(shells_to_batch([], []))
+    for ls in bootstrap._LINCHPIN_SERVICES:
+        if not ls.forced:
+            continue
+        assert props[ls.slug]["service_contract"] == ls.contract
+        assert props[ls.slug]["exposure"] == ls.exposure
+
+
+def test_forced_linchpin_proposed_without_a_contract_is_filled_from_the_constant():
+    """The LLM may propose `sign-in` and give it no usable contract. The guaranteed
+    account surface must not end up unroutable, so the constant fills the gap."""
+    batch = shells_to_batch(
+        [ServiceShell(business_function_slug="sign-in", exposure="public")], []
+    )
+    contract = _svc_props(batch)["sign-in"]["service_contract"]
+    assert contract == bootstrap._LINCHPIN_SERVICES[0].contract
+
+
+def test_an_llm_contract_for_a_forced_linchpin_is_never_clobbered():
+    """A KB-grounded contract is richer than the generic constant, so the LLM's wins."""
+    batch = shells_to_batch(
+        [ServiceShell(business_function_slug="sign-in", exposure="public",
+                      service_contract="Sign in with a seller account.")], []
+    )
+    assert _svc_props(batch)["sign-in"]["service_contract"] == "Sign in with a seller account."
+
+
+def test_duplicate_slug_fills_empty_slots_per_key_without_clobbering():
+    """Two shells for one identity: each key fills independently, and a filled key is
+    never overwritten by a later shell."""
+    batch = shells_to_batch([
+        ServiceShell(business_function_slug="orders", exposure="authenticated"),
+        ServiceShell(business_function_slug="orders", exposure="public",
+                     service_contract="Track an order to delivery."),
+    ], [])
+    assert _svc_props(batch)["orders"] == {
+        "exposure": "authenticated",                      # first wins, not clobbered
+        "service_contract": "Track an order to delivery.",  # second fills the empty slot
+    }
+
+
+# --- out-of-vocabulary System kinds are dropped LOUDLY (#29 D6) ----------------
+
+def test_out_of_vocabulary_system_kind_is_dropped_with_a_warning(caplog):
+    """Live, the model proposed `PaymentSystem` and the sole-writer's typo-guard
+    swallowed it SILENTLY - so a systematically mis-named KB would yield a
+    linchpins-only skeleton that reads like a modelling result."""
+    with caplog.at_level("WARNING"):
+        batch = shells_to_batch([], [SystemShell(kind="PaymentSystem")])
+    kinds = {s.kind for s in batch.systems}
+    assert "PaymentSystem" not in kinds
+    assert kinds == set(bootstrap._LINCHPIN_SYSTEMS)  # only the forced triad survives
+    assert "PaymentSystem" in caplog.text
+
+
+def test_an_in_vocabulary_system_kind_survives():
+    batch = shells_to_batch([], [SystemShell(kind="WAF", claim="KB says 'behind Cloudflare'")])
+    assert "WAF" in {s.kind for s in batch.systems}
+
+
+# --- the shared bounded retry (was untested after the #26 slice) --------------
+# Regression guard for a defect FR-CURE2E hit live: deepseek returned truncated JSON
+# and the un-retried elicitation fail-opened to services=0, zeroing the whole skeleton.
+
+def test_bounded_retry_retries_a_transient_failure_then_succeeds():
+    calls = {"n": 0}
+
+    def flaky():
+        calls["n"] += 1
+        if calls["n"] < 3:
+            raise json.JSONDecodeError("Expecting value", "doc", 6094)
+        return "reasoning"
+
+    assert bounded_retry(flaky, attempts=3) == "reasoning"
+    assert calls["n"] == 3
+
+
+def test_bounded_retry_treats_a_none_return_as_a_failed_attempt():
+    """`with_structured_output` returns None (not raises) on an unparseable response,
+    so None must count as a failure or a single blip silently empties the skeleton."""
+    calls = {"n": 0}
+
+    def none_then_value():
+        calls["n"] += 1
+        return None if calls["n"] < 2 else "ok"
+
+    assert bounded_retry(none_then_value, attempts=3) == "ok"
+
+
+def test_bounded_retry_exhausted_returns_none_the_fail_closed_signal():
+    assert bounded_retry(lambda: None, attempts=3) is None
+    assert bounded_retry(lambda: (_ for _ in ()).throw(RuntimeError("down")), attempts=3) is None
+
+
+# --- the skill seam (#29) ------------------------------------------------------
+
+def test_reasoning_system_prompt_layers_base_plus_skill():
+    """#29: the reasoning system message is TWO layers - a stable base prompt (identity,
+    pipeline position, output-field contract - the WHAT) plus the operator-tunable
+    discipline skill (the 5 stages and service-contract craft - the HOW). The reasoned
+    path had earlier LOST the skill seam entirely, leaving reasoning as inline constants."""
+    base = bootstrap._BOOTSTRAPPER_BASE_SYSTEM
+    assert "Bootstrapper" in base
+    assert "business_function_slug" in base  # the output-field contract lives in the base
+    skill = bootstrap._load_bootstrapper_skill()
+    assert "service contract" in skill  # the discipline that teaches the contract craft
+
+
+def test_the_skill_carries_the_no_invented_paths_rule():
+    """The one content rule the operator ratified: domain nouns and verbs, never a
+    guessed path - a guessed path would enter the graph looking like evidence."""
+    skill = bootstrap._load_bootstrapper_skill().lower()
+    assert "never invent a path" in skill or "never write a path" in skill
+
+
+def test_a_missing_skill_mount_degrades_to_a_fallback_that_keeps_the_constraints():
+    fallback = bootstrap._BOOTSTRAPPER_SKILL_FALLBACK
+    assert "service_contract" in fallback
+    assert "NEVER write a path" in fallback
+    for stage in ("DECOMPOSE", "EXPAND", "GROUND", "WITHHOLD", "DECIDE"):
+        assert stage in fallback
+
+
+def test_both_layers_actually_reach_the_model(monkeypatch):
+    """The layering is only real if BOTH halves land in the system message: the base
+    alone loses the reasoning, the discipline alone loses the output contract."""
     captured = {}
 
-    def curate_fn(services, systems, project_id):
-        captured["services"] = services
-        captured["systems"] = systems
-        captured["project_id"] = project_id
-        return (len(services), len(systems))
+    class _FakeLLM:
+        def invoke(self, messages):
+            captured["system"] = messages[0].content
+            captured["human"] = messages[1].content
+            return type("R", (), {"content": "reasoning"})()
 
-    return captured, curate_fn
+    monkeypatch.setattr("polymerhus.app.llm.roles.chat_model_for", lambda role: _FakeLLM())
+    assert bootstrap.default_reason_fn("a juice marketplace", ["checkout"]) == "reasoning"
 
-
-# --- AST-ELICIT-01/02: elicits services + always-present linchpin auth Systems ---
-
-def test_bootstrap_writes_services_and_linchpin_systems():
-    captured, curate_fn = _capture_curate()
-
-    def elicit_fn(kb):
-        return L1DeltaBatch(
-            services=[ServiceProposal(business_function_slug="checkout"),
-                      ServiceProposal(business_function_slug="orders")],
-            systems=[SystemProposal(kind="RESTApi")],
-        )
-
-    export = bootstrap.bootstrap_from_kb("proj-1", "we sell things; users check out and view orders",
-                                         elicit_fn=elicit_fn, curate_fn=curate_fn)
-
-    slugs = {s.business_function_slug for s in captured["services"]}
-    kinds = {s.kind for s in captured["systems"]}
-    assert slugs == {"checkout", "orders"}
-    # linchpin auth Systems are ALWAYS present, even though the LLM only elicited RESTApi
-    assert {"AuthenticationMechanism", "AuthorizationSystem"} <= kinds
-    assert "RESTApi" in kinds
-    assert export.services_written == 2 and export.error is None
+    assert bootstrap._BOOTSTRAPPER_BASE_SYSTEM in captured["system"]
+    assert bootstrap._load_bootstrapper_skill() in captured["system"]
+    # the run-specific material rides in the HUMAN turn, never the system prompt
+    assert "a juice marketplace" in captured["human"]
+    assert "checkout" in captured["human"]  # the FR-INVENTORY reuse block
 
 
-def test_linchpins_not_duplicated_when_llm_elicits_them():
-    captured, curate_fn = _capture_curate()
+def test_the_breadth_sensitive_reasoning_prompt_stays_free_of_the_linchpin_umbrellas(monkeypatch):
+    """Regression guard for commit 760e93d: pushing the account-surface umbrellas into
+    the REASONING prompt coarsened the model's granularity prior and collapsed breadth
+    25/16/20 -> 13. The pre-auth surface is guaranteed deterministically by the forcing
+    in shells_to_batch instead, so the reasoning prompt must stay clean (B-Q2, #31)."""
+    captured = {}
 
-    def elicit_fn(kb):
-        return L1DeltaBatch(systems=[SystemProposal(kind="AuthenticationMechanism")])
+    class _FakeLLM:
+        def invoke(self, messages):
+            captured["prompt"] = messages[0].content + messages[1].content
+            return type("R", (), {"content": "reasoning"})()
 
-    bootstrap.bootstrap_from_kb("proj-1", "kb", elicit_fn=elicit_fn, curate_fn=curate_fn)
-    kinds = [s.kind for s in captured["systems"]]
-    assert kinds.count("AuthenticationMechanism") == 1  # not doubled
-    assert "AuthorizationSystem" in kinds
+    monkeypatch.setattr("polymerhus.app.llm.roles.chat_model_for", lambda role: _FakeLLM())
+    bootstrap.default_reason_fn("a juice marketplace", [])
 
-
-# --- AST-ELICIT-03: bootstrap is a pure business projection — NO L0 refs (aggregates dropped) ---
-
-def test_bootstrap_drops_any_aggregates_no_l0_refs():
-    captured, curate_fn = _capture_curate()
-    aggregates_seen = {"n": None}
-
-    def elicit_fn(kb):
-        # a misbehaving LLM emits an aggregate; bootstrap must NOT write it
-        return L1DeltaBatch(
-            services=[ServiceProposal(business_function_slug="checkout")],
-            aggregates=[AggregatesProposal(
-                service_slug="checkout",
-                l0=L0Ref(label="Endpoint", identity={"path": "/x", "method": "GET", "baseurl": "https://a"}),
-            )],
-        )
-
-    # curate_fn signature is (services, systems, project_id) — there is no
-    # aggregates parameter, proving bootstrap has no path to write an AGGREGATES edge.
-    export = bootstrap.bootstrap_from_kb("proj-1", "kb", elicit_fn=elicit_fn, curate_fn=curate_fn)
-    assert export.services_written == 1
-    assert "aggregates" not in captured  # only services+systems were curated
+    assert "ACCOUNT-SURFACE UMBRELLAS" not in captured["prompt"]
+    assert "password-recovery" not in captured["prompt"]
 
 
-# --- AST-ELICIT-04: operator_kb read from settings.recon.operator_kb (free text) ---
+# --- the settings-reading entry point -----------------------------------------
 
-def test_run_bootstrap_reads_operator_kb_from_settings():
+def test_run_bootstrap_reads_operator_kb_from_settings_and_uses_the_reasoned_path():
+    """`run_bootstrap` is the ONLY settings-aware entry point, and the API route calls
+    it. Before #29 it still delegated to the superseded fail-OPEN single-call path."""
     seen = {}
 
     def fake_load_settings(project_id):
-        return {"operator_kb": "an online marketplace with reviews and reward points", "target_domain": "x"}
+        return {"operator_kb": "an online marketplace with reviews", "target_domain": "x"}
 
-    def elicit_fn(kb):
+    def reason_fn(kb, service_slugs):
         seen["kb"] = kb
-        return L1DeltaBatch(services=[ServiceProposal(business_function_slug="reviews")])
+        return "reasoning"
 
-    _cap, curate_fn = _capture_curate()
-    bootstrap.run_bootstrap("proj-1", load_settings_fn=fake_load_settings, elicit_fn=elicit_fn, curate_fn=curate_fn)
-    assert seen["kb"] == "an online marketplace with reviews and reward points"
+    def extract_fn(reasoning):
+        seen["reasoning"] = reasoning
+        return ([ServiceShell(business_function_slug="reviews", exposure="public",
+                              service_contract="Read and write product reviews.")], [])
 
-
-def test_empty_operator_kb_still_ensures_linchpins():
-    captured, curate_fn = _capture_curate()
-    # empty KB -> no elicited services, but the linchpin systems must still be ensured
-    export = bootstrap.bootstrap_from_kb("proj-1", "   ", curate_fn=curate_fn)
-    kinds = {s.kind for s in captured["systems"]}
-    assert {"AuthenticationMechanism", "AuthorizationSystem"} <= kinds
-    assert captured["services"] == []
-    assert export.error is None
-
-
-# --- AST-ELICIT-05: fail-open on LLM error ---
-
-def test_elicit_error_is_degraded_not_raised():
-    _cap, curate_fn = _capture_curate()
-
-    def boom(kb):
-        raise RuntimeError("LLM down")
-
-    export = bootstrap.bootstrap_from_kb("proj-1", "kb", elicit_fn=boom, curate_fn=curate_fn)
-    assert export.error and "LLM down" in export.error
-    assert export.services_written == 0  # nothing written
-
-
-def test_curate_error_is_degraded_not_raised():
-    def elicit_fn(kb):
-        return L1DeltaBatch(services=[ServiceProposal(business_function_slug="x")])
-
-    def boom_curate(services, systems, project_id):
-        raise RuntimeError("neo4j down")
-
-    export = bootstrap.bootstrap_from_kb("proj-1", "kb", elicit_fn=elicit_fn, curate_fn=boom_curate)
-    assert export.error and "curate" in export.error
-
-
-# --- AST-ELICIT-05: the elicitation LLM call is retried, like the analyser's ---
-# Regression guard for a defect FR-CURE2E hit live: deepseek returned truncated
-# JSON ("Expecting value: line 1109 column 1") and default_elicit_fn, which called
-# structured_llm.invoke() with NO retry, fail-opened to services=0 - zeroing the
-# whole bootstrap skeleton so every downstream stage ran against an empty L1.
-# The analyser pod was hardened against exactly this transient with
-# _invoke_with_retry(attempts=3); bootstrap has the same exposure and was missed.
-
-def test_elicit_retries_a_transient_structured_output_failure(monkeypatch):
-    """A transient JSONDecodeError from the provider must be retried, not silently
-    collapsed into an empty skeleton."""
-    import json as _json
-
-    from polymerhus.app.llm import roles as _roles
-
-    good = L1DeltaBatch(services=[ServiceProposal(business_function_slug="checkout")])
-    calls = {"n": 0}
-
-    class _FakeStructured:
-        def invoke(self, messages):
-            calls["n"] += 1
-            if calls["n"] < 3:      # fail twice, succeed on the third
-                raise _json.JSONDecodeError("Expecting value", "doc", 6094)
-            return good
-
-    class _FakeLLM:
-        def with_structured_output(self, schema, method=None):
-            return _FakeStructured()
-
-    monkeypatch.setattr(_roles, "chat_model_for", lambda role: _FakeLLM())
-
-    batch = bootstrap.default_elicit_fn("an online juice marketplace")
-
-    assert calls["n"] == 3, f"expected 3 attempts (bounded retry), got {calls['n']}"
-    assert batch is not None and batch.services, "a retried success must return the batch"
-    assert batch.services[0].business_function_slug == "checkout"
-
-
-def test_elicit_exhausting_its_retries_is_fail_open_with_a_clear_error():
-    """When every retry attempt fails, _invoke_with_retry returns None. That must
-    degrade to a reported error, NOT crash the caller (fail-open) and NOT look like
-    a successful empty elicitation."""
-    exp = bootstrap_from_kb_none = bootstrap.bootstrap_from_kb(
-        "p_none", "an online juice marketplace",
-        elicit_fn=lambda kb: None,
-        curate_fn=lambda services, systems, project_id: (len(services), len(systems)),
+    export = bootstrap.run_bootstrap(
+        "proj-1", load_settings_fn=fake_load_settings,
+        reason_fn=reason_fn, extract_fn=extract_fn,
+        curate_fn=lambda s, sy, p: (len(s), len(sy)), service_slugs=[],
     )
-    assert exp.error, "an exhausted-retry elicitation must report an error, not a silent empty skeleton"
-    assert "elicit" in exp.error.lower()
-    assert exp.services_written == 0
+    assert seen["kb"] == "an online marketplace with reviews"
+    assert seen["reasoning"] == "reasoning"      # the two-call handoff, not the old path
+    assert export.blocked is False
+
+
+def test_run_bootstrap_on_a_missing_kb_is_a_valid_linchpins_only_proceed():
+    export = bootstrap.run_bootstrap(
+        "proj-1", load_settings_fn=lambda p: {"target_domain": "x"},
+        curate_fn=lambda s, sy, p: (len(s), len(sy)), service_slugs=[],
+    )
+    assert export.blocked is False
+    assert export.systems_written == len(bootstrap._LINCHPIN_SYSTEMS)
+
+
+def test_the_retired_single_call_path_is_gone():
+    """#29 retired the example-polluted, fail-open elicitation. Guarding its absence
+    keeps it from being resurrected by a merge."""
+    for retired in ("bootstrap_from_kb", "default_elicit_fn", "_BOOTSTRAP_INSTRUCTION"):
+        assert not hasattr(bootstrap, retired), f"{retired} should be retired"

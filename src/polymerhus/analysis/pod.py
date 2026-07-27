@@ -203,14 +203,27 @@ def _inventory_block(inventory: dict | None) -> str:
     """Render the CURRENT L1 identities as an explicit, machine-legible reuse
     block (a bullet list of the exact keys) for the TOP of an analyser prompt.
     Never truncated. An empty category renders `(none yet)` so the block shape is
-    deterministic on the very first pass."""
-    inv = inventory or {}
+    deterministic on the very first pass.
 
-    def _render(heading: str, keys) -> str:
+    A Service that carries a `service_contract` (#29) renders as `slug - contract`.
+    The contract is the Bootstrapper's functional profile of the business function,
+    and it is what makes this block usable for ASSIGNMENT rather than only for
+    identity reuse: a bare slug list tells a proposer which names exist, but nothing
+    about what each one owns, so a slug like `byoc` or `agent-tool` is unroutable.
+    Fed from the parallel `service_contracts` map, so a contract-less inventory
+    renders exactly as before."""
+    inv = inventory or {}
+    contracts = inv.get("service_contracts") or {}
+
+    def _render(heading: str, keys, *, annotations: dict | None = None) -> str:
         keys = list(keys or [])
         if not keys:
             return f"  {heading}: (none yet)"
-        return f"  {heading}:\n" + "\n".join(f"    - {k}" for k in keys)
+        lines = []
+        for k in keys:
+            note = (annotations or {}).get(k)
+            lines.append(f"    - {k} - {note}" if note else f"    - {k}")
+        return f"  {heading}:\n" + "\n".join(lines)
 
     return (
         "EXISTING L1 IDENTITIES - reuse these EXACT keys, do NOT coin a synonym.\n"
@@ -218,7 +231,9 @@ def _inventory_block(inventory: dict | None) -> str:
         "signin / login are ONE identity: pick the key already listed here rather "
         "than minting a near-duplicate. Add a NEW Service / System / DataItem ONLY "
         "for surface no existing key below covers.\n"
-        f"{_render('Services (business_function_slug)', inv.get('services'))}\n"
+        "Where a Service shows a description after its slug, that is its service "
+        "contract: what that business function does and owns.\n"
+        f"{_render('Services (business_function_slug)', inv.get('services'), annotations=contracts)}\n"
         f"{_render('Systems (kind[:discriminator])', inv.get('systems'))}\n"
         f"{_render('DataItems (item_key)', inv.get('data_items'))}"
     )

@@ -18,7 +18,11 @@ from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
 
 from polymerhus.project_management import repository
-from polymerhus.project_management.repository import ProjectNotFound, RunNotFound
+from polymerhus.project_management.repository import (
+    BootstrapBlocked,
+    ProjectNotFound,
+    RunNotFound,
+)
 from polymerhus.recon.control.pipeline import run_pipeline
 
 logger = logging.getLogger(__name__)
@@ -37,6 +41,14 @@ class SettingsUpdate(BaseModel):
 class ReconLaunch(BaseModel):
     jobs: list[str] | None = None
     settings: dict | None = None
+
+
+class BootstrapLaunch(BaseModel):
+    """Ingest the operator's knowledge base and bootstrap. `operator_kb` is optional:
+    supply it to ingest-and-bootstrap in one call (the frontend's flow), or omit it to
+    bootstrap from the KB already stored in the project's settings."""
+
+    operator_kb: str | None = None
 
 
 @router.post("/projects")
@@ -104,6 +116,35 @@ async def launch_recon(project_id: str, body: ReconLaunch) -> dict:
     run_id = repository.open_run(project_id)
     _launch_pipeline(project_id, run_id, body.jobs)
     return {"run_id": run_id}
+
+
+@router.post("/projects/{project_id}/bootstrap")
+async def bootstrap_project(project_id: str, body: BootstrapLaunch) -> dict:
+    """Ingest the operator KB and project it into the L1 Service skeleton.
+
+    SYNCHRONOUS, unlike the recon launch: a bootstrap is two LLM calls whose RESULT
+    (the skeleton counts, or the fail-closed block) is what the caller needs, and it
+    has no per-job progress worth polling - so there is nothing a run row and a
+    status endpoint would add over simply returning the outcome. The blocking work is
+    offloaded to a worker thread so it never stalls the event loop.
+
+    A fail-closed block is a 503, NOT a 200 with zero counts: the whole point of the
+    signal is that the caller must not proceed to the analysis, and a success status
+    would invite exactly that."""
+    try:
+        return await asyncio.to_thread(
+            repository.bootstrap_project, project_id, body.operator_kb
+        )
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except BootstrapBlocked as exc:
+        logger.warning("bootstrap blocked for project %s: %s", project_id, exc.reason)
+        raise HTTPException(
+            status_code=503,
+            detail=f"bootstrap blocked, analysis must not proceed: {exc.reason}",
+        ) from exc
 
 
 @router.get("/projects/{project_id}/recon/{run_id}")

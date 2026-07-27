@@ -163,11 +163,22 @@ The L1 counterpart of the Recon `curator`.
 The pre-analysis step that seeds the operator KB so an analyser run starts from a framed target rather than the bare surface (the bootstrap-first e2e discipline).
 The redesigned Bootstrapper (#26) elicits the skeleton in TWO calls - a free-text 5-step reasoning (architect-decompose -> expand -> hypothesis+KB-ground -> critical-withhold -> decide) then a structured shell extraction - taught by 2 divergent-domain few-shot exemplars, and is FAIL-CLOSED: on retry-exhaustion or a write failure it BLOCKS the analysis rather than degrading to an empty skeleton (an empty KB stays a valid linchpins-only proceed).
 
+The Bootstrapper is a pre-analysis PHASE, not a supervised analyser proposer: it runs once, ahead of the analysis, and is triggered over the app API (`POST /projects/{id}/bootstrap`), which ingests the operator's knowledge and returns the skeleton counts - or a 503 carrying the fail-closed block.
+Its system message is TWO layers: a stable base prompt in code (identity, pipeline position, the output-field contract - the WHAT) plus the operator-tunable reasoning discipline in `skills/analysis/bootstrapper/SKILL.md` (the five stages, service-contract craft, critical withholding - the HOW).
+
+**Service contract**:
+A brief functional profile of a business-function Service - what it DOES and what it OWNS - written in the application's own domain nouns and action verbs, and persisted as the `service_contract` prop.
+Written by the Bootstrapper for every Service (and by the Assigner on a Service it MINTS); it is the PRIMARY evidence the cross-layer Assigner consumes, matching the nouns and actions in an observed endpoint path against it to judge ownership.
+It must DISCRIMINATE between business functions (a profile true of every Service is useless to a matcher) and must contain NO path, URL, route or parameter name: the operator KB states none, so a path in a contract is a model's guess that would then be read as evidence.
+Its richness is bounded by the KB's own vocabulary - a thin KB gets a thin honest contract.
+_Not to be confused with_: `label` (an NL display name) or `salience` (a one-line adversarial summary), both Phase-B concerns the Bootstrapper leaves empty.
+
 **Proposer-reasoning pattern**:
-The reusable prompt fragments every analyser proposer composes (`proposer_reasoning.py`): a role/goal header, a chain-of-thought scaffold, a few-shot CoT block, and a bounded-retry two-call runner - the "optimal prompt pattern" (system-prompt role design + CoT + few-shot + structured extraction) minus the example-pollution pitfall (no hardcoded domain slugs).
+The reusable prompt fragments every analyser proposer composes (`proposer_reasoning.py`): a role/goal header, a chain-of-thought scaffold, a few-shot CoT block, and a bounded retry - the "optimal prompt pattern" (system-prompt role design + CoT + few-shot + structured extraction) minus the example-pollution pitfall (no hardcoded domain slugs).
 
 **ServiceShell / SystemShell**:
-The Bootstrapper's call-2 elicitation template: a per-Service / per-System shell whose phase-A.1 attributes are PRESENT but EMPTIED (bootstrap fills only slug + exposure, or kind + discriminator), mapped down to `L1DeltaBatch` for the sole-writer (the empty A.1 slots are not persisted - absence means not-yet-filled).
+The Bootstrapper's call-2 elicitation template: a per-Service / per-System shell whose phase-A.1 attributes are PRESENT but EMPTIED (bootstrap fills only slug + exposure + service_contract, or kind + discriminator), mapped down to `L1DeltaBatch` for the sole-writer (the empty A.1 slots are not persisted - absence means not-yet-filled).
+A System shell whose `kind` falls outside the controlled vocabulary is dropped at this seam with a warning and a count, rather than silently swallowed downstream by the sole-writer's typo-guard.
 The 3 forced linchpins are the identify/authenticate/authorize triad (IdentificationSystem, AuthenticationMechanism, AuthorizationSystem); the AuthorizationSystem alone keeps a shallow KB-sourced role/realm vocabulary, with no edges.
 
 **Service linchpin (gap-3, ratified 2026-07-26)**:
@@ -248,8 +259,10 @@ _Avoid_: analyser (the whole-model term), classifier.
 The Assigner's crux (AMV-14): a below-bar ownership judgment (confidence < the provisional 0.75 bar) yields NO `AGGREGATES` entry - the L0 element stays in the stale pool.
 The withholding is a SHAPING rule (absence IS the withholding; no "withheld" edge exists), lives in the Assigner seam not the shared sole-writer, and is the Assigner's SELF-check (maker); the Auditor is the separate check over survivors (checker).
 
-**Exposure-only baseline**:
-A MINTED Service carries only a validated `exposure` prop (public/authenticated); a REUSED Service is emitted with EMPTY props so the idempotent MERGE never clobbers the Bootstrapper's exposure (mirrors #7; suppresses AMV-12 drift).
+**Service props baseline** (was "exposure-only baseline", widened 2026-07-27 by #29):
+A MINTED Service carries a validated `exposure` prop (public/authenticated) and its `service_contract`, and nothing else - label, salience and every A.1 slot are dropped at creation by a POSITIVE allowlist.
+A REUSED Service is emitted with EMPTY props so the idempotent MERGE never clobbers the Bootstrapper's exposure or contract (mirrors #7; suppresses AMV-12 drift): the Bootstrapper read the whole architecture to write that contract, while an Assigner sees only one chunk of surface, so it is never the better source for a Service that already exists.
+A minted Service needs its own contract precisely because it was minted - no existing identity covered the surface, so without one the next chunk meets it in the inventory with nothing to route on.
 
 **analysis.supervisor_enabled (coexistence flag)**:
 The single orthogonal flag, read inside `run_analyser`, that selects legacy-pod (default OFF) vs the supervisor (ON) at the one analyser entry.

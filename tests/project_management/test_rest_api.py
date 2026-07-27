@@ -371,3 +371,117 @@ def test_post_recon_baseline_pipeline_still_launches_without_gau(monkeypatch):
 
     assert resp.status_code == 200
     assert launched  # baseline run accepted
+
+
+# --- POST /projects/{id}/bootstrap (#29): the pre-analysis delivery seam --------
+# The Bootstrapper is a pre-analysis PHASE, not a supervised analyser proposer, so
+# the API is its delivery seam: a frontend component ingests the operator's
+# knowledge here and triggers the projection.
+
+def _stub_bootstrap(monkeypatch, result=None, exc=None):
+    """Patch the use-case's collaborator, not the use-case: the route's error
+    mapping is what is under test, and the real one runs two LLM calls."""
+    from polymerhus.analysis import bootstrap as bootstrap_mod
+
+    def fake(project_id, **kwargs):
+        if exc is not None:
+            raise exc
+        return result
+
+    monkeypatch.setattr(bootstrap_mod, "run_bootstrap", fake)
+
+
+def test_bootstrap_ingests_the_kb_and_returns_the_skeleton_counts(monkeypatch):
+    from polymerhus.analysis.bootstrap import BootstrapExport
+
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    saved = []
+    monkeypatch.setattr(pg, "save_settings", lambda pid, s: saved.append((pid, s)))
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"operator_kb": "a juice marketplace"})
+    _stub_bootstrap(monkeypatch, BootstrapExport(services_written=22, systems_written=3))
+
+    resp = client.post("/projects/p1/bootstrap", json={"operator_kb": "a juice marketplace"})
+
+    assert resp.status_code == 200
+    assert resp.json() == {"services_written": 22, "systems_written": 3}
+    # the operator's knowledge is INGESTED (persisted) before the projection runs,
+    # so a re-bootstrap and the later analysis read the same durable text
+    assert saved == [("p1", {"operator_kb": "a juice marketplace"})]
+
+
+def test_bootstrap_without_a_body_kb_uses_the_stored_one(monkeypatch):
+    from polymerhus.analysis.bootstrap import BootstrapExport
+
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    saved = []
+    monkeypatch.setattr(pg, "save_settings", lambda pid, s: saved.append((pid, s)))
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"operator_kb": "stored kb"})
+    _stub_bootstrap(monkeypatch, BootstrapExport(services_written=5, systems_written=3))
+
+    resp = client.post("/projects/p1/bootstrap", json={})
+
+    assert resp.status_code == 200
+    assert saved == []  # nothing supplied -> nothing overwritten
+
+
+def test_bootstrap_unknown_project_404(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: False)
+    resp = client.post("/projects/nope/bootstrap", json={"operator_kb": "x"})
+    assert resp.status_code == 404
+
+
+def test_bootstrap_without_any_kb_is_400(monkeypatch):
+    """A KB-less project is a caller error, not a blocked bootstrap: there is
+    nothing to project, and the operator has to supply the knowledge first."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_seed": "x.com"})
+
+    resp = client.post("/projects/p1/bootstrap", json={})
+
+    assert resp.status_code == 400
+    assert "operator_kb" in resp.json()["detail"]
+
+
+def test_bootstrap_blank_kb_in_the_body_is_400(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    saved = []
+    monkeypatch.setattr(pg, "save_settings", lambda pid, s: saved.append(s))
+
+    resp = client.post("/projects/p1/bootstrap", json={"operator_kb": "   "})
+
+    assert resp.status_code == 400
+    assert saved == []  # a blank KB never overwrites a stored one
+
+
+def test_bootstrap_fail_closed_is_503_not_a_zero_count_200(monkeypatch):
+    """THE fail-closed contract (#26 Q6). A block must not reach the caller as a
+    successful empty skeleton - that is exactly the misreading that would let the
+    whole analysis run against an empty L1."""
+    from polymerhus.analysis.bootstrap import BootstrapExport
+
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "save_settings", lambda pid, s: None)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"operator_kb": "kb"})
+    _stub_bootstrap(monkeypatch, BootstrapExport(blocked=True, error="reason: exhausted after retries"))
+
+    resp = client.post("/projects/p1/bootstrap", json={"operator_kb": "kb"})
+
+    assert resp.status_code == 503
+    detail = resp.json()["detail"]
+    assert "must not proceed" in detail and "exhausted" in detail
+
+
+def test_bootstrap_does_not_open_a_recon_run(monkeypatch):
+    """A bootstrap is NOT a recon run: minting a run row here would leave a run the
+    bootstrap never advances or heartbeats sitting in /runs?status=running forever."""
+    from polymerhus.analysis.bootstrap import BootstrapExport
+
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    monkeypatch.setattr(pg, "save_settings", lambda pid, s: None)
+    monkeypatch.setattr(pg, "load_settings", lambda pid: {"operator_kb": "kb"})
+    opened = []
+    monkeypatch.setattr(pg, "create_run", lambda rid, pid: opened.append(rid))
+    _stub_bootstrap(monkeypatch, BootstrapExport(services_written=1, systems_written=3))
+
+    assert client.post("/projects/p1/bootstrap", json={"operator_kb": "kb"}).status_code == 200
+    assert opened == []

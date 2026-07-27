@@ -1,5 +1,6 @@
 """Contract predicates (integration tier) for the Bootstrapper redesign (#26,
-agent spec #7). Mechanises C1-C13.
+agent spec #7). Mechanises C1-C13, plus C14-C18 (service linchpins) and C19-C22
+(the `service_contract` attribute, #29).
 
 Written against the intended API (shells_to_batch + bootstrap_reasoned) BEFORE the
 build - per /to-assertions they collect, execute, and FAIL for the predicate's
@@ -237,17 +238,26 @@ def test_C14_auth_entry_services_forced_when_llm_omits_them():
     props = _svc_props(shells_to_batch([], []))
     for slug in _FORCED_SERVICE_LINCHPINS:
         assert slug in props, f"forced service linchpin {slug!r} missing"
-        assert props[slug] == {"exposure": "public"}  # pre-auth baseline
+        assert props[slug]["exposure"] == "public"          # pre-auth baseline
+        # #29: a forced Service is never contract-LESS, or the guaranteed surface
+        # would be present in the inventory yet unroutable by the Assigner.
+        assert props[slug]["service_contract"]
+        assert set(props[slug]) == {"exposure", "service_contract"}
 
 
 def test_C15_forced_service_linchpin_not_duplicated_when_llm_proposes_it():
     """Dedup on Service identity: the LLM proposing sign-in (incl. an FR-INVENTORY
     reuse) must not double-mint it, and the LLM's own exposure is preserved."""
     batch = shells_to_batch(
-        [ServiceShell(business_function_slug="sign-in", exposure="public")], [])
+        [ServiceShell(business_function_slug="sign-in", exposure="public",
+                      service_contract="Sign in with a seller account.")], [])
     slugs = [s.business_function_slug for s in batch.services]
     assert slugs.count("sign-in") == 1  # no duplicate
-    assert _svc_props(batch)["sign-in"] == {"exposure": "public"}
+    assert _svc_props(batch)["sign-in"] == {
+        "exposure": "public",
+        # the LLM's KB-grounded contract beats the generic constant, never clobbered
+        "service_contract": "Sign in with a seller account.",
+    }
     # the OTHER forced linchpins are still added alongside the LLM's proposal
     assert {"register", "password-recovery"} <= set(slugs)
 
@@ -276,3 +286,67 @@ def test_C18_prompt_single_sources_the_service_linchpin_constant():
         assert ls.slug in rendered  # every umbrella drawn from the one source
     # the forced-vs-prompt-prior policy is visible to the model
     assert "ALWAYS propose" in rendered and "ONLY when the KB grounds it" in rendered
+
+
+# --- C19-C22 (#29): the `service_contract` attribute ---------------------------
+
+def test_C19_elicited_contract_is_carried_onto_the_service():
+    """The whole point of the attribute: what the model wrote about the business
+    function survives onto the node the Assigner will later read."""
+    batch = shells_to_batch([ServiceShell(
+        business_function_slug="volume-management", exposure="authenticated",
+        service_contract="Create, attach, detach and delete persistent volumes bound to a "
+                         "sandbox; owns volume records and mount state.",
+    )], [])
+    props = _svc_props(batch)["volume-management"]
+    assert props["service_contract"].startswith("Create, attach, detach")
+    assert set(props) == {"exposure", "service_contract"}  # nothing else leaks in
+
+
+def test_C20_contract_survives_a_full_bootstrap_through_the_sole_writer():
+    """End of the shaping path: the contract reaches the curate boundary as a Service
+    prop, so the sole-writer persists it (it is a free-form prop, not a typed field)."""
+    captured = {}
+
+    def curate(services, systems, project_id):
+        captured["services"] = services
+        return (len(services), len(systems))
+
+    out = bootstrap_reasoned(
+        "p1", "a sandbox platform",
+        reason_fn=lambda kb, slugs: "reasoning",
+        extract_fn=lambda r: ([ServiceShell(
+            business_function_slug="sandbox-lifecycle", exposure="authenticated",
+            service_contract="Start, stop and destroy sandboxes; owns the sandbox record.",
+        )], []),
+        curate_fn=curate, service_slugs=[],
+    )
+    assert out.blocked is False
+    written = {s.business_function_slug: s.props for s in captured["services"]}
+    assert written["sandbox-lifecycle"]["service_contract"].startswith("Start, stop and destroy")
+
+
+def test_C21_a_re_bootstrap_never_clobbers_an_existing_contract_with_a_blank_one():
+    """Idempotence with a WEAKER second pass: a re-run whose model omits the contract
+    must not blank the prop. Absence is omission (not-yet-filled), so the MERGE leaves
+    the stored contract standing rather than overwriting it with an empty string."""
+    batch = shells_to_batch([ServiceShell(
+        business_function_slug="checkout", exposure="public", service_contract="   ",
+    )], [])
+    # nothing to write for the key -> the idempotent MERGE cannot clobber it
+    assert "service_contract" not in _svc_props(batch)["checkout"]
+
+
+def test_C22_contract_reaches_the_inventory_block_the_proposers_read():
+    """Without this the attribute would be write-only: `read_l1_inventory` renders into
+    `_inventory_block`, which is what the Assigner / DataPlane / TechnicalSystem prompts
+    actually consume. A bare slug list is what made `byoc` unroutable."""
+    from polymerhus.analysis.pod import _inventory_block
+
+    rendered = _inventory_block({
+        "services": ["byoc", "checkout"],
+        "systems": [], "data_items": [],
+        "service_contracts": {"checkout": "Take a basket to a paid order."},
+    })
+    assert "- checkout - Take a basket to a paid order." in rendered
+    assert "- byoc\n" in rendered  # contract-less Service still listed, just unannotated

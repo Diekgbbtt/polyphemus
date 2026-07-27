@@ -30,10 +30,14 @@ logger = logging.getLogger(__name__)
 # 0.70 is too permissive given the ~31-38% over-assignment prior.
 ASSIGN_CONFIDENCE_BAR = float(os.environ.get("ANALYSER_ASSIGN_BAR", "0.75"))
 
-# Exposure-only baseline (mirrors #7's bootstrap allowlist): a MINTED Service may
-# carry ONLY a validated `exposure` prop - label / salience / anything else the LLM
-# strays into is dropped at creation.
-_ALLOWED_SERVICE_PROPS = frozenset({"exposure"})
+# The Service props baseline (mirrors #7/#29's bootstrap allowlist): a MINTED Service
+# may carry ONLY a validated `exposure` and its `service_contract` - label / salience /
+# anything else the LLM strays into is dropped at creation.
+# A minted Service NEEDS its contract (#29): it is minted precisely because no existing
+# identity covered the surface, so the NEXT chunk sees it in the inventory with nothing
+# to route on unless it describes itself. Without this it would be a second-class
+# identity that only the Bootstrapper's Services could be matched against.
+_ALLOWED_SERVICE_PROPS = frozenset({"exposure", "service_contract"})
 _EXPOSURE_VALUES = frozenset({"public", "authenticated"})
 
 
@@ -56,18 +60,24 @@ def withhold_below_bar(batch: L1DeltaBatch, bar: float = ASSIGN_CONFIDENCE_BAR) 
     return batch.model_copy(update={"aggregates": kept})
 
 
-def apply_exposure_baseline(batch: L1DeltaBatch, *, minted_slugs: frozenset[str]) -> L1DeltaBatch:
-    """Exposure-only baseline (#8 leg 2, mirrors #7): a MINTED Service keeps only a
-    validated `exposure` prop; a REUSED Service is emitted with EMPTY props so the
-    idempotent MERGE never clobbers the Bootstrapper's exposure (no synonym drift,
-    AMV-12)."""
+def apply_service_baseline(batch: L1DeltaBatch, *, minted_slugs: frozenset[str]) -> L1DeltaBatch:
+    """The Service props baseline (#8 leg 2, mirrors #7/#29): a MINTED Service keeps a
+    validated `exposure` and its `service_contract`; a REUSED Service is emitted with
+    EMPTY props so the idempotent MERGE never clobbers the Bootstrapper's exposure or
+    contract (no synonym drift, AMV-12) - the Bootstrapper read the whole architecture
+    to write that contract, while the Assigner sees only one chunk of surface, so the
+    Assigner is never the better source for a Service that already exists."""
     out = []
     for s in batch.services:
+        props: dict = {}
         if s.business_function_slug in minted_slugs:
-            exposure = (s.props or {}).get("exposure")
-            props = {"exposure": exposure} if exposure in _EXPOSURE_VALUES else {}
-        else:
-            props = {}  # reused -> empty props (never clobber existing exposure)
+            raw = s.props or {}
+            if raw.get("exposure") in _EXPOSURE_VALUES:
+                props["exposure"] = raw["exposure"]
+            contract = (raw.get("service_contract") or "").strip()
+            if contract:
+                props["service_contract"] = " ".join(contract.split())
+            props = {k: v for k, v in props.items() if k in _ALLOWED_SERVICE_PROPS}
         out.append(s.model_copy(update={"props": props}))
     return batch.model_copy(update={"services": out})
 
@@ -81,7 +91,7 @@ def shape_proposal(
     minted = frozenset(s.business_function_slug for s in raw.services) - existing_slugs
     batch = narrow_to_assignment(raw)
     batch = withhold_below_bar(batch, bar)
-    batch = apply_exposure_baseline(batch, minted_slugs=minted)
+    batch = apply_service_baseline(batch, minted_slugs=minted)
     return batch
 
 
@@ -97,21 +107,37 @@ def _chunk_slice(chunk: Chunk) -> dict:
 
 def _assignment_prompt(l0_slice: dict, inventory: dict | None) -> str:
     """The assignment-only verbatim (a focused rewrite of the legacy pass-1 prompt,
-    #8): reuse existing identities, judge ownership with confidence + evidence, and
-    set `exposure` (public/authenticated) ONLY on a newly-minted Service - never
-    label or salience."""
+    #8): match the surface against each Service's CONTRACT, reuse existing identities,
+    judge ownership with confidence + evidence, and set `exposure` +
+    `service_contract` ONLY on a newly-minted Service - never label or salience."""
     from polymerhus.analysis.pod import _inventory_block, _slice_repr
 
     return (
         f"{_inventory_block(inventory)}\n\n{_slice_repr(l0_slice)}\n\n"
         "TASK - SURFACE ASSIGNMENT (assignment ONLY). Propose `services` and "
         "`aggregates` (which Service owns each L0 element), each aggregate carrying "
-        "your `confidence` (0..1) and `evidence_refs`. REUSE the exact "
-        "business_function_slug of any Service already listed above rather than "
-        "coining a synonym; add a NEW Service only for surface no existing one "
-        "covers, and on a NEW Service set ONLY `exposure` (public or authenticated) "
-        "- never label or salience. Leave systems, system_edges, and all "
-        "data-modelling lists EMPTY (dedicated proposers produce those)."
+        "your `confidence` (0..1) and `evidence_refs`.\n"
+        # The contract is the PRIMARY routing evidence (#29). Before it existed the
+        # inventory offered only slugs, so matching fell back to guessing what an
+        # opaque slug (`byoc`, `agent-tool`) might mean - the assignment noise the
+        # withholding bar then had to absorb.
+        "HOW TO JUDGE OWNERSHIP: read each candidate Service's contract above - what "
+        "that business function DOES and OWNS - and match it against the concrete "
+        "nouns and actions in the element itself: the path segments, the parameter "
+        "names, the method. A path noun that names something a contract says the "
+        "Service owns is strong evidence; a merely plausible topical association is "
+        "not. Where two contracts both fit, prefer the one whose OWNED records the "
+        "element operates on, and lower your confidence to reflect the ambiguity. "
+        "Cite the specific path/parameter you matched in `evidence_refs`.\n"
+        "REUSE the exact business_function_slug of any Service already listed above "
+        "rather than coining a synonym; add a NEW Service only for surface no "
+        "existing one covers. On a NEW Service set ONLY `exposure` (public or "
+        "authenticated) and a `service_contract` - a brief profile of what that "
+        "function does and owns, in the domain nouns and verbs the surface itself "
+        "shows, so the next batch of surface can be matched against it. Never label "
+        "or salience. Do NOT restate a contract for a Service that already has one. "
+        "Leave systems, system_edges, and all data-modelling lists EMPTY (dedicated "
+        "proposers produce those)."
     )
 
 
@@ -125,7 +151,7 @@ def assign(
 ) -> L1DeltaBatch:
     """The Assigner proposer body (#8): from a `service`-concern `Chunk` + the LIVE
     inventory, judge ownership, then SELF-WITHHOLD below the bar and enforce the
-    exposure baseline, returning a narrowed `L1DeltaBatch{services, aggregates}`.
+    Service props baseline, returning a narrowed `L1DeltaBatch{services, aggregates}`.
 
     `invoke_fn(messages) -> L1DeltaBatch | None` is injected (unit-testable, no live
     LLM). Fail-open: a `None`/raising `invoke_fn` (or an empty chunk) degrades to an
