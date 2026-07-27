@@ -130,10 +130,21 @@ Managed attributes on EVERY node: `project_id` (tenant), `first_seen`/`last_seen
 - **Encodes:** a business function with a service contract - "what the application does for a user" (checkout, sign-in, reward-points).
 - **Attributes (props):**
   - `business_function_slug` (identity) - the stable human-legible business-function key; the dedup anchor (two Services are the same iff same slug-intent).
-  - `label` / `salience` - NL name + one-line adversarial salience summary (for the BFS index-card).
+  - `service_contract` (free text) - a brief functional profile of the business function: what it DOES and what it OWNS, written in the application's own domain nouns and action verbs. Written by the **Bootstrapper** at bootstrap (and by the Assigner on a Service it MINTS); the concrete realisation of the "NL contract handles" slot this catalogue previously left unowned.
+  - `label` / `salience` - NL name + one-line adversarial salience summary (for the BFS index-card). Phase B; NOT written at bootstrap.
   - `exposure` - contract facet: `public` | `authenticated` (whether the function requires a signed-in principal).
-  - NL contract handles (free text) - interface-agreement / data-contract notes the planner consumes.
   - MUST NOT carry: `api_paradigm`, `navigation_model`, `rendering_model`, `auth_methods` (those are System-side, §3).
+
+**On `service_contract` (added 2026-07-27, #29).**
+It exists to be READ, by the cross-layer Assigner: that agent sees concrete endpoint paths and decides ownership by matching the path's nouns and actions against each candidate Service's contract.
+So the contract is written for that consumer, and two rules follow from it.
+
+- It must DISCRIMINATE. A profile true of every Service ("manages platform resources") is useless to a matcher, however accurate it is.
+- It must contain NO path, URL, route, query parameter or field name. The operator's knowledge base never states paths, so any path in a contract is a guess by the writing model - and once persisted it is indistinguishable from evidence, anchoring the matcher onto a shape the real application may not have. Domain nouns and verbs carry the whole matching signal; invented syntax adds none.
+
+Absence means not-yet-filled (the same convention as `exposure`); a blank contract is never persisted as an empty string.
+A re-bootstrap whose model omits the contract leaves the stored one standing - the idempotent MERGE has nothing to clobber it with.
+For the A.2 `SPLIT` op each subordinate leaf MUST get its OWN contract; copying the umbrella's onto every leaf would leave them mutually indiscriminable and defeat the decomposition.
 
 ### 4.2 `:L1TestableUnit` + `:L1System`
 

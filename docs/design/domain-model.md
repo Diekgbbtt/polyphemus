@@ -287,6 +287,10 @@ The spine is what makes a downstream fault-symptom addressable as a graph locus 
 
 The rule that separates spine-on-System from spine-on-Service is the mechanism-classification principle of Section 2.3: only `business_function`, `exposure`, and free-text contract handles are Service props; `api_paradigm`, `navigation_model`, `rendering_model`, and `auth_methods` are all System-side, reached by an edge (`l1-domain-model-catalogue.md` §3).
 
+The "free-text contract handle" is realised as `service_contract` (2026-07-27, #29): a brief functional profile of what the business function does and owns, written in the application's own domain nouns and action verbs.
+It is the primary evidence the cross-layer Assigner consumes - it matches the nouns and actions of an observed endpoint path against the contract to judge ownership - which is why the contract must discriminate between business functions, and why it may never contain a path, URL or parameter name: the operator KB states none, so a path in a contract is a model's guess that would afterwards be indistinguishable from evidence.
+This makes the Service the one L1 node that carries its own description of itself, and it is what lets an opaque slug (`byoc`, `agent-tool`) be routable at all.
+
 Two spine dimensions are ontologically independent and neither may be inferred from the other: `navigation_model` (SPA/MPA/Hybrid) and `rendering_model` (CSR/SSR/...), because a SPA may use SSR and an MPA may use CSR for a widget (`L1D-31a`); the earlier code that inferred rendering from navigation (SPA -> CSR) was deleted as a modelling error (`FR-MODELFIX`).
 
 Some spine slots are not read off the surface at all but *classified* by a dedicated procedure over runtime signals - the anatomy skills (Section 5), which are the "how to reverse-engineer this kind of system" companion to the enumeration of kinds.

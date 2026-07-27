@@ -76,6 +76,59 @@ def save_project_settings(project_id: str, recon: dict) -> None:
     pg.save_settings(project_id, recon)
 
 
+class BootstrapBlocked(Exception):
+    """The Bootstrapper could not produce a skeleton and the analysis MUST NOT
+    proceed (fail-closed, #26 Q6). Carries the reason for the operator."""
+
+    def __init__(self, reason: str | None):
+        super().__init__(reason or "bootstrap blocked")
+        self.reason = reason
+
+
+def bootstrap_project(project_id: str, operator_kb: str | None = None) -> dict:
+    """Project the operator's knowledge base into the L1 Service skeleton.
+
+    The pre-analysis phase's use-case (#29): it INGESTS the operator's knowledge
+    (persisting `operator_kb` when the caller supplies it, so a re-bootstrap and the
+    later analysis read the same durable text) and then runs the Bootstrapper over
+    the project's settings.
+
+    Raises ProjectNotFound if unknown, ValueError if no KB is available at all, and
+    BootstrapBlocked when the Bootstrapper fail-closes - the blocking signal is an
+    ERROR here, never a zero-count success, because a caller that mistook it for one
+    would run the whole analysis against an empty L1.
+
+    BLOCKING: runs two LLM calls, so callers on an event loop must offload it."""
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+
+    if operator_kb is not None:
+        if not operator_kb.strip():
+            raise ValueError("operator_kb must not be blank")
+        pg.save_settings(project_id, {"operator_kb": operator_kb})
+
+    settings = pg.load_settings(project_id) or {}
+    if not (settings.get("operator_kb") or "").strip():
+        raise ValueError(
+            "no operator_kb configured; POST it with this request or PUT "
+            "/projects/{id}/settings with operator_kb before bootstrapping"
+        )
+
+    from polymerhus.analysis.bootstrap import run_bootstrap
+
+    # NOT `open_run`: that mints a RECON run row, which this bootstrap would never
+    # advance or heartbeat, so it would sit in `running_runs()` as a permanently
+    # stalled recon run. The Bootstrapper mints its own run id for provenance and
+    # the Langfuse session; a bootstrap is not a recon run.
+    export = run_bootstrap(project_id)
+    if export.blocked:
+        raise BootstrapBlocked(export.error)
+    return {
+        "services_written": export.services_written,
+        "systems_written": export.systems_written,
+    }
+
+
 def validate_launch(project_id: str, jobs: list[str] | None) -> None:
     """Guard a recon launch. Raises ProjectNotFound if unknown, ValueError for
     unknown/invalid job subsets, a missing target seed, or an IPv6 seed (D-HS3).

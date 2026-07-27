@@ -1,21 +1,31 @@
-"""FR-ELICIT — bootstrap the L1 Service skeleton from the operator KB.
+"""FR-ELICIT - bootstrap the L1 Service skeleton from the operator KB.
 
-Step 1 of the analyser pipeline (spec §7.2): before any recon surface exists, the
-operator's free-text solution architecture (`settings.recon.operator_kb`) is
-projected into an L1 **Service skeleton** — business-function Services plus the
-**linchpin auth Systems** (authentication mechanism + authorization system) that
+Step 1 of the analysis (spec §7.2), and a PRE-ANALYSIS PHASE in its own right:
+before any recon surface exists, the operator's free-text solution architecture
+(`settings.operator_kb`) is projected into an L1 **Service skeleton** -
+business-function Services plus the **linchpin auth-identity Systems** that
 everything later extends. This is a *pure business projection*: it needs no
 surface and writes **no L0 references** (no AGGREGATES). Assignment (attaching L0
-elements to these Services) is the analyser subgraph's job, later.
+elements to these Services) is the Assigner's job, later.
+
+The Bootstrapper is NOT a supervised analyser proposer - it runs once, ahead of
+the analysis, and is triggered over the app API (`POST /projects/{id}/bootstrap`),
+so a future frontend can ingest the operator's knowledge and kick it off.
 
 `operator_kb` is free text for now (operator decision 2026-07-16); a typed
-service-contract template is an after-MVP enhancement (AMV-4). Fail-open
-throughout: an LLM or write failure degrades to an empty/partial skeleton and
-never raises into the caller.
+service-contract template is an after-MVP enhancement (AMV-4).
+
+FAIL-CLOSED on generation (#26 Q6): the skeleton is a hard data dependency for
+every later phase, so a retry-exhausted LLM call or a write failure BLOCKS the
+analysis (`BootstrapExport.blocked`) rather than degrading to a silently-empty
+skeleton whose emptiness then gets misread as a modelling result. An empty
+`operator_kb` is NOT a failure - it yields the linchpins-only skeleton and
+proceeds.
 """
 from __future__ import annotations
 
 import logging
+from contextlib import nullcontext
 from typing import NamedTuple
 
 from pydantic import BaseModel, Field
@@ -29,12 +39,6 @@ from polymerhus.analysis.analyser_types import (
 from polymerhus.analysis.l1_types import L1_SINGLETON, Provenance
 
 logger = logging.getLogger(__name__)
-
-# The linchpin auth Systems that the bootstrap always ensures exist, regardless
-# of what the LLM elicits (spec §7.2: "linchpin System nodes (authentication,
-# authorization) that everything later extends"). Deterministic so the skeleton
-# never lacks the two systems the authorization-pyramid / auth skills extend.
-_LINCHPIN_SYSTEMS = ("AuthenticationMechanism", "AuthorizationSystem")
 
 
 class BootstrapExport(BaseModel):
@@ -52,160 +56,24 @@ class BootstrapExport(BaseModel):
     blocked: bool = False
 
 
-_BOOTSTRAP_INSTRUCTION = (
-    "This is the BOOTSTRAP step: you are given the operator's free-text solution "
-    "architecture / knowledge base, NOT a recon surface. Project it into the L1 "
-    "business skeleton: propose the business-function `services` (sign-in, "
-    "checkout, orders, reward-points, cart, reviews, product-introspection, "
-    "sales-analysis, ...) and any cross-cutting `systems` the text clearly implies. "
-    "Always cover the BROAD account-surface umbrellas where present - the pre-auth "
-    "sign-in / register / password-recovery (public) and, when the KB grounds a "
-    "self-service area, account-management (authenticated) - as umbrellas, never leaves. "
-    "Emit NO `aggregates` - there is no Layer-0 surface to assign yet. Propose only "
-    "business functions the text actually supports; return empty lists if it "
-    "supports none."
-)
-
-
-def default_elicit_fn(operator_kb: str, *, service_slugs: list[str] | None = None) -> L1DeltaBatch:
-    """Real collaborator: ask the analyser LLM to elicit the Service skeleton from
-    the operator KB. Reuses the analyser role + skill (same structured-output
-    pattern as default_analyse_fn); the KB text is the whole input.
-
-    FR-INVENTORY: `service_slugs` are the CURRENT L1 Service identities; rendered
-    as the un-truncated EXISTING L1 IDENTITIES reuse block at the top so a
-    re-bootstrap reuses an existing slug instead of coining a synonym."""
-    from langchain_core.messages import SystemMessage, HumanMessage
-
-    from polymerhus.app.llm.roles import chat_model_for
-    from polymerhus.analysis.l1_curator import vocabulary_prompt
-    from polymerhus.analysis.pod import (
-        _invoke_with_retry,
-        _inventory_block,
-        _load_analyser_skill,
-    )
-
-    llm = chat_model_for("analyser")
-    structured_llm = llm.with_structured_output(L1DeltaBatch, method="function_calling")
-    inventory = {"services": service_slugs or [], "systems": [], "data_items": []}
-    prompt = (
-        f"{_inventory_block(inventory)}\n\n{_BOOTSTRAP_INSTRUCTION}\n\n"
-        f"{vocabulary_prompt()}\n\nOperator KB (free text):\n{operator_kb}"
-    )
-    messages = [SystemMessage(content=_load_analyser_skill()), HumanMessage(content=prompt)]
-    # Bounded retry, exactly as the analyser pod does. `with_structured_output`
-    # intermittently returns None or raises on a truncated provider response
-    # (observed live: deepseek returned malformed JSON mid-elicitation). Without
-    # the retry a single transient zeroes the ENTIRE bootstrap skeleton - the
-    # fail-open then yields services=0 and every downstream stage runs against an
-    # empty L1, which looks like a modelling failure rather than a provider blip.
-    return _invoke_with_retry(structured_llm.invoke, messages)
-
-
-def bootstrap_from_kb(
-    project_id: str,
-    operator_kb: str,
-    *,
-    run_id: str = "bootstrap",
-    elicit_fn=None,
-    curate_fn=None,
-) -> BootstrapExport:
-    """Elicit the Service skeleton from `operator_kb` and write it (services +
-    linchpin auth Systems, NO L0 refs) through the L1 sole-writer. Idempotent
-    (l1_curate MERGEs on identity). Fail-open.
-
-    `elicit_fn(operator_kb) -> L1DeltaBatch` and
-    `curate_fn(services, systems, project_id) -> (int, int)` are injected
-    (defaulting to the analyser LLM and l1_curator) so this is testable without a
-    live LLM/DB.
-    """
-    if not operator_kb or not operator_kb.strip():
-        logger.info("bootstrap_from_kb: empty operator_kb for project=%s; nothing to elicit", project_id)
-        # still ensure the linchpin systems + kind catalogue exist (below)
-        batch = L1DeltaBatch()
-    else:
-        if elicit_fn is None:
-            # FR-INVENTORY: seed the default elicitation with the CURRENT service
-            # slugs so a re-bootstrap reuses existing identities instead of coining
-            # synonyms. read_l1_inventory is fail-open (empty on any read error).
-            from polymerhus.analysis.l1_inventory import read_l1_inventory
-            _slugs = read_l1_inventory(project_id).get("services", [])
-
-            def elicit_fn(kb):
-                return default_elicit_fn(kb, service_slugs=_slugs)
-        try:
-            batch = elicit_fn(operator_kb)
-        except Exception as exc:  # fail-open: an LLM error degrades to no elicited skeleton
-            logger.warning("bootstrap_from_kb: elicit (LLM) failed for project=%s", project_id, exc_info=True)
-            return BootstrapExport(error=f"elicit: {exc}")
-        if batch is None:
-            # The bounded retry returns None when EVERY attempt failed. Without this
-            # guard that None reaches `batch.systems` below and raises AttributeError
-            # straight out of a function contracted to be fail-open. It must also not
-            # be mistaken for a successful-but-empty elicitation: an exhausted retry
-            # is a provider failure and has to say so, or a run silently proceeds on
-            # an empty skeleton and the emptiness gets blamed on the model.
-            logger.warning(
-                "bootstrap_from_kb: elicit returned no batch after retries for project=%s", project_id
-            )
-            return BootstrapExport(error="elicit: LLM returned no parseable batch after retries")
-
-    # Always ensure the two linchpin auth Systems exist, whether or not the LLM
-    # elicited them (dedup is handled by the singleton MERGE, so adding them when
-    # the LLM already proposed them is harmless).
-    elicited_kinds = {s.kind for s in batch.systems}
-    linchpins = [SystemProposal(kind=k) for k in _LINCHPIN_SYSTEMS if k not in elicited_kinds]
-    batch = batch.model_copy(update={"systems": list(batch.systems) + linchpins})
-
-    provenance = Provenance(job=f"bootstrap:{run_id}", model=None, prompt_id=None)
-    # Bootstrap is a pure business projection: drop any aggregates the LLM emitted
-    # (no L0 surface exists yet) so no AGGREGATES edge is written here.
-    services, systems, _aggregates_dropped = proposals_to_deltas(batch, provenance)
-
-    if curate_fn is None:
-        from polymerhus.analysis import l1_curator
-        # No catalogue seeding: a System's kind is a plain `kind` attribute validated
-        # against l1_curator.SYSTEM_KINDS (operator correction 2026-07-20), so there
-        # is no `:SystemKind` catalogue to seed.
-        def curate_fn(svc, sysd, pid):
-            return l1_curator.l1_curate(svc, sysd, pid)
-
-    try:
-        services_written, systems_written = curate_fn(services, systems, project_id)
-    except Exception as exc:  # fail-open: a write failure never crashes the caller
-        logger.warning("bootstrap_from_kb: curate failed for project=%s", project_id, exc_info=True)
-        return BootstrapExport(error=f"curate: {exc}")
-
-    return BootstrapExport(services_written=services_written, systems_written=systems_written)
-
-
-def run_bootstrap(project_id: str, *, load_settings_fn=None, **kwargs) -> BootstrapExport:
-    """Convenience: read `operator_kb` from the project's settings and bootstrap.
-    `load_settings_fn(project_id) -> dict` defaults to pg.load_settings."""
-    if load_settings_fn is None:
-        from polymerhus.app.clients import pg
-        load_settings_fn = pg.load_settings
-    settings = load_settings_fn(project_id) or {}
-    operator_kb = settings.get("operator_kb") or ""
-    return bootstrap_from_kb(project_id, operator_kb, **kwargs)
-
-
-# ==============================================================================
-# Increment 2b (#26): the grilled reasoning+prompt redesign - API surface.
-# Stubs raise NotImplementedError so the /to-assertions catalogue (#26) collects,
-# executes, and fails for the predicate's reason (the path is not built yet); the
-# build fills these. The existing bootstrap_from_kb above stays intact until the
-# redesign supersedes it (kept green through the transition).
-# ==============================================================================
-
 # The 3 forced linchpin auth-identity Systems (#26 Q8): the identify / authenticate
-# / authorize triad every later auth skill extends. Expanded from 2 to 3.
-_LINCHPIN_SYSTEMS_V2 = ("IdentificationSystem", "AuthenticationMechanism", "AuthorizationSystem")
+# / authorize triad every later auth skill extends.
+_LINCHPIN_SYSTEMS = ("IdentificationSystem", "AuthenticationMechanism", "AuthorizationSystem")
 
-# Exposure-only baseline (#26 Q7, mirrors the Assigner #8 / bootstrap #7 allowlist):
-# a minted Service keeps ONLY a validated `exposure`; everything else is dropped.
+# The Service props baseline (#26 Q7, mirrors the Assigner #8 allowlist): a minted
+# Service keeps ONLY a validated `exposure` + its `service_contract`; every other
+# key the LLM hands us (label / salience / any A.1 slot) is DROPPED and never
+# persisted, so absence keeps meaning not-yet-filled for the later proposers.
+_ALLOWED_SERVICE_PROPS = frozenset({"exposure", "service_contract"})
 _EXPOSURE_VALUES = frozenset({"public", "authenticated"})
 _REASON_ATTEMPTS = 3
+
+# `service_contract` length cap (#29). A contract is a brief functional PROFILE for
+# semantic matching, not documentation: past that length the model has stopped
+# profiling and started narrating, and the text stops discriminating between
+# Services - which is the one job the contract has. Trimmed, never rejected: a
+# too-long contract still carries its discriminating nouns in the first sentences.
+_CONTRACT_MAX_CHARS = 600
 
 
 class _LinchpinService(NamedTuple):
@@ -213,12 +81,22 @@ class _LinchpinService(NamedTuple):
     the L1 skeleton. A DEFAULT-PENDING-RATIFICATION record (gap-3): `slug` is the
     umbrella identity, `exposure` its forced baseline, `forced` selects HARD-force
     (minted even when the LLM omits it, like the system linchpins) vs PROMPT-PRIOR
-    (only carried when the LLM grounds it), and `note` is the one-line prompt cue."""
+    (only carried when the LLM grounds it), `note` is the one-line prompt cue, and
+    `contract` is the `service_contract` a HARD-forced row is minted with.
+
+    `note` and `contract` are deliberately DIFFERENT texts (#29). The note is a
+    prompt cue and carries adversarial rationale ("where critical auth bugs
+    concentrate") - which is `salience`, a Phase-B concern. The contract is the
+    routing profile a later Assigner semantically matches endpoint path nouns
+    against, so it states domain nouns and actions and nothing else. Collapsing
+    them would put adversarial prose into the one field whose whole job is to
+    discriminate between business functions."""
 
     slug: str
     exposure: str  # baseline exposure for a FORCED service (in _EXPOSURE_VALUES)
     forced: bool   # True: hard-force always; False: prompt-prior (grounded proposals only)
     note: str      # rendered into the prompt from this single source (no drift)
+    contract: str  # the service_contract minted with a forced row (routing profile)
 
 
 # Service linchpins (gap-3, operator-CRITICAL; DEFAULT-PENDING-RATIFICATION): the
@@ -240,27 +118,50 @@ class _LinchpinService(NamedTuple):
 # surface it lacks. This is a §7 extension point: add a row as new universal surfaces are
 # recognised. (The prompt-prior rows are declarative today - the prompt render that would
 # cue them is retained-not-wired pending the breadth-safe wiring, see _service_linchpin_prompt.)
+# Each `contract` is deliberately domain-GENERIC: these rows are forced without
+# reading the KB, so their contract may not name application-specific nouns the way
+# an elicited one does. It states the universal actions and records of the surface
+# (sign in, reset, credential, session) - enough for an Assigner to match a
+# `/login` or `/reset-password` path, and never a guessed path (#29).
 _LINCHPIN_SERVICES: tuple[_LinchpinService, ...] = (
     _LinchpinService("sign-in", "public", True,
-                     "the pre-auth credential / SSO entry point"),
+                     "the pre-auth credential / SSO entry point",
+                     "Authenticate an existing account holder and start their session. "
+                     "Deals in credentials, login, sign-in, single sign-on and session start."),
     _LinchpinService("register", "public", True,
-                     "the pre-auth account-creation surface"),
+                     "the pre-auth account-creation surface",
+                     "Create a new account from user-supplied details and verify it. "
+                     "Deals in registration, sign-up, account creation and verification."),
     _LinchpinService("password-recovery", "public", True,
                      "the pre-auth credential-reset surface (security-question / email reset "
-                     "- where critical auth bugs concentrate)"),
+                     "- where critical auth bugs concentrate)",
+                     "Let a locked-out account holder prove identity without a password and "
+                     "set a new one. Deals in forgotten passwords, reset tokens and links, "
+                     "security questions and password change."),
     _LinchpinService("account-management", "authenticated", False,
                      "the post-auth self-service umbrella (address / payment / profile / "
-                     "coupons); propose ONLY when the KB grounds a self-service account area"),
+                     "coupons); propose ONLY when the KB grounds a self-service account area",
+                     "Let a signed-in account holder view and change what the account holds "
+                     "about them. Deals in profile, addresses, saved payment methods and "
+                     "account preferences."),
     _LinchpinService("sign-out", "authenticated", False,
                      "the post-auth session-termination ACTION (the solution-profile "
                      "counterpart; the session LIFECYCLE itself is a technical System "
-                     "concern, not a Service) - a CSRF / session-fixation surface"),
+                     "concern, not a Service) - a CSRF / session-fixation surface",
+                     "End a signed-in session on request. Deals in sign-out, logout and "
+                     "session termination."),
     _LinchpinService("notifications", "authenticated", False,
                      "the notification surface (email / in-app / preferences) - an SSRF / "
-                     "template-injection / IDOR-on-preferences surface"),
+                     "template-injection / IDOR-on-preferences surface",
+                     "Deliver messages to an account holder and let them choose what they "
+                     "receive. Deals in notifications, messages, alerts, subscriptions and "
+                     "notification preferences."),
     _LinchpinService("admin-console", "authenticated", False,
                      "the privileged back-office / admin surface - the highest-value "
-                     "authorization surface; propose ONLY when the KB grounds a management area"),
+                     "authorization surface; propose ONLY when the KB grounds a management area",
+                     "Let privileged staff administer the application and the records other "
+                     "business functions own. Deals in administration, back-office management, "
+                     "user and content moderation."),
 )
 
 
@@ -292,15 +193,23 @@ def _service_linchpin_prompt() -> str:
 
 class ServiceShell(BaseModel):
     """Call-2 per-Service elicitation shell (#26 Q7): bootstrap fills
-    `business_function_slug` + `exposure`; the phase-A.1 attributes are PRESENT but
-    EMPTIED (label/salience/aggregates/exposed_via/data_flows/surfaces_at), owned by
-    the later proposers. Mapped DOWN to a `ServiceProposal` (exposure-only props;
-    the empty A.1 slots are NOT persisted - absence means not-yet-filled)."""
+    `business_function_slug` + `exposure` + `service_contract`; the phase-A.1
+    attributes are PRESENT but EMPTIED (label/salience/aggregates/exposed_via/
+    data_flows/surfaces_at), owned by the later proposers. Mapped DOWN to a
+    `ServiceProposal` (the empty A.1 slots are NOT persisted - absence means
+    not-yet-filled)."""
 
     business_function_slug: str
     # permissive on purpose (#7 fork B: the LLM strays) - the exposure-only allowlist
     # {public, authenticated} is enforced as defense-in-depth in shells_to_batch.
     exposure: str | None = None
+    # The brief functional profile of the business function (#29): what it does and
+    # what it owns, in the application's own domain nouns and action verbs. This is
+    # the PRIMARY evidence the cross-layer Assigner (#8) semantically matches
+    # endpoint path nouns against, so it is written FOR that consumer. Paths / URLs
+    # / parameter names are forbidden in it - the KB never states them, so any path
+    # is a guess that would enter the graph looking like evidence.
+    service_contract: str | None = None
     # phase-A.1 attributes, present-but-emptied (never filled at bootstrap):
     label: str | None = None
     salience: str | None = None
@@ -333,46 +242,114 @@ class BootstrapElicitation(BaseModel):
     systems: list[SystemShell] = Field(default_factory=list)
 
 
+def _known_system_kinds() -> frozenset[str]:
+    """The controlled System-kind vocabulary, single-sourced from `l1_curator`
+    (CODING_STANDARD §7) so this seam's validation can never drift from the
+    sole-writer's. Imported lazily - importing this module must not pull the curator
+    (and its driver) in."""
+    from polymerhus.analysis.l1_curator import SYSTEM_KINDS
+
+    return frozenset(kind for kind, _desc in SYSTEM_KINDS)
+
+
+def _clean_contract(raw: str | None) -> str | None:
+    """Validate + normalise a `service_contract` (#29): whitespace-collapsed, trimmed
+    to `_CONTRACT_MAX_CHARS`, and None when it carries no content.
+
+    Blank-but-present is normalised to None rather than persisted, so an empty string
+    can never masquerade as a filled contract: `absence means not-yet-filled` is the
+    convention every consumer reads, and an empty-string prop would satisfy a
+    presence check while telling the Assigner nothing."""
+    if not raw or not raw.strip():
+        return None
+    text = " ".join(raw.split())  # collapse the model's newlines/indentation
+    if len(text) > _CONTRACT_MAX_CHARS:
+        text = text[:_CONTRACT_MAX_CHARS].rstrip()
+    return text
+
+
+def _service_props(shell: ServiceShell) -> dict:
+    """The POSITIVE props allowlist for a bootstrap-minted Service (#7 fork B, #29).
+
+    Only `exposure` (validated against the enum) and a cleaned `service_contract`
+    survive; label / salience / every A.1 slot is DROPPED. Positive rather than
+    subtractive on purpose: a new attribute the LLM invents is silently excluded
+    instead of silently persisted, so `l1_curator` stays policy-free while the
+    baseline holds by construction."""
+    props: dict = {}
+    if shell.exposure in _EXPOSURE_VALUES:
+        props["exposure"] = shell.exposure
+    contract = _clean_contract(shell.service_contract)
+    if contract:
+        props["service_contract"] = contract
+    return {k: v for k, v in props.items() if k in _ALLOWED_SERVICE_PROPS}
+
+
 def shells_to_batch(
     service_shells: list[ServiceShell], system_shells: list[SystemShell]
 ) -> L1DeltaBatch:
     """Map the call-2 shells DOWN to the sole-writer's `L1DeltaBatch` (#26 Q7/Q8).
 
-    Services -> exposure-only props (invalid/None exposure -> empty props; label /
-    salience / any A.1 slot dropped and NOT persisted - absence means not-yet-filled).
-    Systems -> kind + discriminator; the AuthorizationSystem carries its shallow
-    KB-sourced `roles`/`realms` vocabulary; the transient `claim` is dropped; NO
-    `system_edges` are emitted at bootstrap. The 3 linchpins are FORCED (added if the
-    LLM omitted them), deduped by (kind, discriminator)."""
+    Services -> the allowlisted props `{exposure, service_contract}` (invalid/None
+    exposure and a blank contract are omitted; label / salience / any A.1 slot dropped
+    and NOT persisted - absence means not-yet-filled).
+    Systems -> kind + discriminator; an out-of-vocabulary `kind` is DROPPED with a
+    warning; the AuthorizationSystem carries its shallow KB-sourced `roles`/`realms`
+    vocabulary; the transient `claim` is dropped; NO `system_edges` are emitted at
+    bootstrap. The 3 linchpins are FORCED (added if the LLM omitted them), deduped by
+    (kind, discriminator)."""
     services: list[ServiceProposal] = []
     svc_by_slug: dict[str, ServiceProposal] = {}
     for sh in service_shells:
-        props = {"exposure": sh.exposure} if sh.exposure in _EXPOSURE_VALUES else {}
+        props = _service_props(sh)
         existing = svc_by_slug.get(sh.business_function_slug)
         if existing is None:  # dedup on Service identity (project_id, business_function_slug)
             sp = ServiceProposal(business_function_slug=sh.business_function_slug, props=props)
             svc_by_slug[sh.business_function_slug] = sp
             services.append(sp)
-        elif props.get("exposure") and not existing.props.get("exposure"):
-            # a duplicate slug: fill an empty exposure from a later shell (never clobber)
-            existing.props["exposure"] = props["exposure"]
+        else:
+            # a duplicate slug: FILL empty slots from a later shell, never CLOBBER a
+            # filled one. Applies per-key, so a second shell can contribute a contract
+            # to a Service whose exposure the first one set (and vice versa).
+            for key, value in props.items():
+                if value and not existing.props.get(key):
+                    existing.props[key] = value
 
     # Force the HARD service linchpins (the pre-auth account surface) when the LLM
     # omitted them, so the surface where critical auth bugs concentrate is never dropped
     # (gap-3, observed live on the moodique KB). Mirrors the system-linchpin force below;
     # deduped on Service identity (the LLM's own proposal, incl. an FR-INVENTORY reuse,
-    # wins and its exposure is preserved). account-management is PROMPT-PRIOR (forced=False)
-    # - a headless B2B API legitimately has no self-service account surface, so blind-forcing
-    # it would inject a false Service; it is carried only when the LLM grounds it above.
+    # wins and its exposure + contract are preserved). account-management is PROMPT-PRIOR
+    # (forced=False) - a headless B2B API legitimately has no self-service account surface,
+    # so blind-forcing it would inject a false Service; it is carried only when the LLM
+    # grounds it above. A forced row carries its own `contract` (single-sourced from
+    # `_LINCHPIN_SERVICES`) so a forced Service is never contract-less and stays routable.
     for ls in _LINCHPIN_SERVICES:
         if ls.forced and ls.slug not in svc_by_slug:
-            sp = ServiceProposal(business_function_slug=ls.slug, props={"exposure": ls.exposure})
+            sp = ServiceProposal(
+                business_function_slug=ls.slug,
+                props={"exposure": ls.exposure, "service_contract": ls.contract},
+            )
             svc_by_slug[ls.slug] = sp
             services.append(sp)
+        elif ls.forced and not svc_by_slug[ls.slug].props.get("service_contract"):
+            # the LLM proposed the linchpin but gave it no usable contract: fill from
+            # the constant rather than leave the guaranteed surface unroutable.
+            svc_by_slug[ls.slug].props["service_contract"] = ls.contract
 
     systems: list[SystemProposal] = []
     by_key: dict[tuple[str, str], SystemProposal] = {}
+    dropped_kinds: list[str] = []
     for sh in system_shells:
+        # Validate `kind` against the controlled vocabulary HERE (#29 D6). The
+        # sole-writer's typo-guard already skips an unknown kind, but it does so
+        # SILENTLY: a live run's `PaymentSystem` vanished with no warning and no
+        # counter, so a KB whose Systems are systematically mis-named would yield a
+        # linchpins-only skeleton that reads like a modelling result. Drop it here,
+        # loudly, where the count can be reported.
+        if sh.kind not in _known_system_kinds():
+            dropped_kinds.append(sh.kind)
+            continue
         # The identify / authenticate / authorize triad are SINGLETONS at bootstrap
         # ("linchpin System nodes ... that everything later extends", spec §7.2).
         # Coerce any DESCRIPTIVE discriminator the LLM handed a linchpin kind (e.g.
@@ -382,7 +359,7 @@ def shells_to_batch(
         # while the forced singleton is left empty (observed live on the moodique KB).
         # Non-linchpin systems keep their discriminator - a genuine multi-instance kind
         # (two CDN products) still distinguishes.
-        disc = L1_SINGLETON if sh.kind in _LINCHPIN_SYSTEMS_V2 else sh.discriminator
+        disc = L1_SINGLETON if sh.kind in _LINCHPIN_SYSTEMS else sh.discriminator
         key = (sh.kind, disc)
         props: dict = {}
         if sh.kind == "AuthorizationSystem":  # the KB-sourced pyramid vocabulary (shallow, no edges)
@@ -400,42 +377,164 @@ def shells_to_batch(
                 if v and not existing.props.get(k):
                     existing.props[k] = v
 
-    for kind in _LINCHPIN_SYSTEMS_V2:  # force the triad regardless of the LLM
+    for kind in _LINCHPIN_SYSTEMS:  # force the triad regardless of the LLM
         if (kind, L1_SINGLETON) not in by_key:
             sp = SystemProposal(kind=kind)
             by_key[(kind, L1_SINGLETON)] = sp
             systems.append(sp)
+
+    if dropped_kinds:
+        logger.warning(
+            "shells_to_batch: dropped %d System shell(s) with an out-of-vocabulary kind: %s "
+            "(allowed: %s)",
+            len(dropped_kinds), sorted(set(dropped_kinds)), sorted(_known_system_kinds()),
+        )
 
     # aggregates / system_edges / data lists default EMPTY on L1DeltaBatch -> the
     # A.1 attributes are never persisted at bootstrap.
     return L1DeltaBatch(services=services, systems=systems)
 
 
+# ==============================================================================
+# Observability (#18 recipe, #26 Q12/story 17). EVERY helper here is fail-open:
+# tracing is best-effort and must never fail a bootstrap, so each swallows its
+# exception and degrades to a no-op. Langfuse v4: the trace attributes travel via
+# `propagate_attributes(trace_name=, session_id=, tags=)` - the `langfuse_trace_name`
+# metadata key of the older recipe is NOT a v4 key and silently does nothing.
+# ==============================================================================
+
+_TRACE_NAME = "bootstrap-service-skeleton"
+
+
+def _bootstrap_span(project_id: str, run_id: str):
+    """The one span per bootstrap, session-correlated so its trace joins the run's
+    other traces (one run = one session, #18). Degrades to a `nullcontext`.
+
+    BOTH pieces are needed. `propagate_attributes` sets the TRACE-level attributes
+    (name, session, tags) but creates NO observation, so on its own every
+    `update_current_span` / `score_current_span` below finds no active span and is
+    silently skipped - the reasoning trace, the claims and the breadth score would
+    all go nowhere while the code read as if it were instrumented. That is the same
+    silent no-op as the `langfuse_trace_name` metadata key this recipe replaced, so
+    `start_as_current_observation` opens the actual span the updates attach to."""
+    try:
+        from contextlib import ExitStack
+
+        from langfuse import get_client, propagate_attributes
+
+        stack = ExitStack()
+        stack.enter_context(propagate_attributes(
+            trace_name=_TRACE_NAME,
+            session_id=run_id,
+            tags=["analysis", "bootstrapper"],
+            metadata={"project_id": project_id},
+        ))
+        stack.enter_context(get_client().start_as_current_observation(
+            name=_TRACE_NAME, as_type="agent", input={"project_id": project_id},
+        ))
+        return stack
+    except Exception:  # tracing unavailable / misconfigured -> run untraced
+        logger.debug("bootstrap: Langfuse span unavailable; running untraced", exc_info=True)
+        return nullcontext()
+
+
+def _trace_reasoning(reasoning: str) -> None:
+    """Attach call-1's free-text reasoning to the current span (transient - inspectable
+    in the trace, never persisted to the graph)."""
+    try:
+        from langfuse import get_client
+
+        get_client().update_current_span(input={"call": "reason"}, output=reasoning)
+    except Exception:
+        logger.debug("bootstrap: could not trace call-1 reasoning", exc_info=True)
+
+
+def _trace_claims(system_shells: list[SystemShell]) -> None:
+    """Record the transient per-System `claim` rationales on the span. `shells_to_batch`
+    drops them, so without this a claim-based System hypothesis leaves no record of WHY
+    it was proposed and stops being falsifiable."""
+    claims = {sh.kind: sh.claim for sh in system_shells or [] if sh.claim}
+    if not claims:
+        return
+    try:
+        from langfuse import get_client
+
+        get_client().update_current_span(metadata={"system_claims": claims})
+    except Exception:
+        logger.debug("bootstrap: could not trace System claims", exc_info=True)
+
+
+def _score_breadth(services_written: int) -> None:
+    """The NUMERIC `skeleton-breadth` score (#18 flat kebab-case vocabulary)."""
+    try:
+        from langfuse import get_client
+
+        get_client().score_current_span(name="skeleton-breadth", value=float(services_written))
+    except Exception:
+        logger.debug("bootstrap: could not record skeleton-breadth score", exc_info=True)
+
+
+def _flush_traces() -> None:
+    """Flush before returning: a bootstrap is short-lived and may run in a request
+    worker that exits before the background exporter fires (`flush`, never `shutdown`
+    - the client is a process-wide singleton later runs reuse)."""
+    try:
+        from langfuse import get_client
+
+        get_client().flush()
+    except Exception:
+        logger.debug("bootstrap: Langfuse flush failed", exc_info=True)
+
+
+def _analyser_model_id() -> str | None:
+    """The configured analyser model id, stamped into provenance (`prov_model`) so a
+    skeleton records WHICH model produced it - the eval needs that attribution, and it
+    was always None before (#26 story 17). Fail-open: provenance must never be the
+    reason a bootstrap fails, and an injected `reason_fn` legitimately has no model."""
+    try:
+        from polymerhus.app.llm.providers import resolve_role
+
+        provider, model = resolve_role("analyser")
+        return f"{provider}:{model}"
+    except Exception:
+        return None
+
+
 def bootstrap_reasoned(
     project_id: str,
     operator_kb: str,
     *,
-    run_id: str = "bootstrap",
+    run_id: str | None = None,
     reason_fn=None,
     extract_fn=None,
     curate_fn=None,
     service_slugs: list[str] | None = None,
 ) -> BootstrapExport:
-    """The redesigned two-call Bootstrapper (#26): call 1 (`reason_fn`) runs the
-    free-text 5-step reasoning over the KB; call 2 (`extract_fn`) extracts the
-    Service/System shells FROM that reasoning; the shells map down through the
-    sole-writer, the 3 linchpins are forced, and the reasoning trace is traced to
-    Langfuse (transient).
+    """The two-call Bootstrapper (#26): call 1 (`reason_fn`) runs the free-text
+    5-step reasoning over the KB; call 2 (`extract_fn`) extracts the Service/System
+    shells FROM that reasoning; the shells map down through the sole-writer, the 3
+    linchpins are forced, and the reasoning trace goes to Langfuse (transient).
 
     FAIL-CLOSED (#26 Q6): a bounded retry per call; on retry exhaustion of EITHER
     call, or a write failure, return `BootstrapExport(blocked=True)` - the analysis
     must halt (the downstream data dependency is unmet). An empty `operator_kb` is a
     valid proceed (linchpins-only, `blocked=False`), never a block.
+
+    `run_id` is PROMOTED (#26 story 17): it flows to provenance (`prov_job`) and to
+    the Langfuse `session_id`, so a trace correlates to its run. It defaults to a
+    fresh uuid rather than the literal "bootstrap" - a constant default silently
+    collapsed every run's provenance and session onto one id, which is
+    indistinguishable from having no correlation at all.
+
     `reason_fn(operator_kb, service_slugs) -> reasoning`,
     `extract_fn(reasoning) -> (service_shells, system_shells)`, and
     `curate_fn(services, systems, project_id) -> (int, int)` are injected."""
+    import uuid
+
     from polymerhus.analysis.proposer_reasoning import bounded_retry
 
+    if run_id is None:
+        run_id = str(uuid.uuid4())
     if reason_fn is None:
         reason_fn = default_reason_fn
     if extract_fn is None:
@@ -458,60 +557,125 @@ def bootstrap_reasoned(
     service_shells: list[ServiceShell] = []
     system_shells: list[SystemShell] = []
 
-    # Empty KB is a valid minimal bootstrap (linchpins-only), NOT a block: no LLM call.
-    if operator_kb and operator_kb.strip():
-        reasoning = bounded_retry(lambda: reason_fn(operator_kb, service_slugs), attempts=_REASON_ATTEMPTS)
-        if reasoning is None:  # FAIL-CLOSED: call-1 exhausted -> block the analysis
-            logger.warning("bootstrap_reasoned: call-1 (reason) exhausted for project=%s; BLOCKING", project_id)
-            return BootstrapExport(blocked=True, error="reason: exhausted after retries")
-        logger.debug("bootstrap_reasoned: call-1 reasoning (project=%s, run=%s) traced", project_id, run_id)
+    # ONE span per bootstrap, session-correlated to the run (#18 recipe / #26 Q12).
+    # Fail-open: tracing must never fail a bootstrap, so an unconfigured or broken
+    # Langfuse degrades to a nullcontext and the projection runs untraced.
+    with _bootstrap_span(project_id, run_id):
+        # Empty KB is a valid minimal bootstrap (linchpins-only), NOT a block: no LLM call.
+        if operator_kb and operator_kb.strip():
+            reasoning = bounded_retry(
+                lambda: reason_fn(operator_kb, service_slugs), attempts=_REASON_ATTEMPTS
+            )
+            if reasoning is None:  # FAIL-CLOSED: call-1 exhausted -> block the analysis
+                logger.warning(
+                    "bootstrap_reasoned: call-1 (reason) exhausted for project=%s; BLOCKING", project_id
+                )
+                return BootstrapExport(blocked=True, error="reason: exhausted after retries")
+            # The reasoning is TRANSIENT (#26 Q12): inspectable in the trace, never
+            # persisted to the graph. This is the ONLY record of WHY each item was
+            # proposed, so it is logged before the shells discard it.
+            _trace_reasoning(reasoning)
 
-        extracted = bounded_retry(lambda: extract_fn(reasoning), attempts=_REASON_ATTEMPTS)
-        if extracted is None:  # FAIL-CLOSED: call-2 exhausted -> block
-            logger.warning("bootstrap_reasoned: call-2 (extract) exhausted for project=%s; BLOCKING", project_id)
-            return BootstrapExport(blocked=True, error="extract: exhausted after retries")
-        service_shells, system_shells = extracted
+            extracted = bounded_retry(lambda: extract_fn(reasoning), attempts=_REASON_ATTEMPTS)
+            if extracted is None:  # FAIL-CLOSED: call-2 exhausted -> block
+                logger.warning(
+                    "bootstrap_reasoned: call-2 (extract) exhausted for project=%s; BLOCKING", project_id
+                )
+                return BootstrapExport(blocked=True, error="extract: exhausted after retries")
+            service_shells, system_shells = extracted
 
-    batch = shells_to_batch(service_shells, system_shells)
-    provenance = Provenance(job=f"bootstrap:{run_id}", model=None, prompt_id=None)
-    # Bootstrap is a pure business projection: proposals_to_deltas drops aggregates.
-    services, systems, _aggregates_dropped = proposals_to_deltas(batch, provenance)
+        # The per-System `claim` rationale is transient too - dropped by shells_to_batch,
+        # so the trace is the only place a claim-based hypothesis stays falsifiable.
+        _trace_claims(system_shells)
 
-    try:
-        services_written, systems_written = curate_fn(services, systems, project_id)
-    except Exception as exc:  # FAIL-CLOSED: a write failure means no skeleton -> block
-        logger.warning("bootstrap_reasoned: curate failed for project=%s; BLOCKING", project_id, exc_info=True)
-        return BootstrapExport(blocked=True, error=f"curate: {exc}")
+        batch = shells_to_batch(service_shells, system_shells)
+        provenance = Provenance(job=f"bootstrap:{run_id}", model=_analyser_model_id(), prompt_id=None)
+        # Bootstrap is a pure business projection: proposals_to_deltas drops aggregates.
+        services, systems, _aggregates_dropped = proposals_to_deltas(batch, provenance)
+
+        try:
+            services_written, systems_written = curate_fn(services, systems, project_id)
+        except Exception as exc:  # FAIL-CLOSED: a write failure means no skeleton -> block
+            logger.warning(
+                "bootstrap_reasoned: curate failed for project=%s; BLOCKING", project_id, exc_info=True
+            )
+            return BootstrapExport(blocked=True, error=f"curate: {exc}")
+
+        # `skeleton-breadth` (#18 vocabulary, flat kebab-case): the numeric signal the
+        # breadth-leaning bar is judged on, and the regression detector for any future
+        # prompt change (a prompt edit once collapsed breadth 25/16/20 -> 13).
+        _score_breadth(services_written)
+        _flush_traces()
 
     return BootstrapExport(services_written=services_written, systems_written=systems_written)
 
 
 # --- default two-call collaborators (the real LLM path; the prompt redesign) ---
 
-_BOOTSTRAP_ROLE = (
-    "a solution architect projecting an operator's free-text solution architecture "
-    "into the L1 business-function Service/System skeleton, before any recon surface exists"
+# The Bootstrapper's system message is TWO layers: this base prompt (identity, pipeline
+# position, breadth stakes, and the output-field contract - the WHAT, a stable Python
+# constant) and, prepended in `default_reason_fn`, the reasoning discipline from
+# `skills/analysis/bootstrapper/SKILL.md` (the HOW - the 5 stages, service-contract craft
+# and critical-withholding disciplines, operator-tunable without a code change, #29).
+# The base stays here because it is an output contract, not a reasoning discipline, and
+# because it must hold even when the skills mount is unavailable.
+_BOOTSTRAPPER_BASE_SYSTEM = (
+    "You are the solution-architecture Bootstrapper. You read the operator's free-text "
+    "solution architecture - the knowledge base, written in business terms - and project it "
+    "into the Layer-1 skeleton: the business-function `Service`s it describes and the "
+    "cross-cutting `System`s it implies.\n\n"
+    "You run FIRST, before any reconnaissance. You have no endpoints, parameters, headers or "
+    "observed surface of any kind - only the operator's prose. Everything you emit is a "
+    "projection of that prose, and every later phase builds on the skeleton you leave behind.\n\n"
+    "Your skeleton is a hard data dependency, so breadth matters: a missed Service forces "
+    "every later agent to coin a synonym for it or drop the surface that belongs to it, while "
+    "an over-proposed one a later anti-clutter pass prunes cheaply. Widen to what the text "
+    "SUPPORTS - never pad with what a similar application might have.\n\n"
+    "Fill exactly three fields per Service: `business_function_slug` (its stable identity), "
+    "`exposure`, and `service_contract`. Leave the display label, salience summary, surface "
+    "assignments, data flows and system bindings EMPTY - the later phases that hold the "
+    "surface fill those. For each System fill `kind` (from the controlled vocabulary you are "
+    "given; a kind outside it is discarded) and, where the mechanism has multiple instances, "
+    "a discriminator. The AuthorizationSystem alone carries content: the role and realm "
+    "vocabulary the text states, as a flat list, with no per-Service bindings. Return empty "
+    "lists over padding."
 )
-_BOOTSTRAP_GOAL = (
-    "an exhaustive, well-grounded, breadth-leaning skeleton in which EVERY Service is "
-    "grounded in specific KB evidence - reflecting THIS architecture, never a template"
+
+# The FALLBACK below is a degraded stand-in for the SKILL.md discipline, used only when the
+# skills mount is unavailable (`skill_for` logs a warning). The base prompt above is always
+# prepended, so this covers HOW-to-reason only: the 5 stages, ground-or-withhold,
+# exposure-or-omit, and the contract with its no-invented-paths rule - a weaker projection
+# than the full skill, but still constrained.
+_BOOTSTRAPPER_SKILL_FALLBACK = (
+    "Reason out loud through five stages, in order: (1) DECOMPOSE the text into distinct "
+    "business-function components and the cross-cutting systems it implies, separating what "
+    "it STATES from what you ASSUME; (2) EXPAND laterally to adjacent/implied functions "
+    "(a missed Service costs more than an over-proposed one); (3) GROUND each candidate as a "
+    "falsifiable claim tied to a SPECIFIC span, classifying exposure (public/authenticated) "
+    "from the text's trust signals or omitting it when the text is silent - never guess; "
+    "(4) WITHHOLD candidates with NO support, recording non-obvious Systems as shallow "
+    "claim-based hypotheses and capturing the AuthorizationSystem's stated roles and realms; "
+    "(5) DECIDE, reusing an identity already in the inventory over a synonym.\n\n"
+    "For EVERY Service also write a `service_contract`: a brief functional profile of what "
+    "the function does and what it owns, in the application's OWN domain nouns and action "
+    "verbs. A later agent matches observed endpoint path nouns against it, so it must "
+    "discriminate this function from the others. NEVER write a path, URL, route or parameter "
+    "name - the text states none, and a guessed path would enter the model looking like "
+    "evidence."
 )
-_BOOTSTRAP_STEPS = [
-    "ARCHITECT-DECOMPOSE: break the KB into its distinct business-function components "
-    "and the cross-cutting systems it implies; separate what the text STATES from what "
-    "you are assuming.",
-    "EXPAND-CANDIDATES: widen laterally to adjacent/implied business functions (lean "
-    "toward breadth - a missed Service is costlier than an over-proposed one).",
-    "HYPOTHESIS + GROUND: for EACH candidate, state a falsifiable claim tied to a "
-    "SPECIFIC KB span; classify its exposure (public / authenticated) from KB signals, "
-    "or omit exposure when the KB is silent (never guess).",
-    "CRITICAL-CHECK / WITHHOLD: drop ONLY candidates with NO KB support; surface what "
-    "is missing or merely assumed. Non-obvious Systems are CLAIM-BASED - record them as "
-    "shallow hypotheses, and give the AuthorizationSystem its KB-sourced role/realm "
-    "vocabulary (no per-service bindings - those need surface).",
-    "DECIDE + REUSE: commit to the grounded skeleton, REUSING an existing inventory "
-    "slug over coining a synonym.",
-]
+
+
+def _load_bootstrapper_skill() -> str:
+    """The Bootstrapper's reasoning discipline = `skills/analysis/bootstrapper/SKILL.md`,
+    loaded through the shared `skill_for` (FR-SKILLIF) exactly as the analyser pod
+    loads its own: single-sourced, frontmatter stripped, cached, and degraded to the
+    terse fallback above if the mount is unavailable, so a missing mount never crashes
+    or blocks a bootstrap. It is the HOW layer only; `default_reason_fn` prepends the
+    `_BOOTSTRAPPER_BASE_SYSTEM` identity/output-contract layer to form the system message."""
+    from polymerhus.recon.domain.skills import skill_for
+
+    return skill_for("analysis/bootstrapper", fallback=_BOOTSTRAPPER_SKILL_FALLBACK)
+
 
 # Two DIVERGENT-domain few-shot CoT exemplars (#26 Q4): neither ecommerce nor a likely
 # target, so they cancel each other's domain anchoring. Each shows the 5-step trace
@@ -533,7 +697,15 @@ _FEW_SHOT = [
         "AuthorizationSystem roles from the KB: [merchant, support].\n"
         "5. Decide -> services: merchant-onboarding(auth), payout-account-management(auth), "
         "developer-docs(public), settlement-processing(no exposure). Systems: linchpins + "
-        "AuthorizationSystem{roles:[merchant, support]}."
+        "AuthorizationSystem{roles:[merchant, support]}.\n"
+        "   Contracts (domain nouns/verbs, NO invented paths): merchant-onboarding = 'Take a "
+        "prospective merchant through application and approval onto the platform; owns the "
+        "merchant application and its approval state. Deals in merchants, onboarding, "
+        "applications and approval.' payout-account-management = 'Let a merchant register and "
+        "maintain the bank accounts their money is paid into; owns payout account details. "
+        "Deals in payout accounts, bank details and verification.' settlement-processing = "
+        "'Batch the day's captured transactions and pay merchants what they are owed. Deals in "
+        "settlement, batches, transactions and payouts.'"
     ),
     (
         "KB: 'An internal IT-operations console for employees. Engineers file and track "
@@ -548,23 +720,36 @@ _FEW_SHOT = [
         "4. Withhold -> the reporting/dashboard candidate has NO KB support: DROP. "
         "AuthorizationSystem roles from the KB: [engineer, manager]; realms: [corporate].\n"
         "5. Decide -> services: incident-management(auth), change-approval(auth). Systems: "
-        "linchpins + AuthorizationSystem{roles:[engineer, manager], realms:[corporate]}."
+        "linchpins + AuthorizationSystem{roles:[engineer, manager], realms:[corporate]}.\n"
+        "   Contracts (domain nouns/verbs, NO invented paths): incident-management = 'Let an "
+        "engineer raise an incident and follow it to resolution; owns the incident record and "
+        "its status history. Deals in incidents, tickets, severity, assignment and resolution.' "
+        "change-approval = 'Route a proposed change to the manager who must approve it before it "
+        "ships; owns the change request and its approval decision. Deals in change requests, "
+        "approvals, reviewers and sign-off.'"
     ),
 ]
 
 
 def default_reason_fn(operator_kb: str, service_slugs: list[str] | None = None) -> str | None:
-    """Call 1 - the free-text 5-step reasoning over the KB, using the reusable
-    fragments + the 2 divergent-domain few-shot CoT exemplars + the FR-INVENTORY
-    reuse block. Returns the reasoning text (None if the model produced nothing)."""
+    """Call 1 - the free-text 5-step reasoning over the KB. The SYSTEM message is the base
+    prompt (identity, pipeline position, breadth stakes, output-field contract) plus the
+    Bootstrapper skill (the 5 stages, the disciplines, the service_contract craft); the HUMAN
+    message carries the run-specific material: the 2 divergent-domain few-shot CoT exemplars,
+    the FR-INVENTORY reuse block, and the KB itself. Returns the reasoning text (None if the
+    model produced nothing).
+
+    The exemplars stay in the HUMAN turn on purpose (#29): they are prompt MECHANICS
+    (they demonstrate the trace shape and cancel each other's domain anchoring) sitting
+    adjacent to the task, where they demonstrably work today. Only the operator-tunable
+    reasoning discipline moved into the skill."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from polymerhus.app.llm.roles import chat_model_for
     from polymerhus.analysis.pod import _inventory_block
-    from polymerhus.analysis.proposer_reasoning import cot_scaffold, few_shot_block, role_header
+    from polymerhus.analysis.proposer_reasoning import few_shot_block
 
     inventory = {"services": service_slugs or [], "systems": [], "data_items": []}
-    system = role_header(_BOOTSTRAP_ROLE, _BOOTSTRAP_GOAL)
     # NB: the service-linchpin prompt (`_service_linchpin_prompt`) is DELIBERATELY NOT
     # woven in here. Pushing the account-surface umbrellas through the reasoning prompt
     # globally coarsened the model's granularity prior - a live 3-target eval collapsed
@@ -572,14 +757,17 @@ def default_reason_fn(operator_kb: str, service_slugs: list[str] | None = None) 
     # functions (daytona snapshots+volumes+region -> one node). The pre-auth account
     # surface (gap-3) is guaranteed DETERMINISTICALLY by the forcing in shells_to_batch,
     # so the breadth prompt stays untouched. Whether to re-add a minimal, breadth-safe
-    # prompt mention is the force-vs-prompt-prior ratification question (B-Q2).
+    # prompt mention is the force-vs-prompt-prior ratification question (B-Q2, #31).
     human = (
-        f"{cot_scaffold(_BOOTSTRAP_STEPS)}\n\n"
         f"{few_shot_block(_FEW_SHOT)}\n\n"
         f"{_inventory_block(inventory)}\n\nOperator KB (free text):\n{operator_kb}\n\n"
-        "Now produce YOUR reasoning for this KB, following the 5 steps."
+        "Now produce YOUR reasoning for this KB, following the five stages."
     )
-    result = chat_model_for("analyser").invoke([SystemMessage(content=system), HumanMessage(content=human)])
+    system = f"{_BOOTSTRAPPER_BASE_SYSTEM}\n\n{_load_bootstrapper_skill()}"
+    result = chat_model_for("analyser").invoke([
+        SystemMessage(content=system),
+        HumanMessage(content=human),
+    ])
     text = getattr(result, "content", None)
     return text or None
 
@@ -597,10 +785,28 @@ def default_extract_fn(reasoning: str):
     )
     prompt = (
         "Extract the Service and System SHELLS decided in the reasoning below. For each "
-        "Service set ONLY business_function_slug + exposure (public/authenticated, or omit); "
-        "leave label/salience/aggregates/exposed_via/data_flows/surfaces_at EMPTY. For each "
-        "System set kind + discriminator; give the AuthorizationSystem its roles/realms; leave "
-        "other spine slots empty.\n\nREASONING:\n" + reasoning
+        "Service set ONLY business_function_slug + exposure (public/authenticated, or omit) "
+        "+ service_contract; leave label/salience/aggregates/exposed_via/data_flows/"
+        "surfaces_at EMPTY. For each System set kind + discriminator; give the "
+        "AuthorizationSystem its roles/realms; leave other spine slots empty.\n\n"
+        # The contract is COMPOSED here, from the reasoning's own grounding prose. The
+        # reasoning states each candidate as a justification ("the KB says X, so this
+        # exists"); left unguided the extraction copies that, and every contract reads
+        # as a citation instead of a profile. So the target shape is stated explicitly.
+        "SERVICE CONTRACT - for every Service, compose a brief functional profile from "
+        "what the reasoning established about it: what the business function DOES and "
+        "what it OWNS, in the application's own domain nouns and action verbs. Write it "
+        "for a reader who will later see concrete endpoint paths and must decide which "
+        "Service each one belongs to - so it has to DISCRIMINATE this function from the "
+        "others, and a profile true of every Service ('manages platform resources') is "
+        "useless. Two or three sentences. Use the operator's own words for things "
+        "(their 'volume' or 'sandbox', not your paraphrase). NEVER write a path, URL, "
+        "route, query parameter or field name: none appear in the source text, so any "
+        "you write is invented, and it would be read later as if it were evidence. "
+        "Restate a justification as a profile - not \"exists because the KB mentions "
+        "seller payouts\" but \"Pay sellers their accumulated earnings on a schedule; "
+        "owns the payout record and its status. Deals in payouts, earnings, balances "
+        "and payment schedules.\"\n\nREASONING:\n" + reasoning
     )
     result = structured.invoke([
         SystemMessage(content="You extract typed shells from prior reasoning; you never invent beyond it."),
@@ -609,3 +815,24 @@ def default_extract_fn(reasoning: str):
     if result is None:
         return None
     return list(result.services), list(result.systems)
+
+
+# --- entry point ---------------------------------------------------------------
+
+def run_bootstrap(project_id: str, *, load_settings_fn=None, **kwargs) -> BootstrapExport:
+    """THE entry point: read `operator_kb` from the project's settings and project it
+    into the L1 skeleton. This is what the API route (and any future caller) invokes.
+
+    It delegates to `bootstrap_reasoned` - the two-call, fail-CLOSED path. It used to
+    call the superseded single-call `bootstrap_from_kb`, which meant the ONE
+    settings-aware entry point still ran the example-polluted, fail-OPEN elicitation
+    long after its replacement had shipped and been verified live; that function is
+    now retired (#29).
+
+    `load_settings_fn(project_id) -> dict` defaults to pg.load_settings."""
+    if load_settings_fn is None:
+        from polymerhus.app.clients import pg
+        load_settings_fn = pg.load_settings
+    settings = load_settings_fn(project_id) or {}
+    operator_kb = settings.get("operator_kb") or ""
+    return bootstrap_reasoned(project_id, operator_kb, **kwargs)

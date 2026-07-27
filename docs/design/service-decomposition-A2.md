@@ -51,6 +51,12 @@ A finer `Service` unpacked from an umbrella that is still discretely testable - 
 An ordinary `:L1Service` PEER entity, keyed on its OWN `business_function_slug` of the form `<umbrella>-<leaf>` (a naming mnemonic that aids reasoning and traceability; it is a plain slug, not a structural key - see §5).
 A subordinate is always a SOLUTION-PROFILE business function (e.g. `sign-out`), never a TECHNICAL System concern (e.g. the session lifecycle, which is an AuthenticationMechanism / IdentificationSystem property) - the same solution-vs-technical split the operator applied to the service linchpins in `bootstrap.py` (correcting `session-management` -> `sign-out`).
 A leaf that names a technical mechanism rather than a business action is a category error (mechanism-as-System, `CODING_STANDARD` §1) and the testability guard must withhold it.
+
+**Every subordinate MUST get its OWN `service_contract`** (added 2026-07-27, #29 - a constraint on this design, recorded before implementation).
+The contract is the functional profile the cross-layer Assigner matches endpoint path nouns against, so copying the umbrella's contract onto all N leaves would leave them mutually indiscriminable: `account-management-address` and `account-management-payment` would present the SAME routing evidence, and the Assigner could not tell which leaf owns `/account/cards`.
+That would defeat the decomposition entirely - the finer set would exist in the graph while being less routable than the umbrella it replaced, because the umbrella at least had a contract that matched its whole surface.
+So the unpack elicitation must produce a per-leaf contract alongside the per-leaf exposure and the redistribution map, and the SPLIT op must write it; a leaf that arrives contract-less is as much a defect as one that arrives edge-less.
+
 _Avoid_: sub-service, child, endpoint (that is Layer-0).
 
 **Service decomposition (unpack).**
