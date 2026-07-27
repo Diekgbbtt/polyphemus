@@ -120,7 +120,11 @@ def _make_proposer(role: Role, body: ProposerBody | None) -> Callable[[Superviso
     """Build a proposer wrapper-node (subgraph-capable per DP-7). A body RETURNS an
     `L1DeltaBatch` (real cargo, increment 2a) or `None` (hollow, increment 0); the
     wrapper rides the cargo on the envelope. Fail-open: a body that raises degrades
-    to `status='degraded'` carrying the error, never propagating out of the graph."""
+    to `status='degraded'` carrying the error, never propagating out of the graph.
+
+    A step carrying content reports `written`, not `empty` (#34): the receipt trail
+    is what the supervisor sequences on, so a written step misreporting itself as
+    empty makes that trail lie."""
 
     def proposer(state: SupervisorState) -> dict:
         dispatch = state["dispatch"]
@@ -129,7 +133,8 @@ def _make_proposer(role: Role, body: ProposerBody | None) -> Callable[[Superviso
             deltas = cargo if isinstance(cargo, L1DeltaBatch) else None
             env = ProposalEnvelope(
                 dispatch_id=dispatch.dispatch_id, role=dispatch.role,
-                phase=dispatch.phase, deltas=deltas, status="empty",
+                phase=dispatch.phase, deltas=deltas,
+                status="written" if deltas is not None and _has_content(deltas) else "empty",
             )
         except Exception as exc:  # fail-open, mirroring the legacy pod's per-node discipline
             env = ProposalEnvelope(
@@ -188,10 +193,14 @@ def _make_curator(write_fn: WriteFn | None) -> Callable[[SupervisorState], dict]
                 status="written", written=_write_counts(export),
             )
             return {"receipts": [receipt]}
-        # hollow passthrough (increment 0): mirror the envelope status, zero counts.
+        # Hollow passthrough (increment 0): zero counts, and NEVER `written`. The
+        # envelope's `written` means "carries content" (#34); the receipt's means
+        # "the curator wrote it". With no write_fn nothing was written, so mirroring
+        # the envelope here would make the receipt claim a write that never happened.
+        status = "empty" if env.status == "written" else env.status
         receipt = StepReceipt(
             dispatch_id=env.dispatch_id, role=env.role, phase=env.phase,
-            status=env.status, error=env.error,
+            status=status, error=env.error,
         )
         return {"receipts": [receipt]}
 
