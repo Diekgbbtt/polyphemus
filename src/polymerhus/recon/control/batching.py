@@ -27,7 +27,7 @@ import shlex
 from pathlib import Path
 from urllib.parse import urlparse
 
-from polymerhus.recon.domain.parsers._urls import registrable_domain
+from polymerhus.recon.domain.parsers._urls import base_and_path, registrable_domain
 from polymerhus.recon.domain.types import JobSpec
 
 # This file is recon/control/batching.py; the runner lives at recon/scripts/,
@@ -163,3 +163,79 @@ def build_batch_command(job: JobSpec, batch: list[str]) -> str:
     if job.tool == "jsluice":
         return build_jsluice_command(batch)
     raise ValueError(f"no batch command builder registered for tool {job.tool!r}")
+
+
+# --------------- endpoint-profiling input-prep (D16 per-endpoint split) --------------- #
+# The reprofile pass consumes the Endpoint population and actively re-probes each
+# endpoint's own URL so it carries its OWN `profile` (not just the BaseURL root).
+# Two preparations keep that bounded + complete on a resource-constrained host:
+# dedup dynamic routes to one probe, and materialise a root `/` per BaseURL so
+# the root mirror is always set. Pure + deterministic; unit-tested in test_batching.
+_HEXISH = frozenset("0123456789abcdefABCDEF-")
+
+
+def _path_template(path: str) -> str:
+    """Collapse dynamic segments (numeric ids, long hex/uuid tokens) to '*', so
+    `/users/1` and `/users/2` share one probe template."""
+    out = []
+    for seg in path.split("/"):
+        if seg and (seg.isdigit() or (len(seg) >= 8 and all(c in _HEXISH for c in seg))):
+            out.append("*")
+        else:
+            out.append(seg)
+    return "/".join(out)
+
+
+def _endpoint_baseurl(asset: dict) -> str | None:
+    """The BaseURL of an Endpoint asset: its `baseurl`, else derived from `url`."""
+    b = asset.get("baseurl")
+    if isinstance(b, str) and b:
+        return b
+    url = asset.get("url")
+    if isinstance(url, str):
+        split = base_and_path(url)
+        if split is not None:
+            return split[0]
+    return None
+
+
+def prepare_endpoint_profile_assets(assets: list[dict]) -> list[dict]:
+    """Prepare the endpoint-profiling pass's probe set (D16 per-endpoint split).
+
+    1. Dedup to one probe per `(baseurl, method, path-template)`, so dynamic
+       routes (`/users/1`, `/users/2`) cost a single request, not one each.
+    2. Materialise a synthetic root `/` Endpoint for every BaseURL lacking one,
+       so the root is always probed and `BaseURL.profile` (its root mirror) set.
+
+    Pure + deterministic: survivors keep input order, synthesised roots follow in
+    first-seen baseurl order. Assets with no derivable baseurl are dropped.
+    """
+    seen: set[tuple] = set()
+    kept: list[dict] = []
+    baseurl_order: list[str] = []
+    baseurl_set: set[str] = set()
+    has_root: set[str] = set()
+
+    for asset in assets:
+        baseurl = _endpoint_baseurl(asset)
+        if baseurl is None:
+            continue
+        if baseurl not in baseurl_set:
+            baseurl_set.add(baseurl)
+            baseurl_order.append(baseurl)
+        path = asset.get("path") or "/"
+        method = (asset.get("method") or "GET").upper()
+        if path == "/":
+            has_root.add(baseurl)
+        key = (baseurl, method, _path_template(path))
+        if key in seen:
+            continue
+        seen.add(key)
+        kept.append(asset)
+
+    synth = [
+        {"url": f"{baseurl}/", "baseurl": baseurl, "path": "/", "method": "GET"}
+        for baseurl in baseurl_order
+        if baseurl not in has_root
+    ]
+    return kept + synth

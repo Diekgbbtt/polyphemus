@@ -82,6 +82,14 @@ def default_preprocess_fn(
         input_assets = build_batch_assets(
             input_assets or [], apex_registrable=apex_registrable, max_pods=MAX_PODS
         )
+    elif job.endpoint_profiling:
+        # D16 per-endpoint split: dedup the Endpoint population to one probe per
+        # (baseurl, method, path-template) and materialise a root `/` per BaseURL,
+        # so the active re-probe stays bounded on the constrained host and every
+        # host still gets its root-mirror profile.
+        from polymerhus.recon.control.batching import prepare_endpoint_profile_assets
+
+        input_assets = prepare_endpoint_profile_assets(input_assets or [])
 
     capped = list(input_assets or [])[:MAX_JOB_ASSETS]
 
@@ -166,8 +174,10 @@ def steering_preprocess_fn(
     own extra; a throttled asset instead carries `extra["rate_profile"]`."""
     signals = (extra or {}).get("steering") or []
     # A batched job (jsluice) has no per-asset url to throttle and needs the
-    # reduce+pack path; delegate to the deterministic default (which batches).
-    if not signals or job.batch:
+    # reduce+pack path; an endpoint-profiling job (httpx_reprofile) needs its
+    # dedup+root-materialisation prep. Both delegate to the deterministic default
+    # so their input-prep always runs, even under steering.
+    if not signals or job.batch or job.endpoint_profiling:
         return default_preprocess_fn(input_assets, job, extra, asset_context)
     try:
         throttle_urls = decide_pod_selection(signals, job.tool, input_assets or [])

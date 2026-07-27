@@ -7,6 +7,7 @@ from polymerhus.recon.control.batching import (
     build_jsluice_command,
     bundle_url,
     is_first_party,
+    prepare_endpoint_profile_assets,
     reduce_bundles,
 )
 from polymerhus.recon.control.jobs import JOBS
@@ -169,3 +170,56 @@ def test_build_batch_command_unknown_tool_raises():
 
     with pytest.raises(ValueError):
         build_batch_command(JOBS["katana"], ["https://h/a.js"])
+
+
+# ---------------- prepare_endpoint_profile_assets (D16 split) ---------------- #
+
+def test_prepare_materializes_a_root_endpoint_per_baseurl():
+    # A crawler-minted BaseURL reached only via a deep path has no root `/`
+    # Endpoint; the profiling pass must synthesise one so the root is probed and
+    # BaseURL.profile (the root mirror) is set.
+    out = prepare_endpoint_profile_assets(
+        [_ep(url="https://h/api/v1/x", baseurl="https://h", path="/api/v1/x")]
+    )
+    paths = {(a.get("baseurl"), a.get("path")) for a in out}
+    assert ("https://h", "/") in paths          # synthesised root
+    assert ("https://h", "/api/v1/x") in paths   # original survives
+    root = next(a for a in out if a.get("path") == "/")
+    assert root["url"] == "https://h/"
+
+
+def test_prepare_does_not_duplicate_an_existing_root():
+    out = prepare_endpoint_profile_assets(
+        [
+            _ep(url="https://h/", baseurl="https://h", path="/"),
+            _ep(url="https://h/api/x", baseurl="https://h", path="/api/x"),
+        ]
+    )
+    roots = [a for a in out if a.get("baseurl") == "https://h" and a.get("path") == "/"]
+    assert len(roots) == 1
+
+
+def test_prepare_dedups_dynamic_path_segments_per_host():
+    # /users/1 and /users/2 are the same route template; probing both is wasted
+    # requests on a constrained host -> collapse to one probe.
+    out = prepare_endpoint_profile_assets(
+        [
+            _ep(url="https://h/users/1", baseurl="https://h", path="/users/1"),
+            _ep(url="https://h/users/2", baseurl="https://h", path="/users/2"),
+        ]
+    )
+    non_root = [a for a in out if a.get("path") != "/"]
+    assert len(non_root) == 1
+
+
+def test_prepare_keeps_distinct_hosts_separate():
+    out = prepare_endpoint_profile_assets(
+        [
+            _ep(url="https://a/api/x", baseurl="https://a", path="/api/x"),
+            _ep(url="https://b/api/x", baseurl="https://b", path="/api/x"),
+        ]
+    )
+    baseurls = {a.get("baseurl") for a in out}
+    assert baseurls == {"https://a", "https://b"}
+    # each host gets its own synthesised root
+    assert sum(1 for a in out if a.get("path") == "/") == 2

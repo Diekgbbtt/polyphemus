@@ -54,6 +54,12 @@ class JobSpec(BaseModel):
     consumes: str
     consumes_where: AssetSelector | None = None
     batch: bool = False
+    # D16 per-endpoint split: this job re-probes the Endpoint population to
+    # stamp each Endpoint's own `profile`. Its input set is prepared by
+    # `batching.prepare_endpoint_profile_assets` (dedup dynamic routes +
+    # materialise a root `/` per BaseURL), mirroring how `batch` gates jsluice's
+    # `build_batch_assets`.
+    endpoint_profiling: bool = False
     use_auth: bool = False
     configurator_mode: Literal["deterministic", "agent"] = "deterministic"
     eval_criteria: str = "returncode_zero_nonempty"
