@@ -332,10 +332,14 @@ def shells_to_batch(
             )
             svc_by_slug[ls.slug] = sp
             services.append(sp)
-        elif ls.forced and not svc_by_slug[ls.slug].props.get("service_contract"):
-            # the LLM proposed the linchpin but gave it no usable contract: fill from
-            # the constant rather than leave the guaranteed surface unroutable.
-            svc_by_slug[ls.slug].props["service_contract"] = ls.contract
+        elif ls.forced:
+            # The LLM proposed the linchpin but may have left a slot empty. Fill from the
+            # constant, NEVER clobber: a KB-grounded value is richer than the generic
+            # baseline, but a guaranteed surface that is contract-less (unroutable by the
+            # Assigner) or exposure-less is only half-guaranteed.
+            for key, value in (("exposure", ls.exposure), ("service_contract", ls.contract)):
+                if not svc_by_slug[ls.slug].props.get(key):
+                    svc_by_slug[ls.slug].props[key] = value
 
     systems: list[SystemProposal] = []
     by_key: dict[tuple[str, str], SystemProposal] = {}

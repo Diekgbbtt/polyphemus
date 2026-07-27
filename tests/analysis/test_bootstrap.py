@@ -288,3 +288,14 @@ def test_the_retired_single_call_path_is_gone():
     keeps it from being resurrected by a merge."""
     for retired in ("bootstrap_from_kb", "default_elicit_fn", "_BOOTSTRAP_INSTRUCTION"):
         assert not hasattr(bootstrap, retired), f"{retired} should be retired"
+
+
+def test_forced_linchpin_proposed_without_an_exposure_is_filled_from_the_constant():
+    """Same fill-never-clobber rule as the contract: a guaranteed surface that arrives
+    exposure-less is only half-guaranteed."""
+    batch = shells_to_batch(
+        [ServiceShell(business_function_slug="register", service_contract="Sign up.")], []
+    )
+    props = _svc_props(batch)["register"]
+    assert props["exposure"] == "public"                 # filled from the constant
+    assert props["service_contract"] == "Sign up."       # the LLM's own, not clobbered
