@@ -299,3 +299,84 @@ def test_forced_linchpin_proposed_without_an_exposure_is_filled_from_the_constan
     props = _svc_props(batch)["register"]
     assert props["exposure"] == "public"                 # filled from the constant
     assert props["service_contract"] == "Sign up."       # the LLM's own, not clobbered
+
+
+# --- call-1 prompt configurations (#29, operator directive 2026-07-27) ---------
+
+def _capture_prompt(monkeypatch, config=None):
+    captured = {}
+
+    class _FakeLLM:
+        def invoke(self, messages):
+            captured["system"] = messages[0].content
+            captured["human"] = messages[1].content
+            return type("R", (), {"content": "reasoning"})()
+
+    if config is None:
+        monkeypatch.delenv("BOOTSTRAP_PROMPT_CONFIG", raising=False)
+    else:
+        monkeypatch.setenv("BOOTSTRAP_PROMPT_CONFIG", config)
+    monkeypatch.setattr("polymerhus.app.llm.roles.chat_model_for", lambda role: _FakeLLM())
+    bootstrap.default_reason_fn("a juice marketplace", [])
+    return captured
+
+
+def test_default_config_is_baseline_and_unchanged(monkeypatch):
+    """The seam must be inert by default: `baseline` reproduces the arrangement that
+    existed before it, or every prior measurement stops being comparable."""
+    cap = _capture_prompt(monkeypatch)
+    assert cap["system"] == (
+        f"{bootstrap._BOOTSTRAPPER_BASE_SYSTEM}\n\n{bootstrap._load_bootstrapper_skill()}"
+    )
+    for ex in bootstrap._FEW_SHOT:
+        assert ex in cap["human"]
+    for ex in bootstrap._FEW_SHOT_EXTRA:
+        assert ex not in cap["human"]
+    assert bootstrap._BREADTH_VERBATIM not in cap["human"]
+
+
+def test_skill_in_prompt_moves_the_discipline_to_the_user_turn(monkeypatch):
+    cap = _capture_prompt(monkeypatch, "skill_in_prompt")
+    skill = bootstrap._load_bootstrapper_skill()
+    assert skill not in cap["system"]           # system keeps identity/output contract only
+    assert cap["system"] == bootstrap._BOOTSTRAPPER_BASE_SYSTEM
+    assert skill in cap["human"]                # ... and the discipline rides beside the task
+
+
+def test_more_fewshot_adds_the_extra_exemplars(monkeypatch):
+    cap = _capture_prompt(monkeypatch, "more_fewshot")
+    for ex in list(bootstrap._FEW_SHOT) + list(bootstrap._FEW_SHOT_EXTRA):
+        assert ex in cap["human"]
+
+
+def test_breadth_verbatim_adds_the_elicit_then_debug_block(monkeypatch):
+    cap = _capture_prompt(monkeypatch, "breadth_verbatim")
+    assert bootstrap._BREADTH_VERBATIM in cap["human"]
+    assert "SPLIT it" in cap["human"]           # the operative debugging instruction
+    # ... and it must NOT become licence to invent (the withholding discipline holds)
+    assert "still needs its own support in the text" in cap["human"]
+
+
+def test_combined_applies_every_variant(monkeypatch):
+    cap = _capture_prompt(monkeypatch, "combined")
+    assert bootstrap._load_bootstrapper_skill() in cap["human"]
+    assert bootstrap._FEW_SHOT_EXTRA[0] in cap["human"]
+    assert bootstrap._BREADTH_VERBATIM in cap["human"]
+
+
+def test_an_unknown_config_falls_back_to_baseline_loudly(monkeypatch, caplog):
+    """A typo'd config must not silently produce an unrecorded prompt arrangement -
+    that would make an eval result untraceable to what actually ran."""
+    with caplog.at_level("WARNING"):
+        cap = _capture_prompt(monkeypatch, "nonsense")
+    assert bootstrap._load_bootstrapper_skill() in cap["system"]
+    assert "nonsense" in caplog.text
+
+
+def test_the_account_umbrellas_stay_out_of_every_config(monkeypatch):
+    """The 760e93d regression guard must hold across ALL arms, not just baseline."""
+    for cfg in bootstrap._PROMPT_CONFIGS:
+        cap = _capture_prompt(monkeypatch, cfg)
+        blob = cap["system"] + cap["human"]
+        assert "ACCOUNT-SURFACE UMBRELLAS" not in blob, cfg
+        assert "password-recovery" not in blob, cfg
