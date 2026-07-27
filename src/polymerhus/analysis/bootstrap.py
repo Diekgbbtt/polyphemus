@@ -751,15 +751,31 @@ _FEW_SHOT = [
 
 _PROMPT_CONFIGS = ("baseline", "skill_in_prompt", "more_fewshot", "breadth_verbatim", "combined")
 
+# DEFAULT = `skill_in_prompt` (operator-ratified 2026-07-27 on the comparative eval).
+# Measured over 15 live runs through the faithful API path on the Juice Shop KB
+# (3 repeats per arm, breadth judged COMPARATIVELY, never against a bar):
+#   baseline         16,19,21  mean 18.7
+#   skill_in_prompt  20,20,28  mean 22.7   <- best mean AND best floor
+#   more_fewshot     17,18,18  mean 17.7
+#   breadth_verbatim 21,28,18  mean 22.3   (but lost the WHOLE authz role vocabulary
+#                                           in 1 of 3 runs - rejected despite the mean)
+#   combined         18,19,17  mean 18.0
+# Integrity held in every run (contract coverage 1.0, exactly 3 linchpin Systems, zero
+# Service->System edges). `skill_in_prompt` also ran materially faster.
+# CAVEAT recorded honestly: n=3 on ONE KB, and the arms' ranges still touch (skill's
+# floor 20 vs baseline's ceiling 21). This is the best-supported default, not a settled
+# result; re-running `evaluation.py` on further KBs is how it gets confirmed or revised.
+_DEFAULT_PROMPT_CONFIG = "skill_in_prompt"
+
 
 def _prompt_config() -> str:
-    cfg = (os.environ.get("BOOTSTRAP_PROMPT_CONFIG") or "baseline").strip()
+    cfg = (os.environ.get("BOOTSTRAP_PROMPT_CONFIG") or _DEFAULT_PROMPT_CONFIG).strip()
     if cfg not in _PROMPT_CONFIGS:
         logger.warning(
-            "BOOTSTRAP_PROMPT_CONFIG=%r is unknown (known: %s); using 'baseline'",
-            cfg, ", ".join(_PROMPT_CONFIGS),
+            "BOOTSTRAP_PROMPT_CONFIG=%r is unknown (known: %s); using %r",
+            cfg, ", ".join(_PROMPT_CONFIGS), _DEFAULT_PROMPT_CONFIG,
         )
-        return "baseline"
+        return _DEFAULT_PROMPT_CONFIG
     return cfg
 
 

@@ -206,8 +206,9 @@ def test_a_missing_skill_mount_degrades_to_a_fallback_that_keeps_the_constraints
 
 
 def test_both_layers_actually_reach_the_model(monkeypatch):
-    """The layering is only real if BOTH halves land in the system message: the base
-    alone loses the reasoning, the discipline alone loses the output contract."""
+    """The layering is only real if BOTH halves reach the model. WHICH TURN each rides
+    in is the configurable part (the default puts the discipline in the user turn); that
+    both are present is not."""
     captured = {}
 
     class _FakeLLM:
@@ -219,8 +220,11 @@ def test_both_layers_actually_reach_the_model(monkeypatch):
     monkeypatch.setattr("polymerhus.app.llm.roles.chat_model_for", lambda role: _FakeLLM())
     assert bootstrap.default_reason_fn("a juice marketplace", ["checkout"]) == "reasoning"
 
+    both = captured["system"] + captured["human"]
+    assert bootstrap._BOOTSTRAPPER_BASE_SYSTEM in both
+    assert bootstrap._load_bootstrapper_skill() in both
+    # the base (identity + output contract) is ALWAYS the system message, in every arm
     assert bootstrap._BOOTSTRAPPER_BASE_SYSTEM in captured["system"]
-    assert bootstrap._load_bootstrapper_skill() in captured["system"]
     # the run-specific material rides in the HUMAN turn, never the system prompt
     assert "a juice marketplace" in captured["human"]
     assert "checkout" in captured["human"]  # the FR-INVENTORY reuse block
@@ -321,10 +325,21 @@ def _capture_prompt(monkeypatch, config=None):
     return captured
 
 
-def test_default_config_is_baseline_and_unchanged(monkeypatch):
-    """The seam must be inert by default: `baseline` reproduces the arrangement that
-    existed before it, or every prior measurement stops being comparable."""
+def test_the_default_is_skill_in_prompt(monkeypatch):
+    """Operator-ratified 2026-07-27 on the comparative eval: `skill_in_prompt` had the
+    best mean AND the best floor over 15 live runs. Pinning the default here means a
+    silent revert shows up as a failure rather than as a quiet breadth loss."""
+    assert bootstrap._DEFAULT_PROMPT_CONFIG == "skill_in_prompt"
     cap = _capture_prompt(monkeypatch)
+    assert cap["system"] == bootstrap._BOOTSTRAPPER_BASE_SYSTEM
+    assert bootstrap._load_bootstrapper_skill() in cap["human"]
+
+
+def test_baseline_still_reproduces_the_pre_seam_arrangement(monkeypatch):
+    """`baseline` must stay byte-identical to what existed before the seam, or every
+    measurement taken against it stops being comparable - which is what makes the
+    eval's baseline column meaningful at all."""
+    cap = _capture_prompt(monkeypatch, "baseline")
     assert cap["system"] == (
         f"{bootstrap._BOOTSTRAPPER_BASE_SYSTEM}\n\n{bootstrap._load_bootstrapper_skill()}"
     )
@@ -364,13 +379,14 @@ def test_combined_applies_every_variant(monkeypatch):
     assert bootstrap._BREADTH_VERBATIM in cap["human"]
 
 
-def test_an_unknown_config_falls_back_to_baseline_loudly(monkeypatch, caplog):
+def test_an_unknown_config_falls_back_to_the_default_loudly(monkeypatch, caplog):
     """A typo'd config must not silently produce an unrecorded prompt arrangement -
     that would make an eval result untraceable to what actually ran."""
     with caplog.at_level("WARNING"):
         cap = _capture_prompt(monkeypatch, "nonsense")
-    assert bootstrap._load_bootstrapper_skill() in cap["system"]
+    assert cap["human"] == _capture_prompt(monkeypatch, bootstrap._DEFAULT_PROMPT_CONFIG)["human"]
     assert "nonsense" in caplog.text
+    assert bootstrap._DEFAULT_PROMPT_CONFIG in caplog.text
 
 
 def test_the_account_umbrellas_stay_out_of_every_config(monkeypatch):

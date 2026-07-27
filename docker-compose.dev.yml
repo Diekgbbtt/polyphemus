@@ -25,7 +25,7 @@ services:
       # Passed through so a comparative eval can run each arm against the REAL
       # system. `--reload` does NOT re-read the environment, so switching arms
       # needs `up -d --force-recreate agent`, not just a source edit.
-      BOOTSTRAP_PROMPT_CONFIG: ${BOOTSTRAP_PROMPT_CONFIG:-baseline}
+      BOOTSTRAP_PROMPT_CONFIG: ${BOOTSTRAP_PROMPT_CONFIG:-skill_in_prompt}
     command: ["uvicorn", "polymerhus.app.main:app", "--host", "0.0.0.0", "--port", "8080",
               "--reload", "--reload-dir", "/srv/src"]
 
