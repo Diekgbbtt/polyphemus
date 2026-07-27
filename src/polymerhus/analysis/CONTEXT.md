@@ -170,6 +170,14 @@ The reusable prompt fragments every analyser proposer composes (`proposer_reason
 The Bootstrapper's call-2 elicitation template: a per-Service / per-System shell whose phase-A.1 attributes are PRESENT but EMPTIED (bootstrap fills only slug + exposure, or kind + discriminator), mapped down to `L1DeltaBatch` for the sole-writer (the empty A.1 slots are not persisted - absence means not-yet-filled).
 The 3 forced linchpins are the identify/authenticate/authorize triad (IdentificationSystem, AuthenticationMechanism, AuthorizationSystem); the AuthorizationSystem alone keeps a shallow KB-sourced role/realm vocabulary, with no edges.
 
+**Service linchpin (gap-3, ratified 2026-07-26)**:
+A BROAD umbrella business-function Service the Bootstrapper guarantees on the skeleton so a near-universal, bug-dense surface is never dropped (observed live on the moodique KB, where sign-in/register/password-recovery was absorbed into the AuthenticationMechanism System and lost).
+It is always the umbrella, never a leaf: phase-A.2 service decomposition later unpacks it (sign-in -> sign-in-sso / sign-in-credential; account-management -> address / payment / profile management).
+The pre-auth trio (sign-in, register, password-recovery) is HARD-forced as `public`, mirroring the system linchpins; every other umbrella (account-management, sign-out, notifications, admin-console, ...) is PROMPT-PRIOR (carried only when the KB grounds it, since a headless / minimal target legitimately lacks it); a linchpin is always a solution-profile business function (sign-out), never a technical System concern (session lifecycle).
+The set is a growing single-source constant (a §7 extension point) that feeds BOTH the shells_to_batch forcing AND the prompt text, exactly as SYSTEM_KINDS feeds the writer and the vocabulary prompt.
+Guarantee is by FORCING only; the prompt render is retained-not-wired because pushing the umbrellas through the reasoning prompt globally coarsened breadth (a live eval collapsed 25/16/20 Services -> 13).
+_Not to be confused with_: the linchpin auth Systems (mechanisms, not targets).
+
 **Curation / reconciliation**:
 The curation-time repair authority (`merge` / `delete` / `relabel` / `rehome`) that corrects the L1 graph with a later global pass.
 It is repair-after-the-fact, not reasoning-time retraction.
