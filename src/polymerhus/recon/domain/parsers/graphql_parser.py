@@ -93,7 +93,11 @@ def parse(stdout: str, *, target_url: str | None = None) -> list[AssetDelta]:
         endpoint_url,
         method="POST",
         source="graphql-cop",
-        extra_endpoint_props={"endpoint_type": "graphql"},
+        # Provenance profile (D16 split): graphql-cop only ever runs against a
+        # GraphQL surface, so an Endpoint it produces is graphql_api by
+        # construction - tagged here so Endpoint.profile is complete without a
+        # second active-probe pass over API-tool output.
+        extra_endpoint_props={"endpoint_type": "graphql", "profile": "graphql_api"},
     )[:2]
 
 

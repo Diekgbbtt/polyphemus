@@ -221,7 +221,10 @@ def _kiterunner_endpoint_deltas(
         url,
         method=method,
         source="kiterunner",
-        extra_endpoint_props={"status_code": status},
+        # Provenance profile (D16 split): kiterunner only runs against an API
+        # surface, so a route it discovers is restapi by construction - tagged
+        # here so Endpoint.profile is complete without re-probing API-tool output.
+        extra_endpoint_props={"status_code": status, "profile": "restapi"},
     )[:2]
 
 

@@ -90,6 +90,12 @@ def default_preprocess_fn(
         from polymerhus.recon.control.batching import prepare_endpoint_profile_assets
 
         input_assets = prepare_endpoint_profile_assets(input_assets or [])
+    elif job.api_scope:
+        # D16 per-endpoint split: collapse a host's `restapi` Endpoints into
+        # evidence-derived API-root scan-target prefixes (one pod per target).
+        from polymerhus.recon.control.batching import build_api_scope_assets
+
+        input_assets = build_api_scope_assets(input_assets or [])
 
     capped = list(input_assets or [])[:MAX_JOB_ASSETS]
 
@@ -177,7 +183,7 @@ def steering_preprocess_fn(
     # reduce+pack path; an endpoint-profiling job (httpx_reprofile) needs its
     # dedup+root-materialisation prep. Both delegate to the deterministic default
     # so their input-prep always runs, even under steering.
-    if not signals or job.batch or job.endpoint_profiling:
+    if not signals or job.batch or job.endpoint_profiling or job.api_scope:
         return default_preprocess_fn(input_assets, job, extra, asset_context)
     try:
         throttle_urls = decide_pod_selection(signals, job.tool, input_assets or [])

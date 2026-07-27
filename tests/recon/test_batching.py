@@ -223,3 +223,22 @@ def test_prepare_keeps_distinct_hosts_separate():
     assert baseurls == {"https://a", "https://b"}
     # each host gets its own synthesised root
     assert sum(1 for a in out if a.get("path") == "/") == 2
+
+
+# -------------------- build_api_scope_assets (D16 split) --------------------- #
+
+def test_build_api_scope_assets_derives_prefix_targets_per_host():
+    from polymerhus.recon.control.batching import build_api_scope_assets
+    assets = [
+        _ep(url="https://h/api/v1/users", baseurl="https://h", path="/api/v1/users"),
+        _ep(url="https://h/api/v1/orders", baseurl="https://h", path="/api/v1/orders"),
+        _ep(url="https://h/rest/things", baseurl="https://h", path="/rest/things"),
+    ]
+    out = build_api_scope_assets(assets)
+    urls = {a["url"] for a in out}
+    assert urls == {"https://h/api/", "https://h/rest/"}
+
+
+def test_build_api_scope_assets_empty_when_no_endpoints():
+    from polymerhus.recon.control.batching import build_api_scope_assets
+    assert build_api_scope_assets([]) == []
