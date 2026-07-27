@@ -239,10 +239,12 @@ def test_graphql_cop_is_an_authenticated_job():
 
 
 def test_kiterunner_is_gated_to_the_restapi_profile():
-    # D16: kiterunner (API-route scanner) only consumes BaseURLs httpx profiled
-    # as `restapi`, via the D17 consumes_where selector.
+    # D16 per-endpoint split: kiterunner consumes the `restapi` ENDPOINTS a host
+    # exposes (not just its root BaseURL profile) and flags api_scope, so its
+    # input is collapsed into evidence-derived API-root scan prefixes.
     job = JOBS["kiterunner"]
-    assert job.consumes == "BaseURL"
+    assert job.consumes == "Endpoint"
+    assert job.api_scope is True
     assert job.consumes_where is not None
     assert job.consumes_where.field == "profile"
     assert job.consumes_where.op == "equals"
@@ -263,7 +265,9 @@ def test_graphql_cop_is_gated_to_the_graphql_api_profile():
     # so it is gated to the dedicated `graphql_api` profile httpx derives from
     # the endpoint path (a miss = no run, the accepted tradeoff).
     job = JOBS["graphql-cop"]
-    assert job.consumes == "BaseURL"
+    # D16 per-endpoint split: it audits the EXACT graphql_api Endpoint, so it
+    # consumes Endpoint (target = the endpoint's own url), not the BaseURL root.
+    assert job.consumes == "Endpoint"
     assert job.consumes_where is not None
     assert job.consumes_where.field == "profile"
     assert job.consumes_where.op == "equals"

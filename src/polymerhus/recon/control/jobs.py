@@ -169,11 +169,15 @@ JOBS: dict[str, JobSpec] = {
         skill="content_discovery",
         command_template="kr scan {target} -w /opt/localbin/routes-small.kite {auth_header}",
         produces=["Endpoint"],
-        # kiterunner scans for API routes, so it is gated to the API surface
-        # (D16): it only consumes BaseURLs httpx profiled as `restapi`, reusing
-        # the D17 consumes_where selector rather than firing at every web app.
-        consumes="BaseURL",
+        # kiterunner scans for API routes under an evidence-derived API-root
+        # prefix (D16 per-endpoint split). It consumes the `restapi` ENDPOINTS a
+        # host exposes (not just its root profile), and `api_scope` collapses
+        # them per host into scan-target prefixes via
+        # batching.build_api_scope_assets, so it fuzzes `<host>/api/` even when
+        # the root `/` is a webapp. `{target}` is each derived prefix URL.
+        consumes="Endpoint",
         consumes_where=AssetSelector(field="profile", op="equals", values=["restapi"]),
+        api_scope=True,
         # kr scans routes that may sit behind auth, so it receives the
         # project's cookies/headers like the other request-based tools (`kr`
         # takes repeated -H "k: v" flags, the shared default format).
@@ -202,13 +206,12 @@ JOBS: dict[str, JobSpec] = {
         skill="graphql_audit",
         command_template="graphql-cop -t {target} -o json {auth_header}",
         produces=["Endpoint"],
-        # graphql-cop only makes sense against a GraphQL surface, so it is
-        # gated to the dedicated `graphql_api` profile (D16): httpx classifies a
-        # BaseURL/root Endpoint as `graphql_api` when its path is a known
-        # GraphQL endpoint (e.g. /graphql). The accepted tradeoff is that
-        # graphql-cop only runs where GraphQL is detected by path (a miss = no
-        # run), rather than firing at every web app.
-        consumes="BaseURL",
+        # graphql-cop audits ONE GraphQL endpoint, so it consumes the EXACT
+        # `graphql_api` Endpoint (D16 per-endpoint split), targeting that
+        # endpoint's own URL (`{target}` = the Endpoint `url`) rather than gating
+        # on the BaseURL root. A GraphQL surface at any path is now audited, not
+        # only where the root `/` classifies graphql_api.
+        consumes="Endpoint",
         consumes_where=AssetSelector(field="profile", op="equals", values=["graphql_api"]),
         # graphql-cop probes a GraphQL surface that may sit behind auth, so it
         # receives the project's cookies/headers (its own --headers format:

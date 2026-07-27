@@ -25,6 +25,14 @@ _Avoid_: asset (loose synonym; prefer the specific label).
 A reachability fact - a path that responded.
 Input-carrying capability is not on the Endpoint itself but on the Parameter and Header nodes that hang off it.
 
+**profile** (`webapp` / `restapi` / `graphql_api`):
+A per-Endpoint classification of the surface an Endpoint exposes, derived from its own httpx-observed content-type (+ host-label / GraphQL-path signals) by `noise_filter.classify_profile`.
+Every produced Endpoint is profiled by the `httpx_reprofile` pass (D16 per-endpoint split, workflow #28), not just BaseURL roots - so an API mounted under a `webapp` root is visible.
+`BaseURL.profile` is the backward-compatible mirror of its root `/` Endpoint's profile.
+
+**API scope** (kiterunner):
+The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_scope.derive_scan_targets` from a host's `restapi` Endpoint paths (last api-noun cut, versions left as fuzz-space, parent-dir fallback). Not a naming classifier - the gate is the content-type `profile`; the noun set only picks the cut depth.
+
 **Parameter / Header**:
 The input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
 

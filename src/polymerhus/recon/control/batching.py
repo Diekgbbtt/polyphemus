@@ -239,3 +239,33 @@ def prepare_endpoint_profile_assets(assets: list[dict]) -> list[dict]:
         if baseurl not in has_root
     ]
     return kept + synth
+
+
+def build_api_scope_assets(assets: list[dict], *, cap: int = 3) -> list[dict]:
+    """Input-prep for kiterunner (D16 per-endpoint split): collapse a host's
+    `restapi` Endpoints into evidence-derived API-root scan targets.
+
+    Groups the endpoint assets by BaseURL, derives the API-root prefix targets
+    per host (`api_scope.derive_scan_targets`: last-noun cut, versions excluded,
+    parent-dir fallback, top-`cap` by coverage), and returns one synthetic scan
+    asset `{"url": target}` per target so the existing 1:1 preprocess maps one
+    target -> one kiterunner pod. Pure + deterministic (first-seen host order).
+    """
+    from polymerhus.recon.domain.api_scope import derive_scan_targets
+
+    by_host: dict[str, list[str]] = {}
+    order: list[str] = []
+    for asset in assets:
+        baseurl = _endpoint_baseurl(asset)
+        if baseurl is None:
+            continue
+        if baseurl not in by_host:
+            by_host[baseurl] = []
+            order.append(baseurl)
+        by_host[baseurl].append(asset.get("path") or "/")
+
+    out: list[dict] = []
+    for baseurl in order:
+        for target in derive_scan_targets(baseurl, by_host[baseurl], cap=cap):
+            out.append({"url": target})
+    return out

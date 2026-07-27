@@ -149,3 +149,11 @@ def test_parse_findings_without_target_url_has_no_anchor_key_when_undeterminable
     findings = parse_findings(stdout)
     assert len(findings) == 1
     assert "anchor" not in findings[0]
+
+
+def test_graphql_cop_endpoint_carries_graphql_api_provenance_profile():
+    # D16 split: graphql-cop only audits a GraphQL surface, so the Endpoint it
+    # emits is graphql_api by provenance - Endpoint.profile stamped at parse.
+    deltas = parse(FIX.read_text())
+    eps = [d for d in deltas if d.type == "Endpoint"]
+    assert eps and all(d.props.get("profile") == "graphql_api" for d in eps)

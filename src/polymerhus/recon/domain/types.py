@@ -60,6 +60,11 @@ class JobSpec(BaseModel):
     # materialise a root `/` per BaseURL), mirroring how `batch` gates jsluice's
     # `build_batch_assets`.
     endpoint_profiling: bool = False
+    # D16 per-endpoint split: this job (kiterunner) fuzzes under an evidence-
+    # derived API-root prefix. Its input Endpoints (profile==restapi) are grouped
+    # per host and collapsed to scan-target prefixes by
+    # `batching.build_api_scope_assets` (via `api_scope.derive_scan_targets`).
+    api_scope: bool = False
     use_auth: bool = False
     configurator_mode: Literal["deterministic", "agent"] = "deterministic"
     eval_criteria: str = "returncode_zero_nonempty"
