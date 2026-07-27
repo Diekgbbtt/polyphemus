@@ -26,7 +26,7 @@ _SAFE_IDENT = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*\Z")
 # `spine`; the rest of the unit's own props become `nl_handles`.
 _SPINE_KEYS = (
     "api_paradigm", "navigation_model", "rendering_model", "auth_methods",
-    "exposure", "business_function",
+    "exposure", "business_function", "service_contract",
 )
 
 # Identity + curator-managed keys, never surfaced as NL handles.
@@ -74,7 +74,11 @@ def _card_from_row(row: dict) -> dict:
         "spine": spine,
         # edge-degree BY FAMILY (counts), never the member set (DD-4 token discipline)
         "edge_degree": dict(Counter(rels)),
-        "salience": props.get("salience") or props.get("label"),
+        # `salience` is the adversarial one-liner (Phase B, usually absent today), so
+        # this falls back to what the unit does carry. `service_contract` comes before
+        # `label` because it actually SAYS what the function is; the old chain ended at
+        # the bare slug, which told a reader nothing they did not already have in `key`.
+        "salience": props.get("salience") or props.get("service_contract") or props.get("label"),
         "nl_handles": nl_handles,
     }
 

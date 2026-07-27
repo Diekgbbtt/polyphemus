@@ -92,3 +92,28 @@ def test_index_cards_maps_all_rows():
     cards = index_card.index_cards("p", read_fn=fake_read)
     assert [c["kind"] for c in cards] == ["Service", "System"]
     assert cards[0]["edge_degree"] == {"AGGREGATES": 1}
+
+
+def test_service_contract_is_spine_and_backs_salience():
+    """#29: the contract is what a card actually SAYS about the business function, so
+    it belongs in the spine (not swept into nl_handles) and is a far better salience
+    fallback than the bare slug the old chain ended at."""
+    card = index_card._card_from_row({
+        "labels": ["L1Service", "L1TestableUnit"],
+        "props": {"business_function_slug": "byoc", "exposure": "authenticated",
+                  "service_contract": "Bring your own cloud account and run sandboxes in it."},
+        "rels": [],
+    })
+    assert card["spine"]["service_contract"].startswith("Bring your own cloud")
+    assert "service_contract" not in card["nl_handles"]
+    assert card["salience"].startswith("Bring your own cloud")
+
+
+def test_an_explicit_salience_still_wins_over_the_contract():
+    card = index_card._card_from_row({
+        "labels": ["L1Service"],
+        "props": {"business_function_slug": "x", "salience": "IDOR-prone",
+                  "service_contract": "Some contract."},
+        "rels": [],
+    })
+    assert card["salience"] == "IDOR-prone"

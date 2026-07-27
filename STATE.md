@@ -1,6 +1,41 @@
 # Loop State — polymerhus L1-MVP
 
-Last run: 2026-07-19 (**post-MVP curation + L1 remediation - 6 of 7 FR areas verifier-APPROVED and COMMITTED; only FR-CURE2E remains.** See the section directly below. Before: FR-STREAM (NM-7), the exhaustive soupmarket.shop e2e, and L1-MVP COMPLETE.)
+Last run: 2026-07-27 (**#29 - Bootstrapper finished for API delivery: `service_contract`, the skill seam, legacy retirement, observability. See the amendment directly below.** Before: post-MVP curation + L1 remediation, FR-STREAM (NM-7), the exhaustive soupmarket.shop e2e, and L1-MVP COMPLETE.)
+
+## AMENDMENT 2026-07-27 - #29: Bootstrapper finished for API delivery (branch `feat/bootstrapper-service-contract`, commit 8638d3b)
+
+Operator-driven, grilled in-session. Three tickets opened: **#29** (this work), **#30** (per-agent analysis skills roster), **#31** (B-Q2 ratification of the 4 inert prompt-prior service linchpins).
+
+**Framing correction the operator supplied, which reframes #26's deferrals.**
+The Bootstrapper is a **pre-analysis PHASE**, not a supervised analyser proposer, so #26's deferred "supervisor schedule wiring" is **moot** for this agent - its delivery seam is the **app API**, which a future frontend calls to ingest the operator's knowledge and trigger the projection.
+The re-write of the attack-surface-analysis system is **gradual**: legacy superseded paths retire progressively as replacements land.
+
+**What was actually missing** (the core two-call reasoning was built and live-verified; these were the gaps):
+1. No production caller at all - `BootstrapExport.blocked` was unreachable dead code.
+2. `run_bootstrap`, the ONLY settings-aware entry point, still delegated to the superseded `bootstrap_from_kb`: the example-polluted, fail-OPEN single-call path. Wiring an API route to the obvious entry point would have got the OLD agent.
+3. The entire observability leg was unimplemented (no Langfuse call existed anywhere in `bootstrap.py`), and the assertion catalogue had no observability predicate - which is why 17/17 was green with the whole leg absent.
+4. `run_id` unpromoted (`prov_job` was the literal `bootstrap:bootstrap`; `prov_model` always None).
+5. Out-of-vocabulary System kinds silently swallowed by the sole-writer typo-guard.
+6. `bounded_retry` had NO test anywhere - the #26 slice dropped the retry guard the old path had.
+
+**`service_contract` (the operator's request).**
+A brief functional profile of what a business function does and owns, in the application's own domain nouns and action verbs; the PRIMARY evidence the cross-layer Assigner consumes, matching endpoint path nouns against it.
+Ratified content rule: domain nouns and verbs YES, paths/URLs/parameter names NO - the operator KB states none, so any path is the model's guess, and once persisted it is indistinguishable from evidence.
+Ratified placement: composed in **call 2**, so the breadth-sensitive reasoning prompt is untouched (a prompt push once collapsed breadth 25/16/20 -> 13, commit 760e93d).
+Motivating evidence: `eval-daytona` produced `byoc`, `agent-tool`, `human-access`, `declarative-builder` - opaque slugs an Assigner cannot route on.
+
+**Skill seam (found during grilling).**
+`default_reason_fn` built its system prompt from inline Python constants: the reasoned path had silently DROPPED the skill seam the superseded elicitation used, so the operator could not tune the reasoning without a code change.
+Now two layers: a base prompt in code (identity + output-field contract - a structural contract with `ServiceShell` and the props allowlist) plus `skills/analysis/bootstrapper/SKILL.md` (the five stages, service-contract craft, critical withholding), with a constrained fallback for a missing mount.
+The legacy `analysis/analyser` skill is wrong-shaped for the decomposed proposers and is **#30**.
+
+**Defect caught by smoke-testing the real client, not by a test:** `propagate_attributes` sets trace ATTRIBUTES but creates no span, so every `update_current_span` / `score_current_span` was silently skipped - the same class of no-op as the `langfuse_trace_name` key the #18 recipe replaced. Fixed by also opening `start_as_current_observation`; verified exporting cleanly against the real Langfuse project.
+
+**Corrected in my own earlier analysis (recorded because it was stated to the operator):** I claimed the 3-target eval left no reproducible artifact. It did - `eval-daytona` 26 / `eval-magnific` 25 / `eval-moodique` 18 are still queryable in Neo4j and confirm the post-fix behaviour in persisted state. That retraction is what made the **E5 breadth-regression guard** possible: it now compares against OBSERVED prior graphs rather than a number in a commit message, and fails loudly if those baselines are wiped rather than passing vacuously.
+
+**Deliberately NOT done:** the 4 inert prompt-prior service linchpins (`account-management`, `sign-out`, `notifications`, `admin-console`) are untouched - they need operator ratification, not code (**#31**).
+
+**Environment note (pre-existing, not this change):** `tests/test_postgres_schema.py` fails with "the database system is in recovery mode" - the known postgres crash-loop on this 3.8GiB host. `test_agent_health` / `test_stack_smoke` need the full stack up. No schema or `pg` code was touched.
 
 ## AMENDMENT 2026-07-22 - FR-JOURNEY WITHDRAWN; arjun rate cap replaces `--stable`
 
