@@ -165,6 +165,8 @@ The redesigned Bootstrapper (#26) elicits the skeleton in TWO calls - a free-tex
 
 The Bootstrapper is a pre-analysis PHASE, not a supervised analyser proposer: it runs once, ahead of the analysis, and is triggered over the app API (`POST /projects/{id}/bootstrap`), which ingests the operator's knowledge and returns the skeleton counts - or a 503 carrying the fail-closed block.
 Its system message is TWO layers: a stable base prompt in code (identity, pipeline position, the output-field contract - the WHAT) plus the operator-tunable reasoning discipline in `skills/analysis/bootstrapper/SKILL.md` (the five stages, service-contract craft, critical withholding - the HOW).
+WHICH TURN the discipline rides in is configurable (`BOOTSTRAP_PROMPT_CONFIG`, `_PROMPT_CONFIGS`) and was settled empirically, not by argument: the default `skill_in_prompt` puts it in the USER turn beside the task, which measured best on both breadth mean and breadth floor over 15 live runs (operator-ratified 2026-07-27; see the agent-configuration eval below).
+The base layer is always the system message in every arm.
 
 **Service contract**:
 A brief functional profile of a business-function Service - what it DOES and what it OWNS - written in the application's own domain nouns and action verbs, and persisted as the `service_contract` prop.
@@ -172,6 +174,18 @@ Written by the Bootstrapper for every Service (and by the Assigner on a Service 
 It must DISCRIMINATE between business functions (a profile true of every Service is useless to a matcher) and must contain NO path, URL, route or parameter name: the operator KB states none, so a path in a contract is a model's guess that would then be read as evidence.
 Its richness is bounded by the KB's own vocabulary - a thin KB gets a thin honest contract.
 _Not to be confused with_: `label` (an NL display name) or `salience` (a one-line adversarial summary), both Phase-B concerns the Bootstrapper leaves empty.
+
+**Agent-configuration eval** (`evaluation.py` + `tools/eval_bootstrapper.sh`):
+The comparative harness for judging one analysis agent's CONFIGURATION against another - prompt arrangement, exemplar set, reasoning verbatim.
+It exists because these agents are non-deterministic (16 and 21 Services from an identical KB on consecutive runs), which makes a single run uninformative and a heuristic pass-bar actively misleading: a bar loose enough to absorb the variance cannot catch a regression, and one tight enough to catch it fires on healthy runs.
+A prompt edit once collapsed breadth 25/16/20 -> 13 while every unit test stayed green.
+**Breadth is the primary axis and is judged COMPARATIVELY** - arms are ranked against each other over repeated runs, and nothing in the harness encodes a target count or a threshold.
+**Granularity is NOT a criterion**: it has no measure this codebase trusts, so it rides along as a qualitative note (how many Services cover one narrated journey) that nothing ranks on.
+Breadth is never read alone - the integrity metrics (contract coverage, System count, Service->System edges, role-vocabulary size) travel in the same row, because an arm can buy Service count by losing something else: one live arm matched the best breadth mean while dropping an AuthorizationSystem's entire role vocabulary, and a count-only metric would have called it the winner.
+Runs drive the REAL system through the faithful entry path (API -> use-case -> agent -> sole-writer -> Neo4j), never the agent in-process, because the entry path is where an entry-path defect lives.
+Every evaluated project is LEFT IN THE GRAPH (start-only wipes) - a teardown wipe deletes the artifact the operator needs to inspect.
+GENERAL by construction: `run_matrix` / `compare` take an injected `invoke_fn` + `read_fn`, so another analysis proposer adopts the harness by supplying its own pair and may extend `skeleton_metrics` for the slice of L1 it owns; the Bootstrapper is the first adopter.
+_Not to be confused with_: the assertion catalogues (fixed contract/walkthrough predicates that pass or fail), or the #19 regression oracle. This ranks configurations; it never passes or fails one.
 
 **Proposer-reasoning pattern**:
 The reusable prompt fragments every analyser proposer composes (`proposer_reasoning.py`): a role/goal header, a chain-of-thought scaffold, a few-shot CoT block, and a bounded retry - the "optimal prompt pattern" (system-prompt role design + CoT + few-shot + structured extraction) minus the example-pollution pitfall (no hardcoded domain slugs).

@@ -15,6 +15,7 @@ Runs only when the live LLM env is configured; it is a live_neo4j-tier test (aut
 """
 import os
 import re
+from pathlib import Path
 
 import pytest
 
@@ -28,15 +29,11 @@ pytestmark = pytest.mark.skipif(
 
 PROJECT = "e2e-boot-juiceshop"
 
-JUICE_SHOP_KB = """Juice Shop is, at heart, an online juice marketplace. People come to browse and buy fresh juices, but the shop is more than a single storefront: it hosts many independent sellers under one roof, runs a Juice Club that delivers boxes on a recurring schedule, and rewards regulars through a loyalty programme. Around that sit a handful of supporting services - gifting juices and gift cards, a review system that lets buyers guide one another, a support desk that handles complaints and refunds, and an onboarding-and-payout pipeline that lets sellers join, sell, and get paid.
-
-Most of what happens on the shop falls into a few well-worn journeys. A shopper browses the shelves, drops juices into a basket, applies a discount, pays, and then follows the delivery to their door. A seller takes the mirror-image path: they apply to sell, list their juices, receive an order, pack and hand it over, and collect their earnings. After an order arrives, a customer might rate and review it, collect loyalty points, and redeem those points for a reward or discount. Someone who wants juice regularly joins the Juice Club, chooses what goes in the box, and then receives deliveries on a schedule they can pause or change at any time. And when something goes wrong, a shopper raises a complaint, a case is opened and reviewed, a decision is reached, and a refund or credit is issued.
-
-Getting in works at different levels of trust. A guest can wander the shop and even fill a basket without signing in at all. To actually own an account, a shopper registers with an email address and a password, and if they forget that password they recover it by answering a personal security question. Sellers don't simply self-serve - they apply for and are granted a separate seller sign-in. Members unlock their extra benefits only once their plan is active, and staff are handed privileged access matched to their particular job. The rule of thumb is that the higher-trust actions - paying, selling, issuing refunds - always require the person to be signed in and to hold the right role.
-
-The roles themselves span the whole ecosystem: guests and shoppers on the buying side; members with subscription benefits; sellers and seller managers running storefronts; support agents, content moderators, accountants, and administrators keeping the shop running; and, at the edges, affiliates who refer business and delivery partners who move the orders.
-
-Underneath it all, the marketplace keeps a fairly intuitive set of records. Each person has a customer account, and everything for sale is a product listing; while shopping, their choices live in a shopping basket that becomes an order, which in turn generates a delivery to a saved address. Money is tracked through a store balance, saved payment methods, discount coupons, gift cards, and - on the seller side - seller earnings. The community side is captured as product reviews, complaints and feedback, and each seller's storefront. And the loyalty and membership features rest on loyalty points, subscription plans, personal recommendations, and the security question used to protect the account."""
+# Single source of truth for the subject KB (#29): the comparative eval
+# (`polymerhus.analysis.eval_cli`) reads the SAME fixture, so an e2e result and an
+# eval result are measured against identical input and stay comparable.
+JUICE_SHOP_KB = (Path(__file__).parent / "fixtures" / "juice_shop_kb.txt").read_text(
+    encoding="utf-8").strip()
 
 _LINCHPINS = {"IdentificationSystem", "AuthenticationMechanism", "AuthorizationSystem"}
 
