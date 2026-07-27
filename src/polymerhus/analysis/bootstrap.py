@@ -16,6 +16,7 @@ never raises into the caller.
 from __future__ import annotations
 
 import logging
+from typing import NamedTuple
 
 from pydantic import BaseModel, Field
 
@@ -57,6 +58,9 @@ _BOOTSTRAP_INSTRUCTION = (
     "business skeleton: propose the business-function `services` (sign-in, "
     "checkout, orders, reward-points, cart, reviews, product-introspection, "
     "sales-analysis, ...) and any cross-cutting `systems` the text clearly implies. "
+    "Always cover the BROAD account-surface umbrellas where present - the pre-auth "
+    "sign-in / register / password-recovery (public) and, when the KB grounds a "
+    "self-service area, account-management (authenticated) - as umbrellas, never leaves. "
     "Emit NO `aggregates` - there is no Layer-0 surface to assign yet. Propose only "
     "business functions the text actually supports; return empty lists if it "
     "supports none."
@@ -204,6 +208,88 @@ _EXPOSURE_VALUES = frozenset({"public", "authenticated"})
 _REASON_ATTEMPTS = 3
 
 
+class _LinchpinService(NamedTuple):
+    """One broad umbrella business-function Service the Bootstrapper guarantees on
+    the L1 skeleton. A DEFAULT-PENDING-RATIFICATION record (gap-3): `slug` is the
+    umbrella identity, `exposure` its forced baseline, `forced` selects HARD-force
+    (minted even when the LLM omits it, like the system linchpins) vs PROMPT-PRIOR
+    (only carried when the LLM grounds it), and `note` is the one-line prompt cue."""
+
+    slug: str
+    exposure: str  # baseline exposure for a FORCED service (in _EXPOSURE_VALUES)
+    forced: bool   # True: hard-force always; False: prompt-prior (grounded proposals only)
+    note: str      # rendered into the prompt from this single source (no drift)
+
+
+# Service linchpins (gap-3, operator-CRITICAL; DEFAULT-PENDING-RATIFICATION): the
+# BROAD umbrella business-function Services the Bootstrapper ensures exist, so the
+# pre-auth account surface (sign-in / register / password-recovery) is never dropped
+# - observed live on the moodique KB, where that surface got absorbed into the
+# AuthenticationMechanism System and lost, and it is exactly where critical auth bugs
+# (e.g. password-recovery-by-security-question) concentrate. Each is a BROAD umbrella
+# that phase-A.2 "service decomposition" (the screaming step) later splits into fine
+# leaves (sign-in -> sign-in-sso / sign-in-credential; account-management -> address /
+# payment / profile / coupons management), so the linchpin is the umbrella, NEVER a leaf.
+# SINGLE SOURCE OF TRUTH (CODING_STANDARD §7): this ONE constant feeds BOTH the forcing
+# logic in shells_to_batch AND the prompt text (`_service_linchpin_prompt`), exactly as
+# SYSTEM_KINDS feeds both build_system_cypher and vocabulary_prompt.
+# GROWING SET (operator, B-Q1): the near-universal business-function umbrellas any
+# non-trivial webapp exposes, and where bugs concentrate. Only the pre-auth trio is
+# HARD-forced (forced=True, B-Q2); the rest are PROMPT-PRIOR (forced=False) - carried
+# only when the KB grounds them, so a headless / minimal target is never injected with a
+# surface it lacks. This is a §7 extension point: add a row as new universal surfaces are
+# recognised. (The prompt-prior rows are declarative today - the prompt render that would
+# cue them is retained-not-wired pending the breadth-safe wiring, see _service_linchpin_prompt.)
+_LINCHPIN_SERVICES: tuple[_LinchpinService, ...] = (
+    _LinchpinService("sign-in", "public", True,
+                     "the pre-auth credential / SSO entry point"),
+    _LinchpinService("register", "public", True,
+                     "the pre-auth account-creation surface"),
+    _LinchpinService("password-recovery", "public", True,
+                     "the pre-auth credential-reset surface (security-question / email reset "
+                     "- where critical auth bugs concentrate)"),
+    _LinchpinService("account-management", "authenticated", False,
+                     "the post-auth self-service umbrella (address / payment / profile / "
+                     "coupons); propose ONLY when the KB grounds a self-service account area"),
+    _LinchpinService("sign-out", "authenticated", False,
+                     "the post-auth session-termination ACTION (the solution-profile "
+                     "counterpart; the session LIFECYCLE itself is a technical System "
+                     "concern, not a Service) - a CSRF / session-fixation surface"),
+    _LinchpinService("notifications", "authenticated", False,
+                     "the notification surface (email / in-app / preferences) - an SSRF / "
+                     "template-injection / IDOR-on-preferences surface"),
+    _LinchpinService("admin-console", "authenticated", False,
+                     "the privileged back-office / admin surface - the highest-value "
+                     "authorization surface; propose ONLY when the KB grounds a management area"),
+)
+
+
+def _service_linchpin_prompt() -> str:
+    """Render the service-linchpin umbrellas into the prompt FROM `_LINCHPIN_SERVICES`
+    (CODING_STANDARD §7: the ONE constant feeds both this prompt text and the forcing
+    in shells_to_batch, so the two can never drift).
+
+    RETAINED-NOT-WIRED (§12): this is currently NOT called by `default_reason_fn` -
+    weaving it into the reasoning prompt globally coarsened breadth (a live eval
+    collapsed 25/16/20 Services -> 13). The forcing in shells_to_batch guarantees the
+    account surface without it; re-wiring a breadth-safe variant is gated on the
+    force-vs-prompt-prior ratification (B-Q2). Kept single-sourced + tested (C18) so a
+    ratified re-wire is one line."""
+    lines = []
+    for ls in _LINCHPIN_SERVICES:
+        tag = "ALWAYS propose as a broad umbrella" if ls.forced else "propose ONLY when the KB grounds it"
+        lines.append(f"  - `{ls.slug}` (exposure {ls.exposure}; {tag}): {ls.note}")
+    return (
+        "ACCOUNT-SURFACE UMBRELLAS - these BROAD business-function Services are where "
+        "critical auth bugs concentrate, and a later phase splits each into fine leaves "
+        "(sign-in -> sign-in-sso / sign-in-credential; account-management -> address / "
+        "payment / profile management). Propose them as BROAD umbrellas (NEVER the fine "
+        "leaves), unless the architecture genuinely lacks them (e.g. authentication is "
+        "handled by an external IdP, or a headless B2B API has no self-service surface):\n"
+        + "\n".join(lines)
+    )
+
+
 class ServiceShell(BaseModel):
     """Call-2 per-Service elicitation shell (#26 Q7): bootstrap fills
     `business_function_slug` + `exposure`; the phase-A.1 attributes are PRESENT but
@@ -258,30 +344,67 @@ def shells_to_batch(
     KB-sourced `roles`/`realms` vocabulary; the transient `claim` is dropped; NO
     `system_edges` are emitted at bootstrap. The 3 linchpins are FORCED (added if the
     LLM omitted them), deduped by (kind, discriminator)."""
-    services = []
+    services: list[ServiceProposal] = []
+    svc_by_slug: dict[str, ServiceProposal] = {}
     for sh in service_shells:
         props = {"exposure": sh.exposure} if sh.exposure in _EXPOSURE_VALUES else {}
-        services.append(ServiceProposal(business_function_slug=sh.business_function_slug, props=props))
+        existing = svc_by_slug.get(sh.business_function_slug)
+        if existing is None:  # dedup on Service identity (project_id, business_function_slug)
+            sp = ServiceProposal(business_function_slug=sh.business_function_slug, props=props)
+            svc_by_slug[sh.business_function_slug] = sp
+            services.append(sp)
+        elif props.get("exposure") and not existing.props.get("exposure"):
+            # a duplicate slug: fill an empty exposure from a later shell (never clobber)
+            existing.props["exposure"] = props["exposure"]
 
-    systems = []
-    seen: set[tuple[str, str]] = set()
+    # Force the HARD service linchpins (the pre-auth account surface) when the LLM
+    # omitted them, so the surface where critical auth bugs concentrate is never dropped
+    # (gap-3, observed live on the moodique KB). Mirrors the system-linchpin force below;
+    # deduped on Service identity (the LLM's own proposal, incl. an FR-INVENTORY reuse,
+    # wins and its exposure is preserved). account-management is PROMPT-PRIOR (forced=False)
+    # - a headless B2B API legitimately has no self-service account surface, so blind-forcing
+    # it would inject a false Service; it is carried only when the LLM grounds it above.
+    for ls in _LINCHPIN_SERVICES:
+        if ls.forced and ls.slug not in svc_by_slug:
+            sp = ServiceProposal(business_function_slug=ls.slug, props={"exposure": ls.exposure})
+            svc_by_slug[ls.slug] = sp
+            services.append(sp)
+
+    systems: list[SystemProposal] = []
+    by_key: dict[tuple[str, str], SystemProposal] = {}
     for sh in system_shells:
-        key = (sh.kind, sh.discriminator)
-        if key in seen:  # singleton dedup
-            continue
-        seen.add(key)
+        # The identify / authenticate / authorize triad are SINGLETONS at bootstrap
+        # ("linchpin System nodes ... that everything later extends", spec §7.2).
+        # Coerce any DESCRIPTIVE discriminator the LLM handed a linchpin kind (e.g.
+        # AuthorizationSystem:moodique-pyramid, AuthenticationMechanism:prestashop-login)
+        # to the sentinel, so an LLM-named linchpin can never slip past the forced-
+        # singleton dedup and strand its role/realm vocabulary on a non-canonical node
+        # while the forced singleton is left empty (observed live on the moodique KB).
+        # Non-linchpin systems keep their discriminator - a genuine multi-instance kind
+        # (two CDN products) still distinguishes.
+        disc = L1_SINGLETON if sh.kind in _LINCHPIN_SYSTEMS_V2 else sh.discriminator
+        key = (sh.kind, disc)
         props: dict = {}
         if sh.kind == "AuthorizationSystem":  # the KB-sourced pyramid vocabulary (shallow, no edges)
             if sh.roles:
                 props["roles"] = list(sh.roles)
             if sh.realms:
                 props["realms"] = list(sh.realms)
-        systems.append(SystemProposal(kind=sh.kind, discriminator=sh.discriminator, props=props))
+        existing = by_key.get(key)
+        if existing is None:
+            sp = SystemProposal(kind=sh.kind, discriminator=disc, props=props)
+            by_key[key] = sp
+            systems.append(sp)
+        else:  # a coerced/duplicate key: fill an empty role/realm vocabulary from a later shell
+            for k, v in props.items():
+                if v and not existing.props.get(k):
+                    existing.props[k] = v
 
     for kind in _LINCHPIN_SYSTEMS_V2:  # force the triad regardless of the LLM
-        if (kind, L1_SINGLETON) not in seen:
-            seen.add((kind, L1_SINGLETON))
-            systems.append(SystemProposal(kind=kind))
+        if (kind, L1_SINGLETON) not in by_key:
+            sp = SystemProposal(kind=kind)
+            by_key[(kind, L1_SINGLETON)] = sp
+            systems.append(sp)
 
     # aggregates / system_edges / data lists default EMPTY on L1DeltaBatch -> the
     # A.1 attributes are never persisted at bootstrap.
@@ -442,8 +565,17 @@ def default_reason_fn(operator_kb: str, service_slugs: list[str] | None = None) 
 
     inventory = {"services": service_slugs or [], "systems": [], "data_items": []}
     system = role_header(_BOOTSTRAP_ROLE, _BOOTSTRAP_GOAL)
+    # NB: the service-linchpin prompt (`_service_linchpin_prompt`) is DELIBERATELY NOT
+    # woven in here. Pushing the account-surface umbrellas through the reasoning prompt
+    # globally coarsened the model's granularity prior - a live 3-target eval collapsed
+    # every skeleton to ~13 umbrella Services (was 25/16/20), re-bundling distinct
+    # functions (daytona snapshots+volumes+region -> one node). The pre-auth account
+    # surface (gap-3) is guaranteed DETERMINISTICALLY by the forcing in shells_to_batch,
+    # so the breadth prompt stays untouched. Whether to re-add a minimal, breadth-safe
+    # prompt mention is the force-vs-prompt-prior ratification question (B-Q2).
     human = (
-        f"{cot_scaffold(_BOOTSTRAP_STEPS)}\n\n{few_shot_block(_FEW_SHOT)}\n\n"
+        f"{cot_scaffold(_BOOTSTRAP_STEPS)}\n\n"
+        f"{few_shot_block(_FEW_SHOT)}\n\n"
         f"{_inventory_block(inventory)}\n\nOperator KB (free text):\n{operator_kb}\n\n"
         "Now produce YOUR reasoning for this KB, following the 5 steps."
     )
