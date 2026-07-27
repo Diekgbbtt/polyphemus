@@ -44,8 +44,16 @@ def bounded_retry(fn, *, attempts: int = 3):
 
     The LLM client handles service-level failures (credits / rate-limit) upstream
     (#26 Q6), so this retry targets the low-probability transient empty/malformed
-    generation. Its exhaustion (a None return) is the caller's FAIL-CLOSED block
-    signal - the two-call proposer must not proceed on an unmet generation."""
+    generation - a 200 response carrying unusable content, which the client layer
+    cannot see. Its exhaustion (a None return) is the caller's FAIL-CLOSED block
+    signal - the two-call proposer must not proceed on an unmet generation.
+
+    The two layers are complementary in KIND but they still MULTIPLY: this runs
+    on top of a client that retries too, so the worst case is
+    `attempts x (1 + providers.MAX_RETRIES)` provider round-trips, each bounded
+    by `providers.request_timeout()`. Both client-side numbers are set
+    explicitly there precisely so that product stays visible and finite (#32);
+    do not raise `attempts` without re-reading that budget."""
     for _ in range(attempts):
         try:
             result = fn()
