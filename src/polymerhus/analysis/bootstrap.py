@@ -25,6 +25,7 @@ proceeds.
 from __future__ import annotations
 
 import logging
+import os
 from contextlib import nullcontext
 from typing import NamedTuple
 
@@ -735,18 +736,125 @@ _FEW_SHOT = [
 ]
 
 
+# --- call-1 prompt CONFIGURATION (operator directive 2026-07-27) ---------------
+#
+# The reasoning prompt is the Bootstrapper's highest-leverage and highest-risk
+# surface: one edit to it once collapsed breadth 25/16/20 -> 13 (760e93d), and the
+# live variance on a single KB is wide (12 and 17 services on identical inputs).
+# Which arrangement is best is therefore an EMPIRICAL question, and answering it
+# needs the variants runnable through the real system rather than reconstructed in
+# a harness. `BOOTSTRAP_PROMPT_CONFIG` selects one; `baseline` is the default and
+# reproduces the behaviour exactly as before this seam existed.
+#
+# Breadth across configurations is judged COMPARATIVELY (operator: never against a
+# heuristic bar), so nothing here encodes a target count.
+
+_PROMPT_CONFIGS = ("baseline", "skill_in_prompt", "more_fewshot", "breadth_verbatim", "combined")
+
+
+def _prompt_config() -> str:
+    cfg = (os.environ.get("BOOTSTRAP_PROMPT_CONFIG") or "baseline").strip()
+    if cfg not in _PROMPT_CONFIGS:
+        logger.warning(
+            "BOOTSTRAP_PROMPT_CONFIG=%r is unknown (known: %s); using 'baseline'",
+            cfg, ", ".join(_PROMPT_CONFIGS),
+        )
+        return "baseline"
+    return cfg
+
+
+# Two FURTHER divergent-domain exemplars for the `more_fewshot` arm. Chosen to keep
+# cancelling each other's domain pull (public-sector records; field logistics), and
+# each demonstrates a FINER decomposition than the 2 baseline exemplars do - the
+# hypothesis being that the exemplars, not the instructions, set the granularity prior.
+_FEW_SHOT_EXTRA = [
+    (
+        "KB: 'A council planning portal. Residents search planning applications and comment on "
+        "them; agents submit applications and pay fees; officers assess and issue decisions.'\n"
+        "1. Decompose -> application-search, application-commenting, application-submission, "
+        "fee-payment, case-assessment, decision-issuing; cross-cutting: AuthenticationMechanism "
+        "(agent/officer sign-in), AuthorizationSystem (resident vs agent vs officer).\n"
+        "2. Expand -> each of those is a SEPARATE function: a resident searching is not a "
+        "resident commenting (different action, different record); submitting is not paying "
+        "(different record, and payment can fail independently). Do NOT bundle them into a "
+        "single 'planning-applications' node.\n"
+        "3. Ground -> application-search [KB: 'Residents search planning applications'] "
+        "exposure=public; application-commenting [KB: 'comment on them'] exposure OMITTED (the "
+        "KB never says whether commenting needs an account); application-submission [KB: 'agents "
+        "submit applications'] exposure=authenticated; fee-payment [KB: 'pay fees'] "
+        "exposure=authenticated; case-assessment + decision-issuing [KB: 'officers assess and "
+        "issue decisions'] exposure=authenticated.\n"
+        "4. Withhold -> an 'appeals' function is typical of planning portals but this KB never "
+        "mentions it: DROP. AuthorizationSystem roles: [resident, agent, officer].\n"
+        "5. Decide -> 6 services, each with its own contract; e.g. fee-payment = 'Take payment "
+        "of the statutory fee for a submitted application; owns the fee record and its payment "
+        "state. Deals in fees, payments, receipts and refunds.'"
+    ),
+    (
+        "KB: 'A field-service platform. Dispatchers schedule jobs to engineers; engineers log "
+        "parts used and capture customer signatures; the back office invoices completed jobs.'\n"
+        "1. Decompose -> job-scheduling, job-execution, parts-usage, signature-capture, "
+        "invoicing; cross-cutting: AuthenticationMechanism, AuthorizationSystem (dispatcher vs "
+        "engineer vs back-office).\n"
+        "2. Expand -> parts-usage and signature-capture are distinct from job-execution: each "
+        "owns its own record and can be wrong independently of the others. Splitting on the "
+        "RECORD OWNED is what keeps each unit discretely testable.\n"
+        "3. Ground -> job-scheduling [KB: 'Dispatchers schedule jobs'] exposure=authenticated; "
+        "parts-usage [KB: 'log parts used'] exposure=authenticated; signature-capture [KB: "
+        "'capture customer signatures'] exposure OMITTED (the signer may be an unauthenticated "
+        "customer on the engineer's device); invoicing [KB: 'back office invoices completed "
+        "jobs'] exposure=authenticated.\n"
+        "4. Withhold -> a customer self-service portal is plausible but NOT described: DROP. "
+        "AuthorizationSystem roles: [dispatcher, engineer, back-office].\n"
+        "5. Decide -> 5 services; e.g. parts-usage = 'Record which stock parts an engineer "
+        "consumed on a job; owns the parts-usage line against the job. Deals in parts, stock, "
+        "quantities and consumption.'"
+    ),
+]
+
+# The `breadth_verbatim` arm. Frames decomposition as HYPOTHESIS ELICITATION plus an
+# explicit DEBUGGING pass over the candidate set - the operator's suggestion - rather
+# than telling the model to "find more services", which is the kind of unbounded push
+# that historically traded precision for count. The debugging questions are the
+# operative part: they are concrete tests a candidate either passes or fails.
+_BREADTH_VERBATIM = (
+    "BREADTH - ELICIT, THEN DEBUG YOUR CANDIDATE SET.\n"
+    "Treat every business function as a HYPOTHESIS you are trying to falsify, and treat a "
+    "too-coarse candidate set as a DEFECT to be found before you commit, not after.\n\n"
+    "Elicitation: walk the knowledge base and enumerate candidates along each axis it "
+    "actually gives you - the JOURNEYS it narrates end to end, the ROLES it names and what "
+    "each one does, and the RECORDS it says the system keeps. A record the text names with "
+    "nobody acting on it, or an actor with no function attached, is a gap worth a candidate.\n\n"
+    "Debugging pass - before you commit, take each candidate and ask:\n"
+    "  - Does it bundle two actions a user would experience as SEPARATE steps? (browsing a "
+    "catalogue and paying for a basket are not one function.)\n"
+    "  - Does it bundle work done by DIFFERENT roles? (a seller listing stock and a buyer "
+    "ordering it are two functions, however adjacent.)\n"
+    "  - Does it own MORE THAN ONE distinct record, each of which could be wrong on its own?\n"
+    "  - Would a single contract for it be so broad that it no longer discriminates it from "
+    "its neighbours?\n"
+    "If any answer is yes, SPLIT it, and say in your reasoning which test it failed.\n\n"
+    "This is not licence to invent: a split still needs its own support in the text. Splitting "
+    "one described function into two described functions is right; conjuring a function the "
+    "text never describes is the withholding failure, and it is still a defect."
+)
+
+
 def default_reason_fn(operator_kb: str, service_slugs: list[str] | None = None) -> str | None:
     """Call 1 - the free-text 5-step reasoning over the KB. The SYSTEM message is the base
     prompt (identity, pipeline position, breadth stakes, output-field contract) plus the
     Bootstrapper skill (the 5 stages, the disciplines, the service_contract craft); the HUMAN
-    message carries the run-specific material: the 2 divergent-domain few-shot CoT exemplars,
-    the FR-INVENTORY reuse block, and the KB itself. Returns the reasoning text (None if the
-    model produced nothing).
+    message carries the run-specific material: the few-shot CoT exemplars, the FR-INVENTORY
+    reuse block, and the KB itself. Returns the reasoning text (None if the model produced
+    nothing).
 
     The exemplars stay in the HUMAN turn on purpose (#29): they are prompt MECHANICS
     (they demonstrate the trace shape and cancel each other's domain anchoring) sitting
     adjacent to the task, where they demonstrably work today. Only the operator-tunable
-    reasoning discipline moved into the skill."""
+    reasoning discipline moved into the skill.
+
+    `BOOTSTRAP_PROMPT_CONFIG` selects the arrangement (default `baseline`); see
+    `_PROMPT_CONFIGS`."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from polymerhus.app.llm.roles import chat_model_for
@@ -762,12 +870,31 @@ def default_reason_fn(operator_kb: str, service_slugs: list[str] | None = None) 
     # surface (gap-3) is guaranteed DETERMINISTICALLY by the forcing in shells_to_batch,
     # so the breadth prompt stays untouched. Whether to re-add a minimal, breadth-safe
     # prompt mention is the force-vs-prompt-prior ratification question (B-Q2, #31).
-    human = (
-        f"{few_shot_block(_FEW_SHOT)}\n\n"
-        f"{_inventory_block(inventory)}\n\nOperator KB (free text):\n{operator_kb}\n\n"
-        "Now produce YOUR reasoning for this KB, following the five stages."
-    )
-    system = f"{_BOOTSTRAPPER_BASE_SYSTEM}\n\n{_load_bootstrapper_skill()}"
+    cfg = _prompt_config()
+    skill = _load_bootstrapper_skill()
+
+    exemplars = list(_FEW_SHOT)
+    if cfg in ("more_fewshot", "combined"):
+        exemplars += _FEW_SHOT_EXTRA
+
+    parts = []
+    if cfg in ("skill_in_prompt", "combined"):
+        # The whole discipline moves into the USER turn, adjacent to the task, and the
+        # system message keeps only the identity/output contract. Some models weight
+        # user-turn instructions more heavily than the system prompt; whether this one
+        # does is exactly what the comparative eval answers.
+        parts.append(f"HOW TO REASON - follow this discipline:\n{skill}")
+    parts.append(few_shot_block(exemplars))
+    if cfg in ("breadth_verbatim", "combined"):
+        parts.append(_BREADTH_VERBATIM)
+    parts.append(f"{_inventory_block(inventory)}\n\nOperator KB (free text):\n{operator_kb}")
+    parts.append("Now produce YOUR reasoning for this KB, following the five stages.")
+    human = "\n\n".join(parts)
+
+    system = _BOOTSTRAPPER_BASE_SYSTEM
+    if cfg not in ("skill_in_prompt", "combined"):
+        system = f"{system}\n\n{skill}"
+    logger.info("bootstrap call-1 prompt config=%s (%d exemplars)", cfg, len(exemplars))
     result = chat_model_for("analyser").invoke([
         SystemMessage(content=system),
         HumanMessage(content=human),

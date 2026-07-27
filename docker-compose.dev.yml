@@ -20,6 +20,12 @@ services:
       - ./src:/srv/src
       - ./db:/srv/db
       - ./skills:/srv/skills   # triager loads writing-observations SKILL.md at runtime
+    environment:
+      # Bootstrapper call-1 prompt arrangement (see bootstrap.py::_PROMPT_CONFIGS).
+      # Passed through so a comparative eval can run each arm against the REAL
+      # system. `--reload` does NOT re-read the environment, so switching arms
+      # needs `up -d --force-recreate agent`, not just a source edit.
+      BOOTSTRAP_PROMPT_CONFIG: ${BOOTSTRAP_PROMPT_CONFIG:-baseline}
     command: ["uvicorn", "polymerhus.app.main:app", "--host", "0.0.0.0", "--port", "8080",
               "--reload", "--reload-dir", "/srv/src"]
 

@@ -43,7 +43,11 @@ _LINCHPINS = {"IdentificationSystem", "AuthenticationMechanism", "AuthorizationS
 # The must-cover journeys (Q2). Keyword groups tolerate the LLM's slug naming; every
 # group must be covered by >=1 produced Service slug.
 _CORE_JOURNEYS = {
-    "buying/checkout": ("checkout", "basket", "cart", "payment", "order"),
+    # "shop"/"shopping" belongs here: a live run named the buying journey `shopping`
+    # and the group missed it, failing the test for a naming the KB itself uses
+    # ("A shopper browses the shelves, drops juices into a basket"). The group tests
+    # that the journey is COVERED, so it must accept the KB's own words for it.
+    "buying/checkout": ("checkout", "basket", "cart", "payment", "order", "shop"),
     "selling": ("seller",),
     "reviews": ("review",),
     "loyalty": ("loyalty", "points", "reward"),
