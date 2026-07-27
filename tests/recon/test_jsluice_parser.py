@@ -82,11 +82,13 @@ def test_malformed_line_skipped():
     # The garbage line must be dropped without costing us the valid deltas.
     deltas = parse(FIX.read_text())
 
-    # url line -> BaseURL + Endpoint; secret line -> BaseURL + Secret.
-    assert len(deltas) == 4
+    # url line (`...?id=1`) -> BaseURL + Endpoint + Parameter(id); secret line ->
+    # BaseURL + Secret. Param discovery now surfaces the query param too.
+    assert len(deltas) == 5
     assert sum(1 for d in deltas if d.type == "Endpoint") == 1
     assert sum(1 for d in deltas if d.type == "Secret") == 1
     assert sum(1 for d in deltas if d.type == "BaseURL") == 2
+    assert sum(1 for d in deltas if d.type == "Parameter") == 1
 
 
 def test_non_string_values_skipped_not_raised():
@@ -173,3 +175,24 @@ def test_two_distinct_real_secrets_get_distinct_hashes():
     deltas = parse(_REAL_AWS + "\n" + _REAL_GCP)
     hashes = {d.identity["value_hash"] for d in deltas if d.type == "Secret"}
     assert len(hashes) == 2, "distinct secrets must not collide on value_hash"
+
+
+def test_jsluice_urls_emit_query_and_body_parameters():
+    # Param discovery: jsluice `urls` mode already emits queryParams/bodyParams
+    # arrays per discovered URL; the parser now turns them into Parameter deltas
+    # (query params at position=query, body params at position=body) anchored to
+    # the Endpoint via HAS_PARAMETER.
+    from polymerhus.recon.domain.parsers.jsluice_parser import parse
+    line = (
+        '{"url":"https://h/api/login?next=x","method":"POST",'
+        '"queryParams":["next"],"bodyParams":["username","password"]}\n'
+    )
+    out = parse(line)
+    params = {(d.identity["name"], d.identity["position"]) for d in out if d.type == "Parameter"}
+    assert ("next", "query") in params
+    assert ("username", "body") in params
+    assert ("password", "body") in params
+    # each Parameter hangs off the discovered Endpoint
+    for d in out:
+        if d.type == "Parameter":
+            assert any(e.rel == "HAS_PARAMETER" and e.node_type == "Endpoint" for e in d.edges)

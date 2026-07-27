@@ -91,3 +91,33 @@ def test_malformed_line_skipped():
 def test_missing_request_endpoint_skipped():
     deltas = parse('{"response":{"status_code":200}}\n{"request":{}}\n')
     assert deltas == []
+
+
+def test_katana_form_extraction_emits_body_parameters():
+    # Param discovery: with -fx katana emits response.forms[] = {method, action,
+    # enctype, parameters:[names]}. The parser turns a POST form's parameters
+    # into body Parameter deltas anchored to the form's action Endpoint.
+    from polymerhus.recon.domain.parsers.katana_parser import parse
+    line = (
+        '{"request":{"endpoint":"https://h/","method":"GET"},'
+        '"response":{"status_code":200,"content_type":"text/html",'
+        '"forms":[{"method":"POST","action":"https://h/login",'
+        '"parameters":["user","pass"]}]}}\n'
+    )
+    out = parse(line)
+    params = {(d.identity["name"], d.identity["position"]) for d in out if d.type == "Parameter"}
+    assert ("user", "body") in params
+    assert ("pass", "body") in params
+    assert any(d.type == "Endpoint" and d.identity["path"] == "/login" for d in out)
+
+
+def test_katana_get_form_parameters_are_query_position():
+    from polymerhus.recon.domain.parsers.katana_parser import parse
+    line = (
+        '{"request":{"endpoint":"https://h/","method":"GET"},'
+        '"response":{"forms":[{"method":"GET","action":"https://h/search",'
+        '"parameters":["q"]}]}}\n'
+    )
+    out = parse(line)
+    params = {(d.identity["name"], d.identity["position"]) for d in out if d.type == "Parameter"}
+    assert ("q", "query") in params

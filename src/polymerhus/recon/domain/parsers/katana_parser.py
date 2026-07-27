@@ -12,6 +12,8 @@ key with a `HAS_PARAMETER` edge from the `Endpoint`.
 
 Pure, deterministic, tolerant of malformed/missing-key lines - never raises.
 """
+from urllib.parse import urljoin
+
 from polymerhus.recon.domain.parsers._jsonlines import iter_json_dicts, safe_str
 from polymerhus.recon.domain.parsers._urls import url_to_deltas
 from polymerhus.recon.domain.types import AssetDelta
@@ -49,5 +51,37 @@ def parse(stdout: str) -> list[AssetDelta]:
                 },
             )
         )
+
+        # Param discovery: with `-fx` katana emits `response.forms[]` =
+        # {method, action, enctype, parameters:[names]}. Each form's fields
+        # become Parameter deltas anchored to the form's action Endpoint - body
+        # params for a POST form, query params for a GET form. The action is
+        # resolved against the crawled endpoint so a relative action still mints
+        # the right BaseURL+Endpoint via the shared helper.
+        forms = response.get("forms") or []
+        if not isinstance(forms, list):
+            forms = []
+        for form in forms:
+            if not isinstance(form, dict):
+                continue
+            names = [p for p in (form.get("parameters") or []) if isinstance(p, str) and p]
+            if not names:
+                continue
+            fmethod = form.get("method") or "GET"
+            if not isinstance(fmethod, str):
+                fmethod = "GET"
+            fmethod = fmethod.upper()
+            action = form.get("action")
+            if not isinstance(action, str) or not action:
+                action = endpoint
+            action_url = urljoin(endpoint, action)
+            if fmethod == "POST":
+                deltas.extend(
+                    url_to_deltas(action_url, method=fmethod, source="katana", body_params=names)
+                )
+            else:
+                deltas.extend(
+                    url_to_deltas(action_url, method=fmethod, source="katana", query_params=names)
+                )
 
     return deltas

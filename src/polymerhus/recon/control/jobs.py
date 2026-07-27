@@ -129,7 +129,11 @@ JOBS: dict[str, JobSpec] = {
             # trees and ftp/backup artefacts from being crawled at all. The
             # curator gate (noise_filter) still catches anything that slips
             # through, incl. generated JS these coarse flags cannot express.
-            "katana -u {target} -d 3 -jc -kf robotstxt -c 10 -rl 50 "
+            # `-fx` (form-extraction) makes katana emit response.forms[] with each
+            # form's method/action/parameters, so form/body request parameters are
+            # discovered (not just query params from crawled URLs) - the built-in
+            # param-discovery capability the katana_parser now turns into Parameters.
+            "katana -u {target} -d 3 -jc -kf robotstxt -fx -c 10 -rl 50 "
             "-ef css,scss,less,woff,woff2,ttf,eot,otf,map,"
             "png,jpg,jpeg,gif,svg,webp,ico,bmp,mp3,wav,mp4,webm,mov,pdf,zip "
             "-cos 'node_modules/|bower_components/|\\.(bak|old|swp|orig|tmp)($|\\?)' "
