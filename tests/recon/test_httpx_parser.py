@@ -107,6 +107,39 @@ def test_baseurl_and_endpoint_carry_webapp_restapi_profile():
     assert next(d for d in app if d.type == "BaseURL").props["profile"] == "webapp"
 
 
+def test_deep_endpoint_carries_own_profile_without_clobbering_baseurl():
+    # Per-endpoint profiling (D16 split): when the reprofile pass probes a DEEP
+    # endpoint URL (not the root `/`), the resulting Endpoint carries its OWN
+    # profile, but the BaseURL delta must NOT stamp a profile - otherwise a deep
+    # `restapi` endpoint under a `webapp` host would clobber the root-derived
+    # BaseURL.profile via MERGE. BaseURL.profile mirrors the root `/` only.
+    deltas = parse(
+        '{"url":"https://shop.example.com/api/v1/users","status_code":200,'
+        '"content_type":"application/json"}\n'
+    )
+    ep = next(d for d in deltas if d.type == "Endpoint")
+    assert ep.identity["path"] == "/api/v1/users"
+    assert ep.props["profile"] == "restapi"
+
+    baseurl = next(d for d in deltas if d.type == "BaseURL")
+    assert baseurl.props.get("profile") is None, (
+        "a deep-endpoint probe must not stamp BaseURL.profile"
+    )
+
+
+def test_root_probe_still_mirrors_profile_onto_baseurl():
+    # The root `/` probe DOES set BaseURL.profile (the backward-compatible
+    # root-derived mirror the analyser delivery-gate + existing selectors read).
+    deltas = parse(
+        '{"url":"https://api.example.com/","status_code":200,'
+        '"content_type":"application/json"}\n'
+    )
+    baseurl = next(d for d in deltas if d.type == "BaseURL")
+    ep = next(d for d in deltas if d.type == "Endpoint")
+    assert baseurl.props["profile"] == "restapi"
+    assert ep.props["profile"] == "restapi"
+
+
 def test_reprofile_job_uses_the_httpx_parser_to_profile_a_crawler_minted_baseurl():
     # D27: the reprofile pass re-probes BaseURLs a crawler minted without a
     # profile (e.g. a JS-derived API host jsluice recovered). It reuses the

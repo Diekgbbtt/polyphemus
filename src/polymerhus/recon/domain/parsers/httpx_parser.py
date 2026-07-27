@@ -86,8 +86,18 @@ def parse(stdout: str) -> list[AssetDelta]:
             "content_type": content_type,
             "final_url": final_url,
             "server": server,
-            "profile": profile,
         }
+        # Per-endpoint profiling (D16 split): the Endpoint always carries its OWN
+        # `profile` (set via extra_endpoint_props above). `BaseURL.profile` is only
+        # the root-derived MIRROR, so it is stamped ONLY when this probe hit the
+        # root `/`. A deep-endpoint probe (the refactored reprofile pass points
+        # httpx at Endpoints, not just Subdomain roots) must NOT write
+        # `BaseURL.profile`, or a `restapi` endpoint under a `webapp` host would
+        # clobber the root's profile through MERGE. Endpoint.profile is the
+        # authoritative per-endpoint signal; BaseURL.profile stays backward-compat
+        # for the analyser delivery-gate + existing selectors.
+        if endpoint_delta.identity.get("path") == "/":
+            baseurl_delta.props["profile"] = profile
         # Strong constraint: every httpx BaseURL is linked back to the Subdomain
         # it was probed from - the `input` echoed by httpx is exactly that host
         # (httpx consumes Subdomain, so `input` == the Subdomain node's `name`).
