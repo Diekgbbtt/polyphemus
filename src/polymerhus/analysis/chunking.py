@@ -24,6 +24,7 @@ from __future__ import annotations
 
 import logging
 import math
+import re
 
 from pydantic import BaseModel, ConfigDict
 
@@ -41,6 +42,15 @@ CHUNK_MAX_ASSETS = 100
 # still assignable, and withholding it made a never-profiled target produce an
 # ownerless attack surface indistinguishable from one with nothing to own (AMV-14).
 _GATED_TYPES: frozenset[str] = frozenset({"Parameter"})
+
+# Script Endpoints (`*.js`) are EXCLUDED from the stream for every downstream agent.
+# Recon must keep producing them - jsluice mines them for parameters and endpoints,
+# and they carry technology evidence - but a script file is not itself a surface an
+# attack acts on, so an agent asked to assign or type one is being handed noise. The
+# exclusion is at the STREAM, not per-role: no proposer wants them.
+# The query string is stripped before matching so a cache-busted `/app.js?v=2` is
+# still recognised as a script.
+_SCRIPT_PATH = re.compile(r"\.js$", re.IGNORECASE)
 
 # The sentinel admitting EVERY asset type. Load-bearing, not a convenience: with
 # three allow-sets an asset type no role names would be admitted by nobody and so
@@ -116,6 +126,20 @@ def admit_for_role(chunk: Chunk, role: str) -> tuple[AssetDelta, ...]:
     return tuple(a for a in chunk.assets if a.type in admits)
 
 
+def is_script_endpoint(asset: AssetDelta) -> bool:
+    """True for an Endpoint whose path is a JavaScript file (`*.js`).
+
+    Only Endpoints are judged: a Parameter or Header discovered ON a script is a real
+    finding and stays in the stream."""
+    if getattr(asset, "type", None) != "Endpoint":
+        return False
+    path = (asset.identity or {}).get("path")
+    if not isinstance(path, str):
+        return False
+    bare = path.split("?", 1)[0].split("#", 1)[0]
+    return bool(_SCRIPT_PATH.search(bare))
+
+
 def _baseurl_of(asset: AssetDelta) -> str | None:
     """The BaseURL origin a gated asset hangs off, read from its identity."""
     bu = (asset.identity or {}).get("baseurl")
@@ -181,6 +205,8 @@ def chunks_for_job(
         try:
             if not getattr(asset, "type", None):
                 continue  # malformed: no type -> exclude, never crash
+            if is_script_endpoint(asset):
+                continue  # script file: kept in L0, never streamed to an agent
             admitted, flagged = _gate(asset, profiled, barrier)
             if admitted:
                 items.append((asset, flagged))

@@ -160,3 +160,26 @@ def test_C12b_profiled_origins_excludes_blank_or_none_profile():
         {"baseurl": "d", "profile": "webapp"},
     ]
     assert profiled_origins(records) == frozenset({"a", "d"})
+
+
+# --- C27: script Endpoints are excluded from the stream -----------------------
+
+def test_C27_js_script_endpoints_are_excluded_for_every_agent():
+    """Recon keeps producing them (jsluice mines them); no proposer wants them."""
+    assets = [
+        _ep("/orders/42"), _ep("/static/app.js"), _ep("/bundle.JS"),
+        _ep("/main.js?v=2"), _ep("/js/api/orders"),   # a /js/ path segment is NOT a script
+    ]
+    (chunk,) = chunks_for_job(JOB, assets, profiled=frozenset({BU}))
+    assert {a.identity["path"] for a in chunk.assets} == {"/orders/42", "/js/api/orders"}
+
+
+def test_C27b_non_endpoint_assets_found_on_scripts_survive():
+    """A Parameter or Header discovered on a script is a real finding."""
+    assets = [
+        _ep("/app.js"),
+        AssetDelta(type="Parameter", identity={"name": "token", "baseurl": BU}),
+        AssetDelta(type="Header", identity={"name": "X-Api"}),
+    ]
+    (chunk,) = chunks_for_job(JOB, assets, profiled=frozenset({BU}))
+    assert sorted(a.type for a in chunk.assets) == ["Header", "Parameter"]
