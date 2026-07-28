@@ -246,6 +246,14 @@ def _chunk_slice(chunk: Chunk) -> dict:
 # `overthink` and `critical-thinking-logical-reasoning` disciplines down to what this
 # role needs. Fires ONLY on `mode="reflect"`, so the create-pass system prefix stays
 # byte-stable and provider prompt-caching holds across the run.
+#
+# NOT REACHED IN PRODUCTION, deliberately (operator-ratified 2026-07-28). `Mode` is
+# declared at `analysis/messages.py:36` and read only by `_system_prompt`; no
+# dispatcher ever sets `"reflect"`. Like the curation pass, reflection is legacy
+# under the analysis rewrite and degrades ORGANICALLY as the pipeline completes - it
+# is neither wired up nor deleted here. It stays TESTED (C25, C40b on both prompt
+# arms) so that whoever does wire it inherits a pinned contract rather than a guess,
+# and so its cost is visible: it is dead weight until then, not a working feature.
 _REFLECT_VERBATIM = (
     "\n\nREFLECT PASS. Before emitting any revised proposal, write these four steps out:\n"
     "1. RESTATE AS EVIDENCE: for each aggregate, quote the exact path segment or "
@@ -263,18 +271,24 @@ _REFLECT_VERBATIM = (
 
 
 def _system_prompt(mode: str = "create") -> str:
-    """The STABLE half of the prompt (#34): the role verbatim, the worked examples,
-    and under `reflect` the reflection protocol. Everything here is invariant across
-    a run so the provider prompt-cache prefix survives it; the volatile inventory and
-    chunk ride the user message instead.
+    """The STABLE half of the prompt (#34): the role verbatim, the judgment
+    discipline, and under `reflect` the reflection protocol. Everything here is
+    invariant across a run so the provider prompt-cache prefix survives it; the
+    volatile inventory and chunk ride the user message instead.
 
     It deliberately does NOT load the shared legacy analyser skill. That skill is
     L0-oriented and addresses a generalist proposer: it instructs System modelling,
     data relationships and Service props, all of which #34 D4/D18 forbid this role
     from emitting. Carrying it here would put "emit aggregates only" and a
     WebPresentation worked example in one system message and let the model choose.
-    Retiring it per-role is ticket #30; this is that retirement for the Assigner."""
-    base = f"{_ROLE_VERBATIM}\n\n{_FEW_SHOTS}"
+    Retiring it per-role is ticket #30; the ROLE-SPECIFIC skill that replaces it for
+    the Assigner is `skills/analysis/assigner/SKILL.md`, selected by
+    `ASSIGNER_PROMPT_CONFIG=skill`."""
+    base = (
+        f"{_ROLE_VERBATIM}\n\n{_load_assigner_skill()}"
+        if _assigner_prompt_config() == "skill"
+        else f"{_ROLE_VERBATIM}\n\n{_FEW_SHOTS}"
+    )
     return base + _REFLECT_VERBATIM if mode == "reflect" else base
 
 
@@ -302,11 +316,17 @@ _ROLE_VERBATIM = (
     "USE ONLY THE SLUGS LISTED IN THE INVENTORY. You cannot create a Service: a slug "
     "that is not listed names nothing and its aggregate will be discarded. If surface "
     "fits no listed Service, leave it unassigned rather than inventing an owner.\n"
-    "REFERENCING AN ENDPOINT: set `l0.label` to the literal string `Endpoint` - it is "
-    "the node TYPE, never a path and never a method. Put the endpoint itself in "
-    "`l0.identity` as `{\"path\": \"/api/Users\", \"method\": \"GET\", "
-    "\"baseurl\": \"<the baseurl shown>\"}`. Only reference endpoints that appear "
-    "above; one you invent names nothing and is discarded.\n"
+    # The scolding half of this rule ("it is the node TYPE, never a path and never a
+    # method") was deleted once `resolve_l0_refs` began overwriting `l0.label`
+    # unconditionally: an instruction the code no longer depends on is not a safety
+    # net, it is tokens spent naming the elephant. What survives is the IDENTITY
+    # shape, which is still load-bearing - it is what makes the repair's happy path
+    # fire, because `_candidate_path` reads `identity["path"]` first.
+    "REFERENCING AN ENDPOINT: put the endpoint in `l0.identity` as "
+    "`{\"path\": \"/api/Users\", \"method\": \"GET\", "
+    "\"baseurl\": \"<the baseurl shown>\"}`, with `l0.label` set to `Endpoint`. "
+    "Only reference endpoints that appear above; one you invent names nothing and "
+    "is discarded.\n"
     "Emit `aggregates` only. Leave services, systems, system_edges and every "
     "data-modelling list EMPTY - other proposers own those."
 )
@@ -340,6 +360,79 @@ _FEW_SHOTS = (
     "\"path segment /shipment\"). Both contracts genuinely reach this Endpoint; emit "
     "both rather than choosing."
 )
+
+
+# The Assigner's system message is TWO layers, mirroring the Bootstrapper
+# (`bootstrap.py::_BOOTSTRAPPER_BASE_SYSTEM`): `_ROLE_VERBATIM` above is the WHAT
+# (identity, the aggregates-only output contract, the reference shape) and must hold
+# even with no skills mount, while `skills/analysis/assigner/SKILL.md` is the HOW (the
+# ownership-judgment discipline and its worked examples), operator-tunable without a
+# code change. This is the per-role retirement of the shared analyser skill promised by
+# #30: that skill instructs System modelling and data relationships this role is
+# forbidden to emit, so a GENERALIST skill was worse here than none.
+#
+# The FALLBACK is a degraded stand-in used only when the mount is unavailable
+# (`skill_for` logs a warning). Fail-open is required (`loop-constraints.md`: a skill
+# error degrades, never crashes), but it must not degrade to SILENCE: withholding is the
+# only defence against the measured 31-38% over-assignment, so the fallback carries the
+# null-hypothesis, discriminating-evidence and calibration core even though it drops the
+# worked examples. Every HARD invariant survives a missing mount regardless, because
+# narrow / resolve / inventory / bar are code, not prompt.
+_ASSIGNER_SKILL_FALLBACK = (
+    "Begin every judgment from NO OWNER and make the evidence overturn it: "
+    "assignment is the claim that carries the burden of proof. Read the "
+    "Endpoint's own path nouns, method and parameter names BEFORE you read the "
+    "inventory, hold every candidate Service whose contract touches them, and "
+    "keep only the candidate whose evidence fits THAT contract and not the "
+    "others - evidence that fits three Services equally is evidence for none. "
+    "Where two contracts genuinely both reach the Endpoint, emit both. "
+    "Confidence tracks discriminating evidence: ~0.9 when a path noun names a "
+    "record the contract owns, ~0.5 when only the business area matches, ~0.2 "
+    "when the only link is topical proximity. A below-bar judgment produces no "
+    "edge, and that is the correct outcome rather than a failure."
+)
+
+
+def _load_assigner_skill() -> str:
+    """The Assigner's ownership-judgment discipline, single-sourced from
+    `skills/analysis/assigner/SKILL.md` through the shared `skill_for` (FR-SKILLIF):
+    YAML frontmatter stripped, cached in-process, and degraded to the terse fallback
+    above if the mount is unavailable.
+
+    That cache is what preserves the provider prompt-cache prefix: the file is read
+    ONCE per process, so `_system_prompt` returns byte-identical content for every
+    chunk of a run (the only invalidation is `skills.clear_cache()`, a test seam)."""
+    from polymerhus.recon.domain.skills import skill_for
+
+    return skill_for("analysis/assigner", fallback=_ASSIGNER_SKILL_FALLBACK)
+
+
+# The assignment prompt is the highest-variance surface in the analyser: the SAME
+# surface has drawn 143 aggregates in one run and 11 in another (AMV-9). Which
+# arrangement is better is therefore an EMPIRICAL question, and this repo has a settled
+# answer to that shape of question - `bootstrap._PROMPT_CONFIGS`, where `skill_in_prompt`
+# became the default only after a measured comparative eval, never on argument.
+#
+# `baseline` reproduces the pre-skill prompt BYTE-FOR-BYTE and stays the default (and the
+# rollback path) until a comparative run says otherwise. The harness that runs that
+# comparison is `evaluation.evaluate_assigner` - it reads completed runs back per arm and
+# reports assignment volume against the integrity columns that stop volume being read as
+# a score (stale pool, withheld rate, out-of-inventory rate), plus the confidence-bar
+# sweep that finally makes `ASSIGN_CONFIDENCE_BAR` above an output rather than a guess.
+# `_FEW_SHOTS` is retained for this arm and must not be deleted.
+_ASSIGNER_PROMPT_CONFIGS = ("baseline", "skill")
+_DEFAULT_ASSIGNER_PROMPT_CONFIG = "baseline"
+
+
+def _assigner_prompt_config() -> str:
+    cfg = (os.environ.get("ASSIGNER_PROMPT_CONFIG") or _DEFAULT_ASSIGNER_PROMPT_CONFIG).strip()
+    if cfg not in _ASSIGNER_PROMPT_CONFIGS:
+        logger.warning(
+            "ASSIGNER_PROMPT_CONFIG=%r is unknown (known: %s); using %r",
+            cfg, ", ".join(_ASSIGNER_PROMPT_CONFIGS), _DEFAULT_ASSIGNER_PROMPT_CONFIG,
+        )
+        return _DEFAULT_ASSIGNER_PROMPT_CONFIG
+    return cfg
 
 
 def _user_prompt(l0_slice: dict, inventory: dict | None) -> str:

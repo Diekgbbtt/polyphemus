@@ -165,7 +165,16 @@ def _load_curation_skill() -> str:
     """The curation system prompt COMPOSED with the analyser reasoning skill (the
     curation pass reasons the same way, then applies the reconciliation rules).
     Both are loaded via the shared `skill_for`, degrading to the inline fallbacks
-    if the mount is unavailable (a missing mount never crashes the pass)."""
+    if the mount is unavailable (a missing mount never crashes the pass).
+
+    #30 SCOPE NOTE (operator-ratified 2026-07-28). This is the SECOND and last
+    production consumer of `skills/analysis/analyser/SKILL.md`, and it is the reason
+    that shared skill cannot simply be deleted when the analyser pod retires it.
+    It is deliberately left alone: curation is legacy code under the analysis
+    rewrite and degrades ORGANICALLY once the pipeline is complete - the skill and
+    its consumer retire together, rather than the skill being surgically unpicked
+    from a pass that is itself on the way out. Do not "fix" this coupling in
+    isolation; retiring curation retires it."""
     from polymerhus.recon.domain.skills import skill_for
 
     analyser = skill_for("analysis/analyser", fallback="")

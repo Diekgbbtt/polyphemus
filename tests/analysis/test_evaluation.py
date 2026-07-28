@@ -169,3 +169,122 @@ def test_format_comparison_renders_every_arm():
     rendered = format_comparison(summary)
     assert "a" in rendered and "b" in rendered
     assert "n_roles" in rendered  # integrity travels with the breadth row
+
+
+# --- the Assigner arm (AMV-9) -------------------------------------------------
+#
+# The Assigner's risk is OVER-production, the mirror of the Bootstrapper's, so these
+# pin the properties that stop assignment volume being read as a score.
+
+def _census(**kw):
+    base = dict(endpoints=100, aggregates=40, assigned_endpoints=38,
+                multi_owner_endpoints=2, admitted=100, proposed=60,
+                unresolvable=2, out_of_inventory=3, withheld=15, mean_confidence=0.86)
+    base.update(kw)
+    return base
+
+
+def test_assignment_metrics_report_the_stale_pool_as_a_first_class_number():
+    """`stale_pool == 0` was recorded live as a WARNING sign, not a win: a run that
+    leaves nothing unassigned has almost certainly assigned surface no Service owns.
+    So it has to be a column, not an absence."""
+    from polymerhus.analysis.evaluation import assignment_metrics
+
+    m = assignment_metrics(_census())
+    assert m["stale_pool"] == 62
+    assert m["stale_rate"] == 0.62
+    assert m["coverage"] == 0.38
+    assert m["n_aggregates"] == 40          # the primary axis
+
+
+def test_assignment_metrics_expose_where_each_judgment_died():
+    from polymerhus.analysis.evaluation import assignment_metrics
+
+    m = assignment_metrics(_census())
+    assert m["withheld_rate"] == 0.25            # 15/60 - the discipline firing
+    assert m["out_of_inventory_rate"] == 0.05    # 3/60  - invented owners
+    assert m["unresolvable_rate"] == round(2 / 60, 3)
+
+
+def test_assignment_metrics_rates_are_zero_not_none_on_an_empty_run():
+    """A missing column reads as an absent measurement; these columns are how an
+    arm's noise is seen, so they must always be present."""
+    from polymerhus.analysis.evaluation import assignment_metrics
+
+    m = assignment_metrics({})
+    assert m["withheld_rate"] == 0.0 and m["coverage"] == 0.0 and m["stale_pool"] == 0
+
+
+def test_bar_sweep_makes_the_confidence_bar_an_output():
+    """ASSIGN_CONFIDENCE_BAR is documented as 'an OUTPUT of the assertion suite' but
+    nothing swept it. The sweep needs no extra LLM calls - withholding is a pure
+    function of confidences already collected - so one run yields the whole curve."""
+    from polymerhus.analysis.evaluation import bar_sweep
+
+    out = bar_sweep([0.95, 0.9, 0.8, 0.76, 0.74, 0.6, 0.55], bars=(0.5, 0.75, 0.9))
+    assert out["n"] == 7
+    assert out["kept"]["0.5"] == 7
+    assert out["kept"]["0.75"] == 4       # the cliff sits between 0.74 and 0.76
+    assert out["kept"]["0.9"] == 2
+    assert out["kept_rate"]["0.9"] == round(2 / 7, 3)
+
+
+def test_compare_uses_the_assigner_primary_axis_and_integrity_columns():
+    from polymerhus.analysis.evaluation import (
+        ASSIGNMENT_INTEGRITY_KEYS, assignment_metrics, compare,
+    )
+
+    cells = [
+        EvalOutcome("skill", 1, "p1", 1.0, assignment_metrics(_census(aggregates=40))),
+        EvalOutcome("skill", 2, "p2", 1.0, assignment_metrics(_census(aggregates=44))),
+        # the failure this guards: an arm that assigns EVERYTHING looks like a
+        # coverage win while its stale pool collapses to zero
+        EvalOutcome("baseline", 1, "p3", 1.0,
+                    assignment_metrics(_census(aggregates=130, assigned_endpoints=100,
+                                               withheld=0, proposed=130))),
+    ]
+    summary = compare(cells, primary_key="n_aggregates",
+                      integrity_keys=ASSIGNMENT_INTEGRITY_KEYS)
+
+    assert summary["skill"]["primary_key"] == "n_aggregates"
+    assert summary["skill"]["breadth"]["values"] == [40, 44]
+    # baseline "wins" the primary axis while its integrity columns give it away
+    assert summary["baseline"]["breadth"]["mean"] == 130
+    assert summary["baseline"]["integrity"]["stale_pool"] == [0]
+    assert summary["baseline"]["integrity"]["withheld_rate"] == [0.0]
+    # granularity_note is Bootstrapper-only: an agent without it gets no such column
+    assert "granularity_note" not in summary["skill"]
+
+
+def test_compare_defaults_are_unchanged_for_the_bootstrapper():
+    """The generalisation must not move the first adopter. Same call, same shape."""
+    summary = compare(_outcomes("a", [16, 19, 21]))
+    assert summary["a"]["primary_key"] == "n_services"
+    assert summary["a"]["breadth"]["values"] == [16, 19, 21]
+    assert "granularity_note" in summary["a"]
+    assert set(summary["a"]["integrity"]) == set(INTEGRITY_KEYS)
+
+
+def test_evaluate_assigner_labels_each_project_with_the_arm_it_ran_under(monkeypatch):
+    """The operator's requirement: the evaluation must ACCOUNT for the config
+    parameter, not just measure the graph. A project read without its arm label is an
+    unattributable number."""
+    from polymerhus.analysis import evaluation
+
+    graphs = {
+        "p-skill": _census(aggregates=40),
+        "p-base": _census(aggregates=120, assigned_endpoints=99, withheld=0),
+    }
+
+    def fake_read(project_id, *, read_fn=None):
+        c = dict(graphs[project_id])
+        c["confidences"] = [0.9, 0.8, 0.7]
+        return c
+
+    monkeypatch.setattr(evaluation, "read_assignment", fake_read)
+    summary = evaluation.evaluate_assigner({"skill": ["p-skill"], "baseline": ["p-base"]})
+
+    assert summary["skill"]["projects"] == ["p-skill"]
+    assert summary["baseline"]["projects"] == ["p-base"]
+    assert summary["skill"]["bar_sweep"]["n"] == 3     # the sweep rides each arm
+    assert summary["baseline"]["integrity"]["withheld_rate"] == [0.0]

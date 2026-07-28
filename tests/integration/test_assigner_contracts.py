@@ -6,6 +6,9 @@ narrowing, the prompt's volatility split and the supervisor receipt - over craft
 proposals and an injected invoke_fn (no live LLM/graph). Expected values from the
 spec. Verifier-gated; not selected by the tdd unit loop.
 """
+import pytest
+
+from polymerhus.analysis import assigner
 from polymerhus.analysis.analyser_types import (
     AggregatesProposal,
     DataItemProposal,
@@ -399,12 +402,44 @@ def test_C34_repaired_reference_survives_the_full_shaping_end_to_end():
     assert agg.l0.identity["path"] == "/api/Complaints"
 
 
-def test_C35_prompt_states_the_reference_shape():
+def test_C35_a_well_formed_reference_survives_the_gate_untouched():
+    """The gate's HAPPY path, which C32 (repair) and C33 (drop) leave unpinned: a
+    proposal that already names the endpoint correctly must pass through unchanged.
+
+    This assertion used to read `assert "never a path and never a method" in system`.
+    That froze prompt WORDING rather than behaviour, and it froze wording the code had
+    since made redundant - `resolve_l0_refs` overwrites `l0.label` unconditionally, so
+    no outcome depends on the model reading that sentence. Keeping it would have made
+    every future prompt improvement look like weakening a test. The instruction is
+    deleted and the property it was standing in for is asserted directly here."""
+    from polymerhus.analysis.assigner import resolve_l0_refs
+
+    good = AggregatesProposal(
+        service_slug="sign-in",
+        l0=L0Ref(label="Endpoint",
+                 identity={"path": "/rest/user/whoami", "method": "GET", "baseurl": BU}),
+        confidence=0.9, evidence_refs=["path segment /user"],
+    )
+    out = resolve_l0_refs(L1DeltaBatch(aggregates=[good]),
+                          endpoints=(_ep_asset("/rest/user/whoami"),))
+    (kept,) = out.aggregates
+    assert kept.l0.label == "Endpoint"
+    assert kept.l0.identity == {"path": "/rest/user/whoami", "method": "GET", "baseurl": BU}
+    assert kept.confidence == 0.9 and kept.evidence_refs == ["path segment /user"]
+
+
+def test_C35b_prompt_states_the_identity_shape_the_repair_depends_on():
+    """The one part of the reference rule that is NOT redundant. `_candidate_path`
+    reads `identity["path"]` before it falls back to parsing the label, so the
+    identity shape is what makes the repair's happy path fire rather than its
+    salvage path. Asserted as a prompt property because it IS a prompt property -
+    unlike the label sentence, deleting it would change outcomes."""
     seen, make = _capture()
     assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
     system = seen["messages"][0].content
-    assert "l0.label" in system
-    assert "never a path and never a method" in system
+    assert "l0.identity" in system
+    for key in ("path", "method", "baseurl"):
+        assert f'"{key}"' in system
 
 
 # --- C36: the gate census (the instrumentation gap) ---------------------------
@@ -427,3 +462,118 @@ def test_C36_stats_name_where_each_judgment_died():
     assert st.unresolvable == 1        # /gone was never in the chunk
     assert st.out_of_inventory == 1    # ghost is not a live Service
     assert st.withheld == 1            # 0.1 is below the bar
+
+
+# --- C37-C40: the role-specific skill seam (#30 retirement for the Assigner) ---
+#
+# `skills/analysis/assigner/SKILL.md` carries the HOW (the ownership-judgment
+# discipline); `_ROLE_VERBATIM` keeps the WHAT. Selected by ASSIGNER_PROMPT_CONFIG,
+# default `baseline` until a comparative eval flips it (the bootstrap._PROMPT_CONFIGS
+# discipline: a prompt default is earned by measurement, never by argument).
+
+# The pre-skill prompt, pinned by construction rather than by a copied literal: the
+# rollback arm must stay byte-identical to `_ROLE_VERBATIM` + `_FEW_SHOTS` forever.
+_BASELINE_EXPECTED = f"{assigner._ROLE_VERBATIM}\n\n{assigner._FEW_SHOTS}"
+
+
+def _system_for(config, monkeypatch, mode="create"):
+    monkeypatch.setenv("ASSIGNER_PROMPT_CONFIG", config)
+    seen, make = _capture()
+    assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY,
+           existing_slugs=SLUGS, mode=mode)
+    return seen["messages"][0].content
+
+
+def test_C37_baseline_arm_is_byte_identical_to_the_pre_skill_prompt(monkeypatch):
+    """The rollback path is PINNED, not assumed. `baseline` must reproduce the prompt
+    exactly as it stood before the skill seam existed, so a flip to `skill` that
+    measures badly is a one-env-var revert with no prompt drift smuggled in."""
+    assert _system_for("baseline", monkeypatch) == _BASELINE_EXPECTED
+    # and it is what an unset / unknown value coerces to
+    monkeypatch.delenv("ASSIGNER_PROMPT_CONFIG", raising=False)
+    assert assigner._system_prompt("create") == _BASELINE_EXPECTED
+    assert _system_for("no-such-arm", monkeypatch) == _BASELINE_EXPECTED
+
+
+def test_C38_assigner_skill_is_single_sourced():
+    """The discipline lives in ONE place - the skills mount - exactly as every other
+    analysis role's does. A second copy in Python is how the two drift apart."""
+    from polymerhus.recon.domain import skills
+
+    skills.clear_cache()
+    skill = assigner._load_assigner_skill()
+    assert skill
+    assert not skill.startswith("---")                      # frontmatter stripped
+    assert skill is skills.skill_for("analysis/assigner")   # single source
+    # the in-process cache is what keeps the system prefix byte-stable across a run,
+    # so the provider prompt-cache survives every chunk of that run
+    assert assigner._load_assigner_skill() is skill
+
+
+def test_C39_missing_mount_still_carries_the_withholding_core(monkeypatch):
+    """Fail-open must not mean fail-SILENT. A missing mount degrades calibration, but
+    the defence against the measured 31-38% over-assignment has to survive it, so the
+    fallback is the discipline's core - never ''."""
+    import pathlib
+
+    from polymerhus.recon.domain import skills
+
+    def boom(self, *a, **k):
+        raise OSError("no mount")
+
+    monkeypatch.setattr(pathlib.Path, "read_text", boom)
+    skills.clear_cache()
+    try:
+        skill = assigner._load_assigner_skill()
+        assert skill == assigner._ASSIGNER_SKILL_FALLBACK   # inline fallback, not ''
+        assert "NO OWNER" in skill                          # the null hypothesis
+        assert "evidence for none" in skill                 # discriminating evidence
+        assert "below-bar" in skill                         # withholding is correct
+        system = _system_for("skill", monkeypatch)
+        assert assigner._ROLE_VERBATIM in system            # the WHAT always holds
+        assert assigner._ASSIGNER_SKILL_FALLBACK in system
+    finally:
+        skills.clear_cache()
+
+
+@pytest.mark.parametrize("config", assigner._ASSIGNER_PROMPT_CONFIGS)
+def test_C40_role_contract_holds_under_every_prompt_config(config, monkeypatch):
+    """The properties C21-C24/C35 pin must hold on BOTH arms, or flipping the default
+    silently drops one. Two failure directions are covered: a property that lives only
+    in `_ROLE_VERBATIM` today and would be lost if it migrated into the skill, and the
+    #34 D4/D18 scope guard - the reason the SHARED analyser skill was wrong for this
+    role is that it instructs Systems and data modelling this role cannot emit, so any
+    skill wired here must be checked for the same defect."""
+    system = _system_for(config, monkeypatch)
+
+    # the ownership judgment is directed, and minting stays forbidden (C23)
+    assert "path segments" in system
+    assert "cannot create a Service" in system
+    assert "service_contract" not in system
+    assert "exposure" not in system
+    # the reference shape survives (C35)
+    assert "l0.label" in system
+    # no live inventory identity leaks into the cacheable half (C24)
+    assert "checkout" not in system
+    # SCOPE GUARD (#34 D4/D18). Note what this can NOT assert: `_ROLE_VERBATIM`
+    # legitimately NAMES `system_edges` and the data lists in order to forbid them, so
+    # a bare substring ban fails on the untouched baseline prompt too. The real defect
+    # to catch is a prompt that teaches the model HOW to emit them, whose fingerprints
+    # are the shared analyser skill's typed vocabulary - the exact text that made that
+    # skill wrong for this role.
+    assert "Leave services, systems, system_edges and every data-modelling list EMPTY" in system
+    for forbidden in ("EXPOSED_VIA", "AUTHENTICATED_BY", "FRONTED_BY", "PROTECTED_BY",
+                      "WebPresentation", "rendering_model", "navigation_model",
+                      "api_paradigm", "derived_from", "business_function_slug"):
+        assert forbidden not in system, f"{config} arm instructs {forbidden}"
+
+
+@pytest.mark.parametrize("config", assigner._ASSIGNER_PROMPT_CONFIGS)
+def test_C40b_reflect_appends_without_disturbing_the_cacheable_prefix(config, monkeypatch):
+    """C25's property, held on both arms: reflect must EXTEND the create prefix, never
+    rewrite it, or the provider prompt-cache is invalidated on every reflect pass."""
+    create = _system_for(config, monkeypatch, mode="create")
+    reflect = _system_for(config, monkeypatch, mode="reflect")
+    assert reflect.startswith(create)
+    assert "RESTATE AS EVIDENCE" in reflect
+    assert "RESTATE AS EVIDENCE" not in create
