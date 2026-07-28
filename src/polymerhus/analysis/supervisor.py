@@ -20,6 +20,7 @@ proposal-accumulator channel: the live graph is the accumulator.
 """
 from __future__ import annotations
 
+import logging
 from typing import Annotated, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -36,6 +37,8 @@ from polymerhus.analysis.messages import (
     SteeringState,
     WriteCounts,
 )
+
+logger = logging.getLogger(__name__)
 
 # A proposer BODY does the per-role work and RETURNS its cargo (an `L1DeltaBatch`)
 # or `None` (hollow). It may raise - the wrapper degrades fail-open.
@@ -265,7 +268,7 @@ def _flush_langfuse() -> None:
         pass
 
 
-def _observability_config(config: dict, run_id: str) -> dict:
+def _observability_config(config: dict, run_id: str, extra: dict | None = None) -> dict:
     """Attach the #18 Langfuse callbacks + a correct session id to the run config
     (closing the trace-correlation gap: the session id WAS computed but never
     passed as metadata). Empty callbacks are inert."""
@@ -276,6 +279,7 @@ def _observability_config(config: dict, run_id: str) -> dict:
     config["metadata"] = {
         "langfuse_session_id": run_id,
         "langfuse_tags": ["analyser", "supervisor"],
+        **(extra or {}),
     }
     return config
 
@@ -292,6 +296,7 @@ async def run_supervisor(
     builder: StateGraph | None = None,
     thread_id: str | None = None,
     observe: bool = True,
+    observe_metadata: dict | None = None,
 ) -> SupervisorState:
     """Drive the control plane async-native (`ainvoke`). A `checkpointer` (+ `store`)
     is injected in tests (`MemorySaver` / `InMemoryStore`); in production both are
@@ -302,7 +307,7 @@ async def run_supervisor(
     state = _initial_state(project_id, run_id, schedule, l0_slice=l0_slice, observations=observations)
     config: dict = {"configurable": {"thread_id": thread_id or run_id}}
     if observe:
-        config = _observability_config(config, run_id)
+        config = _observability_config(config, run_id, observe_metadata)
 
     if checkpointer is not None:
         compiled = builder.compile(checkpointer=checkpointer, store=store)
@@ -397,7 +402,7 @@ def run_analyser_chunked(
     import asyncio
 
     from polymerhus.analysis.assigner import default_invoke_fn, make_assigner_body
-    from polymerhus.analysis.chunking import chunks_for_job, profiled_origins
+    from polymerhus.analysis.chunking import admit_for_role, chunks_for_job, profiled_origins
     from polymerhus.analysis.l0_stream import read_baseurl_profiles, read_l0_assets
     from polymerhus.analysis.l1_inventory import read_l1_inventory
     from polymerhus.analysis.pod import AnalyserExport
@@ -430,10 +435,24 @@ def run_analyser_chunked(
 
     body = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
     builder = build_supervisor_graph(proposer_bodies={"assigner": body}, write_fn=_counting_write)
+    schedule = build_schedule(chunks, run_id)
     asyncio.run(run_supervisor(
-        project_id, run_id, build_schedule(chunks, run_id), builder=builder,
+        project_id, run_id, schedule, builder=builder,
         checkpointer=checkpointer, store=store, observe=observe,
+        # The chunk shape IS the diagnosis when a step writes nothing, so it rides
+        # the trace rather than living only in the container log.
+        observe_metadata={
+            "chunks": len(chunks),
+            "dispatches": len(schedule),
+            "l0_assets": len(assets),
+            "admitted_endpoints": sum(len(admit_for_role(c, "assigner")) for c in chunks),
+            "langfuse_tags": ["analyser", "supervisor", "assigner", "chunked"],
+        },
     ))
+    logger.info(
+        "analyser chunked run=%s chunks=%d dispatches=%d l0_assets=%d aggregates_written=%d",
+        run_id, len(chunks), len(schedule), len(assets), totals["aggregates"],
+    )
     return AnalyserExport(aggregates_written=totals["aggregates"])
 
 

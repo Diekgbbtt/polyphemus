@@ -405,3 +405,25 @@ def test_C35_prompt_states_the_reference_shape():
     system = seen["messages"][0].content
     assert "l0.label" in system
     assert "never a path and never a method" in system
+
+
+# --- C36: the gate census (the instrumentation gap) ---------------------------
+
+def test_C36_stats_name_where_each_judgment_died():
+    """Every gate is fail-open, so without a per-gate count an empty result cannot be
+    told apart from a model that found nothing - which is exactly how a live run
+    proposed 114 assignments, wrote zero, and reported success."""
+    ep = AssetDelta(type="Endpoint", identity={"path": "/a", "method": "GET", "baseurl": BU})
+    raw = L1DeltaBatch(aggregates=[
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}), confidence=0.9),
+        AggregatesProposal(service_slug="ghost", l0=L0Ref(label="GET /a", identity={}), confidence=0.9),
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /gone", identity={}), confidence=0.9),
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}), confidence=0.1),
+    ])
+    out = assign(Chunk(chunk_id="c0", assets=(ep,)), invoke_fn=lambda m: raw,
+                 inventory=INVENTORY, existing_slugs=SLUGS, bar=0.75)
+    st = out.stats
+    assert (st.admitted, st.proposed, st.kept) == (1, 4, 1)
+    assert st.unresolvable == 1        # /gone was never in the chunk
+    assert st.out_of_inventory == 1    # ghost is not a live Service
+    assert st.withheld == 1            # 0.1 is below the bar

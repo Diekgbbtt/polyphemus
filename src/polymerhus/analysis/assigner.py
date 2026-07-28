@@ -51,9 +51,26 @@ ROLE = "assigner"
 ASSIGN_CONFIDENCE_BAR = float(os.environ.get("ANALYSER_ASSIGN_BAR", "0.75"))
 
 
+class AssignmentStats(BaseModel):
+    """Per-chunk gate census - what the Assigner was handed and where each judgment
+    died. The reason this exists: a run proposed 114 sound assignments and wrote
+    zero, and NOTHING in the system said so. Every gate here is fail-open by design,
+    so without a count per gate an empty result is indistinguishable between "the
+    model found nothing" and "every judgment was discarded on the way out"."""
+
+    model_config = ConfigDict(frozen=True)
+
+    admitted: int = 0        # Endpoints this role was given
+    proposed: int = 0        # aggregates the model returned
+    unresolvable: int = 0    # dropped: named no Endpoint in the chunk
+    out_of_inventory: int = 0  # dropped: named no live Service
+    withheld: int = 0        # dropped: below the confidence bar
+    kept: int = 0            # aggregates handed to the curator
+
+
 class AssignmentOutcome(BaseModel):
     """What one Assigner pass produced: the shaped `batch` the curator may write,
-    and the `backlog` of surface it could not place.
+    the `backlog` of surface it could not place, and the gate census.
 
     The backlog is carried but NOT transported (#34 D6): no envelope field exists to
     carry it upward yet, so it is returned for inspection and deliberately goes no
@@ -64,6 +81,7 @@ class AssignmentOutcome(BaseModel):
 
     batch: L1DeltaBatch = Field(default_factory=L1DeltaBatch)
     backlog: tuple[str, ...] = ()
+    stats: AssignmentStats = Field(default_factory=AssignmentStats)
 
 
 def narrow_to_assignment(batch: L1DeltaBatch) -> L1DeltaBatch:
@@ -197,10 +215,20 @@ def shape_proposal(
     streamed, drop owners that do not exist (collecting the backlog), then
     self-withhold below the bar."""
     batch = narrow_to_assignment(raw)
+    proposed = len(batch.aggregates)
     batch = resolve_l0_refs(batch, endpoints=endpoints)
+    resolved = len(batch.aggregates)
     batch, backlog = drop_out_of_inventory(batch, existing_slugs=existing_slugs)
+    in_inventory = len(batch.aggregates)
     batch = withhold_below_bar(batch, bar)
-    return AssignmentOutcome(batch=batch, backlog=backlog)
+    stats = AssignmentStats(
+        admitted=len(tuple(endpoints)), proposed=proposed,
+        unresolvable=proposed - resolved,
+        out_of_inventory=resolved - in_inventory,
+        withheld=in_inventory - len(batch.aggregates),
+        kept=len(batch.aggregates),
+    )
+    return AssignmentOutcome(batch=batch, backlog=backlog, stats=stats)
 
 
 def _chunk_slice(chunk: Chunk) -> dict:
@@ -350,6 +378,7 @@ def assign(
     same outcome)."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
+    admitted = admit_for_role(chunk, ROLE)
     l0_slice = _chunk_slice(chunk)
     if not l0_slice["nodes"]:  # nothing this role can act on -> valid empty
         return AssignmentOutcome()
@@ -363,10 +392,19 @@ def assign(
         return AssignmentOutcome()
     if raw is None:  # no parseable tool call after retries -> empty outcome
         return AssignmentOutcome()
-    return shape_proposal(
-        raw, existing_slugs=existing_slugs,
-        endpoints=admit_for_role(chunk, ROLE), bar=bar,
+    outcome = shape_proposal(
+        raw, existing_slugs=existing_slugs, endpoints=admitted, bar=bar,
     )
+    st = outcome.stats
+    # ONE structured line per chunk. A zero-kept step now names its cause instead of
+    # looking identical to a model that found nothing.
+    logger.info(
+        "assigner chunk=%s admitted=%d proposed=%d -> kept=%d "
+        "(unresolvable=%d out_of_inventory=%d withheld=%d) backlog=%d",
+        chunk.chunk_id, st.admitted, st.proposed, st.kept,
+        st.unresolvable, st.out_of_inventory, st.withheld, len(outcome.backlog),
+    )
+    return outcome
 
 
 def default_invoke_fn():
