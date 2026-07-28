@@ -347,3 +347,61 @@ def test_C31_empty_surface_yields_an_empty_export_without_dispatching():
         inventory_fn=lambda pid: {"services": []}, observe=False,
     )
     assert export.aggregates_written == 0
+
+
+# --- C32-C35: the reference gate (the live-run defect) ------------------------
+
+def _ep_asset(path, method="GET"):
+    return AssetDelta(type="Endpoint", identity={"path": path, "method": method, "baseurl": BU})
+
+
+def test_C32_model_formatted_label_is_repaired_not_dropped():
+    """A live run proposed 114 sound assignments and wrote ZERO: the model returned
+    `l0.label='GET /rest/user/whoami'`, which the sole-writer refuses as an unsafe
+    label. Correctness must not depend on the model's formatting."""
+    from polymerhus.analysis.assigner import resolve_l0_refs
+
+    bad = AggregatesProposal(
+        service_slug="sign-in",
+        l0=L0Ref(label="GET /rest/user/whoami", identity={"x": "y"}),
+        confidence=0.9, evidence_refs=["path segment /user"],
+    )
+    out = resolve_l0_refs(L1DeltaBatch(aggregates=[bad]),
+                          endpoints=(_ep_asset("/rest/user/whoami"),))
+    (fixed,) = out.aggregates
+    assert fixed.l0.label == "Endpoint"
+    assert fixed.l0.identity == {"path": "/rest/user/whoami", "method": "GET", "baseurl": BU}
+    assert fixed.confidence == 0.9 and fixed.evidence_refs == ["path segment /user"]
+
+
+def test_C33_reference_to_surface_not_in_the_chunk_is_dropped():
+    from polymerhus.analysis.assigner import resolve_l0_refs
+
+    ghost = AggregatesProposal(
+        service_slug="sign-in",
+        l0=L0Ref(label="Endpoint", identity={"path": "/invented", "method": "GET", "baseurl": BU}),
+        confidence=0.99,
+    )
+    out = resolve_l0_refs(L1DeltaBatch(aggregates=[ghost]), endpoints=(_ep_asset("/real"),))
+    assert out.aggregates == []
+
+
+def test_C34_repaired_reference_survives_the_full_shaping_end_to_end():
+    chunk = Chunk(chunk_id="katana:0", assets=(_ep_asset("/api/Complaints"),))
+    raw = L1DeltaBatch(aggregates=[AggregatesProposal(
+        service_slug="checkout", l0=L0Ref(label="GET /api/Complaints", identity={}),
+        confidence=0.88, evidence_refs=["path segment /api/Complaints"],
+    )])
+    out = assign(chunk, invoke_fn=lambda m: raw, inventory=INVENTORY,
+                 existing_slugs=SLUGS, bar=0.75)
+    (agg,) = out.batch.aggregates
+    assert agg.l0.label == "Endpoint"
+    assert agg.l0.identity["path"] == "/api/Complaints"
+
+
+def test_C35_prompt_states_the_reference_shape():
+    seen, make = _capture()
+    assign(_chunk("/x"), invoke_fn=make(L1DeltaBatch()), inventory=INVENTORY, existing_slugs=SLUGS)
+    system = seen["messages"][0].content
+    assert "l0.label" in system
+    assert "never a path and never a method" in system
