@@ -287,3 +287,63 @@ def test_C26b_hollow_curator_never_reports_a_write_that_did_not_happen():
     (receipt,) = state["receipts"]
     assert receipt.status == "empty"
     assert receipt.written.aggregates == 0
+
+
+# --- C28-C31: the chunk-fed wiring (#34) --------------------------------------
+
+def test_C28_schedule_is_one_dispatch_per_chunk_role_pair_with_stable_ids():
+    from polymerhus.analysis.supervisor import build_schedule
+
+    chunks = [Chunk(chunk_id="stream-r1:0"), Chunk(chunk_id="stream-r1:1")]
+    a = build_schedule(chunks, "r1")
+    b = build_schedule(chunks, "r1")
+    assert [d.dispatch_id for d in a] == [
+        "r1:stream-r1:0:assigner", "r1:stream-r1:1:assigner",
+    ]
+    assert [d.dispatch_id for d in a] == [d.dispatch_id for d in b]  # replay-stable
+    assert all(d.role == "assigner" and d.phase == "A1" for d in a)
+
+
+def test_C29_schedule_dispatches_only_roles_that_have_bodies():
+    """A dispatch to a hollow node would report an empty step as if it were work."""
+    from polymerhus.analysis.supervisor import build_schedule
+
+    (dispatch,) = build_schedule([Chunk(chunk_id="c0")], "r1")
+    assert dispatch.role == "assigner"
+
+
+def test_C30_aggregates_write_fn_never_writes_services_or_systems(monkeypatch):
+    """A writer that could create a Service would restore the retired mint path."""
+    import polymerhus.analysis.l1_curator as l1_curator
+    from polymerhus.analysis.l1_types import Provenance
+    from polymerhus.analysis.supervisor import _aggregates_write_fn
+
+    calls = []
+    monkeypatch.setattr(l1_curator, "write_aggregates",
+                        lambda deltas, pid, **kw: (calls.append(("aggregates", len(deltas))), len(deltas))[1])
+    monkeypatch.setattr(l1_curator, "l1_curate",
+                        lambda *a, **kw: calls.append(("curate", a)) or (0, 0))
+
+    batch = L1DeltaBatch(
+        services=[ServiceProposal(business_function_slug="smuggled")],
+        aggregates=[_agg("/x", 0.90)],
+    )
+    export = _aggregates_write_fn(batch, "p1", Provenance(job="analyser:r1"))
+
+    assert export.aggregates_written == 1
+    assert export.services_written == 0
+    assert [c[0] for c in calls] == ["aggregates"]   # l1_curate is never reached
+
+
+def test_C31_empty_surface_yields_an_empty_export_without_dispatching():
+    from polymerhus.analysis.supervisor import run_analyser_chunked
+
+    def boom(*a, **k):
+        raise AssertionError("no LLM call may happen on an empty surface")
+
+    export = run_analyser_chunked(
+        "p1", "r1", invoke_fn=boom,
+        assets_fn=lambda pid: [], profiles_fn=lambda pid: [],
+        inventory_fn=lambda pid: {"services": []}, observe=False,
+    )
+    assert export.aggregates_written == 0

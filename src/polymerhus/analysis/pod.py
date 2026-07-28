@@ -534,13 +534,19 @@ def run_analyser(
     caller pushing its own set). `deliver_fn(project_id) -> list[dict]` is
     injectable for testing."""
     from polymerhus.analysis.supervisor import (
-        resolve_supervisor_enabled, run_analyser_supervised,
+        resolve_supervisor_enabled, run_analyser_chunked,
     )
     if supervisor_enabled is None:
         supervisor_enabled = resolve_supervisor_enabled(project_id)
     if supervisor_enabled:
-        run_supervisor_fn = run_supervisor_fn or run_analyser_supervised
-        return run_supervisor_fn(project_id, run_id, observations)
+        # #34: the supervisor path is now CHUNK-FED - the live L0 surface is
+        # streamed into role-admitted chunks and dispatched per chunk, rather than
+        # the whole slice being handed to the legacy two-pass under the `assigner`
+        # name. Only the Assigner has a body, so this path writes AGGREGATES and no
+        # Systems / DataItems - a knowingly partial L1, which is why the flag stays
+        # default OFF and the legacy pod below remains the runnable default.
+        run_supervisor_fn = run_supervisor_fn or run_analyser_chunked
+        return run_supervisor_fn(project_id, run_id)
 
     # --- legacy analyser pod (the default path; unchanged) --------------------
     if observations is None:

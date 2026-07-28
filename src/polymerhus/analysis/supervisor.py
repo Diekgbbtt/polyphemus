@@ -345,6 +345,112 @@ def resolve_supervisor_enabled(project_id: str, *, settings_fn=None) -> bool:
     return bool(settings.get("supervisor_enabled"))
 
 
+def build_schedule(
+    chunks, run_id: str, *, roles: tuple[str, ...] = ("assigner",),
+    phase: str = "A1", mode: str = "create",
+) -> list[AgentDispatch]:
+    """Turn a chunk sequence into the supervisor's ordered work orders (#34 wiring).
+
+    One dispatch per (chunk, role) pair, chunk-major so a chunk is fully processed
+    before the next begins. `roles` is narrowed to the proposers that actually have
+    bodies - today the `assigner` alone (the mechanism-typist and data-modeller are
+    unbuilt, an accepted gap for this slice), so the schedule never dispatches to a
+    hollow node and reports an empty step as if it were work.
+
+    `dispatch_id` is a pure function of run + chunk + role, so a replayed run
+    produces the same ids and the receipts reducer dedups rather than doubling."""
+    return [
+        AgentDispatch(
+            dispatch_id=f"{run_id}:{chunk.chunk_id}:{role}",
+            role=role, phase=phase, mode=mode, chunk=chunk,
+        )
+        for chunk in chunks
+        for role in roles
+    ]
+
+
+def run_analyser_chunked(
+    project_id: str,
+    run_id: str,
+    *,
+    invoke_fn=None,
+    assets_fn=None,
+    profiles_fn=None,
+    inventory_fn=None,
+    write_fn=None,
+    checkpointer=None,
+    store=None,
+    observe: bool = True,
+):
+    """The CHUNK-FED analyser (#34): read the live L0 surface, stream it into
+    chunks, and dispatch one Assigner work order per chunk through the control
+    plane, writing each step's aggregates through the sole-writer.
+
+    This is the 2b dissolution for ONE role. It replaces the transitional wrapper
+    that ran the whole legacy two-pass under the `assigner` name, so the surface a
+    proposer sees is now a bounded, role-admitted chunk rather than the entire slice.
+    Scope, stated plainly: only the Assigner has a body, so a run writes AGGREGATES
+    against the Bootstrapper's Services and writes no Systems or DataItems.
+
+    Every collaborator is injectable; the defaults are the live ones. Fail-open
+    throughout: a read, LLM or write failure degrades that step, never the run."""
+    import asyncio
+
+    from polymerhus.analysis.assigner import default_invoke_fn, make_assigner_body
+    from polymerhus.analysis.chunking import chunks_for_job, profiled_origins
+    from polymerhus.analysis.l0_stream import read_baseurl_profiles, read_l0_assets
+    from polymerhus.analysis.l1_inventory import read_l1_inventory
+    from polymerhus.analysis.pod import AnalyserExport
+
+    assets_fn = assets_fn or read_l0_assets
+    profiles_fn = profiles_fn or read_baseurl_profiles
+    inventory_fn = inventory_fn or read_l1_inventory
+    invoke_fn = invoke_fn or default_invoke_fn()
+    write_fn = write_fn or _aggregates_write_fn
+
+    assets = assets_fn(project_id)
+    profiled = profiled_origins(profiles_fn(project_id))
+    # A pseudo-job: the chunk builder keys `chunk_id` off the source job, and this
+    # read is the cumulative surface rather than one tool's output. `barrier=True`
+    # because a cumulative read IS the phase-barrier view - nothing further is
+    # coming that would profile a BaseURL retroactively within this pass.
+    from polymerhus.recon.domain.types import JobSpec
+    pseudo_job = JobSpec(tool=f"stream-{run_id}", skill="analysis",
+                         command_template="", produces=[], consumes="BaseURL")
+    chunks = chunks_for_job(pseudo_job, assets, profiled=profiled, barrier=True)
+    if not chunks:
+        return AnalyserExport()
+
+    totals = {"aggregates": 0}
+
+    def _counting_write(deltas, pid, provenance):
+        export = write_fn(deltas, pid, provenance)
+        totals["aggregates"] += getattr(export, "aggregates_written", 0) or 0
+        return export
+
+    body = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
+    builder = build_supervisor_graph(proposer_bodies={"assigner": body}, write_fn=_counting_write)
+    asyncio.run(run_supervisor(
+        project_id, run_id, build_schedule(chunks, run_id), builder=builder,
+        checkpointer=checkpointer, store=store, observe=observe,
+    ))
+    return AnalyserExport(aggregates_written=totals["aggregates"])
+
+
+def _aggregates_write_fn(deltas: L1DeltaBatch, project_id: str, provenance: Provenance):
+    """The Assigner's curator collaborator: write AGGREGATES and nothing else.
+
+    The Assigner emits an aggregates-only batch by construction (#34 D4), so this
+    deliberately does NOT call `l1_curate` - a writer that could create Services
+    would quietly restore the minting path the ticket removed."""
+    from polymerhus.analysis import l1_curator
+    from polymerhus.analysis.analyser_types import proposals_to_deltas
+    from polymerhus.analysis.pod import AnalyserExport
+
+    _, _, aggregates = proposals_to_deltas(deltas, provenance)
+    return AnalyserExport(aggregates_written=l1_curator.write_aggregates(aggregates, project_id))
+
+
 def run_analyser_supervised(
     project_id: str,
     run_id: str,

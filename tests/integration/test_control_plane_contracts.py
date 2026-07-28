@@ -142,7 +142,10 @@ def test_C7_flag_off_runs_legacy_and_not_supervisor():
     legacy = _FakeGraph(known)
     sup_calls = []
 
-    def spy_supervisor(pid, rid, obs):
+    # #34: the supervisor seam is CHUNK-FED and takes (project_id, run_id) alone.
+    # Observations are not passed: the Assigner does not render them (D5), and
+    # everything else is re-derived live at dispatch time.
+    def spy_supervisor(pid, rid):
         sup_calls.append((pid, rid))
         return AnalyserExport()
 
@@ -158,7 +161,10 @@ def test_C7_flag_on_runs_supervisor_and_not_legacy():
     legacy = _FakeGraph(AnalyserExport(services_written=99))
     sup_calls = []
 
-    def spy_supervisor(pid, rid, obs):
+    # #34: the supervisor seam is CHUNK-FED and takes (project_id, run_id) alone.
+    # Observations are not passed: the Assigner does not render them (D5), and
+    # everything else is re-derived live at dispatch time.
+    def spy_supervisor(pid, rid):
         sup_calls.append((pid, rid))
         return AnalyserExport()
 
