@@ -844,3 +844,68 @@ The primary observable is also the one that reads directly against the inline mo
 
 The live gate itself is `tests/e2e/test_decoupling_live_gate.py`, driven by `RECON_RUN_ID` against a completed run.
 It skips without a run id, and *fails* rather than skips when the run exists but is uninformative - a run with fewer than three timed jobs, or no drained claim, or zero `AGGREGATES` is a failed gate, not an absent one.
+
+---
+
+## 13. The gate, run (2026-07-28)
+
+Run `cbd134a8-f862-4f2b-a1ac-c20cfd672b7e`, project `6e6c9806-f55b-454a-bd11-759170147312`, target soupmarket.shop, jobs `httpx, katana, jsluice`, feed mode `queued`.
+**All four assertions pass: AST-DEC-08, AST-DEC-09, AST-DEC-09b, AST-DEC-10.**
+
+The decisive numbers, from `recon_runs.stats`:
+
+| quantity | value |
+|---|---|
+| `advance_blocked_s_max` | **0.002 s** |
+| `advance_blocked_s_total` | 0.003 s |
+| `pass_seconds_max` | 155.5 s |
+| `pass_seconds_total` | 252.8 s |
+| `passes` / `advanced` / `coalesced` | 3 / 4 / 1 |
+| `analysis_drained` | true |
+| `l0_assets_read` / `dispatches_entered` | 176 / 2 |
+
+The analyser performed 253 seconds of work while blocking the recon job loop for **three milliseconds**, and the conflating queue collapsed one signal exactly as designed.
+The corroborating inter-job gaps were 1.3 s and 0.6 s, against 1190 s and 242 s on the inline run `64f2ccb8` that motivated this work.
+
+This is also the first evidence that the non-vacuity guards are doing their job rather than decorating a green result: `passes >= 2` and `pass_seconds_max > 1.0` both held with room to spare, so the near-zero blocking figure cannot be explained by an analyser that did nothing.
+
+**Section 5.1's memory figure is now measured, not estimated.** Peak agent RSS during the run was ~883 MiB of the 4.8 GiB limit, with the queued consumer and a 176-asset pass in flight. The refuted `<50 MB` estimate is withdrawn; the correct statement is that one bounded pass over this surface costs a few hundred MiB on top of the agent's ~440 MiB idle baseline, and the process-wide semaphore of one is what keeps that from multiplying.
+
+---
+
+## 14. The Assigner prompt arms, measured (2026-07-28) - and why the flip is NOT taken
+
+Two runs, same target (soupmarket.shop), same jobs (`httpx, katana, jsluice`), same feed mode.
+
+| | skill | baseline |
+|---|---|---|
+| project | `6e6c9806` | `fcd113e1` |
+| aggregates | 55 | 43 |
+| coverage | 0.366 | 0.313 |
+| stale pool | 83 | 90 |
+| mean confidence | 0.869 | 0.886 |
+| multi-owner endpoints | 7 | 2 |
+| **Services in inventory** | **23** | **11** |
+
+**This comparison cannot support a flip decision, and the last row is why.**
+The Bootstrapper wrote 23 Services for one run and 11 for the other, from the same operator KB, with its own config unchanged.
+Inventory size is the single biggest determinant of how much surface *can* be assigned - an Assigner cannot assign to an owner that does not exist - so the coverage difference (0.366 vs 0.313) is not attributable to the prompt arm.
+Reporting it as a skill-arm win would be exactly the error `evaluation.py` exists to prevent.
+
+What the runs DO support:
+
+- **No regression.** Neither coverage nor mean confidence degraded, and both arms sit far from the two known failure poles on this target: `soupstream_faf091e0` (11 aggregates, coverage 0.005) and `soup_9b876a3c` (246 aggregates, coverage 1.0, stale pool 0 - the over-assignment signature).
+- **Assignment quality is sound on inspection.** `/forgot-password` to `password-recovery`, `/api/Complaints` to `complaint-refund-handling`, `/api/SecurityAnswers` to `password-recovery`, `/api/Feedbacks` shared by `content-moderation` and `product-reviews`, every edge citing a real path segment as evidence.
+- **The withholding gate is working hard**, which no column here shows: the per-chunk logs record `proposed=53 kept=23 withheld=30` and `proposed=87 kept=31 withheld=56` on the baseline arm. A pass that proposed 87 aggregates over 84 admitted endpoints is over-proposing, and the bar is absorbing it.
+
+**Therefore `ASSIGNER_PROMPT_CONFIG` stays `baseline`.**
+A flip needs a matrix with repeats against a FIXED inventory, which is the next deliverable.
+
+### 14.1 A defect in the harness itself, found by using it
+
+`withheld_rate`, `out_of_inventory_rate` and `unresolvable_rate` read `0.0` for every arm above, and that is **false**.
+The true values are in the log lines quoted above; the columns are empty because `AssignmentStats` is returned per chunk in `AssignmentOutcome` and persisted nowhere, so `read_assignment` - which reads the graph - cannot see them.
+
+This is the vacuous-metric trap in its purest form: three columns that always read zero look like "no judgment was ever discarded", when in fact more than half of them were.
+A reader comparing arms on those columns would conclude the withholding discipline never fires.
+Until `AssignmentStats` is persisted per run, **those three columns must be read as "not measured", never as "zero"** - and the fix (persist the per-gate census alongside the feed stats, where `recon_runs.stats` already lives) is the first item on the follow-up list.
