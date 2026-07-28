@@ -176,5 +176,10 @@ def recon_status(run_id: str) -> dict:
     return {
         "status": run["status"],
         "current_phase": run["current_phase"],
+        # #34: the analysis feed's report - mode, pass count, and whether the
+        # terminal pass actually observed the surface (`analysis_drained`). The
+        # operator asking "did this run finish its analysis?" has no other way to
+        # find out, and a stall now shows up here as `advance_blocked_s_max`.
+        "stats": run.get("stats") or {},
         "per_job": pg.get_run_jobs(run_id),
     }

@@ -238,6 +238,67 @@ def test_AST_DEC_05_one_analyser_pass_in_flight_across_concurrent_runs():
     assert sum(r.passes for r in results) >= 2          # non-vacuity: passes ran
 
 
+# --- AST-DEC-09: the stall observable, measured at the seam -------------------
+
+def test_AST_DEC_09_queued_advance_does_not_block_while_inline_advance_does():
+    """The stall predicate, stated as a COMPARISON between the two modes over the
+    same slow pass - which is what makes it non-vacuous. A fast machine could make
+    any single absolute threshold pass; only the contrast between the modes shows
+    the blocking actually moved off the caller.
+
+    This replaces the originally specified observable (the gap between a job's
+    `finished_at` and the next job's `started_at`), which cannot be computed:
+    `upsert_job` never updates `started_at` ON CONFLICT and the pipeline inserts
+    every job of a phase during phase setup, so that column times phase setup."""
+    PASS_S = 0.15
+
+    async def slow_pass(cursor):
+        await asyncio.sleep(PASS_S)
+        return _census()
+
+    async def queued():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=slow_pass).start()
+        for i in range(3):
+            await feed.advance(_cursor(f"job{i}"))
+        return await feed.drain(deadline=5)
+
+    async def inline():
+        feed = InlineAnalysisFeed("p1", "r1", pass_fn=slow_pass)
+        for i in range(3):
+            await feed.advance(_cursor(f"job{i}"))
+        return await feed.drain()
+
+    q, i = _run(queued()), _run(inline())
+
+    # non-vacuity: the SAME slow pass really ran under both modes, so the
+    # difference below is about scheduling and not about doing less work.
+    assert q.pass_seconds_max >= PASS_S
+    assert i.pass_seconds_max >= PASS_S
+
+    assert i.advance_blocked_s_max >= PASS_S      # inline: blocked IS the pass
+    assert q.advance_blocked_s_max < PASS_S / 2   # queued: the caller walked away
+    assert q.advance_blocked_s_total < i.advance_blocked_s_total
+
+
+def test_advance_blocking_is_measured_even_when_the_cursor_coalesces():
+    """The claim is about the CALLER, so every path through advance is timed -
+    including the one that drops a pending cursor rather than enqueuing."""
+    async def gated(cursor):
+        await asyncio.sleep(0.05)
+        return _census()
+
+    async def scenario():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=gated).start()
+        for i in range(6):
+            await feed.advance(_cursor(f"job{i}"))
+        return await feed.drain(deadline=5)
+
+    stats = _run(scenario())
+    assert stats.coalesced > 0                    # non-vacuity: cursors DID collapse
+    assert stats.advance_blocked_s_total >= 0.0   # and every advance was timed
+    assert stats.advance_blocked_s_max < 0.05
+
+
 # --- the mode seam (DQ5a: off means off) --------------------------------------
 
 @pytest.mark.parametrize("settings,expected", [

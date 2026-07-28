@@ -316,6 +316,10 @@ def test_get_recon_status_returns_registry_shape(monkeypatch):
             "current_phase": 2,
             "started_at": None,
             "finished_at": None,
+            # #34: the analysis feed's report rides the run row, so the operator
+            # asking "did this run finish its analysis?" can see the answer.
+            "stats": {"mode": "queued", "analysis_drained": True,
+                      "advance_blocked_s_max": 0.001},
         },
     )
     monkeypatch.setattr(
@@ -335,6 +339,8 @@ def test_get_recon_status_returns_registry_shape(monkeypatch):
     assert body["current_phase"] == 2
     assert len(body["per_job"]) == 1
     assert body["per_job"][0]["job"] == "subfinder"
+    assert body["stats"]["analysis_drained"] is True
+    assert body["stats"]["advance_blocked_s_max"] == 0.001
 
 
 def test_post_recon_with_removed_gau_job_returns_error(monkeypatch):

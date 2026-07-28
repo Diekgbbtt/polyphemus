@@ -39,6 +39,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+import time
 
 from pydantic import BaseModel, ConfigDict
 
@@ -91,6 +92,54 @@ class FeedStats(BaseModel):
     l0_assets_read: int = 0
     dispatches_entered: int = 0
 
+    # THE stall predicate (#34 AST-DEC-09). `advance_blocked_s_max` is the longest
+    # any single `advance` held the recon job loop, measured at the seam itself -
+    # which is the quantity the decoupling exists to drive to zero, and is directly
+    # comparable between the two modes: under `inline` it IS the pass duration
+    # (on run 64f2ccb8, up to 1157 s), under `queued` it must stay near zero even
+    # while `pass_seconds_max` remains large.
+    #
+    # This supersedes the originally specified observable, "the gap between a job's
+    # finished_at and the next job's started_at", which is unimplementable:
+    # `upsert_job` stamps `started_at` with `now()` on INSERT and does not touch it
+    # ON CONFLICT (`app/clients/pg.py:207-212`), and the pipeline inserts the
+    # `in_progress` row for EVERY job of a phase during phase setup, before any of
+    # them runs. So `started_at` measures phase setup, not job start.
+    advance_blocked_s_max: float = 0.0
+    advance_blocked_s_total: float = 0.0
+    pass_seconds_max: float = 0.0
+    pass_seconds_total: float = 0.0
+
+
+class _Timings:
+    """Max/total accumulators for the two durations that decide AST-DEC-09.
+
+    Kept as a tiny value holder rather than four loose attributes so both feeds
+    measure the same two things the same way, and the assertion can compare
+    inline against queued without knowing which class produced the numbers."""
+
+    def __init__(self) -> None:
+        self.blocked_max = 0.0
+        self.blocked_total = 0.0
+        self.pass_max = 0.0
+        self.pass_total = 0.0
+
+    def record_blocked(self, seconds: float) -> None:
+        self.blocked_max = max(self.blocked_max, seconds)
+        self.blocked_total += seconds
+
+    def record_pass(self, seconds: float) -> None:
+        self.pass_max = max(self.pass_max, seconds)
+        self.pass_total += seconds
+
+    def as_stats(self) -> dict:
+        return {
+            "advance_blocked_s_max": round(self.blocked_max, 3),
+            "advance_blocked_s_total": round(self.blocked_total, 3),
+            "pass_seconds_max": round(self.pass_max, 3),
+            "pass_seconds_total": round(self.pass_total, 3),
+        }
+
 
 class InlineAnalysisFeed:
     """Today's behaviour, unchanged: `advance` runs a full pass on the caller's
@@ -104,15 +153,22 @@ class InlineAnalysisFeed:
         self._pass_fn = pass_fn
         self._advanced = 0
         self._passes = 0
+        self._timings = _Timings()
 
     async def advance(self, cursor: AnalysisCursor) -> None:
         self._advanced += 1
+        started = time.monotonic()
         try:
             await self._run_pass(cursor)
             self._passes += 1
+            self._timings.record_pass(time.monotonic() - started)
         except Exception:  # best-effort: analysis never aborts recon
             logger.warning("inline analysis pass raised for run %s job %s (recon continues)",
                            self._run_id, cursor.job, exc_info=True)
+        finally:
+            # For the inline feed the blocked time IS the pass time - which is
+            # exactly the fact the assertion needs to be able to state.
+            self._timings.record_blocked(time.monotonic() - started)
 
     async def _run_pass(self, cursor: AnalysisCursor):
         if self._pass_fn is not None:
@@ -126,7 +182,8 @@ class InlineAnalysisFeed:
         `analysis_drained` stays false, because no terminal pass over the settled
         surface was engineered (the last inline pass ran before the last job's
         surface may have landed)."""
-        return FeedStats(mode=self.mode, advanced=self._advanced, passes=self._passes)
+        return FeedStats(mode=self.mode, advanced=self._advanced, passes=self._passes,
+                         **self._timings.as_stats())
 
 
 class QueuedAnalysisFeed:
@@ -150,6 +207,7 @@ class QueuedAnalysisFeed:
         self._idle.set()
         self._last_census = None
         self._task: asyncio.Task | None = None
+        self._timings = _Timings()
 
     def start(self) -> "QueuedAnalysisFeed":
         self._task = asyncio.create_task(self._consume(), name=f"analysis-consumer-{self._run_id}")
@@ -160,6 +218,7 @@ class QueuedAnalysisFeed:
         the caller waiting: cursors are cumulative, so the newer one subsumes the
         older, and the collapse is counted so it is observable rather than silent."""
         self._advanced += 1
+        started = time.monotonic()
         self._idle.clear()
         try:
             self._queue.put_nowait(cursor)
@@ -181,13 +240,24 @@ class QueuedAnalysisFeed:
                 self._queue.put_nowait(cursor)
             except asyncio.QueueFull:  # consumer re-filled it; its cursor is newer-equal
                 self._coalesced += 1
+        finally:
+            # Measured on EVERY path, including the coalescing one, because the
+            # claim being made is about the caller - the recon job loop - not about
+            # the happy path through this method.
+            self._timings.record_blocked(time.monotonic() - started)
 
     async def _consume(self) -> None:
         while True:
             cursor = await self._queue.get()
             try:
                 async with self._sem:
+                    # Timed INSIDE the semaphore: `pass_seconds` must mean the work
+                    # a pass did, not how long it queued behind another run's pass,
+                    # or the non-vacuity guard ("some pass took real time") could be
+                    # satisfied by contention alone.
+                    started = time.monotonic()
                     result = await self._run_pass(cursor)
+                    self._timings.record_pass(time.monotonic() - started)
                 self._passes += 1
                 if result is not None:
                     self._last_census = getattr(result, "census", None)
@@ -245,6 +315,7 @@ class QueuedAnalysisFeed:
             consumer=self._consumer_state(),
             l0_assets_read=getattr(census, "l0_assets_read", 0) or 0,
             dispatches_entered=getattr(census, "dispatches_entered", 0) or 0,
+            **self._timings.as_stats(),
         )
 
     def _consumer_state(self) -> str:

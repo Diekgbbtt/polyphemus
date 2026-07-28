@@ -123,7 +123,10 @@ def test_set_run_status_nonterminal_leaves_finished_at(monkeypatch):
 
 
 def test_get_run_found(monkeypatch):
-    row = ("run1", "proj1", "running", 2, "t1", None)
+    # #34: `stats` rides the run row. It was written by `set_run_stats` from the
+    # first commit but never selected, so the feed's report - including whether
+    # analysis drained - could not be read back by anything.
+    row = ("run1", "proj1", "running", 2, "t1", None, {"mode": "queued"})
     cur = patch_connect(monkeypatch, FakeCursor(fetch_result=row))
     result = pg.get_run("run1")
 
@@ -134,6 +137,7 @@ def test_get_run_found(monkeypatch):
         "current_phase": 2,
         "started_at": "t1",
         "finished_at": None,
+        "stats": {"mode": "queued"},
     }
     query, params = cur.executed[0]
     assert params == ("run1",)

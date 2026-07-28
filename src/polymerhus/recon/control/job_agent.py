@@ -41,6 +41,35 @@ from polymerhus.recon.domain.types import JobSpec, PodExport
 logger = logging.getLogger(__name__)
 
 
+def pod_trace_metadata(run_id: str, phase: int, tool: str) -> dict:
+    """Correlation metadata for a recon pod's Langfuse trace.
+
+    Recon spans carried NO metadata at all: no session, no run, no job. So a recon
+    trace could not be attributed to a run, and the analyser's spans - which DO set
+    `langfuse_session_id` (`analysis/supervisor.py`) - sat in a session no recon
+    span shared. That made the two modules' traces unjoinable, which is why the
+    proposal to derive the stall delta from trace timestamps could not be executed
+    against today's data at all.
+
+    This closes the gap for DIAGNOSIS - a human can now open one session and see
+    recon jobs and analyser passes interleaved on one timeline. It deliberately
+    does NOT make Langfuse the gate: tracing is optional, fail-open, and drops span
+    batches under exactly the latency stress a stall creates, so the pass/fail
+    predicate is decided from Postgres instead (see `_exec_window` in
+    `recon/control/pipeline.py` and §12 of the decoupling design doc).
+
+    The session id is the bare `run_id`, matching the recon run; the analyser's own
+    passes run under `stream-<run_id>`, and the shared `run_id` tag is what joins
+    the two."""
+    return {
+        "langfuse_session_id": run_id,
+        "langfuse_tags": ["recon", "pod", tool],
+        "run_id": run_id,
+        "phase": phase,
+        "job": tool,
+    }
+
+
 class JobState(TypedDict, total=False):
     job: JobSpec
     input_assets: list[dict]
@@ -243,7 +272,9 @@ def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -
     from polymerhus.app.observability import get_langfuse_callbacks
 
     result = pod_graph.invoke(
-        pod_state, config={"callbacks": get_langfuse_callbacks()}
+        pod_state,
+        config={"callbacks": get_langfuse_callbacks(),
+                "metadata": pod_trace_metadata(run_id, phase, job.tool)},
     )
     return result["export"]
 
