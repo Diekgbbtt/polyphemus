@@ -87,6 +87,25 @@ def update_settings(project_id: str, body: SettingsUpdate) -> dict:
     return {"ok": True}
 
 
+# Strong references to in-flight pipeline tasks.
+#
+# The event loop keeps only a WEAK reference to a task, so the Python docs are
+# explicit that a caller must retain one for the task's lifetime or it may be
+# garbage-collected mid-flight. Every other `create_task` in this codebase already
+# does (`app.state.reaper_task`, `QueuedAnalysisFeed._task`, the pipeline's local
+# `hb`); this was the one that did not, and it is the OUTERMOST task, so losing it
+# would take a whole run with it.
+#
+# HONEST SCOPE. This is defensive correctness, NOT the diagnosis of any observed
+# failure. It was written while investigating run 6b9358a0, and it does not explain
+# that run: the assertion that reproduced the theory passed without this fix,
+# because a task suspended on an await is still referenced by the handle that will
+# resume it, so the collectable window is far narrower than it first appears. That
+# run died because its container was recreated underneath it. The reference is kept
+# anyway because "narrow" is not "closed" and the cost is one set.
+_IN_FLIGHT: set[asyncio.Task] = set()
+
+
 def _launch_pipeline(project_id: str, run_id: str, jobs: list[str] | None) -> None:
     """Schedule `run_pipeline` as a fire-and-forget background task.
 
@@ -101,7 +120,12 @@ def _launch_pipeline(project_id: str, run_id: str, jobs: list[str] | None) -> No
         except Exception:  # noqa: BLE001 - best-effort launch, must not crash the loop
             logger.exception("recon pipeline run %s (project %s) failed", run_id, project_id)
 
-    asyncio.create_task(_run())
+    task = asyncio.create_task(_run(), name=f"recon-pipeline-{run_id}")
+    # Hold the reference until the task finishes, then drop it so the set cannot
+    # grow without bound. `discard` (not `remove`) because the callback may fire
+    # after a shutdown that already cleared the set.
+    _IN_FLIGHT.add(task)
+    task.add_done_callback(_IN_FLIGHT.discard)
 
 
 @router.post("/projects/{project_id}/recon")

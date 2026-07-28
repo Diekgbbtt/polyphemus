@@ -321,10 +321,27 @@ def list_running_runs() -> list[dict]:
 
 def reap_stale_runs(ttl_seconds: int) -> int:
     """Flip running runs whose heartbeat is older than ttl_seconds (or NULL)
-    to failed, stamping finished_at. Returns the number reaped."""
+    to failed, stamping finished_at. Returns the number reaped.
+
+    Records WHY into the run's stats. A reaped run is one whose process stopped
+    without saying anything - it was killed, its container was recreated
+    underneath it, or the host went away - so the reaper is the only witness that
+    exists, and a bare `failed` makes that indistinguishable from a run that
+    failed on its own terms. Diagnosing run 6b9358a0 meant hand-correlating a
+    frozen `last_heartbeat_at` against a container's `StartedAt`; `reaped_at` plus
+    the heartbeat age puts that correlation in the row itself."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "UPDATE recon_runs SET status='failed', finished_at=now() "
+            "UPDATE recon_runs SET status='failed', finished_at=now(), "
+            "stats = COALESCE(stats, '{}'::jsonb) || jsonb_build_object("
+            "  'reaped', true,"
+            "  'reaped_at', to_char(now() AT TIME ZONE 'UTC', "
+            "                       'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),"
+            "  'reap_reason', 'heartbeat stale: the run process stopped without "
+            "reaching a terminal status (killed, container recreated, or host lost)',"
+            "  'heartbeat_age_s', "
+            "     round(EXTRACT(EPOCH FROM (now() - last_heartbeat_at))::numeric, 1)"
+            ") "
             "WHERE status='running' AND "
             "(last_heartbeat_at IS NULL OR last_heartbeat_at <= now() - make_interval(secs => %s))",
             (ttl_seconds,),
