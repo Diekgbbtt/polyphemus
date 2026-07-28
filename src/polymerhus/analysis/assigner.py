@@ -37,6 +37,7 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
+from polymerhus.analysis.l1_types import L0Ref
 
 logger = logging.getLogger(__name__)
 
@@ -108,6 +109,75 @@ def drop_out_of_inventory(
     return batch.model_copy(update={"aggregates": kept}), backlog
 
 
+def _endpoint_index(endpoints) -> tuple[dict, dict]:
+    """Index the chunk's admitted Endpoints by (method, path) and by path alone."""
+    by_pair, by_path = {}, {}
+    for asset in endpoints:
+        ident = asset.identity or {}
+        path = ident.get("path")
+        if not isinstance(path, str):
+            continue
+        canonical = {k: ident[k] for k in ("path", "method", "baseurl") if k in ident}
+        method = str(ident.get("method") or "").upper()
+        by_pair[(method, path)] = canonical
+        by_path.setdefault(path, canonical)
+    return by_pair, by_path
+
+
+def _candidate_path(l0) -> tuple[str | None, str]:
+    """Recover (path, method) from whatever the model put in an `l0` reference.
+
+    Models reliably name the Endpoint but not the SHAPE: `label` comes back as
+    `'GET /rest/user/whoami'` about as often as `'Endpoint'`. The path is the part
+    they always get right, so it is what we key on."""
+    identity = l0.identity if isinstance(l0.identity, dict) else {}
+    method = str(identity.get("method") or "").upper()
+    path = identity.get("path")
+    if isinstance(path, str) and path.startswith("/"):
+        return path, method
+    # fall back to the label, which may be "GET /path" or a bare "/path"
+    label = l0.label if isinstance(l0.label, str) else ""
+    parts = label.split()
+    if len(parts) == 2 and parts[1].startswith("/"):
+        return parts[1], parts[0].upper()
+    if len(parts) == 1 and parts[0].startswith("/"):
+        return parts[0], method
+    # last resort: any identity value that looks like a path
+    for value in identity.values():
+        if isinstance(value, str) and value.startswith("/"):
+            return value, method
+    return None, method
+
+
+def resolve_l0_refs(batch: L1DeltaBatch, *, endpoints) -> L1DeltaBatch:
+    """THE REFERENCE GATE: rewrite every aggregate's `l0` into the canonical
+    `Endpoint{path, method, baseurl}` form, and DROP any that names no Endpoint in
+    this chunk.
+
+    The sole-writer MATCHes an L0 node by exact label + identity and refuses an
+    unsafe label, so a reference the model formatted its own way is silently
+    skipped and the whole judgment is lost - a live run proposed 114 sound
+    assignments and wrote zero, because `l0.label` came back as `'GET /api/Users'`.
+    Correctness must not depend on the model's formatting: the Assigner already
+    knows the label is `Endpoint` and holds the exact identities it streamed, so it
+    repairs the reference here rather than instructing and hoping.
+
+    Dropping an unmatchable reference is the same discipline as the out-of-inventory
+    gate: a reference to surface that was never in the chunk is a reference to
+    nothing, not a weak judgment."""
+    by_pair, by_path = _endpoint_index(endpoints)
+    kept = []
+    for agg in batch.aggregates:
+        path, method = _candidate_path(agg.l0)
+        if path is None:
+            continue
+        canonical = by_pair.get((method, path)) or by_path.get(path)
+        if canonical is None:  # names no Endpoint this chunk carried
+            continue
+        kept.append(agg.model_copy(update={"l0": L0Ref(label="Endpoint", identity=canonical)}))
+    return batch.model_copy(update={"aggregates": kept})
+
+
 def withhold_below_bar(batch: L1DeltaBatch, bar: float = ASSIGN_CONFIDENCE_BAR) -> L1DeltaBatch:
     """THE WITHHOLDING GATE (#8 crux): drop every aggregate whose `confidence < bar`
     so it never reaches `write_aggregates`; the L0 element stays in the stale pool.
@@ -119,12 +189,15 @@ def withhold_below_bar(batch: L1DeltaBatch, bar: float = ASSIGN_CONFIDENCE_BAR) 
 
 
 def shape_proposal(
-    raw: L1DeltaBatch, *, existing_slugs: frozenset[str], bar: float = ASSIGN_CONFIDENCE_BAR
+    raw: L1DeltaBatch, *, existing_slugs: frozenset[str], endpoints=(),
+    bar: float = ASSIGN_CONFIDENCE_BAR,
 ) -> AssignmentOutcome:
     """Apply the Assigner's ordered shaping to a raw LLM proposal: narrow to
-    assignment-only, drop owners that do not exist (collecting the backlog), then
+    assignment-only, canonicalise the L0 references against the surface actually
+    streamed, drop owners that do not exist (collecting the backlog), then
     self-withhold below the bar."""
     batch = narrow_to_assignment(raw)
+    batch = resolve_l0_refs(batch, endpoints=endpoints)
     batch, backlog = drop_out_of_inventory(batch, existing_slugs=existing_slugs)
     batch = withhold_below_bar(batch, bar)
     return AssignmentOutcome(batch=batch, backlog=backlog)
@@ -201,6 +274,11 @@ _ROLE_VERBATIM = (
     "USE ONLY THE SLUGS LISTED IN THE INVENTORY. You cannot create a Service: a slug "
     "that is not listed names nothing and its aggregate will be discarded. If surface "
     "fits no listed Service, leave it unassigned rather than inventing an owner.\n"
+    "REFERENCING AN ENDPOINT: set `l0.label` to the literal string `Endpoint` - it is "
+    "the node TYPE, never a path and never a method. Put the endpoint itself in "
+    "`l0.identity` as `{\"path\": \"/api/Users\", \"method\": \"GET\", "
+    "\"baseurl\": \"<the baseurl shown>\"}`. Only reference endpoints that appear "
+    "above; one you invent names nothing and is discarded.\n"
     "Emit `aggregates` only. Leave services, systems, system_edges and every "
     "data-modelling list EMPTY - other proposers own those."
 )
@@ -285,7 +363,10 @@ def assign(
         return AssignmentOutcome()
     if raw is None:  # no parseable tool call after retries -> empty outcome
         return AssignmentOutcome()
-    return shape_proposal(raw, existing_slugs=existing_slugs, bar=bar)
+    return shape_proposal(
+        raw, existing_slugs=existing_slugs,
+        endpoints=admit_for_role(chunk, ROLE), bar=bar,
+    )
 
 
 def default_invoke_fn():
