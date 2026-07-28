@@ -757,7 +757,90 @@ DQ4a is about not draining on abnormal termination, not about leaking the task: 
 AST-DEC-01..05 in `tests/analysis/test_feed.py` (unit tier, pure seam, injected `pass_fn`), AST-DEC-06/07 in `tests/integration/test_decoupling_contracts.py` (real provider construction, real sole-writer, live Neo4j), plus four pipeline-level predicates in `tests/analysis/test_streaming.py` including one that pins inline mode to today's behaviour.
 Every non-vacuity guard named in section 6 is carried: the drain assertions check that a pass actually RAN before checking that it claimed nothing.
 
-**Not done, and deliberately so.**
-AST-DEC-08/09/10 are the live gate and need a real run; they are unwritten because AST-DEC-09 as specified is unimplementable - `recon_jobs.started_at` is stamped at phase setup for every job in a phase at once, so a per-job gap cannot be measured from it.
-The stall assertion needs a different observable (a per-job timestamp that does not exist yet, or the feed's own advance-to-return latency).
-The section 5.1 memory figure is still derived from the refuted surface number and must be MEASURED before the flag is enabled on any project.
+**Not done at the time of the first commit, resolved in section 12.**
+AST-DEC-08/09/10 are the live gate and need a real run; they were unwritten because AST-DEC-09 as specified is unimplementable - `recon_jobs.started_at` is stamped at phase setup for every job in a phase at once, so a per-job gap cannot be measured from it.
+Section 12 records the operator's proposed remedy (derive the delta from Langfuse trace timestamps), the feasibility assessment that rejected it as the gate, and the observable that replaced it.
+
+**Still open.**
+The section 5.1 memory figure is derived from the refuted surface number and must be MEASURED before the flag is enabled on any project.
+
+---
+
+## 12. The stall observable: why not Langfuse, and what replaced it
+
+*Operator proposal (2026-07-28): "if langfuse-based tracking is used extensively in the recon-job agents and the analyser agents, you can identify a reliable and faithful time delta using specific traces timestamps [...] If an analysis on the feasibility of this proposal does not yield a sufficiently accurate and reliable verification system, add the minimally required metadata to calls and persist it."*
+
+### 12.1 Feasibility: rejected as the GATE, adopted for orientation
+
+The proposal is sound about *where* the time is: the span tree does contain the true boundaries of a pass and of a pod.
+It fails on the properties a *gate* needs, and it fails hardest in the failing case.
+
+**It cannot be selected today.**
+Recon spans carry no metadata at all - `job_agent.default_pod_invoke` and `crawl_pod.crawl_pod_invoke` both invoked with `config={"callbacks": ...}` and nothing else, so no recon span named a run, a phase, or a job.
+The analyser side did set `langfuse_session_id`, but to its own `stream-<run_id>` id, so the two modules traced into two sessions sharing no key.
+The specific delta the proposal names - "recon-job orchestrator call up to the next dispatch from the parent supervisor" - was therefore not expressible as a query against the data that exists.
+
+**It is optional, and silently so.**
+`get_langfuse_callbacks()` returns `[]` when any of three env vars is missing, when the package is absent, or when handler construction raises, and tells no caller (`app/observability/langfuse_tracing.py`).
+A gate reading traces would find no spans, compute no gap, and report no stall.
+That is the vacuous-gate trap the testing-tier discipline exists to prevent: the assertion passes loudest when the instrument is off.
+
+**It is lossy exactly under stall conditions.**
+The module's own root-cause note records that on a read timeout the OTLP exporter returns FAILURE after a single attempt and `BatchSpanProcessor` never retries, dropping the batch permanently; `RetryingSpanExporter` narrows the window but still logs "retry budget exhausted; dropping batch".
+A stalling run is by definition one where latency is pathological, so the runs that most need the measurement are the runs most likely to lose it - and a missing span is indistinguishable from a fast one.
+Two further lossy behaviours compound this: the 256 KiB masking cap, and the resource-manager singleton hazard that `_verify_configured_exporter_in_effect` exists to detect.
+
+**It is out-of-process and eventually consistent.**
+Reading it back requires a flush, server-side ingestion, an authenticated HTTP query, and a poll loop inside the assertion.
+
+The conclusion is a division of labour rather than a rejection: **Postgres decides the verdict, Langfuse explains it.**
+The pass/fail predicate is computed from values written synchronously by the code under test; the trace is what a human opens to see *why* a gap happened.
+
+### 12.2 The metadata that was added, and where it is persisted
+
+Minimal, and each item exists because a specific assertion could not otherwise be written.
+
+| datum | where | why it did not already exist |
+|---|---|---|
+| `PassCensus.started_at` / `finished_at` / `duration_s` | returned by `analyse_chunked`, carried into `recon_runs.stats` | a pass reported what it observed but never how long it occupied |
+| `FeedStats.advance_blocked_s_max` / `_total` | `analysis/feed.py`, both feeds | the quantity the decoupling exists to drive to zero was unmeasured |
+| `FeedStats.pass_seconds_max` / `_total` | `analysis/feed.py`, both feeds | non-vacuity: proves a slow pass ran while the caller was not blocked |
+| `recon_jobs.stats.exec_started_at` / `exec_finished_at` / `exec_seconds` | `pipeline._run_one` | `started_at` times phase setup, not the job (see below) |
+| `langfuse_session_id` + run/phase/job on recon pods | `job_agent.pod_trace_metadata` | recon traces were unattributable to a run |
+| analyser session keyed to the bare recon run | `analyse_chunked` `observe_metadata` | recon and analysis traced into disjoint sessions |
+
+**The `started_at` defect, stated plainly.**
+`pg.upsert_job` inserts with `started_at = now()` and its `ON CONFLICT DO UPDATE` sets `status`, `finished_at`, `stats`, `error` - never `started_at`.
+The pipeline's phase loop inserts the `in_progress` row for *every* job of a phase during setup, before any of them runs.
+So `started_at` is the phase's setup instant, identical across the phase's jobs, and any gap computed from it is an artefact.
+Rather than change the column's meaning (it is a registry contract with other readers), the true window is persisted alongside it in the row's existing `stats` JSONB.
+
+**One defect found while wiring this.** `recon_runs.stats` was written by `set_run_stats` but never selected by `get_run`, so the feed's report - including `analysis_drained` - was unreadable by anything, including the operator-facing `recon_status`. Both now carry it.
+
+### 12.3 The revised AST-DEC-09
+
+The statement is unchanged in substance; the observable is replaced.
+
+```yaml
+- id: AST-DEC-09
+  kind: nonfunctional
+  statement: "The stall is gone: on a live decoupled run, no recon job waits on an analyser pass."
+  tier: e2e
+  observable:
+    primary: recon_runs.stats.advance_blocked_s_max < 1.0 - the longest any single
+      feed.advance held the recon job loop, measured at the seam itself.
+    corroborating: max(next.stats.exec_started_at - prev.stats.exec_finished_at) over
+      recon_jobs ordered by exec_started_at, below ANALYSIS_MAX_JOB_GAP_S (default 60s).
+  non_vacuity: stats.passes >= 2 AND stats.pass_seconds_max > 1.0 - a run where no
+    pass ran, or where every pass was instant, cannot demonstrate anything about
+    keeping a slow analyser off the critical path.
+  rationale: the originally specified observable (recon_jobs.finished_at to the next
+    row's started_at) is uncomputable - started_at times phase setup. Langfuse trace
+    timestamps were assessed as the replacement and rejected as the gate (12.1).
+```
+
+The primary observable is also the one that reads directly against the inline mode: under `InlineAnalysisFeed` the blocked time *is* the pass duration (up to 1157 s on run `64f2ccb8`), under `QueuedAnalysisFeed` it is an enqueue.
+`test_AST_DEC_09_queued_advance_does_not_block_while_inline_advance_does` asserts that contrast in the unit tier over the same injected slow pass, so the live gate is not the first place the predicate is exercised - and neither mode can pass it by doing less work, because `pass_seconds_max` is checked on both.
+
+The live gate itself is `tests/e2e/test_decoupling_live_gate.py`, driven by `RECON_RUN_ID` against a completed run.
+It skips without a run id, and *fails* rather than skips when the run exists but is uninformative - a run with fewer than three timed jobs, or no drained claim, or zero `AGGREGATES` is a failed gate, not an absent one.

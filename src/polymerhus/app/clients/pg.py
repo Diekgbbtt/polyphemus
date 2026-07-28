@@ -149,7 +149,8 @@ def set_run_status(run_id: str, status: str, current_phase: int | None = None) -
 def get_run(run_id: str) -> dict | None:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT run_id, project_id, status, current_phase, started_at, finished_at "
+            "SELECT run_id, project_id, status, current_phase, started_at, finished_at, "
+            "COALESCE(stats, '{}'::jsonb) "
             "FROM recon_runs WHERE run_id = %s",
             (run_id,),
         )
@@ -163,6 +164,11 @@ def get_run(run_id: str) -> dict | None:
             "current_phase": row[3],
             "started_at": row[4],
             "finished_at": row[5],
+            # `set_run_stats` wrote this from the run's first commit but nothing read
+            # it back, so the feed's own report - including whether analysis drained -
+            # was invisible to every consumer of a run. A write-only column is not a
+            # record.
+            "stats": row[6],
         }
 
 

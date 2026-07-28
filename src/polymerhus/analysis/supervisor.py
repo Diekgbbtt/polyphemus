@@ -21,6 +21,8 @@ proposal-accumulator channel: the live graph is the accumulator.
 from __future__ import annotations
 
 import logging
+import time
+from datetime import datetime, timezone
 from typing import Annotated, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
@@ -403,8 +405,37 @@ class PassCensus(BaseModel):
     terminal: bool = False
     error: str | None = None
 
+    # The pass's own wall-clock window, stamped by the pass around its whole body
+    # (#34 AST-DEC-09). This is the ONE authoritative measurement of how long an
+    # analyser pass occupies, and it is recorded here - in the value the pass
+    # already returns to its caller - rather than reconstructed afterwards from
+    # traces. Langfuse was assessed for this role and rejected (see §12 of
+    # `docs/design/recon-analysis-decoupling.md`): it is fail-open, optional, and
+    # drops span batches exactly under the latency stress a stall produces, so a
+    # gate built on it is silently vacuous in precisely the failing case.
+    started_at: str = ""
+    finished_at: str = ""
+    duration_s: float = 0.0
+
 
 PassResult.model_rebuild()
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _window(t0: float, started_at: str) -> dict:
+    """The census fields describing a pass's wall-clock window.
+
+    Duration comes from `time.monotonic` (immune to a clock step), the endpoints
+    from wall-clock UTC so they can be correlated with `recon_jobs` rows and with
+    a Langfuse trace by a human reading both."""
+    return {
+        "started_at": started_at,
+        "finished_at": _utc_now_iso(),
+        "duration_s": round(time.monotonic() - t0, 3),
+    }
 
 
 def run_analyser_chunked(
@@ -474,6 +505,12 @@ async def analyse_chunked(
     invoke_fn = invoke_fn or default_invoke_fn()
     write_fn = write_fn or _aggregates_write_fn
 
+    # Stamped around the WHOLE body, including the reads: a pass that spends its
+    # time in Neo4j rather than in the provider is still a pass that occupied the
+    # analyser, and the stall predicate must not be blind to it.
+    _t0 = time.monotonic()
+    _started_at = _utc_now_iso()
+
     assets = assets_fn(project_id)
     profiled = profiled_origins(profiles_fn(project_id))
     # A pseudo-job: the chunk builder keys `chunk_id` off the source job, and this
@@ -489,7 +526,8 @@ async def analyse_chunked(
         # empty surface is distinguishable from a drain that never read anything.
         return PassResult(
             export=AnalyserExport(),
-            census=PassCensus(l0_assets_read=len(assets), terminal=terminal),
+            census=PassCensus(l0_assets_read=len(assets), terminal=terminal,
+                              **_window(_t0, _started_at)),
         )
 
     totals = {"aggregates": 0}
@@ -523,18 +561,28 @@ async def analyse_chunked(
             "admitted_endpoints": sum(len(admit_for_role(c, "assigner")) for c in chunks),
             "terminal": terminal,
             "langfuse_tags": ["analyser", "supervisor", "assigner", "chunked"],
+            # Join recon and analysis onto ONE Langfuse timeline. The analyser id is
+            # `stream-<recon run_id>` (stable, so repeated passes MERGE), but the
+            # SESSION must be the bare recon run: otherwise the two modules trace
+            # into two sessions that share no key, and no human can see an analyser
+            # pass sitting between two recon jobs. Overrides the default set by
+            # `_observability_config`, which keys off the analyser id.
+            "langfuse_session_id": run_id.removeprefix("stream-"),
+            "recon_run_id": run_id.removeprefix("stream-"),
         },
     ))
     census = PassCensus(
         l0_assets_read=len(assets), chunks_built=len(chunks),
         dispatches_scheduled=len(schedule), dispatches_entered=entered["n"],
         aggregates_written=totals["aggregates"], terminal=terminal,
+        **_window(_t0, _started_at),
     )
     logger.info(
         "analyser chunked run=%s terminal=%s chunks=%d scheduled=%d entered=%d "
-        "l0_assets=%d aggregates_written=%d",
+        "l0_assets=%d aggregates_written=%d duration_s=%.1f",
         run_id, terminal, census.chunks_built, census.dispatches_scheduled,
         census.dispatches_entered, census.l0_assets_read, census.aggregates_written,
+        census.duration_s,
     )
     return PassResult(
         export=AnalyserExport(aggregates_written=totals["aggregates"]), census=census,

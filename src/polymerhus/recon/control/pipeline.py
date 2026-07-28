@@ -26,6 +26,8 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
+from datetime import datetime, timezone
 
 from polymerhus.app.config import config
 from polymerhus.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
@@ -46,6 +48,25 @@ logger = logging.getLogger(__name__)
 # Node properties that are bookkeeping, not part of an asset's identity -
 # excluded when re-hydrating produced assets from Neo4j for the next phase.
 _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
+
+
+def _utc_now_iso() -> str:
+    return datetime.now(timezone.utc).isoformat()
+
+
+def _exec_window(t0: float, started_at: str) -> dict:
+    """A job's real execution window, persisted into `recon_jobs.stats`.
+
+    Recorded because the row's own `started_at` column cannot answer "when did this
+    job actually run" (see `_run_one`), and the stall predicate needs the gap
+    BETWEEN jobs - which is where the analyser's time was being spent. Duration
+    from `time.monotonic` so a clock step cannot manufacture or hide a stall; the
+    endpoints in wall-clock UTC so they join against a pass census and a trace."""
+    return {
+        "exec_started_at": started_at,
+        "exec_finished_at": _utc_now_iso(),
+        "exec_seconds": round(time.monotonic() - t0, 3),
+    }
 
 
 def seed_assets(settings: dict) -> list[dict]:
@@ -442,13 +463,22 @@ async def run_pipeline(
 
             async def _run_one(name: str) -> None:
                 job, input_assets, extra = job_configs[name]
+                # The job's REAL execution window (#34 AST-DEC-09). `recon_jobs.
+                # started_at` cannot serve: `upsert_job` stamps it with now() on
+                # INSERT and leaves it untouched ON CONFLICT, and the phase-setup
+                # loop above already inserted the `in_progress` row for every job in
+                # this phase - so that column measures phase setup, not job start,
+                # and a gap computed from it is meaningless.
+                exec_t0 = time.monotonic()
+                exec_started_at = _utc_now_iso()
                 try:
                     pod_exports = await run_job(
                         job, input_assets, run_id=run_id, phase=phase_idx, extra=extra
                     )
                 except Exception as exc:  # best-effort: never abort the pipeline
                     await asyncio.to_thread(
-                        registry.upsert_job, run_id, phase_idx, name, "degraded", error=str(exc)
+                        registry.upsert_job, run_id, phase_idx, name, "degraded",
+                        stats=_exec_window(exec_t0, exec_started_at), error=str(exc)
                     )
                     return
 
@@ -478,6 +508,7 @@ async def run_pipeline(
                     "consumed": len(input_assets),
                     "produced_assets": produced_assets,
                     "produced_observations": produced_observations,
+                    **_exec_window(exec_t0, exec_started_at),
                 }
                 commands = [
                     e.stats.get("command")

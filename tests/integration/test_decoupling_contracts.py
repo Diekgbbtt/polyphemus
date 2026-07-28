@@ -77,14 +77,16 @@ def _seed_l1_service(project_id, slug):
 
 
 def _counts(project_id):
+    # Counted independently: a chained MATCH would drop the whole row when there
+    # are no AGGREGATES yet, reporting zero Services as well and turning a real
+    # "1 service, 0 edges" state into an indistinguishable "nothing here".
     rows = neo4j_client.read(
-        "MATCH (s:L1Service) WHERE s.project_id = $p "
-        "WITH count(s) AS services "
-        "MATCH (:L1Service)-[r:AGGREGATES]->(e) WHERE e.project_id = $p "
-        "RETURN services, count(r) AS aggregates",
+        "RETURN COUNT { MATCH (s:L1Service) WHERE s.project_id = $p } AS services, "
+        "COUNT { MATCH (:L1Service)-[r:AGGREGATES]->(e) WHERE e.project_id = $p } "
+        "AS aggregates",
         {"p": project_id},
     )
-    return (rows[0]["services"], rows[0]["aggregates"]) if rows else (0, 0)
+    return (rows[0]["services"], rows[0]["aggregates"])
 
 
 def _cleanup(project_id):

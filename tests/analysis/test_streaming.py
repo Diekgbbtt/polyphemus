@@ -150,7 +150,7 @@ def test_AST_DEC_01_queued_feed_never_runs_a_pass_inside_the_job_loop():
     async def slow_pass(cursor):
         events.append(("pass", cursor.job))
         await asyncio.sleep(0.02)
-        return _ok_census(cursor)
+        return await _ok_census(cursor)
 
     original = pipeline.registry_upsert_probe = None  # noqa: F841 - readability
     reg = _run_queued(_QUEUED_SETTINGS, slow_pass)

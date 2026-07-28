@@ -449,8 +449,11 @@ def crawl_pod_invoke(pod_input: dict, job, run_id: str, phase: int) -> PodExport
     # Langfuse tracing: the crawl-pod tree (crawl/parse/triager/curator) becomes
     # the per-pod span tree. Empty list (Langfuse unconfigured) is inert.
     from polymerhus.app.observability import get_langfuse_callbacks
+    from polymerhus.recon.control.job_agent import pod_trace_metadata
 
     result = crawl_pod.invoke(
-        pod_state, config={"callbacks": get_langfuse_callbacks()}
+        pod_state,
+        config={"callbacks": get_langfuse_callbacks(),
+                "metadata": pod_trace_metadata(run_id, phase, job.tool)},
     )
     return result["export"]
