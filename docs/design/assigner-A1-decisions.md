@@ -86,7 +86,13 @@ It is an OUTPUT of the assertion suite, not a reasoned input, and stays env-tuna
 
 Split by VOLATILITY so the provider prompt-cache prefix holds across a run.
 
-**System message (stable):** the analyser skill, the role verbatim, the reflection protocol, the few-shot examples, the output-shape rules.
+**System message (stable):** the ASSIGNER skill, the role verbatim, the reflection protocol, the worked examples, the output-shape rules.
+
+Amended 2026-07-28: this line originally read "the analyser skill", meaning the SHARED `skills/analysis/analyser/SKILL.md`.
+#34 removed that skill from the Assigner's system message and left nothing in its place, because the shared skill addresses a generalist proposer - it instructs System modelling, data relationships and Service props that D4/D18 forbid this role from emitting, so carrying it here let the model choose between "emit aggregates only" and a WebPresentation worked example.
+Removing it was right; leaving the role with NO skill was not, and it made the Assigner the only analysis role whose reasoning discipline was a hardcoded Python constant rather than an operator-tunable file.
+The role-specific replacement is `skills/analysis/assigner/SKILL.md` (the #30 per-role retirement, for this role), split the same way the Bootstrapper's prompt is: `_ROLE_VERBATIM` in code carries the WHAT (identity, the aggregates-only output contract, the reference shape) and must hold even with no skills mount, while the skill carries the HOW (the ownership-judgment discipline and its worked examples).
+It is selected by `ASSIGNER_PROMPT_CONFIG`, and the default stays `baseline` - the pre-skill prompt, byte-for-byte - until a comparative eval flips it, on the `bootstrap._PROMPT_CONFIGS` discipline that a prompt default is earned by measurement rather than by argument.
 
 **User message (volatile):** the un-truncated L1 identities block FIRST (the FR-INVENTORY discipline), then the rendered chunk.
 

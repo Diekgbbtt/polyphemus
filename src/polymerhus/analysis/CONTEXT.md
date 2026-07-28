@@ -268,6 +268,9 @@ The `_two_pass_analyse` monolith dissolves into responsibility-scoped proposers,
 **Assigner**:
 The sole owner of the `AGGREGATES` hinge (agent spec #8) - HIGH-PRECISION assignment of an Endpoint to its owning Service, A.1-only (no re-assignment, no retraction).
 Emits a narrowed `L1DeltaBatch{aggregates}` (#34 D4: `services` left the output when minting was retired).
+Its system message is TWO layers, the same split the Bootstrapper uses: the role verbatim in code (identity, the aggregates-only output contract, the reference shape - the WHAT, which must hold even with no skills mount) plus the operator-tunable ownership-judgment discipline in `skills/analysis/assigner/SKILL.md` (the no-owner null hypothesis, the differential over candidate owners, discriminating evidence, calibrated withholding - the HOW).
+The shared analyser skill is NOT that layer and was never a fit: it addresses a generalist proposer and instructs the System and data modelling D4/D18 forbid this role (the #30 per-role retirement).
+`ASSIGNER_PROMPT_CONFIG` selects the arrangement, defaulting to the pre-skill `baseline` until a comparative eval flips it.
 _Avoid_: analyser (the whole-model term).
 
 **Three "no edge is written" mechanisms** (named apart 2026-07-27, #34 - one word for all three hid a decision never taken behind a decision taken and declined):
