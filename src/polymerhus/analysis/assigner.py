@@ -64,6 +64,7 @@ class AssignmentStats(BaseModel):
     proposed: int = 0        # aggregates the model returned
     unresolvable: int = 0    # dropped: named no Endpoint in the chunk
     out_of_inventory: int = 0  # dropped: named no live Service
+    rescaled: int = 0        # repaired: confidence was a percentage, not a 0..1 value
     withheld: int = 0        # dropped: below the confidence bar
     kept: int = 0            # aggregates handed to the curator
 
@@ -196,6 +197,37 @@ def resolve_l0_refs(batch: L1DeltaBatch, *, endpoints) -> L1DeltaBatch:
     return batch.model_copy(update={"aggregates": kept})
 
 
+def normalise_confidence(batch: L1DeltaBatch) -> tuple[L1DeltaBatch, int]:
+    """THE SCALE GATE: rewrite any confidence expressed as a PERCENTAGE into 0..1,
+    and clamp what remains into range. Returns the batch and the count rescaled.
+
+    Found live, in the graph, by the eval harness: 213 of 675 `AGGREGATES` edges
+    carried confidences between 30.0 and 95.0. `AggregatesProposal.confidence` is a
+    bare `float` with no bound, so a model that answers `85` instead of `0.85` is
+    accepted verbatim - and then `withhold_below_bar` keeps it, because 85.0 >= 0.75.
+
+    That is the whole withholding gate silently bypassed: the ONE mechanism defending
+    against the measured 31-38% over-assignment stops rejecting anything at all, and
+    nothing anywhere says so. It is the same defect class as the `l0.label` failure
+    that wrote zero of 114 sound assignments - correctness must not depend on the
+    model's formatting - so it gets the same treatment: repaired in the shaping seam
+    rather than instructed in the prompt and hoped for.
+
+    1.0 is left alone: it is a legitimate maximum, not an ambiguous percentage."""
+    rescaled = 0
+    fixed = []
+    for agg in batch.aggregates:
+        c = agg.confidence
+        if c > 1.0:
+            c = c / 100.0 if c <= 100.0 else 1.0
+            rescaled += 1
+        elif c < 0.0:
+            c = 0.0
+            rescaled += 1
+        fixed.append(agg if c == agg.confidence else agg.model_copy(update={"confidence": c}))
+    return batch.model_copy(update={"aggregates": fixed}), rescaled
+
+
 def withhold_below_bar(batch: L1DeltaBatch, bar: float = ASSIGN_CONFIDENCE_BAR) -> L1DeltaBatch:
     """THE WITHHOLDING GATE (#8 crux): drop every aggregate whose `confidence < bar`
     so it never reaches `write_aggregates`; the L0 element stays in the stale pool.
@@ -212,19 +244,25 @@ def shape_proposal(
 ) -> AssignmentOutcome:
     """Apply the Assigner's ordered shaping to a raw LLM proposal: narrow to
     assignment-only, canonicalise the L0 references against the surface actually
-    streamed, drop owners that do not exist (collecting the backlog), then
-    self-withhold below the bar."""
+    streamed, drop owners that do not exist (collecting the backlog), put every
+    confidence onto the 0..1 scale, then self-withhold below the bar.
+
+    ORDER IS LOAD-BEARING. Normalisation must precede withholding: a percentage-scale
+    confidence clears any bar in 0..1, so withholding a batch that has not been
+    normalised is a no-op wearing the appearance of a gate."""
     batch = narrow_to_assignment(raw)
     proposed = len(batch.aggregates)
     batch = resolve_l0_refs(batch, endpoints=endpoints)
     resolved = len(batch.aggregates)
     batch, backlog = drop_out_of_inventory(batch, existing_slugs=existing_slugs)
     in_inventory = len(batch.aggregates)
+    batch, rescaled = normalise_confidence(batch)
     batch = withhold_below_bar(batch, bar)
     stats = AssignmentStats(
         admitted=len(tuple(endpoints)), proposed=proposed,
         unresolvable=proposed - resolved,
         out_of_inventory=resolved - in_inventory,
+        rescaled=rescaled,
         withheld=in_inventory - len(batch.aggregates),
         kept=len(batch.aggregates),
     )

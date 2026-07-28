@@ -21,6 +21,7 @@ from polymerhus.analysis.assigner import (
     assign,
     drop_out_of_inventory,
     narrow_to_assignment,
+    shape_proposal,
     withhold_below_bar,
 )
 from polymerhus.analysis.chunking import Chunk
@@ -577,3 +578,61 @@ def test_C40b_reflect_appends_without_disturbing_the_cacheable_prefix(config, mo
     assert reflect.startswith(create)
     assert "RESTATE AS EVIDENCE" in reflect
     assert "RESTATE AS EVIDENCE" not in create
+
+
+# --- C41: the scale gate (found live, in the graph, by the eval harness) -------
+
+def test_C41_percentage_confidence_is_rescaled_not_waved_through():
+    """213 of 675 live AGGREGATES edges carried confidences between 30.0 and 95.0:
+    the model answered `85` where the contract is 0..1, and nothing rejected it.
+
+    The consequence is not cosmetic. `withhold_below_bar(0.75)` keeps 85.0, so the
+    ONE mechanism defending against the measured 31-38% over-assignment stops
+    rejecting anything at all, silently. Same defect class as the `l0.label` failure
+    that wrote zero of 114 sound assignments, and the same remedy: repair it in the
+    shaping seam rather than instruct the model and hope."""
+    from polymerhus.analysis.assigner import normalise_confidence
+
+    batch = L1DeltaBatch(aggregates=[
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="Endpoint", identity={}),
+                           confidence=85.0),
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="Endpoint", identity={}),
+                           confidence=30.0),
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="Endpoint", identity={}),
+                           confidence=0.9),      # already in range: untouched
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="Endpoint", identity={}),
+                           confidence=1.0),      # a legitimate maximum, not a percentage
+    ])
+    out, rescaled = normalise_confidence(batch)
+    assert [a.confidence for a in out.aggregates] == [0.85, 0.3, 0.9, 1.0]
+    assert rescaled == 2
+
+
+def test_C41b_the_withholding_gate_actually_bites_after_rescaling():
+    """The property that matters, stated end to end: a percentage-scale 30.0 means
+    LOW confidence and must be withheld, where before the fix it cleared every bar."""
+    ep = AssetDelta(type="Endpoint", identity={"path": "/a", "method": "GET", "baseurl": BU})
+    raw = L1DeltaBatch(aggregates=[
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}),
+                           confidence=95.0),     # -> 0.95, kept
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}),
+                           confidence=30.0),     # -> 0.30, withheld
+    ])
+    outcome = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(ep,))
+    assert outcome.stats.rescaled == 2
+    assert outcome.stats.withheld == 1
+    assert outcome.stats.kept == 1
+    assert outcome.batch.aggregates[0].confidence == 0.95
+
+
+def test_C41c_normalisation_precedes_withholding_in_the_shaping_order():
+    """Order is load-bearing: withholding a batch that has not been normalised is a
+    no-op wearing the appearance of a gate. Pinned by the one input that can only
+    survive if the order is wrong - a 200.0 that clamps to 1.0 rather than to 2.0."""
+    ep = AssetDelta(type="Endpoint", identity={"path": "/a", "method": "GET", "baseurl": BU})
+    raw = L1DeltaBatch(aggregates=[
+        AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}),
+                           confidence=200.0),
+    ])
+    outcome = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(ep,))
+    assert outcome.batch.aggregates[0].confidence == 1.0   # clamped, in range
