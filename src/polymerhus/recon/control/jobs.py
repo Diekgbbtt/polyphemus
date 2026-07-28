@@ -302,8 +302,17 @@ JOBS: dict[str, JobSpec] = {
 # Ordered phases: job names grouped by their consumes/produces dependencies,
 # rooted at subdomain discovery. Each job's `consumes` type is either
 # DOMAIN (always available) or produced by a job in an earlier phase.
+# Temporarily OUT OF PRODUCTION (operator, 2026-07-28), withdrawn from PHASES
+# like gau (D-gau) - the JobSpec + parser stay for easy re-introduction, only the
+# scheduling wiring is removed:
+#   - `amass`: broken against amass v4.2.0 (its `enum` dropped the `-json` flag
+#     the template + parse_amass expect), so it degraded on every run - a wasted
+#     pod (documented in recon-pipeline-forward-decisions.md, the amass-broken finding).
+#   - `paramspider`: withdrawn to reduce phase-4 crawl load on the constrained
+#     host while the OOM/anti-DoS work items (#36/#37) are pending.
+# Re-add the names to their phases below to restore them.
 PHASES: list[list[str]] = [
-    ["subfinder", "amass", "whois"],
+    ["subfinder", "whois"],
     ["dnsx", "puredns", "subdomain_takeover"],
     ["naabu"],
     ["httpx"],
@@ -317,7 +326,7 @@ PHASES: list[list[str]] = [
     # Crawl phase. kiterunner + graphql-cop were moved OUT of this phase (D27):
     # they now run after the reprofile pass so they can gate on the JS-derived
     # API surface, not just httpx's originals.
-    ["katana", "ffuf", "paramspider", "steel_crawl"],
+    ["katana", "ffuf", "steel_crawl"],
     # jsluice consumes the `.js`/`.mjs` Endpoints the phase-4 crawler (katana)
     # produces, so it MUST run in a later phase than it - the phase
     # barrier resolves a job's inputs before any same-phase job runs, so keeping

@@ -111,7 +111,17 @@ def test_subdomain_takeover_template_has_target_placeholder():
 
 def test_phase_zero_is_subdomain_discovery():
     assert "subfinder" in PHASES[0]
-    assert "amass" in PHASES[0]
+
+
+def test_amass_and_paramspider_are_out_of_production():
+    # Withdrawn from PHASES (operator 2026-07-28), like gau: JobSpec kept, only
+    # scheduling removed. amass is broken vs v4.2.0 (degraded every run);
+    # paramspider withdrawn to cut phase-4 crawl load on the constrained host.
+    scheduled = {j for phase in PHASES for j in phase}
+    assert "amass" not in scheduled
+    assert "paramspider" not in scheduled
+    # JobSpecs (and parsers) remain for easy re-introduction.
+    assert "amass" in JOBS and "paramspider" in JOBS
 
 
 def test_consumes_deps_respected_across_full_plan():

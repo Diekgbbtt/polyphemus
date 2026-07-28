@@ -101,10 +101,9 @@ def test_same_phase_jobs_run_sequentially_not_concurrently():
     """Within a phase, one job's run_job must fully return before the next
     job's run_job is even called - peak concurrency inside a phase is one
     job's own pod fan-out (MAX_PODS), never (jobs in phase) x MAX_PODS. Phase
-    0 has three jobs (subfinder/amass/whois); use two of them and have
-    run_job track a running-count via an asyncio.Event handoff so any
-    overlap (a second job starting before the first's run_job returns)
-    would be caught."""
+    0 has two scheduled jobs (subfinder/whois; amass is out of production);
+    use both and have run_job track a running-count so any overlap (a second
+    job starting before the first's run_job returns) would be caught."""
     running = 0
     max_running = 0
     order = []
@@ -127,7 +126,7 @@ def test_same_phase_jobs_run_sequentially_not_concurrently():
         pipeline.run_pipeline(
             "proj1",
             run_id="run1",
-            job_subset=["subfinder", "amass"],
+            job_subset=["subfinder", "whois"],
             run_job=run_job,
             load_settings=make_load_settings(settings),
             registry=registry,
@@ -137,7 +136,7 @@ def test_same_phase_jobs_run_sequentially_not_concurrently():
 
     assert max_running == 1
     # Sequential = job_configs insertion order = PHASES order.
-    assert order == ["subfinder", "amass"]
+    assert order == ["subfinder", "whois"]
 
 
 def test_job_with_all_pods_failed_is_degraded_and_run_completes():
@@ -508,25 +507,24 @@ def test_exact_mode_seeds_single_host_into_httpx_and_naabu():
     assert seen_inputs["whois"] == [{"name": "app.t.com"}]
 
 
-def test_exact_mode_paramspider_gets_single_seed_host_not_per_subdomain():
-    """D14/D19: paramspider (`consumes="Domain"`, later phase) must run EXACTLY
-    ONE pod against the in-scope exact host - non-empty input, one host, never
-    fanned out per discovered subdomain (the wildcard rate-ban risk). The mocked
-    read_assets returns a stray Domain node; the injection replaces it with the
-    single seed host."""
-    _, seen_inputs = _run_and_capture({"target_domain": "app.t.com"})
+def test_seed_domain_host_exact_mode_is_single_in_scope_host():
+    """D14/D19: a later-phase Domain-consuming harvester must run EXACTLY ONE pod
+    against the in-scope exact host - one host, never fanned out per discovered
+    subdomain (the wildcard rate-ban risk). Tested directly on `_seed_domain_host`
+    because its former exemplar (paramspider) is temporarily out of production
+    (withdrawn from PHASES); the seeding logic it guards is unchanged."""
+    from polymerhus.recon.control.scope import parse_scope
 
-    assert "paramspider" in seen_inputs
-    assert seen_inputs["paramspider"] == [{"name": "app.t.com"}]
+    assert pipeline._seed_domain_host(parse_scope("app.t.com")) == [{"name": "app.t.com"}]
 
 
-def test_wildcard_mode_paramspider_gets_single_apex_host():
-    """D14/D19: in wildcard mode paramspider harvests the zone ONCE against the
-    registrable apex - still exactly one pod, never one per discovered
-    subdomain."""
-    _, seen_inputs = _run_and_capture({"target_domain": "*.t.com"})
+def test_seed_domain_host_wildcard_mode_is_single_apex_host():
+    """D14/D19: in wildcard mode the harvest runs ONCE against the registrable
+    apex - still exactly one pod, never one per discovered subdomain. Direct test
+    (see the exact-mode case re: paramspider being out of production)."""
+    from polymerhus.recon.control.scope import parse_scope
 
-    assert seen_inputs["paramspider"] == [{"name": "t.com"}]
+    assert pipeline._seed_domain_host(parse_scope("*.t.com")) == [{"name": "t.com"}]
 
 
 def test_wildcard_mode_runs_discovery_and_probes_apex():
