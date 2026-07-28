@@ -37,6 +37,11 @@ _RECON_SCHEMA_MIGRATIONS = (
     "ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS requester_id TEXT",
     "ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS origin TEXT",
     "CREATE INDEX IF NOT EXISTS recon_jobs_correlation_idx ON recon_jobs (correlation_id)",
+    # #34: run-level analysis stats. The guarantee this design makes is
+    # at-least-once OBSERVATION of surface, and `analysis_drained` is decided from
+    # what the terminal pass actually read - so the counters must be durable and
+    # assertable, not merely logged. Additive JSONB, inert to every existing reader.
+    "ALTER TABLE recon_runs ADD COLUMN IF NOT EXISTS stats JSONB NOT NULL DEFAULT '{}'::jsonb",
 )
 
 
@@ -48,6 +53,20 @@ def ensure_recon_schema() -> None:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         for stmt in _RECON_SCHEMA_MIGRATIONS:
             cur.execute(stmt)
+
+
+def set_run_stats(run_id: str, stats: dict) -> None:
+    """Merge run-level stats onto the run row (#34). Additive and idempotent: the
+    JSONB concatenation overwrites only the keys supplied, so a later writer of a
+    different key cannot clobber an earlier one."""
+    import json
+
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE recon_runs SET stats = COALESCE(stats, '{}'::jsonb) || %s::jsonb "
+            "WHERE run_id = %s",
+            (json.dumps(stats or {}), run_id),
+        )
 
 
 def create_project(project_id: str, name: str) -> None:

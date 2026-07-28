@@ -65,6 +65,8 @@ CREATE INDEX IF NOT EXISTS recon_runs_status_idx ON recon_runs (status);
 -- last_heartbeat_at ALTER above. Also applied at runtime by
 -- agent/app/clients/pg.py::ensure_recon_schema so the persistent dev DB and CI
 -- self-heal without a volume reset (init.sql only runs on first volume init).
+-- #34: run-level analysis stats (analysis_drained + the terminal pass's census).
+ALTER TABLE recon_runs ADD COLUMN IF NOT EXISTS stats JSONB NOT NULL DEFAULT '{}'::jsonb;
 ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS correlation_id TEXT;
 ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS requester_id   TEXT;
 ALTER TABLE recon_jobs ADD COLUMN IF NOT EXISTS origin         TEXT;

@@ -248,6 +248,8 @@ async def run_pipeline(
     read_steering_signals=None,
     decide_routing=None,
     stream_fn=None,
+    feed_mode: str | None = None,
+    pass_fn=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -280,6 +282,22 @@ async def run_pipeline(
     # fed each recon job's freshly-curated surface AS RECON PROCEEDS, so L1 is
     # integrated progressively. Default OFF -> batch stays the default (L1D-23).
     streaming = bool(settings.get("streaming_analysis"))
+    # #34: the analysis touchpoint is a FEED handle, not a direct call. `inline`
+    # reproduces today's blocking behaviour verbatim (the rollback path); `queued`
+    # hands the pass to a per-run consumer so recon never waits on an LLM. The mode
+    # is a settings flag, so this call site does not branch and rollback is a flip.
+    from polymerhus.analysis.feed import (
+        AnalysisCursor, resolve_feed_mode, start_analysis_feed,
+    )
+    _mode = feed_mode or resolve_feed_mode(settings)
+    if pass_fn is None and _mode == "inline":
+        # Preserve the injected `stream_fn` seam verbatim: inline mode must remain
+        # byte-for-byte today's behaviour, or the rollback path is not a rollback.
+        async def _inline_pass(cursor):
+            return await asyncio.to_thread(stream_fn, cursor.project_id, cursor.run_id)
+
+        pass_fn = _inline_pass
+    feed = start_analysis_feed(project_id, run_id, mode=_mode, pass_fn=pass_fn) if streaming else None
 
     if job_subset is not None:
         validate_job_subset(job_subset)
@@ -501,19 +519,25 @@ async def run_pipeline(
                     stats=job_stats,
                 )
 
-                # FR-STREAM (NM-7): feed this job's freshly-curated surface to the
-                # analyser NOW, so L1 grows progressively during recon. Only when
-                # the job actually produced surface (else the pass is redundant),
-                # and synchronously here (jobs run sequentially) so peak memory
-                # stays one analyser pass - no concurrent consumer (OOM-safe).
-                # stream_fn is fail-open; guard the call too so streaming can
-                # never fail a healthy recon run.
-                if streaming and (produced_assets or produced_observations):
+                # FR-STREAM (NM-7) + #34: signal the analyser that this job added
+                # surface, so L1 grows progressively during recon. Only when the job
+                # actually produced surface (else the pass is redundant).
+                # `advance` is NON-BLOCKING under the queued feed - that is the whole
+                # point, and the memory bound moved with it: a process-wide semaphore
+                # of one pass now does what strict serialisation used to do, so the
+                # OOM failure mode the NM-7 ledger named stays closed. Under the
+                # inline feed this call blocks exactly as it always did.
+                # Guarded regardless: analysis never fails a healthy recon run.
+                if feed is not None and (produced_assets or produced_observations):
                     try:
-                        await asyncio.to_thread(stream_fn, project_id, run_id)
-                    except Exception:  # best-effort: streaming never aborts recon
+                        await feed.advance(AnalysisCursor(
+                            project_id=project_id, run_id=run_id, job=name,
+                            phase=phase_idx, produced_assets=produced_assets,
+                            produced_observations=produced_observations,
+                        ))
+                    except Exception:  # best-effort: analysis never aborts recon
                         logger.warning(
-                            "streaming analyser step raised for run %s job %s (recon continues)",
+                            "analysis feed advance raised for run %s job %s (recon continues)",
                             run_id, name, exc_info=True,
                         )
 
@@ -527,7 +551,35 @@ async def run_pipeline(
             for name in job_configs:
                 await _run_one(name)
             signals = await asyncio.to_thread(read_steering_signals, project_id)
+
+        # DRAIN, inside the try so the heartbeat is still ticking through it: the
+        # reaper flips a run whose heartbeat stalls, and a terminal analyser pass
+        # can outlive REAP_TTL_SECONDS. The terminal pass is what makes the
+        # at-least-once-observation guarantee real (#34 DQ1a/DQ2b).
+        if feed is not None:
+            try:
+                feed_stats = await feed.drain()
+                write_stats = getattr(registry, "set_run_stats", None)
+                if write_stats is not None:
+                    await asyncio.to_thread(write_stats, run_id, feed_stats.model_dump())
+            except Exception:  # a drain failure must never fail a healthy recon run
+                logger.warning("analysis drain raised for run %s (recon continues)",
+                               run_id, exc_info=True)
     finally:
+        # #34 DQ4a: no DRAIN on abnormal termination - a cancelled or failed run
+        # finishes no outstanding pass and makes no convergence claim, because
+        # finishing analysis the operator asked to abandon serves nobody. The drain
+        # therefore lives in the `try` above and only the STOP is unconditional:
+        # `stop` is idempotent, and calling it on every path is what guarantees the
+        # consumer task cannot outlive its run (a `drain` that raised before its own
+        # cleanup would otherwise leak it).
+        if feed is not None:
+            stop = getattr(feed, "stop", None)
+            if stop is not None:
+                try:
+                    await stop()
+                except Exception:
+                    logger.warning("analysis consumer stop raised for run %s", run_id, exc_info=True)
         hb.cancel()
         try:
             await hb
