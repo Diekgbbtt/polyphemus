@@ -720,3 +720,44 @@ It is recorded here as a candidate, to be decided when the cost lever is actuall
 **What must be asserted.**
 Any assertion for the skip must show that a skipped window is re-judged by the terminal pass (the exemption is what preserves DQ1(a)), and must FAIL if a skip key is ever derived from `chunk_id` or `dispatch_id`.
 Section 3.7's note that dispatch ids repeat across passes reads as a licence to key on them; it is not, and keying on them would silently violate DQ1(a) because chunk indices are positional over an unordered read.
+
+---
+
+## 11. Implementation record (2026-07-28, `feat/recon-analysis-decoupling`)
+
+Built per the section 10 decisions. Migration steps 1-3 of section 8 are complete; step 4 (the live gate) has not been run.
+
+**Step 1 - the bounded provider call, behind no flag.**
+`ChatOpenAI` was constructed with neither a timeout nor `max_retries` (`providers.py`), under `pod._invoke_with_retry(attempts=3)`.
+That unbounded request is the mechanism behind the measured stall, so it is fixed on its own and independently: `LLM_REQUEST_TIMEOUT_S` (default 120) and `LLM_SDK_MAX_RETRIES` (default 0).
+The SDK retry is set to zero deliberately: retry policy belongs to the one layer that already owns it, and leaving the SDK default of 2 multiplies the two ladders into up to nine attempts with no single place to reason about the bound.
+
+**Step 2 - the async extraction and the census.**
+`analyse_chunked` is now the single async implementation; `run_analyser_chunked` is the sync wrapper that `asyncio.run`s it, so every existing caller and test is unchanged.
+It returns a `PassResult` carrying the `AnalyserExport` AND a `PassCensus` of `{l0_assets_read, chunks_built, dispatches_scheduled, dispatches_entered, aggregates_written, terminal}` (DQ2b).
+`dispatches_entered` is counted inside the proposer body rather than from the schedule, because a dispatch that was scheduled but never entered is precisely the silent case the census exists to expose.
+
+**Step 3 - the feed, and the pipeline call site.**
+`analysis/feed.py` is the one new module: `AnalysisCursor`, `InlineAnalysisFeed`, `QueuedAnalysisFeed`, `start_analysis_feed`, `resolve_feed_mode`.
+The pipeline keeps ONE analysis touchpoint (`feed.advance`) plus one drain, and the mode is a settings flag, so the call site does not branch.
+`recon_runs.stats` (additive JSONB, idempotent ALTER + runtime self-heal, mirroring the `last_heartbeat_at` precedent) carries the feed stats so `analysis_drained` is durable and assertable rather than only logged.
+
+**Two things the build got right only after they went wrong.**
+
+A pending TERMINAL cursor must never be demoted by a later ordinary cursor.
+Conflation replaces the pending cursor with the newer one, and the naive version dropped the terminal flag with it, so the drain would then wait for a pass that could no longer arrive.
+`terminal` is a property of the RUN, not of the signal: once the run has stopped producing surface, that fact cannot be un-learned.
+Asserted by `test_AST_DEC_02b_coalescing_never_demotes_a_pending_terminal_cursor`.
+
+The consumer `stop` is unconditional in the pipeline's `finally`, while the DRAIN stays in the `try`.
+DQ4a is about not draining on abnormal termination, not about leaking the task: a `drain` that raised before its own cleanup would otherwise leave the consumer running past its run.
+`stop` is idempotent, so calling it on every path is free.
+
+**Assertions.**
+AST-DEC-01..05 in `tests/analysis/test_feed.py` (unit tier, pure seam, injected `pass_fn`), AST-DEC-06/07 in `tests/integration/test_decoupling_contracts.py` (real provider construction, real sole-writer, live Neo4j), plus four pipeline-level predicates in `tests/analysis/test_streaming.py` including one that pins inline mode to today's behaviour.
+Every non-vacuity guard named in section 6 is carried: the drain assertions check that a pass actually RAN before checking that it claimed nothing.
+
+**Not done, and deliberately so.**
+AST-DEC-08/09/10 are the live gate and need a real run; they are unwritten because AST-DEC-09 as specified is unimplementable - `recon_jobs.started_at` is stamped at phase setup for every job in a phase at once, so a per-job gap cannot be measured from it.
+The stall assertion needs a different observable (a per-job timestamp that does not exist yet, or the feed's own advance-to-return latency).
+The section 5.1 memory figure is still derived from the refuted surface number and must be MEASURED before the flag is enabled on any project.

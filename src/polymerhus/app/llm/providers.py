@@ -13,6 +13,17 @@ PROVIDERS: dict[str, str] = {
 
 ROLES: tuple[str, ...] = ("configurator", "triager", "job_orchestrator", "crawler", "analyser")
 
+# Per-request wall-clock bound on a provider call, and the SDK's own retry count.
+# Both were unset, which is the mechanism behind the measured stall: an unbounded
+# request sat under `_invoke_with_retry(attempts=3)`, so a provider that never
+# answered blocked a caller indefinitely, three times over. One analyser pass on
+# run 64f2ccb8 took 1157 s against a 59 s median.
+# `max_retries=0` hands retry policy to the ONE layer that already owns it
+# (`pod._invoke_with_retry`); leaving the SDK default of 2 multiplies the two
+# ladders into up to nine attempts with no single place to reason about the bound.
+LLM_REQUEST_TIMEOUT_S = float(os.environ.get("LLM_REQUEST_TIMEOUT_S", "120"))
+LLM_SDK_MAX_RETRIES = int(os.environ.get("LLM_SDK_MAX_RETRIES", "0"))
+
 def _key_env(provider: str) -> str:
     return f"API_KEY_{provider.upper()}"
 
@@ -39,6 +50,7 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0) -> Ch
 
     return ChatOpenAI(model=model, api_key=api_key,
                       base_url=PROVIDERS[provider], temperature=temperature,
+                      timeout=LLM_REQUEST_TIMEOUT_S, max_retries=LLM_SDK_MAX_RETRIES,
                       callbacks=get_langfuse_callbacks())
 
 def validate_llm_config() -> None:

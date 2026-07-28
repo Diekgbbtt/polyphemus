@@ -24,6 +24,7 @@ import logging
 from typing import Annotated, Callable, TypedDict
 
 from langgraph.graph import END, START, StateGraph
+from pydantic import BaseModel, ConfigDict
 from langgraph.types import Command
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
@@ -374,6 +375,38 @@ def build_schedule(
     ]
 
 
+class PassResult(BaseModel):
+    """One pass's outcome: what it wrote, and what it observed while writing it."""
+
+    model_config = ConfigDict(frozen=True)
+
+    export: object = None
+    census: "PassCensus" = None
+
+
+class PassCensus(BaseModel):
+    """What one analyser pass OBSERVED, not merely that it ran (#34 DQ2).
+
+    The guarantee this design makes is at-least-once OBSERVATION of surface (DQ1),
+    and every layer beneath this one is fail-open, so a pass that read an empty
+    surface, built no chunks, or degraded every dispatch is indistinguishable from
+    a healthy one unless it says what it saw. `analysis_drained` is derived from
+    these counters, never from the fact that the coroutine returned."""
+
+    model_config = ConfigDict(frozen=True)
+
+    l0_assets_read: int = 0
+    chunks_built: int = 0
+    dispatches_scheduled: int = 0
+    dispatches_entered: int = 0
+    aggregates_written: int = 0
+    terminal: bool = False
+    error: str | None = None
+
+
+PassResult.model_rebuild()
+
+
 def run_analyser_chunked(
     project_id: str,
     run_id: str,
@@ -387,6 +420,35 @@ def run_analyser_chunked(
     store=None,
     observe: bool = True,
 ):
+    """Sync wrapper over `analyse_chunked` for callers that own no event loop.
+
+    Kept so every existing caller and test is unchanged; there is exactly ONE
+    implementation, in the coroutine below. A caller already on an event loop (the
+    analysis consumer) must await `analyse_chunked` directly - `asyncio.run` cannot
+    be called from a running loop."""
+    import asyncio
+
+    return asyncio.run(analyse_chunked(
+        project_id, run_id, invoke_fn=invoke_fn, assets_fn=assets_fn,
+        profiles_fn=profiles_fn, inventory_fn=inventory_fn, write_fn=write_fn,
+        checkpointer=checkpointer, store=store, observe=observe,
+    )).export
+
+
+async def analyse_chunked(
+    project_id: str,
+    run_id: str,
+    *,
+    invoke_fn=None,
+    assets_fn=None,
+    profiles_fn=None,
+    inventory_fn=None,
+    write_fn=None,
+    checkpointer=None,
+    store=None,
+    observe: bool = True,
+    terminal: bool = False,
+) -> "PassResult":
     """The CHUNK-FED analyser (#34): read the live L0 surface, stream it into
     chunks, and dispatch one Assigner work order per chunk through the control
     plane, writing each step's aggregates through the sole-writer.
@@ -398,9 +460,8 @@ def run_analyser_chunked(
     against the Bootstrapper's Services and writes no Systems or DataItems.
 
     Every collaborator is injectable; the defaults are the live ones. Fail-open
-    throughout: a read, LLM or write failure degrades that step, never the run."""
-    import asyncio
-
+    throughout: a read, LLM or write failure degrades that step, never the run.
+    Returns a `PassResult` carrying the export AND the census of what was observed."""
     from polymerhus.analysis.assigner import default_invoke_fn, make_assigner_body
     from polymerhus.analysis.chunking import admit_for_role, chunks_for_job, profiled_origins
     from polymerhus.analysis.l0_stream import read_baseurl_profiles, read_l0_assets
@@ -424,7 +485,12 @@ def run_analyser_chunked(
                          command_template="", produces=[], consumes="BaseURL")
     chunks = chunks_for_job(pseudo_job, assets, profiled=profiled, barrier=True)
     if not chunks:
-        return AnalyserExport()
+        # Valid empty: nothing to judge. Recorded as observed, so a drain over an
+        # empty surface is distinguishable from a drain that never read anything.
+        return PassResult(
+            export=AnalyserExport(),
+            census=PassCensus(l0_assets_read=len(assets), terminal=terminal),
+        )
 
     totals = {"aggregates": 0}
 
@@ -433,10 +499,19 @@ def run_analyser_chunked(
         totals["aggregates"] += getattr(export, "aggregates_written", 0) or 0
         return export
 
-    body = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
+    entered = {"n": 0}
+    inner_body = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
+
+    def body(dispatch, state):
+        # Counted HERE rather than from the schedule: a dispatch that was scheduled
+        # but never entered (the graph terminated early, the step degraded before
+        # the body) is exactly the case the census exists to expose.
+        entered["n"] += 1
+        return inner_body(dispatch, state)
+
     builder = build_supervisor_graph(proposer_bodies={"assigner": body}, write_fn=_counting_write)
     schedule = build_schedule(chunks, run_id)
-    asyncio.run(run_supervisor(
+    await (run_supervisor(
         project_id, run_id, schedule, builder=builder,
         checkpointer=checkpointer, store=store, observe=observe,
         # The chunk shape IS the diagnosis when a step writes nothing, so it rides
@@ -446,14 +521,24 @@ def run_analyser_chunked(
             "dispatches": len(schedule),
             "l0_assets": len(assets),
             "admitted_endpoints": sum(len(admit_for_role(c, "assigner")) for c in chunks),
+            "terminal": terminal,
             "langfuse_tags": ["analyser", "supervisor", "assigner", "chunked"],
         },
     ))
-    logger.info(
-        "analyser chunked run=%s chunks=%d dispatches=%d l0_assets=%d aggregates_written=%d",
-        run_id, len(chunks), len(schedule), len(assets), totals["aggregates"],
+    census = PassCensus(
+        l0_assets_read=len(assets), chunks_built=len(chunks),
+        dispatches_scheduled=len(schedule), dispatches_entered=entered["n"],
+        aggregates_written=totals["aggregates"], terminal=terminal,
     )
-    return AnalyserExport(aggregates_written=totals["aggregates"])
+    logger.info(
+        "analyser chunked run=%s terminal=%s chunks=%d scheduled=%d entered=%d "
+        "l0_assets=%d aggregates_written=%d",
+        run_id, terminal, census.chunks_built, census.dispatches_scheduled,
+        census.dispatches_entered, census.l0_assets_read, census.aggregates_written,
+    )
+    return PassResult(
+        export=AnalyserExport(aggregates_written=totals["aggregates"]), census=census,
+    )
 
 
 def _aggregates_write_fn(deltas: L1DeltaBatch, project_id: str, provenance: Provenance):
