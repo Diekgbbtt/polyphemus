@@ -2,11 +2,16 @@ import asyncio
 import logging
 
 from fastapi import FastAPI
+from polymerhus.app.logging_config import configure_logging
 from polymerhus.app.clients import pg, neo4j_client, kali_mcp
 from polymerhus.app.config import config
 from polymerhus.app.llm import validate_llm_config
 from polymerhus.app.observability import disabled_reason, get_langfuse_callbacks
 from polymerhus.project_management.api import router as recon_router
+
+# Before anything else: uvicorn configures only its own loggers, so without this
+# every application log line in this process is discarded. See logging_config.
+configure_logging()
 
 logger = logging.getLogger(__name__)
 
