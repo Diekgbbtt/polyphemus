@@ -25,6 +25,11 @@ When you introduce, rename, or sharpen a domain term while implementing, update 
 When a change alters the reasoned model (a new primitive, a corrected relationship, a resolved open question), update `docs/design/domain-model.md` too.
 Provisional terms not yet ratified by the operator (currently the phase-3 `fault-hypothesis` / `testing technique` / `probe` / `vulnerability` vocabulary and the "escalating epistemic ladder" framing) stay marked as such until ratified. The fault-hypothesis is a phase-3 testing primitive, not a graph node or edge.
 
+### E2E eval targets
+
+The eval dataset is `tests/e2e/fixtures/eval-targets.yaml` - the registry of live targets for end-to-end runs.
+Each target's fields map onto `settings.recon` (`target_seed`, `auth_context`, `operator_kb`, feature toggles) plus the `POST /recon` job subset; the eval agent applies one target's `settings`/`launch` mechanically and asserts against its `expected_recon` ground truth.
+
 ### Work authority
 
 `loop-constraints.md` is the sole authority on what an agent works on next.

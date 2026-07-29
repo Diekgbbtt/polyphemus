@@ -93,6 +93,12 @@ Several of these decisions are also restated as binding invariants in `loop-cons
 Where the two agree, they are one rule.
 Where they appear to disagree, `loop-constraints.md` wins for anything an agent is about to write, and the discrepancy is an escalation.
 
+## Eval dataset
+
+The registry of live e2e targets is `tests/e2e/fixtures/eval-targets.yaml`.
+Each target carries a `settings` block (maps onto `settings.recon`: `target_seed`, `auth_context`, feature toggles), an `operator_kb` text block that bootstraps the L1 graph, a `launch.jobs` subset, `environmental_caveats` that drive run configuration, and an `expected_recon` ground-truth sketch.
+The eval agent is pointed at one or more target `name`s and applies each mechanically; only `expected_recon` maps to no setting.
+
 ## Eval-time technique: bare-IP vhost resolution
 
 When a Project is seeded by bare IP (recon `host` scope mode), a web target routinely 301-redirects the IP to a name-based virtual host (e.g. `10.129.x.x` -> `https://fireflow.htb/`).

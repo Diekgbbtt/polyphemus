@@ -16,3 +16,4 @@ docs/.DS_Store
 
 # Recon run artifacts (multi-MB per-target graph dumps), reproducible by re-running.
 .recon-exports/
+tests/e2e/fixtures/eval-targets.yaml
