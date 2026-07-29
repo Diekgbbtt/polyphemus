@@ -133,6 +133,37 @@ def test_configure_logging_is_idempotent():
         root.handlers = before
 
 
+def test_configure_logging_silences_mcp_client_transport_noise():
+    """Regression for the /health session-churn misdiagnosis (2026-07-29):
+    `configure_logging` attaching a root handler made the MCP SDK's own INFO-level
+    "GET stream disconnected, reconnecting" chatter visible for the first time -
+    it fires once per session because kali's FastMCP server doesn't hold the
+    streamable-http GET stream open, and every `/health` poll opens a fresh
+    session. That noise looked like a new regression but was pre-existing and
+    benign; `mcp` belongs in `_NOISY` alongside the other chatty transports so it
+    doesn't bury real application log lines."""
+    import io
+
+    root = logging.getLogger()
+    before = list(root.handlers)
+    before_levels = {name: logging.getLogger(name).level for name in ("mcp", "polymerhus.x")}
+    try:
+        root.handlers = []
+        buf = io.StringIO()
+        configure_logging(stream=buf)
+        logging.getLogger("mcp.client.streamable_http").info(
+            "GET stream disconnected, reconnecting in 1000ms..."
+        )
+        logging.getLogger("polymerhus.x").info("a real application line")
+        out = buf.getvalue()
+        assert "reconnecting" not in out
+        assert "a real application line" in out
+    finally:
+        root.handlers = before
+        for name, level in before_levels.items():
+            logging.getLogger(name).setLevel(level)
+
+
 def test_a_bad_log_level_does_not_crash_the_process(monkeypatch):
     monkeypatch.setenv("LOG_LEVEL", "BANANA")
     root = logging.getLogger()

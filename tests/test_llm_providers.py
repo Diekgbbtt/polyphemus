@@ -59,6 +59,23 @@ def test_build_chat_model_sets_base_url_and_key(monkeypatch):
     assert str(m.openai_api_base) == P.PROVIDERS["swissai"]
 
 
+def test_resolve_role_parses_the_qwen_swissai_swap(monkeypatch):
+    """The operator's `.env` now points every role at
+    `swissai:Qwen/Qwen3.5-397B-A17B-ETar` - a model id containing a slash, which
+    is also the provider/model separator `resolve_role` splits on. Pin that the
+    split is on the FIRST colon only, so a slash inside the model id never
+    truncates it."""
+    monkeypatch.setenv("LLM_MODEL_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
+    assert P.resolve_role("analyser") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
+
+
+def test_build_chat_model_accepts_the_qwen_swissai_model_id(monkeypatch):
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
+    assert m.model_name == "Qwen/Qwen3.5-397B-A17B-ETar"
+    assert str(m.openai_api_base) == P.PROVIDERS["swissai"]
+
+
 # --- #32: the effective client settings -------------------------------------
 # These assert on the UNDERLYING openai client, never on the ChatOpenAI wrapper.
 # The defect was invisible at the wrapper level: `ChatOpenAI.max_retries` reads
