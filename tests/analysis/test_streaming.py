@@ -88,10 +88,12 @@ def _run(settings, stream_calls):
 
 
 def test_pipeline_streams_after_each_producing_job_when_enabled():
-    """With streaming_analysis=True, the analyser is invoked once per producing
-    job, during recon (a stream call per job that merged surface)."""
+    """With streaming on and the INLINE feed (async_analysis_consumer=False), the
+    analyser is invoked once per producing job, during recon (a stream call per job
+    that merged surface). Queued is the default since #9, so inline is opted into."""
     stream_calls = []
-    _run({"target_domain": "*.t.com", "streaming_analysis": True}, stream_calls)
+    _run({"target_domain": "*.t.com", "streaming_analysis": True,
+          "async_analysis_consumer": False}, stream_calls)
     assert len(stream_calls) == 2  # one per producing job (subfinder, dnsx)
     assert all(c == ("proj1", "run1") for c in stream_calls)
 
@@ -183,8 +185,11 @@ def test_AST_DEC_04_run_stats_record_the_terminal_pass_census():
 
 
 def test_inline_mode_is_byte_for_byte_todays_behaviour():
-    """The rollback path: with the consumer flag absent, the injected stream_fn is
-    still called once per producing job, exactly as before #34."""
+    """The rollback path: with the consumer flag explicitly FALSE, the injected
+    stream_fn is still called once per producing job, exactly as before #34. (Since
+    #9 flipped the default to queued, inline is now an explicit opt-in, not the
+    absent-flag default.)"""
     stream_calls = []
-    _run({"target_domain": "*.t.com", "streaming_analysis": True}, stream_calls)
+    _run({"target_domain": "*.t.com", "streaming_analysis": True,
+          "async_analysis_consumer": False}, stream_calls)
     assert len(stream_calls) == 2

@@ -302,10 +302,13 @@ def test_advance_blocking_is_measured_even_when_the_cursor_coalesces():
 # --- the mode seam (DQ5a: off means off) --------------------------------------
 
 @pytest.mark.parametrize("settings,expected", [
-    ({}, "inline"),
-    ({"streaming_analysis": True}, "inline"),
-    ({"async_analysis_consumer": True}, "inline"),          # streaming OFF wins
+    ({}, "inline"),                                          # streaming OFF -> off
+    ({"streaming_analysis": True}, "queued"),                # #9: queued is the default
+    ({"async_analysis_consumer": True}, "inline"),           # streaming OFF wins
     ({"streaming_analysis": True, "async_analysis_consumer": True}, "queued"),
+    # explicit opt-back-into-inline is the only way to put the pass back on the
+    # recon critical path (the pre-#9 rollback path).
+    ({"streaming_analysis": True, "async_analysis_consumer": False}, "inline"),
 ])
 def test_feed_mode_is_gated_on_streaming_analysis(settings, expected):
     assert resolve_feed_mode(settings) == expected

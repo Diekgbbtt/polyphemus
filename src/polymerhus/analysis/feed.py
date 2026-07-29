@@ -350,7 +350,15 @@ def start_analysis_feed(project_id: str, run_id: str, *, mode: str = "inline", p
 
 
 def resolve_feed_mode(settings: dict | None) -> str:
-    """`queued` only when the async consumer is enabled AND streaming analysis is on.
+    """`queued` is the DEFAULT whenever streaming analysis is on; `inline` only when
+    explicitly opted back into (`async_analysis_consumer=False`).
+
+    The default flipped (#9): with the mechanism_typist dispatched in the streaming
+    schedule, an analyser pass is ~126 s/chunk (its 3 LLM calls), and the inline feed
+    runs that pass ON the recon critical path - so recon stalls behind the typist.
+    Queued hands each pass to a per-run consumer (depth-1 conflating), keeping recon
+    off the analyser's latency. `inline` remains the rollback path (the pre-#9
+    behaviour) for a caller that sets `async_analysis_consumer=False` explicitly.
 
     The terminal pass stays gated on `streaming_analysis` (#34 DQ5a): off means off,
     byte-for-byte as today, so this flag cannot introduce post-recon batch analysis
@@ -358,4 +366,4 @@ def resolve_feed_mode(settings: dict | None) -> str:
     s = settings or {}
     if not s.get("streaming_analysis"):
         return "inline"
-    return "queued" if s.get("async_analysis_consumer") else "inline"
+    return "inline" if s.get("async_analysis_consumer") is False else "queued"
