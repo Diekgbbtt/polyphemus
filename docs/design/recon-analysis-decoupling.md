@@ -898,8 +898,19 @@ What the runs DO support:
 - **Assignment quality is sound on inspection.** `/forgot-password` to `password-recovery`, `/api/Complaints` to `complaint-refund-handling`, `/api/SecurityAnswers` to `password-recovery`, `/api/Feedbacks` shared by `content-moderation` and `product-reviews`, every edge citing a real path segment as evidence.
 - **The withholding gate is working hard**, which no column here shows: the per-chunk logs record `proposed=53 kept=23 withheld=30` and `proposed=87 kept=31 withheld=56` on the baseline arm. A pass that proposed 87 aggregates over 84 admitted endpoints is over-proposing, and the bar is absorbing it.
 
-**Therefore `ASSIGNER_PROMPT_CONFIG` stays `baseline`.**
-A flip needs a matrix with repeats against a FIXED inventory, which is the next deliverable.
+**My recommendation was that `ASSIGNER_PROMPT_CONFIG` stay `baseline` until a matrix with repeats against a FIXED inventory settled it.**
+
+**The operator overruled that and ratified `skill` as the default (2026-07-29).**
+The distinction matters for anyone reading this later: the flip is a judgment about the skill's CONTENT - the no-owner null hypothesis, the confidence anchors, the differential over candidate owners, none of which existed in the baseline prompt - and NOT a conclusion drawn from the table above.
+The measured claim these runs support remains only "no regression".
+
+`baseline` stays byte-identical to the pre-skill prompt and is one env var away, so the rollback is free.
+The matrix with a fixed inventory remains the outstanding deliverable, and 14.1 must be fixed before it can be run meaningfully.
+
+One thing the flip surfaced immediately, recorded because it is a real (currently harmless) redundancy: the skill's fourth move is "CALIBRATE, THEN COMMIT OR WITHHOLD" and the reflect verbatim's third step is "CALIBRATE: state each confidence".
+With `skill` as the default, the create pass now teaches calibration and the reflect pass re-teaches it.
+That is harmless only because nothing dispatches `mode="reflect"`; whoever wires reflection must reconcile the two rather than shipping both.
+`CALIBRATE` was consequently dropped from C25's reflect-marker set, which is now `REFLECT PASS` / `RESTATE AS EVIDENCE` / `COMPETING OWNER` / `RESIDUE` - all four verified absent from the skill body, so the assertion is unchanged in strength.
 
 ### 14.1 A defect in the harness itself, found by using it
 
