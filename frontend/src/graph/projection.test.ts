@@ -1,4 +1,4 @@
-import { projectGraph, isL1Type } from "./projection"
+import { projectGraph, isL1Type, layerKey } from "./projection"
 import type { GraphData } from "../api/types"
 
 // A small mixed graph:
@@ -33,6 +33,11 @@ const DATA: GraphData = {
   ],
 }
 
+const BOTH = { l0: true, l1: true }
+const L0_ONLY = { l0: true, l1: false }
+const L1_ONLY = { l0: false, l1: true }
+const NEITHER = { l0: false, l1: false }
+
 test("isL1Type classifies L1 labels (incl. catalogues) and rejects L0", () => {
   for (const t of ["L1Service", "L1System", "L1DataItem", "SystemKind", "DataRelationshipKind"]) {
     expect(isL1Type(t)).toBe(true)
@@ -42,22 +47,34 @@ test("isL1Type classifies L1 labels (incl. catalogues) and rejects L0", () => {
   }
 })
 
-test("'both' returns the full graph unchanged", () => {
-  const { nodes, links } = projectGraph(DATA, "both")
+test("layerKey gives each combination a distinct stable identity", () => {
+  const keys = [BOTH, L0_ONLY, L1_ONLY, NEITHER].map(layerKey)
+  expect(new Set(keys).size).toBe(4)
+  expect(layerKey({ l0: true, l1: true })).toBe(layerKey(BOTH))
+})
+
+test("both layers on returns the full graph unchanged", () => {
+  const { nodes, links } = projectGraph(DATA, BOTH)
   expect(nodes).toHaveLength(DATA.nodes.length)
   expect(links).toHaveLength(DATA.links.length)
 })
 
-test("'l0' keeps only L0 nodes and L0-L0 edges", () => {
-  const { nodes, links } = projectGraph(DATA, "l0")
+test("both layers off returns the empty graph", () => {
+  const { nodes, links } = projectGraph(DATA, NEITHER)
+  expect(nodes).toEqual([])
+  expect(links).toEqual([])
+})
+
+test("L0 only keeps L0 nodes and L0-L0 edges", () => {
+  const { nodes, links } = projectGraph(DATA, L0_ONLY)
   expect(nodes.map((n) => n.id).sort()).toEqual(["dom", "ep", "hdr", "param", "secret"])
   expect(nodes.every((n) => !isL1Type(n.type))).toBe(true)
   // Only the Domain->Endpoint edge survives; every cross-layer edge is dropped.
   expect(links).toEqual([{ source: "dom", target: "ep", type: "HAS_SUBDOMAIN" }])
 })
 
-test("'l1' keeps every L1 node plus only its anchored L0 nodes", () => {
-  const { nodes } = projectGraph(DATA, "l1")
+test("L1 only keeps every L1 node plus only its anchored L0 nodes", () => {
+  const { nodes } = projectGraph(DATA, L1_ONLY)
   const ids = nodes.map((n) => n.id).sort()
   // L1 nodes: svc, sys, data, kind. Anchored L0: ep, hdr, param.
   // Unanchored L0 (dom, secret) are hidden.
@@ -66,8 +83,8 @@ test("'l1' keeps every L1 node plus only its anchored L0 nodes", () => {
   expect(ids).not.toContain("secret")
 })
 
-test("'l1' keeps cross-layer + L1-internal edges, drops L0-L0 edges", () => {
-  const { links } = projectGraph(DATA, "l1")
+test("L1 only keeps cross-layer + L1-internal edges, drops L0-L0 edges", () => {
+  const { links } = projectGraph(DATA, L1_ONLY)
   const types = links.map((l) => l.type).sort()
   expect(types).toEqual(["AGGREGATES", "EVIDENCED_BY", "OF_KIND", "SURFACES_AT"])
   expect(types).not.toContain("HAS_SUBDOMAIN")
@@ -75,7 +92,6 @@ test("'l1' keeps cross-layer + L1-internal edges, drops L0-L0 edges", () => {
 
 test("projectGraph never mutates its input", () => {
   const before = JSON.stringify(DATA)
-  projectGraph(DATA, "l0")
-  projectGraph(DATA, "l1")
+  for (const layers of [L0_ONLY, L1_ONLY, NEITHER, BOTH]) projectGraph(DATA, layers)
   expect(JSON.stringify(DATA)).toBe(before)
 })
