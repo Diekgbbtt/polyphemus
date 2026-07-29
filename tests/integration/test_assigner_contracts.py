@@ -232,7 +232,18 @@ def test_C24_stable_prefix_in_system_volatile_in_user():
 # --- C25: the reflect verbatim ------------------------------------------------
 
 def test_C25_reflect_verbatim_only_under_reflect_mode():
-    markers = ["RESTATE AS EVIDENCE", "COMPETING OWNER", "CALIBRATE", "RESIDUE"]
+    # `CALIBRATE` was dropped from this marker set when `skill` became the default
+    # (2026-07-29): the skill's own fourth move is "CALIBRATE, THEN COMMIT OR
+    # WITHHOLD", so the word stopped discriminating between the two prompts. The
+    # assertion is unchanged in strength - the four remaining markers are verified
+    # absent from the skill body - but it now names only text the reflect verbatim
+    # actually owns.
+    #
+    # The collision is a real (harmless) REDUNDANCY: the skill teaches calibration in
+    # the create pass and the reflect verbatim re-teaches it in the reflect pass.
+    # Harmless only because nothing dispatches `mode="reflect"` today; whoever wires
+    # reflection must reconcile the two rather than shipping both.
+    markers = ["REFLECT PASS", "RESTATE AS EVIDENCE", "COMPETING OWNER", "RESIDUE"]
     seen_c, make_c = _capture()
     assign(_chunk("/x"), invoke_fn=make_c(L1DeltaBatch()), inventory=INVENTORY,
            existing_slugs=SLUGS, mode="create")
@@ -487,13 +498,29 @@ def _system_for(config, monkeypatch, mode="create"):
 
 def test_C37_baseline_arm_is_byte_identical_to_the_pre_skill_prompt(monkeypatch):
     """The rollback path is PINNED, not assumed. `baseline` must reproduce the prompt
-    exactly as it stood before the skill seam existed, so a flip to `skill` that
-    measures badly is a one-env-var revert with no prompt drift smuggled in."""
+    exactly as it stood before the skill seam existed, so reverting a `skill` default
+    that measures badly is a one-env-var revert with no prompt drift smuggled in.
+
+    This property survives the default flip unchanged - which is the point of pinning
+    it by construction (`_ROLE_VERBATIM` + `_FEW_SHOTS`) rather than against a copied
+    literal that would have to be re-copied every time the prompt moves."""
     assert _system_for("baseline", monkeypatch) == _BASELINE_EXPECTED
-    # and it is what an unset / unknown value coerces to
+
+
+def test_C37b_the_default_arm_is_skill_and_an_unknown_value_coerces_to_it(monkeypatch):
+    """DEFAULT = `skill` (operator-ratified 2026-07-29). An unset env var and an
+    unknown one must both land on the SAME arm as an explicit `skill`, or the
+    deployed behaviour depends on how the variable failed to be set."""
+    explicit_skill = _system_for("skill", monkeypatch)
+
     monkeypatch.delenv("ASSIGNER_PROMPT_CONFIG", raising=False)
-    assert assigner._system_prompt("create") == _BASELINE_EXPECTED
-    assert _system_for("no-such-arm", monkeypatch) == _BASELINE_EXPECTED
+    assert assigner._system_prompt("create") == explicit_skill
+    assert _system_for("no-such-arm", monkeypatch) == explicit_skill
+
+    # non-vacuity: the default is a REAL change from the rollback arm, not the same
+    # bytes under a different name
+    assert explicit_skill != _BASELINE_EXPECTED
+    assert assigner._load_assigner_skill() in explicit_skill
 
 
 def test_C38_assigner_skill_is_single_sourced():

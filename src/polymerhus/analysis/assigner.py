@@ -451,15 +451,26 @@ def _load_assigner_skill() -> str:
 # answer to that shape of question - `bootstrap._PROMPT_CONFIGS`, where `skill_in_prompt`
 # became the default only after a measured comparative eval, never on argument.
 #
-# `baseline` reproduces the pre-skill prompt BYTE-FOR-BYTE and stays the default (and the
-# rollback path) until a comparative run says otherwise. The harness that runs that
-# comparison is `evaluation.evaluate_assigner` - it reads completed runs back per arm and
-# reports assignment volume against the integrity columns that stop volume being read as
-# a score (stale pool, withheld rate, out-of-inventory rate), plus the confidence-bar
-# sweep that finally makes `ASSIGN_CONFIDENCE_BAR` above an output rather than a guess.
-# `_FEW_SHOTS` is retained for this arm and must not be deleted.
+# DEFAULT = `skill` (operator-ratified 2026-07-29). The comparison that would normally
+# earn that default did NOT: on soupmarket.shop the skill arm scored 55 aggregates /
+# 0.366 coverage against baseline's 43 / 0.313, but its run had 23 bootstrapped Services
+# against the baseline run's 11 - and an Assigner cannot assign to an owner that does not
+# exist, so inventory size, not the prompt arm, is the likeliest explanation of that gap.
+# The measured claim is therefore only "no regression"; the flip rests on the operator's
+# judgment of the skill's CONTENT (the no-owner null hypothesis, the confidence anchors,
+# the differential over candidate owners), not on the numbers.
+#
+# `baseline` reproduces the pre-skill prompt BYTE-FOR-BYTE and remains the rollback path,
+# one env var away, and `_FEW_SHOTS` is retained for it and must not be deleted.
+#
+# The harness for a proper comparison is `evaluation.evaluate_assigner` - assignment
+# volume against the integrity columns that stop volume being read as a score (stale
+# pool, withheld rate, out-of-inventory rate), plus the confidence-bar sweep that makes
+# `ASSIGN_CONFIDENCE_BAR` an output rather than a guess. It needs a FIXED inventory and
+# repeats to settle this, and three of its columns are still unpopulated because
+# `AssignmentStats` is persisted nowhere (design doc section 14.1).
 _ASSIGNER_PROMPT_CONFIGS = ("baseline", "skill")
-_DEFAULT_ASSIGNER_PROMPT_CONFIG = "baseline"
+_DEFAULT_ASSIGNER_PROMPT_CONFIG = "skill"
 
 
 def _assigner_prompt_config() -> str:

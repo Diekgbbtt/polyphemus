@@ -27,10 +27,11 @@ services:
       # needs `up -d --force-recreate agent`, not just a source edit.
       BOOTSTRAP_PROMPT_CONFIG: ${BOOTSTRAP_PROMPT_CONFIG:-skill_in_prompt}
       # Assigner system-prompt arrangement (see assigner.py::_ASSIGNER_PROMPT_CONFIGS).
-      # Same mechanics and the same reason as the line above. Defaults to `baseline`
-      # (the pre-skill prompt, byte-for-byte) so this passthrough changes nothing
-      # until an eval says it should - the arm is opt-in, not opt-out.
-      ASSIGNER_PROMPT_CONFIG: ${ASSIGNER_PROMPT_CONFIG:-baseline}
+      # Same mechanics and the same reason as the line above: `--reload` re-reads
+      # SOURCE but not the ENVIRONMENT, so switching arms needs a container recreate.
+      # `skill` is the operator-ratified default (2026-07-29); `baseline` reproduces
+      # the pre-skill prompt byte-for-byte and is the one-env-var rollback.
+      ASSIGNER_PROMPT_CONFIG: ${ASSIGNER_PROMPT_CONFIG:-skill}
     command: ["uvicorn", "polymerhus.app.main:app", "--host", "0.0.0.0", "--port", "8080",
               "--reload", "--reload-dir", "/srv/src"]
 
