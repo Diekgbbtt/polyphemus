@@ -21,6 +21,7 @@ It carries settings and owns the runs launched against it.
 **Settings**:
 The operator's configuration of a project's recon: `target_domain`, scope, the [AuthContext](#authcontext), and feature toggles.
 Persisted as a JSON document and updated by PARTIAL PUT - a settings update deep-merges into the stored document (recursive jsonb merge in the gateway), so setting one field never wipes its siblings.
+Concrete settings for the live e2e targets are held in the eval dataset `tests/e2e/fixtures/eval-targets.yaml`.
 
 **AuthContext**:
 The operator's declaration of how authenticated recon should authenticate: an optional `cookies` list, an optional autonomous-login `credentials` set, optional role/realm-tagged credential sets (FR-AUTH), and otherwise arbitrary HTTP headers emitted verbatim by the request-based tools.

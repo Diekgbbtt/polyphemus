@@ -185,6 +185,7 @@ Breadth is never read alone - the integrity metrics (contract coverage, System c
 Runs drive the REAL system through the faithful entry path (API -> use-case -> agent -> sole-writer -> Neo4j), never the agent in-process, because the entry path is where an entry-path defect lives.
 Every evaluated project is LEFT IN THE GRAPH (start-only wipes) - a teardown wipe deletes the artifact the operator needs to inspect.
 GENERAL by construction: `run_matrix` / `compare` take an injected `invoke_fn` + `read_fn`, so another analysis proposer adopts the harness by supplying its own pair and may extend `skeleton_metrics` for the slice of L1 it owns; the Bootstrapper is the first adopter.
+The live targets these runs execute against are held in the eval dataset `tests/e2e/fixtures/eval-targets.yaml` (each target's `operator_kb` bootstraps the L1 skeleton the harness then measures).
 _Not to be confused with_: the assertion catalogues (fixed contract/walkthrough predicates that pass or fail), or the #19 regression oracle. This ranks configurations; it never passes or fails one.
 
 **Proposer-reasoning pattern**:
