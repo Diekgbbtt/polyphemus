@@ -143,8 +143,14 @@ def test_AST_DEC_07_two_consecutive_passes_write_no_new_identities(project):
         ])
 
     def one_pass():
+        # Null the typist seam: this contract is about the Assigner's aggregate
+        # convergence, and the two-role schedule (#9) would otherwise drive the
+        # mechanism_typist against the live LLM. A None-returning invoke keeps the
+        # pass deterministic (the typist fail-closes to an empty batch).
         return asyncio.run(analyse_chunked(project, f"stream-{project}",
-                                           invoke_fn=fake_llm, observe=False))
+                                           invoke_fn=fake_llm,
+                                           typist_invoke_fn=lambda *a, **k: None,
+                                           observe=False))
 
     first = one_pass()
     after_first = _counts(project)

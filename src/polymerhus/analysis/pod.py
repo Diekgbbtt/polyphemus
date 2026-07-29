@@ -542,9 +542,10 @@ def run_analyser(
         # #34: the supervisor path is now CHUNK-FED - the live L0 surface is
         # streamed into role-admitted chunks and dispatched per chunk, rather than
         # the whole slice being handed to the legacy two-pass under the `assigner`
-        # name. Only the Assigner has a body, so this path writes AGGREGATES and no
-        # Systems / DataItems - a knowingly partial L1, which is why the flag stays
-        # default OFF and the legacy pod below remains the runnable default.
+        # name. The Assigner and the mechanism-typist (#9) both have bodies, so this
+        # path writes AGGREGATES and Systems + Service->System edges; only the
+        # data_modeller's DataItems remain unbuilt - a knowingly partial L1, which is
+        # why the flag stays default OFF and the legacy pod below remains the default.
         run_supervisor_fn = run_supervisor_fn or run_analyser_chunked
         return run_supervisor_fn(project_id, run_id)
 
