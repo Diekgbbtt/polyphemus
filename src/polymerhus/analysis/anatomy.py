@@ -289,11 +289,20 @@ def commit_anatomy(
         service_deltas.append(ServiceDelta(
             business_function_slug=business_function_slug, props=service_props, provenance=provenance))
     if webpres_props:
+        # Phase-B (deepening) home for this WebPresentation profiling path: issue #41.
+        # WebPresentation is PER-SERVICE (#9 DP-3 / T1): key its System on the owning
+        # service's slug as the discriminator, on BOTH the node AND its EXPOSED_VIA
+        # edge - `build_system_edge_cypher` MATCHes the target System on
+        # (kind, discriminator), so omitting it here would collapse every service's
+        # presentation onto the ONE `__singleton__` node. Only WebPresentation takes
+        # the per-service discriminator; shared-System edges (the authz skill's) keep
+        # their own `__singleton__`.
         system_deltas.append(SystemDelta(
-            kind=WEB_PRESENTATION_KIND, props=webpres_props, provenance=provenance))
+            kind=WEB_PRESENTATION_KIND, discriminator=business_function_slug,
+            props=webpres_props, provenance=provenance))
         presentation_edges.append(SystemEdgeDelta(
             service_slug=business_function_slug, kind=WEB_PRESENTATION_KIND,
-            rel="EXPOSED_VIA", provenance=provenance))
+            discriminator=business_function_slug, rel="EXPOSED_VIA", provenance=provenance))
 
     written = {"classifications": 0, "observations": 0, "probes": len(result.probes)}
 

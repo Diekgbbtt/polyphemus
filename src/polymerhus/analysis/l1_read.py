@@ -42,3 +42,24 @@ def read_aggregated_l0(service_slug: str, project_id: str, *, read_fn=None) -> l
         props["_labels"] = list(row.get("labels") or [])
         out.append(props)
     return out
+
+
+def read_service_aggregations(project_id: str, *, read_fn=None) -> list[dict]:
+    """Return the live Service->L0 aggregation view for a project: one row per
+    `(:L1Service)-[:AGGREGATES]->(l0)` edge as `{"slug", "labels", "props"}` (the L0
+    node's labels + property map). The mechanism-typist uses it to split its linking
+    candidates into PRIMARY (services aggregating the current chunk's assets) vs
+    SECONDARY (other asset-bearing services) - grilled #9. A read of the whole
+    project's aggregations, matched against the chunk's assets in memory (bounded:
+    chunk <= 100 assets). Never reconstructs an L0 key on the L1 side."""
+    read_fn = _resolve_read_fn(read_fn)
+    rows = read_fn(
+        "MATCH (s:L1Service {project_id: $project_id})-[:AGGREGATES]->(l0) "
+        "RETURN s.business_function_slug AS slug, labels(l0) AS labels, l0 {.*} AS props",
+        {"project_id": project_id},
+    )
+    return [
+        {"slug": r.get("slug"), "labels": list(r.get("labels") or []), "props": dict(r.get("props") or {})}
+        for r in rows
+        if r.get("slug")
+    ]

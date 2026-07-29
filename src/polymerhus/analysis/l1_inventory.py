@@ -31,7 +31,8 @@ def _resolve_read_fn(read_fn):
 
 
 def _empty() -> dict:
-    return {"services": [], "systems": [], "data_items": [], "service_contracts": {}}
+    return {"services": [], "systems": [], "data_items": [],
+            "service_contracts": {}, "system_descriptions": {}}
 
 
 def _render_system(row: dict) -> str:
@@ -57,6 +58,12 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
     Only Services that actually carry a contract appear in it - absence keeps meaning
     not-yet-filled.
 
+    `system_descriptions` is the same ADDITIVE pattern for Systems (#9): the flat
+    `systems` list is unchanged, and a consumer that wants the adversarial
+    characterisation reads the parallel `{system_key: description}` map (keyed by the
+    same `_render_system` shape). The mechanism-typist reads it to decide new-vs-extend
+    and to COMPOUND the description on extension (grilled #9).
+
     Fail-open: any read error degrades to the empty inventory shape and never raises
     into the caller."""
     read_fn = _resolve_read_fn(read_fn)
@@ -68,7 +75,7 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
         )
         system_rows = read_fn(
             "MATCH (n:L1System) WHERE n.project_id = $project_id "
-            "RETURN n.kind AS kind, n.discriminator AS disc",
+            "RETURN n.kind AS kind, n.discriminator AS disc, n.description AS description",
             {"project_id": project_id},
         )
         data_rows = read_fn(
@@ -88,9 +95,15 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
         for r in service_rows
         if r.get("slug") and (r.get("contract") or "").strip()
     }
+    system_descriptions = {
+        _render_system(r): r["description"]
+        for r in system_rows
+        if r.get("kind") and (r.get("description") or "").strip()
+    }
     return {
         "services": services,
         "systems": systems,
         "data_items": data_items,
         "service_contracts": contracts,
+        "system_descriptions": system_descriptions,
     }

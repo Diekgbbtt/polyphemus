@@ -39,7 +39,8 @@ def test_read_error_is_fail_open():
         raise RuntimeError("neo4j down")
 
     inv = read_l1_inventory("proj-1", read_fn=boom)
-    assert inv == {"services": [], "systems": [], "data_items": [], "service_contracts": {}}
+    assert inv == {"services": [], "systems": [], "data_items": [],
+                   "service_contracts": {}, "system_descriptions": {}}
 
 
 def test_service_contracts_are_returned_alongside_the_slugs():

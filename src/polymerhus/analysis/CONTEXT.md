@@ -278,6 +278,15 @@ _Avoid_: analyser (the whole-model term).
 - **Narrow** (output side, structural): the agent may not emit a class of delta at all, whatever the model returned.
 - **Withhold** (output side, epistemic): the agent looked, judged, and declined below the bar.
 
+**TechnicalSystem / mechanism-typist**:
+The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s the streamed surface evidences and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
+It runs a THREE-call chain over one `service` chunk delivered AFTER the Assigner: a hypothesis-driven free-text **reflection** (define which Systems the assets impact, verify soundly - overthink + critical-thinking + define/debug-hypothesis; exhaustion fails the step CLOSED), then structured **systems extraction**, then structured **services linking** (soft pass-through on later-step exhaustion).
+_Avoid_: analyser (the whole-model term); anatomy (the Phase-B deepening path).
+
+**System description (discriminative attribute)**:
+The System-side counterpart of `service_contract`: a System's brief adversarially-oriented NL `description` prop is its DISCRIMINATIVE attribute - the mechanism-typist reads the currently-defined Systems WITH their descriptions (the additive `read_l1_inventory` `system_descriptions` map) to decide new-vs-extend, and on extend it COMPOUNDS the description (reads the existing one, emits the enriched superset), never emptied. Contrast the Assigner's never-re-emit `service_contract`: there the Bootstrapper is the better whole-architecture author, whereas the mechanism-typist is the SOLE incremental author of System descriptions, so compounding is correct, not clobbering.
+_Status_: NL description is the sole carrier at breadth; a richer type-based System specification is Phase B (#40, the L1-System under-typing gap).
+
 **Withholding gate**:
 The Assigner's crux (AMV-14): a below-bar ownership judgment (confidence < the 0.75 bar) yields NO `AGGREGATES` entry - the L0 element stays in the stale pool.
 The withholding is a SHAPING rule (absence IS the withholding; no "withheld" edge exists), lives in the Assigner seam not the shared sole-writer, and is the Assigner's SELF-check (maker); the Auditor is the separate check over survivors (checker).
