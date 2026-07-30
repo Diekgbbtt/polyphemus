@@ -165,14 +165,34 @@ def _asset_ref(asset) -> str:
 def _asset_observation_paragraphs(chunk: Chunk) -> str:
     """Render each streamed asset paired with its triager observation INSIGHT as a
     paragraph (grilled #9 Q4): the adversarial NLP layer that drives System typing
-    rides beside the asset it anchors to. Observations already travel on the chunk."""
+    rides beside the asset it anchors to. Observations already travel on the chunk.
+
+    An observation is NEVER anchored to an Endpoint/Header/Parameter: the triager
+    re-anchors UP to the owning broad asset and the curator's ANCHOR_ALLOWLIST
+    ({Domain, Subdomain, BaseURL, IP, Service}) silently drops any narrow anchor.
+    So a narrow asset's insight is looked up on its PARENT broad anchor (via the
+    curator's pure `broaden_anchor`, e.g. Endpoint -> its BaseURL) AS WELL AS on the
+    asset itself - otherwise the exact (type, identity) match can never connect an
+    Endpoint to its BaseURL-anchored insight and the block is silently empty."""
+    from polymerhus.recon.domain.curator import broaden_anchor
+
     by_anchor: dict[tuple, list] = defaultdict(list)
     for o in chunk.observations:
         anchor = o.anchor or {}
         by_anchor[(anchor.get("type"), _idkey(anchor.get("identity") or {}))].append(o)
     paras: list[str] = []
     for a in chunk.assets:
-        insights = by_anchor.get((a.type, _idkey(a.identity or {})), [])
+        lookups = [(a.type, _idkey(a.identity or {}))]
+        parent = broaden_anchor({"type": a.type, "identity": a.identity or {}})
+        if parent:
+            lookups.append((parent["type"], _idkey(parent["identity"])))
+        seen: set[int] = set()
+        insights: list = []
+        for k in lookups:
+            for o in by_anchor.get(k, []):
+                if id(o) not in seen:  # an obs matched by both exact + parent lookup shows once
+                    seen.add(id(o))
+                    insights.append(o)
         head = f"- {a.type} {dict(a.identity or {})}"
         if insights:
             joined = "; ".join(f"{o.rationale or ''} ({o.evidence or ''})".strip() for o in insights)

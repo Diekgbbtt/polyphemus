@@ -514,6 +514,14 @@ async def analyse_chunked(
     _started_at = _utc_now_iso()
 
     assets = assets_fn(project_id)
+    # The triager's adversarial observations ride the chunk beside the assets they
+    # anchor to (#9): the mechanism-typist and the data_modeller need them. Without
+    # this the chunk carried NO observations, so the per-asset/per-origin insight
+    # rendered was empty every time (the silent-empty-insight defect). Fail-open: a
+    # read error degrades to no observations, never crashes the pass. The httpx-profile
+    # gate this used to also read (`profiled`/`barrier`) was RETIRED (#48 section 11
+    # step 6, ratified 2026-07-30, mirroring #34 D1's identical retirement for Endpoint):
+    # both gated types are gone, so the apparatus is permanently unreachable.
     observations = observations_fn(project_id)
     # A pseudo-job: the chunk builder keys `chunk_id` off the source job, and this
     # read is the cumulative surface rather than one tool's output.

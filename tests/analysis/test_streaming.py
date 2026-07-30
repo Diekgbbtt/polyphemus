@@ -193,3 +193,94 @@ def test_inline_mode_is_byte_for_byte_todays_behaviour():
     _run({"target_domain": "*.t.com", "streaming_analysis": True,
           "async_analysis_consumer": False}, stream_calls)
     assert len(stream_calls) == 2
+
+
+def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(monkeypatch):
+    """L1 of the silent-empty-insight fix: the streaming pass must DELIVER the triager
+    observations and hand them to the chunk builder. Before the fix analyse_chunked
+    called chunks_for_job with NO observations, so every chunk - and thus the typist -
+    saw none, and the per-asset insight was empty every time. Spy on chunks_for_job
+    (returning [] short-circuits the pass before the graph/DB) to capture what it got."""
+    from polymerhus.analysis import chunking, supervisor
+    from polymerhus.recon.domain.types import AssetDelta, Observation
+
+    captured = {}
+
+    def spy_chunks_for_job(job, assets, observations=None, **kw):
+        captured["observations"] = observations
+        return []  # valid-empty -> analyse_chunked returns before run_supervisor (no DB/LLM)
+
+    monkeypatch.setattr(chunking, "chunks_for_job", spy_chunks_for_job)
+    obs = Observation(macro_kind="cors", severity="high", evidence="acao *",
+                      rationale="wide-open CORS", anchor={"type": "BaseURL", "identity": {"url": "https://a"}},
+                      source_job="triager", source_tool="triager")
+    asyncio.run(supervisor.analyse_chunked(
+        "p", "run1",
+        # `default_invoke_fn()` resolves the real provider config EAGERLY, as a
+        # parameter default, not lazily on first call - so even though the empty-
+        # chunks spy short-circuits before any LLM invocation, a bare `invoke_fn`
+        # would still trip live provider resolution while building the call. Every
+        # collaborator must be injectable (CODING_STANDARD.md section 6); a no-op
+        # is enough since this test's subject is observation threading, not invocation.
+        invoke_fn=lambda messages: None,
+        assets_fn=lambda pid: [AssetDelta(type="Endpoint", identity={"path": "/x", "baseurl": "https://a"})],
+        observations_fn=lambda pid: [obs],
+        observe=False,
+    ))
+    assert captured["observations"] == [obs]
+
+
+# --- #9: the phase-6 endpoint-reprofile pass is NOT re-streamed to proposers ---
+
+class _RecordingFeed:
+    """Captures every cursor the pipeline hands to `advance`, without a queue - so the
+    assertion is on WHICH jobs triggered an analyser signal, deterministically (no
+    conflation)."""
+
+    mode = "queued"
+
+    def __init__(self):
+        self.advanced_jobs = []
+
+    async def advance(self, cursor):
+        self.advanced_jobs.append(cursor.job)
+
+    async def drain(self, *a, **k):
+        from polymerhus.analysis.feed import FeedStats
+        return FeedStats(mode=self.mode)
+
+    async def stop(self):
+        pass
+
+
+def test_endpoint_reprofile_job_does_not_advance_the_analyser(monkeypatch):
+    """The httpx_reprofile pass (phase 6, `endpoint_profiling=True`) re-emits Endpoints
+    already streamed by the crawl phase, adding only a per-endpoint `profile`. Streaming
+    those endpoints to the proposers again is redundant analysis - the profile-aware
+    deeper pass is deferred to phase A.2 (#45) and later B. So a reprofile job that
+    merges surface must NOT raise an analyser cursor, while ordinary producing jobs
+    still do."""
+    from polymerhus.analysis import feed as feed_mod
+
+    recording = _RecordingFeed()
+    monkeypatch.setattr(feed_mod, "start_analysis_feed", lambda *a, **k: recording)
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        # every job merges surface, so only the reprofile guard - not the
+        # produced-nothing guard - can be what suppresses the reprofile advance.
+        return [PodExport(input_asset={}, verdict="success", assets_merged=1,
+                          observations_merged=1)]
+
+    asyncio.run(pipeline.run_pipeline(
+        "proj1", run_id="run1",
+        job_subset=["httpx", "httpx_reprofile"],  # producer then its reprofile
+        run_job=run_job,
+        load_settings=lambda project_id: {
+            "target_domain": "*.t.com", "streaming_analysis": True,
+            "async_analysis_consumer": True},
+        registry=_StatsRegistry(),
+        read_assets=lambda node_type, project_id, where=None: [{"name": "seed"}],
+    ))
+
+    assert "httpx" in recording.advanced_jobs           # ordinary producer still signals
+    assert "httpx_reprofile" not in recording.advanced_jobs  # the reprofile pass does not

@@ -222,6 +222,34 @@ def test_N8_observations_feed_reflection_only():
     assert "session cookie missing Secure" not in captured["systems"]  # NOT re-shown to extract
 
 
+def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
+    """REGRESSION (silent-empty-insight defect). The triager anchors observations UP
+    to the nearest broad asset - the curator's ANCHOR_ALLOWLIST = {Domain, Subdomain,
+    BaseURL, IP, Service} silently DROPS any Endpoint/Header/Parameter anchor - so a
+    persisted observation is NEVER anchored to an Endpoint. The typist must therefore
+    surface an Endpoint's insight by looking up observations anchored to its PARENT
+    BaseURL, not to the endpoint itself. Before the fix the exact (type, identity)
+    match never connects the two, so the per-asset insight shown to the model is empty
+    every time - a feature that can never have anything to say."""
+    captured = {}
+
+    def invoke(messages, *, schema=None):
+        if schema is None:
+            captured["reflect"] = messages[-1].content
+        return "prose" if schema is None else L1DeltaBatch()
+
+    obs = Observation(macro_kind="cors", severity="high",
+                      evidence="access_control_allow_origin: *",
+                      rationale="wide-open CORS enables cross-origin exfiltration",
+                      anchor={"type": "BaseURL", "identity": {"url": "https://a"}},
+                      source_job="triager", source_tool="triager")
+    type_mechanisms(
+        _service_chunk(_endpoint("/rest/admin", baseurl="https://a"), observations=(obs,)),
+        invoke_fn=invoke,
+    )
+    assert "wide-open CORS enables cross-origin exfiltration" in captured["reflect"]
+
+
 def test_N9_idempotent_same_inputs_same_batch():
     a = type_mechanisms(_service_chunk(), invoke_fn=_Recorder())
     b = type_mechanisms(_service_chunk(), invoke_fn=_Recorder())

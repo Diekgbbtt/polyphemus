@@ -559,7 +559,19 @@ async def run_pipeline(
                 # OOM failure mode the NM-7 ledger named stays closed. Under the
                 # inline feed this call blocks exactly as it always did.
                 # Guarded regardless: analysis never fails a healthy recon run.
-                if feed is not None and (produced_assets or produced_observations):
+                #
+                # The endpoint-reprofile pass (`endpoint_profiling`, phase 6) is
+                # EXCLUDED (#9): it re-emits Endpoints the crawl phase already streamed,
+                # adding only each Endpoint's own `profile`. The current proposers
+                # (assigner/typist/data_modeller) do not read that per-endpoint profile,
+                # so re-streaming those endpoints is a redundant re-analysis of surface
+                # already judged. The profile-aware deeper pass is deferred to phase A.2
+                # (#45) and later B. Nothing is lost: the feed re-reads the CUMULATIVE
+                # surface, so any genuinely-new asset the reprofile probe incidentally
+                # mints is still observed by the next producing job's pass or the
+                # terminal drain pass.
+                if feed is not None and (produced_assets or produced_observations) \
+                        and not job.endpoint_profiling:
                     try:
                         await feed.advance(AnalysisCursor(
                             project_id=project_id, run_id=run_id, job=name,

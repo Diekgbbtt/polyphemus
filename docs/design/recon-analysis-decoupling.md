@@ -223,6 +223,12 @@ run_pipeline (async, API event loop)
 One consumer, one queue, one pass in flight process-wide.
 The consumer runs concurrently with recon jobs, which is the whole point; the semaphore is what keeps that concurrency from becoming accumulation.
 
+**Exception - the endpoint-reprofile pass is not advanced (#9).**
+The per-job hook fires `feed.advance` only when a job produced surface AND the job is not the phase-6 endpoint-reprofile pass (`job.endpoint_profiling`).
+That pass re-emits Endpoints the crawl phase already streamed, adding only each Endpoint's own `profile`, which no A.1 streaming proposer (assigner / typist / data_modeller) consumes - so re-streaming them is a redundant re-analysis of already-judged surface.
+The profile-aware deeper pass that *would* use that signal is deferred to phase A.2 (#45) and later B.
+Nothing is lost: because every cursor re-reads the cumulative surface, any genuinely-new asset the reprofile probe incidentally mints is still observed by the next producing job's pass or by the terminal drain pass.
+
 ### 4.2 Queue shape and back-pressure
 
 The queue is an `asyncio.Queue(maxsize=1)` carrying an **analysis cursor**: a frozen value object of `{project_id, run_id, job, phase, produced_assets, produced_observations, terminal}`.
