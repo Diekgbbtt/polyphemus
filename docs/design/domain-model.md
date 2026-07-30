@@ -181,7 +181,19 @@ The `AGGREGATES` assignment edge carries a **judgment envelope** from day one - 
 
 The stated reason is exactly the failure it prevents: without a carried confidence, a low-confidence assignment can masquerade as authoritative (`L1R-4`).
 
-Confidence is also the missing *policy* that the project's worst assignment defects trace back to: there is no threshold below which an assignment is withheld (`L1OP-5`, deferred), so the envelope records confidence but nothing yet acts on it (Section 3.5, `AMV-9`).
+Confidence was long the missing *policy* that the project's worst assignment defects trace back to, and it is **no longer missing for assignment** (2026-07, `#34`/`#8`): `withhold_below_bar` drops an aggregate whose confidence falls below `ASSIGN_CONFIDENCE_BAR` (0.75) in the Assigner's own seam, so a below-bar judgment yields no edge and the element stays in the stale pool (`src/polymerhus/analysis/assigner.py`).
+
+Three things about that policy are ontologically load-bearing.
+
+It is a **shaping** rule, not a stored one: absence *is* the withholding, and no "withheld" edge exists - which keeps the graph a record of judgments made, not of judgments declined (`AMV-14`).
+
+It lives in the *proposer's* seam and never in the sole-writer, so the writer stays policy-free and the maker/checker split holds: the Assigner self-withholds (maker), the designed-not-built Auditor would check survivors (checker, Section 5).
+
+The bar is an **empirical output, not a reasoned input** - `evaluation.bar_sweep` reads the kept-vs-bar curve off a run's real confidences, so the number is answerable to measurement rather than argument.
+
+One correction the model must carry, because it cost the guarantee silently: a threshold means nothing without a *scale*. `AggregatesProposal.confidence` is an unbounded float, so a model answering `85` where the contract is 0..1 cleared the 0.75 bar and voided the entire gate - observed on 213 of 675 live edges before `normalise_confidence` was placed ahead of the bar. A graded judgment is only gradable on a scale the system enforces.
+
+What remains unset is the *stale-pool* policy: nothing decides what to do with an element the bar left unjudged (Section 3.5, `AMV-9`).
 
 ### 3.3 Staleness and temporal identity
 
@@ -317,7 +329,7 @@ Crucially the system is deliberately kept blind to the target's true identity - 
 
 **The proposer roles** are LLM agents that hold judgment but not write authority.
 
-The `triager` reads L0 tool output into adversarial `Observation` insights (`src/polymerhus/recon/domain/pod.py`, recon design §4.5); the `analyser` reconstructs the L1 service/system model in two passes - an assignment pass and a dedicated data-modelling pass, split because one combined call systematically starved data modelling (`src/polymerhus/analysis/pod.py:_two_pass_analyse`; STATE.md DataItems=0 defect); the anatomy skills (`webpage-profile`, `authorization-pyramid`) classify spine slots that cannot be read off the surface and emit the triple *typed classification -> spine slot, evidence -> Observation, deeper probe -> backward-recon request* (`L1D-31`, `src/polymerhus/analysis/anatomy.py:60-86`).
+The `triager` reads L0 tool output into adversarial `Observation` insights (`src/polymerhus/recon/domain/pod.py`, recon design §4.5); the `analyser` reconstructs the L1 service/system model - historically in two passes, an assignment pass and a dedicated data-modelling pass, split because one combined call systematically starved data modelling (`_two_pass_analyse`; STATE.md DataItems=0 defect), and since `#34` dissolved into **responsibility-scoped proposers** behind a supervisor, each consuming a `Chunk` narrowed by its own admission set (the `Assigner` owns `AGGREGATES` and emits nothing else, `src/polymerhus/analysis/assigner.py`); the anatomy skills (`webpage-profile`, `authorization-pyramid`) classify spine slots that cannot be read off the surface and emit the triple *typed classification -> spine slot, evidence -> Observation, deeper probe -> backward-recon request* (`L1D-31`, `src/polymerhus/analysis/anatomy.py:60-86`).
 
 Two roles are registered but dormant (`configurator`, `job_orchestrator`, `src/polymerhus/app/llm/providers.py:14`), reserved seams for the designed-not-built context-memory scaffold (recon design §9).
 
@@ -411,7 +423,9 @@ The commitment is what makes N:M membership affordable: the set stays large and 
 
 An honest ontology names its holes; false closure here would be worse than an open question.
 
-**The confidence threshold and stale-pool policy are unset** (`L1OP-5`, `AMV-9`): the envelope records confidence but no number decides when an assignment is withheld into the stale pool, so the boundary between "judged" and "left stale" is currently undefined, and a stronger model over-assigns noise for want of a gate.
+**The confidence threshold is now SET; the stale-pool policy is still unset** (`L1OP-5`, `AMV-9`, updated 2026-07-30): the boundary between "judged" and "left stale" is defined for assignment - `withhold_below_bar` at 0.75, a shaping rule in the Assigner seam, with the bar swept empirically rather than argued (Section 3.2).
+What remains open is what to DO with the pool that gate produces: nothing re-judges a withheld element, escalates it, or reports it as a coverage debt, so the stale pool is still a ledger nobody reads.
+The related open question is whether a graded gate belongs on any other edge; today only `AGGREGATES` carries a graded judgment, so the envelope asymmetry (Section 4.3) leaves nothing else to gate.
 
 **Absence is deliberately excluded, not unresolved** (Section 3.5, `AMV-14`): the model records what is discovered, not what was not looked at, so the probed-empty/unprobed distinction is an operational quality-gate concern by decision, not an open ontological question.
 
