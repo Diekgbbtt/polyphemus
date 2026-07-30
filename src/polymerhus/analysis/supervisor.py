@@ -479,6 +479,7 @@ async def analyse_chunked(
     assets_fn=None,
     profiles_fn=None,
     inventory_fn=None,
+    observations_fn=None,
     write_fn=None,
     checkpointer=None,
     store=None,
@@ -510,6 +511,7 @@ async def analyse_chunked(
     assets_fn = assets_fn or read_l0_assets
     profiles_fn = profiles_fn or read_baseurl_profiles
     inventory_fn = inventory_fn or read_l1_inventory
+    observations_fn = observations_fn or _deliver_chunk_observations
     invoke_fn = invoke_fn or default_invoke_fn()
     write_fn = write_fn or _chunked_write_fn
 
@@ -521,6 +523,12 @@ async def analyse_chunked(
 
     assets = assets_fn(project_id)
     profiled = profiled_origins(profiles_fn(project_id))
+    # The triager's adversarial observations ride the chunk beside the assets they
+    # anchor to (#9): the mechanism-typist needs them to type mechanisms. Without this
+    # the chunk carried NO observations, so the per-asset insight the typist showed the
+    # model was empty every time (the silent-empty-insight defect). Fail-open: a read
+    # error degrades to no observations, never crashes the pass.
+    observations = observations_fn(project_id)
     # A pseudo-job: the chunk builder keys `chunk_id` off the source job, and this
     # read is the cumulative surface rather than one tool's output. `barrier=True`
     # because a cumulative read IS the phase-barrier view - nothing further is
@@ -528,7 +536,7 @@ async def analyse_chunked(
     from polymerhus.recon.domain.types import JobSpec
     pseudo_job = JobSpec(tool=f"stream-{run_id}", skill="analysis",
                          command_template="", produces=[], consumes="BaseURL")
-    chunks = chunks_for_job(pseudo_job, assets, profiled=profiled, barrier=True)
+    chunks = chunks_for_job(pseudo_job, assets, observations, profiled=profiled, barrier=True)
     if not chunks:
         # Valid empty: nothing to judge. Recorded as observed, so a drain over an
         # empty surface is distinguishable from a drain that never read anything.
@@ -629,6 +637,31 @@ def _aggregates_write_fn(deltas: L1DeltaBatch, project_id: str, provenance: Prov
 
     _, _, aggregates = proposals_to_deltas(deltas, provenance)
     return AnalyserExport(aggregates_written=l1_curator.write_aggregates(aggregates, project_id))
+
+
+def _deliver_chunk_observations(project_id: str) -> list:
+    """Deliver the project's triager Observations as `Observation` objects (each with
+    its anchor reconstructed by `delivery.collect_observations`) for the chunk builder.
+    Fail-open: a read or parse error degrades to an empty list, so the pass still runs
+    over the asset surface rather than crashing."""
+    from polymerhus.analysis.delivery import deliver_observations
+    from polymerhus.recon.domain.types import Observation
+
+    out: list = []
+    for d in deliver_observations(project_id) or []:
+        try:
+            out.append(Observation(
+                macro_kind=d.get("macro_kind") or "",
+                severity=d.get("severity") or "",
+                evidence=d.get("evidence") or "",
+                rationale=d.get("rationale") or "",
+                anchor=d.get("anchor") or {},
+                source_job=d.get("source_job") or "",
+                source_tool=d.get("source_tool") or "",
+            ))
+        except Exception:  # a malformed observation is skipped, never crashes the pass
+            continue
+    return out
 
 
 def _chunked_write_fn(deltas: L1DeltaBatch, project_id: str, provenance: Provenance):

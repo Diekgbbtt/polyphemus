@@ -165,10 +165,22 @@ def _gate(asset: AssetDelta, profiled: frozenset[str], barrier: bool) -> tuple[b
 
 
 def _observations_for(assets: tuple[AssetDelta, ...], observations: list[Observation]) -> tuple[Observation, ...]:
-    """The observations whose anchor asset is present in this chunk: an observation
-    rides the chunk carrying the asset it anchors to. Consumed by the mechanism-typist
-    and the data-modeller; the Assigner does not render them (#34 D5)."""
-    keys = {(a.type, _identity_key(a.identity)) for a in assets}
+    """The observations that belong to this chunk. An observation rides the chunk
+    when its anchor is either an asset in the chunk OR the PARENT broad anchor of one
+    (via the curator's pure `broaden_anchor`, e.g. a `/rest/*` Endpoint -> its
+    BaseURL). The parent hop is essential: the triager anchors observations UP to a
+    broad asset (curator ANCHOR_ALLOWLIST drops Endpoint/Header/Parameter anchors), so
+    a service chunk of Endpoints would otherwise carry NONE of its BaseURL's insights.
+    Consumed by the mechanism-typist and the data-modeller; the Assigner does not
+    render them (#34 D5)."""
+    from polymerhus.recon.domain.curator import broaden_anchor
+
+    keys: set[tuple] = set()
+    for a in assets:
+        keys.add((a.type, _identity_key(a.identity)))
+        parent = broaden_anchor({"type": a.type, "identity": a.identity or {}})
+        if parent:
+            keys.add((parent["type"], _identity_key(parent["identity"])))
     out = [
         o for o in observations
         if (o.anchor.get("type"), _identity_key(o.anchor.get("identity") or {})) in keys

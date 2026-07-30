@@ -28,6 +28,32 @@ logger = logging.getLogger(__name__)
 # provenance, keyed by the stable dedup `id`.
 _OBS_FIELDS = ("id", "macro_kind", "severity", "evidence", "rationale", "source_job", "source_tool")
 
+# The broad anchor an Observation is attached to via `(anchor)-[:HAS_OBSERVATION]->(o)`,
+# and the identity key(s) picking out each anchor node's identity (curator
+# ANCHOR_ALLOWLIST). The anchor is a RELATIONSHIP, not a node prop, so it must be
+# re-materialised here into the `{type, identity}` shape the chunk/typist match on -
+# without it every delivered observation is anchorless and matches nothing (the
+# silent-empty-insight defect).
+_ANCHOR_IDENTITY_KEYS: dict[str, tuple[str, ...]] = {
+    "Domain": ("name",),
+    "Subdomain": ("name",),
+    "BaseURL": ("url",),
+    "IP": ("address",),
+    "Service": ("name", "ip_address", "port_number"),
+}
+
+
+def _anchor_from(labels: list | None, props: dict | None) -> dict:
+    """Rebuild the `{type, identity}` anchor from the HAS_OBSERVATION anchor node's
+    labels + identity props. Empty dict when no broad anchor is attached (defensive;
+    curation always attaches exactly one allowlisted anchor)."""
+    props = props or {}
+    for t in _ANCHOR_IDENTITY_KEYS:
+        if labels and t in labels:
+            identity = {k: props[k] for k in _ANCHOR_IDENTITY_KEYS[t] if props.get(k) is not None}
+            return {"type": t, "identity": identity}
+    return {}
+
 
 def _resolve_read_fn(read_fn):
     if read_fn is None:
@@ -45,17 +71,24 @@ def collect_observations(project_id: str, *, read_fn=None) -> list[dict]:
     read_fn = _resolve_read_fn(read_fn)
     rows = read_fn(
         "MATCH (o:Observation) WHERE o.project_id = $project_id "
+        "OPTIONAL MATCH (anchor)-[:HAS_OBSERVATION]->(o) "
+        "  WHERE any(l IN labels(anchor) WHERE l IN $anchor_labels) "
         "RETURN o { .id, .macro_kind, .severity, .evidence, .rationale, "
-        ".source_job, .source_tool } AS o ORDER BY o.id",
-        {"project_id": project_id},
+        ".source_job, .source_tool } AS o, "
+        "labels(anchor) AS anchor_labels, "
+        "anchor { .name, .url, .address, .ip_address, .port_number } AS anchor_props "
+        "ORDER BY o.id",
+        {"project_id": project_id, "anchor_labels": list(_ANCHOR_IDENTITY_KEYS)},
     )
     by_id: dict[str, dict] = {}
     for r in rows:
         o = dict(r.get("o") or {})
         oid = o.get("id")
         if oid is None or oid in by_id:
-            continue  # dedup by id (defensive; the query is already 1 row per node)
-        by_id[oid] = {k: o.get(k) for k in _OBS_FIELDS}
+            continue  # dedup by id (an obs with >1 anchor row keeps the first)
+        rec = {k: o.get(k) for k in _OBS_FIELDS}
+        rec["anchor"] = _anchor_from(r.get("anchor_labels"), r.get("anchor_props"))
+        by_id[oid] = rec
     return list(by_id.values())
 
 

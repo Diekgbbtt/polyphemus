@@ -14,7 +14,7 @@ from polymerhus.analysis.chunking import (
     chunks_for_job,
     profiled_origins,
 )
-from polymerhus.recon.domain.types import AssetDelta, JobSpec
+from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
 
 JOB = JobSpec(tool="katana", skill="crawl", command_template="t", produces=["BaseURL", "Endpoint"], consumes="BaseURL")
 BU = "https://a"
@@ -183,3 +183,23 @@ def test_C27b_non_endpoint_assets_found_on_scripts_survive():
     ]
     (chunk,) = chunks_for_job(JOB, assets, profiled=frozenset({BU}))
     assert sorted(a.type for a in chunk.assets) == ["Header", "Parameter"]
+
+
+def _obs_on(anchor_type, identity):
+    return Observation(macro_kind="k", severity="info", evidence="e", rationale="r",
+                       anchor={"type": anchor_type, "identity": identity},
+                       source_job="triager", source_tool="triager")
+
+
+def test_C28_baseurl_anchored_observation_rides_via_its_endpoints_parent():
+    """Silent-empty-insight fix (chunking half). Observations are anchored UP to the
+    BaseURL (curator ANCHOR_ALLOWLIST drops narrow anchors), so a chunk of Endpoints
+    must carry its BaseURL's observations via the parent hop (`broaden_anchor`), even
+    when the BaseURL node itself is not an asset in the chunk. An observation on an
+    UNRELATED BaseURL must NOT ride."""
+    on_bu = _obs_on("BaseURL", {"url": BU})            # parent of /x
+    on_other = _obs_on("BaseURL", {"url": BU2})        # unrelated
+    (chunk,) = chunks_for_job(JOB, [_ep("/x")], [on_bu, on_other], profiled=frozenset({BU}))
+    riding = [(o.anchor["type"], o.anchor["identity"]) for o in chunk.observations]
+    assert ("BaseURL", {"url": BU}) in riding          # inherited from the endpoint's parent
+    assert ("BaseURL", {"url": BU2}) not in riding      # unrelated BaseURL excluded

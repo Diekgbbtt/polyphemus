@@ -193,3 +193,32 @@ def test_inline_mode_is_byte_for_byte_todays_behaviour():
     _run({"target_domain": "*.t.com", "streaming_analysis": True,
           "async_analysis_consumer": False}, stream_calls)
     assert len(stream_calls) == 2
+
+
+def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(monkeypatch):
+    """L1 of the silent-empty-insight fix: the streaming pass must DELIVER the triager
+    observations and hand them to the chunk builder. Before the fix analyse_chunked
+    called chunks_for_job with NO observations, so every chunk - and thus the typist -
+    saw none, and the per-asset insight was empty every time. Spy on chunks_for_job
+    (returning [] short-circuits the pass before the graph/DB) to capture what it got."""
+    from polymerhus.analysis import chunking, supervisor
+    from polymerhus.recon.domain.types import AssetDelta, Observation
+
+    captured = {}
+
+    def spy_chunks_for_job(job, assets, observations=None, **kw):
+        captured["observations"] = observations
+        return []  # valid-empty -> analyse_chunked returns before run_supervisor (no DB/LLM)
+
+    monkeypatch.setattr(chunking, "chunks_for_job", spy_chunks_for_job)
+    obs = Observation(macro_kind="cors", severity="high", evidence="acao *",
+                      rationale="wide-open CORS", anchor={"type": "BaseURL", "identity": {"url": "https://a"}},
+                      source_job="triager", source_tool="triager")
+    asyncio.run(supervisor.analyse_chunked(
+        "p", "run1",
+        assets_fn=lambda pid: [AssetDelta(type="Endpoint", identity={"path": "/x", "baseurl": "https://a"})],
+        profiles_fn=lambda pid: [],
+        observations_fn=lambda pid: [obs],
+        observe=False,
+    ))
+    assert captured["observations"] == [obs]

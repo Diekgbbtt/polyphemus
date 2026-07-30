@@ -31,9 +31,36 @@ def test_collect_observations_dedups_by_id():
 
     out = delivery.collect_observations("proj-1", read_fn=fake_read)
     assert "MATCH (o:Observation)" in captured["cy"]
-    assert captured["params"] == {"project_id": "proj-1"}
+    assert "HAS_OBSERVATION" in captured["cy"]  # anchor reconstructed from the relationship
+    assert captured["params"]["project_id"] == "proj-1"
     assert [o["id"] for o in out] == ["obs1", "obs2"]  # deduped by id, one each
     assert out[0]["macro_kind"] == "reflected_input" and out[0]["evidence"] == "x=<script>"
+    assert out[0]["anchor"] == {}  # no anchor row in this fake -> empty (defensive)
+
+
+def test_collect_observations_reconstructs_the_broad_anchor():
+    """L2 of the silent-empty-insight fix: the anchor is a `(anchor)-[:HAS_OBSERVATION]->(o)`
+    RELATIONSHIP, not a node prop, so delivery must re-materialise `{type, identity}`
+    from the anchor node's labels + identity props - else every delivered observation
+    is anchorless and matches nothing downstream."""
+    def fake_read(cy, params):
+        return [
+            {"o": {"id": "b", "macro_kind": "cors", "severity": "high", "evidence": "acao *",
+                   "rationale": "wide-open CORS", "source_job": "httpx", "source_tool": "httpx"},
+             "anchor_labels": ["BaseURL"],
+             "anchor_props": {"url": "https://a", "name": None, "address": None,
+                              "ip_address": None, "port_number": None}},
+            {"o": {"id": "s", "macro_kind": "open_port", "severity": "info", "evidence": "80/tcp",
+                   "rationale": "http exposed", "source_job": "naabu", "source_tool": "naabu"},
+             "anchor_labels": ["Service"],
+             "anchor_props": {"name": "http", "ip_address": "1.2.3.4", "port_number": 80,
+                              "url": None, "address": None}},
+        ]
+
+    out = {o["id"]: o for o in delivery.collect_observations("p", read_fn=fake_read)}
+    assert out["b"]["anchor"] == {"type": "BaseURL", "identity": {"url": "https://a"}}
+    assert out["s"]["anchor"] == {
+        "type": "Service", "identity": {"name": "http", "ip_address": "1.2.3.4", "port_number": 80}}
 
 
 def test_collect_observations_skips_rows_without_id():
