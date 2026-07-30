@@ -1,28 +1,26 @@
-"""WI-2: the analyser data-modelling prompt must ask for EVIDENCE-BOUND fields.
+"""WI-2: the analyser's remaining legacy ASSIGNMENT prompt (`pod._assignment_prompt`).
+
+`pod._data_modelling_prompt` (and the two tests here that exercised it,
+`test_data_modelling_prompt_asks_for_observed_fields_only` /
+`test_data_modelling_prompt_does_not_reintroduce_likely_fields` /
+`test_data_modelling_prompt_pins_existing_identities`) was RETIRED by #48
+section 11 step 5 (ratified 2026-07-30): the legacy two-pass no longer proposes
+data at all, because `data_modeller.py` (the chunk-fed path, now the default via
+`resolve_supervisor_enabled`'s flipped default) owns that responsibility. Its
+"observed fields only, never speculative" contract is mechanised instead at
+`tests/analysis/test_data_modeller.py::test_fields_observed_only` and
+`tests/integration/test_data_modeller_contracts.py::test_D7_fields_observed_only`
+/ `test_D9_fields_omitted_when_none_observed`, via `bind_fields_to_observed`
+(gate 5) rather than a prompt-text assertion - the invariant is CODE now, not
+prose (DPL-DEC-07).
 
 The DataItem model no longer carries a speculative `likely_fields`; observed
-fields go into an evidence-bound `fields` list, and further attribute discovery is
-deferred to a dedicated enrichment activity (AMV-10). These assertions encode that
-prompt contract so a future edit cannot silently reintroduce guessed fields.
+fields go into an evidence-bound `fields` list (AMV-10).
 """
-from polymerhus.analysis.analyser_types import L1DeltaBatch
-from polymerhus.analysis.pod import _assignment_prompt, _data_modelling_prompt
+from polymerhus.analysis.pod import _assignment_prompt
 
 
-def test_data_modelling_prompt_asks_for_observed_fields_only():
-    prompt = _data_modelling_prompt({"nodes": []}, L1DeltaBatch())
-    low = prompt.lower()
-    assert "fields" in low  # the fields channel exists
-    assert "observed" in low  # it is scoped to observed fields
-    assert "speculative" in low  # and explicitly forbids a speculative list
-
-
-def test_data_modelling_prompt_does_not_reintroduce_likely_fields():
-    prompt = _data_modelling_prompt({"nodes": []}, L1DeltaBatch())
-    assert "likely_fields" not in prompt  # the removed concept never returns
-
-
-# --- FR-INVENTORY (AST-INV-02): both prompts pin the existing L1 identities ---
+# --- FR-INVENTORY (AST-INV-02): the assignment prompt pins existing identities --
 
 def test_assignment_prompt_pins_existing_identities():
     """AST-INV-02: the assignment prompt renders the EXISTING L1 IDENTITIES block
@@ -39,20 +37,6 @@ def test_assignment_prompt_pins_existing_identities():
     assert "reuse" in p.lower() and "synonym" in p.lower()
     # the block is at the TOP - before the controlled-vocabulary section
     assert p.index("EXISTING L1 IDENTITIES") < p.index("CONTROLLED VOCABULARIES")
-
-
-def test_data_modelling_prompt_pins_existing_identities():
-    """AST-INV-02: the data-modelling pass (which otherwise drops the L0 slice
-    entirely) also carries the un-truncated EXISTING L1 IDENTITIES block + reuse
-    instruction, so pass-2 reuses an existing DataItem key instead of a synonym."""
-    inv = {"services": ["cart"], "systems": [], "data_items": ["loyalty_ledger"]}
-    p = _data_modelling_prompt({"nodes": []}, L1DeltaBatch(), inventory=inv)
-    assert "EXISTING L1 IDENTITIES" in p
-    # a distinctive key NOT present in the worked example proves the block injected it
-    assert "loyalty_ledger" in p
-    assert "reuse" in p.lower() and "synonym" in p.lower()
-    # rendered at the TOP - before the data-modelling task text
-    assert p.index("EXISTING L1 IDENTITIES") < p.index("LOGICAL DATA MODELLING")
 
 
 # --- FR-TYPESEP-a (AST-TYPE-01): system facts are edges, not Service props ---

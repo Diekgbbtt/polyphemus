@@ -341,16 +341,24 @@ async def run_supervisor(
 
 def resolve_supervisor_enabled(project_id: str, *, settings_fn=None) -> bool:
     """Read the orthogonal `analysis.supervisor_enabled` flag from project
-    settings, fail-open to False so the legacy pod stays the default (a two-way
-    door: rollback is a flag flip). Mirrors how `streaming_analysis` is read from
-    the same settings blob."""
+    settings.
+
+    DEFAULT FLIPPED TO ON (#48 section 11 step 5, ratified 2026-07-30, together
+    with dissolving the legacy two-pass in the same change): the chunk-fed
+    three-role schedule (`analyse_chunked`) is now the DEFAULT production path.
+    A project whose settings omit the flag, or set it explicitly `True`, gets it;
+    only an explicit `False` opts back into the legacy pod - still a two-way
+    door, rollback is a flag flip, just the other direction now. A settings-read
+    FAILURE still degrades to False (never silently enable a path this run
+    cannot confirm the project actually wants), mirroring how
+    `streaming_analysis` is read from the same settings blob."""
     if settings_fn is None:
         from polymerhus.app.clients.pg import load_settings as settings_fn
     try:
         settings = settings_fn(project_id) or {}
     except Exception:  # a settings-read failure must never enable the new path
         return False
-    return bool(settings.get("supervisor_enabled"))
+    return bool(settings.get("supervisor_enabled", True))
 
 
 def build_schedule(

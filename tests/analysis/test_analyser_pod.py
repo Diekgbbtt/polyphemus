@@ -255,59 +255,40 @@ def test_default_curate_with_enrichment_skips_enrich_when_no_enrichment_deltas(m
     assert export.services_written == 1
 
 
-# --- FIX 3: data modelling gets its own dedicated analyse pass (e2e-caught) ---
+# --- #48 section 11 step 5: the legacy pass is now ASSIGNMENT-ONLY -------------
+#
+# The dedicated data-modelling pass this file used to test HERE
+# (`test_two_pass_analyse_runs_dedicated_data_modelling_pass`,
+# `test_two_pass_analyse_fail_open_keeps_assignment_when_data_pass_raises`) was
+# retired together with `pod._data_modelling_prompt`/`_compact_l0_for_data`,
+# ratified 2026-07-30: `resolve_supervisor_enabled`'s default flipped ON in the
+# SAME change, so the chunk-fed `data_modeller` (its own dedicated pass, with its
+# own fail-open discipline - see `tests/analysis/test_data_modeller.py`) is now
+# the DEFAULT path's data-modelling proposer; this legacy pod only still serves
+# the explicit `analysis.supervisor_enabled=False` opt-out, and on that path it
+# proposes assignment ONLY.
 
-def test_two_pass_analyse_runs_dedicated_data_modelling_pass():
-    """Regression for an e2e-caught defect: one combined LLM call reliably returned
-    0 data_items while emitting 150 aggregates + 90 system_edges (finish_reason
-    'tool_calls', NOT a token cutoff) - the model deprioritised data modelling under
-    assignment load. The analyser must issue a SEPARATE data-modelling pass whose
-    output is merged in, so DataItems survive even when the assignment pass has
-    none."""
+def test_two_pass_analyse_is_assignment_only():
+    """The legacy pass issues exactly ONE call (assignment) and merges nothing
+    else in - `merged.data_items` is always empty on this path now."""
     calls = []
 
     def fake_invoke(messages):
         calls.append(messages[-1].content)
-        if len(calls) == 1:
-            # assignment pass: aggregates + system_edges, NO data_items (the live shape)
-            return L1DeltaBatch(
-                aggregates=[AggregatesProposal(
-                    service_slug="orders",
-                    l0=L0Ref(label="Endpoint", identity={"path": "/api/Orders", "method": "GET", "baseurl": "https://a"}))],
-                system_edges=[SystemEdgeProposal(service_slug="orders", kind="RESTApi", rel="EXPOSED_VIA")],
-            )
-        # dedicated data-modelling pass supplies the DataItems + flows
         return L1DeltaBatch(
-            data_items=[DataItemProposal(item_key="order")],
-            data_flows=[DataFlowProposal(service_slug="orders", item_key="order", direction="produces")],
+            aggregates=[AggregatesProposal(
+                service_slug="orders",
+                l0=L0Ref(label="Endpoint", identity={"path": "/api/Orders", "method": "GET", "baseurl": "https://a"}))],
+            system_edges=[SystemEdgeProposal(service_slug="orders", kind="RESTApi", rel="EXPOSED_VIA")],
         )
 
     merged = analyser_pod._two_pass_analyse(fake_invoke, {"nodes": [{"type": "Endpoint"}]}, [])
 
-    assert len(calls) == 2  # a dedicated data-modelling pass ran
-    assert "TASK 1 of 2" in calls[0] and "LOGICAL DATA MODELLING" in calls[1]  # the two distinct tasks
-    # assignment preserved AND data modelling merged in (the load-bearing fix)
+    assert len(calls) == 1  # no second (data-modelling) call is ever made
+    assert "TASK 1 of 2" in calls[0]
     assert [a.service_slug for a in merged.aggregates] == ["orders"]
     assert [e.rel for e in merged.system_edges] == ["EXPOSED_VIA"]
-    assert [d.item_key for d in merged.data_items] == ["order"]
-    assert [f.direction for f in merged.data_flows] == ["produces"]
-
-
-def test_two_pass_analyse_fail_open_keeps_assignment_when_data_pass_raises():
-    """If the dedicated data-modelling pass raises, the assignment pass must survive
-    (fail-open) - a data-pass error degrades enrichment, never loses assignment."""
-    calls = []
-
-    def fake_invoke(messages):
-        calls.append(1)
-        if len(calls) == 1:
-            return L1DeltaBatch(services=[ServiceProposal(business_function_slug="orders")])
-        raise RuntimeError("data pass LLM 500")
-
-    merged = analyser_pod._two_pass_analyse(fake_invoke, {"nodes": []}, [])
-
-    assert [s.business_function_slug for s in merged.services] == ["orders"]  # assignment kept
-    assert merged.data_items == []  # degraded to no enrichment, no crash
+    assert merged.data_items == []  # retired: this path never proposes data
 
 
 def test_invoke_with_retry_returns_first_non_none():
@@ -336,80 +317,34 @@ def test_invoke_with_retry_gives_up_after_attempts():
 
 
 def test_two_pass_analyse_recovers_from_transient_none_on_assignment():
-    """Regression for a live-observed flake: a transient None on a pass must not
-    zero the whole analyser - the pass is retried and a later success is used."""
+    """Regression for a live-observed flake: a transient None on the assignment
+    call must not zero the whole analyser - the call is retried and a later
+    success is used."""
     calls = []
 
     def fake_invoke(messages):
-        content = messages[-1].content
-        calls.append(content)
-        if "TASK 1 of 2" in content:
-            # assignment: None on the first attempt, a real batch on the retry
-            if sum("TASK 1 of 2" in c for c in calls) == 1:
-                return None
-            return L1DeltaBatch(
-                services=[ServiceProposal(business_function_slug="orders")],
-                aggregates=[AggregatesProposal(service_slug="orders",
-                    l0=L0Ref(label="Endpoint", identity={"path": "/x", "method": "GET", "baseurl": "https://a"}))])
-        return L1DeltaBatch(data_items=[DataItemProposal(item_key="order")])
+        calls.append(messages[-1].content)
+        # None on the first attempt, a real batch on the retry
+        if len(calls) == 1:
+            return None
+        return L1DeltaBatch(
+            services=[ServiceProposal(business_function_slug="orders")],
+            aggregates=[AggregatesProposal(service_slug="orders",
+                l0=L0Ref(label="Endpoint", identity={"path": "/x", "method": "GET", "baseurl": "https://a"}))])
 
     merged = analyser_pod._two_pass_analyse(fake_invoke, {"nodes": []}, [])
     assert [s.business_function_slug for s in merged.services] == ["orders"]  # recovered on retry
-    assert [d.item_key for d in merged.data_items] == ["order"]  # data pass still merged
 
 
-def test_data_modelling_prompt_grounds_in_assignment():
-    """Pass-2's prompt must carry pass-1's Service->endpoint assignment so data
-    modelling is grounded in what was actually assigned (token-light: <=8 paths)."""
-    assignment = L1DeltaBatch(aggregates=[
-        AggregatesProposal(service_slug="sign-in",
-            l0=L0Ref(label="Endpoint", identity={"path": "/rest/user/login", "method": "POST", "baseurl": "https://a"})),
-    ])
-    p = analyser_pod._data_modelling_prompt({"nodes": []}, assignment)
-    assert "LOGICAL DATA MODELLING" in p
-    assert "sign-in: /rest/user/login" in p  # the assignment is echoed as grounding
-
-
-def test_data_modelling_prompt_is_positive_recipe_with_example():
-    """The data prompt must be a POSITIVE, example-led recipe - NOT a negative
-    'leave the other lists empty' framing that made a weaker model anchor on the
-    empties and return zero data_items. Guards the reframing."""
-    p = analyser_pod._data_modelling_prompt({"nodes": []}, L1DeltaBatch())
-    # a concrete worked example the weak model can pattern-match
-    assert '"item_key": "shopping_basket"' in p
-    assert "WORKED EXAMPLE" in p
-    # a directive demand for at least one item (the failure was zero)
-    assert "at least" in p and "data_items" in p
-    # NO harmful negative framing telling it to leave lists empty
-    assert "EMPTY" not in p and "leave" not in p.lower()
-    # the worked example must use a REAL controlled DataRelationship kind (a bogus
-    # example kind would teach the model to emit deltas the curator drops)
-    from polymerhus.analysis.l1_curator import _KNOWN_DATA_REL_KINDS
-    import re as _re
-    example_kinds = set(_re.findall(r'"kind":\s*"([a-z_]+)"', p))
-    assert example_kinds and example_kinds <= _KNOWN_DATA_REL_KINDS, example_kinds
-    # data_flows must be told to copy service slugs verbatim (avoid orphan services)
-    assert "VERBATIM" in p
-
-
-def test_data_modelling_prompt_uses_identity_only_surface_not_full_dump():
-    """Pass-2's surface digest must be IDENTITY-ONLY - the full node property dump
-    ballooned the prompt to ~123k chars and pass-2 timed out / returned no
-    structured output. Guards that heavy props never reach the data prompt."""
-    slice_ = {"nodes": [
-        {"type": "Endpoint", "properties": {
-            "path": "/api/Orders", "method": "GET", "baseurl": "https://a",
-            "status_code": 200, "body_snippet": "Z" * 500}},
-        {"type": "Parameter", "properties": {
-            "name": "orderId", "position": "query", "endpoint_path": "/api/Orders", "baseurl": "https://a"}},
-        {"type": "Header", "properties": {"name": "Server", "value": "nginx"}},
-    ]}
-    eps, params = analyser_pod._compact_l0_for_data(slice_)
-    assert eps == [{"path": "/api/Orders", "method": "GET", "baseurl": "https://a"}]  # no status_code/body
-    assert params == [{"name": "orderId", "position": "query", "endpoint_path": "/api/Orders", "baseurl": "https://a"}]
-    p = analyser_pod._data_modelling_prompt(slice_, L1DeltaBatch())
-    assert "status_code" not in p and "Z" * 500 not in p  # heavy props excluded from the prompt
-    assert "/api/Orders" in p and "orderId" in p  # identities present
+# `_data_modelling_prompt`/`_compact_l0_for_data` (and their tests -
+# `test_data_modelling_prompt_grounds_in_assignment`,
+# `test_data_modelling_prompt_is_positive_recipe_with_example`,
+# `test_data_modelling_prompt_uses_identity_only_surface_not_full_dump`) were
+# RETIRED alongside the legacy data-modelling pass, per the note above. The
+# positive-recipe / identity-only-surface / observed-fields-only disciplines
+# they guarded now live in `data_modeller.py`'s own prompt (see
+# `tests/analysis/test_data_modeller.py` and
+# `tests/integration/test_data_modeller_contracts.py`).
 
 def test_analyser_skill_loads_and_strips_frontmatter():
     from polymerhus.recon.domain import skills
