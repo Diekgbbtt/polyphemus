@@ -32,7 +32,8 @@ def _resolve_read_fn(read_fn):
 
 def _empty() -> dict:
     return {"services": [], "systems": [], "data_items": [],
-            "service_contracts": {}, "system_descriptions": {}}
+            "service_contracts": {}, "system_descriptions": {},
+            "data_item_fields": {}, "data_item_notes": {}}
 
 
 def _render_system(row: dict) -> str:
@@ -64,6 +65,14 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
     same `_render_system` shape). The mechanism-typist reads it to decide new-vs-extend
     and to COMPOUND the description on extension (grilled #9).
 
+    `data_item_fields` (`{item_key: [field, ...]}`) and `data_item_notes`
+    (`{item_key: notes}`) are the SAME additive pattern for DataItems (#48,
+    dataplane-A1-decisions.md DPL-DEC-08/09): the flat `data_items` list stays
+    unchanged, and the data-modeller reads the parallel maps to UNION its proposed
+    `fields` with what is already persisted (so a re-proposal can never shrink the
+    observed set) and to decide reuse-vs-coin against each item's discriminative
+    `notes`.
+
     Fail-open: any read error degrades to the empty inventory shape and never raises
     into the caller."""
     read_fn = _resolve_read_fn(read_fn)
@@ -80,7 +89,7 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
         )
         data_rows = read_fn(
             "MATCH (n:L1DataItem) WHERE n.project_id = $project_id "
-            "RETURN n.item_key AS item_key",
+            "RETURN n.item_key AS item_key, n.fields AS fields, n.notes AS notes",
             {"project_id": project_id},
         )
     except Exception:  # fail-open: a read error degrades to the empty inventory
@@ -100,10 +109,22 @@ def read_l1_inventory(project_id: str, *, read_fn=None) -> dict:
         for r in system_rows
         if r.get("kind") and (r.get("description") or "").strip()
     }
+    data_item_fields = {
+        r["item_key"]: list(r["fields"])
+        for r in data_rows
+        if r.get("item_key") and r.get("fields")
+    }
+    data_item_notes = {
+        r["item_key"]: r["notes"]
+        for r in data_rows
+        if r.get("item_key") and (r.get("notes") or "").strip()
+    }
     return {
         "services": services,
         "systems": systems,
         "data_items": data_items,
         "service_contracts": contracts,
         "system_descriptions": system_descriptions,
+        "data_item_fields": data_item_fields,
+        "data_item_notes": data_item_notes,
     }

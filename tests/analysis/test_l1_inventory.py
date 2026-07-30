@@ -32,6 +32,31 @@ def test_reads_service_slugs_systems_dataitems():
     assert inv["data_items"] == ["order", "shopping_basket"]
 
 
+def test_reads_data_item_fields_and_notes_additively():
+    """#48 DPL-DEC-08/09: `data_item_fields`/`data_item_notes` are ADDITIVE - the
+    flat `data_items` list is untouched, and only items actually carrying a
+    non-empty value appear in the parallel maps."""
+    def fake_read(cypher, params):
+        if "L1Service" in cypher:
+            return []
+        if "L1System" in cypher:
+            return []
+        if "L1DataItem" in cypher:
+            return [
+                {"item_key": "shopping_basket", "fields": ["ProductId", "quantity"],
+                 "notes": "client-supplied quantity; server may not revalidate"},
+                {"item_key": "order", "fields": None, "notes": None},
+            ]
+        return []
+
+    inv = read_l1_inventory("proj-1", read_fn=fake_read)
+    assert inv["data_items"] == ["order", "shopping_basket"]  # unchanged shape
+    assert inv["data_item_fields"] == {"shopping_basket": ["ProductId", "quantity"]}
+    assert inv["data_item_notes"] == {
+        "shopping_basket": "client-supplied quantity; server may not revalidate",
+    }
+
+
 def test_read_error_is_fail_open():
     """AST-INV-01: a read error degrades to the empty inventory shape and never
     raises into the caller (fail-open, mirroring the analyser pod)."""
@@ -40,7 +65,8 @@ def test_read_error_is_fail_open():
 
     inv = read_l1_inventory("proj-1", read_fn=boom)
     assert inv == {"services": [], "systems": [], "data_items": [],
-                   "service_contracts": {}, "system_descriptions": {}}
+                   "service_contracts": {}, "system_descriptions": {},
+                   "data_item_fields": {}, "data_item_notes": {}}
 
 
 def test_service_contracts_are_returned_alongside_the_slugs():
