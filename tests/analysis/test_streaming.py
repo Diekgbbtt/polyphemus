@@ -222,3 +222,59 @@ def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(m
         observe=False,
     ))
     assert captured["observations"] == [obs]
+
+
+# --- #9: the phase-6 endpoint-reprofile pass is NOT re-streamed to proposers ---
+
+class _RecordingFeed:
+    """Captures every cursor the pipeline hands to `advance`, without a queue - so the
+    assertion is on WHICH jobs triggered an analyser signal, deterministically (no
+    conflation)."""
+
+    mode = "queued"
+
+    def __init__(self):
+        self.advanced_jobs = []
+
+    async def advance(self, cursor):
+        self.advanced_jobs.append(cursor.job)
+
+    async def drain(self, *a, **k):
+        from polymerhus.analysis.feed import FeedStats
+        return FeedStats(mode=self.mode)
+
+    async def stop(self):
+        pass
+
+
+def test_endpoint_reprofile_job_does_not_advance_the_analyser(monkeypatch):
+    """The httpx_reprofile pass (phase 6, `endpoint_profiling=True`) re-emits Endpoints
+    already streamed by the crawl phase, adding only a per-endpoint `profile`. Streaming
+    those endpoints to the proposers again is redundant analysis - the profile-aware
+    deeper pass is deferred to phase A.2 (#45) and later B. So a reprofile job that
+    merges surface must NOT raise an analyser cursor, while ordinary producing jobs
+    still do."""
+    from polymerhus.analysis import feed as feed_mod
+
+    recording = _RecordingFeed()
+    monkeypatch.setattr(feed_mod, "start_analysis_feed", lambda *a, **k: recording)
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        # every job merges surface, so only the reprofile guard - not the
+        # produced-nothing guard - can be what suppresses the reprofile advance.
+        return [PodExport(input_asset={}, verdict="success", assets_merged=1,
+                          observations_merged=1)]
+
+    asyncio.run(pipeline.run_pipeline(
+        "proj1", run_id="run1",
+        job_subset=["httpx", "httpx_reprofile"],  # producer then its reprofile
+        run_job=run_job,
+        load_settings=lambda project_id: {
+            "target_domain": "*.t.com", "streaming_analysis": True,
+            "async_analysis_consumer": True},
+        registry=_StatsRegistry(),
+        read_assets=lambda node_type, project_id, where=None: [{"name": "seed"}],
+    ))
+
+    assert "httpx" in recording.advanced_jobs           # ordinary producer still signals
+    assert "httpx_reprofile" not in recording.advanced_jobs  # the reprofile pass does not
