@@ -1,12 +1,13 @@
 """Analyser control plane: the central supervisor + the message topology.
 
-Increment 0 (#22) built this with HOLLOW agents. Increment 2a (#24) makes it the
-"async is runnable" checkpoint: a proposer node can now carry a real `L1DeltaBatch`
-and the curator can WRITE it through the sole-writer, so the async supervisor runs
-the LEGACY analyser and produces the same `AnalyserExport` the legacy pod does -
-with the durable `AsyncPostgresStore` and the #18 observability recipe wired - all
-still behind `analysis.supervisor_enabled` (default OFF). The per-responsibility
-decomposition, the chunk feeding, and the `_two_pass_analyse` dissolution are 2b.
+Increment 0 (#22) built this with HOLLOW agents. Increment 2a (#24) made it the
+"async is runnable" checkpoint, with the durable `AsyncPostgresStore` and the #18
+observability recipe wired. 2b built the per-responsibility decomposition and the
+chunk feeding; #48 completed the dissolution of the legacy two-pass analyser
+prompt (the whole legacy pod module) and its `analysis.supervisor_enabled`
+coexistence flag - `analyse_chunked`, below, is now the analyser's ONE
+production path, driving the `assigner -> mechanism_typist -> data_modeller`
+chunk-major schedule.
 
 Topology (#17 DP-5/DP-7), unchanged from increment 0:
   START -> supervisor
@@ -337,30 +338,6 @@ async def run_supervisor(
                 _flush_langfuse()
 
 
-# --- coexistence: the analysis.supervisor_enabled flag ------------------------
-
-def resolve_supervisor_enabled(project_id: str, *, settings_fn=None) -> bool:
-    """Read the orthogonal `analysis.supervisor_enabled` flag from project
-    settings.
-
-    DEFAULT FLIPPED TO ON (#48 section 11 step 5, ratified 2026-07-30, together
-    with dissolving the legacy two-pass in the same change): the chunk-fed
-    three-role schedule (`analyse_chunked`) is now the DEFAULT production path.
-    A project whose settings omit the flag, or set it explicitly `True`, gets it;
-    only an explicit `False` opts back into the legacy pod - still a two-way
-    door, rollback is a flag flip, just the other direction now. A settings-read
-    FAILURE still degrades to False (never silently enable a path this run
-    cannot confirm the project actually wants), mirroring how
-    `streaming_analysis` is read from the same settings blob."""
-    if settings_fn is None:
-        from polymerhus.app.clients.pg import load_settings as settings_fn
-    try:
-        settings = settings_fn(project_id) or {}
-    except Exception:  # a settings-read failure must never enable the new path
-        return False
-    return bool(settings.get("supervisor_enabled", True))
-
-
 def build_schedule(
     chunks, run_id: str, *, roles: tuple[str, ...] = ("assigner",),
     phase: str = "A1", mode: str = "create",
@@ -689,74 +666,3 @@ def _chunked_write_fn(deltas: L1DeltaBatch, project_id: str, provenance: Provena
         from polymerhus.analysis.pod import default_curate_with_enrichment_fn
         return default_curate_with_enrichment_fn(deltas, project_id, provenance)
     return _aggregates_write_fn(deltas, project_id, provenance)
-
-
-def run_analyser_supervised(
-    project_id: str,
-    run_id: str,
-    observations=None,
-    *,
-    read_fn=None,
-    analyse_fn=None,
-    curate_fn=None,
-    checkpointer=None,
-    store=None,
-    observe: bool = True,
-):
-    """Sync bridge from `run_analyser` (offloaded via `asyncio.to_thread` by both
-    callers, so this worker thread has no running loop) into the born-async
-    supervisor, driven with `asyncio.run` (increment 2a).
-
-    Wraps the LEGACY analyser as the supervisor's nodes: it reads the whole L0
-    slice and delivers observations exactly as the legacy `run_analyser` does, then
-    runs ONE `assigner` dispatch whose body is the legacy `default_analyse_fn` (the
-    whole two-pass) and whose curator `write_fn` is the legacy
-    `default_curate_with_enrichment_fn`, so the async supervisor produces the SAME
-    `AnalyserExport` as the legacy pod. The `assigner` role + one node is
-    transitional; 2b replaces it with the chunk-fed per-responsibility schedule."""
-    import asyncio
-
-    from polymerhus.analysis.chunking import Chunk
-    from polymerhus.analysis.pod import (
-        AnalyserExport, default_analyse_fn, default_curate_with_enrichment_fn,
-        default_read_fn,
-    )
-
-    read_fn = read_fn or default_read_fn
-    analyse_fn = analyse_fn or default_analyse_fn
-    curate_fn = curate_fn or default_curate_with_enrichment_fn
-
-    # match the legacy run_analyser's INPUT: whole L0 slice + auto-delivered obs.
-    try:
-        l0_slice = read_fn(project_id)
-    except Exception:  # degrade to an empty slice rather than crash (legacy parity)
-        l0_slice = {"nodes": [], "links": []}
-    if observations is None:
-        from polymerhus.analysis.delivery import deliver_observations
-        try:
-            observations = deliver_observations(project_id)
-        except Exception:
-            observations = []
-
-    def _legacy_analyse(dispatch, state) -> L1DeltaBatch:
-        return analyse_fn(state.get("l0_slice") or {}, state.get("observations") or [])
-
-    captured: dict = {}
-
-    def _capturing_write(deltas, pid, provenance):
-        export = curate_fn(deltas, pid, provenance)
-        captured["export"] = export
-        return export
-
-    builder = build_supervisor_graph(
-        proposer_bodies={"assigner": _legacy_analyse}, write_fn=_capturing_write,
-    )
-    schedule = [AgentDispatch(
-        dispatch_id=run_id, role="assigner", phase="A1", chunk=Chunk(chunk_id=run_id),
-    )]
-    asyncio.run(run_supervisor(
-        project_id, run_id, schedule, builder=builder,
-        l0_slice=l0_slice, observations=observations,
-        checkpointer=checkpointer, store=store, observe=observe,
-    ))
-    return captured.get("export") or AnalyserExport()

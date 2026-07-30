@@ -1,14 +1,24 @@
 """FR-PODSTREAM unit tier — the batch-mode delivery/completeness guarantee for the
 analyser (exactly-once delivery of every AssetDelta via the slice + every
-Observation via the dedicated channel), with injected fakes (no live DB/LLM).
+Observation via a dedicated channel), with injected fakes (no live DB/LLM).
 Store-level idempotency is the integration tier (tests/integration/test_delivery_merge.py).
+
+REWIRED (#48 section 11 step 6, ratified 2026-07-30): `run_analyser` no longer
+drives a compiled `build_analyser_graph` subgraph with injected read/analyse/curate
+fakes - the legacy pod is retired, and `run_analyser` is now a thin wrapper that
+always drives the chunk-fed supervised path (`supervisor.run_analyser_chunked`).
+The AST-PODSTREAM-03/05 tests below are rewired onto the SAME collaborator surface
+`run_analyser` now exposes: an injectable `run_supervisor_fn` (defaulting to
+`run_analyser_chunked`) that receives an `observations_fn` collaborator carrying
+whatever `run_analyser` resolved (explicit vs auto-delivered). The INTENT of every
+assertion is unchanged: dedup by id, fail-open on a delivery error, and an explicit
+`observations` list bypassing auto-delivery.
 
 Each test names the assertion it encodes (docs/design/L1-MVP-plan.md FR-PODSTREAM ledger).
 """
 from polymerhus.analysis import delivery
 from polymerhus.analysis import pod as analyser_pod
-from polymerhus.analysis.analyser_types import L1DeltaBatch, ServiceProposal
-from polymerhus.analysis.pod import AnalyserExport, build_analyser_graph, run_analyser
+from polymerhus.analysis.pod import AnalyserExport, run_analyser
 
 
 # --- AST-PODSTREAM-01: collect_observations returns each Observation once, id-deduped ---
@@ -71,41 +81,38 @@ def test_analyser_slice_excludes_observation_nodes(monkeypatch):
 
 # --- AST-PODSTREAM-03: run_analyser auto-delivers observations when caller passes none ---
 
-def _capturing_graph(sink: dict):
-    def fake_read(pid):
-        return {"nodes": [{"type": "Endpoint", "path": "/x"}], "links": []}
-
-    def fake_analyse(l0_slice, observations):
-        sink["observations"] = observations  # what actually reached the analyse step
-        return L1DeltaBatch(services=[ServiceProposal(business_function_slug="s")])
-
-    def fake_curate(batch, project_id, provenance):
-        return AnalyserExport(services_written=1)
-
-    return build_analyser_graph(read_fn=fake_read, analyse_fn=fake_analyse, curate_fn=fake_curate)
+def _spying_supervisor(sink: dict, export=None):
+    def spy(project_id, run_id, **collaborators):
+        sink["project_id"] = project_id
+        sink["run_id"] = run_id
+        obs_fn = collaborators.get("observations_fn")
+        sink["observations"] = obs_fn(project_id) if obs_fn is not None else None
+        return export if export is not None else AnalyserExport(services_written=1)
+    return spy
 
 
 def test_run_analyser_auto_delivers_observations():
     sink = {}
     delivered = [{"id": "obs1", "macro_kind": "reflected_input"}]
-    graph = _capturing_graph(sink)
 
-    # observations=None (default) -> auto-delivered from the injected deliver_fn
-    run_analyser("proj-1", "run-1", graph=graph, deliver_fn=lambda pid: delivered)
-    assert sink["observations"] == delivered  # the run's observations reached the analyser
+    # observations=None (default) -> auto-delivered from the injected deliver_fn,
+    # threaded into the supervised pass as an observations_fn override.
+    run_analyser("proj-1", "run-1", run_supervisor_fn=_spying_supervisor(sink),
+                 deliver_fn=lambda pid: delivered)
+    assert sink["observations"] == delivered  # the run's observations reached the supervised pass
 
 
 def test_run_analyser_honours_explicit_observations_without_delivering():
     sink = {}
     called = {"deliver": False}
-    graph = _capturing_graph(sink)
 
     def deliver_fn(pid):
         called["deliver"] = True
         return [{"id": "should-not-be-used"}]
 
     # an explicit list (even empty) is honoured as-is; delivery is NOT invoked
-    run_analyser("proj-1", "run-1", observations=[], graph=graph, deliver_fn=deliver_fn)
+    run_analyser("proj-1", "run-1", observations=[],
+                 run_supervisor_fn=_spying_supervisor(sink), deliver_fn=deliver_fn)
     assert sink["observations"] == []
     assert called["deliver"] is False
 
@@ -122,17 +129,14 @@ def test_observation_delivery_fail_open():
 
 
 def test_run_analyser_still_runs_when_delivery_fails():
-    """End-to-end fail-open: the real deliver wrapper degrades a failing observation
-    read to [], so the analyser still runs over the asset slice."""
+    """End-to-end fail-open: a raising deliver_fn degrades to empty observations
+    inside run_analyser itself, so the supervised pass still runs."""
     sink = {}
-    graph = _capturing_graph(sink)
 
-    def failing_read(cy, params):
+    def failing_deliver(pid):
         raise RuntimeError("neo4j down")
 
-    # production uses deliver_observations (the fail-open wrapper); wire it with a
-    # read that raises and confirm the run completes with empty observations.
-    out = run_analyser("proj-1", "run-1", graph=graph,
-                       deliver_fn=lambda pid: delivery.deliver_observations(pid, read_fn=failing_read))
-    assert out.services_written == 1  # ran over the asset slice with empty observations
-    assert sink["observations"] == []
+    out = run_analyser("proj-1", "run-1", run_supervisor_fn=_spying_supervisor(sink),
+                       deliver_fn=failing_deliver)
+    assert out.services_written == 1  # the supervised pass still ran
+    assert sink["observations"] == []  # degraded to empty, never raised

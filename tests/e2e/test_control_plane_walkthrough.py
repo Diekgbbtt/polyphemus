@@ -83,35 +83,26 @@ def test_E4_middle_raising_stub_degrades_run_still_terminates():
     assert "boom" in (receipts[1].error or "")
 
 
-# --- E5: coexistence two-way door - flag OFF returns identical legacy export ---
+# --- E5: run_analyser drives the supervised path unconditionally (#48 step 6) --
+#
+# The `analysis.supervisor_enabled` coexistence flag and the legacy pod it chose
+# between are RETIRED (ratified 2026-07-30): `run_analyser` is now a thin wrapper
+# with exactly one path, so this proves the export it returns is exactly what the
+# supervised pass (`run_supervisor_fn`) produced, unmodified.
 
-def test_E5_flag_off_run_analyser_returns_identical_legacy_export():
+def test_E5_run_analyser_returns_the_supervised_export_unmodified():
     from polymerhus.analysis.pod import AnalyserExport, run_analyser
 
     known = AnalyserExport(services_written=2, systems_written=1, aggregates_written=5)
-
-    class _Legacy:
-        def __init__(self):
-            self.calls = 0
-
-        def invoke(self, state):
-            self.calls += 1
-            return {"export": known}
-
-    legacy = _Legacy()
     sup_calls = []
 
-    def spy_supervisor(pid, rid, obs):
+    def spy_supervisor(pid, rid, **collaborators):
         sup_calls.append((pid, rid))
-        return AnalyserExport()
+        return known
 
-    out = run_analyser(
-        "p1", "r5", observations=[], graph=legacy,
-        supervisor_enabled=False, run_supervisor_fn=spy_supervisor,
-    )
-    assert out == known  # field-for-field identical to the injected legacy export
-    assert legacy.calls == 1
-    assert sup_calls == []  # the supervisor was never compiled/driven
+    out = run_analyser("p1", "r5", observations=[], run_supervisor_fn=spy_supervisor)
+    assert out == known  # field-for-field identical to what the supervised pass returned
+    assert sup_calls == [("p1", "r5")]  # the supervised pass ran, exactly once
 
 
 # --- E6: single-path routing (the both-paths-fire pitfall is absent) ----------

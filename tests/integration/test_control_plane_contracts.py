@@ -125,51 +125,41 @@ def test_C6_receipts_is_the_only_reducer_channel_no_proposals_accumulator():
     assert "dispatch" in ann and "inflight" in ann  # last-write baton channels
 
 
-# --- C7: run_analyser flag branch - exactly one path per flag value ------------
+# --- C7: run_analyser always drives the supervised path (#48 section 11 step 6) -
+#
+# The `analysis.supervisor_enabled` flag branch and the legacy pod it selected
+# away from are RETIRED (ratified 2026-07-30): `run_analyser` is now a thin
+# wrapper with exactly one path, `run_supervisor_fn` (defaulting to
+# `run_analyser_chunked`), so there is no second path left to prove absent.
 
-class _FakeGraph:
-    def __init__(self, export):
-        self.calls = 0
-        self._export = export
-
-    def invoke(self, state):
-        self.calls += 1
-        return {"export": self._export}
-
-
-def test_C7_flag_off_runs_legacy_and_not_supervisor():
+def test_C7_run_analyser_always_drives_the_supervisor_path():
     known = AnalyserExport(services_written=2, systems_written=1, aggregates_written=5)
-    legacy = _FakeGraph(known)
     sup_calls = []
 
-    # #34: the supervisor seam is CHUNK-FED and takes (project_id, run_id) alone.
-    # Observations are not passed: the Assigner does not render them (D5), and
-    # everything else is re-derived live at dispatch time.
-    def spy_supervisor(pid, rid):
+    # #34: the supervisor seam is CHUNK-FED and takes (project_id, run_id) plus
+    # any injected collaborator; everything else is re-derived live at dispatch
+    # time.
+    def spy_supervisor(pid, rid, **collaborators):
         sup_calls.append((pid, rid))
-        return AnalyserExport()
+        return known
 
-    out = run_analyser(
-        "p1", "r1", observations=[], graph=legacy,
-        supervisor_enabled=False, run_supervisor_fn=spy_supervisor,
-    )
+    out = run_analyser("p1", "r1", observations=[], run_supervisor_fn=spy_supervisor)
     assert out.services_written == 2 and out.systems_written == 1 and out.aggregates_written == 5
-    assert legacy.calls == 1 and sup_calls == []  # legacy fired, supervisor did not
+    assert sup_calls == [("p1", "r1")]  # the supervisor path fired, exactly once
 
 
-def test_C7_flag_on_runs_supervisor_and_not_legacy():
-    legacy = _FakeGraph(AnalyserExport(services_written=99))
-    sup_calls = []
+def test_C7_run_analyser_threads_extra_collaborators_through():
+    """Any keyword beyond `observations`/`deliver_fn`/`run_supervisor_fn` passes
+    straight through to the supervised pass (the collaborator-injection surface
+    `analyse_chunked` exposes), so a caller can wire `invoke_fn`, `assets_fn`,
+    `write_fn`, etc. without `run_analyser` knowing their names."""
+    captured = {}
 
-    # #34: the supervisor seam is CHUNK-FED and takes (project_id, run_id) alone.
-    # Observations are not passed: the Assigner does not render them (D5), and
-    # everything else is re-derived live at dispatch time.
-    def spy_supervisor(pid, rid):
-        sup_calls.append((pid, rid))
+    def spy_supervisor(pid, rid, **collaborators):
+        captured.update(collaborators)
         return AnalyserExport()
 
-    run_analyser(
-        "p1", "r1", observations=[], graph=legacy,
-        supervisor_enabled=True, run_supervisor_fn=spy_supervisor,
-    )
-    assert sup_calls == [("p1", "r1")] and legacy.calls == 0  # supervisor fired, legacy did not
+    run_analyser("p1", "r1", observations=[], run_supervisor_fn=spy_supervisor,
+                 invoke_fn="marker-invoke", write_fn="marker-write")
+    assert captured["invoke_fn"] == "marker-invoke"
+    assert captured["write_fn"] == "marker-write"

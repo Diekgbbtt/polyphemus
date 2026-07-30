@@ -1,7 +1,19 @@
-"""FR-ANALYSER unit tier — the analyser subgraph's control flow + the
-proposal->delta mapping, with injected fake collaborators (no live LLM/DB).
-Store-level idempotency is the integration tier
-(tests/integration/test_analyser_pod_merge.py).
+"""FR-ANALYSER unit tier — the proposal->delta mapping and the sole-writer curate
+collaborators, with injected fake collaborators (no live LLM/DB). Store-level
+idempotency is the integration tier (tests/integration/test_analyser_pod_merge.py).
+
+RETIRED (#48 section 11 step 6, ratified 2026-07-30): the legacy compiled
+`build_analyser_graph` subgraph (`read -> analyse -> curate`, with its per-node
+fail-open degrade behaviour) and the legacy two-pass prompt/skill-loader
+(`_two_pass_analyse`, `_load_analyser_skill`, `_L0_REFERENCE_GUIDE`,
+`_ANALYSER_SYSTEM_PROMPT`) are deleted along with the whole legacy pod - see
+`pod.py`'s module docstring. The behaviours those tests guarded now live
+elsewhere: per-step fail-open degrade is exercised by `supervisor.analyse_chunked`
+(each read/dispatch/write already guarded, tested in
+`tests/integration/test_control_plane_contracts.py` and the walkthroughs), and the
+positive-recipe / observed-fields-only / reflect-then-extract prompt disciplines
+now live in `data_modeller.py` (`tests/analysis/test_data_modeller.py`,
+`tests/integration/test_data_modeller_contracts.py`).
 
 Each test names the assertion it encodes (docs/design/L1-MVP-plan.md §5).
 """
@@ -19,11 +31,8 @@ from polymerhus.analysis import l1_curator as real_l1_curator
 from polymerhus.analysis import pod as analyser_pod
 from polymerhus.analysis.l1_types import L0Ref, Provenance
 from polymerhus.analysis.pod import (
-    AnalyserExport,
-    build_analyser_graph,
     default_curate_fn,
     default_curate_with_enrichment_fn,
-    run_analyser,
 )
 
 
@@ -62,99 +71,6 @@ def test_proposal_models_have_no_provenance_field():
 def test_empty_batch_is_valid():
     b = L1DeltaBatch()
     assert b.services == [] and b.systems == [] and b.aggregates == []
-
-
-# --- AST-ANALYSER-01 (flow): read -> analyse -> curate, deltas reach the curator ---
-
-def test_subgraph_flow_routes_deltas_to_curator():
-    read_calls, curate_calls = [], []
-
-    def fake_read(project_id):
-        read_calls.append(project_id)
-        return {"nodes": [{"type": "Endpoint", "path": "/x"}], "links": []}
-
-    def fake_analyse(l0_slice, observations):
-        assert l0_slice["nodes"]  # the read slice reached the analyser
-        return L1DeltaBatch(services=[ServiceProposal(business_function_slug="orders")])
-
-    def fake_curate(batch, project_id, provenance):
-        curate_calls.append((len(batch.services), len(batch.systems), len(batch.aggregates), project_id))
-        return AnalyserExport(services_written=len(batch.services), systems_written=len(batch.systems),
-                              aggregates_written=len(batch.aggregates))
-
-    graph = build_analyser_graph(read_fn=fake_read, analyse_fn=fake_analyse, curate_fn=fake_curate)
-    export = run_analyser("proj-1", "run-1", [], graph=graph)
-
-    assert read_calls == ["proj-1"]
-    assert curate_calls == [(1, 0, 0, "proj-1")]  # the proposed Service reached the curator
-    assert export.services_written == 1
-    assert export.error is None
-
-
-def test_curate_receives_provenance_stamped_deltas():
-    captured = {}
-
-    def fake_curate(batch, project_id, provenance):
-        captured["prov_job"] = provenance.job  # provenance is system-supplied, passed to curate
-        return AnalyserExport(services_written=1)
-
-    graph = build_analyser_graph(
-        read_fn=lambda p: {"nodes": [], "links": []},
-        analyse_fn=lambda s, o: L1DeltaBatch(services=[ServiceProposal(business_function_slug="x")]),
-        curate_fn=fake_curate,
-    )
-    run_analyser("proj-9", "run-42", observations=[], graph=graph)  # explicit [] keeps this unit test hermetic
-    assert captured["prov_job"] == "analyser:run-42"  # run-scoped, system-supplied
-
-
-# --- AST-ANALYSER-03: an LLM error fails open — empty deltas, no write, no crash ---
-
-def test_llm_error_degrades_to_empty_no_write_no_crash():
-    curate_calls = []
-
-    def exploding_analyse(l0_slice, observations):
-        raise RuntimeError("LLM 500")
-
-    def fake_curate(batch, project_id, provenance):
-        curate_calls.append((len(batch.services), len(batch.systems), len(batch.aggregates)))
-        return AnalyserExport()  # nothing to write
-
-    graph = build_analyser_graph(
-        read_fn=lambda p: {"nodes": [], "links": []},
-        analyse_fn=exploding_analyse,
-        curate_fn=fake_curate,
-    )
-    export = run_analyser("proj-1", "run-1", observations=[], graph=graph)  # must NOT raise
-
-    assert export.error and "LLM 500" in export.error
-    assert curate_calls == [(0, 0, 0)]  # curator ran with an EMPTY batch: no write
-    assert export.services_written == 0
-
-
-def test_read_error_degrades_and_still_completes():
-    def exploding_read(project_id):
-        raise RuntimeError("neo4j down")
-
-    graph = build_analyser_graph(
-        read_fn=exploding_read,
-        analyse_fn=lambda s, o: L1DeltaBatch(),
-        curate_fn=lambda batch, p, prov: AnalyserExport(),
-    )
-    export = run_analyser("proj-1", "run-1", observations=[], graph=graph)  # must NOT raise
-    assert export.error and "read" in export.error
-
-
-def test_curate_error_degrades_not_raised():
-    def exploding_curate(batch, project_id, provenance):
-        raise RuntimeError("write failed")
-
-    graph = build_analyser_graph(
-        read_fn=lambda p: {"nodes": [], "links": []},
-        analyse_fn=lambda s, o: L1DeltaBatch(services=[ServiceProposal(business_function_slug="x")]),
-        curate_fn=exploding_curate,
-    )
-    export = run_analyser("proj-1", "run-1", observations=[], graph=graph)  # must NOT raise
-    assert export.error and "curate" in export.error
 
 
 # --- default_curate_fn wires the real l1_curator (DB-free, l1_curator faked) ---
@@ -255,41 +171,8 @@ def test_default_curate_with_enrichment_skips_enrich_when_no_enrichment_deltas(m
     assert export.services_written == 1
 
 
-# --- #48 section 11 step 5: the legacy pass is now ASSIGNMENT-ONLY -------------
-#
-# The dedicated data-modelling pass this file used to test HERE
-# (`test_two_pass_analyse_runs_dedicated_data_modelling_pass`,
-# `test_two_pass_analyse_fail_open_keeps_assignment_when_data_pass_raises`) was
-# retired together with `pod._data_modelling_prompt`/`_compact_l0_for_data`,
-# ratified 2026-07-30: `resolve_supervisor_enabled`'s default flipped ON in the
-# SAME change, so the chunk-fed `data_modeller` (its own dedicated pass, with its
-# own fail-open discipline - see `tests/analysis/test_data_modeller.py`) is now
-# the DEFAULT path's data-modelling proposer; this legacy pod only still serves
-# the explicit `analysis.supervisor_enabled=False` opt-out, and on that path it
-# proposes assignment ONLY.
-
-def test_two_pass_analyse_is_assignment_only():
-    """The legacy pass issues exactly ONE call (assignment) and merges nothing
-    else in - `merged.data_items` is always empty on this path now."""
-    calls = []
-
-    def fake_invoke(messages):
-        calls.append(messages[-1].content)
-        return L1DeltaBatch(
-            aggregates=[AggregatesProposal(
-                service_slug="orders",
-                l0=L0Ref(label="Endpoint", identity={"path": "/api/Orders", "method": "GET", "baseurl": "https://a"}))],
-            system_edges=[SystemEdgeProposal(service_slug="orders", kind="RESTApi", rel="EXPOSED_VIA")],
-        )
-
-    merged = analyser_pod._two_pass_analyse(fake_invoke, {"nodes": [{"type": "Endpoint"}]}, [])
-
-    assert len(calls) == 1  # no second (data-modelling) call is ever made
-    assert "TASK 1 of 2" in calls[0]
-    assert [a.service_slug for a in merged.aggregates] == ["orders"]
-    assert [e.rel for e in merged.system_edges] == ["EXPOSED_VIA"]
-    assert merged.data_items == []  # retired: this path never proposes data
-
+# --- _invoke_with_retry: the shared bounded-retry helper (survives the retirement,
+# still used by sweep/curation/assigner) ----------------------------------------
 
 def test_invoke_with_retry_returns_first_non_none():
     """Bounded retry returns the first non-None structured result."""
@@ -316,61 +199,6 @@ def test_invoke_with_retry_gives_up_after_attempts():
     assert analyser_pod._invoke_with_retry(lambda m: None, ["m"], attempts=2) is None
 
 
-def test_two_pass_analyse_recovers_from_transient_none_on_assignment():
-    """Regression for a live-observed flake: a transient None on the assignment
-    call must not zero the whole analyser - the call is retried and a later
-    success is used."""
-    calls = []
-
-    def fake_invoke(messages):
-        calls.append(messages[-1].content)
-        # None on the first attempt, a real batch on the retry
-        if len(calls) == 1:
-            return None
-        return L1DeltaBatch(
-            services=[ServiceProposal(business_function_slug="orders")],
-            aggregates=[AggregatesProposal(service_slug="orders",
-                l0=L0Ref(label="Endpoint", identity={"path": "/x", "method": "GET", "baseurl": "https://a"}))])
-
-    merged = analyser_pod._two_pass_analyse(fake_invoke, {"nodes": []}, [])
-    assert [s.business_function_slug for s in merged.services] == ["orders"]  # recovered on retry
-
-
-# `_data_modelling_prompt`/`_compact_l0_for_data` (and their tests -
-# `test_data_modelling_prompt_grounds_in_assignment`,
-# `test_data_modelling_prompt_is_positive_recipe_with_example`,
-# `test_data_modelling_prompt_uses_identity_only_surface_not_full_dump`) were
-# RETIRED alongside the legacy data-modelling pass, per the note above. The
-# positive-recipe / identity-only-surface / observed-fields-only disciplines
-# they guarded now live in `data_modeller.py`'s own prompt (see
-# `tests/analysis/test_data_modeller.py` and
-# `tests/integration/test_data_modeller_contracts.py`).
-
-def test_analyser_skill_loads_and_strips_frontmatter():
-    from polymerhus.recon.domain import skills
-    skills.clear_cache()  # bypass the shared skill_for cache for a clean load
-    skill = analyser_pod._load_analyser_skill()
-    assert not skill.startswith("---")  # YAML frontmatter stripped
-    # embodies the overthink discipline (deliberate, staged reasoning)
-    assert "Reason deliberately" in skill
-    assert "Verify before you emit" in skill
-    # embodies the critical-thinking discipline (claims/evidence/assumptions/burden)
-    assert "Separate the claim from its support" in skill
-    assert "Surface hidden assumptions" in skill
-    assert "Burden of proof" in skill
-    # is the analyser's task prompt (proposes deltas, evidence-bound, honest-empty)
-    assert "attack-surface analyser" in skill
-    assert "Return empty lists" in skill
-
-
-def test_analyser_skill_is_cached():
-    from polymerhus.recon.domain import skills
-    skills.clear_cache()
-    first = analyser_pod._load_analyser_skill()
-    second = analyser_pod._load_analyser_skill()
-    assert first is second  # cached (same object), not re-read
-
-
 def test_vocabulary_prompt_lists_controlled_values():
     """Regression for an e2e-caught defect: the LLM proposed 'Authentication'
     (not the canonical 'AuthenticationMechanism') and the delta was silently
@@ -385,27 +213,11 @@ def test_vocabulary_prompt_lists_controlled_values():
     assert "__singleton__" in v
 
 
-def test_l0_reference_guide_teaches_label_is_node_type():
-    """Regression for an e2e-caught defect: the LLM put a URL value in
-    aggregates.l0.label instead of the node TYPE ('Endpoint'), and the safe-label
-    guard dropped the assignment. The guide must teach label=type + the per-label
-    identity keys."""
-    guide = analyser_pod._L0_REFERENCE_GUIDE
-    assert "label" in guide and "TYPE" in guide
-    assert "Endpoint: {path, method, baseurl}" in guide
-    assert "BaseURL: {url}" in guide
-    assert "NEVER put a value" in guide
-
-
-def test_analyser_skill_degrades_to_fallback_when_missing(monkeypatch):
-    import pathlib
-
-    def boom(self, *a, **k):
-        raise OSError("no skill mount")
-
-    monkeypatch.setattr(pathlib.Path, "read_text", boom)
-    from polymerhus.recon.domain import skills
-    skills.clear_cache()  # force a re-read that will fail
-    skill = analyser_pod._load_analyser_skill()
-    assert skill == analyser_pod._ANALYSER_SYSTEM_PROMPT  # graceful degrade, no crash
-    skills.clear_cache()  # reset cache so other tests re-load the real file
+def test_slice_repr_is_untruncated():
+    """#48 section 11 step 6: the legacy 400-node cap is retired as a provable
+    no-op - every consumer now renders a single chunk, bounded well under it."""
+    nodes = [{"type": "Endpoint", "path": f"/x{i}"} for i in range(150)]
+    out = analyser_pod._slice_repr({"nodes": nodes})
+    assert "150 nodes" in out
+    assert "omitted" not in out  # nothing is ever dropped now
+    assert all(f"/x{i}" in out for i in (0, 149))  # first AND last node both survive

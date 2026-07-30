@@ -31,9 +31,10 @@ from polymerhus.recon.domain.types import AssetDelta, Observation
 logger = logging.getLogger(__name__)
 
 # The L0 identity keys per label - which of a node's properties form its identity.
-# Single-sourced here for the read side; `pod._L0_REFERENCE_GUIDE` states the same
-# keys to the LLM, and the two must not drift (an identity carrying a stray property
-# is one the sole-writer's MATCH will not find).
+# Single-sourced here for the read side; a proposer's own reference guide (e.g.
+# `data_modeller`'s reference-gate canonicalisation) states the same keys to the
+# LLM, and the two must not drift (an identity carrying a stray property is one
+# the sole-writer's MATCH will not find).
 L0_IDENTITY_KEYS: dict[str, tuple[str, ...]] = {
     "BaseURL": ("url",),
     "Endpoint": ("path", "method", "baseurl"),

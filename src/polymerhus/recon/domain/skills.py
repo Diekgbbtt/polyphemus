@@ -6,8 +6,9 @@ skill, and - as the catalogue grows, NM-9 - the system-anatomy skills). Every
 loader wants the same three behaviours: read `skills/<name>/SKILL.md`, strip the
 YAML frontmatter, cache the result, and DEGRADE to a caller-supplied fallback if
 the file is unavailable (a missing mount must never crash the pod). This module
-is the one place that does it; `_load_triager_skill` / `_load_analyser_skill`
-retro-point here, so hardening the loader hardens every consumer.
+is the one place that does it; `_load_triager_skill` and every per-role skill
+loader (the Assigner, the mechanism-typist, the data-modeller, ...) retro-point
+here, so hardening the loader hardens every consumer.
 """
 from __future__ import annotations
 

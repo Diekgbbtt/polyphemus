@@ -1,38 +1,29 @@
-"""The analyser pod — a compiled LangGraph subgraph implementing the analyser as
-a pure function `f(L0-slice + observations) -> L1-deltas`, written by idempotent
-MERGE through `l1_curator` (L1D-22). Mirrors the STYLE of `build_pod_graph`
-(src/polymerhus/recon/domain/pod.py): typed state, node functions, and three injected
-side-effecting collaborators so the graph is unit/integration testable without a
-live LLM.
+"""The analyser's entry point plus shared prompt-render and write helpers.
 
-The recon pod's `configurator/execute/gate/parser` tool-invocation machinery has
-no analog here (the analyser runs no external tool — its "execute" is a read of
-the L0 slice), so the graph is the focused `read -> analyse -> curate` flow the
-pure-function contract implies. Phase-B reflection and backward-recon requests
-(interface B) slot in later as additional edges without re-cutting this.
+RETIRED (#48 section 11 step 6, ratified 2026-07-30): this module used to compile
+a LangGraph subgraph implementing the legacy analyser as a pure function
+`f(L0-slice + observations) -> L1-deltas` (a `read -> analyse -> curate` flow),
+running a legacy two-pass prompt behind the `analysis.supervisor_enabled`
+coexistence flag. That flag flipped ON by default in the same change (step 5) and
+the flag branch, the legacy pass, its prompts, and its skill loader are now fully
+dissolved: `run_analyser` is a thin wrapper that always drives the chunk-fed
+supervised path (`supervisor.run_analyser_chunked`), the three-role
+`assigner -> mechanism_typist -> data_modeller` schedule (`dataplane-A1-decisions.md`).
 
-Fail-open throughout (mirrors orchestrator_agent / steel_client degrade): a read,
-LLM, or curate error degrades that node to an empty result and never crashes the
-caller — an LLM error yields an empty delta batch, so nothing is written but the
-run still completes.
+What survives here, with its live consumers: `AnalyserExport` (broadly),
+`default_read_fn` (`l0_stream`), `_inventory_block` (`bootstrap`, `assigner`,
+`data_modeller`), `_slice_repr` (`assigner`), `_invoke_with_retry` (`sweep`,
+`curation`, `assigner`), `default_curate_fn` and `default_curate_with_enrichment_fn`
+(`supervisor`), and `run_analyser` itself. The module is coherent without a pod:
+the analyser's entry point plus shared prompt-render and write helpers.
 """
 from __future__ import annotations
 
 import logging
-from typing import TypedDict
 
-from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel
 
-from polymerhus.analysis.analyser_types import L1DeltaBatch
-from polymerhus.analysis.l1_types import Provenance
-
 logger = logging.getLogger(__name__)
-
-# Cap on L0 nodes serialized into the analyser prompt, mirroring pod._MAX_TRIAGE_ASSETS:
-# a huge project graph would otherwise blow the model's context window.
-import os
-_MAX_L0_NODES = int(os.environ.get("MAX_ANALYSER_L0_NODES", "400"))
 
 
 class AnalyserExport(BaseModel):
@@ -47,75 +38,6 @@ class AnalyserExport(BaseModel):
     error: str | None = None
 
 
-class AnalyserState(TypedDict, total=False):
-    project_id: str
-    run_id: str
-    observations: list[dict]
-    l0_slice: dict
-    model: str | None
-    batch: L1DeltaBatch
-    export: AnalyserExport
-
-
-def _provenance(state: AnalyserState) -> Provenance:
-    """System-supplied provenance for every L1 write of this run (the LLM never
-    sets it). `job` names the analyser + its run; `model` is the resolved
-    analyser model when known."""
-    return Provenance(job=f"analyser:{state.get('run_id', '')}", model=state.get("model"), prompt_id=None)
-
-
-def build_analyser_graph(*, read_fn, analyse_fn, curate_fn):
-    """Compile the analyser subgraph, injecting the three collaborators:
-      read_fn(project_id) -> l0_slice dict,
-      analyse_fn(l0_slice, observations) -> L1DeltaBatch,
-      curate_fn(batch, project_id, provenance) -> AnalyserExport.
-    The curate collaborator receives the whole proposal `batch` + the system
-    `provenance`, so it maps + writes the core deltas AND the enrichment deltas in
-    one place (the LLM never sets provenance). Each node is fail-open: an
-    exception degrades to an empty result carrying the error, never propagating
-    out of the compiled graph.
-    """
-
-    def read(state: AnalyserState) -> dict:
-        try:
-            l0_slice = read_fn(state["project_id"])
-        except Exception as exc:  # degrade: analyse an empty slice rather than crash
-            logger.warning("analyser.read failed for project=%s", state.get("project_id"), exc_info=True)
-            return {"l0_slice": {"nodes": [], "links": []}, "export": AnalyserExport(error=f"read: {exc}")}
-        return {"l0_slice": l0_slice}
-
-    def analyse(state: AnalyserState) -> dict:
-        try:
-            batch = analyse_fn(state.get("l0_slice") or {}, state.get("observations") or [])
-        except Exception as exc:  # the key fail-open: an LLM error -> empty batch -> no L1 write
-            logger.warning("analyser.analyse (LLM) failed; degrading to empty deltas", exc_info=True)
-            return {"batch": L1DeltaBatch(), "export": AnalyserExport(error=f"analyse: {exc}")}
-        return {"batch": batch}
-
-    def curate(state: AnalyserState) -> dict:
-        batch = state.get("batch") or L1DeltaBatch()
-        try:
-            export = curate_fn(batch, state["project_id"], _provenance(state))
-        except Exception as exc:  # degrade: a write failure never crashes the run
-            logger.warning("analyser.curate failed for project=%s", state.get("project_id"), exc_info=True)
-            return {"export": AnalyserExport(error=f"curate: {exc}")}
-        # preserve an upstream (read/analyse) error note if one was set
-        prior = state.get("export")
-        if prior is not None and prior.error and not export.error:
-            export = export.model_copy(update={"error": prior.error})
-        return {"export": export}
-
-    g = StateGraph(AnalyserState)
-    g.add_node("read", read)
-    g.add_node("analyse", analyse)
-    g.add_node("curate", curate)
-    g.add_edge(START, "read")
-    g.add_edge("read", "analyse")
-    g.add_edge("analyse", "curate")
-    g.add_edge("curate", END)
-    return g.compile()
-
-
 # --- default collaborators (real wiring) --------------------------------------
 
 def default_read_fn(project_id: str) -> dict:
@@ -125,9 +47,10 @@ def default_read_fn(project_id: str) -> dict:
     it).
 
     FR-PODSTREAM: `Observation` nodes are EXCLUDED here - they reach the analyser
-    on the dedicated `observations` channel (delivery.collect_observations), so
-    delivering them in the slice too would double-deliver each one. Their anchor
-    edges (whose other endpoint is dropped) fall away with them."""
+    on their own dedicated channel (`l0_stream.read_observations`, or
+    `delivery.collect_observations` for a dict-shaped pull), so delivering them
+    in the slice too would double-deliver each one. Their anchor edges (whose
+    other endpoint is dropped) fall away with them."""
     from polymerhus.recon.domain.graph_read import fetch_project_graph
     slice_ = fetch_project_graph(project_id)
     nodes = [n for n in slice_.get("nodes", []) if n.get("type") != "Observation"]
@@ -136,69 +59,23 @@ def default_read_fn(project_id: str) -> dict:
     return {"nodes": nodes, "links": links}
 
 
-# Fallback analyser system prompt, used only if the skill file is unavailable
-# (graceful degrade, mirroring _load_triager_skill's "" fallback).
-_ANALYSER_SYSTEM_PROMPT = (
-    "You are the attack-surface analyser. Given a Layer-0 slice (endpoints, "
-    "parameters, headers, technologies, observations), propose Layer-1 service/"
-    "system deltas: business-function Services, cross-cutting Systems, and "
-    "AGGREGATES assignments (which Service owns which L0 element) with a "
-    "confidence and verbatim evidence. Propose nothing you cannot evidence. "
-    "Return empty lists if the slice supports no confident judgment."
-)
-
-# How to reference an L0 element in an `aggregates` / `surfaces_at` proposal. The
-# analyser LLM must set `l0.label` to the node's TYPE and `l0.identity` to its key
-# fields (both read straight off the provided slice nodes), NOT put a value in the
-# label. Injected into the analyser prompt because the LLM otherwise mislabels
-# (observed live: it put a URL in `label`, and the safe-label guard dropped the
-# whole assignment).
-_L0_REFERENCE_GUIDE = (
-    "REFERENCING L0 ELEMENTS (for `aggregates` and `surfaces_at`):\n"
-    "Each slice node has a `type` (its L0 label) and `properties` (its fields). "
-    "To reference it, set `l0.label` = that node's `type` (e.g. 'Endpoint'), and "
-    "`l0.identity` = ONLY the node's identity key fields (omit project_id). The L0 "
-    "identity keys per label are:\n"
-    "- BaseURL: {url}\n"
-    "- Endpoint: {path, method, baseurl}\n"
-    "- Parameter: {name, position, endpoint_path, baseurl}\n"
-    "- Header: {name, value, baseurl}\n"
-    "- Technology: {name, version}\n"
-    "- Certificate: {subject_cn}\n"
-    "NEVER put a value (like a URL string) in `l0.label`; the label is the node "
-    "TYPE. Only reference L0 elements that actually appear in the provided slice."
-)
-
-def _load_analyser_skill() -> str:
-    """The analyser system prompt = the analyser-service-system-reasoning skill,
-    which synthesises the `overthink` + `critical-thinking-logical-reasoning`
-    disciplines for proposing L1 deltas. Loaded via the shared `skill_for`
-    (FR-SKILLIF): single-sourced from skills/analysis/analyser/SKILL.md, YAML
-    frontmatter stripped, cached, and degraded to the inline
-    _ANALYSER_SYSTEM_PROMPT fallback if the mount is unavailable, so a missing
-    mount never crashes the analyser."""
-    from polymerhus.recon.domain.skills import skill_for
-    return skill_for("analysis/analyser", fallback=_ANALYSER_SYSTEM_PROMPT)
-
-
 def _slice_repr(l0_slice: dict) -> str:
-    """Token-bounded textual rendering of the L0 slice for the analyser prompt
-    (caps at _MAX_L0_NODES, mirroring pod._MAX_TRIAGE_ASSETS)."""
+    """Textual rendering of the L0 slice for a prompt.
+
+    UNTRUNCATED since #48 section 11 step 6 (ratified 2026-07-30): the legacy
+    400-node cap this helper used to apply is a provable no-op on the surviving
+    path, because every consumer of this helper now renders a single CHUNK,
+    bounded at `chunking.CHUNK_MAX_ASSETS = 100` - well under the old 400 cap, so
+    the truncation branch could never fire again."""
     nodes = (l0_slice or {}).get("nodes", [])
-    shown = nodes[:_MAX_L0_NODES]
-    omitted = len(nodes) - len(shown)
-    return (
-        f"L0 slice ({len(nodes)} nodes"
-        + (f", showing first {len(shown)}, {omitted} omitted" if omitted else "")
-        + f"): {shown}"
-    )
+    return f"L0 slice ({len(nodes)} nodes): {nodes}"
 
 
 # FR-INVENTORY: the "reuse these exact keys" duplicate-prevention rule. Rendered
 # from the CURRENT L1 identity inventory (read once per run) and injected at the
-# TOP of every analyser prompt - OUTSIDE the _MAX_L0_NODES truncation, so it is
-# never dropped the way the old "reuse the slug already in the slice" hint was
-# (that hint leaned on L1 nodes buried in a 400-capped slice the data pass drops).
+# TOP of every analyser prompt - never truncated, so it is never dropped the way
+# the old "reuse the slug already in the slice" hint was (that hint leaned on L1
+# nodes buried in a capped slice the legacy data pass dropped).
 def _inventory_block(inventory: dict | None) -> str:
     """Render the CURRENT L1 identities as an explicit, machine-legible reuse
     block (a bullet list of the exact keys) for the TOP of an analyser prompt.
@@ -239,54 +116,6 @@ def _inventory_block(inventory: dict | None) -> str:
     )
 
 
-# FR-TYPESEP-a: a service's rendering / navigation / API-paradigm / perimeter are
-# cross-cutting SYSTEMS reached by a typed edge, never Service props. Positive,
-# example-led recipe (mirrors the data-modelling worked example) with the exact
-# `system_edges` JSON shape, plus the Stage-3 DFS rationale that motivates it.
-_SYSTEM_FACTS_ARE_EDGES_RULE = (
-    "SYSTEM FACTS ARE EDGES, NOT SERVICE PROPS. A service's rendering, navigation, "
-    "API paradigm, and perimeter are cross-cutting Systems reached by a typed "
-    "`system_edges` entry - NEVER a property on the Service. The Stage-3 attack "
-    "engineer discovers a service's systems by a depth-first (DFS) traversal of "
-    "its System edges, so a fact stranded as a Service prop is invisible to it. "
-    "Map each spine fact to a `system_edges` entry:\n"
-    "- rendering_model / navigation_model -> an `EXPOSED_VIA` edge to ONE "
-    "`WebPresentation` System that carries rendering_model AND navigation_model as "
-    "INDEPENDENT props (never infer one from the other - a SPA may be SSR).\n"
-    "- api_paradigm -> an `EXPOSED_VIA` edge to a `RESTApi` / `GraphQLApi` System.\n"
-    "- perimeter (WAF / CDN / reverse proxy / gateway) -> a `FRONTED_BY`, "
-    "`PROTECTED_BY`, or `ROUTED_BY` edge to the matching perimeter System.\n"
-    "WORKED EXAMPLE (copy this shape) - a client-rendered single-page checkout is:\n"
-    '  systems: [{"kind": "WebPresentation", "props": '
-    '{"rendering_model": "CSR", "navigation_model": "SPA"}}]\n'
-    '  system_edges: [{"service_slug": "checkout", "kind": '
-    '"WebPresentation", "rel": "EXPOSED_VIA"}]\n'
-    'NOT services: [{"business_function_slug": "checkout", "props": '
-    '{"rendering_model": "CSR"}}] - a rendering_model prop on the Service is wrong.'
-)
-
-
-def _assignment_prompt(l0_slice: dict, observations: list[dict], inventory: dict | None = None) -> str:
-    """Pass-1 prompt: the service/system model + surface assignment + topology.
-    The EXISTING L1 IDENTITIES reuse block (FR-INVENTORY) leads, un-truncated, so
-    the analyser reuses existing identities instead of coining synonyms."""
-    from polymerhus.analysis.l1_curator import vocabulary_prompt
-
-    return (
-        f"{_inventory_block(inventory)}\n\n"
-        f"{vocabulary_prompt()}\n\n{_L0_REFERENCE_GUIDE}\n\n{_slice_repr(l0_slice)}\n"
-        f"Observations: {observations}\n"
-        f"{_SYSTEM_FACTS_ARE_EDGES_RULE}\n\n"
-        "TASK 1 of 2 - SERVICE MODEL & SURFACE ASSIGNMENT. Propose ONLY: `services` "
-        "(business-function Services - REUSE the exact business_function_slug of any "
-        "Service already listed above rather than coining a synonym; add a "
-        "new Service only for surface no existing one covers), `systems`, "
-        "`aggregates` (which Service owns each L0 element), and `system_edges`. "
-        "Leave the data-modelling lists (data_items, surfaces_at, data_flows, "
-        "data_relationships) EMPTY - a dedicated second pass produces those."
-    )
-
-
 def _invoke_with_retry(invoke_fn, messages, *, attempts: int = 3):
     """Call a structured-output LLM with a bounded retry. `with_structured_output`
     returns None (no parseable tool call) on a transient provider hiccup - observed
@@ -304,66 +133,6 @@ def _invoke_with_retry(invoke_fn, messages, *, attempts: int = 3):
             return result
         logger.warning("analyser structured call returned no tool call (attempt %d/%d)", i + 1, attempts)
     return result
-
-
-def _two_pass_analyse(
-    invoke_fn, l0_slice: dict, observations: list[dict], inventory: dict | None = None
-) -> L1DeltaBatch:
-    """The legacy analyser's ASSIGNMENT pass (services/systems/aggregates/
-    system_edges).
-
-    ASSIGNMENT-ONLY since #48 section 11 step 5 (ratified 2026-07-30): the
-    dedicated data-modelling pass this function used to also drive
-    (`_data_modelling_prompt`/`_compact_l0_for_data`, retired in the same change)
-    is now the `data_modeller`'s job on the chunk-fed path
-    (`supervisor.analyse_chunked`), which is the DEFAULT production path as of
-    this same change (`resolve_supervisor_enabled`'s flipped default). This
-    function - and the legacy pod graph it feeds - now serves ONLY the explicit
-    `analysis.supervisor_enabled=False` opt-out, so it proposes assignment alone;
-    it never proposed data on that opt-out path again once the flip landed, which
-    the operator ruling accepted as the trade-off for retiring the monolith in
-    one ticket rather than two. `invoke_fn(messages) -> L1DeltaBatch` is injected
-    so this is unit-testable without a live LLM."""
-    from langchain_core.messages import SystemMessage, HumanMessage
-
-    skill = _load_analyser_skill()
-    assignment = _invoke_with_retry(invoke_fn, [
-        SystemMessage(content=skill),
-        HumanMessage(content=_assignment_prompt(l0_slice, observations, inventory)),
-    ])
-    # structured_output returns None when the model emits no parseable tool call;
-    # after retries, degrade to an empty batch rather than crash (fail-open).
-    if assignment is None:
-        assignment = L1DeltaBatch()
-    return assignment
-
-
-def default_analyse_fn(l0_slice: dict, observations: list[dict]) -> L1DeltaBatch:
-    """Real collaborator: ask the analyser LLM to propose L1 deltas via the
-    legacy ASSIGNMENT-ONLY pass (see `_two_pass_analyse`'s docstring for why data
-    modelling is no longer part of this path). Mirrors default_triage_fn's
-    structured-output pattern (function_calling tolerates the open-ended `dict`
-    props/identity fields json_schema rejects).
-
-    FR-INVENTORY: reads the CURRENT L1 identity inventory ONCE (project_id is
-    carried on every L0 node's properties) and threads it into both passes so the
-    analyser reuses existing identities instead of coining synonyms. Fail-open:
-    read_l1_inventory degrades to the empty inventory on any read error, and an
-    undetermined project_id (empty slice) simply skips the read."""
-    from polymerhus.app.llm.roles import chat_model_for
-    from polymerhus.analysis.l1_inventory import read_l1_inventory
-
-    llm = chat_model_for("analyser")
-    structured_llm = llm.with_structured_output(L1DeltaBatch, method="function_calling")
-
-    project_id = None
-    for n in (l0_slice or {}).get("nodes", []):
-        pid = (n.get("properties") or {}).get("project_id")
-        if pid:
-            project_id = pid
-            break
-    inventory = read_l1_inventory(project_id) if project_id else None
-    return _two_pass_analyse(structured_llm.invoke, l0_slice, observations, inventory)
 
 
 def default_curate_fn(services, systems, aggregates, project_id: str) -> AnalyserExport:
@@ -405,66 +174,56 @@ def default_curate_with_enrichment_fn(batch, project_id: str, provenance) -> Ana
     return export
 
 
-# The default compiled analyser pod (real collaborators). The curate collaborator
-# is the full one: it writes the core deltas AND the FR-ENRICH deltas.
-analyser_graph = build_analyser_graph(
-    read_fn=default_read_fn, analyse_fn=default_analyse_fn,
-    curate_fn=default_curate_with_enrichment_fn,
-)
-
-
 def run_analyser(
     project_id: str,
     run_id: str,
-    observations: list[dict] | None = None,
+    observations: list | None = None,
     *,
-    graph=None,
     deliver_fn=None,
-    supervisor_enabled: bool | None = None,
     run_supervisor_fn=None,
+    **collaborators,
 ) -> AnalyserExport:
-    """Convenience: invoke the compiled analyser pod for a project and return its
-    export. Synchronous (no async collaborators in the default wiring); a caller
-    on the event loop should offload via asyncio.to_thread, like run_job.
+    """Convenience: run the analyser for a project and return its export.
+    Synchronous (the default wiring has no live collaborator on the caller's own
+    event loop); a caller already on the event loop should offload via
+    asyncio.to_thread, like run_job.
 
-    COEXISTENCE SEAM (#22, increment 0): the orthogonal `analysis.supervisor_enabled`
-    flag selects legacy-pod (default OFF -> the linear read->analyse->curate graph
-    below, byte-for-byte unchanged) vs the born-async supervisor control plane
-    (ON). This is the SINGLE seam - both callers (`streaming.py` and the batch
-    path) keep calling `run_analyser`, so streaming-vs-batch settings, curation,
-    and sweep are untouched and rollback is a flag flip. `supervisor_enabled` and
-    `run_supervisor_fn` are injectable for testing; when the flag is None it is
-    resolved from project settings (fail-open OFF).
+    THIN WRAPPER (#48 section 11 step 6, ratified 2026-07-30): the legacy
+    read->analyse->curate pod and its `analysis.supervisor_enabled` coexistence
+    flag are retired. `run_analyser` always drives the chunk-fed supervised path
+    (`supervisor.run_analyser_chunked`, the assigner -> mechanism_typist ->
+    data_modeller schedule). `run_supervisor_fn` is injectable for testing and
+    defaults to `run_analyser_chunked`; any extra keyword (`invoke_fn`,
+    `assets_fn`, `write_fn`, `checkpointer`, ...) is passed straight through, so a
+    test can wire the same collaborator surface `analyse_chunked` exposes.
 
-    FR-PODSTREAM: when `observations is None` (the default), the run's triager
-    Observations are auto-delivered from the graph (deduped, fail-open) so the
-    batch pull is complete without the caller wiring them. An explicit
-    `observations` list (including `[]`) is honoured as-is (e.g. a streaming
-    caller pushing its own set). `deliver_fn(project_id) -> list[dict]` is
-    injectable for testing."""
-    from polymerhus.analysis.supervisor import (
-        resolve_supervisor_enabled, run_analyser_chunked,
-    )
-    if supervisor_enabled is None:
-        supervisor_enabled = resolve_supervisor_enabled(project_id)
-    if supervisor_enabled:
-        # #34: the supervisor path is now CHUNK-FED - the live L0 surface is
-        # streamed into role-admitted chunks and dispatched per chunk, rather than
-        # the whole slice being handed to the legacy two-pass under the `assigner`
-        # name. The Assigner and the mechanism-typist (#9) both have bodies, so this
-        # path writes AGGREGATES and Systems + Service->System edges; only the
-        # data_modeller's DataItems remain unbuilt - a knowingly partial L1, which is
-        # why the flag stays default OFF and the legacy pod below remains the default.
-        run_supervisor_fn = run_supervisor_fn or run_analyser_chunked
-        return run_supervisor_fn(project_id, run_id)
+    FR-PODSTREAM: the delivery-completeness guarantee is independent of which
+    graph executes it. When `observations is None` (the default) and the caller
+    has not supplied its own `observations_fn` override, the run's triager
+    Observations are auto-delivered (fail-open) via `deliver_fn` and threaded
+    into the supervised pass as an `observations_fn` override, so a caller that
+    already holds a fixed set (a test, or a future streaming caller) does not pay
+    for a second live read. An explicit `observations` list (including `[]`) is
+    honoured as-is and delivery is NOT invoked. `deliver_fn(project_id) ->
+    list[Observation]` is injectable for testing and defaults to
+    `l0_stream.read_observations` - the SAME anchored read `analyse_chunked`
+    would otherwise perform itself, so the default production behaviour is
+    unchanged, just made explicit at this seam."""
+    from polymerhus.analysis.supervisor import run_analyser_chunked
 
-    # --- legacy analyser pod (the default path; unchanged) --------------------
-    if observations is None:
+    if observations is None and "observations_fn" not in collaborators:
         if deliver_fn is None:
-            from polymerhus.analysis.delivery import deliver_observations as deliver_fn
-        observations = deliver_fn(project_id)
-    graph = graph or analyser_graph
-    result = graph.invoke(
-        {"project_id": project_id, "run_id": run_id, "observations": observations}
-    )
-    return result["export"]
+            from polymerhus.analysis.l0_stream import read_observations as deliver_fn
+        try:
+            observations = deliver_fn(project_id)
+        except Exception:  # fail-open: a delivery-read failure must not crash the run
+            logger.warning(
+                "run_analyser: observation delivery failed for project=%s; "
+                "degrading to no observations", project_id, exc_info=True,
+            )
+            observations = []
+    if observations is not None:
+        collaborators.setdefault("observations_fn", lambda pid, _obs=observations: _obs)
+
+    run_supervisor_fn = run_supervisor_fn or run_analyser_chunked
+    return run_supervisor_fn(project_id, run_id, **collaborators)

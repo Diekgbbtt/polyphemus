@@ -266,7 +266,7 @@ The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgre
 
 ## Proposer decomposition (increment 2b)
 
-The `_two_pass_analyse` monolith dissolves into responsibility-scoped proposers, each consuming a `Chunk` narrowed by its own admission set and writing through the sole-writer. Built as standalone slices (flag OFF) then wired.
+The legacy two-pass analyser monolith dissolves into responsibility-scoped proposers, each consuming a `Chunk` narrowed by its own admission set and writing through the sole-writer. Built as standalone slices (flag OFF) then wired, and fully retired in #48.
 
 **Assigner**:
 The sole owner of the `AGGREGATES` hinge (agent spec #8) - HIGH-PRECISION assignment of an Endpoint to its owning Service, A.1-only (no re-assignment, no retraction).
@@ -329,11 +329,10 @@ The Bootstrapper is the sole source of the Service population and of `service_co
 An Assigner sees one chunk of surface while the Bootstrapper read the whole architecture, so a chunk-local mint competes with a far better-informed source and is the measured origin of cross-run identity drift (AMV-12).
 The Assigner's `existing_slugs` is therefore a VALIDATION set, never a mint discriminator.
 
-**analysis.supervisor_enabled (coexistence flag)**:
-The single orthogonal flag, read inside `run_analyser`, that selects legacy-pod vs the supervisor at the one analyser entry.
-AMENDED (#48 section 11 step 5, ratified 2026-07-30): DEFAULT FLIPPED TO ON.
-The chunk-fed three-role schedule (`analyse_chunked`) is now the default production path; an explicit `False` still opts back into the legacy pod (still a two-way door, reversed direction), which now proposes ASSIGNMENT ONLY (its dedicated data-modelling pass was retired in the same change - data modelling is the chunk-fed `data_modeller`'s job on the now-default path).
-A settings-read failure still degrades to `False`.
+**analysis.supervisor_enabled (coexistence flag, RETIRED)**:
+The orthogonal flag that used to select legacy-pod vs the supervisor at the one analyser entry (`run_analyser`).
+RETIRED (#48 section 11 step 6, ratified 2026-07-30): the legacy two-pass pod it selected away from is deleted, so the flag branch is gone - `run_analyser` always drives the chunk-fed supervised path (`analyse_chunked`, the `assigner -> mechanism_typist -> data_modeller` schedule).
+A project settings blob may still carry the key from before this change; it is simply no longer read.
 
 ## Chunk feeding (increment 1; the delivery gate was REMOVED by #48)
 

@@ -1,5 +1,5 @@
-"""FR-SKILLIF unit tier — the generalised skill loader `skill_for` and the two
-retro-pointed loaders (_load_triager_skill / _load_analyser_skill).
+"""FR-SKILLIF unit tier — the generalised skill loader `skill_for` and the
+retro-pointed `_load_triager_skill`.
 
 Each test names the assertion it encodes (docs/design/L1-MVP-plan.md FR-SKILLIF ledger).
 """
@@ -101,26 +101,3 @@ def test_triager_loader_degrades_to_empty(monkeypatch):
     skills.clear_cache()
     from polymerhus.recon.domain.pod import _load_triager_skill
     assert _load_triager_skill() == ""  # triager fallback is '' (no system prompt)
-
-
-# --- AST-SKILLIF-05: analyser loader retro-pointed with the inline fallback ---
-
-def test_analyser_loader_retropointed():
-    from polymerhus.analysis.pod import _load_analyser_skill
-    skill = _load_analyser_skill()
-    assert skill  # the real analyser skill is present (mount is in the repo)
-    assert not skill.startswith("---")
-    assert skill is skills.skill_for("analysis/analyser")  # single source
-
-
-def test_analyser_loader_degrades_to_inline_fallback(monkeypatch):
-    import pathlib
-    from polymerhus.analysis import pod as analyser_pod
-
-    def boom(self, *a, **k):
-        raise OSError("no mount")
-
-    monkeypatch.setattr(pathlib.Path, "read_text", boom)
-    skills.clear_cache()
-    skill = analyser_pod._load_analyser_skill()
-    assert skill == analyser_pod._ANALYSER_SYSTEM_PROMPT  # inline fallback, not ''
