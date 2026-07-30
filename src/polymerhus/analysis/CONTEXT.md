@@ -106,8 +106,9 @@ _Avoid_: metadata, source tag.
 
 **Confidence**:
 The strength of a judgment, carried in the envelope; orthogonal to provenance (who asserted) - both are needed to weigh a claim.
-The policy that would act on it (a withholding threshold) is unset.
-_Status_: recorded but not yet acted on.
+It is now ACTED ON for assignment: `withhold_below_bar` drops an aggregate below `ASSIGN_CONFIDENCE_BAR` (0.75) in the Assigner seam, and `evaluation.bar_sweep` reads the kept-vs-bar curve off a run's real confidences, so the bar is an output rather than a guess.
+The scale is 0..1 and is ENFORCED, not assumed - see the Assigner's `normalise_confidence`.
+_Status_: acted on for `AGGREGATES`; no other L1 edge carries a graded judgment to gate.
 
 **Evidence**:
 The L0 nodes an L1 node's cross-layer edges anchor to; pulling the evidence defeats the judgment.
@@ -185,6 +186,8 @@ Breadth is never read alone - the integrity metrics (contract coverage, System c
 Runs drive the REAL system through the faithful entry path (API -> use-case -> agent -> sole-writer -> Neo4j), never the agent in-process, because the entry path is where an entry-path defect lives.
 Every evaluated project is LEFT IN THE GRAPH (start-only wipes) - a teardown wipe deletes the artifact the operator needs to inspect.
 GENERAL by construction: `run_matrix` / `compare` take an injected `invoke_fn` + `read_fn`, so another analysis proposer adopts the harness by supplying its own pair and may extend `skeleton_metrics` for the slice of L1 it owns; the Bootstrapper is the first adopter.
+The **Assigner is the second** (`evaluate_assigner`), and it shows what agent-agnostic has to mean: its primary axis is assignment VOLUME, which - unlike breadth - must never be read as a score, because this agent's measured failure is over-production. So `compare` takes the primary key and integrity columns as parameters, and the Assigner supplies `ASSIGNMENT_INTEGRITY_KEYS`, in which a LARGER stale pool is a POSITIVE signal.
+CAVEAT (2026-07-29): its `withheld_rate` / `out_of_inventory_rate` / `unresolvable_rate` columns read `0.0` because `AssignmentStats` is persisted nowhere and `read_assignment` reads the graph. Read them as **not measured**, never as zero - the real values (withheld 30 of 53, then 56 of 87) exist only in per-chunk logs.
 The live targets these runs execute against are held in the eval dataset `tests/e2e/fixtures/eval-targets.yaml` (each target's `operator_kb` bootstraps the L1 skeleton the harness then measures).
 _Not to be confused with_: the assertion catalogues (fixed contract/walkthrough predicates that pass or fail), or the #19 regression oracle. This ranks configurations; it never passes or fails one.
 
@@ -265,12 +268,18 @@ The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgre
 
 The `_two_pass_analyse` monolith dissolves into responsibility-scoped proposers, each consuming a `Chunk` narrowed by its own admission set and writing through the sole-writer. Built as standalone slices (flag OFF) then wired.
 
-**Assigner**:
-The sole owner of the `AGGREGATES` hinge (agent spec #8) - HIGH-PRECISION assignment of an Endpoint to its owning Service, A.1-only (no re-assignment, no retraction).
-Emits a narrowed `L1DeltaBatch{aggregates}` (#34 D4: `services` left the output when minting was retired).
-Its system message is TWO layers, the same split the Bootstrapper uses: the role verbatim in code (identity, the aggregates-only output contract, the reference shape - the WHAT, which must hold even with no skills mount) plus the operator-tunable ownership-judgment discipline in `skills/analysis/assigner/SKILL.md` (the no-owner null hypothesis, the differential over candidate owners, discriminating evidence, calibrated withholding - the HOW).
-The shared analyser skill is NOT that layer and was never a fit: it addresses a generalist proposer and instructs the System and data modelling D4/D18 forbid this role (the #30 per-role retirement).
-`ASSIGNER_PROMPT_CONFIG` selects the arrangement, defaulting to the pre-skill `baseline` until a comparative eval flips it.
+**Assigner** (built, #8/#34/#30):
+Sole owner of the `AGGREGATES` hinge: high-precision classification of an observed `Endpoint` onto an EXISTING Service. A.1-only - no minting, no re-assignment, no retraction.
+
+*Contracts.* In: a `Chunk` narrowed by `admit_for_role` to `Endpoint` alone, plus the live L1 inventory with its `service_contract`s (the primary routing evidence). Out: `L1DeltaBatch{aggregates}`, each `AggregatesProposal{service_slug, l0: L0Ref, confidence, evidence_refs}`. Writes only through `l1_curator.write_aggregates`.
+
+*Prompt.* TWO layers, the Bootstrapper's split: the role verbatim in code (identity, the aggregates-only contract, the `l0.identity` shape - the WHAT, which must hold with no skills mount) plus `skills/analysis/assigner/SKILL.md` (the no-owner null hypothesis, the differential over candidate owners, discriminating evidence, confidence anchors - the HOW). The shared analyser skill was never a fit here: it addresses a generalist proposer and instructs the System and data modelling D4/D18 forbid this role (the #30 per-role retirement).
+`ASSIGNER_PROMPT_CONFIG` selects; **`skill` is the default** (operator-ratified 2026-07-29), `baseline` a byte-identical rollback. The default was NOT earned on measurement - the comparison was confounded by inventory size (23 vs 11 Services) and supports only "no regression".
+The system half is byte-stable so the provider prompt-cache survives a run; inventory and chunk ride the volatile user turn.
+
+*Shaping* (deterministic, post-LLM, ORDER load-bearing): `narrow_to_assignment` -> `resolve_l0_refs` -> `drop_out_of_inventory` -> `normalise_confidence` -> `withhold_below_bar`.
+Correctness never depends on the model's formatting: an `l0.label` the model coined is repaired against the streamed chunk, and a percentage-scale confidence is rescaled BEFORE the bar - an unrescaled `85` clears a 0.75 bar and silently voids the withholding gate, as it did on 213 live edges.
+`AssignmentStats` counts every gate, so "found nothing" stays distinguishable from "discarded everything".
 _Avoid_: analyser (the whole-model term).
 
 **Three "no edge is written" mechanisms** (named apart 2026-07-27, #34 - one word for all three hid a decision never taken behind a decision taken and declined):
@@ -290,7 +299,7 @@ _Status_: NL description is the sole carrier at breadth; a richer type-based Sys
 **Withholding gate**:
 The Assigner's crux (AMV-14): a below-bar ownership judgment (confidence < the 0.75 bar) yields NO `AGGREGATES` entry - the L0 element stays in the stale pool.
 The withholding is a SHAPING rule (absence IS the withholding; no "withheld" edge exists), lives in the Assigner seam not the shared sole-writer, and is the Assigner's SELF-check (maker); the Auditor is the separate check over survivors (checker).
-The bar is an EMPIRICAL PLACEHOLDER (#34): an OUTPUT of the assertion suite that a run sweeps, not a reasoned input.
+The bar is an EMPIRICAL OUTPUT, not a reasoned input, and is now actually swept: `evaluation.bar_sweep` reads the kept-vs-bar curve off one run's real confidences (no extra LLM calls - withholding is a pure function of confidences already collected). A bar where the curve is FLAT is buying nothing; a bar on a cliff discards a cluster the model felt alike about.
 
 **Validation gate** (#34 D9):
 An aggregate whose `service_slug` is not a live L1 identity is dropped BEFORE the confidence gate - an owner that does not exist is a reference to nothing, not a weak judgment to be scored, so a confident hallucination must not be scoreable.
@@ -305,6 +314,14 @@ Each genuine owner is emitted with its own independent confidence, and the bar f
 The Bootstrapper is the sole source of the Service population and of `service_contract`.
 An Assigner sees one chunk of surface while the Bootstrapper read the whole architecture, so a chunk-local mint competes with a far better-informed source and is the measured origin of cross-run identity drift (AMV-12).
 The Assigner's `existing_slugs` is therefore a VALIDATION set, never a mint discriminator.
+
+**Analysis feed** (`analysis/feed.py`, #34 - the recon/analysis runtime seam):
+The ONE runtime edge from recon to analysis, and the reason a recon run no longer waits on an LLM.
+It carries **cursors, never payloads**: an `AnalysisCursor` is a signal to re-derive L1 over the CURRENT cumulative surface, so five signals raised during one pass mean one further pass, not five - which is what makes the depth-1 conflating queue correct rather than merely convenient.
+`QueuedAnalysisFeed.advance` enqueues and returns; one consumer task per run holds a process-wide semaphore of ONE pass, the memory bound that made a concurrent consumer admissible at all (the NM-7 ledger had rejected an unbounded one).
+`drain` enqueues a TERMINAL cursor - a cumulative pass beginning after the last recon curate is by construction the batch pass over the settled surface - and decides `analysis_drained` from that pass's `PassCensus`, never from the fact a coroutine returned, because every layer beneath is fail-open.
+Mode requires `streaming_analysis` on; given that, `queued` is now the DEFAULT (#9 - the mechanism-typist's ~126s/chunk cost put an inline pass on recon's critical path), and `inline` is the explicit rollback path for a caller that sets `async_analysis_consumer=False`.
+_Guarantee_: at-least-once OBSERVATION of surface - a completion obligation on the run, NOT a transport property, and nothing is claimed about what the analyser concluded.
 
 **analysis.supervisor_enabled (coexistence flag)**:
 The single orthogonal flag, read inside `run_analyser`, that selects legacy-pod (default OFF) vs the supervisor (ON) at the one analyser entry.
