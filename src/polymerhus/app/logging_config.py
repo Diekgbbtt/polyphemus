@@ -28,7 +28,12 @@ import sys
 _MARKER = "_polymerhus_handler"
 
 # Third parties chatty enough to bury the application's own lines at INFO.
-_NOISY = ("httpx", "httpcore", "neo4j", "urllib3", "openai", "hpack", "h2")
+# "mcp" (the MCP SDK's transport client) belongs here too: streamable-http
+# reconnects its GET listener stream once per session as routine protocol
+# noise (kali's FastMCP server doesn't hold that stream open), and every
+# `/health` poll opens a fresh session, so left at INFO this drowns real
+# application lines under a "reconnecting in 1000ms" line per poll.
+_NOISY = ("httpx", "httpcore", "neo4j", "urllib3", "openai", "hpack", "h2", "mcp")
 
 
 def configure_logging(stream=None) -> logging.Handler | None:
