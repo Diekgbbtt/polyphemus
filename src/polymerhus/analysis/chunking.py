@@ -1,6 +1,6 @@
-"""Optimal-chunk feeding + the httpx-profile delivery gate (#13 + #14), realising
-#20 increment 1 as ONE standalone module in the analysis read/chunk seam (the peer
-of `l1_read` / `l1_inventory` / `index_card` / `delivery`).
+"""Optimal-chunk feeding (#13), realising #20 increment 1 as ONE standalone module
+in the analysis read/chunk seam (the peer of `l1_read` / `l1_inventory` /
+`index_card` / `delivery`).
 
 The chunk-builder streams a recon job's immutable L0 DELTA (its `AssetDelta` list)
 into ONE ordered, size-bounded sequence of `Chunk`s, and each proposer ROLE then
@@ -9,14 +9,23 @@ narrows that stream to the asset types it can meaningfully consume (`ROLE_ADMITS
 This replaced the earlier two-way `service`/`data` CONCERN partition, which fixed
 "which types matter" once and globally when the real constraint is per-agent (#34 D8).
 
-It is a PURE function: the caller does the live reads (the profiled-origin set, the
-deltas) and passes them in, so no L1 context is ever frozen onto a chunk - the
-live-graph invariant the stale-context curation bug taught.
+It is a PURE function: the caller does the live reads (the deltas) and passes them
+in, so no L1 context is ever frozen onto a chunk - the live-graph invariant the
+stale-context curation bug taught.
+
+**The httpx-profile delivery gate (#14) is REMOVED, not consumed** (#48,
+`dataplane-A1-decisions.md` section 6, DPL-DEC question 9, ratified 2026-07-30):
+`#34 D1` already dropped it for `Endpoint` - withholding un-profiled surface made a
+never-profiled target indistinguishable from an empty one (AMV-14) - and the same
+argument applies to `Parameter`, the one type that still carried it. With both
+gated types gone, the gate/`Chunk.flagged` apparatus is permanently unreachable, a
+dormant seam `CODING_STANDARD.md` section 12 says should not be left to rot
+silently. This does NOT touch `ROLE_ADMITS`/`admit_for_role` - the per-agent
+type-narrowing mechanism is a separate, later stage over an already-built chunk.
 
 Composition (the clean seams):
   - `AssetDelta` / `Observation` / `JobSpec` come from `recon.domain.types` UNCHANGED
-    (the ACL); `profiled_origins` REUSES `recon.domain.selectors.apply_selector`
-    (no new profiling, no new predicate language - #14 D16 reuse-first).
+    (the ACL).
   - `Chunk` lives HERE and is imported by `messages.py` (it promotes the
     increment-0 placeholder); this module has NO runtime import of `messages.py`.
 """
@@ -28,20 +37,12 @@ import re
 
 from pydantic import BaseModel, ConfigDict
 
-from polymerhus.recon.domain.selectors import apply_selector
-from polymerhus.recon.domain.types import AssetDelta, AssetSelector, JobSpec, Observation
+from polymerhus.recon.domain.types import AssetDelta, JobSpec, Observation
 
 logger = logging.getLogger(__name__)
 
 # Provisional per-chunk asset budget (#13, fork B): tune on a katana-heavy run.
 CHUNK_MAX_ASSETS = 100
-
-# The httpx-profile gate applies ONLY to Parameter (#13 fork G), gated on its
-# BaseURL origin, where the profile genuinely informs API-input vs web-form-field.
-# Endpoint was gated too (#14) until #34 D1 dropped it: an unprofiled Endpoint is
-# still assignable, and withholding it made a never-profiled target produce an
-# ownerless attack surface indistinguishable from one with nothing to own (AMV-14).
-_GATED_TYPES: frozenset[str] = frozenset({"Parameter"})
 
 # Script Endpoints (`*.js`) are EXCLUDED from the stream for every downstream agent.
 # Recon must keep producing them - jsluice mines them for parameters and endpoints,
@@ -64,16 +65,17 @@ ADMIT_ALL = "*"
 ROLE_ADMITS: dict[str, frozenset[str] | str] = {
     "assigner": frozenset({"Endpoint"}),          # one judgment: who owns this Endpoint
     "mechanism_typist": ADMIT_ALL,                 # the generalist (see ADMIT_ALL)
-    "data_modeller": frozenset({"Parameter", "Header"}),
+    # Widened to include Secret (#48, dataplane-A1-decisions.md section 6,
+    # ratified 2026-07-30): a jsluice-mined Secret is Tier-1 trust substrate too -
+    # #10's own responsibility statement names "parameters/headers/secrets/HTML"
+    # as the lift surface. Endpoint stays OUT (question 8): SURFACES_AT targets
+    # Parameter/Header/Secret only, never an Endpoint (DPL-DEC-10).
+    "data_modeller": frozenset({"Parameter", "Header", "Secret"}),
 }
 
 # The chunk-fed proposer roles, in dispatch order. `bootstrapper` / `anti_cluttering`
 # are slice-less (they re-derive the whole live L1) and never receive a chunk.
 CHUNK_ROLES: tuple[str, ...] = ("assigner", "mechanism_typist", "data_modeller")
-
-# The valid httpx profiles (D16 `noise_filter.classify_profile`).
-_PROFILE_VALUES = ["webapp", "restapi", "graphql_api"]
-_HAS_PROFILE = AssetSelector(field="profile", op="equals", values=_PROFILE_VALUES)
 
 
 class Chunk(BaseModel):
@@ -95,19 +97,6 @@ class Chunk(BaseModel):
     observations: tuple[Observation, ...] = ()
     batch_index: int = 0
     batch_total: int = 1
-    # True when this chunk was assembled at the phase-barrier and carries a
-    # still-un-profiled gated asset (the AMV-14 fail-open flag; the proposer
-    # treats it conservatively). Never silently dropped.
-    flagged: bool = False
-
-
-def profiled_origins(base_url_records: list[dict]) -> frozenset[str]:
-    """The set of BaseURL origins carrying an httpx `profile` (#14 gate, D16
-    reuse). Each record is a BaseURL's `{"baseurl": ..., "profile": ...}`
-    projection. REUSES `apply_selector` for the 'has a profile' predicate, whose
-    missing/blank-field default is exclusion (the correct fail-safe direction)."""
-    matched = apply_selector(base_url_records, _HAS_PROFILE)
-    return frozenset(r["baseurl"] for r in matched if r.get("baseurl"))
 
 
 def admit_for_role(chunk: Chunk, role: str) -> tuple[AssetDelta, ...]:
@@ -140,30 +129,6 @@ def is_script_endpoint(asset: AssetDelta) -> bool:
     return bool(_SCRIPT_PATH.search(bare))
 
 
-def _baseurl_of(asset: AssetDelta) -> str | None:
-    """The BaseURL origin a gated asset hangs off, read from its identity."""
-    bu = (asset.identity or {}).get("baseurl")
-    return bu if isinstance(bu, str) and bu else None
-
-
-def _gate(asset: AssetDelta, profiled: frozenset[str], barrier: bool) -> tuple[bool, bool]:
-    """The #14 profile gate for one asset. Returns (admitted, flagged).
-
-    Non-gated types are always admitted (flagged False), which since #34 D1 includes
-    Endpoint. The one gated type (Parameter) is admitted when its BaseURL is
-    profiled; when un-profiled it is WITHHELD at normal delivery (`barrier=False`)
-    and admitted-but-FLAGGED at the phase-barrier (`barrier=True`) - the fail-open
-    backstop."""
-    if asset.type not in _GATED_TYPES:
-        return True, False
-    if _baseurl_of(asset) in profiled:
-        return True, False
-    # un-profiled gated asset
-    if barrier:
-        return True, True   # delivered flagged, never silently dropped
-    return False, False     # withheld at delivery
-
-
 def _observations_for(assets: tuple[AssetDelta, ...], observations: list[Observation]) -> tuple[Observation, ...]:
     """The observations whose anchor asset is present in this chunk: an observation
     rides the chunk carrying the asset it anchors to. Consumed by the mechanism-typist
@@ -186,43 +151,39 @@ def chunks_for_job(
     assets: list[AssetDelta],
     observations: list[Observation] | None = None,
     *,
-    profiled: frozenset[str] = frozenset(),
-    barrier: bool = False,
     max_assets: int = CHUNK_MAX_ASSETS,
 ) -> list[Chunk]:
-    """Stream a job's L0 delta into ONE ordered, size-bounded, profile-gated `Chunk`
-    sequence (#13 + #14, reshaped by #34 D8). EVERY asset type is streamed; the
-    consuming role narrows via `admit_for_role`. Pure: `profiled` and the deltas are
-    read by the caller and passed in. Total delivery semantics: an empty delta -> [];
-    a malformed asset is excluded (never crashes); replay is deterministic (the
-    `chunk_id` is a pure function of source_job + batch_index)."""
+    """Stream a job's L0 delta into ONE ordered, size-bounded `Chunk` sequence
+    (#13, reshaped by #34 D8, the profile gate removed by #48 section 6). EVERY
+    asset type is streamed; the consuming role narrows via `admit_for_role`.
+    Pure: the deltas are read by the caller and passed in. Total delivery
+    semantics: an empty delta -> []; a malformed asset is excluded (never
+    crashes); replay is deterministic (the `chunk_id` is a pure function of
+    source_job + batch_index)."""
     observations = observations or []
     source_job = job.tool if job is not None else ""
 
-    # 1. gate the stream, tracking per-asset flagged state.
-    items: list[tuple[AssetDelta, bool]] = []
+    # 1. filter the stream (malformed assets, script Endpoints).
+    items: list[AssetDelta] = []
     for asset in assets:
         try:
             if not getattr(asset, "type", None):
                 continue  # malformed: no type -> exclude, never crash
             if is_script_endpoint(asset):
                 continue  # script file: kept in L0, never streamed to an agent
-            admitted, flagged = _gate(asset, profiled, barrier)
-            if admitted:
-                items.append((asset, flagged))
+            items.append(asset)
         except Exception:  # any malformed asset degrades to exclusion, not a crash
             logger.warning("chunking: skipped a malformed asset", exc_info=True)
             continue
     if not items:
-        return []  # empty / fully-gated delta -> no chunk (valid)
+        return []  # empty delta -> no chunk (valid)
 
     # 2. batch-overflow the stream into ordered chunks (tail never dropped).
     budget = max(1, max_assets)
     total = math.ceil(len(items) / budget)
     chunks: list[Chunk] = []
     for idx in range(total):
-        window = items[idx * budget:(idx + 1) * budget]
-        window_assets = tuple(a for a, _ in window)
+        window_assets = tuple(items[idx * budget:(idx + 1) * budget])
         chunks.append(Chunk(
             chunk_id=f"{source_job}:{idx}",
             source_job=source_job,
@@ -230,7 +191,6 @@ def chunks_for_job(
             observations=_observations_for(window_assets, observations),
             batch_index=idx,
             batch_total=total,
-            flagged=any(f for _, f in window),
         ))
     return chunks
 

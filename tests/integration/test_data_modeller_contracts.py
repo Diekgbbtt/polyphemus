@@ -375,6 +375,42 @@ def test_D15_idempotent_replay(_neo4j_session):
     assert counts_1 == counts_2
 
 
+# --- C16 - the write path carries data (fixes the DPL-DEC-21 silent drop) --------
+
+def test_D16_write_routing_carries_data_only_batch():
+    from polymerhus.analysis.l1_types import Provenance
+    from polymerhus.analysis.supervisor import _aggregates_write_fn, _chunked_write_fn
+
+    data_only_batch = L1DeltaBatch(
+        data_items=[DataItemProposal(item_key="basket")],
+        surfaces_at=[SurfacesAtProposal(item_key="basket", l0=L0Ref(label="Parameter", identity={"name": "n"}))],
+    )
+    provenance = Provenance(job="test:c16", model="test", prompt_id=None)
+
+    # documents the defect this predicate guards against: routed through the OLD
+    # aggregates-only writer, a data-only batch produces zero enrichment
+    old_export = _aggregates_write_fn(data_only_batch, "p1", provenance)
+    assert old_export.enrichment in (None, {})
+
+    calls = {}
+
+    def fake_curate_with_enrichment(deltas, pid, prov):
+        calls["deltas"] = deltas
+        from polymerhus.analysis.pod import AnalyserExport
+        return AnalyserExport(enrichment={"data_items": 1, "surfaces_at": 1})
+
+    import polymerhus.analysis.pod as pod_module
+    original = pod_module.default_curate_with_enrichment_fn
+    pod_module.default_curate_with_enrichment_fn = fake_curate_with_enrichment
+    try:
+        export = _chunked_write_fn(data_only_batch, "p1", provenance)
+    finally:
+        pod_module.default_curate_with_enrichment_fn = original
+
+    assert calls["deltas"] is data_only_batch
+    assert sum(export.enrichment.values()) > 0
+
+
 # --- C17 - no Cypher, no provenance ---------------------------------------------------
 
 def test_D17_no_cypher_no_provenance():

@@ -2,8 +2,13 @@
 
 `chunks_for_job` is a pure function whose reads are injected by its caller; this
 module is that caller's read side. It projects the project's current L0 surface out
-of Neo4j back into `AssetDelta`s the chunk builder understands, and reads the
-BaseURL profile records the retained Parameter gate needs.
+of Neo4j back into `AssetDelta`s the chunk builder understands, and reconstructs the
+project's triager `Observation`s (with their anchor) for the chunk builder to attach.
+
+`read_baseurl_profiles` (the httpx-profile read the retained Parameter gate used)
+was REMOVED by #48 alongside the gate itself (`chunking.py` module docstring) - it
+had no consumer left once `chunking._gate`/`_GATED_TYPES`/`profiled_origins` were
+removed.
 
 WHY THE CUMULATIVE SURFACE, NOT A PER-JOB DELTA. A recon job's freshly-produced
 `AssetDelta` list exists only inside the pod: `PodExport` carries counts, and L0
@@ -148,21 +153,3 @@ def read_observations(project_id: str, *, read_fn=None) -> list[Observation]:
     return out
 
 
-def read_baseurl_profiles(project_id: str, *, read_fn=None) -> list[dict]:
-    """The `{"baseurl": ..., "profile": ...}` records `profiled_origins` consumes.
-
-    Read straight from the BaseURL nodes rather than derived from the slice, so the
-    gate sees the httpx profile even when a BaseURL carries nothing else."""
-    if read_fn is None:
-        from polymerhus.app.clients import neo4j_client
-        read_fn = neo4j_client.read
-    try:
-        rows = read_fn(
-            "MATCH (b:BaseURL) WHERE b.project_id = $project_id "
-            "RETURN b.url AS baseurl, b.profile AS profile",
-            {"project_id": project_id},
-        )
-        return [dict(r) for r in rows]
-    except Exception:  # no profiles -> the gate's fail-safe direction (exclusion)
-        logger.warning("l0_stream: BaseURL profile read failed", exc_info=True)
-        return []
