@@ -29,7 +29,8 @@ It is the load-bearing L0/L1 hinge and the only cross-layer edge that carries a 
 _Avoid_: contains, owns, has (membership is N:M and non-possessive).
 
 **SURFACES_AT**:
-The cross-layer edge from an L1 `DataItem` to the L0 Parameter / Header / field where that logical item appears on the observed surface; carries provenance and timestamps only.
+The cross-layer edge from an L1 `DataItem` to the L0 Parameter / Header / Secret where that logical item appears on the observed surface; carries provenance and timestamps only.
+Never an Endpoint (#48, DPL-DEC-10): a path is the address a tester interrogates, never a place data appears, so a path noun alone never grounds a lift.
 
 **EVIDENCED_BY**:
 The cross-layer edge from an L1 `System` to the L0 node that fingerprints it (a `Server:` header, a cookie); carries provenance and timestamps only.
@@ -152,7 +153,9 @@ Retyping it is a one-way door.
 ## Actors
 
 **Analyser**:
-The proposer role that reconstructs the L1 Service/System model, run in two passes - an assignment pass and a dedicated data-modelling pass - split because one combined call systematically starved data modelling.
+The whole-model proposer role that reconstructs the L1 Service/System/DataItem model.
+AMENDED (#48, 2026-07-30): the "run in two passes - an assignment pass and a dedicated data-modelling pass" description is RETIRED with the monolith.
+The analyser is now the chunk-fed, per-responsibility proposer decomposition behind the supervisor - `Assigner` (AGGREGATES), `TechnicalSystem`/mechanism-typist (Systems), `DataPlane Analyser`/data_modeller (DataItems) - each a standalone A.1 proposer dispatched per chunk (see "Proposer decomposition" below).
 _Avoid_: analyst, modeller.
 
 **l1_curator (L1 sole-writer)**:
@@ -273,10 +276,11 @@ The shared analyser skill is NOT that layer and was never a fit: it addresses a 
 `ASSIGNER_PROMPT_CONFIG` selects the arrangement, defaulting to the pre-skill `baseline` until a comparative eval flips it.
 _Avoid_: analyser (the whole-model term).
 
-**Three "no edge is written" mechanisms** (named apart 2026-07-27, #34 - one word for all three hid a decision never taken behind a decision taken and declined):
-- **Gate** (input side): the element never reaches the agent, so no judgment is formed. The per-role admission set, and the profile gate on the data path.
+**Four "no edge is written" mechanisms** (named apart 2026-07-27, #34; a fourth added #48, 2026-07-30 - one word for all of them hid a decision never taken behind a decision taken and declined):
+- **Gate** (input side): the element never reaches the agent, so no judgment is formed. The per-role admission set. (The httpx-profile delivery gate on the data path was REMOVED by #48, not merely retired as an instance of this mechanism - see "Chunk feeding" below.)
 - **Narrow** (output side, structural): the agent may not emit a class of delta at all, whatever the model returned.
-- **Withhold** (output side, epistemic): the agent looked, judged, and declined below the bar.
+- **Withhold** (output side, epistemic): the agent looked, judged, and declined below the bar. The Assigner's mechanism; requires a graded `confidence`.
+- **Ground** (output side, epistemic; #48): the DataPlane Analyser's substitute for Withhold, forced by the envelope asymmetry - the four data proposal shapes carry NO `confidence` field (reserved for `AGGREGATES` alone), so there is no bar to calibrate against. The epistemic control is anchoring in observed surface (a surviving `SURFACES_AT`) rather than a calibrated threshold; an ungrounded lift is dropped by code (`enforce_groundedness`), never merely discouraged by prompt.
 
 **TechnicalSystem / mechanism-typist**:
 The sole owner of mechanism TYPING (agent spec #9) - it defines/extends the cross-cutting `System`s the streamed surface evidences and links them to Services as typed `Service->System` edges, never Service props. BREADTH-ONLY: it emits `L1DeltaBatch{systems, system_edges}`; all System DEEPENING (WebPresentation rendering/navigation, authz inverse-pyramid, backward-recon probes, the `AnatomyResult` triple) is Phase B (epic #39).
@@ -286,6 +290,25 @@ _Avoid_: analyser (the whole-model term); anatomy (the Phase-B deepening path).
 **System description (discriminative attribute)**:
 The System-side counterpart of `service_contract`: a System's brief adversarially-oriented NL `description` prop is its DISCRIMINATIVE attribute - the mechanism-typist reads the currently-defined Systems WITH their descriptions (the additive `read_l1_inventory` `system_descriptions` map) to decide new-vs-extend, and on extend it COMPOUNDS the description (reads the existing one, emits the enriched superset), never emptied. Contrast the Assigner's never-re-emit `service_contract`: there the Bootstrapper is the better whole-architecture author, whereas the mechanism-typist is the SOLE incremental author of System descriptions, so compounding is correct, not clobbering.
 _Status_: NL description is the sole carrier at breadth; a richer type-based System specification is Phase B (#40, the L1-System under-typing gap).
+
+**DataPlane Analyser / data-modeller** (#48, `docs/design/dataplane-A1-decisions.md`):
+The sole owner of the Tier-1 data substrate - lifts logical `DataItem`s (business records) from streamed `Parameter`/`Header`/`Secret` surface, binds them with `SURFACES_AT`, and maps `PRODUCES`/`CONSUMES` flows onto the settled Service model plus surface-observable `DataItem`-to-`DataItem` dependencies.
+Emits `L1DeltaBatch{data_items, surfaces_at, data_flows, data_relationships}` and nothing else; runs LAST in the per-chunk schedule (after the Assigner and the mechanism-typist) so its Parameter-to-owning-Service join has a live `AGGREGATES` answer.
+A.1 is BUILT; A.2 (a batched completeness sweep per user-controllable datum) is `designed-not-built` - the phase guard in `make_data_modeller_body` returns `None` for any phase but `"A1"`, an inert dormant seam, never a silent half-implementation.
+_Avoid_: analyser (the whole-model term).
+
+**Observed-only fields**:
+A DataItem's `fields` prop names ONLY fields observed on the surface; enforced in the proposer's shaping seam (`bind_fields_to_observed`) by intersecting the proposal with the observed vocabulary and UNIONING with the item's already-persisted `fields`, never by instruction alone.
+The union is required, not defensive: the sole-writer's `SET d += $props` replaces `fields` wholesale, so a re-proposal from a later chunk observing a different subset would otherwise LOSE what an earlier chunk observed.
+
+**Grounded DataItem** (#48, T1's deliverable predicate):
+A DataItem with at least one `SURFACES_AT` AND at least one `PRODUCES`/`CONSUMES` flow.
+The surface half is REQUIRED per chunk (ratified 2026-07-30: a path noun alone never grounds a lift, so `enforce_groundedness` drops every NEW item with no surviving `SURFACES_AT`); the flow half is a GRAPH-LEVEL acceptance predicate, checked across chunks rather than per-chunk, because a flow needs the Assigner's ownership to have settled and the Assigner may legitimately WITHHOLD it in a later chunk.
+An item already in the live inventory is not re-tested (it was grounded when it was written).
+
+**DataItem notes (discriminative attribute)**:
+The DataItem-side counterpart of `service_contract` and of a System's `description`: an ADVERSARIAL CHARACTERISATION of the record - what it is, whose trust it carries, what breaks - compounded by the data-modeller as its sole incremental author, never blanked.
+Carries NO named payload, technique, or vector (stays inside A.1's descriptive fence, off the unratified phase-3 fault-hypothesis vocabulary).
 
 **Withholding gate**:
 The Assigner's crux (AMV-14): a below-bar ownership judgment (confidence < the 0.75 bar) yields NO `AGGREGATES` entry - the L0 element stays in the stale pool.
@@ -307,10 +330,12 @@ An Assigner sees one chunk of surface while the Bootstrapper read the whole arch
 The Assigner's `existing_slugs` is therefore a VALIDATION set, never a mint discriminator.
 
 **analysis.supervisor_enabled (coexistence flag)**:
-The single orthogonal flag, read inside `run_analyser`, that selects legacy-pod (default OFF) vs the supervisor (ON) at the one analyser entry.
-A two-way door: rollback is a flag flip; the legacy path stays byte-for-byte unchanged and is the runnable default until the acceptance gate is green.
+The single orthogonal flag, read inside `run_analyser`, that selects legacy-pod vs the supervisor at the one analyser entry.
+AMENDED (#48 section 11 step 5, ratified 2026-07-30): DEFAULT FLIPPED TO ON.
+The chunk-fed three-role schedule (`analyse_chunked`) is now the default production path; an explicit `False` still opts back into the legacy pod (still a two-way door, reversed direction), which now proposes ASSIGNMENT ONLY (its dedicated data-modelling pass was retired in the same change - data modelling is the chunk-fed `data_modeller`'s job on the now-default path).
+A settings-read failure still degrades to `False`.
 
-## Chunk feeding + delivery gate (increment 1)
+## Chunk feeding (increment 1; the delivery gate was REMOVED by #48)
 
 The chunk-builder (`analysis/chunking.py`, `#13`/`#14`, increment 1) streams a recon job's L0 delta to the proposers.
 A pure function whose reads are injected.
@@ -322,23 +347,24 @@ _Avoid_: batch (a batch is the overflow unit, below), payload.
 
 **Role admission set** (`ROLE_ADMITS` / `admit_for_role`, #34 D2/D7 - the lever #15 called asset-type-driven agent scoping):
 Every asset type a recon job produces is STREAMED; each proposer role then narrows the stream to the types it can meaningfully consume.
-`assigner` admits `Endpoint` alone; `data_modeller` admits `Parameter` + `Header`; `mechanism_typist` holds the `ADMIT_ALL` sentinel.
+`assigner` admits `Endpoint` alone; `data_modeller` admits `Parameter` + `Header` + `Secret` (widened #48, 2026-07-30 - a jsluice-mined Secret is Tier-1 trust substrate too); `mechanism_typist` holds the `ADMIT_ALL` sentinel.
 The sentinel is load-bearing, not shorthand: with three allow-sets an asset type no role names would be admitted by nobody and silently dropped, losing the fork-H guarantee, so the generalist role always catches a new recon tool's output.
 A role admitting nothing from a chunk yields an empty batch, which is a valid outcome rather than an error.
+This is a SEPARATE, later-stage mechanism from the httpx-profile delivery gate below (verified NOT to be affected by that gate's removal).
 
 **Concern (concern tag)** - RETIRED 2026-07-27 (#34 D8).
 The two-way `service` / `data` partition fixed "which asset types matter" once and globally, when the real constraint is per-agent; the role admission set replaced it, and `Chunk.concern` / `CONCERN_ROLES` are gone.
 
 **Chunk-builder**:
-`chunks_for_job` - streams a job's `AssetDelta` list into ONE ordered sequence, applying the profile gate and size-bounding by batch-overflow.
+`chunks_for_job` - streams a job's `AssetDelta` list into ONE ordered sequence, size-bounded by batch-overflow.
 
 **Batch-overflow**:
 The sizing lever: a stream longer than the per-chunk asset budget splits into ordered chunks (`batch_index` / `batch_total`), the tail never dropped - replacing the retired silent 400-cap truncation.
 
-**httpx-profile delivery gate**:
-The `#13` fork-G rule (reuse-first on D16): a Parameter is admitted only when its BaseURL carries an httpx `profile`; an un-profiled one is WITHHELD at delivery until phase-6 `httpx_reprofile` sets the profile, and delivered FLAGGED at the phase-barrier (the AMV-14 fail-open backstop - never silently dropped).
-The profiled-origin set reuses `selectors.apply_selector`.
-The gate covered Endpoint too (`#14`) until #34 D1 dropped it: withholding an unprofiled Endpoint made a never-profiled target produce an ownerless attack surface indistinguishable from one with nothing to own.
+**httpx-profile delivery gate** - REMOVED, 2026-07-30 (#48, not merely retired as an instance of "Gate"):
+Formerly: the `#13` fork-G rule (reuse-first on D16) that admitted a Parameter only when its BaseURL carried an httpx `profile`, withholding an un-profiled one at delivery and delivering it FLAGGED at the phase-barrier (`Chunk.flagged`, the AMV-14 fail-open backstop).
+`#34 D1` already dropped the identical gate for Endpoint (withholding an unprofiled Endpoint made a never-profiled target produce an ownerless attack surface indistinguishable from one with nothing to own); dropping the Parameter half too EMPTIED the gate's `_GATED_TYPES`, making the whole apparatus (`chunking._gate`/`_GATED_TYPES`/`profiled_origins`/the `barrier` parameter/`Chunk.flagged`) permanently unreachable, so it was removed rather than left to rot.
+Profile classification is now absent from every proposer's context entirely; the data-modeller's candidate-owning-Service join is its sole interpretive signal for a Parameter's origin.
 
 ## Provisional and designed-not-built terms
 

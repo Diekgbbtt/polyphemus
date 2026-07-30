@@ -163,7 +163,7 @@ For the A.2 `SPLIT` op each subordinate leaf MUST get its OWN contract; copying 
 - **Attributes:**
   - `item_key` (identity) - the semantic slug; the same key is reused for sites judged one logical item.
   - `fields: list[str]` - the concrete fields OBSERVED for this item on the surface (evidence-bound only; speculative fields are forbidden, richer attribution deferred to AMV-10).
-  - NL notes.
+  - `notes` (NL notes) - realised by #48 (`docs/design/dataplane-A1-decisions.md` DPL-DEC-09) as the DataItem's DISCRIMINATIVE attribute: an adversarial CHARACTERISATION (what the record is, whose trust it carries, what breaks - no named payload, technique, or vector), read by the data-modeller to decide reuse-or-coin and COMPOUNDED on reuse, never blanked. The System-side counterpart is `:L1System.description` (§4.2).
 
 ### 4.4 `:SystemKind` - REMOVED (operator correction 2026-07-20, §0)
 
@@ -183,6 +183,8 @@ Every relationship the L1 sole-writer emits, its endpoints, its properties, and 
 `RENDERED_BY` is REMOVED by this correction (§2).
 
 ### 5.1 Cross-layer (L1 -> L0) edges
+
+No change needed by #48, and worth stating why: the row below already reads `L1DataItem -> L0 Parameter/Header/field`, so the row was already correct - the legacy analyser prompt's Endpoint-target worked example (`pod.py`, retired) CONTRADICTED this catalogue rather than the catalogue needing a correction (DPL-DEC-10). The data-modeller's `resolve_surface_refs` gate now enforces this shape in code (Parameter/Header/Secret only, never an Endpoint).
 
 | Edge | From -> To | Properties | Encodes |
 |---|---|---|---|
