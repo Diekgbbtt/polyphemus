@@ -447,8 +447,10 @@ def run_analyser_chunked(
     *,
     invoke_fn=None,
     typist_invoke_fn=None,
+    data_modeller_invoke_fn=None,
     assets_fn=None,
     profiles_fn=None,
+    observations_fn=None,
     inventory_fn=None,
     write_fn=None,
     checkpointer=None,
@@ -465,7 +467,9 @@ def run_analyser_chunked(
 
     return asyncio.run(analyse_chunked(
         project_id, run_id, invoke_fn=invoke_fn, typist_invoke_fn=typist_invoke_fn,
-        assets_fn=assets_fn, profiles_fn=profiles_fn, inventory_fn=inventory_fn,
+        data_modeller_invoke_fn=data_modeller_invoke_fn,
+        assets_fn=assets_fn, profiles_fn=profiles_fn, observations_fn=observations_fn,
+        inventory_fn=inventory_fn,
         write_fn=write_fn, checkpointer=checkpointer, store=store, observe=observe,
     )).export
 
@@ -476,8 +480,10 @@ async def analyse_chunked(
     *,
     invoke_fn=None,
     typist_invoke_fn=None,
+    data_modeller_invoke_fn=None,
     assets_fn=None,
     profiles_fn=None,
+    observations_fn=None,
     inventory_fn=None,
     write_fn=None,
     checkpointer=None,
@@ -503,12 +509,15 @@ async def analyse_chunked(
     Returns a `PassResult` carrying the export AND the census of what was observed."""
     from polymerhus.analysis.assigner import default_invoke_fn, make_assigner_body
     from polymerhus.analysis.chunking import admit_for_role, chunks_for_job, profiled_origins
-    from polymerhus.analysis.l0_stream import read_baseurl_profiles, read_l0_assets
+    from polymerhus.analysis.l0_stream import (
+        read_baseurl_profiles, read_l0_assets, read_observations,
+    )
     from polymerhus.analysis.l1_inventory import read_l1_inventory
     from polymerhus.analysis.pod import AnalyserExport
 
     assets_fn = assets_fn or read_l0_assets
     profiles_fn = profiles_fn or read_baseurl_profiles
+    observations_fn = observations_fn or read_observations
     inventory_fn = inventory_fn or read_l1_inventory
     invoke_fn = invoke_fn or default_invoke_fn()
     write_fn = write_fn or _chunked_write_fn
@@ -521,6 +530,7 @@ async def analyse_chunked(
 
     assets = assets_fn(project_id)
     profiled = profiled_origins(profiles_fn(project_id))
+    observations = observations_fn(project_id)
     # A pseudo-job: the chunk builder keys `chunk_id` off the source job, and this
     # read is the cumulative surface rather than one tool's output. `barrier=True`
     # because a cumulative read IS the phase-barrier view - nothing further is
@@ -528,7 +538,9 @@ async def analyse_chunked(
     from polymerhus.recon.domain.types import JobSpec
     pseudo_job = JobSpec(tool=f"stream-{run_id}", skill="analysis",
                          command_template="", produces=[], consumes="BaseURL")
-    chunks = chunks_for_job(pseudo_job, assets, profiled=profiled, barrier=True)
+    chunks = chunks_for_job(
+        pseudo_job, assets, observations, profiled=profiled, barrier=True,
+    )
     if not chunks:
         # Valid empty: nothing to judge. Recorded as observed, so a drain over an
         # empty surface is distinguishable from a drain that never read anything.

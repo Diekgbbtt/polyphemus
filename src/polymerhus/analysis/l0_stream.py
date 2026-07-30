@@ -21,7 +21,7 @@ from __future__ import annotations
 
 import logging
 
-from polymerhus.recon.domain.types import AssetDelta
+from polymerhus.recon.domain.types import AssetDelta, Observation
 
 logger = logging.getLogger(__name__)
 
@@ -36,6 +36,11 @@ L0_IDENTITY_KEYS: dict[str, tuple[str, ...]] = {
     "Header": ("name", "value", "baseurl"),
     "Technology": ("name", "version"),
     "Certificate": ("subject_cn",),
+    # DPL-DEC-10 (dataplane-A1-decisions.md §6): a jsluice-mined Secret is Tier-1
+    # trust substrate, so the data_modeller's reference gate needs its identity
+    # shape too - added alongside the ROLE_ADMITS widening to {Parameter, Header,
+    # Secret}.
+    "Secret": ("value_hash",),
 }
 
 # Properties that are never part of an identity and never useful to a proposer.
@@ -83,6 +88,64 @@ def read_l0_assets(project_id: str, *, read_fn=None) -> list[AssetDelta]:
     except Exception:  # a read blip degrades to no surface, never crashes a run
         logger.warning("l0_stream: L0 read failed; degrading to empty surface", exc_info=True)
         return []
+
+
+def read_observations(project_id: str, *, read_fn=None) -> list[Observation]:
+    """The project's triager `Observation`s, with their ANCHOR reconstructed, for
+    the chunk builder (dataplane-A1-decisions.md §11 step 0).
+
+    `analyse_chunked` called `chunks_for_job` with no observations at all, so
+    `Chunk.observations` was ALWAYS empty on the live path - the typist and the
+    data-modeller both render observations but neither ever received one.
+    `delivery.collect_observations` cannot be reused: it projects `_OBS_FIELDS`
+    and DROPS the anchor entirely, while `chunking._observations_for` needs a real
+    `Observation.anchor`. This is that missing read.
+
+    An Observation node carries no anchor identity itself; the anchor is the OTHER
+    end of the `(anchor)-[:HAS_OBSERVATION]->(Observation)` edge
+    (`recon.domain.curator.build_observation_cypher`). The anchor's identity is
+    reconstructed with the SAME `_identity_of` de-noising rule `assets_from_slice`
+    uses, so an Observation's anchor and a chunk's own asset for that same node
+    compute an IDENTICAL identity dict - which is what lets
+    `chunking._observations_for`'s exact `(type, identity)` match actually fire.
+
+    Fail-open: a read error degrades to no observations, never raises."""
+    if read_fn is None:
+        from polymerhus.app.clients import neo4j_client
+        read_fn = neo4j_client.read
+    try:
+        rows = read_fn(
+            "MATCH (a)-[:HAS_OBSERVATION]->(o:Observation) WHERE o.project_id = $project_id "
+            "RETURN labels(a) AS anchor_labels, a {.*} AS anchor_props, o {.*} AS obs_props",
+            {"project_id": project_id},
+        )
+    except Exception:  # a read blip degrades to no observations, never crashes a run
+        logger.warning("l0_stream: observation read failed; degrading to no observations", exc_info=True)
+        return []
+
+    out: list[Observation] = []
+    for row in rows:
+        labels = [l for l in (row.get("anchor_labels") or []) if isinstance(l, str)]
+        anchor_type = labels[0] if labels else None
+        if not anchor_type:
+            continue
+        anchor_props = {k: v for k, v in dict(row.get("anchor_props") or {}).items()}
+        identity = _identity_of(anchor_type, anchor_props)
+        obs = dict(row.get("obs_props") or {})
+        try:
+            out.append(Observation(
+                macro_kind=obs.get("macro_kind") or "",
+                severity=obs.get("severity") or "",
+                evidence=obs.get("evidence") or "",
+                rationale=obs.get("rationale") or "",
+                anchor={"type": anchor_type, "identity": identity},
+                source_job=obs.get("source_job") or "",
+                source_tool=obs.get("source_tool") or "",
+            ))
+        except Exception:  # a malformed row is skipped, never crashes the read
+            logger.warning("l0_stream: skipped a malformed observation row", exc_info=True)
+            continue
+    return out
 
 
 def read_baseurl_profiles(project_id: str, *, read_fn=None) -> list[dict]:
