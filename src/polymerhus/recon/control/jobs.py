@@ -154,7 +154,74 @@ JOBS: dict[str, JobSpec] = {
             # form's method/action/parameters, so form/body request parameters are
             # discovered (not just query params from crawled URLs) - the built-in
             # param-discovery capability the katana_parser now turns into Parameters.
-            "katana -u {target} -d 3 -jc -kf robotstxt -fx -c 10 -rl 50 "
+            # `-d 1` (operator default, 2026-07-30): depth-3 crawls of large catalogs
+            # (e.g. moodique's PrestaShop store: 116k+ events, unbounded at -d3) blow
+            # past EXEC_TIMEOUT_S so the pod never returns and no params persist. Depth
+            # is meant to be set adaptively by the configurator agent; the static
+            # default is 1 until then.
+            #
+            # 2026-07-31 (operator, katana-repo investigation, iteration 1 of 3):
+            # `-d 1` alone did not prevent the moodique OOM - depth bounds recursion,
+            # not the BREADTH of a wide same-depth catalog (thousands of near-identical
+            # product pages), so 2 new lever groups are added, targeting the real
+            # frontier-explosion root cause rather than guessing at depth:
+            #   `-ct 240s` self-terminates the crawl gracefully at a wall-clock budget
+            #     UNDER EXEC_TIMEOUT_S=300s (config.py), so katana exits 0 with whatever
+            #     it already streamed instead of our harness hard-killing it mid-run
+            #     with no output (context.WithTimeout in katana's crawl loop, output is
+            #     already streamed per-result so a graceful stop keeps a clean partial
+            #     jsonl file).
+            #   `-iqp -fsu -fst 10` (explicit defaults) stop re-crawling the same path
+            #     with different query-param values and treat a path position as a
+            #     parameter template once >=10 distinct values are seen, so
+            #     /product/1, /product/2, ... collapse to one representative instead
+            #     of fanning out per-SKU.
+            # `-pcs -pcsm simhash -pcsd 3` (page-content-similarity, explicit defaults)
+            # clusters near-duplicate rendered pages (moodique's templated PrestaShop
+            # product-page shape) and only fully crawls a budgeted 1/cluster, pruning
+            # the frontier at the source of the breadth explosion depth alone cannot
+            # bound.
+            #
+            # `-pcs`/`-pcsm`/`-pcsd` and `-kb-endpoints` were verified NOT present in
+            # the installed katana v1.6.1 (`katana -h`, confirmed the latest tagged
+            # release via `gh api repos/projectdiscovery/katana/releases/latest`) -
+            # they only existed on katana's unreleased `main` branch (`-pcs` caused an
+            # instant "flag provided but not defined" CLI failure, exec_seconds=3.8, 0
+            # assets, reproduced by hand inside the kali container). 2026-07-31: built
+            # `main`@7eaa0c2 from source inside the kali container (Go 1.25.7 arm64
+            # toolchain auto-upgraded to 1.26 per go.mod) and installed it over
+            # /root/go/bin/katana (release binary kept alongside as
+            # katana-release-v1.6.1-backup). This is a container-runtime patch only -
+            # NOT persisted in the kali Dockerfile, so it will NOT survive a container
+            # recreate; a durable fix is a separate follow-up.
+            #
+            # 2026-07-31 (iteration 2 of 3): `-kb-endpoints` enables katana's own
+            # passive REST/GraphQL/SOAP/XHR classifier, run inline on every request
+            # katana already issues while crawling (no extra round-trip). Emits
+            # `response.knowledgebase.endpoints` = {class, method, url, content_type,
+            # auth, params}. This is a WEAKER, narrower signal than httpx_reprofile's
+            # dedicated per-Endpoint probe (heuristic on path/verb/content-type only,
+            # vs. a real live re-request with auth) - being trialled here as a
+            # cheap cross-check, NOT a replacement for phase 6. Not yet wired into
+            # katana_parser; this iteration is to observe the raw output shape
+            # against moodique before deciding whether/how to map it to Endpoint.
+            # RESULT (2026-07-31, moodique manual capture, 1104 lines): ZERO
+            # `knowledgebase` entries emitted - moodique is pure SSR HTML and the
+            # classifier only sees requests katana itself issues (no headless JS
+            # execution), so no XHR/fetch JSON call was ever observed to classify.
+            # Coherent negative result, not a bug; adds no signal on this target.
+            #
+            # 2026-07-31 (operator-approved, ADOPTED as default after iteration 3
+            # of 3 on moodique): `-aff` (automatic-form-fill, EXPERIMENTAL) makes
+            # katana actively SUBMIT heuristically-filled requests to every form's
+            # action - a real mutation against the crawled site, not passive
+            # discovery (confirmed live: a `POST /it/login` + repeated
+            # `POST /it/carrello` against moodique.com). Operator explicitly
+            # accepted this mutation risk and adopted it as the standing default;
+            # revisit if a target's forms turn out to have costlier side effects
+            # (e.g. real email dispatch, payment-adjacent actions).
+            "katana -u {target} -d 1 -jc -kf robotstxt -fx -c 10 -rl 50 "
+            "-ct 240s -pcs -pcsm simhash -pcsd 3 -iqp -fsu -fst 10 -aff "
             "-ef css,scss,less,woff,woff2,ttf,eot,otf,map,"
             "png,jpg,jpeg,gif,svg,webp,ico,bmp,mp3,wav,mp4,webm,mov,pdf,zip "
             "-cos 'node_modules/|bower_components/|\\.(bak|old|swp|orig|tmp)($|\\?)' "
