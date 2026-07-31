@@ -220,14 +220,18 @@ JOBS: dict[str, JobSpec] = {
             # accepted this mutation risk and adopted it as the standing default;
             # revisit if a target's forms turn out to have costlier side effects
             # (e.g. real email dispatch, payment-adjacent actions).
-            "katana -u {target} -d 1 -jc -kf robotstxt -fx -c 10 -rl 50 "
+            # `-td` (2026-07-31): katana's own tech-detect, the IDENTICAL
+            # wappalyzergo dataset httpx_reprofile's `-td` uses - now mapped by
+            # katana_parser into the same Technology/Header nodes httpx_parser
+            # produces, so this is free signal instead of being discarded.
+            "katana -u {target} -d 1 -jc -kf robotstxt -fx -td -c 10 -rl 50 "
             "-ct 240s -pcs -pcsm simhash -pcsd 3 -iqp -fsu -fst 10 -aff "
             "-ef css,scss,less,woff,woff2,ttf,eot,otf,map,"
             "png,jpg,jpeg,gif,svg,webp,ico,bmp,mp3,wav,mp4,webm,mov,pdf,zip "
             "-cos 'node_modules/|bower_components/|\\.(bak|old|swp|orig|tmp)($|\\?)' "
             "-silent -jsonl {auth_header}"
         ),
-        produces=["BaseURL", "Endpoint", "Parameter"],
+        produces=["BaseURL", "Endpoint", "Parameter", "Header", "Technology"],
         consumes="BaseURL",
         use_auth=True,
     ),
