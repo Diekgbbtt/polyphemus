@@ -202,9 +202,17 @@ def _endpoint_baseurl(asset: dict) -> str | None:
 def prepare_endpoint_profile_assets(assets: list[dict]) -> list[dict]:
     """Prepare the endpoint-profiling pass's probe set (D16 per-endpoint split).
 
-    1. Dedup to one probe per `(baseurl, method, path-template)`, so dynamic
+    1. Skip a non-root endpoint that already carries a `profile` (2026-07-31:
+       katana_parser now pre-fills `profile` from its own crawl-time
+       content-type via the same `classify_profile` this pass uses, so
+       re-probing an endpoint katana already classified is pure redundant
+       work). The root `/` is NEVER skipped by this rule regardless of an
+       existing profile - only THIS pass mirrors onto `BaseURL.profile`
+       (`httpx_parser`), so skipping it would silently stop that mirror from
+       ever being set for hosts katana alone crawled.
+    2. Dedup to one probe per `(baseurl, method, path-template)`, so dynamic
        routes (`/users/1`, `/users/2`) cost a single request, not one each.
-    2. Materialise a synthetic root `/` Endpoint for every BaseURL lacking one,
+    3. Materialise a synthetic root `/` Endpoint for every BaseURL lacking one,
        so the root is always probed and `BaseURL.profile` (its root mirror) set.
 
     Pure + deterministic: survivors keep input order, synthesised roots follow in
@@ -227,6 +235,8 @@ def prepare_endpoint_profile_assets(assets: list[dict]) -> list[dict]:
         method = (asset.get("method") or "GET").upper()
         if path == "/":
             has_root.add(baseurl)
+        elif asset.get("profile"):
+            continue
         key = (baseurl, method, _path_template(path))
         if key in seen:
             continue
