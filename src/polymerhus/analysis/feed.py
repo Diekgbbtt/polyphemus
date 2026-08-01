@@ -87,6 +87,9 @@ class FeedStats(BaseModel):
     advanced: int = 0
     passes: int = 0
     coalesced: int = 0
+    # Follow-up passes the consumer self-triggered to drain surface that landed during an
+    # earlier pass (fix 3) - distinct from `advanced` (recon-driven) and `coalesced` (dropped).
+    continued: int = 0
     analysis_drained: bool = False
     consumer: str = "none"
     l0_assets_read: int = 0
@@ -203,11 +206,23 @@ class QueuedAnalysisFeed:
         self._advanced = 0
         self._passes = 0
         self._coalesced = 0
+        self._continued = 0
         self._idle = asyncio.Event()
         self._idle.set()
         self._last_census = None
         self._task: asyncio.Task | None = None
         self._timings = _Timings()
+        # The per-run cumulative set of analysed asset keys (incremental streaming): each
+        # pass processes only surface not already in here, so a pass is resumable rather than
+        # a monolithic re-read of the whole surface (feed-decoupling fixes 2/3).
+        self._analysed_keys: set = set()
+        # Cumulative non-vacuity: did ANY pass this run actually enter a dispatch? The drained
+        # claim needs this because a terminal pass may legitimately be a no-op (everything was
+        # already analysed by earlier passes), yet the surface WAS observed - just not by it.
+        self._observed_any = False
+        # Graceful stop (fix 4): set to stop SCHEDULING further passes without cancelling the
+        # one in flight (a hard cancel discards its in-flight chunk and its Langfuse traces).
+        self._stopping = False
 
     def start(self) -> "QueuedAnalysisFeed":
         self._task = asyncio.create_task(self._consume(), name=f"analysis-consumer-{self._run_id}")
@@ -261,6 +276,23 @@ class QueuedAnalysisFeed:
                 self._passes += 1
                 if result is not None:
                     self._last_census = getattr(result, "census", None)
+                    if getattr(self._last_census, "dispatches_entered", 0):
+                        self._observed_any = True
+                    # Fix 3 - keep draining while a NON-terminal pass is still making progress:
+                    # a pass reads the surface at its start, so any surface that landed while it
+                    # ran (the katana burst behind a slow httpx-era pass, live) is picked up by a
+                    # follow-up pass instead of waiting for the terminal one. When nothing fresh
+                    # remains the next pass returns cheaply (empty chunks) and the loop settles;
+                    # never chained off a terminal pass (recon has stopped producing surface).
+                    fresh = getattr(self._last_census, "fresh_assets_read", 0) or 0
+                    if (not cursor.terminal and fresh > 0
+                            and not self._stopping and self._queue.empty()):
+                        self._continued += 1
+                        try:
+                            self._queue.put_nowait(AnalysisCursor(
+                                project_id=self._project_id, run_id=self._run_id, job=cursor.job))
+                        except asyncio.QueueFull:  # a real cursor arrived first; it subsumes this
+                            self._continued -= 1
             except asyncio.CancelledError:
                 self._queue.task_done()
                 raise
@@ -278,6 +310,7 @@ class QueuedAnalysisFeed:
         from polymerhus.analysis.supervisor import analyse_chunked
         return await analyse_chunked(
             cursor.project_id, f"stream-{cursor.run_id}", terminal=cursor.terminal,
+            analysed_keys=self._analysed_keys,
         )
 
     async def drain(self, deadline: float = ANALYSIS_DRAIN_DEADLINE_S) -> FeedStats:
@@ -292,26 +325,33 @@ class QueuedAnalysisFeed:
         await self.advance(AnalysisCursor(
             project_id=self._project_id, run_id=self._run_id, terminal=True,
         ))
-        drained = False
         try:
             await asyncio.wait_for(self._idle.wait(), timeout=deadline)
-            census = self._last_census
-            # DQ2b: the pass must have OBSERVED something, not merely returned.
-            drained = bool(
-                census is not None
-                and getattr(census, "terminal", False)
-                and getattr(census, "l0_assets_read", 0) > 0
-                and getattr(census, "dispatches_entered", 0) > 0
-            )
         except asyncio.TimeoutError:
-            logger.warning("analysis drain deadline (%.0fs) expired for run %s; "
-                           "completing with analysis_drained=false", deadline, self._run_id)
-        finally:
-            await self.stop()
+            # Fix 4 - GRACEFUL, not a mid-pass hard cancel: a hard cancel discards the
+            # in-flight chunk's work and its Langfuse traces (the moodique cc29fd4a failure -
+            # the whole terminal pass was killed, losing the katana surface). Instead stop
+            # SCHEDULING further passes and let the in-flight one finish. The fixed deadline is
+            # a test knob (operator): a real run is not time-bounded and waits for analysis to
+            # settle - incremental passes make even that bounded, since no pass redoes work.
+            logger.warning("analysis drain deadline (%.0fs) reached for run %s; stopping new "
+                           "passes, awaiting the in-flight pass", deadline, self._run_id)
+            self._stopping = True
+            await self._idle.wait()
         census = self._last_census
+        # Drained iff the terminal pass left NO unprocessed surface AND some pass this run
+        # actually observed surface (cumulative - the terminal pass itself may be a no-op when
+        # earlier passes already covered everything).
+        drained = bool(
+            census is not None
+            and getattr(census, "terminal", False)
+            and getattr(census, "unprocessed_after", 0) == 0
+            and self._observed_any
+        )
+        await self.stop()
         return FeedStats(
             mode=self.mode, advanced=self._advanced, passes=self._passes,
-            coalesced=self._coalesced, analysis_drained=drained,
+            coalesced=self._coalesced, continued=self._continued, analysis_drained=drained,
             consumer=self._consumer_state(),
             l0_assets_read=getattr(census, "l0_assets_read", 0) or 0,
             dispatches_entered=getattr(census, "dispatches_entered", 0) or 0,

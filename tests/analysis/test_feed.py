@@ -144,6 +144,62 @@ def test_AST_DEC_04_drain_runs_a_terminal_pass_after_the_last_advance():
     assert stats.analysis_drained is True
 
 
+def test_terminal_pass_over_deadline_finishes_gracefully_not_cancelled():
+    """Regression for the moodique breadth failure (run cc29fd4a): the full-surface pass
+    was slower than the drain deadline, and the old `drain()` HARD-CANCELLED it via `stop()`,
+    so the settled (katana) surface was never analysed (feed stats: passes=1, coalesced=1,
+    consumer='dead').
+
+    Fix 4 (graceful stop): on deadline the feed stops SCHEDULING new passes but lets the
+    in-flight one finish, so the surface it is responsible for is analysed rather than lost."""
+    analysed: list[str] = []
+
+    async def pass_fn(cursor):
+        await asyncio.sleep(0.3)                       # slower than the deadline below
+        analysed.append("terminal" if cursor.terminal else "early")
+        return _census(terminal=cursor.terminal, l0_assets_read=400, dispatches_entered=3)
+
+    async def scenario():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=pass_fn).start()
+        return await feed.drain(deadline=0.05)         # far SHORTER than the pass, as in the live run
+
+    stats = _run(scenario())
+    assert "terminal" in analysed, (                   # the in-flight pass was allowed to finish
+        f"terminal pass was cancelled by the deadline instead of finishing (analysed={analysed})")
+    assert stats.analysis_drained is True              # ...and its full-surface observation counts
+
+
+def test_surface_that_lands_during_a_pass_is_drained_by_a_follow_up_pass():
+    """Fix 3: a pass reads the surface at its START, so surface that lands while it runs (the
+    katana burst behind a slow httpx-era pass, live) must be picked up by a self-triggered
+    follow-up pass - not left for a terminal pass that in the live run never got to run it."""
+    seen_fresh: list[int] = []
+    remaining = {"fresh": [40, 0]}       # a real pass (40 fresh), then its self-triggered follow-up finds nothing
+    two_passes = asyncio.Event()
+
+    async def pass_fn(cursor):
+        fresh = remaining["fresh"].pop(0) if remaining["fresh"] else 0
+        seen_fresh.append(fresh)
+        if len(seen_fresh) >= 2:
+            two_passes.set()
+        await asyncio.sleep(0.01)
+        return _census(terminal=cursor.terminal, l0_assets_read=100,
+                       fresh_assets_read=fresh, dispatches_entered=1 if fresh else 0)
+
+    async def scenario():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=pass_fn).start()
+        await feed.advance(_cursor("httpx"))     # ONE recon signal only - no drain pending yet
+        await asyncio.wait_for(two_passes.wait(), timeout=5)  # a follow-up pass must run on its own
+        return await feed.drain(deadline=5)
+
+    stats = _run(scenario())
+    # a single recon advance drove TWO passes: the fresh=40 pass self-triggered a follow-up to
+    # drain any surface that could have landed during it (which found nothing, so the loop
+    # settled). continued counts the self-trigger - distinct from the one recon `advanced`.
+    assert stats.continued >= 1, f"non-terminal pass did not self-trigger a drain (seen_fresh={seen_fresh})"
+    assert seen_fresh[0] == 40 and seen_fresh[1] == 0
+
+
 def test_AST_DEC_04b_a_terminal_pass_that_observed_nothing_does_not_claim_drained():
     """The bar that makes the guarantee falsifiable: every layer beneath the feed is
     fail-open, so a pass that read an empty surface must not claim convergence."""

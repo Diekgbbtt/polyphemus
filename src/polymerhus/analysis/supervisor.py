@@ -404,6 +404,14 @@ class PassCensus(BaseModel):
     terminal: bool = False
     error: str | None = None
 
+    # Incremental streaming (#feed-decoupling): a pass processes only the surface not
+    # already analysed in a PRIOR pass of the same run (`fresh_assets_read`), and reports
+    # how much surface is STILL unprocessed after it (`unprocessed_after`). `unprocessed_after
+    # == 0` on a terminal pass is what now proves the drain - not that this pass happened to
+    # read >0, which a cumulative-but-already-analysed terminal pass legitimately would not.
+    fresh_assets_read: int = 0
+    unprocessed_after: int = 0
+
     # The pass's own wall-clock window, stamped by the pass around its whole body
     # (#34 AST-DEC-09). This is the ONE authoritative measurement of how long an
     # analyser pass occupies, and it is recorded here - in the value the pass
@@ -486,6 +494,7 @@ async def analyse_chunked(
     store=None,
     observe: bool = True,
     terminal: bool = False,
+    analysed_keys: set | None = None,
 ) -> "PassResult":
     """The CHUNK-FED analyser (#34, completed by #48): read the live L0 surface,
     stream it into chunks, and dispatch one work order per (chunk, role) pair
@@ -524,6 +533,18 @@ async def analyse_chunked(
     _started_at = _utc_now_iso()
 
     assets = assets_fn(project_id)
+    # Incremental streaming: process only surface not already analysed in a prior pass of
+    # this run (`analysed_keys` is the caller-owned, per-run cumulative set). This is what
+    # makes a slow full-surface pass RESUMABLE instead of monolithic - a re-run or a
+    # follow-on pass picks up the fresh surface rather than redoing (and re-costing) what
+    # earlier passes committed. `analysed_keys=None` keeps the legacy whole-surface behaviour
+    # for any non-feed caller. The cumulative-equals-batch guarantee (L1D-23) is preserved
+    # as a UNION over passes: every asset is analysed in exactly one pass, so by the terminal
+    # pass the union covers the settled surface.
+    def _key(a):
+        return (a.type, tuple(sorted((a.identity or {}).items())))
+
+    fresh = [a for a in assets if _key(a) not in analysed_keys] if analysed_keys is not None else list(assets)
     # The triager's adversarial observations ride the chunk beside the assets they
     # anchor to (#9): the mechanism-typist and the data_modeller need them. Without
     # this the chunk carried NO observations, so the per-asset/per-origin insight
@@ -538,13 +559,17 @@ async def analyse_chunked(
     from polymerhus.recon.domain.types import JobSpec
     pseudo_job = JobSpec(tool=f"stream-{run_id}", skill="analysis",
                          command_template="", produces=[], consumes="BaseURL")
-    chunks = chunks_for_job(pseudo_job, assets, observations)
+    chunks = chunks_for_job(pseudo_job, fresh, observations)
     if not chunks:
-        # Valid empty: nothing to judge. Recorded as observed, so a drain over an
-        # empty surface is distinguishable from a drain that never read anything.
+        # Valid empty: nothing FRESH to judge. A terminal pass reaching here has, by
+        # definition, no unprocessed surface left (analysed_keys already covers it), so it
+        # legitimately confirms the drain without redoing prior work. `unprocessed_after=0`
+        # says exactly that; `l0_assets_read` stays the full surface for continuity with the
+        # logs, while `fresh_assets_read=0` records that this pass added nothing new.
         return PassResult(
             export=AnalyserExport(),
-            census=PassCensus(l0_assets_read=len(assets), terminal=terminal,
+            census=PassCensus(l0_assets_read=len(assets), fresh_assets_read=0,
+                              unprocessed_after=0, terminal=terminal,
                               **_window(_t0, _started_at)),
         )
 
@@ -623,8 +648,15 @@ async def analyse_chunked(
             "recon_run_id": run_id.removeprefix("stream-"),
         },
     ))
+    # Commit the fresh surface into the caller's cumulative set now that its chunks ran, so
+    # the next pass skips it. Done AFTER run_supervisor so a raised pass leaves the surface
+    # unprocessed (it will be retried), never silently marked done.
+    if analysed_keys is not None:
+        analysed_keys.update(_key(a) for a in fresh)
     census = PassCensus(
-        l0_assets_read=len(assets), chunks_built=len(chunks),
+        l0_assets_read=len(assets), fresh_assets_read=len(fresh),
+        unprocessed_after=0,  # this pass consumed every fresh asset it read (union invariant)
+        chunks_built=len(chunks),
         dispatches_scheduled=len(schedule), dispatches_entered=entered["n"],
         aggregates_written=totals["aggregates"], systems_written=totals["systems"],
         data_items_written=totals["data_items"],
