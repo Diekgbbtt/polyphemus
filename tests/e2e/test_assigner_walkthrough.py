@@ -13,14 +13,14 @@ from polymerhus.analysis.analyser_types import (
     ServiceProposal,
 )
 from polymerhus.analysis.assigner import assign, make_assigner_body
-from polymerhus.analysis.chunking import admit_for_role, chunks_for_job, profiled_origins
+from polymerhus.analysis.chunking import admit_for_role, chunks_for_job
 from polymerhus.analysis.l1_types import L0Ref
 from polymerhus.recon.domain.types import AssetDelta, JobSpec
 
 JOB = JobSpec(tool="katana", skill="crawl", command_template="t",
               produces=["BaseURL", "Endpoint", "Technology"], consumes="BaseURL")
-A = "https://a"   # profiled
-B = "https://b"   # un-profiled
+A = "https://a"
+B = "https://b"
 
 INVENTORY = {
     "services": ["checkout", "fulfilment"], "systems": [], "data_items": [],
@@ -39,10 +39,10 @@ def _delta():
     return [
         _asset("BaseURL", baseurl=A), _asset("BaseURL", baseurl=B),
         _asset("Endpoint", path="/orders/42", method="GET", baseurl=A),
-        _asset("Endpoint", path="/ship/7", method="GET", baseurl=B),   # UNPROFILED origin
+        _asset("Endpoint", path="/ship/7", method="GET", baseurl=B),
         _asset("Technology", name="nginx"),
         _asset("Parameter", name="q", baseurl=A),
-        _asset("Parameter", name="r", baseurl=B),                       # gated out
+        _asset("Parameter", name="r", baseurl=B),
         _asset("Header", name="X-Api"),
         _asset("Secret", key="tok"),
         _asset("Subdomain", host="s.a"),
@@ -72,9 +72,7 @@ def _proposal():
 
 
 def _build_chunk():
-    profiled = profiled_origins([{"baseurl": A, "profile": "restapi"}, {"baseurl": B, "profile": None}])
-    assert profiled == frozenset({A})
-    chunks = chunks_for_job(JOB, _delta(), profiled=profiled, barrier=False)
+    chunks = chunks_for_job(JOB, _delta())
     assert len(chunks) == 1
     return chunks[0]
 
@@ -82,12 +80,11 @@ def _build_chunk():
 def test_E1_katana_delta_through_admission_to_assignment():
     chunk = _build_chunk()
 
-    # --- the stream: every type, one chunk, only the unprofiled Parameter withheld
+    # --- the stream: every type, one chunk (the profile gate is REMOVED, #48 -
+    # nothing is withheld on that basis any more)
     assert chunk.chunk_id == "katana:0"
-    assert len(chunk.assets) == 9                       # 10 minus r@B
-    assert chunk.flagged is False
-    assert all(a.identity.get("name") != "r" for a in chunk.assets)
-    # the unprofiled Endpoint is STREAMED (D1)
+    assert len(chunk.assets) == 10
+    assert any(a.identity.get("name") == "r" for a in chunk.assets)
     assert {a.identity["path"] for a in chunk.assets if a.type == "Endpoint"} == {"/orders/42", "/ship/7"}
     assert any(a.type == "Subdomain" for a in chunk.assets)  # pre-HTTP streamed (D2)
 

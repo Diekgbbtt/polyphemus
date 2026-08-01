@@ -358,7 +358,7 @@ def test_C31_empty_surface_yields_an_empty_export_without_dispatching():
 
     export = run_analyser_chunked(
         "p1", "r1", invoke_fn=boom,
-        assets_fn=lambda pid: [], profiles_fn=lambda pid: [],
+        assets_fn=lambda pid: [],
         inventory_fn=lambda pid: {"services": []}, observe=False,
     )
     assert export.aggregates_written == 0

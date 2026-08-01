@@ -36,7 +36,7 @@ from polymerhus.analysis.l1_types import (
 logger = logging.getLogger(__name__)
 
 # Cap the stale-pool slice rendered into the curation prompt so a huge unassigned
-# pool cannot blow the model's context window (mirrors pod._MAX_L0_NODES).
+# pool cannot blow the model's context window.
 _MAX_STALE_IN_PROMPT = 200
 
 

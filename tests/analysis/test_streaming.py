@@ -216,8 +216,14 @@ def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(m
                       source_job="triager", source_tool="triager")
     asyncio.run(supervisor.analyse_chunked(
         "p", "run1",
+        # `default_invoke_fn()` resolves the real provider config EAGERLY, as a
+        # parameter default, not lazily on first call - so even though the empty-
+        # chunks spy short-circuits before any LLM invocation, a bare `invoke_fn`
+        # would still trip live provider resolution while building the call. Every
+        # collaborator must be injectable (CODING_STANDARD.md section 6); a no-op
+        # is enough since this test's subject is observation threading, not invocation.
+        invoke_fn=lambda messages: None,
         assets_fn=lambda pid: [AssetDelta(type="Endpoint", identity={"path": "/x", "baseurl": "https://a"})],
-        profiles_fn=lambda pid: [],
         observations_fn=lambda pid: [obs],
         observe=False,
     ))
