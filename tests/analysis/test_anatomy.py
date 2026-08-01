@@ -103,7 +103,7 @@ def test_triple_lands_on_spine_observation_and_interfaceB():
     assert len(res.probes) == 1
     probe = res.probes[0]
     assert probe.origin == "anatomy_skill" and probe.skill_id == "webpage_profile"
-    assert probe.scope.service_id == "svc-1" and probe.requester_id == "req-1"
+    assert probe.scope.unit_id == "svc-1" and probe.requester_id == "req-1"
     assert probe.job == "steel_crawl"  # the deeper probe rides the Steel/CDP path
 
     # leg 1 (commit): AST-MODEL-02 - the web-presentation classifications land as

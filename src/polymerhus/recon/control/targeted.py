@@ -35,14 +35,20 @@ from polymerhus.app.clients.pg import TARGETED_PHASE
 
 class ReconScope(BaseModel):
     """What a targeted request points at. `targets` are concrete L0 handles the
-    probe runs against (URLs/hosts, or already-shaped asset dicts); `service_id`
-    names the L1 Service the need arose from; `auth_context` (optional) carries
-    the per-role credentials a skill probe needs (interface-B `auth_context?`);
-    `note` (optional) records WHY the probe was raised (e.g. an anatomy skill's
-    fingerprint-only rationale + the spine slot(s) it must settle) so the routed
-    result knows what to refine."""
+    probe runs against (URLs/hosts, or already-shaped asset dicts); `unit_id`
+    names the L1 **testable unit** the need arose from - a kind-qualified
+    identity string `"<kind>:<key>"` (`"Service:orders"`, or a System's
+    `"System:<kind>/<discriminator>"`); an unprefixed value is read as a Service
+    slug for back-compat. It carries the testable-unit identity only, never a
+    fault-class (hunt back-edges join the fault in the hunt store via
+    `correlation_id`, keeping this seam fault-agnostic). `auth_context` (optional)
+    carries the per-role credentials a skill probe needs (interface-B
+    `auth_context?`); `note` (optional) records WHY the probe was raised (e.g. an
+    anatomy skill's fingerprint-only rationale + the spine slot(s) it must settle,
+    or a hunt's yellow `insufficient-evidence` gap) so the routed result knows
+    what to refine."""
 
-    service_id: str | None = None
+    unit_id: str | None = None
     targets: list[str | dict] = Field(default_factory=list)
     auth_context: dict | None = None
     note: str | None = None
@@ -56,7 +62,7 @@ class AnalyserReconRequest(BaseModel):
 
     job: str
     scope: ReconScope = Field(default_factory=ReconScope)
-    origin: Literal["analyser", "anatomy_skill"] = "analyser"
+    origin: Literal["analyser", "anatomy_skill", "hunting"] = "analyser"
     skill_id: str | None = None
     correlation_id: str = Field(default_factory=lambda: uuid.uuid4().hex)
     requester_id: str

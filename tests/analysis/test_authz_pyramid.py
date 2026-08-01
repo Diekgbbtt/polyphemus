@@ -25,7 +25,7 @@ def test_plan_probes_one_per_role_with_selected_creds():
     assert len(probes) == 3
     for p in probes:
         assert p.origin == "anatomy_skill" and p.skill_id == "authorization_pyramid"
-        assert p.scope.service_id == "orders" and p.scope.targets == ["https://shop/api/Orders/7"]
+        assert p.scope.unit_id == "orders" and p.scope.targets == ["https://shop/api/Orders/7"]
         assert p.requester_id == "req-1" and p.scope.note  # self-describing
     by_role = {p.scope.note.split("role '")[1].rstrip("'"): p for p in probes}
     # each probe carries THAT role's SELECTED credentials

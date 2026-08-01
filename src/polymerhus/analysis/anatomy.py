@@ -145,7 +145,7 @@ def _webpage_probe(service_id: str | None, base_url: str | None, requester_id: s
 
     return AnalyserReconRequest(
         job=_DEEP_PROBE_JOB,
-        scope=ReconScope(service_id=service_id, targets=[base_url] if base_url else [], note=note),
+        scope=ReconScope(unit_id=service_id, targets=[base_url] if base_url else [], note=note),
         origin="anatomy_skill",
         skill_id=_SKILL_ID,
         requester_id=requester_id,
@@ -391,7 +391,7 @@ def plan_authz_probes(
         probes.append(AnalyserReconRequest(
             job=_AUTHZ_PROBE_JOB,
             scope=ReconScope(
-                service_id=service_slug, targets=[action], auth_context=creds or None,
+                unit_id=service_slug, targets=[action], auth_context=creds or None,
                 note=f"authz inverse-pyramid probe: '{action}' as role '{role}'",
             ),
             origin="anatomy_skill", skill_id=_AUTHZ_SKILL_ID, requester_id=requester_id,

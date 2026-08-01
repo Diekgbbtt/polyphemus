@@ -63,7 +63,7 @@ def test_registry_carries_correlation_and_is_retrievable(run_ctx):
 
     req = AnalyserReconRequest(
         job="graphql-cop", requester_id="analyser-42", origin="analyser", correlation_id=cid,
-        scope=ReconScope(service_id="sales-analysis", targets=["https://a/graphql"]),
+        scope=ReconScope(unit_id="sales-analysis", targets=["https://a/graphql"]),
     )
     result = _run(request_targeted_recon(req, rid, pid, run_job=fake_run_job))
     assert result.status == "success"

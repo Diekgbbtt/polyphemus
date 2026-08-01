@@ -56,10 +56,10 @@ def test_contract_anatomy_skill_origin_carries_skill_id():
     req = AnalyserReconRequest(
         job="katana", requester_id="skill-run-1", origin="anatomy_skill",
         skill_id="webpage_profile",
-        scope=ReconScope(service_id="sales-analysis", targets=["https://a/dash"]),
+        scope=ReconScope(unit_id="sales-analysis", targets=["https://a/dash"]),
     )
     assert req.origin == "anatomy_skill" and req.skill_id == "webpage_profile"
-    assert req.scope.service_id == "sales-analysis"
+    assert req.scope.unit_id == "sales-analysis"
 
 
 # --- AST-RECONREQ-01: runs exactly one job outside the barrier, returns result ---
