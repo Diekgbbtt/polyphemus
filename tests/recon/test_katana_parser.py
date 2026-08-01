@@ -100,7 +100,7 @@ def test_katana_form_extraction_emits_body_parameters():
     from polymerhus.recon.domain.parsers.katana_parser import parse
     line = (
         '{"request":{"endpoint":"https://h/","method":"GET"},'
-        '"response":{"status_code":200,"content_type":"text/html",'
+        '"response":{"status_code":200,"headers":{"Content-Type":"text/html"},'
         '"forms":[{"method":"POST","action":"https://h/login",'
         '"parameters":["user","pass"]}]}}\n'
     )
@@ -109,6 +109,19 @@ def test_katana_form_extraction_emits_body_parameters():
     assert ("user", "body") in params
     assert ("pass", "body") in params
     assert any(d.type == "Endpoint" and d.identity["path"] == "/login" for d in out)
+
+
+def test_content_type_read_from_response_headers():
+    # Issue #52 regression: katana's response object has no top-level
+    # content_type key - it only appears as response.headers["Content-Type"].
+    from polymerhus.recon.domain.parsers.katana_parser import parse
+    line = (
+        '{"request":{"endpoint":"https://h/page","method":"GET"},'
+        '"response":{"status_code":200,"headers":{"Content-Type":"application/json"}}}\n'
+    )
+    out = parse(line)
+    endpoint = next(d for d in out if d.type == "Endpoint")
+    assert endpoint.props["content_type"] == "application/json"
 
 
 def test_katana_get_form_parameters_are_query_position():

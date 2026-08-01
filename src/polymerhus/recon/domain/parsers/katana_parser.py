@@ -4,7 +4,10 @@ This parser targets katana's `-jsonl` output shape (one JSON object per
 crawled request):
 
     {"timestamp":..,"request":{"endpoint":"https://host/path?x=1","method":"GET"},
-     "response":{"status_code":200,"content_type":"text/html"}}
+     "response":{"status_code":200,"headers":{"Content-Type":"text/html"}}}
+
+Note: katana's response object has no top-level `content_type` key (confirmed
+live, issue #52) - content-type sits in `response.headers["Content-Type"]`.
 
 Each line yields a `BaseURL` (scheme://host), an `Endpoint` (path/method under
 that BaseURL) with a `HAS_ENDPOINT` edge, and one `Parameter` per query-string
@@ -39,7 +42,10 @@ def parse(stdout: str) -> list[AssetDelta]:
         if not isinstance(response, dict):
             response = {}
         status_code = response.get("status_code")
-        content_type = response.get("content_type")
+        response_headers = response.get("headers") or {}
+        if not isinstance(response_headers, dict):
+            response_headers = {}
+        content_type = response_headers.get("Content-Type") or response_headers.get("content-type")
 
         # Crawl-time pre-fill (2026-07-31): the SAME pure classifier
         # httpx_reprofile uses, applied to katana's own content-type instead of
@@ -74,9 +80,8 @@ def parse(stdout: str) -> list[AssetDelta]:
         # same nodes regardless of which one discovered them.
         if url_deltas:
             baseurl_identity = url_deltas[0].identity
-            headers = response.get("headers") or {}
-            if isinstance(headers, dict):
-                for name, value in headers.items():
+            if response_headers:
+                for name, value in response_headers.items():
                     if not name or not isinstance(name, str):
                         continue
                     deltas.append(

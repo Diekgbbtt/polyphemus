@@ -1,3 +1,3 @@
-{"timestamp":"2026-07-03T10:00:00Z","request":{"method":"GET","endpoint":"https://app.example.com/dashboard"},"response":{"status_code":200,"content_type":"text/html"}}
-{"timestamp":"2026-07-03T10:00:01Z","request":{"method":"GET","endpoint":"https://app.example.com/search?id=1&q=x"},"response":{"status_code":200,"content_type":"text/html; charset=utf-8"}}
+{"timestamp":"2026-07-03T10:00:00Z","request":{"method":"GET","endpoint":"https://app.example.com/dashboard"},"response":{"status_code":200,"headers":{"Content-Type":"text/html"}}}
+{"timestamp":"2026-07-03T10:00:01Z","request":{"method":"GET","endpoint":"https://app.example.com/search?id=1&q=x"},"response":{"status_code":200,"headers":{"Content-Type":"text/html; charset=utf-8"}}}
 NOT JSON
