@@ -538,6 +538,15 @@ def assign(
         raw, existing_slugs=existing_slugs, endpoints=admitted, bar=bar,
     )
     st = outcome.stats
+    # #18/observability: persist the RAW proposals + their confidences (and the bar they were
+    # judged against) to Langfuse - otherwise a withheld aggregate leaves no inspectable trace
+    # and "did the Assigner withhold on confidence?" is unanswerable post-hoc (moodique cc29fd4a).
+    from polymerhus.app.observability import trace_generation
+    trace_generation("assigner-aggregates", input={"chunk": chunk.chunk_id, "bar": bar},
+                     output={"proposed": [{"service_slug": getattr(a, "service_slug", None),
+                                           "confidence": getattr(a, "confidence", None)}
+                                          for a in (raw.aggregates or [])],
+                             "stats": st.model_dump()})
     # ONE structured line per chunk. A zero-kept step now names its cause instead of
     # looking identical to a model that found nothing.
     logger.info(

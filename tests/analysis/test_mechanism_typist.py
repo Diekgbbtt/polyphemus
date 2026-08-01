@@ -313,18 +313,23 @@ def test_webpresentation_singleton_duplicate_and_orphan_edge_reconciled():
     __singleton__ carries the service edge, catalogue::homepage has zero edges).
 
     Correct behaviour: one WebPresentation per (service, cluster) and the edge hits the
-    discriminated node - uniqueness + coherent service-linking, the two properties #53 must
-    guarantee."""
+    discriminated node with EXPOSED_VIA - uniqueness + coherent service-linking, the two
+    properties #53 must guarantee.
+
+    Also guards the rel: the linking call sometimes mislabels a WebPresentation edge as
+    FRONTED_BY (perimeter semantics, observed live on moodique 73c42969) - a presentation
+    channel is EXPOSED_VIA, never FRONTED_BY, so the rel is coerced."""
     desc = "PrestaShop-rendered HTML homepage at GET / (redirects to /it/)."
     chunk = _service_chunk(_endpoint("/"))
     systems = L1DeltaBatch(systems=[SystemProposal(
         kind="WebPresentation", discriminator="catalogue_and_discovery::homepage",
         props={"description": desc, "pages": ["/"]})])
-    # linking call co-produces the SAME system at the default discriminator + an edge to it
+    # linking call co-produces the SAME system at the default discriminator + a MISLABELLED
+    # (FRONTED_BY) edge to it - both the discriminator drift and the wrong rel must be repaired.
     link = L1DeltaBatch(
         systems=[SystemProposal(kind="WebPresentation", props={"description": desc})],  # discriminator=__singleton__
         system_edges=[SystemEdgeProposal(
-            service_slug="catalogue_and_discovery", kind="WebPresentation", rel="EXPOSED_VIA")])  # discriminator=__singleton__
+            service_slug="catalogue_and_discovery", kind="WebPresentation", rel="FRONTED_BY")])  # discriminator=__singleton__
     invoke = _Recorder(systems=systems, edges=link)
 
     out = type_mechanisms(chunk, invoke_fn=invoke, inventory={"services": ["catalogue_and_discovery"]},
@@ -336,6 +341,7 @@ def test_webpresentation_singleton_duplicate_and_orphan_edge_reconciled():
     assert wps[0].props.get("pages") == ["/"]                            # location index survives
     assert len(out.system_edges) == 1
     assert out.system_edges[0].discriminator == "catalogue_and_discovery::homepage"  # edge snapped to real node
+    assert out.system_edges[0].rel == "EXPOSED_VIA"                      # perimeter rel coerced to exposure
 
 
 def test_N9_idempotent_same_inputs_same_batch():

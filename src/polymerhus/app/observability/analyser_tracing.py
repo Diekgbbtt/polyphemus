@@ -85,6 +85,29 @@ def trace_reasoning(prose: str, *, call: str = "reason") -> None:
         logger.debug("trace_reasoning could not attach %r reasoning", call, exc_info=True)
 
 
+def trace_generation(call: str, *, input=None, output=None) -> None:
+    """Persist a proposer's STRUCTURED generation (its input slice + the batch it returned,
+    incl. per-item confidences) as a child `generation` observation under the current agent
+    span.
+
+    Closes the observability hole surfaced on moodique (run cc29fd4a): a proposer's structured
+    output - the Assigner's aggregate proposals and their confidences, the typist's systems/edges
+    - reached Langfuse only as anonymous, output-less LLM runs, so a post-hoc question like "did
+    the Assigner withhold on confidence?" was unanswerable from the traces. `trace_reasoning`
+    overwrites the AGENT span's own input/output (used for free-text prose), so structured output
+    rides its OWN nested observation instead of clobbering it. Fail-open (never raises / perturbs
+    the proposer); no-op when there is no active span. `input`/`output` must be JSON-serialisable."""
+    try:
+        from langfuse import get_client
+
+        with get_client().start_as_current_observation(
+            name=call, as_type="generation", input=input,
+        ) as gen:
+            gen.update(output=output)
+    except Exception:
+        logger.debug("trace_generation could not record %r", call, exc_info=True)
+
+
 def flush_analyser_traces() -> None:
     """Flush pending spans (a run worker may exit before the background exporter fires).
     `flush`, never `shutdown` - the client is a process-wide singleton later runs reuse."""

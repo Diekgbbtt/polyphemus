@@ -152,10 +152,22 @@ def _reconcile_webpresentation(systems: list, edges: list) -> tuple[list, list]:
 
     repaired_edges = []
     for e in edges:
-        if e.kind == "WebPresentation" and (e.discriminator or _SINGLETON) not in known_disc:
-            candidates = by_service.get(e.service_slug, [])
-            if len(candidates) == 1:
-                e = e.model_copy(update={"discriminator": candidates[0]})
+        if e.kind == "WebPresentation":
+            update: dict = {}
+            # snap a singleton/blank/unknown discriminator onto the real per-cluster node of
+            # the SAME service (unambiguous single-cluster service only).
+            if (e.discriminator or _SINGLETON) not in known_disc:
+                candidates = by_service.get(e.service_slug, [])
+                if len(candidates) == 1:
+                    update["discriminator"] = candidates[0]
+            # a WebPresentation is the channel a service is EXPOSED_VIA, never a perimeter
+            # FRONTED_BY / ROUTED_BY / PROTECTED_BY it: the linking call sometimes mislabels the
+            # rel (observed live: FRONTED_BY), so coerce it - the node is a presentation surface,
+            # not an intermediary. Keeps the edge SEMANTICS robust to the second call's wording.
+            if e.rel != "EXPOSED_VIA":
+                update["rel"] = "EXPOSED_VIA"
+            if update:
+                e = e.model_copy(update=update)
         repaired_edges.append(e)
     return kept_systems, repaired_edges
 
@@ -457,6 +469,17 @@ def type_mechanisms(
          HumanMessage(content=_linking_prompt(prose, systems_batch, primary, secondary, owned, inventory))],
         schema=L1DeltaBatch,
     )) or L1DeltaBatch()
+
+    # #18/observability: persist the typist's STRUCTURED output (systems + edges, with each
+    # system's kind/discriminator) alongside its reflection prose - otherwise the WHAT it
+    # proposed (not just the WHY) leaves no inspectable trace (moodique cc29fd4a).
+    from polymerhus.app.observability import trace_generation
+    trace_generation("typist-systems-and-edges",
+                     output={"systems": [{"kind": s.kind, "discriminator": s.discriminator}
+                                         for s in (list(systems_batch.systems) + list(link_batch.systems))],
+                             "edges": [{"service_slug": e.service_slug, "kind": e.kind,
+                                        "discriminator": e.discriminator, "rel": e.rel}
+                                       for e in (link_batch.system_edges or [])]})
 
     merged_systems = _merge_systems(systems_batch.systems, link_batch.systems)
     # #53: the two structured calls disagree on the WebPresentation discriminator; deterministically
