@@ -56,8 +56,11 @@ The resolved rule that a mechanism classification (how the UI renders, which API
 (Resolved: the operator corrected this twice; storing `rendering_model` on a Service is a category error, so those handles are System-side, reached by an edge.)
 
 **WebPresentation**:
-The single System `kind` for the web-presentation channel, carrying `rendering_model` (CSR/SSR/...) and `navigation_model` (SPA/MPA/Hybrid) as two ontologically independent props.
-(Resolved: replaced the deleted `RENDERED_BY` edge and the `RenderingSystem_*` kinds; a Service reaches it via `EXPOSED_VIA`, exactly as it reaches a REST or GraphQL API.)
+The System `kind` for the web-presentation channel: the navigable `text/html` PAGES a Service renders (never its API/XHR/JSON responses).
+It is PER (service, rendered-page CLUSTER), not a singleton (#53, operator-ratified 2026-08-01): pages are grouped by rendered similarity (title/structure/size) into clusters - a templated product-page set or a single not-found page is ONE cluster, not many - and each (service, cluster) is one node.
+Its `discriminator` is `<business_function_slug>::<cluster>`, nesting per-page within the per-service key (superseding the service-only discriminator of the anatomy path, #41); the cluster's member page paths ride a `pages` prop (the location index the downstream agent uses to find where a Service is exposed).
+It still carries `rendering_model` (CSR/SSR/...) and `navigation_model` (SPA/MPA/Hybrid) as two ontologically independent props (Phase-B deepening).
+(Resolved: replaced the deleted `RENDERED_BY` edge and the `RenderingSystem_*` kinds; a Service reaches it via `EXPOSED_VIA`, exactly as it reaches a REST or GraphQL API. For a CSR+SPA target the served pages are one shell, so it stays ONE node carrying its client-side `pages`/route refs until steel DOM-delta (#51) supplies distinct per-view evidence.)
 
 **kind**:
 A System's intrinsic identity attribute, validated against the fixed `SYSTEM_KINDS` constant.

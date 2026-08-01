@@ -132,11 +132,21 @@ def _make_proposer(role: Role, body: ProposerBody | None) -> Callable[[Superviso
     A step carrying content reports `written`, not `empty` (#34): the receipt trail
     is what the supervisor sequences on, so a written step misreporting itself as
     empty makes that trail lie."""
+    from polymerhus.app.observability import analyser_span
 
     def proposer(state: SupervisorState) -> dict:
         dispatch = state["dispatch"]
         try:
-            cargo = body(dispatch, state) if body is not None else None
+            # #18/#9: a session-correlated Langfuse agent span per dispatch (bootstrapper
+            # pattern) so this proposer's generations + reasoning group under one named,
+            # run-correlated span. The session id is the BARE recon run (strip the
+            # `stream-` analyser prefix) so these spans land on the SAME recon+analysis
+            # timeline as the graph's own traces (which analyse_chunked keys off the bare
+            # run). Fail-open (nullcontext when tracing is unavailable).
+            with analyser_span(dispatch.role, project_id=state.get("project_id", ""),
+                               run_id=state.get("run_id", "").removeprefix("stream-"),
+                               phase=dispatch.phase, dispatch_id=dispatch.dispatch_id):
+                cargo = body(dispatch, state) if body is not None else None
             deltas = cargo if isinstance(cargo, L1DeltaBatch) else None
             env = ProposalEnvelope(
                 dispatch_id=dispatch.dispatch_id, role=dispatch.role,

@@ -46,10 +46,18 @@ _SINGLETON = "__singleton__"
 # critical-thinking (claim/evidence/assumption/fallacy) and define/debug-hypothesis.
 _REFLECTION_STEPS = [
     "ORIENT: what technical mechanisms could this batch of surface plausibly evidence? "
-    "Read each asset together with its adversarial observation insight.",
+    "Read each asset with its adversarial observation insight AND its response evidence "
+    "(content type, title, status, server). What a path SERVES outweighs what its name "
+    "suggests: an API-looking path returning text/html is a client-routed web-presentation "
+    "view, not a REST endpoint.",
     "HYPOTHESISE: for each asset+observation, define candidate hypotheses of the form "
     "'this asset impacts a System of kind K - newly-defined, OR extending currently-defined "
     "System X'. Hold more than one candidate kind for an ambiguous asset.",
+    "CLUSTER PAGES (WebPresentation): among the NAVIGABLE text/html pages only (content_type "
+    "text/html; exclude API/XHR/JSON responses and static assets), group them by rendered "
+    "similarity (shared title/structure/size) into page CLUSTERS - a templated set (e.g. many "
+    "product pages) or a single not-found/error page is ONE cluster, not many. Note which "
+    "service each cluster serves; each (service, cluster) is one WebPresentation.",
     "VERIFY / FALSIFY: test each hypothesis against the evidence actually present. A "
     "framework fingerprint alone is NOT the mechanism-in-use; separate the claim from its "
     "support; decide new-vs-extend against the currently-defined Systems listed.",
@@ -103,6 +111,53 @@ def _merge_systems(primary, fallback):
         elif not (out[k].props or {}).get("description") and (s.props or {}).get("description"):
             out[k] = s
     return list(out.values())
+
+
+def _reconcile_webpresentation(systems: list, edges: list) -> tuple[list, list]:
+    """Deterministically enforce the two #53 invariants a two-call typist cannot -
+    WebPresentation UNIQUENESS and coherent service-LINKING - and return the repaired
+    (systems, edges).
+
+    The fault (moodique 6c21005b): the SYSTEMS call emits the ratified per-cluster node
+    (`<service>::<cluster>`, with `pages`) while the LINKING call independently re-describes
+    the same presentation at the DEFAULT `__singleton__` discriminator and points its edge
+    THERE - the 'copy the discriminator VERBATIM' prompt instruction is unreliable across two
+    separate structured calls. `_merge_systems` keys on (kind, discriminator), so the singleton
+    survives as a DUPLICATE and the real per-cluster node is left ORPHANED (the edge hangs off
+    the singleton). Per the #53 model a WebPresentation is ALWAYS per (service, cluster), so a
+    `__singleton__` WebPresentation is never a legitimate node when a discriminated one exists.
+
+    Repair (only when >=1 discriminated WebPresentation exists - otherwise the batch under-
+    clustered, a separate A.2 concern, and is left untouched):
+      * DROP every `__singleton__` WebPresentation system (uniqueness); its description is a
+        re-statement of a discriminated node's.
+      * SNAP every WebPresentation edge whose discriminator is `__singleton__`/blank/unknown to
+        the discriminated node of its OWN service - matched by the `<service_slug>::` prefix the
+        discriminator is defined on - but ONLY when exactly one such node exists (an unambiguous
+        single-cluster service). A multi-cluster service whose edge already names a real cluster
+        is left as the LLM wrote it; an ambiguous singleton edge is left for A.2 rather than
+        guessed."""
+    disc_wp = [s for s in systems
+               if s.kind == "WebPresentation" and (s.discriminator or _SINGLETON) != _SINGLETON]
+    if not disc_wp:
+        return systems, edges
+    known_disc = {s.discriminator for s in disc_wp}
+    # by owning service (the discriminator is '<service_slug>::<cluster>')
+    by_service: dict[str, list[str]] = defaultdict(list)
+    for d in known_disc:
+        by_service[d.split("::", 1)[0]].append(d)
+
+    kept_systems = [s for s in systems
+                    if not (s.kind == "WebPresentation" and (s.discriminator or _SINGLETON) == _SINGLETON)]
+
+    repaired_edges = []
+    for e in edges:
+        if e.kind == "WebPresentation" and (e.discriminator or _SINGLETON) not in known_disc:
+            candidates = by_service.get(e.service_slug, [])
+            if len(candidates) == 1:
+                e = e.model_copy(update={"discriminator": candidates[0]})
+        repaired_edges.append(e)
+    return kept_systems, repaired_edges
 
 
 def _known_kinds() -> frozenset[str]:
@@ -162,6 +217,26 @@ def _asset_ref(asset) -> str:
 
 # --- prompt construction ------------------------------------------------------
 
+# Non-identity props that are pipeline plumbing, not adversarial evidence: kept off
+# the prompt so the surface stays no-noise. Everything else on the props bag (an
+# Endpoint's content_type/title/status_code/server/content_length, a Technology's
+# categories, ...) IS discriminative and must reach the typist.
+_PROMPT_NOISE_PROPS = frozenset({"profile", "source"})
+
+
+def _asset_props_summary(props: dict) -> str:
+    """The asset's non-identity props that CARRY mechanism-typing signal (grilled #9
+    fix): the mechanism a path evidences is discriminated by what it actually SERVES -
+    content_type, title, status_code, server - NOT by its path string alone. Rendering
+    only the identity made the typist infer a System's kind from path nouns (an
+    assumption, not evidence): an API-looking path returning `text/html` is a
+    client-routed web-presentation view, indistinguishable from a REST endpoint once
+    content_type is dropped. Pipeline plumbing is filtered out to keep the prompt
+    no-noise; the keys are sorted for a deterministic prompt."""
+    meaningful = {k: v for k, v in (props or {}).items() if k not in _PROMPT_NOISE_PROPS}
+    return ", ".join(f"{k}={v}" for k, v in sorted(meaningful.items()))
+
+
 def _asset_observation_paragraphs(chunk: Chunk) -> str:
     """Render each streamed asset paired with its triager observation INSIGHT as a
     paragraph (grilled #9 Q4): the adversarial NLP layer that drives System typing
@@ -194,6 +269,9 @@ def _asset_observation_paragraphs(chunk: Chunk) -> str:
                     seen.add(id(o))
                     insights.append(o)
         head = f"- {a.type} {dict(a.identity or {})}"
+        summary = _asset_props_summary(a.props)
+        if summary:
+            head = f"{head} [{summary}]"
         if insights:
             joined = "; ".join(f"{o.rationale or ''} ({o.evidence or ''})".strip() for o in insights)
             paras.append(f"{head}\n  adversarial insight: {joined}")
@@ -255,7 +333,15 @@ def _systems_prompt(prose: str, inventory: dict | None) -> str:
         "of that mechanism. You MUST return at least one system whenever your reflection "
         "named a mechanism; an empty `systems` list is a wrong answer here. For a System "
         "already listed above, REUSE its exact key and output an ENRICHED description (fold "
-        "your new insight in - never blank it, never merely restate). Do not link edges here."
+        "your new insight in - never blank it, never merely restate). "
+        # WebPresentation is PER (service, page-cluster), not a singleton (#53): the
+        # downstream agent must locate the exact page a service is exposed on.
+        "SPECIAL CASE - WebPresentation: emit ONE per (owning service, page cluster) from the "
+        "CLUSTER PAGES step - set `discriminator` to '<service_slug>::<cluster>' (a short "
+        "stable cluster slug, e.g. 'product-detail', 'category-listing', 'checkout', "
+        "'not-found') and put the cluster's member text/html page paths in a `pages` list in "
+        "`props`. Never emit a __singleton__ WebPresentation and never one per raw URL. "
+        "Do not link edges here."
     )
 
 
@@ -278,7 +364,9 @@ def _linking_prompt(prose: str, systems_batch: L1DeltaBatch, primary: list[str],
         f"SECONDARY services (other asset-bearing services): {secondary or '(none)'}\n\n"
         "TASK - LINK SERVICES (system_edges ONLY). Propose `system_edges`: connect each "
         "touched System to the Service(s) it overlays, choosing the exact edge label "
-        "(EXPOSED_VIA a REST/GraphQL API; FRONTED_BY / PROTECTED_BY / ROUTED_BY a perimeter; "
+        "(EXPOSED_VIA a REST/GraphQL API OR a WebPresentation page-cluster - copy its "
+        "'<service>::<cluster>' discriminator VERBATIM so the edge hits the right node; "
+        "FRONTED_BY / PROTECTED_BY / ROUTED_BY a perimeter; "
         "IDENTIFIED_BY / AUTHENTICATED_BY / AUTHORIZED_BY the identity Systems). Copy each "
         "service_slug VERBATIM from the lists above; prefer PRIMARY services. Leave every "
         "other list EMPTY."
@@ -348,6 +436,13 @@ def type_mechanisms(
         logger.warning("mechanism_typist: reflection exhausted; fail-closed to empty batch")
         return L1DeltaBatch()
 
+    # #9/#18: attach the reflection prose to the active Langfuse agent span (opened by
+    # the supervisor per dispatch). Otherwise the WHY behind each System proposal - the
+    # hypothesis-driven reason call - is built, consumed by extraction, and discarded,
+    # leaving nothing to evaluate the thought process against. Fail-open no-op untraced.
+    from polymerhus.app.observability import trace_reasoning
+    trace_reasoning(prose, call="typist-reflection")
+
     # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
     systems_batch = bounded_retry(lambda: invoke_fn(
         [SystemMessage(content=skill), HumanMessage(content=_systems_prompt(prose, inventory))],
@@ -363,9 +458,13 @@ def type_mechanisms(
         schema=L1DeltaBatch,
     )) or L1DeltaBatch()
 
+    merged_systems = _merge_systems(systems_batch.systems, link_batch.systems)
+    # #53: the two structured calls disagree on the WebPresentation discriminator; deterministically
+    # de-duplicate the singleton and snap its orphaned edge to the real per-cluster node.
+    reconciled_systems, reconciled_edges = _reconcile_webpresentation(merged_systems, link_batch.system_edges)
     combined = L1DeltaBatch(
-        systems=_merge_systems(systems_batch.systems, link_batch.systems),
-        system_edges=link_batch.system_edges,
+        systems=reconciled_systems,
+        system_edges=reconciled_edges,
     )
     combined = narrow_to_typing(combined)
     return drop_unknown_vocabulary(combined, kinds=_known_kinds(), rels=_known_rels())

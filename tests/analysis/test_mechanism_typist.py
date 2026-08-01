@@ -250,6 +250,94 @@ def test_baseurl_anchored_observation_reaches_its_endpoint_insight():
     assert "wide-open CORS enables cross-origin exfiltration" in captured["reflect"]
 
 
+def test_response_evidence_props_reach_reflection_not_path_alone():
+    """REGRESSION (typist blind to content_type). The mechanism a path evidences is
+    discriminated by what it SERVES - content_type / title / status / server - not by
+    its path string. The renderer used to emit the identity dict ALONE, so an
+    API-looking path returning text/html (a client-routed SPA view) was
+    indistinguishable from a REST endpoint and no WebPresentation could be typed. The
+    reflection prompt must now carry the discriminative props AND drop pipeline
+    plumbing (profile/source) so the surface stays no-noise."""
+    captured = {}
+
+    def invoke(messages, *, schema=None):
+        if schema is None:
+            captured["reflect"] = messages[-1].content
+        return "prose" if schema is None else L1DeltaBatch()
+
+    shell = AssetDelta(
+        type="Endpoint",
+        identity={"path": "/git/clone", "method": "GET", "baseurl": "https://a"},
+        props={"content_type": "text/html", "title": "Daytona", "status_code": 200,
+               "server": "AmazonS3", "profile": "webapp", "source": "httpx"},
+    )
+    type_mechanisms(_service_chunk(shell), invoke_fn=invoke)
+    reflect = captured["reflect"]
+    assert "content_type=text/html" in reflect      # the discriminating evidence reaches it
+    assert "title=Daytona" in reflect
+    assert "profile=webapp" not in reflect           # pipeline plumbing filtered out (no-noise)
+    assert "source=httpx" not in reflect
+
+
+def test_webpresentation_per_service_cluster_survives_shaping():
+    """#53: WebPresentation is per (service, rendered-page cluster), not a singleton. A
+    `<service>::<cluster>` discriminator carrying the cluster's member paths in a `pages`
+    prop must pass shaping UNCHANGED (kind is known; discriminator + props are free-form),
+    never collapsed to __singleton__ nor dropped - so the downstream agent can locate the
+    exact pages a service is exposed on."""
+    batch = L1DeltaBatch(
+        systems=[SystemProposal(
+            kind="WebPresentation", discriminator="catalogue::product-detail",
+            props={"description": "product pages", "pages": ["/it/prodotto/1", "/it/prodotto/2"]})],
+        system_edges=[SystemEdgeProposal(
+            service_slug="catalogue", kind="WebPresentation",
+            discriminator="catalogue::product-detail", rel="EXPOSED_VIA")],
+    )
+    out = drop_unknown_vocabulary(narrow_to_typing(batch), kinds=_KINDS, rels=_RELS)
+    assert len(out.systems) == 1
+    s = out.systems[0]
+    assert s.discriminator == "catalogue::product-detail"          # per (service, cluster), not singleton
+    assert s.props["pages"] == ["/it/prodotto/1", "/it/prodotto/2"]  # location index preserved
+    assert len(out.system_edges) == 1
+    assert out.system_edges[0].discriminator == "catalogue::product-detail"  # edge hits the cluster node
+
+
+def test_webpresentation_singleton_duplicate_and_orphan_edge_reconciled():
+    """#53 fault (moodique 6c21005b, red loop): the two typist calls disagree on the
+    WebPresentation discriminator. The SYSTEMS call emits the ratified per-cluster node
+    (`catalogue::homepage`, pages=['/']); the LINKING call re-describes the SAME homepage
+    but at the DEFAULT __singleton__ discriminator and points its edge THERE (dropping the
+    'copy VERBATIM' instruction). `_merge_systems` keys on (kind, discriminator), so the two
+    survive as DISTINCT nodes -> a DUPLICATE WebPresentation; and the edge lands on the
+    singleton, leaving the real per-cluster node ORPHANED (exactly the neo4j state:
+    __singleton__ carries the service edge, catalogue::homepage has zero edges).
+
+    Correct behaviour: one WebPresentation per (service, cluster) and the edge hits the
+    discriminated node - uniqueness + coherent service-linking, the two properties #53 must
+    guarantee."""
+    desc = "PrestaShop-rendered HTML homepage at GET / (redirects to /it/)."
+    chunk = _service_chunk(_endpoint("/"))
+    systems = L1DeltaBatch(systems=[SystemProposal(
+        kind="WebPresentation", discriminator="catalogue_and_discovery::homepage",
+        props={"description": desc, "pages": ["/"]})])
+    # linking call co-produces the SAME system at the default discriminator + an edge to it
+    link = L1DeltaBatch(
+        systems=[SystemProposal(kind="WebPresentation", props={"description": desc})],  # discriminator=__singleton__
+        system_edges=[SystemEdgeProposal(
+            service_slug="catalogue_and_discovery", kind="WebPresentation", rel="EXPOSED_VIA")])  # discriminator=__singleton__
+    invoke = _Recorder(systems=systems, edges=link)
+
+    out = type_mechanisms(chunk, invoke_fn=invoke, inventory={"services": ["catalogue_and_discovery"]},
+                          aggregations=[])
+
+    wps = [s for s in out.systems if s.kind == "WebPresentation"]
+    assert len(wps) == 1, f"duplicate WebPresentation not reconciled: {[s.discriminator for s in wps]}"
+    assert wps[0].discriminator == "catalogue_and_discovery::homepage"  # the real per-cluster node kept
+    assert wps[0].props.get("pages") == ["/"]                            # location index survives
+    assert len(out.system_edges) == 1
+    assert out.system_edges[0].discriminator == "catalogue_and_discovery::homepage"  # edge snapped to real node
+
+
 def test_N9_idempotent_same_inputs_same_batch():
     a = type_mechanisms(_service_chunk(), invoke_fn=_Recorder())
     b = type_mechanisms(_service_chunk(), invoke_fn=_Recorder())

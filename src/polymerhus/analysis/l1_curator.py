@@ -91,8 +91,12 @@ SYSTEM_KINDS: tuple[tuple[str, str], ...] = (
     ("IntegrationSystem", "Cross-origin integration system (CSP / CORS)."),
     ("AuthenticationMechanism", "How credentials / tokens are minted and validated."),
     ("AuthorizationSystem", "Role / permission policy enforcement system."),
-    ("WebPresentation", "Web presentation channel: how the app renders views and navigates "
-                        "between them (rendering_model + navigation_model attributes)."),
+    ("WebPresentation", "Per-page-cluster presentation channel: the navigable text/html PAGES "
+                        "a service renders (NOT its API/XHR/JSON responses), grouped by rendered "
+                        "similarity (title/structure/size) so a templated product page or a "
+                        "not-found page is ONE cluster, not many. Discriminator "
+                        "'<service_slug>::<cluster>'; the member page paths ride a `pages` prop "
+                        "(the location index), plus rendering_model + navigation_model attributes."),
     ("Sitemap", "Site structure / navigation map system."),
 )
 _KNOWN_KINDS = frozenset(kind_id for kind_id, _desc in SYSTEM_KINDS)

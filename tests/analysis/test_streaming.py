@@ -204,6 +204,12 @@ def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(m
     from polymerhus.analysis import chunking, supervisor
     from polymerhus.recon.domain.types import AssetDelta, Observation
 
+    # analyse_chunked resolves + BUILDS the configured analyser model at pass start (a
+    # real run always has these set); stub the provider env so this hermetic unit test
+    # does not depend on the ambient env. Construction is lazy (no network), and the []
+    # from the spy short-circuits the pass before any model.invoke.
+    monkeypatch.setenv("LLM_MODEL_ANALYSER", "openai:gpt-4o-mini")
+    monkeypatch.setenv("API_KEY_OPENAI", "sk-test-not-used")
     captured = {}
 
     def spy_chunks_for_job(job, assets, observations=None, **kw):
