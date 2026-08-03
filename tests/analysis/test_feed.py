@@ -239,10 +239,45 @@ def test_AST_DEC_04d_deadline_expiry_completes_without_the_claim():
     async def scenario():
         feed = QueuedAnalysisFeed("p1", "r1", pass_fn=hang).start()
         await feed.advance(_cursor())
-        return await feed.drain(deadline=0.1)   # forced expiry
+        return await feed.drain(deadline=0.1, grace=0.1)   # forced expiry, then bounded grace
 
-    stats = _run(scenario())                    # returns rather than hanging
+    stats = _run(scenario())                    # returns rather than hanging (no 30s wait)
     assert stats.analysis_drained is False
+
+
+def test_terminal_pass_that_hangs_is_bounded_by_the_grace_not_awaited_forever():
+    """Regression for the live wedge (run 27386f9c): Fix 4's graceful stop replaced the
+    deadline's bounded wait with an UNCONDITIONAL `await self._idle.wait()`, so a terminal
+    pass that HANGS - blocked on a wedged provider socket whose per-read timeout never trips -
+    held the run `running` forever (recon finished at 09:51, the run was still `running` 40+
+    min later). The prior deadline tests all used a pass that RETURNS on its own (a bounded
+    `sleep`), so none exercised a pass that never completes; this one does.
+
+    The grace makes the graceful path bounded: the in-flight pass gets a finite window to
+    finish (Fix 4 - preserve its work + traces), then it is abandoned and the run completes
+    with the claim withheld. `drain` is wrapped in its own `wait_for` so a regression to the
+    unbounded await FAILS the test instead of hanging the whole suite."""
+    started = asyncio.Event()
+    cancelled = {"was": False}
+
+    async def hang(cursor):
+        started.set()
+        try:
+            await asyncio.Event().wait()       # never set: the pass never completes on its own
+        except asyncio.CancelledError:
+            cancelled["was"] = True            # the grace-expiry stop() must cancel it
+            raise
+
+    async def scenario():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=hang).start()
+        await feed.advance(_cursor())
+        await asyncio.wait_for(started.wait(), timeout=5)      # the pass is genuinely in flight
+        return await asyncio.wait_for(feed.drain(deadline=0.05, grace=0.05), timeout=5)
+
+    stats = _run(scenario())                    # MUST return - the bug was an unbounded await
+    assert stats.analysis_drained is False      # ...claim withheld
+    assert stats.consumer == "stopped"          # ...the hung pass was cancelled, not awaited forever
+    assert cancelled["was"] is True
 
 
 # --- AST-DEC-05: one pass in flight process-wide ------------------------------

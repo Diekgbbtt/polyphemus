@@ -58,6 +58,18 @@ ANALYSER_PASS_SEMAPHORE = asyncio.Semaphore(1)
 # never a failed run.
 ANALYSIS_DRAIN_DEADLINE_S = float(os.environ.get("ANALYSIS_DRAIN_DEADLINE_S", "600"))
 
+# The BOUNDED grace the graceful stop (Fix 4) grants the in-flight pass after the
+# deadline: long enough that a pass a little slower than the deadline still finishes
+# and its work + Langfuse traces survive, but FINITE so a pass that HANGS cannot hold
+# the run open forever. This closes the live wedge on run 27386f9c: the graceful path
+# used to `await self._idle.wait()` with NO timeout, so a terminal pass blocked on a
+# wedged provider socket (a dead half-open connection whose per-read timeout never
+# trips) kept the run `running` indefinitely. On grace expiry the in-flight pass is
+# cancelled and the run completes with the claim withheld - the deadline's original
+# "honest hole, never an unbounded wait" contract, now honoured on the graceful path
+# too. The total ceiling drain can spend is therefore `deadline + grace`.
+ANALYSIS_DRAIN_GRACE_S = float(os.environ.get("ANALYSIS_DRAIN_GRACE_S", "300"))
+
 
 class AnalysisCursor(BaseModel):
     """A signal to re-derive L1 over the CURRENT cumulative surface.
@@ -313,15 +325,16 @@ class QueuedAnalysisFeed:
             analysed_keys=self._analysed_keys,
         )
 
-    async def drain(self, deadline: float = ANALYSIS_DRAIN_DEADLINE_S) -> FeedStats:
+    async def drain(self, deadline: float = ANALYSIS_DRAIN_DEADLINE_S,
+                    grace: float = ANALYSIS_DRAIN_GRACE_S) -> FeedStats:
         """Enqueue a TERMINAL cursor and wait for the consumer to go idle.
 
         The terminal pass is what makes the at-least-once-observation guarantee
         real: being cumulative, a pass that BEGINS after the last recon curate is by
         construction the batch pass over the settled surface. `analysis_drained` is
         decided from that pass's census, so a pass that read nothing cannot claim
-        convergence. On deadline expiry the run still completes, with the claim
-        explicitly withheld."""
+        convergence. On deadline expiry the run still completes within a BOUNDED
+        grace, with the claim explicitly withheld - never an unbounded wait."""
         await self.advance(AnalysisCursor(
             project_id=self._project_id, run_id=self._run_id, terminal=True,
         ))
@@ -334,10 +347,23 @@ class QueuedAnalysisFeed:
             # SCHEDULING further passes and let the in-flight one finish. The fixed deadline is
             # a test knob (operator): a real run is not time-bounded and waits for analysis to
             # settle - incremental passes make even that bounded, since no pass redoes work.
+            #
+            # But the graceful wait is itself BOUNDED (run 27386f9c): it used to be an
+            # unconditional `await self._idle.wait()`, so a terminal pass that HANGS - blocked
+            # on a wedged provider socket whose per-read timeout never trips - held the run
+            # `running` forever. Grant the in-flight pass a finite grace to finish on its own
+            # (preserving its work + traces); if even that expires, fall through to `stop()`
+            # below, which cancels it, and complete with `analysis_drained: false`.
             logger.warning("analysis drain deadline (%.0fs) reached for run %s; stopping new "
-                           "passes, awaiting the in-flight pass", deadline, self._run_id)
+                           "passes, awaiting the in-flight pass (grace %.0fs)",
+                           deadline, self._run_id, grace)
             self._stopping = True
-            await self._idle.wait()
+            try:
+                await asyncio.wait_for(self._idle.wait(), timeout=grace)
+            except asyncio.TimeoutError:
+                logger.warning("analysis drain grace (%.0fs) expired for run %s; abandoning the "
+                               "in-flight pass, completing with analysis_drained=false",
+                               grace, self._run_id)
         census = self._last_census
         # Drained iff the terminal pass left NO unprocessed surface AND some pass this run
         # actually observed surface (cumulative - the terminal pass itself may be a no-op when
