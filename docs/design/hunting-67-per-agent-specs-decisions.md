@@ -120,6 +120,49 @@ Budget and timeout are NOT spec fields (D67-09): they are pod-internal fixed cap
 
 **Rejected.** Typing only target/symptom/pattern/budget and leaving assumptions + payload vector to NL (the drafting agent's recommended option); a minimal envelope of target + pattern + budget.
 
+## 3b. Decisions from grilling round 3 (Q1-Q4, spec-mining follow-up, 2026-08-03)
+
+### D67-11 - KB-retrieval failure at the in-turn gate degrades, never prunes
+
+**Claim.** If the KB retrieval the orchestrator's in-turn gate (spec 4.3 step 2) grounds on fails, the direction is kept and reasoned over the evidences alone, with a weaker rationale.
+The retrieval is an aid, not a gate; pruning would silently lose coverage against the high-recall intent of FaultSource selection.
+The ranker and the budget still filter weak directions.
+
+**Evidence.** Operator answer to mining Q1: "Degrade (Recommended)".
+
+**Rejected.** Pruning the direction when its KB grounding is unavailable.
+
+### D67-12 - The hunting agent's worst case is graceful degradation, not a failure mode; the failure state is "no hypothesis verifiable + no meaningful narrow-recon insights"
+
+**Claim.** The "at least one test-execution, ephemeral and meaningless" worst case (spec 5.3 step 5) is NOT an uncontrolled hunting-agent failure mode.
+It is a state where the hunt-orchestrator fed the agent a hostile (fault-class, testable-unit) pair, the agent verified one hypothesis that yielded one test, and that test - with worst-case thinking - results in something technically unfeasible or a state with a strong blocking assertion, even after many variants have been executed.
+That is totally fine: a graceful degradation that still feeds evidence-backed insights to the hunt-orchestrator.
+The actual hunting-agent failure state is different: no hypothesis could be successfully verified, AND further back-edged narrow recon requests provided no meaningful insights.
+In that state the hunt degrades to `unsuccessful` with the attempted hypotheses' evidence trail, and the feedback still flows; `insufficient-evidence` never exists as a HuntingAgent state (Q8).
+
+**Evidence.** Operator answer to mining Q2 (verbatim): "this is framed as an uncontrolled huntingAgent failure mode, it is not. It is simply modelling a state where the hunt-rochestrator feeded the huntingAgent a quite ostile/harsh fault_class-testabelUnit pair, and it was able to verify one hypothesis that yielded one test, which then, still with worst-case thinking, results in something either technically unfeasible or in a state with a strong blocking assertion(even after many variant has been executed) - but that is totally fine, it is a graceful degragation, that will still feed back insights to the hunt-orchestrator backed by evidences. Something more similar to the HuntingAgent failure is instead the state whereby no Hypothesis could be succesfully verified, and further back-edged narrow recon requests did not provide any meaningful insights".
+
+**Rejected.** Pinning a concrete degenerate spec template (a reachability-probe fallback the agent emits on authoring failure) - the premise was wrong: there is no uncontrolled authoring failure to fall back from.
+
+### D67-13 - The D1-D11 record shapes are ratified contracts
+
+**Claim.** The domain-data record shapes of spec section 11 are ratified contracts now.
+The hunt store (#68) may add persistence-specific fields when it implements, but must not remove fields the agents depend on.
+
+**Evidence.** Operator answer to mining Q3: "Ratify now (Recommended)".
+
+**Rejected.** Treating the shapes as draft contracts for #68 to adjust freely.
+
+### D67-14 - The inline back-edge allows unbounded re-evaluation; the depth-1 cap binds park/resume only
+
+**Claim.** In the inline request-response mode (spec 10.7 S6, IA-6), the hypothesis verdict is re-evaluated with each returned back-edge result, without a depth cap.
+The evaluation continues while responses yield meaningful insights; a no-meaningful-insight response ends the evaluation, possibly entering the D67-12 failure state.
+The depth-1 cap binds the park/resume mode only (a re-match still `insufficient-evidence` terminates the candidate as `unresolved`).
+
+**Evidence.** Operator answer to mining Q4: "Unbounded re-evaluation".
+
+**Rejected.** Exactly one re-evaluation per hypothesis; no re-evaluation (record-only inline results).
+
 ## 4. Deferred work items (to open as tickets after the specs)
 
 - The closed-enum testing-pattern engine (D67-07): a dedicated ticket with an exhaustive description of the pattern vocabulary and per-pattern engine mechanics.

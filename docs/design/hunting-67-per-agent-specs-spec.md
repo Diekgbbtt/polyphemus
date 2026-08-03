@@ -64,6 +64,7 @@ Select `HuntCandidate`s, configure and dispatch hunts so that every dispatched h
 
 1. Consume the `FaultSource` output: `{(unit, fault, symptom, applies-witnesses)}` with the deterministic prune applied (the #63 typed predicate; the three-valued `match verdict` is the prune signal, Q8 level 1).
 2. Run the in-turn reasoning gate (Q8): per fault-class, reason over the evidences plus the fault-class's concrete requirements (retrieved KB), producing rationale, assumptions, and envisioned test primitives.
+   A KB-retrieval failure degrades the reasoning to the evidences alone (D67-11); it never prunes a direction by itself.
    Directions it is not sufficiently confident on are pruned in-turn (pure LLM heuristic, no confidence score); there is no distinct gating phase.
 3. For each carried-forward direction, mint a `HuntConfig` and dispatch one hunting agent (N = 1 in phase 1).
 4. Handle the back-edge: a yellow `insufficient-evidence` match verdict raises a targeted-recon need via the hunt back-edge (`request_targeted_recon`, `origin="hunting"`, #64-wired); park/resume and inline modes per Q8.
@@ -117,7 +118,11 @@ Author, for its dispatched `HuntConfig`, a `TestImplementationSpec` that a test-
 2. Query the symptom-technique KB (the `fault KB` handle) for symptoms and probing-techniques on the join key `(fault-class, unit technological-axis)`.
 3. Author the `TestImplementationSpec` (section 7): core NL over the fundamental typed base.
 4. Yield the spec plus feedback to the orchestrator.
-5. Worst case: the execution is ephemeral and meaningless, exploration degrades gracefully, and the agent yields feedback; `insufficient-evidence` never exists as a HuntingAgent state (Q8).
+5. Worst case (D67-12): a hostile (fault-class, testable-unit) pair - one hypothesis verified, yielding one test - results in something technically unfeasible or a state with a strong blocking assertion, even after many variants have been executed.
+   This is graceful degradation, not failure: the hunt still feeds evidence-backed insights to the orchestrator.
+6. The actual HuntingAgent failure state (D67-12): no hypothesis could be successfully verified, AND further back-edged narrow recon requests provided no meaningful insights.
+   The hunt degrades to `unsuccessful` with the attempted hypotheses' evidence trail, and the feedback still flows.
+   `insufficient-evidence` never exists as a HuntingAgent state (Q8).
 
 ### 5.4 Tools
 
@@ -320,7 +325,10 @@ Stages S0 and S2 are owned by sibling tickets (#66, #71); this spec fixes the co
 
 1. The HuntingAgent derives the three-valued hypothesis verdict from the pod's binary outcome plus the evidence trail.
 2. Hypothesis-`insufficient-evidence` triggers either a narrow tool exec or a back-edged targeted-recon request (inline request-response mode, IA-6).
-3. The back-edge is fault-agnostic on the wire; the `correlation_id` routes the result back; depth is capped at 1.
+3. The inline mode allows unbounded re-evaluation (D67-14): each returned response may revise the hypothesis verdict; the evaluation continues while responses yield meaningful insights.
+4. When an inline response yields no meaningful insight, the evaluation ends: the hunt either lands a verdict or enters the failure state (D67-12) - no hypothesis verifiable and recon no longer meaningful - degrading to `unsuccessful` with the evidence trail.
+5. The back-edge is fault-agnostic on the wire; the `correlation_id` routes the result back.
+   The depth-1 cap applies to park/resume only, not to the inline mode.
 
 ### 10.8 S7 - Persistence and advancement (this spec, 4.3, IA-7)
 
@@ -333,6 +341,7 @@ Stages S0 and S2 are owned by sibling tickets (#66, #71); this spec fixes the co
 
 Every record this flow moves is declared here with its producer, consumer, and shape.
 Records that already exist in the codebase are referenced, not redefined; records this spec introduces are type-now seams for the implementer.
+D1-D11 are ratified contracts (D67-13): the hunt store (#68) may add persistence-specific fields when it implements, but must not remove fields the agents depend on.
 
 ### 11.1 D1 - Candidate record
 
@@ -435,7 +444,9 @@ The delivery canon (section 3) holds: synchronous, in-process, phase 1.
 
 ### 12.6 IA-6 hunt-orchestrator <-> recon (hunt back-edge)
 
-- Delivery: `request_targeted_recon` with `origin="hunting"`; synchronous in-process MVP (interface agreement B, L1D-26); the `correlation_id` routes the result; fault-agnostic on the wire; depth capped at 1.
+- Delivery: `request_targeted_recon` with `origin="hunting"`; synchronous in-process MVP (interface agreement B, L1D-26); the `correlation_id` routes the result; fault-agnostic on the wire.
+- Inline mode (S6): unbounded re-evaluation (D67-14); each response may revise the hypothesis verdict while it yields meaningful insights; a no-meaningful-insight response ends the evaluation (possibly entering the D67-12 failure state).
+- Park/resume mode (S3): the depth-1 cap applies (a re-match still `insufficient-evidence` terminates the candidate as `unresolved`).
 - Status vocabulary: `success`, `degraded`, `skipped`, `error` (`TargetedReconResult`).
 - Failure: fail-open, never raises (`targeted.py`); a degraded or errored result is folded into the evidence trail.
 
