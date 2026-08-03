@@ -136,7 +136,7 @@ def test_curate_merges_reanchored_and_still_drops_unrepairable():
                                anchor={"type": "Technology",
                                        "identity": {"name": "nginx", "version": ""}},
                                source_job="j", source_tool="t")
-    a, o = curator.curate([], [repairable, unrepairable], "proj1", merge_fn=fake_merge)
+    a, o, _, _ = curator.curate([], [repairable, unrepairable], "proj1", merge_fn=fake_merge)
     assert a == 0 and o == 1
     assert len(calls) == 1
     assert "MERGE (a:BaseURL" in calls[0][0]
@@ -158,7 +158,7 @@ def test_curate_counts_and_skips_bad_delta():
     def fake_merge(cy, params): calls.append((cy, params))
     good = AssetDelta(type="BaseURL", identity={"url": "https://a"})
     bad = AssetDelta(type="Nope", identity={"x": 1})
-    a, o = curator.curate([good, bad], [], "proj1", merge_fn=fake_merge)
+    a, o, _, _ = curator.curate([good, bad], [], "proj1", merge_fn=fake_merge)
     assert a == 1 and o == 0
     assert len(calls) == 1
 
@@ -177,7 +177,7 @@ def test_curate_continues_batch_when_merge_fn_raises(caplog):
     second = AssetDelta(type="BaseURL", identity={"url": "https://b"})
 
     with caplog.at_level("WARNING"):
-        a, o = curator.curate([first, second], [], "proj1", merge_fn=flaky_merge)
+        a, o, _, _ = curator.curate([first, second], [], "proj1", merge_fn=flaky_merge)
 
     assert a == 1 and o == 0
     assert len(calls) == 1

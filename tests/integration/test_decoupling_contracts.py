@@ -147,7 +147,11 @@ def test_AST_DEC_07_two_consecutive_passes_write_no_new_identities(project):
         # convergence, and the two-role schedule (#9) would otherwise drive the
         # mechanism_typist against the live LLM. A None-returning invoke keeps the
         # pass deterministic (the typist fail-closes to an empty batch).
-        return asyncio.run(analyse_chunked(project, f"stream-{project}",
+        from polymerhus.analysis.feed import L0Chunk
+        from polymerhus.analysis.l0_stream import read_l0_assets, read_observations
+        chunk = L0Chunk(project_id=project, run_id=f"stream-{project}",
+                        assets=read_l0_assets(project), observations=read_observations(project))
+        return asyncio.run(analyse_chunked(chunk,
                                            invoke_fn=fake_llm,
                                            typist_invoke_fn=lambda *a, **k: None,
                                            observe=False))
@@ -165,11 +169,12 @@ def test_AST_DEC_07_two_consecutive_passes_write_no_new_identities(project):
 def test_AST_DEC_07b_a_pass_over_an_empty_surface_records_what_it_observed(project):
     """The census must distinguish 'read nothing' from 'read surface and judged
     nothing' - the whole basis of the drain's evidence bar (DQ2b)."""
+    from polymerhus.analysis.feed import L0Chunk
     from polymerhus.analysis.supervisor import analyse_chunked
 
     result = asyncio.run(analyse_chunked(
-        project, f"stream-{project}", invoke_fn=lambda m: None, observe=False,
-        terminal=True,
+        L0Chunk(project_id=project, run_id=f"stream-{project}", terminal=True),
+        invoke_fn=lambda m: None, observe=False,
     ))
     assert result.census.l0_assets_read == 0
     assert result.census.dispatches_entered == 0

@@ -149,7 +149,7 @@ def test_run_crawl_authenticated_best_effort_on_precreate_failure():
 
 def make_capturing_curate_fn():
     def curate_fn(assets, observations, project_id, scope_domain=None):
-        return len(assets), len(observations)
+        return len(assets), len(observations), assets, observations
 
     return curate_fn
 

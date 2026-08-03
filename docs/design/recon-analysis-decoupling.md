@@ -1,5 +1,7 @@
 # Recon / analysis runtime decoupling - design specification and grilling set
 
+*SUPERSEDED IN PART by #74 (2026-08-03): the depth-1 coalescing cursor queue specified below was RE-SHAPED into an unbounded in-memory FIFO of curated `L0Chunk` payloads - one chunk per producing recon job, consumed exactly once, in push order, with the terminal drain marker empty (`terminal=True`). The decoupling (one per-run consumer, bounded drain deadline + grace, `analysis_drained` from the terminal pass's `PassCensus`, fail-open pushes) is UNCHANGED; what changed is that the feed carries the job's exactly-curated payload instead of a re-derive signal, `analyse_chunked(chunk)` consumes that payload (the `analysed_keys` cumulative filter is gone), and `run_analyser_chunked` survives as the batch adapter that builds a pseudo-job `L0Chunk` from the settled surface. The record below is the historical design decision; the live vocabulary is the `Analysis feed` entry in `src/polymerhus/analysis/CONTEXT.md`.*
+
 *Status: PROPOSED, not ratified. Nothing here is built. Written 2026-07-28 against `feat/assigner-classification-only`, on the evidence of live run `64f2ccb8-f526-495b-a0ae-d2d3db59f0c5` (project `00ea6ea4-8dfc-4d1b-a34d-141b0783d762`, Juice Shop).*
 
 *Scope: the runtime relationship between the Recon pipeline (`recon/control/pipeline.py`) and the Analysis control plane (`analysis/supervisor.py`).*

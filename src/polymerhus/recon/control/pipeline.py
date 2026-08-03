@@ -268,7 +268,6 @@ async def run_pipeline(
     read_assets=None,
     read_steering_signals=None,
     decide_routing=None,
-    stream_fn=None,
     feed_mode: str | None = None,
     pass_fn=None,
 ) -> None:
@@ -290,8 +289,6 @@ async def run_pipeline(
         read_steering_signals = globals()["read_steering_signals"]
     if decide_routing is None:
         from polymerhus.recon.control.orchestrator_agent import decide_routing as decide_routing  # noqa: PLC0414
-    if stream_fn is None:
-        from polymerhus.analysis.streaming import stream_analyser_step as stream_fn  # noqa: PLC0414
 
     # All DB helpers below (pg + neo4j) are synchronous/blocking. run_pipeline
     # runs on the API event loop, so every one is offloaded via asyncio.to_thread
@@ -308,16 +305,14 @@ async def run_pipeline(
     # hands the pass to a per-run consumer so recon never waits on an LLM. The mode
     # is a settings flag, so this call site does not branch and rollback is a flip.
     from polymerhus.analysis.feed import (
-        AnalysisCursor, resolve_feed_mode, start_analysis_feed,
+        L0Chunk, resolve_feed_mode, start_analysis_feed,
     )
     _mode = feed_mode or resolve_feed_mode(settings)
-    if pass_fn is None and _mode == "inline":
-        # Preserve the injected `stream_fn` seam verbatim: inline mode must remain
-        # byte-for-byte today's behaviour, or the rollback path is not a rollback.
-        async def _inline_pass(cursor):
-            return await asyncio.to_thread(stream_fn, cursor.project_id, cursor.run_id)
-
-        pass_fn = _inline_pass
+    # `start_analysis_feed` decides the worker placement: `queued` hands the pass
+    # to a per-run consumer so recon never waits on an LLM; `inline` (the rollback
+    # path) runs each pass on the caller's task. Both consume the pushed chunk via
+    # `analyse_chunked(chunk)` - identical semantics, different executor. The feed
+    # falls back to that pass internally, so no seam to inject here.
     feed = start_analysis_feed(project_id, run_id, mode=_mode, pass_fn=pass_fn) if streaming else None
 
     if job_subset is not None:
@@ -550,37 +545,41 @@ async def run_pipeline(
                     stats=job_stats,
                 )
 
-                # FR-STREAM (NM-7) + #34: signal the analyser that this job added
+# FR-STREAM (NM-7) + #34: signal the analyser that this job added
                 # surface, so L1 grows progressively during recon. Only when the job
-                # actually produced surface (else the pass is redundant).
-                # `advance` is NON-BLOCKING under the queued feed - that is the whole
+                # actually produced surface (else the push is redundant).
+                # `push` is NON-BLOCKING under the queued feed - that is the whole
                 # point, and the memory bound moved with it: a process-wide semaphore
                 # of one pass now does what strict serialisation used to do, so the
                 # OOM failure mode the NM-7 ledger named stays closed. Under the
-                # inline feed this call blocks exactly as it always did.
-                # Guarded regardless: analysis never fails a healthy recon run.
+                # inline feed this call blocks exactly as it always did. Guarded
+                # regardless: analysis never fails a healthy recon run. The chunk
+                # carries the job's EXACTLY-curated L0 payload (the merged asset
+                # and observation lists), so the feed re-reads no graph - each chunk
+                # is consumed once, in push order (#74).
                 #
                 # The endpoint-reprofile pass (`endpoint_profiling`, phase 6) is
                 # EXCLUDED (#9): it re-emits Endpoints the crawl phase already streamed,
                 # adding only each Endpoint's own `profile`. The current proposers
                 # (assigner/typist/data_modeller) do not read that per-endpoint profile,
                 # so re-streaming those endpoints is a redundant re-analysis of surface
-                # already judged. The profile-aware deeper pass is deferred to phase A.2
-                # (#45) and later B. Nothing is lost: the feed re-reads the CUMULATIVE
-                # surface, so any genuinely-new asset the reprofile probe incidentally
-                # mints is still observed by the next producing job's pass or the
-                # terminal drain pass.
+                # already judged. Nothing is lost: the pushes are exact per-job payloads
+                # and the terminal drain pass is cumulative, so any genuinely-new asset
+                # the reprofile probe incidentally mints is still observed by the next
+                # produced job's pass or the terminal drain pass.
                 if feed is not None and (produced_assets or produced_observations) \
                         and not job.endpoint_profiling:
+                    chunk = L0Chunk(
+                        project_id=project_id,
+                        run_id=run_id, job=name, phase=phase_idx,
+                        assets=[a for e in pod_exports for a in e.assets],
+                        observations=[o for e in pod_exports for o in e.observations],
+                    )
                     try:
-                        await feed.advance(AnalysisCursor(
-                            project_id=project_id, run_id=run_id, job=name,
-                            phase=phase_idx, produced_assets=produced_assets,
-                            produced_observations=produced_observations,
-                        ))
+                        await feed.push(chunk)
                     except Exception:  # best-effort: analysis never aborts recon
                         logger.warning(
-                            "analysis feed advance raised for run %s job %s (recon continues)",
+                            "analysis feed push raised for run %s job %s (recon continues)",
                             run_id, name, exc_info=True,
                         )
 

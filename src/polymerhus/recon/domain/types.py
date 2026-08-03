@@ -74,6 +74,12 @@ class PodExport(BaseModel):
     verdict: Literal["success", "failed"]
     assets_merged: int = 0
     observations_merged: int = 0
+    # #74: the CURATED (post-gate, actually-merged) deltas this pod wrote, so
+    # the pipeline can push them into the analysis feed as an `L0Chunk` without
+    # a graph re-read. Populated by the pod's curator node; empty for a failed
+    # pod (a failed pod merged nothing).
+    assets: list[AssetDelta] = Field(default_factory=list)
+    observations: list[Observation] = Field(default_factory=list)
     iterations: int = 0
     error: str | None = None
     stats: dict | None = None

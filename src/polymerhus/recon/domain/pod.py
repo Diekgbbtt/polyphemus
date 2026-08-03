@@ -280,7 +280,7 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             curate_kwargs["seed_domain"] = extra["seed_domain"]
         if extra.get("seed_root_type"):
             curate_kwargs["seed_root_type"] = extra["seed_root_type"]
-        assets_merged, observations_merged = curate_fn(
+        assets_merged, observations_merged, merged_assets, merged_observations = curate_fn(
             assets, observations, state["project_id"], **curate_kwargs
         )
         invocation = state.get("invocation")
@@ -289,6 +289,9 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             verdict="success",
             assets_merged=assets_merged,
             observations_merged=observations_merged,
+            # The curated payload the pipeline pushes into the analysis feed (#74).
+            assets=merged_assets,
+            observations=merged_observations,
             iterations=state.get("iteration", 0),
             stats={"command": invocation.command} if invocation is not None else None,
         )

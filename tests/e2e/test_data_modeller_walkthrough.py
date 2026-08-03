@@ -160,12 +160,13 @@ def test_E1_three_role_pass_exact_counts(_neo4j_session):
 
     import asyncio
 
+    from polymerhus.analysis.feed import L0Chunk
+
     result = asyncio.run(analyse_chunked(
-        project_id, f"stream-{project_id}",
+        L0Chunk(project_id=project_id, run_id=f"stream-{project_id}",
+                assets=_fixture_assets(), observations=[]),
         invoke_fn=_assigner_invoke, typist_invoke_fn=_typist_invoke,
         data_modeller_invoke_fn=_data_modeller_invoke,
-        assets_fn=lambda pid: _fixture_assets(),
-        observations_fn=lambda pid: [],
         inventory_fn=lambda pid: {
             "services": ["cart", "orders"], "systems": [], "data_items": [],
             "service_contracts": {}, "system_descriptions": {},

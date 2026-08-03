@@ -250,11 +250,16 @@ def curate(
     scope_domain: str | None = None,
     seed_domain: str | None = None,
     seed_root_type: str = "Domain",
-) -> tuple[int, int]:
+) -> tuple[int, int, list[AssetDelta], list[Observation]]:
     """Execute each asset/observation MERGE, skipping+logging single-item
     failures (bad label, bad anchor, or a merge_fn exception) and continuing.
 
-    Returns (assets_merged, observations_merged) counts of successful merges.
+    Returns (assets_merged, observations_merged, merged_assets,
+    merged_observations): the counts AND the CURATED lists - the post-gate,
+    actually-merged deltas, exactly what landed in the graph. The lists are the
+    #74 chunk payload: recon pushes them into the analysis feed as an `L0Chunk`
+    so the analyser consumes precisely the settled surface, with no re-read.
+    (Read-only extension of the return contract; no write guarantee changes.)
 
     `scope_domain` (the seeded target host/apex/IP, D14) drops out-of-scope
     BaseURLs and everything anchored to them - the social/analytics origins
@@ -282,6 +287,7 @@ def curate(
     observations = filter_observations(observations, scope_domain=scope_domain)
 
     assets_merged = 0
+    merged_assets: list[AssetDelta] = []
     for delta in assets:
         try:
             cypher, params = build_asset_cypher(delta)
@@ -295,8 +301,10 @@ def curate(
             logger.warning("curate: merge failed for asset type=%r", delta.type, exc_info=True)
             continue
         assets_merged += 1
+        merged_assets.append(delta)
 
     observations_merged = 0
+    merged_observations: list[Observation] = []
     for obs in observations:
         try:
             cypher, params = build_observation_cypher(obs)
@@ -310,5 +318,6 @@ def curate(
             logger.warning("curate: merge failed for observation macro_kind=%r", obs.macro_kind, exc_info=True)
             continue
         observations_merged += 1
+        merged_observations.append(obs)
 
-    return assets_merged, observations_merged
+    return assets_merged, observations_merged, merged_assets, merged_observations

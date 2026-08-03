@@ -463,42 +463,55 @@ def run_analyser_chunked(
 ):
     """Sync wrapper over `analyse_chunked` for callers that own no event loop.
 
-    Kept so every existing caller and test is unchanged; there is exactly ONE
-    implementation, in the coroutine below. A caller already on an event loop (the
-    analysis consumer) must await `analyse_chunked` directly - `asyncio.run` cannot
-    be called from a running loop."""
+    Batch adapter (#74): a caller without a pushed chunk (the legacy batch path,
+    the pod seam, tests) reads the CUMULATIVE settled surface and builds a single
+    pseudo-job `L0Chunk` carrying it, then hands it to the chunk-fed analyser - so
+    `run_analyser_chunked(project_id, run_id, ...)` still means "analyse the whole
+    current surface", exactly as before. Kept so every existing caller and test is
+    unchanged; there is exactly ONE implementation, in the coroutine below. A caller
+    already on an event loop (the analysis consumer) must await `analyse_chunked`
+    directly - `asyncio.run` cannot be called from a running loop."""
     import asyncio
 
+    from polymerhus.analysis.feed import L0Chunk
+    from polymerhus.analysis.l0_stream import read_l0_assets, read_observations
+
+    assets_fn = assets_fn or read_l0_assets
+    observations_fn = observations_fn or read_observations
+    chunk = L0Chunk(
+        project_id=project_id, run_id=run_id, job=f"stream-{run_id}",
+        assets=list(assets_fn(project_id)),
+        observations=list(observations_fn(project_id)),
+    )
     return asyncio.run(analyse_chunked(
-        project_id, run_id, invoke_fn=invoke_fn, typist_invoke_fn=typist_invoke_fn,
+        chunk, invoke_fn=invoke_fn, typist_invoke_fn=typist_invoke_fn,
         data_modeller_invoke_fn=data_modeller_invoke_fn,
-        assets_fn=assets_fn, observations_fn=observations_fn,
         inventory_fn=inventory_fn, aggregations_fn=aggregations_fn,
         write_fn=write_fn, checkpointer=checkpointer, store=store, observe=observe,
     )).export
 
 
 async def analyse_chunked(
-    project_id: str,
-    run_id: str,
+    chunk: "L0Chunk",
     *,
     invoke_fn=None,
     typist_invoke_fn=None,
     data_modeller_invoke_fn=None,
-    assets_fn=None,
-    observations_fn=None,
     inventory_fn=None,
     aggregations_fn=None,
     write_fn=None,
     checkpointer=None,
     store=None,
     observe: bool = True,
-    terminal: bool = False,
-    analysed_keys: set | None = None,
 ) -> "PassResult":
-    """The CHUNK-FED analyser (#34, completed by #48): read the live L0 surface,
-    stream it into chunks, and dispatch one work order per (chunk, role) pair
-    through the control plane, writing each step's deltas through the sole-writer.
+    """The CHUNK-FED analyser (#34, completed by #48, payload-fed by #74): consume
+    one curated `L0Chunk` (a recon job's freshly-curated L0 payload) and dispatch one
+    work order per (chunk, role) pair through the control plane, writing each step's
+    deltas through the sole-writer. The chunk is consumed EXACTLY ONCE, in push
+    order - the feed re-reads no graph, and there is no cross-pass dedup state: what
+    a pass judges is precisely the payload it was pushed (#74). The terminal
+    drain marker rides as an empty `terminal` chunk whose pass reports
+    `unprocessed_after=0`, so the feed can decide the drain honestly.
 
     The schedule is CHUNK-MAJOR over THREE roles: per chunk, the `assigner` runs
     first and writes AGGREGATES against the Bootstrapper's Services, then the
@@ -514,58 +527,46 @@ async def analyse_chunked(
     from polymerhus.analysis.assigner import default_invoke_fn, make_assigner_body
     from polymerhus.analysis.chunking import admit_for_role, chunks_for_job
     from polymerhus.analysis.data_modeller import make_data_modeller_body
-    from polymerhus.analysis.l0_stream import read_l0_assets, read_observations
     from polymerhus.analysis.l1_inventory import read_l1_inventory
     from polymerhus.analysis.l1_read import read_service_aggregations
     from polymerhus.analysis.pod import AnalyserExport
 
-    assets_fn = assets_fn or read_l0_assets
-    observations_fn = observations_fn or read_observations
     inventory_fn = inventory_fn or read_l1_inventory
     aggregations_fn = aggregations_fn or read_service_aggregations
     invoke_fn = invoke_fn or default_invoke_fn()
     write_fn = write_fn or _chunked_write_fn
 
-    # Stamped around the WHOLE body, including the reads: a pass that spends its
-    # time in Neo4j rather than in the provider is still a pass that occupied the
-    # analyser, and the stall predicate must not be blind to it.
+    # Stamped around the WHOLE body: a pass that spends its time in Neo4j rather
+    # than in the provider is still a pass that occupied the analyser, and the
+    # stall predicate must not be blind to it.
     _t0 = time.monotonic()
     _started_at = _utc_now_iso()
+    project_id, run_id = chunk.project_id, chunk.run_id
+    terminal = chunk.terminal
 
-    assets = assets_fn(project_id)
-    # Incremental streaming: process only surface not already analysed in a prior pass of
-    # this run (`analysed_keys` is the caller-owned, per-run cumulative set). This is what
-    # makes a slow full-surface pass RESUMABLE instead of monolithic - a re-run or a
-    # follow-on pass picks up the fresh surface rather than redoing (and re-costing) what
-    # earlier passes committed. `analysed_keys=None` keeps the legacy whole-surface behaviour
-    # for any non-feed caller. The cumulative-equals-batch guarantee (L1D-23) is preserved
-    # as a UNION over passes: every asset is analysed in exactly one pass, so by the terminal
-    # pass the union covers the settled surface.
-    def _key(a):
-        return (a.type, tuple(sorted((a.identity or {}).items())))
-
-    fresh = [a for a in assets if _key(a) not in analysed_keys] if analysed_keys is not None else list(assets)
+    assets = chunk.assets
     # The triager's adversarial observations ride the chunk beside the assets they
     # anchor to (#9): the mechanism-typist and the data_modeller need them. Without
     # this the chunk carried NO observations, so the per-asset/per-origin insight
-    # rendered was empty every time (the silent-empty-insight defect). Fail-open: a
-    # read error degrades to no observations, never crashes the pass. The httpx-profile
+    # rendered was empty every time (the silent-empty-insight defect). The httpx-profile
     # gate this used to also read (`profiled`/`barrier`) was RETIRED (#48 section 11
     # step 6, ratified 2026-07-30, mirroring #34 D1's identical retirement for Endpoint):
     # both gated types are gone, so the apparatus is permanently unreachable.
-    observations = observations_fn(project_id)
+    observations = chunk.observations
     # A pseudo-job: the chunk builder keys `chunk_id` off the source job, and this
-    # read is the cumulative surface rather than one tool's output.
+    # chunk IS one job's curated output - so the job name rides through, keeping
+    # `chunk_id` (and the dispatch ids derived from it) deterministic per pushed
+    # job, which is what makes a replayed run dedup rather than double.
     from polymerhus.recon.domain.types import JobSpec
-    pseudo_job = JobSpec(tool=f"stream-{run_id}", skill="analysis",
+    pseudo_job = JobSpec(tool=chunk.job or f"stream-{chunk.run_id}", skill="analysis",
                          command_template="", produces=[], consumes="BaseURL")
-    chunks = chunks_for_job(pseudo_job, fresh, observations)
+    chunks = chunks_for_job(pseudo_job, assets, observations)
     if not chunks:
-        # Valid empty: nothing FRESH to judge. A terminal pass reaching here has, by
-        # definition, no unprocessed surface left (analysed_keys already covers it), so it
-        # legitimately confirms the drain without redoing prior work. `unprocessed_after=0`
-        # says exactly that; `l0_assets_read` stays the full surface for continuity with the
-        # logs, while `fresh_assets_read=0` records that this pass added nothing new.
+        # Valid empty: nothing in this payload to judge (the terminal drain marker
+        # is such a chunk by construction). `unprocessed_after=0` says exactly that:
+        # everything this pass was pushed was consumed. `l0_assets_read` stays the
+        # chunk's payload size for continuity with the logs, while
+        # `fresh_assets_read=0` records that this pass added nothing new.
         return PassResult(
             export=AnalyserExport(),
             census=PassCensus(l0_assets_read=len(assets), fresh_assets_read=0,
@@ -638,24 +639,19 @@ async def analyse_chunked(
                 "analyser", "supervisor", "assigner", "mechanism_typist", "data_modeller",
                 "analyse-data-plane", "chunked",
             ],
-            # Join recon and analysis onto ONE Langfuse timeline. The analyser id is
-            # `stream-<recon run_id>` (stable, so repeated passes MERGE), but the
-            # SESSION must be the bare recon run: otherwise the two modules trace
-            # into two sessions that share no key, and no human can see an analyser
-            # pass sitting between two recon jobs. Overrides the default set by
-            # `_observability_config`, which keys off the analyser id.
-            "langfuse_session_id": run_id.removeprefix("stream-"),
-            "recon_run_id": run_id.removeprefix("stream-"),
+            # Join recon and analysis onto ONE Langfuse timeline. The run id is the
+            # recon run itself (the feed is keyed on it), and the SESSION must be the
+            # bare recon run: otherwise the two modules trace into two sessions that
+            # share no key, and no human can see an analyser pass sitting between two
+            # recon jobs. Overrides the default set by `_observability_config`, which
+            # keys off the analyser id.
+            "langfuse_session_id": run_id,
+            "recon_run_id": run_id,
         },
     ))
-    # Commit the fresh surface into the caller's cumulative set now that its chunks ran, so
-    # the next pass skips it. Done AFTER run_supervisor so a raised pass leaves the surface
-    # unprocessed (it will be retried), never silently marked done.
-    if analysed_keys is not None:
-        analysed_keys.update(_key(a) for a in fresh)
     census = PassCensus(
-        l0_assets_read=len(assets), fresh_assets_read=len(fresh),
-        unprocessed_after=0,  # this pass consumed every fresh asset it read (union invariant)
+        l0_assets_read=len(assets), fresh_assets_read=len(assets),
+        unprocessed_after=0,  # this pass consumed the whole payload it was pushed
         chunks_built=len(chunks),
         dispatches_scheduled=len(schedule), dispatches_entered=entered["n"],
         aggregates_written=totals["aggregates"], systems_written=totals["systems"],

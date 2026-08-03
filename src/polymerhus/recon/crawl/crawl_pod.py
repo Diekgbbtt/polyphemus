@@ -367,7 +367,7 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
         curate_kwargs = {}
         if scope:
             curate_kwargs["scope_domain"] = scope[0]
-        assets_merged, observations_merged = curate_fn(
+        assets_merged, observations_merged, merged_assets, merged_observations = curate_fn(
             assets, observations, state["project_id"], **curate_kwargs
         )
         viewer_url = state.get("viewer_url")
@@ -376,6 +376,9 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
             verdict="success",
             assets_merged=assets_merged,
             observations_merged=observations_merged,
+            # The curated payload the pipeline pushes into the analysis feed (#74).
+            assets=merged_assets,
+            observations=merged_observations,
             stats={"viewer_url": viewer_url} if viewer_url else None,
         )
         return {"export": export}
@@ -384,13 +387,15 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn, run_crawl_a
         input_asset = state.get("input_asset") or {}
         reason = state.get("crawl_error") or "crawl failed"
         observation = _coverage_observation(input_asset, reason)
-        _, observations_merged = curate_fn([], [observation], state["project_id"])
+        _, observations_merged, _, merged_observations = curate_fn([], [observation], state["project_id"])
         viewer_url = state.get("viewer_url")
         export = PodExport(
             input_asset=input_asset,
             verdict="failed",
             assets_merged=0,
             observations_merged=observations_merged,
+            # the coverage observation that merged still rides the payload (#74)
+            observations=merged_observations,
             error=reason,
             stats={"viewer_url": viewer_url} if viewer_url else None,
         )

@@ -140,7 +140,7 @@ def test_C7_out_of_scope_cdn_js_dropped_and_composes_with_noise():
     in_real = _endpoint("/api/orders")               # in-scope real surface
     base = AssetDelta(type="BaseURL", identity={"url": BASE})
 
-    assets_merged, _ = curate(
+    assets_merged, _, _, _ = curate(
         [base, cdn_js, in_junk, in_real], [], "p_test",
         merge_fn=lambda cypher, params: merged.append(params),
         scope_domain="juice-shop.test",

@@ -163,7 +163,7 @@ def _build_pod(run_crawl_fn):
         run_crawl_fn=run_crawl_fn,
         parse_fn=lambda stdout: [],
         triage_fn=lambda exec_result, assets, job: [],
-        curate_fn=lambda a, o, p, **k: (len(a), len(o)),
+        curate_fn=lambda a, o, p, **k: (len(a), len(o), a, o),
     )
 
 

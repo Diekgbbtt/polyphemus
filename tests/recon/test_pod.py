@@ -264,7 +264,7 @@ def test_no_job_command_template_leaves_a_residual_placeholder():
 def test_pod_happy_path_success():
     captured = {}
     def exec_fn(cmd, sid, t): return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=3)
-    def curate_fn(assets, obs, pid): captured["n"] = len(assets); return (len(assets), len(obs))
+    def curate_fn(assets, obs, pid): captured["n"] = len(assets); return (len(assets), len(obs), assets, obs)
     def triage_fn(er, assets, job): return []
     g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
     out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "app.example.com"},
@@ -278,7 +278,7 @@ def test_pod_retries_then_fails_on_nonzero():
     def exec_fn(cmd, sid, t):
         attempts["n"] += 1
         return ExecResult(stdout="", stderr="boom", returncode=1, duration_ms=1)
-    def curate_fn(a, o, p): return (0, 0)
+    def curate_fn(a, o, p): return (0, 0, [], [])
     def triage_fn(er, a, j): return []
     g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
     out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "x"}, "asset_context": "",
@@ -298,7 +298,7 @@ def test_pod_zero_exit_empty_output_is_success_not_failure():
     def exec_fn(cmd, sid, t):
         attempts["n"] += 1
         return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
-    def curate_fn(a, o, p): return (len(a), len(o))
+    def curate_fn(a, o, p): return (len(a), len(o), a, o)
     def triage_fn(er, a, j): return []
     g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
     out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "x"}, "asset_context": "",
@@ -357,7 +357,7 @@ def test_pod_takeover_findings_reach_curator_even_when_llm_triager_returns_nothi
 
     def curate_fn(assets, obs, pid):
         captured["observations"] = obs
-        return (len(assets), len(obs))
+        return (len(assets), len(obs), assets, obs)
 
     def triage_fn(er, assets, job):
         return []
@@ -401,7 +401,7 @@ def test_pod_graphql_findings_get_baseurl_anchor_from_input_asset_url_and_reach_
 
     def curate_fn(assets, obs, pid):
         captured["observations"] = obs
-        return (len(assets), len(obs))
+        return (len(assets), len(obs), assets, obs)
 
     def triage_fn(er, assets, job):
         return []
@@ -486,7 +486,7 @@ def test_batched_jsluice_configurator_builds_batch_command_and_reaches_curator()
     def triage_fn(er, assets, job):
         return []
 
-    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=lambda a, o, p: (len(a), len(o)), triage_fn=triage_fn)
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=lambda a, o, p: (len(a), len(o), a, o), triage_fn=triage_fn)
     batch = ["https://h.example.com/static/app.js", "https://h.example.com/static/vendor.js"]
     out = g.invoke({
         "job": JOBS["jsluice"],
@@ -529,7 +529,7 @@ def test_curator_node_forwards_scope_domain_from_extra():
     def exec_fn(cmd, sid, t): return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=3)
     def curate_fn(assets, obs, pid, scope_domain=None):
         seen["scope_domain"] = scope_domain
-        return (len(assets), len(obs))
+        return (len(assets), len(obs), assets, obs)
     def triage_fn(er, assets, job): return []
     g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
     g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "app.example.com"},
@@ -542,7 +542,7 @@ def test_curator_node_omits_scope_domain_when_absent():
     """No scope_domain in extra -> a 3-arg fake curate_fn is called unchanged
     (backward compatibility for the many pod tests that don't set scope)."""
     def exec_fn(cmd, sid, t): return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=3)
-    def curate_fn(assets, obs, pid): return (len(assets), len(obs))  # 3-arg, no scope
+    def curate_fn(assets, obs, pid): return (len(assets), len(obs), assets, obs)  # 3-arg, no scope
     def triage_fn(er, assets, job): return []
     g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
     out = g.invoke({"job": HTTPX_JOB, "input_asset": {"name": "app.example.com"},
@@ -560,7 +560,7 @@ def test_pod_export_records_executed_command():
 
     graph = build_pod_graph(
         exec_fn=fake_exec,
-        curate_fn=lambda assets, obs, pid, **kw: (0, 0),
+        curate_fn=lambda assets, obs, pid, **kw: (0, 0, [], []),
         triage_fn=lambda exec_result, assets, job: [],
     )
     job = JobSpec(tool="whois", skill="whois_lookup",

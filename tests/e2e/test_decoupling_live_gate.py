@@ -76,7 +76,7 @@ def feed_stats(run):
 def test_AST_DEC_09_the_analyser_never_blocked_the_recon_job_loop(feed_stats):
     """The direct predicate, measured at the seam the decoupling changed.
 
-    `advance_blocked_s_max` is the longest any single `feed.advance` held the recon
+    `advance_blocked_s_max` is the longest any single `feed.push` held the recon
     job loop. Under the inline feed it IS the analyser pass duration (up to 1157 s
     on run 64f2ccb8); under the queued feed it is an enqueue and must be ~0."""
     assert feed_stats.get("mode") == "queued", (
@@ -159,6 +159,8 @@ def test_AST_DEC_08_a_further_pass_over_the_settled_surface_adds_nothing(run, fe
     which would destroy the provenance this same test then checks."""
     import asyncio
 
+    from polymerhus.analysis.feed import L0Chunk
+    from polymerhus.analysis.l0_stream import read_l0_assets, read_observations
     from polymerhus.analysis.supervisor import analyse_chunked
 
     assert feed_stats.get("analysis_drained") is True, (
@@ -168,7 +170,10 @@ def test_AST_DEC_08_a_further_pass_over_the_settled_surface_adds_nothing(run, fe
     before = _l1_counts(project_id)
     assert before[3] > 0, "no AGGREGATES were written - nothing converged"
 
-    result = asyncio.run(analyse_chunked(project_id, f"stream-{RUN_ID}", terminal=True))
+    result = asyncio.run(analyse_chunked(
+        L0Chunk(project_id=project_id, run_id=f"stream-{RUN_ID}",
+                assets=read_l0_assets(project_id), observations=read_observations(project_id),
+                terminal=True)))
     # Non-vacuity: the convergence pass must have READ the surface. A pass that
     # degraded to nothing would also "add nothing", for the wrong reason.
     assert result.census.l0_assets_read > 0

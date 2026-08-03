@@ -402,7 +402,7 @@ def test_curate_drops_out_of_scope_observation_anchor():
     obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
     merged = curate([], [obs], "p", merge_fn=lambda cypher, params: None,
                     scope_domain="daytona.io")
-    assert merged == (0, 0)
+    assert merged == (0, 0, [], [])
 
 
 def test_curate_keeps_observation_when_no_scope_domain():
@@ -410,7 +410,7 @@ def test_curate_keeps_observation_when_no_scope_domain():
     obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
     merged = curate([], [obs], "p", merge_fn=lambda cypher, params: None,
                     scope_domain=None)
-    assert merged == (0, 1)
+    assert merged == (0, 1, [], [obs])
 
 
 # --- D16 webapp/restapi profiling ---

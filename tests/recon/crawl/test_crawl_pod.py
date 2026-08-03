@@ -41,7 +41,7 @@ def make_capturing_curate_fn():
             "project_id": project_id,
             "scope_domain": scope_domain,
         })
-        return len(assets), len(observations)
+        return len(assets), len(observations), assets, observations
 
     curate_fn.calls = calls
     return curate_fn
@@ -192,7 +192,7 @@ def test_crawl_pod_fires_notify_on_awaiting_auth():
         run_crawl_fn=lambda *a, **k: {"pages": []},
         parse_fn=lambda s: [],
         triage_fn=lambda e, a, j: [],
-        curate_fn=lambda a, o, pid, **k: (0, 0),
+        curate_fn=lambda a, o, pid, **k: (0, 0, [], []),
         run_crawl_authenticated_fn=fake_run_crawl_authenticated_fn,
         status_sink=lambda *a, **k: None,
         notify_fn=lambda run_id, phase, job, vu: notified.append((run_id, phase, job, vu)),
@@ -234,7 +234,7 @@ def test_crawl_scope_folds_to_registrable_domain_of_seed_host():
         run_crawl_fn=run_crawl_fn,
         parse_fn=lambda s: [],
         triage_fn=lambda e, a, j: [],
-        curate_fn=lambda a, o, pid, **k: (0, 0),
+        curate_fn=lambda a, o, pid, **k: (0, 0, [], []),
     )
     job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
                   produces=["BaseURL"], consumes="BaseURL", use_auth=False,
@@ -297,7 +297,7 @@ def test_crawl_node_falls_back_to_anonymous_when_credentials_off_target():
         run_crawl_fn=run_crawl_fn,
         parse_fn=lambda s: [],
         triage_fn=lambda e, a, j: [],
-        curate_fn=lambda a, o, pid, **k: (0, 0),
+        curate_fn=lambda a, o, pid, **k: (0, 0, [], []),
         run_crawl_authenticated_fn=run_crawl_authenticated_fn,
     )
     job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
@@ -334,7 +334,7 @@ def test_crawl_node_takes_interactive_path_with_no_credentials():
         run_crawl_fn=run_crawl_fn,
         parse_fn=lambda s: [],
         triage_fn=lambda e, a, j: [],
-        curate_fn=lambda a, o, pid, **k: (0, 0),
+        curate_fn=lambda a, o, pid, **k: (0, 0, [], []),
         run_crawl_authenticated_fn=run_crawl_authenticated_fn,
     )
     job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
@@ -358,7 +358,7 @@ def test_crawl_node_takes_credentialed_path_for_matching_host():
         run_crawl_fn=lambda *a, **k: {"pages": []},
         parse_fn=lambda s: [],
         triage_fn=lambda e, a, j: [],
-        curate_fn=lambda a, o, pid, **k: (0, 0),
+        curate_fn=lambda a, o, pid, **k: (0, 0, [], []),
         run_crawl_credentialed_fn=lambda target, scope, credentials: called.update(
             target=target, credentials=credentials) or {"pages": [{"url": target}]},
     )

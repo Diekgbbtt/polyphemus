@@ -1,9 +1,10 @@
-"""FR-STREAM (NM-7) unit tier — the streaming analyser step + the pipeline hook.
+"""FR-STREAM (NM-7) unit tier - the streaming analyser step + the pipeline hook.
 
-Streaming reuses the pure, idempotent analyser (`run_analyser`) invoked at each
-recon increment (L1D-23: push/pull produce identical writes). These tests pin the
-contract WITHOUT a live LLM/Neo4j: `stream_analyser_step` is exercised with an
-injected analyse_fn, and the pipeline hook with the existing injected-fakes style.
+Since #74 the analyser is chunk-fed: `start_analysis_feed` consumes curated
+`L0Chunk` payloads exactly once, in push order; the batch adapter
+`run_analyser_chunked` remains for callers without a chunk (L1D-23). These tests
+pin the contract WITHOUT a live LLM/Neo4j: the steps are exercised with injected
+passes, and the pipeline hook with the existing injected-fakes style.
 """
 import asyncio
 
@@ -13,7 +14,7 @@ from polymerhus.analysis.pod import AnalyserExport
 from polymerhus.recon.domain.types import PodExport
 
 
-# --- stream_analyser_step (the per-increment invocation) ----------------------
+# --- stream_analyser_step (the batch invocatiaon, kept for non-feed callers) ---
 
 def test_stream_step_uses_stable_stream_id_and_autodelivers():
     """A step runs the analyser under a STABLE stream-<run_id> id (so repeated
@@ -63,46 +64,45 @@ class FakeRegistry:
         self.upsert_job_calls.append({"phase": phase, "job": job, "status": status})
 
 
-def _run(settings, stream_calls):
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+def _run(settings, pass_calls):
+    async def _run_job(job, input_assets, *, run_id, phase, extra):
         # a producing pod: one asset merged so the streaming gate fires
         return [PodExport(input_asset={}, verdict="success", assets_merged=1,
                           observations_merged=1)]
 
-    def stream_fn(project_id, run_id):
-        stream_calls.append((project_id, run_id))
-        return AnalyserExport(aggregates_written=1)
+    def pass_fn(chunk):
+        pass_calls.append((chunk.project_id, chunk.run_id, chunk.job))
 
     asyncio.run(
         pipeline.run_pipeline(
             "proj1",
             run_id="run1",
             job_subset=["subfinder", "dnsx"],  # 2 jobs across 2 phases
-            run_job=run_job,
+            run_job=_run_job,
             load_settings=lambda project_id: settings,
             registry=FakeRegistry(),
             read_assets=lambda node_type, project_id, where=None: [{"name": "seed"}],
-            stream_fn=stream_fn,
+            pass_fn=pass_fn,
         )
     )
 
 
 def test_pipeline_streams_after_each_producing_job_when_enabled():
-    """With streaming on and the INLINE feed (async_analysis_consumer=False), the
-    analyser is invoked once per producing job, during recon (a stream call per job
-    that merged surface). Queued is the default since #9, so inline is opted into."""
-    stream_calls = []
+    """With streaming on and the INLINE feed (async_analysis_consumer=False), one
+    pass per producing job is entered INLINE on the job loop (a chunk per job that
+    merged surface). Queued is the default; inline is opted into."""
+    pass_calls = []
     _run({"target_domain": "*.t.com", "streaming_analysis": True,
-          "async_analysis_consumer": False}, stream_calls)
-    assert len(stream_calls) == 2  # one per producing job (subfinder, dnsx)
-    assert all(c == ("proj1", "run1") for c in stream_calls)
+          "async_analysis_consumer": False}, pass_calls)
+    assert len(pass_calls) == 2  # one per producing job (subfinder, dnsx)
+    assert all(c[:2] == ("proj1", "run1") for c in pass_calls)
 
 
 def test_pipeline_does_not_stream_when_disabled():
     """Default (flag absent) = batch: the pipeline never invokes the analyser."""
-    stream_calls = []
-    _run({"target_domain": "*.t.com"}, stream_calls)
-    assert stream_calls == []
+    pass_calls = []
+    _run({"target_domain": "*.t.com"}, pass_calls)
+    assert pass_calls == []
 
 
 # --- #34: the decoupled feed at the pipeline call site ------------------------
@@ -118,14 +118,14 @@ class _StatsRegistry(FakeRegistry):
 
 def _run_queued(settings, pass_fn, registry=None):
     """Drive run_pipeline with the QUEUED feed and an injected pass."""
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def _run_job(job, input_assets, *, run_id, phase, extra):
         return [PodExport(input_asset={}, verdict="success", assets_merged=1,
                           observations_merged=1)]
 
     reg = registry or _StatsRegistry()
     asyncio.run(pipeline.run_pipeline(
         "proj1", run_id="run1", job_subset=["subfinder", "dnsx"],
-        run_job=run_job, load_settings=lambda project_id: settings,
+        run_job=_run_job, load_settings=lambda project_id: settings,
         registry=reg,
         read_assets=lambda node_type, project_id, where=None: [{"name": "seed"}],
         feed_mode="queued", pass_fn=pass_fn,
@@ -137,11 +137,12 @@ _QUEUED_SETTINGS = {"target_domain": "*.t.com", "streaming_analysis": True,
                     "async_analysis_consumer": True}
 
 
-async def _ok_census(cursor):
+async def _ok_census(chunk):
     from polymerhus.analysis.supervisor import PassCensus, PassResult
     return PassResult(export=None, census=PassCensus(
-        l0_assets_read=9, chunks_built=1, dispatches_scheduled=1,
-        dispatches_entered=1, aggregates_written=2, terminal=cursor.terminal))
+        l0_assets_read=len(chunk.assets), chunks_built=1, dispatches_scheduled=1,
+        dispatches_entered=1, aggregates_written=2, terminal=chunk.terminal,
+        unprocessed_after=0))
 
 
 def test_AST_DEC_01_queued_feed_never_runs_a_pass_inside_the_job_loop():
@@ -149,12 +150,11 @@ def test_AST_DEC_01_queued_feed_never_runs_a_pass_inside_the_job_loop():
     hook returns before any pass is entered."""
     events = []
 
-    async def slow_pass(cursor):
-        events.append(("pass", cursor.job))
+    async def slow_pass(chunk):
+        events.append(("pass", chunk.job))
         await asyncio.sleep(0.02)
-        return await _ok_census(cursor)
+        return await _ok_census(chunk)
 
-    original = pipeline.registry_upsert_probe = None  # noqa: F841 - readability
     reg = _run_queued(_QUEUED_SETTINGS, slow_pass)
 
     # every recon job reached a terminal status, and a terminal pass ran
@@ -165,7 +165,7 @@ def test_AST_DEC_01_queued_feed_never_runs_a_pass_inside_the_job_loop():
 
 
 def test_AST_DEC_03_a_failing_analysis_leaves_every_recon_job_untouched():
-    async def boom(cursor):
+    async def boom(chunk):
         raise RuntimeError("provider down")
 
     reg = _run_queued(_QUEUED_SETTINGS, boom)
@@ -179,77 +179,67 @@ def test_AST_DEC_04_run_stats_record_the_terminal_pass_census():
     reg = _run_queued(_QUEUED_SETTINGS, _ok_census)
     stats = reg.run_stats["run1"]
     assert stats["analysis_drained"] is True
-    assert stats["l0_assets_read"] == 9
+    assert stats["l0_assets_read"] == 0  # the pushed chunks carried no payload
     assert stats["dispatches_entered"] == 1
     assert stats["passes"] >= 1
 
 
-def test_inline_mode_is_byte_for_byte_todays_behaviour():
-    """The rollback path: with the consumer flag explicitly FALSE, the injected
-    stream_fn is still called once per producing job, exactly as before #34. (Since
-    #9 flipped the default to queued, inline is now an explicit opt-in, not the
-    absent-flag default.)"""
-    stream_calls = []
+def test_inline_mode_consumes_each_chunk_inline():
+    """The rollback path: with the consumer flag explicitly FALSE, each pushed
+    chunk runs a pass on the caller's task, exactly as before #34's queuing."""
+    pass_calls = []
     _run({"target_domain": "*.t.com", "streaming_analysis": True,
-          "async_analysis_consumer": False}, stream_calls)
-    assert len(stream_calls) == 2
+          "async_analysis_consumer": False}, pass_calls)
+    assert len(pass_calls) == 2
 
 
 def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(monkeypatch):
-    """L1 of the silent-empty-insight fix: the streaming pass must DELIVER the triager
-    observations and hand them to the chunk builder. Before the fix analyse_chunked
-    called chunks_for_job with NO observations, so every chunk - and thus the typist -
-    saw none, and the per-asset insight was empty every time. Spy on chunks_for_job
-    (returning [] short-circuits the pass before the graph/DB) to capture what it got."""
+    """L1 of the silent-empty-insight fix: the pass must thread the triager
+    observations from the CHUNK into the chunk builder. Spy on chunks_for_job
+    (returning [] short-circuits the pass before the graph/DB) to capture what it
+    got."""
     from polymerhus.analysis import chunking, supervisor
-    from polymerhus.recon.domain.types import AssetDelta, Observation
+    from polymerhus.analysis.feed import AssetDelta, L0Chunk
+    from polymerhus.recon.domain.types import Observation
 
-    # analyse_chunked resolves + BUILDS the configured analyser model at pass start (a
-    # real run always has these set); stub the provider env so this hermetic unit test
-    # does not depend on the ambient env. Construction is lazy (no network), and the []
-    # from the spy short-circuits the pass before any model.invoke.
     monkeypatch.setenv("LLM_MODEL_ANALYSER", "openai:gpt-4o-mini")
     monkeypatch.setenv("API_KEY_OPENAI", "sk-test-not-used")
     captured = {}
 
     def spy_chunks_for_job(job, assets, observations=None, **kw):
         captured["observations"] = observations
-        return []  # valid-empty -> analyse_chunked returns before run_supervisor (no DB/LLM)
+        return []
 
     monkeypatch.setattr(chunking, "chunks_for_job", spy_chunks_for_job)
     obs = Observation(macro_kind="cors", severity="high", evidence="acao *",
                       rationale="wide-open CORS", anchor={"type": "BaseURL", "identity": {"url": "https://a"}},
                       source_job="triager", source_tool="triager")
-    asyncio.run(supervisor.analyse_chunked(
-        "p", "run1",
-        # `default_invoke_fn()` resolves the real provider config EAGERLY, as a
-        # parameter default, not lazily on first call - so even though the empty-
-        # chunks spy short-circuits before any LLM invocation, a bare `invoke_fn`
-        # would still trip live provider resolution while building the call. Every
-        # collaborator must be injectable (CODING_STANDARD.md section 6); a no-op
-        # is enough since this test's subject is observation threading, not invocation.
+    chunk = L0Chunk(project_id="p", run_id="run1",
+                    assets=[AssetDelta(type="Endpoint", identity={"path": "/x", "baseurl": "https://a"})],
+                    observations=[obs])
+    result = asyncio.run(supervisor.analyse_chunked(
+        chunk,
         invoke_fn=lambda messages: None,
-        assets_fn=lambda pid: [AssetDelta(type="Endpoint", identity={"path": "/x", "baseurl": "https://a"})],
-        observations_fn=lambda pid: [obs],
         observe=False,
     ))
     assert captured["observations"] == [obs]
+    assert result.census.unprocessed_after == 0
 
 
 # --- #9: the phase-6 endpoint-reprofile pass is NOT re-streamed to proposers ---
 
 class _RecordingFeed:
-    """Captures every cursor the pipeline hands to `advance`, without a queue - so the
+    """Captures every chunk the pipeline hands to `push`, without a queue - so the
     assertion is on WHICH jobs triggered an analyser signal, deterministically (no
     conflation)."""
 
     mode = "queued"
 
     def __init__(self):
-        self.advanced_jobs = []
+        self.pushed_jobs = []
 
-    async def advance(self, cursor):
-        self.advanced_jobs.append(cursor.job)
+    async def push(self, chunk):
+        self.pushed_jobs.append(chunk.job)
 
     async def drain(self, *a, **k):
         from polymerhus.analysis.feed import FeedStats
@@ -261,26 +251,22 @@ class _RecordingFeed:
 
 def test_endpoint_reprofile_job_does_not_advance_the_analyser(monkeypatch):
     """The httpx_reprofile pass (phase 6, `endpoint_profiling=True`) re-emits Endpoints
-    already streamed by the crawl phase, adding only a per-endpoint `profile`. Streaming
-    those endpoints to the proposers again is redundant analysis - the profile-aware
-    deeper pass is deferred to phase A.2 (#45) and later B. So a reprofile job that
-    merges surface must NOT raise an analyser cursor, while ordinary producing jobs
-    still do."""
+    already streamed, adding only a per-endpoint `profile`. Streaming those endpoints
+    to the proposers again is redundant analysis - so a reprofile job that merges
+    surface must NOT push a chunk, while ordinary producing jobs still do."""
     from polymerhus.analysis import feed as feed_mod
 
     recording = _RecordingFeed()
     monkeypatch.setattr(feed_mod, "start_analysis_feed", lambda *a, **k: recording)
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
-        # every job merges surface, so only the reprofile guard - not the
-        # produced-nothing guard - can be what suppresses the reprofile advance.
+    async def _run_job(job, input_assets, *, run_id, phase, extra):
         return [PodExport(input_asset={}, verdict="success", assets_merged=1,
                           observations_merged=1)]
 
     asyncio.run(pipeline.run_pipeline(
         "proj1", run_id="run1",
         job_subset=["httpx", "httpx_reprofile"],  # producer then its reprofile
-        run_job=run_job,
+        run_job=_run_job,
         load_settings=lambda project_id: {
             "target_domain": "*.t.com", "streaming_analysis": True,
             "async_analysis_consumer": True},
@@ -288,5 +274,5 @@ def test_endpoint_reprofile_job_does_not_advance_the_analyser(monkeypatch):
         read_assets=lambda node_type, project_id, where=None: [{"name": "seed"}],
     ))
 
-    assert "httpx" in recording.advanced_jobs           # ordinary producer still signals
-    assert "httpx_reprofile" not in recording.advanced_jobs  # the reprofile pass does not
+    assert "httpx" in recording.pushed_jobs                 # ordinary producer still signals
+    assert "httpx_reprofile" not in recording.pushed_jobs   # the reprofile pass does not
