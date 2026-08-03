@@ -1,6 +1,6 @@
 # Context: Hunting (vuln-testing) - designed-not-built
 
-*Status: **designed-not-built**. Terse glossary seed; the reasoned design is `docs/design/hunting-system-design.md`, the decided design is the wayfinder map [#54](https://github.com/Diekgbbtt/polyphemus/issues/54) (Phase 1 complete: Q1-Q8 closed; Phase-2+ concretisation specs per graduated ticket, e.g. `docs/design/hunting-63-typed-applies-if-spec.md` resolving #63 and `docs/design/hunting-67-per-agent-specs-spec.md` resolving #67). Terms marked provisional are not yet ratified.*
+*Status: **designed-not-built**. Terse glossary seed; the reasoned design is `docs/design/hunting-system-design.md`, the decided design is the wayfinder map [#54](https://github.com/Diekgbbtt/polyphemus/issues/54) (Phase 1 complete: Q1-Q8 closed; Phase-2+ concretisation specs per graduated ticket, e.g. `docs/design/hunting-63-typed-applies-if-spec.md` resolving #63 and `docs/design/hunting-67-per-agent-specs-spec.md` resolving #67). The per-agent contracts are disambiguated from #67's combined spec into `docs/design/hunting-67-orchestrator-spec.md` (hunt-orchestrator), `docs/design/hunting-67-hunting-agent-spec.md` (hunting agent), and `docs/design/hunting-67-test-executor-pod-spec.md` (stub pod). Terms marked provisional are not yet ratified.*
 
 Hunting configures and dispatches; a test-executor pod executes. Only the former is in scope.
 
