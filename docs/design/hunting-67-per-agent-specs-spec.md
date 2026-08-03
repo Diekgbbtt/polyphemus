@@ -3,7 +3,7 @@
 Part of [#54](https://github.com/Diekgbbtt/polyphemus/issues/54) (hunting wayfinder map, Phase-2+ concretisation).
 Resolves [#67](https://github.com/Diekgbbtt/polyphemus/issues/67) (enhancement, the graduated per-agent spec ticket).
 
-*Status: spec (decision record + contract), NOT implementation. This is the phase-2 map convention: one spec per graduated ticket. The cooperative-team execution logic of the pod beyond the scaffold is deferred (D67-01; decision record section 4); the closed-enum testing-pattern engine is deferred (D67-07; decision record section 4); the hunt-store persistence is owned by [#68](https://github.com/Diekgbbtt/polyphemus/issues/68); the control-plane dispatch graph by [#69](https://github.com/Diekgbbtt/polyphemus/issues/69); the orchestrator memory by [#70](https://github.com/Diekgbbtt/polyphemus/issues/70); the deterministic components by [#71](https://github.com/Diekgbbtt/polyphemus/issues/71). This spec owns the per-agent contracts only. Mined on 2026-08-04 per the operator's request: sections 10-14 add the end-to-end walkthrough, the domain-data contracts, the interface agreements with delivery semantics and failure handling, and the agent-attribute compliance against the #9 agent-spec precedent.*
+*Status: spec (decision record + contract), NOT implementation. This is the phase-2 map convention: one spec per graduated ticket. The cooperative-team execution logic of the pod beyond the scaffold is deferred (D67-01; decision record section 4); the closed-enum testing-pattern engine is deferred (D67-07; decision record section 4); the hunt-store persistence is owned by [#68](https://github.com/Diekgbbtt/polyphemus/issues/68); the control-plane dispatch graph by [#69](https://github.com/Diekgbbtt/polyphemus/issues/69); the orchestrator memory by [#70](https://github.com/Diekgbbtt/polyphemus/issues/70); the deterministic components by [#71](https://github.com/Diekgbbtt/polyphemus/issues/71). This spec owns the per-agent contracts only. Mined on 2026-08-03 per the operator's request: sections 10-14 add the end-to-end walkthrough, the domain-data contracts, the interface agreements with delivery semantics and failure handling, and the agent-attribute compliance against the #9 agent-spec precedent.*
 
 ## 0. Provenance and decision record
 
@@ -260,7 +260,7 @@ The pod's internals are observable to the same degree as the parent agents, not 
 The recipe is the repo's ratified v4 recipe (`docs/design/dataplane-A1-decisions.md` DPL-DEC-20, AST-DEC-09), applied verbatim:
 
 - Langfuse is optional and fail-open: tracing failures drop span batches and never gate, block, or raise into a run (AST-DEC-09).
-- One trace per agent turn/run; the session identifier is the run id.
+- One trace per agent turn/run; the session identifier is the run id (no `stream-` prefix on hunting run ids, so no stripping applies).
 - Spans per step (orchestrator steps, spec-authoring steps, pod loop iterations), each span named after its step's node (span name = node name, DPL-DEC-20).
 - Verdicts are NOT Langfuse score identifiers: `create_score` has no call sites and scores are designed-not-built (DPL-DEC-20). The authoritative verdict measurement is the hunt-store records (section 11) plus the eval-harness assertions (section 14, leg 9).
 - Tags carry the verdict markers for localisation.
@@ -281,7 +281,7 @@ Stages S0 and S2 are owned by sibling tickets (#66, #71); this spec fixes the co
 
 ### 10.1 S0 - Candidate production (FaultSource, #66/#71)
 
-1. The FaultSource prefilter engine evaluates the typed `applies-if` predicates (#63) against the L1 model; each satisfied predicate emits its violated clause as the deterministic half of the witness.
+1. The FaultSource prefilter engine evaluates the typed `applies-if` predicates (#63) against the L1 model; each predicate that evaluates FALSE emits its violated clause as the deterministic half of the witness (the deterministic `does-not-apply`, a prune); TRUE/UNKNOWN evaluations pass without a witness.
 2. An LLM match step evaluates the fault's applicability to the unit and returns the three-valued `match verdict` (`applies`, `does-not-apply`, `insufficient-evidence`) with the LLM half of the witness.
 3. The candidate set `{(unit, fault, symptom, applies-witnesses)}` is delivered to the hunt-orchestrator; `symptom` is phase-2-populated and empty in phase 1.
 4. Yellow `insufficient-evidence` verdicts are not dropped: they raise a back-edge need (S3, S6).
@@ -293,7 +293,7 @@ Stages S0 and S2 are owned by sibling tickets (#66, #71); this spec fixes the co
 3. Directions it is not sufficiently confident on are pruned in-turn; there is no distinct gating phase and no confidence score.
 4. Carried-forward directions proceed to ranking.
 
-### 10.3 S2 - Ranking (Q7, #71)
+### 10.3 S2 - Ranking (Q7, #69/#71)
 
 1. A multi-facet LLM risk ranker orders the carried-forward directions; the clear-L0-Observation facet is the most important one (Q7).
 2. The budget governor (#71) may cut dispatch at the budget boundary; the phase-1 rule is N = 1 hunt per carried-forward direction.
@@ -467,15 +467,28 @@ This section maps every attribute to each agent of this spec and records what th
 
 ### 14.1 The leg-by-leg map
 
-- Role: #9 pins the role in the supervisory graph. Orchestrator: single planner, peer of the phase-2 orchestrator (4.1). Hunting agent: one per dispatched hunt (5.1). Pod: cooperative team with the minimal scaffold (6.1).
-- Workflow: #9 pins the ordered steps. Orchestrator 4.3, hunting agent 5.3, pod 6.4-6.7.
+- Role: #9 pins the role in the supervisory graph.
+  Orchestrator: single planner, peer of the phase-2 orchestrator (4.1).
+  Hunting agent: one per dispatched hunt (5.1).
+  Pod: cooperative team with the minimal scaffold (6.1).
+- Workflow: #9 pins the ordered steps.
+  Orchestrator 4.3, hunting agent 5.3, pod 6.4-6.7.
 - Goal: 4.2, 5.2, 6.2.
-- Tools: #9 pins the named tool surface. Orchestrator: the admitted surface is exactly the back-edge, the hunt-store reads, and the read-only graph view; a write attempt is rejected (4.9). Hunting agent: the fault-targeting tool registry plus the KB query (5.4). Pod: the minimal scaffold surface of the HTTP probe tool and the exec tool (6.8); the specialised registry is #71's future home. Mining closed: the pod's tool surface was previously unspecified.
-- Context: #9 pins live reads re-derived from the graph, never a pipeline snapshot. Mining closed: section 3's live-reads principle pins the orchestrator's graph view, the index-card projections, and the hunt-store reads as dispatch-time re-derives.
-- Output template: #9 reuses existing typed shapes (L1DeltaBatch/AnatomyResult). Mining closed: section 11 reuses the existing models verbatim where they exist (D9, D3's index-card handle, the L0 evidences) and declares the missing records (D3, D4, D5, D6, D7, D8) as typed seams.
-- Produced outcome: #9 pins the environment change. 4.7, 5.7, 6.10: the hunt store reflects the lifecycle; nothing is ever written to L0/L1.
-- Observability: #9 pins trace, span, and score identifiers. Mining corrected: the repo's ratified recipe (DPL-DEC-20, AST-DEC-09) has no Langfuse score identifiers (`create_score` has no call sites); span names equal node names; the authoritative verdict measurement is the hunt-store records plus the eval-harness assertions (section 8).
-- Verifiability: #9 pins e2e assertions over outlier inputs and a unit tier with mocks. 4.9, 5.9, 6.12 pin the files; the assertion families are the binary terminal invariant, the tool-surface admission, and the walkthroughs - the #63 assertion-catalogue pattern (C-series) is the template.
+- Tools: #9 pins the named tool surface.
+  Orchestrator: the admitted surface is exactly the back-edge, the hunt-store reads, and the read-only graph view; a write attempt is rejected (4.9).
+  Hunting agent: the fault-targeting tool registry plus the KB query (5.4).
+  Pod: the minimal scaffold surface of the HTTP probe tool and the exec tool (6.8); the specialised registry is #71's future home.
+  Mining closed: the pod's tool surface was previously unspecified.
+- Context: #9 pins live reads re-derived from the graph, never a pipeline snapshot.
+  Mining closed: section 3's live-reads principle pins the orchestrator's graph view, the index-card projections, and the hunt-store reads as dispatch-time re-derives.
+- Output template: #9 reuses existing typed shapes (L1DeltaBatch/AnatomyResult).
+  Mining closed: section 11 reuses the existing models verbatim where they exist (D9, D3's index-card handle, the L0 evidences) and declares the missing records (D3, D4, D5, D6, D7, D8) as typed seams.
+- Produced outcome: #9 pins the environment change.
+  4.7, 5.7, 6.10: the hunt store reflects the lifecycle; nothing is ever written to L0/L1.
+- Observability: #9 pins trace, span, and score identifiers.
+  Mining corrected: the repo's ratified recipe (DPL-DEC-20, AST-DEC-09) has no Langfuse score identifiers (`create_score` has no call sites); span names equal node names; the authoritative verdict measurement is the hunt-store records plus the eval-harness assertions (section 8).
+- Verifiability: #9 pins e2e assertions over outlier inputs and a unit tier with mocks.
+  4.9, 5.9, 6.12 pin the files; the assertion families are the binary terminal invariant, the tool-surface admission, and the walkthroughs - the #63 assertion-catalogue pattern (C-series) is the template.
 
 ### 14.2 Honour clauses
 
