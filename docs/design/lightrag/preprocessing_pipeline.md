@@ -495,6 +495,64 @@ The generated documents are review overlays. Promotion to the validated base
 should happen only after reviewing that the extracted relation briefs are
 reusable methodology rather than machine-specific steps.
 
+### 2026-08-03 Overlay Gate
+
+The 0xdf overlay was loaded into a separate LightRAG instance instead of the
+validated WSTG base:
+
+```text
+http://127.0.0.1:9622
+workspace: writeups_0xdf
+input: data/lightrag/inputs/writeups_overlay/0xdf
+storage: data/lightrag/writeups_rag_storage
+```
+
+Ingestion used batches of 10 documents with a batch-and-gate sequence:
+
+1. upload the batch to the overlay API;
+2. poll `/documents` until the batch reaches `processed == batch_size` and
+   `failed == 0`;
+3. run graph audit and deterministic normalization against the canonical WSTG
+   entity set;
+4. prune CTF-only artifacts, transient local execution paths, source markers,
+   and generic command noise;
+5. run a mini-smoke query for a technique present in the batch.
+
+Final overlay state after batches 1 through 4:
+
+```text
+documents: 39 processed / 39 all / 0 failed
+entities: 139
+relations: 502
+unknown entity types: 0
+non-canonical type labels: 0
+blocking noise entities: 0
+expected type mismatches: 0
+embedded marker names: 0
+prefix noise names: 0
+```
+
+The overlay must keep the same 10 canonical methodology entity types used by
+the WSTG base:
+
+```text
+PreconditionEnvironment
+TechnologyStack
+DefensiveControl
+VulnerabilityClass
+AttackGoal
+AttackerCapability
+AttackTechnique
+PayloadPattern
+Artifact
+ObservableSignal
+```
+
+Any future writeup ingestion must pass the same gate before the data is used by
+`RoutedMethodologyRetriever`. Passing the overlay gate does not promote the
+content to the validated base; it only makes the material eligible for
+conditional retrieval with `source_tier=review_overlay`.
+
 ## LightRAG 1.5
 
 The runtime is pinned to `ghcr.io/hkuds/lightrag:v1.5.0rc3`. In this line,
@@ -689,6 +747,106 @@ category, and methodology templates before enabling generated answers:
 Then run the same benchmark without `--only-context` and keep
 `--temperature 0` to evaluate generated methodology quality separately from
 retrieval quality.
+
+### Ontology Query Benchmark
+
+The routed overlay benchmark harness lives in:
+
+```text
+agent/lightrag/benchmark_ontology_queries.py
+```
+
+It evaluates three ontology-shaped Attack Engineer queries across three
+LightRAG retrieval configurations:
+
+```text
+A: base-only OAuth2/OIDC broken access control and session handling
+B: JWT weak-signature token forgery and role-claim escalation
+C: Java deserialization gadget chains with RMI/JRMP listener constraints
+
+standard: mode=mix, top_k=10, only_need_context=true
+deep_graph_retrieval: mode=mix, top_k=20, only_need_context=true
+hybrid_search: mode=hybrid, top_k=15, only_need_context=true
+```
+
+Example live run:
+
+```bash
+.venv/bin/python -m agent.lightrag.benchmark_ontology_queries \
+  --base-url http://127.0.0.1:9621 \
+  --writeup-url http://127.0.0.1:9622 \
+  --fail-on-gate
+```
+
+To also save generated LightRAG answers for utility review, add:
+
+```bash
+--include-answers
+```
+
+The runner writes timestamped JSON records under:
+
+```text
+data/lightrag/benchmarks/ontology_query_benchmark_<timestamp>.json
+```
+
+Each result records:
+
+```text
+test_id
+routing_decision.sources_queried
+routing_decision.trigger_reason
+hyperparameters.mode
+hyperparameters.top_k
+retrieved_entities_by_type
+retrieved_entities_by_role
+extracted_relations
+source_chunks
+raw_context_bytes
+lightrag_answer.text
+lightrag_answer.raw_source_answers
+```
+
+The benchmark has a completeness gate so failures cannot silently disappear
+from the output. The top-level summary includes expected and observed run IDs,
+missing runs, route mismatches, trigger mismatches, retriever errors, runs
+without canonical entities, runs without canonical source context, and runs
+without extracted relations.
+
+The validated 2026-08-03 run completed all `3 x 3` cases:
+
+```text
+output: data/lightrag/benchmarks/ontology_query_benchmark_20260803T123110Z.json
+expected_run_count: 9
+run_count: 9
+missing_runs: []
+error_count: 0
+expected_route_mismatches: []
+expected_trigger_mismatches: []
+runs_without_canonical_entities: []
+runs_without_canonical_source_context: []
+runs_without_extracted_relations: []
+total_raw_context_bytes: 2893542
+```
+
+Query C is expected to include both `base_candidates_below_threshold` and
+`concept:deserialization` when the query text explicitly contains
+deserialization or gadget-chain terms. The gate treats the configured trigger
+as required but not exclusive.
+
+The 2026-08-03 generated-answer run saved responses in:
+
+```text
+data/lightrag/benchmarks/ontology_query_benchmark_withanswer.json
+generated_at: 20260803T124640Z
+answer_run_count: 9
+answer_error_count: 0
+total_answer_bytes: 72681
+```
+
+Generated answers are a utility signal, not the canonical gate. The graph and
+context checks remain the blocking validation path; answer prose can still need
+prompt tuning even when routing and retrieval are correct.
 
 ## Previous Validated WSTG KB And Pending Rebuild
 

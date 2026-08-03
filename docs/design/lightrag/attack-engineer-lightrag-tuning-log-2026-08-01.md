@@ -258,3 +258,93 @@ FAIL: No remaining failure in the touched LightRAG test suite.
 
 NOTE: The production `KnowledgeQuery` contract can now represent the selected
 retrieval strategy.
+
+### [LR-AE-011] Writeups overlay ingestion gate
+
+Configuration / Query: four batch-and-gate ingestion passes against the
+separate overlay service at `http://127.0.0.1:9622`, workspace
+`writeups_0xdf`, using files from
+`data/lightrag/inputs/writeups_overlay/0xdf`.
+
+OK: All 39 parsed 0xdf writeups were processed with `failed=0`. The final
+overlay graph audit reported 139 entities, 502 relations, 0 unknown entity
+types, 0 non-canonical type labels, 0 expected type mismatches, and 0 blocking
+noise nodes. Mini-smoke queries for batch-specific techniques returned
+canonical WSTG-aligned entity context.
+
+FAIL: No blocking ingestion or schema issue remained after normalization.
+
+NOTE: The overlay is queryable as review material only. It must remain separate
+from `data/lightrag/rag_storage` to avoid biasing the validated WSTG base graph.
+
+### [LR-AE-012] Routed ontology benchmark
+
+Configuration / Query:
+
+```bash
+.venv/bin/python -m agent.lightrag.benchmark_ontology_queries \
+  --base-url http://127.0.0.1:9621 \
+  --writeup-url http://127.0.0.1:9622 \
+  --fail-on-gate
+```
+
+The matrix covered:
+
+```text
+A: OAuth2/OIDC broken access control and session handling
+B: JWT weak signatures, token forgery, role claim escalation, filter bypass
+C: Java deserialization gadget chains with RMI/JRMP listeners
+
+standard: mix/top_k=10
+deep_graph_retrieval: mix/top_k=20
+hybrid_search: hybrid/top_k=15
+```
+
+OK: The runner produced all 9 expected results in
+`data/lightrag/benchmarks/ontology_query_benchmark_20260803T123110Z.json`.
+There were no missing runs, no retriever errors, no route mismatches, no trigger
+mismatches, no runs without canonical entities, no runs without canonical
+source context, and no runs without extracted relations. Query A remained
+base-only. Query B routed to base plus writeups through `concept:jwt`. Query C
+routed to base plus writeups through the knowledge-gap gate and also matched
+`concept:deserialization`.
+
+FAIL: No runner-level failure remained. The earlier single-result benchmark
+dump was addressed by adding matrix completeness accounting and per-run error
+records so B/C cannot vanish silently if a future run times out or crashes.
+
+NOTE: Treat trigger expectations as inclusion checks, not exact string matches:
+one query can validly satisfy both a concept trigger and the
+`base_candidates_below_threshold` fallback. Continue tuning against saved raw
+context bytes and extracted relation triples before enabling answer generation
+in the Attack Engineer pipeline.
+
+### [LR-AE-013] Routed benchmark with generated answers
+
+Configuration / Query:
+
+```bash
+.venv/bin/python -m agent.lightrag.benchmark_ontology_queries \
+  --base-url http://127.0.0.1:9621 \
+  --writeup-url http://127.0.0.1:9622 \
+  --timeout 300 \
+  --include-answers \
+  --fail-on-gate
+```
+
+OK: The run produced all 9 expected context results and all 9 generated-answer
+records in
+`data/lightrag/benchmarks/ontology_query_benchmark_withanswer.json`
+(`generated_at=20260803T124640Z`). `answer_error_count=0`,
+`total_raw_context_bytes=2893542`, and `total_answer_bytes=72681`.
+Dual-source cases stored separate raw answer payloads for `base` and
+`writeups`, so overlay usefulness can be reviewed without losing base
+precedence.
+
+FAIL: Query A's generated prose started with metatestual reasoning language
+instead of a direct methodology answer. This is an answer-generation prompt
+tuning issue, not a routing or graph retrieval failure.
+
+NOTE: Keep `only_need_context=true` as the blocking retrieval benchmark. Use
+`--include-answers` for periodic utility review because it is much slower and
+evaluates generation style in addition to retrieval quality.

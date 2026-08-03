@@ -60,7 +60,7 @@ flowchart LR
     FC -->|consumed by| QA
     L1 -->|minimal target projection consumed by| QA
 
-    QA -->|produces KnowledgeQuery<br/>pattern + objective + target_context| LR
+    QA -->|produces KnowledgeQuery<br/>symptom + fault_context +<br/>objective + target_context| LR
     LR -->|produces MethodologyBundle<br/>techniques, prerequisites,<br/>defenses, bypasses, evidence| TE
     HT -->|consumed by| TE
     IC -->|consumed by| TE
@@ -99,10 +99,38 @@ stateDiagram-v2
 | `IndexCard` | Stage 3 index-card builder | Fault matcher, Query Agent, Test Engineer Agent | Compact service/system testing profile. |
 | `FaultCard` | Checklist/fault pool projection | Fault matcher, Query Agent, Test Engineer Agent | Candidate fault or test family to evaluate against the service/system. |
 | `HighLevelTest` | `IndexCard <match with> FaultCard` | Query Agent, Test Engineer Agent | Test objective before methodology retrieval. |
-| `KnowledgeQuery` | Query Agent | LightRAG retrieval service | Structured plus natural-language request for methodology. |
+| `KnowledgeQuery` | Query Agent | LightRAG retrieval service | Symptom-first structured plus natural-language request for methodology. |
 | `MethodologyBundle` | LightRAG retrieval service | Test Engineer Agent, audit artifact store | Evidence-grounded methodology response. |
 | `AttackHypothesis` / `TestCandidate` | Test Engineer Agent | Stage 4 specialized agents/pods | Concrete hypothesis to implement later. |
 | `Execution Knowledge Pack` | Test Engineer Agent | Stage 4 specialized agents/pods | Evidence, constraints, prerequisite checks, and technique notes needed to execute safely. |
+
+## Symptom-First Retrieval Boundary
+
+`KnowledgeQuery` treats observed fault symptoms as first-class retrieval
+anchors. The Query Agent should phrase methodology requests as:
+
+```text
+Given Symptom / Fault Context
++ Target TechnologyStack / PreconditionEnvironment
++ VulnerabilityClass and taxonomy tags
+-> retrieve AttackTechnique, PayloadPattern, ObservableSignal,
+   TestingStrategy, and Mitigation guidance
+```
+
+The default `retrieve_methodology()` path uses `RoutedMethodologyRetriever`.
+It queries the validated WSTG base KB first and only consults the writeup
+overlay when one of the routing gates fires:
+
+- symptom or taxonomy concepts match overlay markers such as JWT, SQLi, SSRF,
+  Active Directory, Git exposure, or deserialization;
+- an execution/planning agent asks for bypass, chaining, or escalation
+  techniques;
+- the base KB returns fewer candidates than the configured minimum.
+
+Merged results preserve base precedence. Base-derived candidates are tagged
+`source_tier=validated_base`; overlay-derived candidates are tagged
+`source_tier=review_overlay` and must be treated as review material until
+promoted.
 
 ## Boundary Rules
 
@@ -112,6 +140,9 @@ stateDiagram-v2
 - WSTG and similar standards populate the validated base KB.
 - Writeups and machine-specific material should enter an overlay or reviewed
   ingestion path before promotion to the validated base.
+- Overlay routing is conditional. General WSTG methodology queries should stay
+  base-only unless the symptom, taxonomy, or candidate-count gate justifies
+  querying lower-confidence material.
 - The Query Agent retrieves methodology; it does not choose the final attack.
 - The Test Engineer Agent produces attack hypotheses and execution knowledge;
   it does not execute them.

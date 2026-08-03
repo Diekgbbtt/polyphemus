@@ -9,6 +9,10 @@ __pycache__/
 .DS_Store
 .venv/
 data/lightrag/rag_storage/
+data/lightrag/rag_storage.bak.*/
+data/lightrag/writeups_rag_storage/
+data/lightrag/benchmarks/*.sqlite3
+data/lightrag/benchmarks/ontology_query_benchmark*.json
 data/lightrag/inputs/*
 !data/lightrag/inputs/.gitkeep
 data/lightrag/prompts/*

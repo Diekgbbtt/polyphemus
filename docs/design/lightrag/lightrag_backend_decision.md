@@ -1,12 +1,43 @@
 # LightRAG Backend Decision
 
-Status: updated after the validated WSTG indexing run on 2026-07-28 and the
-2026-07-30 WSTG corpus/benchmark preparation pass.
+Status: updated after the validated WSTG indexing run on 2026-07-28, the
+2026-07-30 WSTG corpus/benchmark preparation pass, and the 2026-08-03
+writeups overlay integration.
 
 ## Decision
 
 Use LightRAG's OpenAI-compatible binding, but keep the LightRAG indexing backend
 separate from the repository's `LLM_MODEL_<ROLE>` agent roles.
+
+Run methodology retrieval as two isolated LightRAG workspaces:
+
+```text
+Base WSTG KB
+  service: lightrag
+  host url: http://127.0.0.1:9621
+  compose url: http://lightrag:9621
+  workspace: default LightRAG workspace
+  storage: data/lightrag/rag_storage
+  role: validated methodology
+
+0xdf writeups overlay
+  service: lightrag-writeups
+  host url: http://127.0.0.1:9622
+  compose url: http://lightrag-writeups:9621
+  workspace: writeups_0xdf
+  storage: data/lightrag/writeups_rag_storage
+  role: review-overlay methodology
+```
+
+Application code should address these instances through
+`LIGHTRAG_BASE_API_URL` and `LIGHTRAG_WRITEUP_API_URL`. The base KB remains the
+default retrieval source. The writeup overlay is queried only through routing
+logic in `RoutedMethodologyRetriever`, and overlay results are tagged
+`source_tier=review_overlay`.
+
+This keeps machine-specific exploitation narratives from polluting the
+validated WSTG graph while still allowing Attack Engineer agents to retrieve
+specialized bypass and chaining techniques when symptoms justify it.
 
 The existing `triager` and `job_orchestrator` roles are configured with DeepSeek via
 OpenRouter:
