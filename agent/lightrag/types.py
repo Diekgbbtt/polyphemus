@@ -4,20 +4,25 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, Field, field_validator, model_validator
 
-from agent.lightrag.ontology import validate_relation
-
 QueryPattern = Literal["target_state", "bypass", "chaining"]
 ConfidenceLevel = Literal["high", "medium", "low"]
-RetrievalMode = Literal["hybrid", "vector", "graph", "keyword"]
+RetrievalMode = Literal["naive", "local", "global", "hybrid", "mix"]
 AuthenticationState = Literal["unknown", "unauthenticated", "authenticated", "mixed"]
 SafetyLevel = Literal["non_destructive", "low_impact", "manual_review"]
+SourceTier = Literal["validated_base", "review_overlay"]
 EntityType = Literal[
+    "PreconditionEnvironment",
+    "TechnologyStack",
+    "DefensiveControl",
     "VulnerabilityClass",
-    "DefensiveTechnology",
-    "EnvironmentalCondition",
+    "AttackGoal",
+    "AttackerCapability",
     "AttackTechnique",
+    "PayloadPattern",
+    "Artifact",
+    "ObservableSignal",
 ]
-RelationType = Literal["exploits", "detectedBy", "requires", "enables", "mitigates", "bypasses"]
+RelationType = str
 
 
 def _require_non_blank(value: str, field_name: str) -> str:
@@ -77,17 +82,17 @@ class RelationPathStep(BaseModel):
     def _string_lists(cls, value):  # noqa: N805
         return _clean_str_list(value, "value")
 
+    @field_validator("relation")
+    @classmethod
+    def _relation_required(cls, value):  # noqa: N805
+        return _require_non_blank(value, "relation")
+
     @field_validator("evidence_refs")
     @classmethod
     def _relation_step_requires_evidence(cls, value):  # noqa: N805
         if not value:
             raise ValueError("relation path steps require evidence_refs")
         return value
-
-    @model_validator(mode="after")
-    def _valid_relation_direction(self):
-        validate_relation(self.source.entity_type, self.relation, self.target.entity_type)
-        return self
 
 
 class TechniqueRef(BaseModel):
@@ -145,6 +150,7 @@ class MethodologyCandidate(BaseModel):
     expected_effect: ExpectedEffect = Field(default_factory=ExpectedEffect)
     confidence: ConfidenceLevel = "medium"
     evidence_refs: list[EvidenceRef]
+    source_tier: SourceTier = "validated_base"
 
     @field_validator("evidence_refs")
     @classmethod
@@ -167,6 +173,8 @@ class SourceChunk(BaseModel):
 
 
 class FaultContext(BaseModel):
+    symptom: str | None = None
+    symptoms: list[str] = Field(default_factory=list)
     vulnerability_hypothesis: str | None = None
     observed_conditions: list[str] = Field(default_factory=list)
     defenses_present: list[str] = Field(default_factory=list)
@@ -174,14 +182,14 @@ class FaultContext(BaseModel):
     blocked_technique: str | None = None
     desired_condition: str | None = None
 
-    @field_validator("vulnerability_hypothesis", "blocked_technique", "desired_condition")
+    @field_validator("symptom", "vulnerability_hypothesis", "blocked_technique", "desired_condition")
     @classmethod
     def _optional_strings(cls, value):  # noqa: N805
         if value is None:
             return value
         return _require_non_blank(value, "value")
 
-    @field_validator("observed_conditions", "defenses_present", "available_capabilities")
+    @field_validator("symptoms", "observed_conditions", "defenses_present", "available_capabilities")
     @classmethod
     def _string_lists(cls, value):  # noqa: N805
         return _clean_str_list(value, "value")
@@ -208,14 +216,23 @@ class KnowledgeQuery(BaseModel):
     query_id: str
     pattern: QueryPattern
     objective: str
+    symptom: str | None = None
+    taxonomy_tags: list[str] = Field(default_factory=list)
     fault_context: FaultContext = Field(default_factory=FaultContext)
     constraints: QueryConstraints = Field(default_factory=QueryConstraints)
     retrieval: RetrievalOptions = Field(default_factory=RetrievalOptions)
 
-    @field_validator("query_id", "objective")
+    @field_validator("query_id", "objective", "symptom")
     @classmethod
     def _required_strings(cls, value):  # noqa: N805
+        if value is None:
+            return value
         return _require_non_blank(value, "value")
+
+    @field_validator("taxonomy_tags")
+    @classmethod
+    def _taxonomy_tags_not_blank(cls, value):  # noqa: N805
+        return _clean_str_list(value, "taxonomy_tags")
 
     @model_validator(mode="after")
     def _pattern_required_context(self):
@@ -244,9 +261,18 @@ class KnowledgeQuery(BaseModel):
             context = self.fault_context.model_dump()
         else:
             context = self.fault_context.dict()
+        fault_symptoms = []
+        if self.symptom:
+            fault_symptoms.append(self.symptom)
+        if self.fault_context.symptom:
+            fault_symptoms.append(self.fault_context.symptom)
+        fault_symptoms.extend(self.fault_context.symptoms)
         return (
+            "Given Symptom -> Retrieve Testing Techniques\n"
             f"pattern: {self.pattern}\n"
             f"objective: {self.objective}\n"
+            f"fault_symptoms: {fault_symptoms}\n"
+            f"taxonomy_tags: {self.taxonomy_tags}\n"
             f"fault_context: {context}\n"
             f"max_candidates: {self.retrieval.max_candidates}"
         )

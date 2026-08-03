@@ -26,7 +26,8 @@ services:
       ENTITY_TYPE_PROMPT_FILE: methodology_entities.yml
       LIGHTRAG_PARSER: "*:native-teP,*:legacy-R"
       VLM_PROCESS_ENABLE: "false"
-      MAX_PARALLEL_INSERT: 2
+      MAX_PARALLEL_INSERT: ${MAX_PARALLEL_INSERT:-1}
+      MAX_GRAPH_NODES: ${MAX_GRAPH_NODES:-5000}
     env_file:
       - path: .env
         required: false
@@ -35,6 +36,42 @@ services:
     volumes:
       - ./data/lightrag/rag_storage:/app/data/rag_storage
       - ./data/lightrag/inputs:/app/data/inputs
+      - ./data/lightrag/prompts:/app/data/prompts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:9621/health', timeout=3).read()\nPY"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  lightrag-writeups:
+    image: ghcr.io/hkuds/lightrag:v1.5.0rc3
+    profiles: ["lightrag"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: 9621
+      WORKSPACE: writeups_0xdf
+      WORKING_DIR: /app/data/writeups_rag_storage
+      INPUT_DIR: /app/data/writeups_overlay
+      PROMPT_DIR: /app/data/prompts
+      SUMMARY_LANGUAGE: English
+      ENTITY_EXTRACTION_USE_JSON: "false"
+      ENTITY_TYPE_PROMPT_FILE: methodology_entities.yml
+      LIGHTRAG_PARSER: "*:native-teP,*:legacy-R"
+      VLM_PROCESS_ENABLE: "false"
+      MAX_PARALLEL_INSERT: ${MAX_PARALLEL_INSERT:-1}
+      MAX_GRAPH_NODES: ${MAX_GRAPH_NODES:-5000}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "127.0.0.1:${LIGHTRAG_WRITEUP_PORT:-9622}:9621"
+    volumes:
+      - ./data/lightrag/writeups_rag_storage:/app/data/writeups_rag_storage
+      - ./data/lightrag/inputs/writeups_overlay:/app/data/writeups_overlay
       - ./data/lightrag/prompts:/app/data/prompts
     extra_hosts:
       - "host.docker.internal:host-gateway"
@@ -105,6 +142,8 @@ services:
       KALI_MCP_URL: http://kali:8000/mcp
       PROJECT_ID: default
       LIGHTRAG_API_URL: http://lightrag:9621
+      LIGHTRAG_BASE_API_URL: http://lightrag:9621
+      LIGHTRAG_WRITEUP_API_URL: http://lightrag-writeups:9621
     env_file:
       - path: .env
         required: false

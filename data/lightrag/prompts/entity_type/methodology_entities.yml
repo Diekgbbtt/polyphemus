@@ -1,31 +1,152 @@
 entity_types_guidance: |
-  Classify each methodology entity using one of the following types. If no type
-  fits, use `Other`.
+  Classify each methodology entity using exactly one of the following ten types.
+  This is a closed set: every extracted entity MUST use one of these literal
+  type names and no other type name.
 
-  - VulnerabilityClass: A reusable category of weakness or security failure that
-    an attacker may test or exploit, such as SQL injection, insecure direct
-    object reference, or authentication bypass.
-  - DefensiveTechnology: A control, validation layer, security mechanism, policy,
-    or detection capability that prevents, mitigates, blocks, or observes a
-    technique or weakness.
-  - EnvironmentalCondition: A target state, prerequisite, capability, privilege,
-    data-flow condition, side channel, or application behavior that changes
-    whether a technique is applicable.
-  - AttackTechnique: A reusable attacker or tester method, probe, exploit
-    approach, bypass method, chaining step, or payload strategy.
+  Type names are case-sensitive. Output the exact CamelCase spelling shown
+  below. Never lowercase, uppercase, pluralize, abbreviate, or concatenate type
+  names. For example, output AttackTechnique, never attacktechnique; output
+  VulnerabilityClass, never vulnerabilityclass; output PreconditionEnvironment,
+  never environmentalcondition.
 
-  Keep document titles, WSTG identifiers, section names, URLs, and source paths as
-  provenance context unless the text describes them as methodology concepts.
-  Prefer source-grounded relation keywords such as requires, exploits, enables,
-  mitigates, detects, detectedBy, bypasses, blocks, and depends on.
+  This profile overrides any generic extractor fallback instruction: do not
+  classify unknown, generic, provenance, or ambiguous candidates as Other.
+  If a candidate does not fit exactly one listed type, omit it completely.
+  Never output fallback or catch-all types such as Other, other, UNKNOWN, Misc,
+  Document, Source, Author, Section, Result, Topic, Finding, Evidence, or
+  Context. Do not create aliases, subtypes, hierarchy, or target-specific nodes.
+
+  - PreconditionEnvironment: Target or environment condition that must be true
+    for a technique to apply.
+  - TechnologyStack: Technology, product, framework, protocol, or component
+    present in the target and relevant to the attack.
+  - DefensiveControl: Target mechanism intended to prevent, limit, or detect an
+    attack.
+  - VulnerabilityClass: Technical, logic, or configuration weakness class in
+    the target.
+  - AttackGoal: Strategic result the attacker wants to achieve through one or
+    more techniques.
+  - AttackerCapability: Access, control, or operational ability the attacker
+    already has and can use in later steps.
+  - AttackTechnique: Concrete action performed by the attacker to obtain a
+    result.
+  - PayloadPattern: Reusable, parameterized structure of malicious input used
+    to perform a technique.
+  - Artifact: Concrete object obtained or produced during an attack and reusable
+    in later steps.
+  - ObservableSignal: Observable evidence indicating relevant behavior or
+    possible technique success.
+
+  Omit document titles, challenge or machine names, author names, source names,
+  source paths, source URLs, WSTG identifiers, section names, provenance fields,
+  tooling names for the ingestion system, and generic headings such as Recon,
+  Tech Stack, Result, Summary, Findings, or Source Context unless the text
+  clearly describes a reusable attack methodology concept in one of the ten
+  allowed types.
+
+  Never emit an ontology type label itself as an entity name. For example, do
+  not extract entities named DefensiveControl, AttackTechnique,
+  VulnerabilityClass, PayloadPattern, TechnologyStack, Artifact,
+  PreconditionEnvironment, AttackerCapability, AttackGoal, or
+  ObservableSignal. Use those strings only as entity type values.
+
+  Omit generic actor nouns such as attacker, tester, user, client, victim, and
+  administrator when they only identify who performs or receives an action.
+  Extract a capability only when the text names a reusable access condition or
+  operational ability, such as valid account credentials or control of an
+  attacker-hosted callback listener.
+
+  Omit literal one-off values that are only target data, such as hostnames,
+  usernames, command prompts, file line references, document IDs, hashes used
+  only as provenance, or exact secrets. Extract a PayloadPattern only when the
+  input is reusable and parameterized rather than a target-specific payload.
+
+  Omit tester tools, scanners, proxy products, public directories, search
+  engines, archive services, wordlists, documentation catalogs, cheat sheets,
+  source repositories, and reference titles unless the text clearly presents
+  them as target TechnologyStack or as a concrete Artifact obtained during an
+  attack step. Do not classify these as DefensiveControl or TechnologyStack
+  merely because they appear in methodology text.
+
+  Omit automated testing tool names and documentation resource titles such as
+  sqlmap, SQLMap, wfuzz, Burp Suite, ZAP, Netcat, CheatSheet, cheat sheet, or
+  "SQL Injection Prevention CheatSheet" when they are only tester tooling or
+  references. If a sentence only recommends a tool or reference, extract no
+  entity from that sentence.
+
+  Omit external taxonomy, catalog, and guideline titles such as OWASP API
+  Security Top 10, OWASP Testing Guide, API Security Top 10 API3:2023, or
+  similar reference labels. If such a title maps to a concrete weakness named
+  by the surrounding sentence, extract only that concrete weakness class and
+  not the taxonomy title.
+
+  Classify SQL Injection, NoSQL Injection, LDAP Injection, XML Injection, XSS,
+  path traversal, SSRF, and similar weakness-family names as
+  VulnerabilityClass when the text describes a weakness, flaw, vulnerability,
+  or vulnerability class. Classify a concrete action performed by the tester as
+  AttackTechnique, such as "single quote probe", "union-based extraction", or
+  "time-delay inference".
+
+  Weakness-family roots remain VulnerabilityClass even when the source phrase
+  includes attack wording, such as "SQL Injection attack" or "SQL Injection
+  attacks". Extract concrete operational variants as AttackTechnique only when
+  the entity name contains a method or action qualifier, such as "Union-Based
+  SQL Injection", "Boolean-Based SQL Injection", "Error-Based SQL Injection",
+  or "Time Delay SQL Injection". Do not type the broad family entity "SQL
+  Injection" itself as AttackTechnique.
+
+  API endpoints, request parameters, API documentation, public APIs, private
+  APIs, API security posture, and pentesting engagements are not
+  VulnerabilityClass entities. Classify reachable or hidden target endpoints
+  and parameters as PreconditionEnvironment only when they are target
+  applicability conditions. Classify captured requests, endpoint lists,
+  credentials, API keys, documentation files, source files, or configuration
+  files as Artifact only when they are concrete objects obtained or produced
+  by an attack step.
+
+  Relationships are not enumerated by this profile; infer concise
+  source-grounded relationship keywords only from the supplied text.
 
 entity_extraction_examples:
   - |
-    entity{tuple_delimiter}Alternate Encoding Probe{tuple_delimiter}AttackTechnique{tuple_delimiter}A testing method that varies payload encoding to observe whether a request-filtering control normalizes input consistently.
-    entity{tuple_delimiter}Web Application Firewall{tuple_delimiter}DefensiveTechnology{tuple_delimiter}A request-filtering control that blocks suspicious input patterns before they reach application logic.
-    entity{tuple_delimiter}Normalization Mismatch{tuple_delimiter}EnvironmentalCondition{tuple_delimiter}A condition where two processing stages decode or normalize input differently.
-    relation{tuple_delimiter}Alternate Encoding Probe{tuple_delimiter}Web Application Firewall{tuple_delimiter}bypasses{tuple_delimiter}The probe may bypass the firewall when normalization mismatch is present.
-    relation{tuple_delimiter}Alternate Encoding Probe{tuple_delimiter}Normalization Mismatch{tuple_delimiter}requires{tuple_delimiter}The technique is applicable when normalization mismatch exists.
+    entity{tuple_delimiter}Alternate Encoding Probe{tuple_delimiter}AttackTechnique{tuple_delimiter}An action that varies request encoding to test how input handling changes.
+    entity{tuple_delimiter}Web Application Firewall{tuple_delimiter}DefensiveControl{tuple_delimiter}A target control that filters suspicious requests before application logic receives them.
+    entity{tuple_delimiter}Normalization Mismatch{tuple_delimiter}PreconditionEnvironment{tuple_delimiter}A target condition where processing stages decode or normalize input differently.
+    entity{tuple_delimiter}<encoded_input_variant>{tuple_delimiter}PayloadPattern{tuple_delimiter}A reusable placeholder pattern for sending equivalent input with alternate encoding.
+    entity{tuple_delimiter}Unexpected 200 Response{tuple_delimiter}ObservableSignal{tuple_delimiter}A response status indicating that a filtered request may have reached application logic.
+    relation{tuple_delimiter}Alternate Encoding Probe{tuple_delimiter}Web Application Firewall{tuple_delimiter}may bypass{tuple_delimiter}The technique may bypass the control when normalization mismatch is present.
+    relation{tuple_delimiter}Alternate Encoding Probe{tuple_delimiter}Normalization Mismatch{tuple_delimiter}applies when{tuple_delimiter}The technique is applicable when normalization mismatch exists.
+    {completion_delimiter}
+
+  - |
+    entity{tuple_delimiter}Callback Received{tuple_delimiter}ObservableSignal{tuple_delimiter}A received callback indicates that the submitted input triggered outbound behavior.
+    entity{tuple_delimiter}UNC Path Submission{tuple_delimiter}AttackTechnique{tuple_delimiter}An action that sends a UNC path to induce an outbound authentication attempt.
+    entity{tuple_delimiter}<unc_path_to_attacker_listener>{tuple_delimiter}PayloadPattern{tuple_delimiter}A reusable UNC path input structure pointing to an attacker-controlled listener.
+    relation{tuple_delimiter}UNC Path Submission{tuple_delimiter}Callback Received{tuple_delimiter}indicated by{tuple_delimiter}A received callback can indicate that the UNC path submission caused outbound behavior.
+    {completion_delimiter}
+
+  - |
+    entity{tuple_delimiter}GraphQL{tuple_delimiter}TechnologyStack{tuple_delimiter}An API query technology where schema, fields, and resolvers influence testing methodology.
+    entity{tuple_delimiter}GraphQL Introspection Enabled{tuple_delimiter}PreconditionEnvironment{tuple_delimiter}A target condition where schema introspection can reveal queryable types, fields, and relationships.
+    entity{tuple_delimiter}Broken Object-Level Authorization{tuple_delimiter}VulnerabilityClass{tuple_delimiter}A weakness class where object access checks do not enforce the current user's authorization scope.
+    entity{tuple_delimiter}GraphQL Introspection Query{tuple_delimiter}AttackTechnique{tuple_delimiter}A testing action that requests schema metadata to discover types, fields, mutations, and authorization-relevant objects.
+    entity{tuple_delimiter}GraphQL Schema{tuple_delimiter}Artifact{tuple_delimiter}A concrete schema artifact obtained from introspection or documentation.
+    entity{tuple_delimiter}Authorization Response Difference{tuple_delimiter}ObservableSignal{tuple_delimiter}A response difference that indicates an authorization decision changed for a tested object or field.
+    relation{tuple_delimiter}GraphQL Introspection Query{tuple_delimiter}GraphQL Introspection Enabled{tuple_delimiter}applies when{tuple_delimiter}The technique is applicable when introspection is enabled.
+    relation{tuple_delimiter}GraphQL Introspection Query{tuple_delimiter}GraphQL Schema{tuple_delimiter}produces{tuple_delimiter}The query can produce a schema artifact for follow-on testing.
+    relation{tuple_delimiter}GraphQL Introspection Query{tuple_delimiter}Broken Object-Level Authorization{tuple_delimiter}supports testing for{tuple_delimiter}The schema can expose objects and fields used to test object-level authorization.
+    {completion_delimiter}
+
+  - |
+    entity{tuple_delimiter}JSON Web Token{tuple_delimiter}TechnologyStack{tuple_delimiter}A bearer token format whose claims and signature validation influence session testing methodology.
+    entity{tuple_delimiter}JWT Stored In LocalStorage{tuple_delimiter}PreconditionEnvironment{tuple_delimiter}A target condition where a bearer token is readable by client-side JavaScript through browser storage.
+    entity{tuple_delimiter}Browser Storage Token{tuple_delimiter}Artifact{tuple_delimiter}A token artifact stored in browser storage and usable in follow-on requests.
+    entity{tuple_delimiter}JWT Claim Tampering{tuple_delimiter}AttackTechnique{tuple_delimiter}A testing action that modifies token claims to evaluate validation and authorization behavior.
+    entity{tuple_delimiter}Content-Security-Policy{tuple_delimiter}DefensiveControl{tuple_delimiter}A browser-enforced policy that can reduce script execution and token exposure risk.
+    entity{tuple_delimiter}Accepted Modified JWT{tuple_delimiter}ObservableSignal{tuple_delimiter}An accepted request using a modified JWT indicates weak token validation or authorization checks.
+    relation{tuple_delimiter}JWT Claim Tampering{tuple_delimiter}JSON Web Token{tuple_delimiter}targets{tuple_delimiter}The technique targets JWT token validation behavior.
+    relation{tuple_delimiter}JWT Stored In LocalStorage{tuple_delimiter}Browser Storage Token{tuple_delimiter}exposes{tuple_delimiter}The storage condition exposes the token artifact to client-side script access.
+    relation{tuple_delimiter}Content-Security-Policy{tuple_delimiter}Browser Storage Token{tuple_delimiter}reduces exposure of{tuple_delimiter}A strict policy can reduce script paths that access stored tokens.
     {completion_delimiter}
 
 entity_extraction_json_examples:
@@ -35,7 +156,7 @@ entity_extraction_json_examples:
         {
           "name": "Parameter Tampering",
           "type": "AttackTechnique",
-          "description": "A testing method that changes request parameters to observe whether application behavior depends on user-controlled input."
+          "description": "An action that changes request parameters to test authorization or data-flow behavior."
         },
         {
           "name": "SQL Injection",
@@ -44,33 +165,63 @@ entity_extraction_json_examples:
         },
         {
           "name": "User-Controlled SQL Input",
-          "type": "EnvironmentalCondition",
-          "description": "A target condition where input supplied by a user can influence a SQL query path."
+          "type": "PreconditionEnvironment",
+          "description": "A target condition where user input can influence a SQL query path."
+        },
+        {
+          "name": "MSSQL",
+          "type": "TechnologyStack",
+          "description": "A database technology whose SQL dialect can affect payload structure and technique choice."
         },
         {
           "name": "Parameterized Query Enforcement",
-          "type": "DefensiveTechnology",
+          "type": "DefensiveControl",
           "description": "A defensive implementation pattern that separates SQL code from supplied data."
+        },
+        {
+          "name": "Read Sensitive Data",
+          "type": "AttackGoal",
+          "description": "A strategic result where the attacker obtains data they should not access."
+        },
+        {
+          "name": "Arbitrary HTTP Request Ability",
+          "type": "AttackerCapability",
+          "description": "The attacker can send chosen HTTP requests to the target."
+        },
+        {
+          "name": "' AND IF(<condition>, SLEEP(<delay>), 0)--",
+          "type": "PayloadPattern",
+          "description": "A parameterized time-based SQL injection input structure."
+        },
+        {
+          "name": "Database Row Dump",
+          "type": "Artifact",
+          "description": "Concrete database content obtained during an attack step."
+        },
+        {
+          "name": "Response Time Delay",
+          "type": "ObservableSignal",
+          "description": "A measurable delay that may indicate conditional SQL execution."
         }
       ],
       "relationships": [
         {
           "source": "Parameter Tampering",
           "target": "User-Controlled SQL Input",
-          "keywords": "requires",
+          "keywords": "applies when",
           "description": "Parameter tampering is relevant when user-controlled input reaches SQL query construction or execution."
         },
         {
           "source": "Parameter Tampering",
           "target": "SQL Injection",
-          "keywords": "exploits",
-          "description": "Parameter tampering can be used to test or exploit SQL injection weaknesses."
+          "keywords": "tests for",
+          "description": "Parameter tampering can test whether SQL injection is present."
         },
         {
           "source": "Parameterized Query Enforcement",
           "target": "SQL Injection",
-          "keywords": "mitigates",
-          "description": "Parameterized query enforcement mitigates SQL injection by separating query structure from data values."
+          "keywords": "reduces risk of",
+          "description": "Parameterized query enforcement reduces SQL injection risk by separating query structure from data values."
         }
       ]
     }

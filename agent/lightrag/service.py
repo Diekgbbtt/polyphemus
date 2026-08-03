@@ -40,13 +40,17 @@ def retrieve_methodology(
     query: KnowledgeQuery | dict,
     *,
     run_id: str,
-    retriever,
+    retriever=None,
     artifact_store=None,
 ) -> MethodologyBundle:
     """Run the generic P0 KnowledgeQuery -> MethodologyBundle -> artifact path."""
     if not run_id or not run_id.strip():
         raise ValueError("run_id must not be blank")
     validated_query = _coerce_query(query)
+    if retriever is None:
+        from agent.lightrag.retriever import RoutedMethodologyRetriever  # noqa: PLC0415
+
+        retriever = RoutedMethodologyRetriever.from_config()
     retriever_output = _call_retriever(retriever, validated_query)
     bundle = package_methodology(validated_query, retriever_output)
     _save_artifact(artifact_store, run_id, validated_query, bundle)

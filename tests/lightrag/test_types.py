@@ -16,7 +16,7 @@ RELATION_STEP = {
     },
     "relation": "bypasses",
     "target": {
-        "entity_type": "DefensiveTechnology",
+        "entity_type": "DefensiveControl",
         "canonical_name": "Request filtering defense",
     },
     "applicability": ["Input reaches a request filter"],
@@ -40,6 +40,72 @@ def test_target_state_query_validates():
 
     assert query.pattern == "target_state"
     assert query.retrieval.mode == "hybrid"
+
+
+def test_knowledge_query_retrieval_prompt_preserves_fault_symptom_and_taxonomy_tags():
+    query = KnowledgeQuery(
+        query_id="q-symptom",
+        pattern="target_state",
+        objective="Map observed runtime behavior to testing techniques.",
+        symptom="Login returns a SQL syntax error when a single quote is submitted.",
+        taxonomy_tags=["sqli", "authentication"],
+        fault_context={
+            "vulnerability_hypothesis": "Injection weakness",
+            "observed_conditions": ["Differentiated error response on login form"],
+            "symptom": "Stack trace includes SQL parser details.",
+            "symptoms": ["Response timing changes with boolean predicates."],
+        },
+    )
+
+    prompt = query.to_retrieval_prompt()
+
+    assert "Given Symptom -> Retrieve Testing Techniques" in prompt
+    assert "fault_symptoms:" in prompt
+    assert "Login returns a SQL syntax error when a single quote is submitted." in prompt
+    assert "Stack trace includes SQL parser details." in prompt
+    assert "Response timing changes with boolean predicates." in prompt
+    assert "taxonomy_tags: ['sqli', 'authentication']" in prompt
+
+
+def test_retrieval_mode_matches_lightrag_api_modes():
+    query = KnowledgeQuery(
+        query_id="q-naive",
+        pattern="target_state",
+        objective="Find applicable methodology with the best observed retrieval mode.",
+        fault_context={
+            "vulnerability_hypothesis": "Injection weakness",
+            "observed_conditions": ["User-controlled input reaches a server-side operation"],
+        },
+        retrieval={"mode": "naive"},
+    )
+
+    assert query.retrieval.mode == "naive"
+
+    mix_query = KnowledgeQuery(
+        query_id="q-mix",
+        pattern="target_state",
+        objective="Find applicable methodology with the mix retrieval mode.",
+        fault_context={
+            "vulnerability_hypothesis": "Injection weakness",
+            "observed_conditions": ["User-controlled input reaches a server-side operation"],
+        },
+        retrieval={"mode": "mix"},
+    )
+    assert mix_query.retrieval.mode == "mix"
+
+    with pytest.raises(Exception):
+        KnowledgeQuery(
+            query_id="q-vector",
+            pattern="target_state",
+            objective="Reject non-API retrieval modes.",
+            fault_context={
+                "vulnerability_hypothesis": "Injection weakness",
+                "observed_conditions": [
+                    "User-controlled input reaches a server-side operation"
+                ],
+            },
+            retrieval={"mode": "vector"},
+        )
 
 
 def test_pattern_specific_required_context_is_enforced():
@@ -68,7 +134,7 @@ def test_pattern_specific_required_context_is_enforced():
         )
 
 
-def test_invalid_pattern_entity_relation_and_evidence_shapes_fail():
+def test_invalid_pattern_entity_and_evidence_shapes_fail():
     with pytest.raises(Exception):
         KnowledgeQuery(
             query_id="q-bad",
@@ -77,19 +143,34 @@ def test_invalid_pattern_entity_relation_and_evidence_shapes_fail():
             fault_context={"vulnerability_hypothesis": "x", "observed_conditions": ["y"]},
         )
 
-    invalid_relation = dict(RELATION_STEP)
-    invalid_relation["source"] = {
-        "entity_type": "DefensiveTechnology",
+    invalid_entity = dict(RELATION_STEP)
+    invalid_entity["target"] = {
+        "entity_type": "Service",
         "canonical_name": "Request filtering defense",
     }
     with pytest.raises(Exception):
         MethodologyBundle(
             query_id="q-1",
-            summary="Candidate with invalid relation.",
+            summary="Candidate with invalid entity.",
             candidates=[
                 {
                     "technique": {"canonical_name": "Alternate encoding probe"},
-                    "relevance": {"relation_path": [invalid_relation], "rationale": "Matches."},
+                    "relevance": {"relation_path": [invalid_entity], "rationale": "Matches."},
+                    "evidence_refs": [EVIDENCE],
+                }
+            ],
+        )
+
+    blank_relation = dict(RELATION_STEP)
+    blank_relation["relation"] = " "
+    with pytest.raises(Exception):
+        MethodologyBundle(
+            query_id="q-1",
+            summary="Candidate with blank relation.",
+            candidates=[
+                {
+                    "technique": {"canonical_name": "Alternate encoding probe"},
+                    "relevance": {"relation_path": [blank_relation], "rationale": "Matches."},
                     "evidence_refs": [EVIDENCE],
                 }
             ],

@@ -31,6 +31,11 @@ class Config:
     LIGHTRAG_WORK_DIR = os.environ.get("LIGHTRAG_WORK_DIR", "/tmp/polyphemus-lightrag")
     LIGHTRAG_MAX_CANDIDATES = int(os.environ.get("LIGHTRAG_MAX_CANDIDATES", "5"))
     LIGHTRAG_API_URL = os.environ.get("LIGHTRAG_API_URL", "http://lightrag:9621")
+    LIGHTRAG_BASE_API_URL = os.environ.get("LIGHTRAG_BASE_API_URL", LIGHTRAG_API_URL)
+    LIGHTRAG_WRITEUP_API_URL = os.environ.get(
+        "LIGHTRAG_WRITEUP_API_URL",
+        "http://lightrag-writeups:9621",
+    )
     LIGHTRAG_API_KEY = os.environ.get("LIGHTRAG_API_KEY", "")
     LIGHTRAG_TIMEOUT_SECONDS = float(os.environ.get("LIGHTRAG_TIMEOUT_SECONDS", "30"))
 

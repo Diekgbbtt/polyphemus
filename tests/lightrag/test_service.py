@@ -103,3 +103,51 @@ def test_service_accepts_mapping_query_and_persists_packaged_bundle():
     assert bundle.query_id == "q-map"
     assert bundle.candidates[0].technique.canonical_name == "Alternate encoding probe"
     assert store.saved[0][0] == "run-map"
+
+
+def test_service_defaults_to_routed_methodology_retriever(monkeypatch):
+    import agent.lightrag.retriever as retriever_module
+
+    class DefaultRetriever:
+        def __init__(self):
+            self.seen = []
+
+        def retrieve_methodology(self, query):
+            self.seen.append(query)
+            return {
+                "summary": "Default routed methodology.",
+                "candidates": [
+                    {
+                        "technique": "Symptom Technique",
+                        "rationale": "Matches the observed symptom.",
+                        "evidence_refs": [EVIDENCE],
+                    }
+                ],
+            }
+
+    default_retriever = DefaultRetriever()
+    monkeypatch.setattr(
+        retriever_module.RoutedMethodologyRetriever,
+        "from_config",
+        classmethod(lambda cls: default_retriever),
+    )
+    store = FakeStore()
+
+    bundle = retrieve_methodology(
+        {
+            "query_id": "q-default",
+            "pattern": "target_state",
+            "objective": "Map symptom to technique.",
+            "symptom": "A modified JWT is accepted.",
+            "fault_context": {
+                "vulnerability_hypothesis": "Token validation weakness",
+                "observed_conditions": ["Role claim change persists"],
+            },
+        },
+        run_id="run-default",
+        artifact_store=store,
+    )
+
+    assert default_retriever.seen[0].symptom == "A modified JWT is accepted."
+    assert bundle.candidates[0].technique.canonical_name == "Symptom Technique"
+    assert store.saved[0][0] == "run-default"

@@ -1,6 +1,7 @@
 # LightRAG Methodology Service — Codex Implementation Brief
 
-**Status:** MVP design input  
+**Status:** MVP design input; WSTG static KB validated locally on 2026-07-28;
+WSTG corpus preparation updated on 2026-07-30 and awaiting clean re-index.
 **Audience:** Codex or a developer planning the implementation  
 **Primary rule:** build the smallest end-to-end slice first. Do not add infrastructure or abstractions unless the current repository already needs them.
 
@@ -55,7 +56,7 @@ Given a fault hypothesis and a small target-context projection, the Planner rece
 - Generating the final `TestCandidate` inside LightRAG.
 - Executing tools, payloads, or attacks.
 - Building a second custom graph database beside LightRAG.
-- Duplicating ontology relations into PostgreSQL or YAML as another source of truth.
+- Duplicating LightRAG graph relationships into PostgreSQL or YAML as another source of truth.
 - Complex workflow engines, event buses, distributed queues, or microservices unless already required by the repository.
 - Automatic semantic merging of uncertain nodes in the MVP.
 
@@ -94,53 +95,35 @@ The query adapter sends only the minimum target facts needed for the current dec
 
 ---
 
-## 4. Minimal methodology ontology
+## 4. Methodology ontology
 
-The MVP has exactly four core entity types.
+The methodology ontology has exactly ten entity types.
 
-| Entity type | Meaning | Required attributes |
-|---|---|---|
-| `VulnerabilityClass` | Reusable category of weakness or security failure. | `canonical_name`, `taxonomy_refs`, `security_impact` |
-| `DefensiveTechnology` | Control or mechanism that detects, blocks, or reduces an attack. | `canonical_name`, `defense_family`, `coverage_scope` |
-| `EnvironmentalCondition` | Target state that changes whether a technique is applicable. | `canonical_name`, `condition_state`, `scope` |
-| `AttackTechnique` | Reusable attacker method for testing, exploiting, bypassing, or enabling another action. | `canonical_name`, `attacker_objective`, `execution_context` |
+| Entity type | Meaning |
+|---|---|
+| `PreconditionEnvironment` | Target or environment condition that must be true for a technique to apply. |
+| `TechnologyStack` | Technology, product, framework, protocol, or component present in the target and relevant to the attack. |
+| `DefensiveControl` | Target mechanism intended to prevent, limit, or detect an attack. |
+| `VulnerabilityClass` | Technical, logic, or configuration weakness class in the target. |
+| `AttackGoal` | Strategic result the attacker wants to achieve through one or more techniques. |
+| `AttackerCapability` | Access, control, or operational ability the attacker already has and can use in later steps. |
+| `AttackTechnique` | Concrete action performed by the attacker to obtain a result. |
+| `PayloadPattern` | Reusable, parameterized structure of malicious input used to perform a technique. |
+| `Artifact` | Concrete object obtained or produced during an attack and reusable in later steps. |
+| `ObservableSignal` | Observable evidence indicating relevant behavior or possible technique success. |
 
 Every entity may also contain:
 
 ```yaml
-aliases: []
 description: "Short methodology-oriented summary"
 source_refs: []
 confidence: high | medium | low
 ```
 
-### Relations
-
-| Relation | Direction |
-|---|---|
-| `exploits` | `AttackTechnique -> VulnerabilityClass` |
-| `detectedBy` | `AttackTechnique -> DefensiveTechnology` |
-| `requires` | `AttackTechnique -> EnvironmentalCondition` |
-| `enables` | `EnvironmentalCondition -> AttackTechnique` or `AttackTechnique -> AttackTechnique` |
-| `mitigates` | `DefensiveTechnology -> AttackTechnique` or `DefensiveTechnology -> VulnerabilityClass` |
-| `bypasses` | `AttackTechnique -> DefensiveTechnology` |
-
-Every relation carries a small evidence envelope:
-
-```yaml
-applicability: []
-limitations: []
-evidence_refs: []
-confidence: high | medium | low
-```
-
-### Modularity rules
-
-1. Add a new entity type only when the Planner must query it directly.
-2. Use attributes for descriptive variation.
-3. Use nodes for independently retrievable concepts.
-4. Keep relation names controlled.
-5. Keep titles, authors, URLs, document hierarchy, and page references as provenance metadata.
+The ontology does not define relation types, directions, hierarchies, subtypes,
+or compatibility aliases. LightRAG extracts source-grounded relationships during
+indexing. Titles, authors, URLs, document hierarchy, and page references remain
+provenance metadata.
 
 ---
 
@@ -307,12 +290,14 @@ Do not build an advanced semantic chunking engine before the simple heading-awar
 
 The ingestion model must:
 
-- use only the four entity types and six relations;
-- normalize canonical names while preserving aliases;
+- use only the ten entity types listed above;
+- omit entities that do not fit one of those types;
+- let LightRAG extract source-grounded relationship keywords from the source;
+- normalize canonical names while preserving source wording in evidence;
 - extract only supported claims;
 - attach applicability, limitations, evidence span, and provenance;
 - preserve negative evidence and failed techniques;
-- reject unsupported relations rather than guess.
+- avoid unsupported relationships rather than guessing.
 
 Use:
 
@@ -335,14 +320,14 @@ normalized(entity_type + canonical_name)
 Merge only when:
 
 1. the canonical key matches; or
-2. a known alias maps to the same canonical key.
+2. LightRAG's own indexing deduplicates the entity from source-grounded context.
 
 Do not automatically merge two nodes only because embeddings are similar.
 
 ### Relation key
 
 ```text
-source_entity + relation_type + target_entity + applicability_fingerprint
+source_entity + relationship_keyword + target_entity + applicability_fingerprint
 ```
 
 When the relation already exists, append evidence records. Do not overwrite existing evidence.
@@ -365,6 +350,66 @@ Rules:
 - Promotion from overlay to base requires an explicit later review step.
 
 Use the simplest repository-compatible isolation mechanism. Do not introduce a new database solely for the overlay.
+
+### Current implementation state
+
+The static base currently targets OWASP WSTG first. Raw WSTG Markdown is
+preprocessed into scenario-scoped methodology documents before LightRAG sees it;
+the operational details and commands live in
+`docs/design/lightrag/preprocessing_pipeline.md`.
+
+Current WSTG preprocessing behavior:
+
+- one LightRAG Markdown input per WSTG testing scenario;
+- source provenance and non-ingestion context kept in `.manifest.json`;
+- merged placeholders, reference-only fragments, tool lists, and generic source
+  boilerplate filtered before ingestion;
+- ontology query anchors generated for WSTG scenarios that are important to
+  Phase 2 web-app abstractions, including API, GraphQL, client-side storage,
+  CORS, postMessage, upload, SSRF, session, and input-validation cases;
+- canonical relation anchors generated to link `TechnologyStack`,
+  `PreconditionEnvironment`, `VulnerabilityClass`, `AttackTechnique`,
+  `PayloadPattern`, `Artifact`, `ObservableSignal`, and `DefensiveControl`
+  terms back to WSTG scenario IDs;
+- relation briefs generated from source-grounded operational fragments;
+- stale generated WSTG methodology files removed during full regeneration.
+
+The regenerated corpus contains 119 WSTG methodology Markdown files. The local
+WSTG preprocessing run on 2026-07-30 produced 119 methodology files from 4,489
+source fragments and 1,078 relation brief candidates. Static corpus QA passed;
+the only current warning is that `wstg-inpv-05-methodology.md` is large enough
+to increase extraction timeout risk. `WSTG-ATHN-01` is skipped because it is a
+merged placeholder, and `WSTG-INPV-13` / "Testing for Buffer Overflow" is
+skipped because the current source body is only `This content has been
+removed`.
+
+The local LightRAG store under `data/lightrag/rag_storage` now has a validated
+119-document WSTG base. The final graph gate passes with 2,873 entities, 2,379
+relations, zero unknown/cannot-canonicalize entities, zero expected type
+mismatches, zero noise entities, zero non-canonical type labels, and all
+blocking targeted/bypass queries passing. LightRAG document status is
+`processed: 119`, `failed: 0`, `all: 119`.
+
+That validated store predates the 2026-07-30 ontology-query anchor update. Treat
+the new generated corpus as ready for a clean rebuild, not as already indexed.
+The next rebuild should reset the store, run staged loading with
+`MAX_PARALLEL_INSERT=1`, `--batch-size 5`, `--normalize-types`,
+`--log-ingestion-history`, graph gate, and blocking query gate.
+
+The preferred benchmark template after rebuild is `ontology_feature_to_wstg`.
+It projects Phase 2 target facts into ontology buckets and asks LightRAG to map
+from observed features to vulnerability classes, techniques, payloads,
+defenses, artifacts, signals, and finally WSTG scenario anchors. Production
+queries should not pass benchmark-only `expected_wstg_ids`.
+
+Future ingestion work should treat WSTG as a validated static base. Rebuilds
+should use staged loading with `--normalize-types`, graph gate, and blocking
+query gate; normal development should query the existing base rather than
+reloading it.
+
+Writeups remain a run-scoped or review-overlay source. They should not be
+inserted into the validated WSTG base until their relation briefs have been
+reviewed for reusable methodology content and promoted explicitly.
 
 ---
 

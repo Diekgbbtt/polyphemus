@@ -24,65 +24,37 @@ What can establish the prerequisite for another technique?
 
 endpoint/parameters etc.. devono essere nel target model e passati a lightrag tramite query.
 
-1.2 - Ontologia/tipi principali (estensibile,partiamo semplici)
+1.2 - Ontologia/tipi principali
 
-+------------------------+-------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------+
-| Entity type            | Definition                                                                                      | Key attributes                                                              |
-+------------------------+-------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------+
-| Vulnerability Class    | A reusable category of weakness or security failure that an attacker may exploit.              | canonical_name; taxonomy_refs (CWE, OWASP, CAPEC); security_impact          |
-+------------------------+-------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------+
-| Defensive Technology   | A control, mechanism, product family, or security capability that detects, blocks, or mitigates.| canonical_name; defense_family (WAF, MFA, CSP, EDR); coverage_scope         |
-+------------------------+-------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------+
-| Environmental Condition| A state of the target environment that dictates if a technique is possible, useful, or likely.  | canonical_name; condition_state; scope (application, service, identity, host|
-+------------------------+-------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------+
-| Attack Technique       | A reusable attacker method for testing, exploiting, bypassing, or building a new capability.    | canonical_name; attacker_objective; execution_context (auth, unauth, etc.)  |
-+------------------------+-------------------------------------------------------------------------------------------------+-----------------------------------------------------------------------------+
+L'ontologia LightRAG contiene esattamente questi dieci tipi di entità:
+
+| Entity type | Definition |
+|---|---|
+| `PreconditionEnvironment` | Target or environment condition that must be true for a technique to apply. |
+| `TechnologyStack` | Technology, product, framework, protocol, or component present in the target and relevant to the attack. |
+| `DefensiveControl` | Target mechanism intended to prevent, limit, or detect an attack. |
+| `VulnerabilityClass` | Technical, logic, or configuration weakness class in the target. |
+| `AttackGoal` | Strategic result the attacker wants to achieve through one or more techniques. |
+| `AttackerCapability` | Access, control, or operational ability the attacker already has and can use in later steps. |
+| `AttackTechnique` | Concrete action performed by the attacker to obtain a result. |
+| `PayloadPattern` | Reusable, parameterized structure of malicious input used to perform a technique. |
+| `Artifact` | Concrete object obtained or produced during an attack and reusable in later steps. |
+| `ObservableSignal` | Observable evidence indicating relevant behavior or possible technique success. |
 
 
 Ogni entità deve poi prendere dei non-identity metadata ma che servono , del tipo:
-aliases: []
 description: "Short methodology-oriented summary"
 source_refs: []
 confidence: high | medium | low
 
 
-1.3 RELAZIONI TRA I PRINCIPALI TIPI 
+1.3 RELAZIONI
 
-+----------------+-------------------------------------------------------------+-----------------------------------------------------------------------------------------+
-| Relation       | Direction                                                   | Meaning                                                                                 |
-+----------------+-------------------------------------------------------------+-----------------------------------------------------------------------------------------+
-| exploits       | AttackTechnique -> VulnerabilityClass                       | The technique takes advantage of the weakness represented by the vulnerability class.   |
-+----------------+-------------------------------------------------------------+-----------------------------------------------------------------------------------------+
-| detectedBy     | AttackTechnique -> DefensiveTechnology                      | The defense can observe, identify, or alert on the use of the technique.                |
-+----------------+-------------------------------------------------------------+-----------------------------------------------------------------------------------------+
-| requires       | AttackTechnique -> EnvironmentalCondition                   | The technique is applicable only when the stated condition is present.                  |
-+----------------+-------------------------------------------------------------+-----------------------------------------------------------------------------------------+
-| enables        | EnvCondition -> AttackTechnique / AttackTech -> AttackTech  | A condition makes a technique possible, or one technique establishes a new capability.   |
-+----------------+-------------------------------------------------------------+-----------------------------------------------------------------------------------------+
-| mitigates      | DefensiveTech -> AttackTechnique / DefensiveTech -> VulnClass| The defense reduces the feasibility or impact of the technique or weakness.             |
-+----------------+-------------------------------------------------------------+-----------------------------------------------------------------------------------------+
-| bypasses       | AttackTechnique -> DefensiveTechnology                      | The technique avoids, weakens, or routes around the defense under stated conditions.    |
-+----------------+-------------------------------------------------------------+-----------------------------------------------------------------------------------------+
+Le relazioni non sono definite manualmente dall'ontologia locale. LightRAG le
+estrae durante l'ingestion come keyword source-grounded tra entità dei dieci
+tipi ammessi.
 
-Core graph shape
-flowchart LR
-    C[Environmental Condition]
-    T1[Attack Technique T1]
-    T2[Attack Technique T2]
-    V[Vulnerability Class]
-    D[Defensive Technology]
-
-    C -->|enables| T1
-    T1 -->|requires| C
-    T1 -->|exploits| V
-    T1 -->|detectedBy| D
-    D -->|mitigates| T1
-    T2 -->|bypasses| D
-    T1 -->|enables| T2
-
-
-
-RELAZIONI DEVONO AVERE UN SMALL EVIDENCE ENVELOPE:
+Le relazioni restituite devono avere un small evidence envelope:
 applicability:
   - "Conditions under which the relation is true"
 limitations:
@@ -92,11 +64,11 @@ evidence_refs:
 confidence: high | medium | low
 
 COME MODULARLO PER IL FUTURO: REGOLE
-The MVP should follow four rules:
+The system should follow these rules:
 
-Do not introduce a new entity type unless the Planner needs to query it directly.
+Do not introduce new entity types.
 Use attributes for descriptive variation and nodes for independently retrievable concepts.
-Use controlled relation names, but allow new entity aliases and taxonomy references.
+Let LightRAG extract source-grounded relation keywords during indexing.
 Keep source hierarchy, document titles, authors, and URLs as provenance metadata rather than core offensive nodes.
 
 
@@ -155,12 +127,10 @@ summary: "Short evidence-grounded answer"
 candidates:
   - technique:
       canonical_name: "Technique name"
-      aliases: []
 
     relevance:
       relation_path:
-        - "Condition A enables Technique"
-        - "Technique bypasses Defense D"
+        - "Source-grounded relationship phrase from LightRAG"
         - "Technique exploits Vulnerability Class V"
 
       rationale: "Why this candidate matches the target state"
@@ -355,12 +325,17 @@ Semantic filtering
 
 A section should be retained only when it contributes at least one of:
 
-Vulnerability Class
-Environmental Condition
-Attack Technique
-Defensive Technology
-Relation between them
-Evidence explaining when a relation is valid
+PreconditionEnvironment
+TechnologyStack
+DefensiveControl
+VulnerabilityClass
+AttackGoal
+AttackerCapability
+AttackTechnique
+PayloadPattern
+Artifact
+ObservableSignal
+Evidence explaining when a relationship is valid
 
 Pure storytelling can remain as source context but should not automatically create graph nodes.
 
@@ -398,19 +373,18 @@ A fixed maximum token size may still exist as a safety limit, but it should not 
 
 The ingestion LLM should receive instructions conceptually equivalent to:
 
-Read the supplied segment as offensive-security methodology. Extract only statements explicitly supported by the text or directly implied by a described result. Use only the approved entity types and relations. Normalize entity names to canonical security terminology while preserving aliases used by the source. Represent prerequisites as requires, environmental support as enables, defensive effects as mitigates or detectedBy, and explicit evasion methods as bypasses. Do not infer that a technique always works merely because it succeeded in one writeup. Attach the specific environmental conditions, limitations, evidence span, and source reference to every context-dependent relation. Omit unsupported relations rather than guessing.
+Read the supplied segment as offensive-security methodology. Extract only statements explicitly supported by the text or directly implied by a described result. Use only the ten approved entity types. Omit entities that do not fit one of those types. Normalize entity names to canonical security terminology while preserving source wording in evidence. Let LightRAG infer concise relationship keywords from the source text instead of applying a fixed local relation list. Do not infer that a technique always works merely because it succeeded in one writeup. Attach the specific preconditions, limitations, evidence span, and source reference to every context-dependent relationship. Omit unsupported relationships rather than guessing.
 
 The extraction result can conceptually resemble:
 
 entities:
   - type: AttackTechnique
     canonical_name: "..."
-    aliases: []
     description: "..."
 
 relations:
   - source: "..."
-    type: bypasses
+    keywords: "source-grounded relationship phrase"
     target: "..."
     applicability:
       - "..."
@@ -458,16 +432,15 @@ entity_key = normalized(entity_type + canonical_name)
 
 Examples:
 
-attack_technique::kerberoasting
-defensive_technology::ldap_signing
-environmental_condition::ldap_signing_disabled
-vulnerability_class::weak_service_account_credentials
+AttackTechnique:kerberoasting
+DefensiveControl:ldap signing
+PreconditionEnvironment:ldap signing disabled
+VulnerabilityClass:weak service account credentials
 Merge sequence
 
 flowchart LR
     N[New entity]
     E{Exact canonical key?}
-    A{Known alias?}
     S{High semantic similarity<br/>and same type?}
     M[Merge]
     R[Create new node]
@@ -475,9 +448,7 @@ flowchart LR
 
     N --> E
     E -->|yes| M
-    E -->|no| A
-    A -->|yes| M
-    A -->|no| S
+    E -->|no| S
     S -->|clearly same| M
     S -->|uncertain| Q
     S -->|different| R
@@ -495,7 +466,7 @@ Relation key
 Use:
 
 source_entity
-+ relation_type
++ relationship_keyword
 + target_entity
 + applicability_fingerprint
 
@@ -581,59 +552,44 @@ The LightRAG architecture already relies on document segmentation before extract
 
 A broad chapter such as Active Directory should not produce a single generic node connected to every technique.
 
-Instead, the chapter is decomposed into concrete condition–technique–defense statements.
+Instead, the chapter is decomposed into typed entities and source-grounded
+methodology claims.
 
-flowchart LR
-    C1[Condition:<br/>AD domain is present]
-    C2[Condition:<br/>SPN-bearing service account exists]
-    C3[Condition:<br/>Service account credential is weak]
-    C4[Condition:<br/>LDAP signing is disabled]
+Example entities:
 
-    T1[Technique:<br/>Kerberoasting]
-    T2[Technique:<br/>NTLM relay to LDAP]
-
-    V1[Vulnerability Class:<br/>Weak credential policy]
-    V2[Vulnerability Class:<br/>Insufficient channel protection]
-
-    D1[Defense:<br/>Managed service accounts / strong credentials]
-    D2[Defense:<br/>LDAP signing]
-
-    T1 -->|requires| C1
-    T1 -->|requires| C2
-    T1 -->|exploits| V1
-    C3 -->|enables| T1
-    D1 -->|mitigates| T1
-
-    T2 -->|requires| C1
-    T2 -->|requires| C4
-    T2 -->|exploits| V2
-    D2 -->|mitigates| T2
+- `PreconditionEnvironment`: AD domain is present.
+- `PreconditionEnvironment`: SPN-bearing service account exists.
+- `PreconditionEnvironment`: LDAP signing is disabled.
+- `AttackTechnique`: Kerberoasting.
+- `AttackTechnique`: NTLM relay to LDAP.
+- `VulnerabilityClass`: Weak service account credential policy.
+- `DefensiveControl`: LDAP signing.
 
 The chapter contributes:
 
 global context through its summary and heading metadata;
-specific graph knowledge through granular entities and relations.
+specific graph knowledge through granular entities and source-grounded claims.
 
 
 Mapping procedure
 
 For every broad section, ask:
 
-What environmental states are described?
+What target or environment preconditions are described?
+What technologies are present?
 What attacker techniques become possible?
 Which weakness does each technique exploit?
 Which control detects or mitigates it?
 Does the document describe an alternative or bypass?
-Does one technique establish a condition required by another?
+Does one technique establish an attacker capability, artifact, or precondition required by another?
 
 The result should be a set of small reusable claims such as:
 
-Condition C enables Technique T.
-Technique T requires Condition C.
-Technique T exploits Vulnerability Class V.
-Defense D mitigates Technique T.
-Technique T2 bypasses Defense D under Condition C2.
-Technique T1 enables Technique T2.
+Technique T is applicable when precondition C is present.
+Technique T tests or exploits vulnerability class V.
+Defensive control D can limit technique T.
+Payload pattern P may bypass defensive control D under precondition C2.
+Technique T1 can produce artifact A or attacker capability K.
 
 4.4 Handling broad conceptual material
 
@@ -707,8 +663,59 @@ flowchart TD
 The resulting system stays lightweight because:
 
 the target graph and methodology graph have separate identities and lifecycles;
-the core ontology contains only four entity types and six relations;
+the core ontology contains exactly ten entity types and no manually defined relations;
 runtime content is isolated in a per-run overlay;
 LightRAG performs semantic and graph-enhanced retrieval;
 the Planner receives evidence-grounded candidates rather than an uncontrolled execution plan;
 new taxonomies, tools, topics, or source types can be added later without recutting the core model.
+
+4.6 WSTG retrieval strategy for Attack Engineering queries
+
+The Attack Engineering Agent does not ask LightRAG to "find attacks" from raw
+recon text. It first converts Phase 2 target facts into ontology-shaped query
+evidence, then asks LightRAG to resolve matching WSTG methodology.
+
+The query adapter should project target facts into the same ten entity buckets
+used during ingestion:
+
+TechnologyStack;
+PreconditionEnvironment;
+DefensiveControl;
+VulnerabilityClass;
+AttackGoal;
+AttackerCapability;
+AttackTechnique;
+PayloadPattern;
+Artifact;
+ObservableSignal.
+
+For WSTG, scenario IDs are not graph entity types. They are document anchors and
+manifest metadata. This keeps the methodology ontology small while still giving
+retrieval a direct path from observed target facts to WSTG IDs.
+
+The preferred runtime query path is:
+
+observed technology / condition / artifact / signal
+    -> suspected vulnerability class
+    -> relevant technique, payload, defense, or evidence
+    -> WSTG scenario anchor
+    -> WSTG ID and methodology packet.
+
+This supports the three planner questions defined earlier:
+
+Target-state query:
+Given the current target features and observed signals, identify applicable WSTG
+tests, hypotheses, preconditions, probes, and negative controls.
+
+Bypass query:
+Given a blocked technique and an observed defensive control, retrieve WSTG
+methodology describing alternate probes, bypass patterns, or conditions where
+the defense changes applicability.
+
+Chaining query:
+Given a desired missing condition or artifact, retrieve WSTG methodology that
+can establish that condition or collect that artifact before the next test.
+
+Benchmarking must keep diagnostic exact-ID prompts separate from production
+queries. `expected_wstg_ids` are labels for recall/precision measurement only;
+they must not be supplied to runtime retrieval.
