@@ -297,15 +297,11 @@ def test_phase_guard_returns_none_for_non_a1():
     assert body(dispatch, {"project_id": "p"}) is None
 
 
-def test_degradation_invoke_raises():
-    def invoke_fn(messages, *, schema=None):
-        raise RuntimeError("boom")
-
-    body = make_data_modeller_body(invoke_fn=invoke_fn, inventory_fn=lambda pid: {}, aggregations_fn=lambda pid: [])
-    dispatch = type("D", (), {"phase": "A1", "chunk": _chunk([_param("a")])})()
-    result = body(dispatch, {"project_id": "p"})
-    assert result == L1DeltaBatch()
-
+# `test_degradation_invoke_raises` was RETIRED (#73): a raising invoke_fn no longer
+# reaches the body in production - the default (invoke_role) converts any provider
+# failure to a None return via the escalating wrapper (see
+# tests/test_llm_providers.py::test_escalating_invoke_fail_closes_to_none_*). The
+# None-degradation path the body must honour is covered by test_degradation_invoke_none.
 
 def test_degradation_invoke_none():
     outcome = model_data(_chunk([_param("a")]), invoke_fn=lambda *a, **k: None, inventory={}, aggregations=[])

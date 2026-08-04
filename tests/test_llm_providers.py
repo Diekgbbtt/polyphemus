@@ -97,18 +97,22 @@ def test_underlying_client_has_an_effective_request_timeout(monkeypatch):
 
 
 def test_underlying_client_bounds_its_own_retries(monkeypatch):
-    """#32/FM-4: the SDK's silent default of 2 multiplies with analysis'
-    `bounded_retry(attempts=3)` into 9 round-trips per logical attempt. The
-    policy must be stated, not inherited."""
+    """#32/FM-4: the SDK's silent default of 2 must not be inherited. `MAX_RETRIES`
+    is the DEFAULT retry, which (post-#73) belongs to the AGENT / injectable-model
+    per-turn callers (crawl, steering/job_agent) - single-shot role calls go through
+    `invoke_role`, which passes `max_retries=0` and owns the escalating retry
+    instead, so the two layers never multiply."""
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     m = P.build_chat_model("swissai", "x")
     assert m.root_client.max_retries == P.MAX_RETRIES
     assert P.MAX_RETRIES == 1
-    # FM-5: NOT zero. `bounded_retry` lives only in analysis, so this is the sole
-    # retry the recon roles have, and the only layer that backs off / honours
-    # Retry-After. Zeroing it would trade a latency bug for a recon resilience
-    # regression.
+    # FM-5: NOT zero for the DEFAULT/agent path - it is the only layer that backs off
+    # and honours Retry-After for a multi-turn agent turn. The escalating wrapper
+    # explicitly opts single-shot calls down to 0.
     assert P.MAX_RETRIES > 0
+    # invoke_role's per-attempt client carries no client-side retry (the wrapper is
+    # the sole retry), so the #32 multiplication cannot recur.
+    assert P.build_chat_model("swissai", "x", max_retries=0).root_client.max_retries == 0
 
 
 def test_request_timeout_is_overridable_and_fails_fast_on_a_bad_value(monkeypatch):
@@ -185,3 +189,58 @@ def test_a_hung_provider_fails_within_the_timeout(monkeypatch):
     # 1s read budget x (1 + MAX_RETRIES) attempts, plus the SDK's backoff. The
     # bound is loose on purpose - the assertion under test is "terminates at all".
     assert elapsed < 30, f"hung call took {elapsed:.1f}s; it must fail on the timeout"
+
+
+# --- #73 (D6): the single escalating-budget retry layer ----------------------
+
+def test_attempt_timeouts_default_schedule_escalates(monkeypatch):
+    monkeypatch.delenv("LLM_ATTEMPT_TIMEOUTS_S", raising=False)
+    sched = P.attempt_timeouts()
+    assert sched == P.DEFAULT_ATTEMPT_TIMEOUTS_S == (300.0, 600.0, 900.0, 2700.0)
+    assert list(sched) == sorted(sched), "budget must grow, never shrink, per attempt"
+
+
+def test_attempt_timeouts_override_and_fail_fast(monkeypatch):
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "10, 20, 40")
+    assert P.attempt_timeouts() == (10.0, 20.0, 40.0)
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "")  # unset-equivalent -> default
+    assert P.attempt_timeouts() == P.DEFAULT_ATTEMPT_TIMEOUTS_S
+    for bad in ("soon", "0", "-5", "10,nope"):
+        monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", bad)
+        with pytest.raises(P.LLMConfigError):
+            P.attempt_timeouts()
+
+
+def test_escalating_invoke_grows_the_budget_and_returns_first_success(monkeypatch):
+    """A slow-but-healthy call that misses the first budget succeeds on a later,
+    larger one - and the budget handed to each attempt strictly grows."""
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2, 4")
+    seen: list[float] = []
+
+    def call(budget):
+        seen.append(budget)
+        return "ok" if budget >= 2 else None   # first (budget=1) unmet, second succeeds
+
+    assert P.invoke_with_escalating_timeout(call) == "ok"
+    assert seen == [1.0, 2.0]                   # stopped at the first success, budgets grew
+
+
+def test_escalating_invoke_fail_closes_to_none_after_all_attempts_raise(monkeypatch):
+    """Faithful to the retired bounded_retry/_invoke_with_retry: a persistently
+    raising provider is retried under each larger budget, then fail-CLOSES to None
+    (the caller's established empty-step signal) - it never re-raises to crash the
+    caller, and never hangs."""
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2")
+    budgets: list[float] = []
+
+    def call(budget):
+        budgets.append(budget)
+        raise TimeoutError(f"hung@{budget}")
+
+    assert P.invoke_with_escalating_timeout(call) is None
+    assert budgets == [1.0, 2.0]                # every budget was tried, in order
+
+
+def test_escalating_invoke_returns_none_when_every_attempt_is_unmet(monkeypatch):
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2, 3")
+    assert P.invoke_with_escalating_timeout(lambda budget: None) is None

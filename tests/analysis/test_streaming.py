@@ -226,6 +226,13 @@ def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(m
     assert result.census.unprocessed_after == 0
 
 
+# NOTE (merge, #74): the regression test `test_analyse_chunked_incremental_key_...`
+# was DROPPED here. It pinned `_key`/`analysed_keys` - the cross-pass dedup machinery
+# #74 deletes from `analyse_chunked` (it now consumes exactly the pushed `L0Chunk`,
+# no identity hashing anywhere), so the unhashable-identity bug class it guarded
+# (moodique 82b88988) is structurally impossible in the new design.
+
+
 # --- #9: the phase-6 endpoint-reprofile pass is NOT re-streamed to proposers ---
 
 class _RecordingFeed:

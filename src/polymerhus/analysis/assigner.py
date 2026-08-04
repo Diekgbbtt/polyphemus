@@ -560,20 +560,14 @@ def assign(
 
 def default_invoke_fn():
     """The LIVE structured-output call for the Assigner: the `analyser` role model
-    bound to `L1DeltaBatch` via function-calling, behind the pod's bounded retry.
-
-    Reuses the legacy pod's two ingredients rather than introducing a second LLM
-    plumbing path; returns `None` when no parseable tool call survives the retries,
-    which `assign` already treats as a valid empty outcome."""
-    from polymerhus.analysis.pod import _invoke_with_retry
-    from polymerhus.app.llm.roles import chat_model_for
-
-    structured = chat_model_for("analyser").with_structured_output(
-        L1DeltaBatch, method="function_calling"
-    )
+    bound to `L1DeltaBatch` via function-calling, through the single coherent
+    escalating retry (#73, `invoke_role`); returns `None` when no parseable tool
+    call survives the schedule, which `assign` already treats as a valid empty
+    outcome."""
+    from polymerhus.app.llm.roles import invoke_role
 
     def invoke(messages):
-        return _invoke_with_retry(structured.invoke, messages)
+        return invoke_role("analyser", messages, schema=L1DeltaBatch)
 
     return invoke
 

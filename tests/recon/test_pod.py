@@ -437,17 +437,12 @@ def test_triage_caps_assets_to_avoid_llm_context_overflow(monkeypatch):
 
     captured = {}
 
-    class FakeStructured:
-        def invoke(self, prompt):
-            captured["prompt"] = prompt
-            return pod._ObservationBatch(observations=[])
-
-    class FakeLLM:
-        def with_structured_output(self, schema, method=None):
-            return FakeStructured()
+    def fake_invoke_role(role, messages, *, schema=None, temperature=0):
+        captured["prompt"] = messages
+        return pod._ObservationBatch(observations=[])
 
     import polymerhus.app.llm.roles as roles
-    monkeypatch.setattr(roles, "chat_model_for", lambda role: FakeLLM())
+    monkeypatch.setattr(roles, "invoke_role", fake_invoke_role)
 
     n = pod._MAX_TRIAGE_ASSETS + 300
     assets = [AssetDelta(type="Subdomain", identity={"name": f"h{i}.x.com"}) for i in range(n)]
