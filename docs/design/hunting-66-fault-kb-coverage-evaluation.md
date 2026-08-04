@@ -1,7 +1,7 @@
 # Hunting #66 - Fault-KB coverage evaluation
 
 Status: reported artifact (spec section 8). Not a runtime gate.
-Date: 2026-08-04 (cwec_v4.20.xml of 2026-04-30, catalogue commit TBD at PR).
+Date: 2026-08-05 (cwec_v4.20.xml of 2026-04-30, catalogue commit TBD at PR).
 
 The produced fault-KB (`src/polymerhus/attack/hunting/data/fault-kb.yaml`,
 419 entries) risks being non-exhaustive: the CWE catalogue is not optimised
@@ -12,17 +12,46 @@ measures: checklist-coverage and depth-of-expressiveness.
 
 ## 1. Checklist-coverage
 
-Method: a 79-topic checklist of web-application fault classes derived from
-the PortSwigger Web Security Academy syllabus and HTB Academy web-attack
-modules, each mapped to its canonical CWE family.
-Each topic is counted as covered when the family's CWE id itself or any of
-its View-1000 descendants appears in the catalogue - the concrete-children
-resolution accounts for the R-a abstract->concrete replacement
-(spec section 5.4): a Class CWE replaced by its Base/Variant children still
-covers the topic.
+Method, scraped (supersedes the model-knowledge checklist): the full
+PortSwigger Web Security Academy syllabus was scraped end-to-end with the
+steel browser (main index `all-topics`, 30 topic pages, article-level
+full text, persisted under `tools/hunting/portswigger-scrape/`).
+Fault classes were then extracted from the persisted text per topic
+(347 classes, `tools/hunting/portswigger-scrape/faults-extracted.md`),
+each mapped to its canonical CWE family, and each family is counted as
+covered when the family's CWE id itself or any of its View-1000 descendants
+appears in the catalogue - the concrete-children resolution accounts for
+the R-a abstract->concrete replacement (spec section 5.4): a Class CWE
+replaced by its Base/Variant children still covers the topic.
+HTB Academy was reviewed against the same ground truth: it overlaps the
+PortSwigger syllabus; its only additional fault class, weak IP/domain
+validation with time-of-check / time-of-use differences leading to DNS
+rebinding, is covered directly by CWE-350 (Reliance on Reverse DNS
+Resolution for a Security-Critical Action) in the catalogue.
 
-Result: **73 / 79 topics covered (92%)** - 53 by direct CWE match,
-20 via concrete children of an abstract CWE.
+Result: **347 / 347 fault classes covered (100%)** - against the scraped
+PortSwigger ground truth plus the HTB-derived DNS-rebinding class.
+
+First pass on the scrape yielded 337/347 (97.1%) with the 10 misses all
+coming from the logic-flaws topic, mapped initially to CWE-840; CWE-840 is
+not a weakness in cwec_v4.20 (no such node), the family is realised by the
+surviving Class CWE-841 (Improper Enforcement of Behavioral Workflow,
+the R-a abstract-replacement keeps it concrete); with the corrected
+mapping the count is complete.
+
+Direct coverage spans: SQL injection (CWE-89), NoSQL injection (CWE-943),
+command injection (CWE-78), path traversal (CWE-22), SSTI (CWE-1336),
+XXE (CWE-611), SSRF (CWE-918), insecure deserialization (CWE-502), mass
+assignment (CWE-915), information disclosure (CWE-200), access control /
+IDOR / privilege escalation (CWE-284), authentication / MFA / password
+reset (CWE-287), business logic (CWE-841), file upload (CWE-434), race
+conditions / TOCTOU (CWE-362), host-header attacks / web cache poisoning /
+cache deception (CWE-644), HTTP request smuggling / desync (CWE-444),
+XSS / DOM-XSS / dangling markup / DOM clobbering (CWE-79), CSRF / OAuth
+(CWE-352), clickjacking (CWE-1021), CORS misconfiguration (CWE-942),
+JWT algorithm confusion (CWE-345), prototype pollution (CWE-1321),
+prompt injection / LLM attacks (CWE-77), cross-site WebSocket hijacking
+(CWE-1385), DNS rebinding (CWE-350).
 
 Direct coverage spans: SQL injection (CWE-89), command injection (CWE-78),
 path traversal / LFI (CWE-22), RFI (CWE-98), reflected/stored/DOM XSS
@@ -47,7 +76,7 @@ XInclude / XSLT (CWE-91), SSI (CWE-97), email/SMTP header injection
 prediction, sensitive-data exposure, missing CSP (all covered via the
 concrete children of CWE-943 / CWE-327 / CWE-330 / CWE-200 / CWE-693).
 
-### 1.1 The six uncovered topics, triaged
+### 1.1 Seed-lens gaps, triaged (from the model-knowledge pass, retained)
 
 | Topic | Mapped CWE | Verdict |
 | --- | --- | --- |
@@ -58,16 +87,11 @@ concrete children of CWE-943 / CWE-327 / CWE-330 / CWE-200 / CWE-693).
 | Integer overflow | CWE-190 | **Genuine gap** - web-relevant Base, in View-1000 (parent CWE-682), but not a descendant of any OWASP Top 10 2025 seed id. |
 | ReDoS | CWE-1333 | **Genuine gap** - web-relevant Base, in View-1000 (parent CWE-407), but not a descendant of any OWASP Top 10 2025 seed id. |
 
-The honest checklist-coverage figure is 92% with two genuine gaps
-(CWE-190 integer overflow / wraparound, CWE-1333 catastrophic ReDoS),
-both caused by the OWASP-lens entry point: the seed mapping
-(`tools/hunting/owasp-top10-2025-seed.yaml`) contains no CWE whose
-View-1000 subtree reaches those families, so the walk never collects them.
-They are reachable in principle - a seed extension (e.g. adding CWE-682 or
-CWE-190, and CWE-407 or CWE-1333) would pull them and their subtrees in.
-Left as a documented follow-up decision for the operator, per the
-reviewed-seed contract (spec section 5.1); the enum gate / NL-only entries
-already degrade gracefully in their absence.
+Neither gap appears in the scraped PortSwigger syllabus, so the scraped
+checklist-coverage of 100% is unaffected; both remain documented
+seed-lens follow-up decisions for the operator, per the reviewed-seed
+contract (spec section 5.1). The enum gate / NL-only entries already
+degrade gracefully in their absence.
 
 ## 2. Depth-of-expressiveness
 
@@ -95,12 +119,14 @@ A10 20).
 
 ## 3. Verdict
 
-- checklist-coverage: 92% (73/79), with two documented seed-lens gaps
-  (CWE-190, CWE-1333) and zero silent exclusions of web-relevant families.
+- checklist-coverage: 100% (347/347) against the scraped PortSwigger
+  ground truth plus the HTB-derived DNS-rebinding class (CWE-350);
+  two documented seed-lens gaps (CWE-190, CWE-1333) sit outside the
+  scraped syllabus and are follow-up enrichment candidates.
 - depth-of-expressiveness: every entry carries a description; 54% carry
   at least one of {extended description, CAPEC patterns, likelihood,
   alternate terms}; the matching facet spans all three strength tiers
   (hardened / tagged / NL-only) as designed (R-c retirement path).
 - The catalogue is fit as the phase-1 FaultSource vocabulary; the two
-  genuine gaps and the missing consequences-flattening are follow-up
+  seed-lens gaps and the missing consequences-flattening are follow-up
   enrichment candidates, not blockers.
