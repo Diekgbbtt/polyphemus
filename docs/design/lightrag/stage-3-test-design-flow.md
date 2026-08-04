@@ -1,6 +1,7 @@
 # Stage 3 Test Design - LightRAG Methodology Flow
 
-Status: design diagram.
+Status: design plus implemented retrieval contract. Runtime details are tracked
+in `docs/design/lightrag/methodology_bundle_runtime.md`.
 
 Purpose: describe how Stage 3 turns the Layer-1 service/system model into
 evidence-grounded high-level tests and attack hypotheses, using LightRAG as a
@@ -29,6 +30,7 @@ flowchart LR
         BASE["Validated LightRAG base KB"]
         OVER["Run or review overlay<br/>lower-confidence / recent material"]
         LR["LightRAG methodology retrieval<br/>hybrid semantic + graph retrieval"]
+        FMT["Methodology formatter<br/>schema-bound compact extraction"]
     end
 
     subgraph Agents["Stage 3 agents"]
@@ -61,7 +63,8 @@ flowchart LR
     L1 -->|minimal target projection consumed by| QA
 
     QA -->|produces KnowledgeQuery<br/>symptom + fault_context +<br/>objective + target_context| LR
-    LR -->|produces MethodologyBundle<br/>techniques, prerequisites,<br/>defenses, bypasses, evidence| TE
+    LR -->|retrieves context only<br/>only_need_context=true| FMT
+    FMT -->|produces validated<br/>MethodologyBundle| TE
     HT -->|consumed by| TE
     IC -->|consumed by| TE
     FC -->|consumed by| TE
@@ -81,7 +84,8 @@ stateDiagram-v2
     IndexedForTesting --> FaultMatched: match IndexCard with FaultCard
     FaultMatched --> TestIntentReady: produce HighLevelTest
     TestIntentReady --> QueryReady: Query Agent builds KnowledgeQuery
-    QueryReady --> MethodologyRetrieved: LightRAG returns MethodologyBundle
+    QueryReady --> MethodologyContextRetrieved: LightRAG returns raw context
+    MethodologyContextRetrieved --> MethodologyRetrieved: formatter validates MethodologyBundle
     MethodologyRetrieved --> HypothesisDrafted: Test Engineer drafts AttackHypothesis
     HypothesisDrafted --> Stage4Queued: TestCandidate + Knowledge Pack queued
     Stage4Queued --> [*]: Stage 4 pods consume the handoff
@@ -118,8 +122,12 @@ Given Symptom / Fault Context
 ```
 
 The default `retrieve_methodology()` path uses `RoutedMethodologyRetriever`.
-It queries the validated WSTG base KB first and only consults the writeup
-overlay when one of the routing gates fires:
+LightRAG is queried with `only_need_context=true`; a dedicated formatter then
+turns the retrieved context into a validated `MethodologyBundle`. The native
+LightRAG `/query` response is not the agent-facing methodology contract.
+
+`RoutedMethodologyRetriever` queries the validated WSTG base KB first and only
+consults the writeup overlay when one of the routing gates fires:
 
 - symptom or taxonomy concepts match overlay markers such as JWT, SQLi, SSRF,
   Active Directory, Git exposure, or deserialization;
@@ -131,6 +139,26 @@ Merged results preserve base precedence. Base-derived candidates are tagged
 `source_tier=validated_base`; overlay-derived candidates are tagged
 `source_tier=review_overlay` and must be treated as review material until
 promoted.
+
+## Attack Engineer Consumption Contract
+
+The Test Engineer or Attack Engineer agent should consume a validated
+`MethodologyBundle` with at most three candidate techniques, evidence
+references, condition separation, mitigation checks, observables, and explicit
+knowledge gaps. It should not parse conversational prose from LightRAG.
+
+The pending HTTP boundary is:
+
+```text
+POST /methodology/query
+request: {"run_id": "...", "query": KnowledgeQuery}
+response: MethodologyBundle
+```
+
+`tests/lightrag/test_methodology_http_contract.py` captures this contract and
+is marked `xfail(strict=True)` until the route is wired. The route implementation
+should call `agent.lightrag.service.retrieve_methodology()` and return the
+validated bundle directly.
 
 ## Boundary Rules
 

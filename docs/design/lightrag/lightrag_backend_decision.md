@@ -1,8 +1,8 @@
 # LightRAG Backend Decision
 
 Status: updated after the validated WSTG indexing run on 2026-07-28, the
-2026-07-30 WSTG corpus/benchmark preparation pass, and the 2026-08-03
-writeups overlay integration.
+2026-07-30 WSTG corpus/benchmark preparation pass, the 2026-08-03 writeups
+overlay integration, and the 2026-08-04 structured output runtime refactor.
 
 ## Decision
 
@@ -38,6 +38,20 @@ logic in `RoutedMethodologyRetriever`, and overlay results are tagged
 This keeps machine-specific exploitation narratives from polluting the
 validated WSTG graph while still allowing Attack Engineer agents to retrieve
 specialized bypass and chaining techniques when symptoms justify it.
+
+The branch intentionally versions the current storage snapshots:
+
+```text
+data/lightrag/rag_storage/
+data/lightrag/writeups_rag_storage/
+```
+
+This makes the LightRAG profile ready to query after clone plus compose startup.
+`data/lightrag/rag_storage.bak.*` remains ignored. The largest current storage
+file is below GitHub's hard 100 MB single-file limit, but the snapshot is still
+large enough that future rebuilds should be reviewed deliberately before
+replacement. If storage files grow past normal Git limits, move the snapshots to
+Git LFS or an external release artifact rather than committing oversized blobs.
 
 The existing `triager` and `job_orchestrator` roles are configured with DeepSeek via
 OpenRouter:
@@ -149,6 +163,8 @@ EMBEDDING_USE_BASE64=false
 Keep the embedding model and dimension stable after the first successful insert;
 changing them requires clearing `data/lightrag/rag_storage` and re-indexing.
 
-The current practical baseline is the validated 119-document WSTG KB under
-`data/lightrag/rag_storage`. Treat backend changes as a re-indexing event, not
-as a runtime-only configuration change.
+The current practical baseline is the validated WSTG KB under
+`data/lightrag/rag_storage` plus the isolated writeup overlay under
+`data/lightrag/writeups_rag_storage`. Treat backend, workspace, embedding, or
+entity-prompt changes as re-indexing events, not runtime-only configuration
+changes.

@@ -1,8 +1,7 @@
 # LightRAG Preprocessing Pipeline
 
-Status: MVP implementation note. Current WSTG corpus generation updated on
-2026-07-30. The live LightRAG store must be rebuilt from a clean store before
-the new ontology-query anchors are considered indexed.
+Status: MVP implementation note. Current WSTG and writeup methodology stores
+are available as pre-indexed snapshots on branch `lightrag` as of 2026-08-04.
 
 ## Decision
 
@@ -200,6 +199,52 @@ This structure supports the three likely Attack Engineering query classes:
 Production queries should not include `expected_wstg_ids`; those are benchmark
 labels only. Diagnostic templates may query exact IDs, titles, or categories,
 but only to validate that indexing and anchors work.
+
+## 2026-08-04 Structured Retrieval Snapshot
+
+The current branch ships two LightRAG storage snapshots so the methodology
+service can be started without rebuilding the WSTG base and writeup overlay:
+
+```text
+data/lightrag/rag_storage/
+data/lightrag/writeups_rag_storage/
+```
+
+These are mounted by the compose services:
+
+```text
+lightrag           -> /app/data/rag_storage
+lightrag-writeups  -> /app/data/writeups_rag_storage
+```
+
+Do not delete or reinitialize these directories during normal development. A
+clean rebuild is required only when one of these changes:
+
+- preprocessed source corpus;
+- LightRAG image/version;
+- entity extraction prompt;
+- embedding model or embedding dimension;
+- workspace name.
+
+After a rebuild, rerun:
+
+```bash
+.venv/bin/python -m pytest tests/lightrag/test_formatter.py \
+  tests/lightrag/test_routed_retriever.py \
+  tests/lightrag/test_service.py \
+  tests/lightrag/test_benchmark_wstg_writeup_generation.py -v
+```
+
+Then run the live WSTG plus writeup benchmark and replace:
+
+```text
+data/lightrag/benchmarks/wstg_writeup_generation_benchmark_live.json
+```
+
+The expected runtime behavior is now structured retrieval: LightRAG is queried
+with `only_need_context=true`, the formatter produces a validated
+`MethodologyBundle`, and unsupported or weak evidence becomes `knowledge_gaps`
+rather than free-form guidance.
 
 ## WSTG Profile
 

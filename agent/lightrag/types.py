@@ -10,6 +10,17 @@ RetrievalMode = Literal["naive", "local", "global", "hybrid", "mix"]
 AuthenticationState = Literal["unknown", "unauthenticated", "authenticated", "mixed"]
 SafetyLevel = Literal["non_destructive", "low_impact", "manual_review"]
 SourceTier = Literal["validated_base", "review_overlay"]
+MAX_METHODOLOGY_CANDIDATES = 3
+MAX_COMPACT_TEXT_CHARS = 280
+MAX_SUMMARY_CHARS = 360
+MAX_LIST_ITEMS = 6
+MAX_EVIDENCE_REFS = 8
+_FORBIDDEN_META_TEXT = (
+    "I need to",
+    "Let me",
+    "Based on the provided context",
+    "Here is how",
+)
 EntityType = Literal[
     "PreconditionEnvironment",
     "TechnologyStack",
@@ -31,11 +42,44 @@ def _require_non_blank(value: str, field_name: str) -> str:
     return value
 
 
+def _require_compact_text(
+    value: str,
+    field_name: str,
+    *,
+    max_chars: int = MAX_COMPACT_TEXT_CHARS,
+) -> str:
+    value = _require_non_blank(value, field_name).strip()
+    if len(value) > max_chars:
+        raise ValueError(f"{field_name} must be <= {max_chars} characters")
+    if value.count("\n") > 1:
+        raise ValueError(f"{field_name} must be at most 1-2 lines")
+    lowered = value.casefold()
+    for marker in _FORBIDDEN_META_TEXT:
+        if marker.casefold() in lowered:
+            raise ValueError(f"{field_name} contains forbidden meta text")
+    return value
+
+
 def _clean_str_list(values: list[str], field_name: str) -> list[str]:
     cleaned = []
     for value in values:
         cleaned.append(_require_non_blank(value, field_name))
     return cleaned
+
+
+def _clean_compact_str_list(
+    values: list[str],
+    field_name: str,
+    *,
+    max_items: int = MAX_LIST_ITEMS,
+    max_chars: int = 180,
+) -> list[str]:
+    if len(values) > max_items:
+        raise ValueError(f"{field_name} must contain <= {max_items} items")
+    return [
+        _require_compact_text(value, field_name, max_chars=max_chars)
+        for value in values
+    ]
 
 
 class EvidenceRef(BaseModel):
@@ -117,7 +161,7 @@ class CandidateRelevance(BaseModel):
     @field_validator("rationale")
     @classmethod
     def _rationale_required(cls, value):  # noqa: N805
-        return _require_non_blank(value, "rationale")
+        return _require_compact_text(value, "rationale")
 
 
 class CandidateApplicability(BaseModel):
@@ -150,6 +194,8 @@ class MethodologyCandidate(BaseModel):
     expected_effect: ExpectedEffect = Field(default_factory=ExpectedEffect)
     confidence: ConfidenceLevel = "medium"
     evidence_refs: list[EvidenceRef]
+    observables: list[str] = Field(default_factory=list, max_length=MAX_LIST_ITEMS)
+    mitigation_checks: list[str] = Field(default_factory=list, max_length=MAX_LIST_ITEMS)
     source_tier: SourceTier = "validated_base"
 
     @field_validator("evidence_refs")
@@ -158,6 +204,67 @@ class MethodologyCandidate(BaseModel):
         if not value:
             raise ValueError("methodology candidates require evidence_refs")
         return value
+
+    @field_validator("observables", "mitigation_checks")
+    @classmethod
+    def _compact_lists(cls, value):  # noqa: N805
+        return _clean_compact_str_list(value, "value")
+
+
+class CompactMethodologyCandidate(BaseModel):
+    technique: str = Field(min_length=1, max_length=120)
+    relevance: str = Field(min_length=1, max_length=MAX_COMPACT_TEXT_CHARS)
+    satisfied_conditions: list[str] = Field(default_factory=list, max_length=MAX_LIST_ITEMS)
+    missing_conditions: list[str] = Field(default_factory=list, max_length=MAX_LIST_ITEMS)
+    observables: list[str] = Field(default_factory=list, max_length=MAX_LIST_ITEMS)
+    mitigation_checks: list[str] = Field(default_factory=list, max_length=MAX_LIST_ITEMS)
+    confidence: ConfidenceLevel = "medium"
+    evidence_refs: list[str] = Field(min_length=1, max_length=MAX_EVIDENCE_REFS)
+    source_tier: SourceTier = "validated_base"
+
+    @field_validator("technique", "relevance")
+    @classmethod
+    def _compact_text(cls, value, info):  # noqa: N805
+        return _require_compact_text(value, info.field_name)
+
+    @field_validator(
+        "satisfied_conditions",
+        "missing_conditions",
+        "observables",
+        "mitigation_checks",
+        "evidence_refs",
+    )
+    @classmethod
+    def _compact_text_lists(cls, value, info):  # noqa: N805
+        return _clean_compact_str_list(value, info.field_name, max_chars=180)
+
+
+class CompactMethodologyBundle(BaseModel):
+    query_id: str = Field(min_length=1, max_length=120)
+    summary: str = Field(min_length=1, max_length=MAX_SUMMARY_CHARS)
+    candidates: list[CompactMethodologyCandidate] = Field(
+        default_factory=list,
+        max_length=MAX_METHODOLOGY_CANDIDATES,
+    )
+    knowledge_gaps: list[str] = Field(default_factory=list, max_length=MAX_EVIDENCE_REFS)
+    source_tier: SourceTier = "validated_base"
+
+    @field_validator("query_id", "summary")
+    @classmethod
+    def _compact_text(cls, value, info):  # noqa: N805
+        max_chars = 120 if info.field_name == "query_id" else MAX_SUMMARY_CHARS
+        return _require_compact_text(value, info.field_name, max_chars=max_chars)
+
+    @field_validator("knowledge_gaps")
+    @classmethod
+    def _knowledge_gaps_compact(cls, value):  # noqa: N805
+        return _clean_compact_str_list(value, "knowledge_gaps", max_items=MAX_EVIDENCE_REFS)
+
+    @model_validator(mode="after")
+    def _empty_candidates_need_gap(self):
+        if not self.candidates and not self.knowledge_gaps:
+            raise ValueError("empty compact methodology bundles require knowledge_gaps")
+        return self
 
 
 class SourceChunk(BaseModel):
@@ -281,20 +388,26 @@ class KnowledgeQuery(BaseModel):
 class MethodologyBundle(BaseModel):
     query_id: str
     summary: str
-    candidates: list[MethodologyCandidate] = Field(default_factory=list)
-    knowledge_gaps: list[str] = Field(default_factory=list)
+    candidates: list[MethodologyCandidate] = Field(
+        default_factory=list,
+        max_length=MAX_METHODOLOGY_CANDIDATES,
+    )
+    knowledge_gaps: list[str] = Field(default_factory=list, max_length=MAX_EVIDENCE_REFS)
+    source_tier: SourceTier = "validated_base"
     source_chunks: list[SourceChunk] = Field(default_factory=list)
     retrieval_metadata: dict[str, Any] = Field(default_factory=dict)
 
     @field_validator("query_id", "summary")
     @classmethod
     def _required_strings(cls, value):  # noqa: N805
-        return _require_non_blank(value, "value")
+        if value is None:
+            return value
+        return _require_compact_text(value, "value", max_chars=MAX_SUMMARY_CHARS)
 
     @field_validator("knowledge_gaps")
     @classmethod
     def _knowledge_gaps_not_blank(cls, value):  # noqa: N805
-        return _clean_str_list(value, "knowledge_gaps")
+        return _clean_compact_str_list(value, "knowledge_gaps", max_items=MAX_EVIDENCE_REFS)
 
     @model_validator(mode="after")
     def _empty_candidates_need_gap(self):

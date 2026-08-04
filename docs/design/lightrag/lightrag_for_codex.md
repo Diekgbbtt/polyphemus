@@ -1,7 +1,8 @@
 # LightRAG Methodology Service — Codex Implementation Brief
 
-**Status:** MVP design input; WSTG static KB validated locally on 2026-07-28;
-WSTG corpus preparation updated on 2026-07-30 and awaiting clean re-index.
+**Status:** MVP runtime path implemented on branch `lightrag`; WSTG base and
+writeup overlay stores are available as pre-indexed local snapshots as of
+2026-08-04.
 **Audience:** Codex or a developer planning the implementation  
 **Primary rule:** build the smallest end-to-end slice first. Do not add infrastructure or abstractions unless the current repository already needs them.
 
@@ -31,6 +32,10 @@ For the fuller Stage 3 component and data-lifecycle view, including
 `IndexCard <match with> FaultCard`, the Query Agent, LightRAG retrieval, and the
 Test Engineer Agent handoff to Stage 4, see
 `docs/design/lightrag/stage-3-test-design-flow.md`.
+
+For the current implementation details, strict structured-output behavior,
+benchmark runner, HTTP contract test, and pre-indexed storage policy, see
+`docs/design/lightrag/methodology_bundle_runtime.md`.
 
 ### Success condition
 
@@ -197,6 +202,10 @@ source_chunks: []
 - Never return a technique without evidence references.
 - Never instruct execution.
 - Return an empty candidate list plus `knowledge_gaps` when evidence is insufficient.
+- Cap candidates at three.
+- Keep text fields compact.
+- Do not return raw LightRAG prose or native LightRAG response wrappers to
+  attack-engineering agents.
 
 ---
 
@@ -383,18 +392,11 @@ merged placeholder, and `WSTG-INPV-13` / "Testing for Buffer Overflow" is
 skipped because the current source body is only `This content has been
 removed`.
 
-The local LightRAG store under `data/lightrag/rag_storage` now has a validated
-119-document WSTG base. The final graph gate passes with 2,873 entities, 2,379
-relations, zero unknown/cannot-canonicalize entities, zero expected type
-mismatches, zero noise entities, zero non-canonical type labels, and all
-blocking targeted/bypass queries passing. LightRAG document status is
-`processed: 119`, `failed: 0`, `all: 119`.
-
-That validated store predates the 2026-07-30 ontology-query anchor update. Treat
-the new generated corpus as ready for a clean rebuild, not as already indexed.
-The next rebuild should reset the store, run staged loading with
-`MAX_PARALLEL_INSERT=1`, `--batch-size 5`, `--normalize-types`,
-`--log-ingestion-history`, graph gate, and blocking query gate.
+The local LightRAG store under `data/lightrag/rag_storage` contains the WSTG
+base. The writeup overlay store under `data/lightrag/writeups_rag_storage`
+contains the isolated `writeups_0xdf` workspace. Both stores are mounted by the
+`lightrag` compose profile and are intended to be versioned on the `lightrag`
+branch so developers can query without rebuilding both indexes first.
 
 The preferred benchmark template after rebuild is `ontology_feature_to_wstg`.
 It projects Phase 2 target facts into ontology buckets and asks LightRAG to map
@@ -403,8 +405,9 @@ defenses, artifacts, signals, and finally WSTG scenario anchors. Production
 queries should not pass benchmark-only `expected_wstg_ids`.
 
 Future ingestion work should treat WSTG as a validated static base. Rebuilds
-should use staged loading with `--normalize-types`, graph gate, and blocking
-query gate; normal development should query the existing base rather than
+should use staged loading with `--normalize-types`, graph gate, blocking query
+gate, and the WSTG plus writeup benchmark before replacing the committed store
+snapshot. Normal development should query the existing base rather than
 reloading it.
 
 Writeups remain a run-scoped or review-overlay source. They should not be

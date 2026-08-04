@@ -9,6 +9,7 @@ from typing import Any, Mapping, Sequence
 
 from agent.lightrag.client import LightRAGHttpClient
 from agent.lightrag.ontology import ENTITY_TYPES
+from agent.lightrag.packager import package_methodology
 from agent.lightrag.retriever import RoutedMethodologyRetriever
 from agent.lightrag.types import FaultContext, KnowledgeQuery, RetrievalOptions
 
@@ -263,22 +264,42 @@ class CapturingLightRAGClient:
             **self.query_extra,
             **(extra or {}),
         }
-        response = self.inner.query(
-            query,
-            mode=mode,
-            include_references=include_references,
-            include_chunk_content=include_chunk_content,
-            extra=merged_extra,
-        )
-        self.calls.append(
-            {
-                "source": self.source_name,
+        call = {
+            "source": self.source_name,
+            "mode": mode,
+            "extra": merged_extra,
+            "prompt": query,
+            "kwargs": {
                 "mode": mode,
+                "include_references": include_references,
+                "include_chunk_content": include_chunk_content,
                 "extra": merged_extra,
-                "prompt": query,
-                "response": response,
+            },
+            "request_payload": {
+                "query": query,
+                "mode": mode,
+                "include_references": include_references,
+                "include_chunk_content": include_chunk_content,
+                **merged_extra,
+            },
+        }
+        try:
+            response = self.inner.query(
+                query,
+                mode=mode,
+                include_references=include_references,
+                include_chunk_content=include_chunk_content,
+                extra=merged_extra,
+            )
+        except Exception as exc:
+            call["error"] = {
+                "type": type(exc).__name__,
+                "message": str(exc),
             }
-        )
+            self.calls.append(call)
+            raise
+        call["response"] = response
+        self.calls.append(call)
         return response
 
 
@@ -389,8 +410,18 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument("--timestamp", default=None)
     parser.add_argument(
         "--include-answers",
+        dest="include_answers",
         action="store_true",
-        help="Also run generated-answer LightRAG queries and save their raw responses.",
+        help=(
+            "Deprecated alias for --include-structured-bundles; records validated "
+            "MethodologyBundle payloads instead of free-form answers."
+        ),
+    )
+    parser.add_argument(
+        "--include-structured-bundles",
+        dest="include_answers",
+        action="store_true",
+        help="Also run and save validated structured MethodologyBundle payloads.",
     )
     parser.add_argument(
         "--fail-on-gate",
@@ -434,6 +465,7 @@ def _run_case_config(
     include_answers: bool,
     answer_retriever: Any | None,
 ) -> dict[str, Any]:
+    _ = include_answers, answer_retriever
     query = _knowledge_query_for_case(case, config)
     captures: list[dict[str, Any]] = []
     active_retriever = retriever
@@ -456,7 +488,11 @@ def _run_case_config(
         )
         captures = [*base_client.calls, *writeup_client.calls]
 
-    bundle = active_retriever.retrieve_methodology(query)
+    try:
+        bundle = active_retriever.retrieve_methodology(query)
+    except Exception as exc:
+        captures = _capture_calls(active_retriever, captures)
+        return _error_result(case=case, config=config, error=exc, query=query, captures=captures)
     captures = _capture_calls(active_retriever, captures)
     bundle_payload = _jsonable(bundle)
     if not isinstance(bundle_payload, Mapping):
@@ -469,6 +505,19 @@ def _run_case_config(
                 "mode": config.mode,
                 "extra": config.to_query_extra(),
                 "prompt": query.to_retrieval_prompt(),
+                "kwargs": {
+                    "mode": config.mode,
+                    "include_references": True,
+                    "include_chunk_content": True,
+                    "extra": config.to_query_extra(),
+                },
+                "request_payload": {
+                    "query": query.to_retrieval_prompt(),
+                    "mode": config.mode,
+                    "include_references": True,
+                    "include_chunk_content": True,
+                    **config.to_query_extra(),
+                },
                 "response": bundle_payload,
             }
         ]
@@ -489,9 +538,12 @@ def _run_case_config(
         routing["trigger_reason"],
         case.expected_trigger_reason,
     )
+    structured_bundle = _structured_bundle_record(query, bundle_payload, captures)
     result = {
         "test_id": case.test_id,
         "query": case.question,
+        "exact_retriever_input": _exact_retriever_input(query),
+        "exact_lightrag_calls": [_exact_lightrag_call_record(capture) for capture in captures],
         "ontology_mapping": dict(case.ontology_mapping),
         "prompt": _prompt_for_case(case),
         "routing_decision": routing,
@@ -503,99 +555,44 @@ def _run_case_config(
         "raw_context": context_payload["raw_context"],
         "raw_context_bytes": context_payload["raw_context_bytes"],
         "raw_source_contexts": [_capture_record(capture) for capture in captures],
+        "structured_methodology_bundle": structured_bundle,
         "canonical_entity_type_coverage": [
             entity_type
             for entity_type, values in context_payload["retrieved_entities_by_type"].items()
             if values
         ],
     }
-    if include_answers:
-        result["lightrag_answer"] = _run_answer_case_config(
-            case=case,
-            config=config,
-            retriever=answer_retriever,
-            base_url=base_url,
-            writeup_url=writeup_url,
-            api_key=api_key,
-            timeout=timeout,
-        )
     return result
 
 
-def _run_answer_case_config(
-    *,
-    case: OntologyBenchmarkCase,
-    config: OntologyBenchmarkConfig,
-    retriever: Any | None,
-    base_url: str,
-    writeup_url: str,
-    api_key: str | None,
-    timeout: float,
+def _structured_bundle_record(
+    query: KnowledgeQuery,
+    bundle_payload: Mapping[str, Any],
+    captures: Sequence[Mapping[str, Any]],
 ) -> dict[str, Any]:
-    answer_config = OntologyBenchmarkConfig(
-        label=config.label,
-        mode=config.mode,
-        top_k=config.top_k,
-        only_need_context=False,
-    )
-    query = _knowledge_query_for_case(case, answer_config)
-    captures: list[dict[str, Any]] = []
-    active_retriever = retriever
-    if active_retriever is None:
-        base_client = CapturingLightRAGClient(
-            "base",
-            LightRAGHttpClient(base_url, api_key=api_key, timeout=timeout),
-            query_extra=answer_config.to_query_extra(),
-        )
-        writeup_client = CapturingLightRAGClient(
-            "writeups",
-            LightRAGHttpClient(writeup_url, api_key=api_key, timeout=timeout),
-            query_extra=answer_config.to_query_extra(),
-        )
-        active_retriever = RoutedMethodologyRetriever(
-            base_client=base_client,
-            writeup_client=writeup_client,
-            min_base_candidates=case.min_base_candidates,
-            overlay_mode=config.mode,
-        )
-        captures = [*base_client.calls, *writeup_client.calls]
-
     try:
-        bundle = active_retriever.retrieve_methodology(query)
-        captures = _capture_calls(active_retriever, captures)
-        bundle_payload = _jsonable(bundle)
-        if not isinstance(bundle_payload, Mapping):
-            bundle_payload = {"summary": extract_response_text(bundle_payload)}
-        if not captures:
-            captures = [
-                {
-                    "source": "bundle",
-                    "mode": config.mode,
-                    "extra": answer_config.to_query_extra(),
-                    "prompt": query.to_retrieval_prompt(),
-                    "response": bundle_payload,
-                }
-            ]
-        answer_text = extract_response_text(bundle_payload)
         metadata = dict(bundle_payload.get("retrieval_metadata") or {})
-        return {
-            "text": answer_text,
-            "bytes": len(answer_text.encode("utf-8")),
-            "routing_decision": {
-                "sources_queried": metadata.get("sources_queried", []),
-                "trigger_reason": metadata.get("overlay_trigger_reason", []),
-            },
-            "raw_source_answers": [_answer_capture_record(capture) for capture in captures],
+        packaged = package_methodology(query, bundle_payload)
+        structured = packaged.model_dump(mode="json")
+        structured["retrieval_metadata"] = {
+            **structured.get("retrieval_metadata", {}),
+            "sources_queried": metadata.get("sources_queried", []),
+            "overlay_trigger_reason": metadata.get("overlay_trigger_reason", []),
+            "raw_source_contexts": [_structured_capture_record(capture) for capture in captures],
         }
+        return structured
     except Exception as exc:
         return {
-            "text": "",
-            "bytes": 0,
-            "routing_decision": {
+            "query_id": query.query_id,
+            "summary": "No evidence-backed methodology bundle could be produced.",
+            "candidates": [],
+            "knowledge_gaps": ["Structured methodology bundle generation failed."],
+            "source_tier": "validated_base",
+            "source_chunks": [],
+            "retrieval_metadata": {
                 "sources_queried": [],
-                "trigger_reason": [],
+                "overlay_trigger_reason": [],
             },
-            "raw_source_answers": [],
             "error": {
                 "type": type(exc).__name__,
                 "message": str(exc),
@@ -608,10 +605,15 @@ def _error_result(
     case: OntologyBenchmarkCase,
     config: OntologyBenchmarkConfig,
     error: Exception,
+    query: KnowledgeQuery | None = None,
+    captures: Sequence[Mapping[str, Any]] = (),
 ) -> dict[str, Any]:
+    query = query or _knowledge_query_for_case(case, config)
     return {
         "test_id": case.test_id,
         "query": case.question,
+        "exact_retriever_input": _exact_retriever_input(query),
+        "exact_lightrag_calls": [_exact_lightrag_call_record(capture) for capture in captures],
         "ontology_mapping": dict(case.ontology_mapping),
         "prompt": _prompt_for_case(case),
         "routing_decision": {
@@ -707,6 +709,32 @@ def _jsonable(value: Any) -> Any:
     return value
 
 
+def _exact_retriever_input(query: KnowledgeQuery) -> dict[str, Any]:
+    return {
+        "method": "RoutedMethodologyRetriever.retrieve_methodology",
+        "args": [query.model_dump(mode="json")],
+        "kwargs": {},
+        "retrieval_prompt": query.to_retrieval_prompt(),
+    }
+
+
+def _exact_lightrag_call_record(capture: Mapping[str, Any]) -> dict[str, Any]:
+    raw_response = _jsonable(capture.get("response"))
+    record = {
+        "source": capture.get("source"),
+        "prompt": capture.get("prompt", ""),
+        "kwargs": capture.get("kwargs", {}),
+        "request_payload": capture.get("request_payload", {}),
+        "raw_response": raw_response,
+        "raw_lightrag_context": extract_response_text(raw_response)
+        if raw_response is not None
+        else "",
+    }
+    if capture.get("error"):
+        record["error"] = capture["error"]
+    return record
+
+
 def _capture_calls(
     retriever: Any,
     initial_captures: list[dict[str, Any]],
@@ -745,28 +773,43 @@ def _merged_capture_context(
 
 def _capture_record(capture: Mapping[str, Any]) -> dict[str, Any]:
     response = capture.get("response")
-    raw_context = extract_response_text(response)
+    raw_context = extract_response_text(response) if response is not None else ""
     payload = extract_context_payload(response)
-    return {
+    record = {
         "source": capture.get("source"),
         "mode": capture.get("mode"),
         "extra": capture.get("extra", {}),
+        "prompt": capture.get("prompt", ""),
+        "kwargs": capture.get("kwargs", {}),
+        "request_payload": capture.get("request_payload", {}),
+        "raw_response": _jsonable(response),
         "raw_context": raw_context,
         "raw_context_bytes": len(raw_context.encode("utf-8")),
         "retrieved_entities_by_type": payload["retrieved_entities_by_type"],
         "extracted_relations": payload["extracted_relations"],
     }
+    if capture.get("error"):
+        record["error"] = capture["error"]
+    return record
 
 
-def _answer_capture_record(capture: Mapping[str, Any]) -> dict[str, Any]:
-    answer = extract_response_text(capture.get("response"))
-    return {
+def _structured_capture_record(capture: Mapping[str, Any]) -> dict[str, Any]:
+    response = capture.get("response")
+    raw_context = extract_response_text(response) if response is not None else ""
+    record = {
         "source": capture.get("source"),
         "mode": capture.get("mode"),
         "extra": capture.get("extra", {}),
-        "answer": answer,
-        "answer_bytes": len(answer.encode("utf-8")),
+        "prompt": capture.get("prompt", ""),
+        "kwargs": capture.get("kwargs", {}),
+        "request_payload": capture.get("request_payload", {}),
+        "raw_response": _jsonable(response),
+        "raw_context": raw_context,
+        "raw_context_bytes": len(raw_context.encode("utf-8")),
     }
+    if capture.get("error"):
+        record["error"] = capture["error"]
+    return record
 
 
 def _graph_objects_from_response(response: Any) -> list[dict[str, Any]]:
@@ -907,9 +950,8 @@ def _summarize_results(
     without_relations = []
     observed_run_ids = []
     error_count = 0
-    answer_run_count = 0
-    answer_error_count = 0
-    total_answer_bytes = 0
+    structured_bundle_run_count = 0
+    structured_bundle_error_count = 0
     for result in results:
         route = result["routing_decision"]
         run_id = _run_id(result["test_id"], result["hyperparameters"]["label"])
@@ -946,12 +988,11 @@ def _summarize_results(
                 without_canonical_source.append(f"{run_id}:{source}")
         if not result["extracted_relations"]:
             without_relations.append(run_id)
-        answer = result.get("lightrag_answer")
-        if isinstance(answer, Mapping):
-            answer_run_count += 1
-            if answer.get("error"):
-                answer_error_count += 1
-            total_answer_bytes += int(answer.get("bytes") or 0)
+        structured_bundle = result.get("structured_methodology_bundle")
+        if isinstance(structured_bundle, Mapping):
+            structured_bundle_run_count += 1
+            if structured_bundle.get("error"):
+                structured_bundle_error_count += 1
     return {
         "run_count": len(results),
         "expected_run_count": len(expected_run_ids),
@@ -966,9 +1007,8 @@ def _summarize_results(
         "runs_without_canonical_source_context": without_canonical_source,
         "runs_without_extracted_relations": without_relations,
         "total_raw_context_bytes": sum(int(result["raw_context_bytes"]) for result in results),
-        "answer_run_count": answer_run_count,
-        "answer_error_count": answer_error_count,
-        "total_answer_bytes": total_answer_bytes,
+        "structured_bundle_run_count": structured_bundle_run_count,
+        "structured_bundle_error_count": structured_bundle_error_count,
     }
 
 

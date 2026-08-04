@@ -6,6 +6,8 @@ from agent.lightrag.types import (
     AuthenticationState,
     CandidateApplicability,
     CandidateRelevance,
+    CompactMethodologyBundle,
+    CompactMethodologyCandidate,
     ConfidenceLevel,
     EntityRef,
     EntityType,
@@ -30,6 +32,8 @@ __all__ = [
     "AuthenticationState",
     "CandidateApplicability",
     "CandidateRelevance",
+    "CompactMethodologyBundle",
+    "CompactMethodologyCandidate",
     "ConfidenceLevel",
     "EntityRef",
     "EntityType",
@@ -73,6 +77,7 @@ __all__ = [
     "fetch_and_preprocess_writeups",
     "fetch_and_preprocess_wstg",
     "load_wstg_manifest_scenarios",
+    "format_methodology_context",
     "preprocess_sources_for_lightrag",
     "preprocess_writeups_for_lightrag",
     "preprocess_wstg_for_lightrag",
@@ -99,6 +104,10 @@ def __getattr__(name: str):
         from agent.lightrag.retriever import RoutedMethodologyRetriever
 
         return RoutedMethodologyRetriever
+    if name == "format_methodology_context":
+        from agent.lightrag.formatter import format_methodology_context
+
+        return format_methodology_context
     if name in {
         "PreprocessResult",
         "CorpusQAIssue",

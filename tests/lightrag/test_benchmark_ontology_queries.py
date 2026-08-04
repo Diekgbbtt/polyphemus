@@ -24,7 +24,8 @@ class FakeRoutedRetriever:
             sources = ["base", "writeups"]
             reasons = ["base_candidates_below_threshold"]
         return {
-            "summary": (
+            "summary": "Structured methodology bundle for routing audit.",
+            "response": (
                 "\nKnowledge Graph Data (Entity):\n\n```json\n"
                 '{"entity": "JWT Authentication Flow", "type": "PreconditionEnvironment"}\n'
                 '{"entity": "JWT Token Forgery", "type": "AttackTechnique"}\n'
@@ -37,7 +38,14 @@ class FakeRoutedRetriever:
             ),
             "candidates": [],
             "knowledge_gaps": ["No structured candidates returned."],
-            "source_chunks": [{"chunk_id": "chunk-1", "text": "JWT role claim escalation"}],
+            "source_chunks": [
+                {
+                    "chunk_id": "chunk-1",
+                    "source_id": "fake-source",
+                    "locator": "section: jwt",
+                    "text": "JWT role claim escalation",
+                }
+            ],
             "retrieval_metadata": {
                 "sources_queried": sources,
                 "overlay_trigger_reason": reasons,
@@ -45,11 +53,9 @@ class FakeRoutedRetriever:
         }
 
 
-class FakeAnsweringRetriever(FakeRoutedRetriever):
+class FailingStructuredBundleRetriever(FakeRoutedRetriever):
     def retrieve_methodology(self, query):
-        result = super().retrieve_methodology(query)
-        result["summary"] = f"Generated methodology answer for {query.query_id}"
-        return result
+        raise RuntimeError("structured bundle should come from the same retrieval run")
 
 
 class FailingOnBRetrier(FakeRoutedRetriever):
@@ -137,15 +143,20 @@ def test_run_benchmark_grid_records_routing_hyperparameters_and_payloads(tmp_pat
         "top_k": 10,
         "only_need_context": True,
     }
+    assert first["exact_retriever_input"]["method"] == (
+        "RoutedMethodologyRetriever.retrieve_methodology"
+    )
+    assert first["exact_retriever_input"]["args"][0]["query_id"] == "ontology-benchmark-A"
+    assert first["exact_lightrag_calls"][0]["request_payload"]["only_need_context"] is True
     assert first["routing_decision"]["sources_queried"] == ["base"]
     assert "AttackTechnique" in first["retrieved_entities_by_type"]
     assert first["extracted_relations"][0]["subject"] == "JWT Token Forgery"
 
 
-def test_run_benchmark_grid_can_record_generated_lightrag_answers(tmp_path):
+def test_run_benchmark_grid_can_record_structured_methodology_bundles(tmp_path):
     output_path = run_benchmark_grid(
         retriever=FakeRoutedRetriever(),
-        answer_retriever=FakeAnsweringRetriever(),
+        answer_retriever=FailingStructuredBundleRetriever(),
         configs=[OntologyBenchmarkConfig(label="standard", mode="mix", top_k=10)],
         output_dir=tmp_path,
         timestamp="20260803T120003Z",
@@ -154,30 +165,31 @@ def test_run_benchmark_grid_can_record_generated_lightrag_answers(tmp_path):
 
     payload = json.loads(output_path.read_text(encoding="utf-8"))
 
-    assert payload["summary"]["answer_run_count"] == 3
-    assert payload["summary"]["answer_error_count"] == 0
+    assert payload["summary"]["structured_bundle_run_count"] == 3
+    assert payload["summary"]["structured_bundle_error_count"] == 0
     first = payload["results"][0]
-    assert first["lightrag_answer"] == {
-        "text": "Generated methodology answer for ontology-benchmark-A",
-        "bytes": 53,
-        "routing_decision": {
-            "sources_queried": ["base"],
-            "trigger_reason": [],
-        },
-        "raw_source_answers": [
+    assert "lightrag_answer" not in first
+    assert first["structured_methodology_bundle"] | {"retrieval_metadata": {}} == {
+        "query_id": "ontology-benchmark-A",
+        "summary": "Structured methodology bundle for routing audit.",
+        "candidates": [],
+        "knowledge_gaps": ["No structured candidates returned."],
+        "source_tier": "validated_base",
+        "source_chunks": [
             {
-                "source": "bundle",
-                "mode": "mix",
-                "extra": {
-                    "top_k": 10,
-                    "only_need_context": False,
-                    "stream": False,
-                },
-                "answer": "Generated methodology answer for ontology-benchmark-A",
-                "answer_bytes": 53,
+                "chunk_id": "chunk-1",
+                "source_id": "fake-source",
+                "locator": "section: jwt",
+                "text": "JWT role claim escalation",
             }
         ],
+        "retrieval_metadata": {},
     }
+    metadata = first["structured_methodology_bundle"]["retrieval_metadata"]
+    assert metadata["sources_queried"] == ["base"]
+    assert metadata["overlay_trigger_reason"] == []
+    assert metadata["raw_source_contexts"][0]["extra"]["only_need_context"] is True
+    assert metadata["raw_source_contexts"][0]["request_payload"]["only_need_context"] is True
 
 
 def test_run_benchmark_grid_records_every_query_config_pair(tmp_path):
@@ -227,6 +239,9 @@ def test_run_benchmark_grid_logs_errors_without_dropping_matrix_entries(tmp_path
     assert payload["summary"]["missing_runs"] == []
     assert payload["summary"]["error_count"] == 1
     error_result = payload["results"][1]
+    assert error_result["exact_retriever_input"]["args"][0]["query_id"] == (
+        "ontology-benchmark-B"
+    )
     assert error_result["error"] == {
         "type": "RuntimeError",
         "message": "overlay query failed",

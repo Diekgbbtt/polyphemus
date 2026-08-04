@@ -1,6 +1,6 @@
 import pytest
 
-from agent.lightrag.types import KnowledgeQuery, MethodologyBundle
+from agent.lightrag.types import CompactMethodologyBundle, KnowledgeQuery, MethodologyBundle
 
 
 EVIDENCE = {
@@ -230,3 +230,48 @@ def test_methodology_bundle_validates_candidate_and_empty_gap_shapes():
 
     with pytest.raises(Exception):
         MethodologyBundle(query_id="q-empty", summary="No candidates.", candidates=[])
+
+
+def test_compact_methodology_bundle_rejects_prose_and_more_than_three_candidates():
+    candidate = {
+        "technique": "JWT claim tampering",
+        "relevance": "Matches accepted modified-token behavior.",
+        "satisfied_conditions": ["JWT bearer flow is present"],
+        "missing_conditions": ["Specific signing algorithm is unknown"],
+        "observables": ["Accepted modified JWT"],
+        "mitigation_checks": ["Reject mismatched JWT algorithms"],
+        "confidence": "medium",
+        "evidence_refs": ["wstg-sess-10:jwt-validation"],
+    }
+
+    bundle = CompactMethodologyBundle(
+        query_id="q-jwt",
+        summary="JWT validation evidence supports compact signature checks.",
+        candidates=[candidate],
+        source_tier="validated_base",
+    )
+
+    assert bundle.candidates[0].technique == "JWT claim tampering"
+
+    with pytest.raises(Exception):
+        CompactMethodologyBundle(
+            query_id="q-long",
+            summary="I need to synthesize a comprehensive answer from the graph.",
+            candidates=[candidate],
+        )
+
+    with pytest.raises(Exception):
+        CompactMethodologyBundle(
+            query_id="q-many",
+            summary="Too many candidates should be rejected.",
+            candidates=[candidate, candidate, candidate, candidate],
+        )
+
+    verbose_candidate = dict(candidate)
+    verbose_candidate["relevance"] = "x" * 281
+    with pytest.raises(Exception):
+        CompactMethodologyBundle(
+            query_id="q-verbose",
+            summary="Candidate fields must stay compact.",
+            candidates=[verbose_candidate],
+        )
