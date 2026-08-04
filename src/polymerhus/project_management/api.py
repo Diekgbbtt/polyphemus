@@ -180,8 +180,16 @@ async def stop_recon(project_id: str, run_id: str) -> dict:
 @router.post("/projects/{project_id}/analysis")
 async def launch_analysis(project_id: str, body: AnalysisLaunch) -> dict:
     """The dispatcher's analysis-ONLY entrypoint (#75): start a consumer that drains
-    an existing run's FIFO. Also the RESUME path after a graceful stop (D7)."""
+    an existing run's FIFO. Also the RESUME path after a graceful stop (D7).
+
+    The run must exist: starting a consumer for an unknown run_id would create a
+    `draining` analysis run whose queue no recon will ever end - a zombie."""
+    from polymerhus.app.clients import pg
     from polymerhus.analysis.lifecycle import start_analysis
+
+    run = await asyncio.to_thread(pg.get_run, body.run_id)
+    if run is None:
+        raise HTTPException(status_code=404, detail="unknown run_id")
 
     analysis_run_id = start_analysis(project_id, body.run_id)
     if analysis_run_id is None:

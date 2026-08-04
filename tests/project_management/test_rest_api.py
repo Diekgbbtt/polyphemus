@@ -491,3 +491,30 @@ def test_bootstrap_does_not_open_a_recon_run(monkeypatch):
 
     assert client.post("/projects/p1/bootstrap", json={"operator_kb": "kb"}).status_code == 200
     assert opened == []
+
+
+# --- #75: the analysis-only dispatch validates the run exists ------------------
+
+def test_post_analysis_unknown_run_is_404_not_a_zombie(monkeypatch):
+    """Starting a consumer for an unknown run_id would create a `draining` analysis
+    run whose queue no recon will ever end - a zombie. The dispatch must 404 first,
+    and must NOT start a consumer."""
+    started = []
+    monkeypatch.setattr(pg, "get_run", lambda run_id: None)         # run does not exist
+    import polymerhus.analysis.lifecycle as lifecycle
+    monkeypatch.setattr(lifecycle, "start_analysis",
+                        lambda pid, rid, **k: started.append(rid) or "should-not-happen")
+
+    resp = client.post("/projects/p1/analysis", json={"run_id": "ghost"})
+    assert resp.status_code == 404
+    assert started == []                                            # no consumer started
+
+
+def test_post_analysis_known_run_starts_the_consumer(monkeypatch):
+    monkeypatch.setattr(pg, "get_run", lambda run_id: {"run_id": run_id, "status": "complete"})
+    import polymerhus.analysis.lifecycle as lifecycle
+    monkeypatch.setattr(lifecycle, "start_analysis", lambda pid, rid, **k: f"{rid}:aid")
+
+    resp = client.post("/projects/p1/analysis", json={"run_id": "real"})
+    assert resp.status_code == 200
+    assert resp.json() == {"run_id": "real", "analysis_run_id": "real:aid"}
