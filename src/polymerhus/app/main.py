@@ -54,6 +54,13 @@ async def _startup():
     validate_llm_config()
     log_tracing_status()
     pg.reap_stale_runs(config.REAP_TTL_SECONDS)  # sweep zombies left by a prior crash
+    # #75 D10: the in-memory chunk queue dies with the process, so any analysis run
+    # left `draining` by a prior crash/redeploy has no live queue - flip it to
+    # `interrupted` (an honest terminal state) rather than leave a zombie row.
+    n_interrupted = pg.reconcile_orphaned_analysis_runs()
+    if n_interrupted:
+        logger.warning("startup: reconciled %d orphaned draining analysis run(s) -> interrupted",
+                       n_interrupted)
     app.state.reaper_task = asyncio.create_task(_reaper_loop())
 
 

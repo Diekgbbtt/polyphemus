@@ -21,7 +21,6 @@ from polymerhus.analysis.feed import (
     L0Chunk,
     QueuedAnalysisFeed,
     resolve_feed_mode,
-    start_analysis_feed,
 )
 from polymerhus.analysis.supervisor import PassCensus, PassResult
 from polymerhus.recon.domain.types import AssetDelta, Observation
@@ -29,6 +28,14 @@ from polymerhus.recon.domain.types import AssetDelta, Observation
 
 def _run(coro):
     return asyncio.run(coro)
+
+
+async def _drain(feed):
+    """Recon's end-of-stream + the natural wait, the two steps that replaced the
+    old `drain(deadline)` (#75): enqueue the terminal marker, then await the
+    consumer's natural end. No deadline - every pass self-terminates (#73)."""
+    await feed.signal_end()
+    return await feed.wait_until_done()
 
 
 def _chunk(job="katana", assets=None, observations=None, terminal=False, phase=0):
@@ -65,7 +72,7 @@ def test_push_returns_before_the_chunk_is_consumed():
         await feed.push(_chunk())
         order.append("push-returned")       # must precede the pass entry
         await entered.wait()
-        stats = await feed.drain(deadline=5)
+        stats = await _drain(feed)
         return stats
 
     stats = _run(scenario())
@@ -90,7 +97,7 @@ def test_each_pushed_chunk_is_consumed_exactly_once_in_fifo_order():
         feed = QueuedAnalysisFeed("p1", "r1", pass_fn=record).start()
         for path in ("/a", "/b", "/c"):
             await feed.push(_chunk(job=f"job-{path}", assets=[_asset(path)]))
-        return await feed.drain(deadline=5)
+        return await _drain(feed)
 
     stats = _run(scenario())
     # order: exactly the push order, then the terminal marker; each exactly once
@@ -123,7 +130,7 @@ def test_chunk_payload_rides_the_fifo_unchanged():
     async def scenario():
         feed = QueuedAnalysisFeed("p1", "r1", pass_fn=record).start()
         await feed.push(_chunk(job="katana", assets=assets, observations=[obs], phase=3))
-        return await feed.drain(deadline=5)
+        return await _drain(feed)
 
     _run(scenario())
     assert seen["job"] == "katana" and seen["phase"] == 3
@@ -141,7 +148,7 @@ def test_a_pass_that_always_raises_never_escapes():
         feed = QueuedAnalysisFeed("p1", "r1", pass_fn=boom).start()
         for i in range(3):
             await feed.push(_chunk(job=f"job{i}"))
-        return await feed.drain(deadline=5)
+        return await _drain(feed)
 
     stats = _run(scenario())                # no exception escapes
     assert stats.analysis_drained is False  # and it makes NO convergence claim
@@ -173,7 +180,7 @@ def test_drain_runs_a_terminal_pass_after_the_last_push():
     async def scenario():
         feed = QueuedAnalysisFeed("p1", "r1", pass_fn=record).start()
         await feed.push(_chunk("katana"))
-        return await feed.drain(deadline=5)
+        return await _drain(feed)
 
     stats = _run(scenario())
     assert seen[-1] is True                 # the LAST consume is the terminal one
@@ -191,7 +198,7 @@ def test_a_run_that_observed_nothing_does_not_claim_drained():
     async def scenario():
         feed = QueuedAnalysisFeed("p1", "r1", pass_fn=empty_pass).start()
         await feed.push(_chunk())
-        return await feed.drain(deadline=5)
+        return await _drain(feed)
 
     stats = _run(scenario())
     assert stats.passes >= 1                # a pass DID run...
@@ -207,54 +214,87 @@ def test_scheduled_but_never_entered_does_not_claim_drained():
     async def scenario():
         feed = QueuedAnalysisFeed("p1", "r1", pass_fn=never_entered).start()
         await feed.push(_chunk())
-        return await feed.drain(deadline=5)
+        return await _drain(feed)
 
     assert _run(scenario()).analysis_drained is False
 
 
-def test_deadline_expiry_completes_without_the_claim():
-    async def hang(chunk):
-        await asyncio.sleep(30)
-        return _census()
+def test_dispatches_entered_accumulates_across_passes_not_just_the_terminal_one():
+    """Regression: `dispatches_entered` is the SUM over every pass, not the value
+    of the last census. The terminal marker is itself a final pass whose real
+    census carries dispatches_entered=0 (it processes no surface), and it always
+    lands last (FIFO) - so reading only `_last_census` reported 0 for a run that
+    did real work (the live juice-shop-remote run: assigner entered 3 dispatches,
+    stats said 0). Here a single working chunk enters 3 dispatches and the terminal
+    pass enters 0; the run must report 3."""
+    async def graded(chunk):
+        if chunk.terminal:
+            # the REAL terminal pass does no dispatch work
+            return _census(terminal=True, dispatches_scheduled=0, dispatches_entered=0)
+        return _census(dispatches_scheduled=3, dispatches_entered=3)
 
     async def scenario():
-        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=hang).start()
-        await feed.push(_chunk())
-        return await feed.drain(deadline=0.1, grace=0.1)   # forced expiry, then bounded grace
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=graded).start()
+        await feed.push(_chunk("httpx"))
+        return await _drain(feed)
 
-    stats = _run(scenario())                    # returns rather than hanging (no 30s wait)
-    assert stats.analysis_drained is False
+    stats = _run(scenario())
+    assert stats.dispatches_entered == 3        # accumulated, not the terminal 0
+    assert stats.analysis_drained is True       # and the run still drained
+    assert stats.passes == 2                     # chunk + terminal marker
 
 
-def test_terminal_pass_that_hangs_is_bounded_by_the_grace_not_awaited_forever():
-    """Regression for the live wedge (run 27386f9c): the graceful stop granted
-    the in-flight pass an UNCONDITIONAL wait, so a pass that HANGS - blocked on
-    a wedged provider socket whose per-read timeout never trips - held the run
-    `running` forever. The grace makes the graceful path bounded: the in-flight
-    pass gets a finite window to finish, then it is abandoned and the run
-    completes with the claim withheld. `drain` is wrapped in its own `wait_for`
-    so a regression to the unbounded await FAILS the test instead of hanging."""
-    started = asyncio.Event()
-    cancelled = {"was": False}
-
-    async def hang(chunk):
-        started.set()
-        try:
-            await asyncio.Event().wait()       # never set: the pass never completes on its own
-        except asyncio.CancelledError:
-            cancelled["was"] = True            # the grace-expiry stop() must cancel it
-            raise
+def test_a_slow_pass_drains_naturally_with_no_deadline(monkeypatch):
+    """#75 D8: the internal drain deadline/grace is GONE. A pass slower than the
+    old 600s deadline is NOT cancelled - the consumer drains naturally because
+    every pass self-terminates (#73). Wrapped in a `wait_for` so a regression to
+    an unbounded HANG fails the test instead of hanging the suite; the pass itself
+    is a bounded sleep standing in for a legitimately slow reasoning pass."""
+    async def slow(chunk):
+        await asyncio.sleep(0.2)               # would have blown a sub-second deadline
+        return _census(terminal=chunk.terminal)
 
     async def scenario():
-        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=hang).start()
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=slow).start()
         await feed.push(_chunk())
-        await asyncio.wait_for(started.wait(), timeout=5)      # the pass is genuinely in flight
-        return await asyncio.wait_for(feed.drain(deadline=0.05, grace=0.05), timeout=5)
+        return await asyncio.wait_for(_drain(feed), timeout=5)
 
-    stats = _run(scenario())                    # MUST return - the bug was an unbounded await
-    assert stats.analysis_drained is False      # ...claim withheld
-    assert stats.consumer == "stopped"          # ...the hung pass was cancelled, not awaited forever
-    assert cancelled["was"] is True
+    stats = _run(scenario())
+    assert stats.analysis_drained is True       # the slow pass was allowed to finish
+    assert stats.pass_seconds_max >= 0.2        # non-vacuity: it really was slow
+
+
+def test_graceful_stop_finishes_the_in_flight_chunk_and_preserves_the_rest():
+    """#75 D7: stop lets the CURRENTLY-RUNNING chunk finish, consumes no FURTHER
+    chunk, and leaves the remainder in the queue for a resume. `stop` NEVER cancels
+    the in-flight pass (that would lose its work - the cc29fd4a failure)."""
+    entered = asyncio.Event()
+    release = asyncio.Event()
+    consumed: list[str] = []
+
+    async def gated(chunk):
+        consumed.append(chunk.job)
+        if chunk.job == "j0":
+            entered.set()
+            await release.wait()               # hold j0 in flight until we stop
+        return _census(terminal=chunk.terminal)
+
+    async def scenario():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=gated).start()
+        for i in range(3):
+            await feed.push(_chunk(job=f"j{i}"))   # j0 (in flight), j1, j2 (queued)
+        await asyncio.wait_for(entered.wait(), timeout=5)
+        stop_task = asyncio.ensure_future(feed.stop())
+        await asyncio.sleep(0.02)              # let the stop request register
+        release.set()                          # now let the in-flight j0 finish
+        stats = await asyncio.wait_for(stop_task, timeout=5)
+        return stats, feed
+
+    stats, feed = _run(scenario())
+    assert consumed == ["j0"]                  # j0 finished; j1,j2 were NOT consumed
+    assert stats.status == "stopped"
+    assert stats.analysis_drained is False     # no terminal marker -> no claim
+    assert feed._queue.qsize() == 2            # j1,j2 preserved for a resume
 
 
 # --- one chunk in flight process-wide -----------------------------------------
@@ -274,7 +314,7 @@ def test_one_analyser_chunk_in_flight_across_concurrent_runs():
         feed = QueuedAnalysisFeed("p1", run_id, pass_fn=counting_pass, semaphore=sem).start()
         await feed.push(L0Chunk(project_id="p1", run_id=run_id, job="katana"))
         await asyncio.sleep(0.01)
-        return await feed.drain(deadline=5)
+        return await _drain(feed)
 
     async def scenario():
         return await asyncio.gather(one_run("rA"), one_run("rB"))
@@ -301,7 +341,7 @@ def test_queued_push_does_not_block_while_inline_push_does():
         feed = QueuedAnalysisFeed("p1", "r1", pass_fn=slow_pass).start()
         for i in range(3):
             await feed.push(_chunk(f"job{i}"))
-        return await feed.drain(deadline=5)
+        return await _drain(feed)
 
     async def inline():
         feed = InlineAnalysisFeed("p1", "r1", pass_fn=slow_pass)
@@ -331,10 +371,11 @@ def test_push_blocking_is_measured_on_every_push():
         feed = QueuedAnalysisFeed("p1", "r1", pass_fn=gated).start()
         for i in range(6):
             await feed.push(_chunk(f"job{i}"))
-        return await feed.drain(deadline=5)
+        return await _drain(feed)
 
     stats = _run(scenario())
-    assert stats.advanced == 7                   # 6 job pushes + the drain's terminal marker
+    assert stats.advanced == 6                   # 6 recon pushes; the terminal marker is NOT a push (#75)
+    assert stats.passes == 7                      # 6 chunks + the terminal marker consumed
     assert stats.advance_blocked_s_total >= 0.0  # every push was timed
     assert stats.advance_blocked_s_max < 0.05
 
@@ -354,12 +395,16 @@ def test_feed_mode_is_gated_on_streaming_analysis(settings, expected):
     assert resolve_feed_mode(settings) == expected
 
 
-def test_start_analysis_feed_returns_the_mode_it_was_asked_for():
-    assert isinstance(start_analysis_feed("p", "r", mode="inline"), InlineAnalysisFeed)
+def test_registry_returns_the_same_feed_for_a_run_and_drops_it():
+    """#75 D1: one feed per run in the process registry, so recon (producer) and
+    the analysis module (consumer) share the SAME queue - and it is dropped on
+    teardown (the memory bound, D12)."""
+    from polymerhus.analysis.feed import drop_feed, get_feed, get_or_create_feed
 
-    async def scenario():
-        feed = start_analysis_feed("p", "r", mode="queued", pass_fn=lambda c: None)
-        assert isinstance(feed, QueuedAnalysisFeed)
-        await feed.stop()
-
-    _run(scenario())
+    drop_feed("run-reg")                              # clean slate
+    a = get_or_create_feed("p", "run-reg")
+    b = get_or_create_feed("p", "run-reg")
+    assert a is b                                     # same instance for a run_id
+    assert get_feed("run-reg") is a
+    drop_feed("run-reg")
+    assert get_feed("run-reg") is None                # discarded on teardown

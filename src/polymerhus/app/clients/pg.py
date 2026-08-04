@@ -42,7 +42,30 @@ _RECON_SCHEMA_MIGRATIONS = (
     # what the terminal pass actually read - so the counters must be durable and
     # assertable, not merely logged. Additive JSONB, inert to every existing reader.
     "ALTER TABLE recon_runs ADD COLUMN IF NOT EXISTS stats JSONB NOT NULL DEFAULT '{}'::jsonb",
+    # #75: analysis is its own run with its own row, INDEPENDENT of the recon run.
+    # A surrogate PK (`analysis_run_id`) with `run_id` as a NON-UNIQUE indexed
+    # correlation column (D5): a later relaunch - a fresh analysis attempt over the
+    # same recon run after a teardown - must never collide on a key, so run_id is
+    # deliberately not UNIQUE. The 1:1 read path (get_analysis_run) is a convention
+    # over this shape (latest attempt wins), not a hard uniqueness constraint.
+    "CREATE TABLE IF NOT EXISTS analysis_runs ("
+    "  analysis_run_id TEXT PRIMARY KEY,"
+    "  run_id          TEXT NOT NULL,"
+    "  project_id      TEXT NOT NULL,"
+    "  status          TEXT NOT NULL,"
+    "  started_at      TIMESTAMPTZ,"
+    "  finished_at     TIMESTAMPTZ,"
+    "  stats           JSONB NOT NULL DEFAULT '{}'::jsonb"
+    ")",
+    "CREATE INDEX IF NOT EXISTS analysis_runs_run_idx ON analysis_runs (run_id)",
 )
+
+# Analysis-run statuses (#75). `draining` is the only live state; the rest are
+# terminal. `withheld` = the terminal marker was consumed but non-vacuity failed
+# (no pass entered a dispatch), `stopped` = a graceful operator stop left the
+# queue non-empty, `interrupted` = the process died mid-drain (startup reconcile,
+# D10). Kept here so every writer agrees on the vocabulary.
+_TERMINAL_ANALYSIS_STATUSES = {"drained", "withheld", "stopped", "interrupted"}
 
 
 def ensure_recon_schema() -> None:
@@ -67,6 +90,74 @@ def set_run_stats(run_id: str, stats: dict) -> None:
             "WHERE run_id = %s",
             (json.dumps(stats or {}), run_id),
         )
+
+
+# --- analysis runs (#75): analysis is its own run, decoupled from the recon run ---
+
+def create_analysis_run(analysis_run_id: str, run_id: str, project_id: str) -> None:
+    """Open an analysis-run row in the live `draining` state. Idempotent on the
+    surrogate PK. `run_id` correlates it to its recon run but is NOT unique, so a
+    relaunch (a fresh analysis_run_id over the same run_id) inserts cleanly (D5)."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO analysis_runs (analysis_run_id, run_id, project_id, status, started_at) "
+            "VALUES (%s, %s, %s, 'draining', now()) "
+            "ON CONFLICT (analysis_run_id) DO NOTHING",
+            (analysis_run_id, run_id, project_id),
+        )
+
+
+def set_analysis_run_status(analysis_run_id: str, status: str, stats: dict | None = None) -> None:
+    """Set an analysis run's status, stamping finished_at on a terminal status and
+    merging any stats (additive JSONB, same discipline as set_run_stats)."""
+    finished = "finished_at = now(), " if status in _TERMINAL_ANALYSIS_STATUSES else ""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE analysis_runs SET status = %s, {finished}"
+            "stats = COALESCE(stats, '{}'::jsonb) || %s::jsonb "
+            "WHERE analysis_run_id = %s",
+            (status, json.dumps(stats or {}), analysis_run_id),
+        )
+
+
+def get_analysis_run(run_id: str) -> dict | None:
+    """The 1:1 read path (D5): the LATEST analysis attempt for a recon run_id.
+    Latest-attempt-wins is a convention over the non-unique run_id, so an observer
+    that launched recon with a run_id finds the analysis result by that same id."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT analysis_run_id, run_id, project_id, status, started_at, finished_at, "
+            "COALESCE(stats, '{}'::jsonb) FROM analysis_runs WHERE run_id = %s "
+            "ORDER BY started_at DESC NULLS LAST LIMIT 1",
+            (run_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "analysis_run_id": row[0], "run_id": row[1], "project_id": row[2],
+            "status": row[3], "started_at": row[4], "finished_at": row[5], "stats": row[6],
+        }
+
+
+def reconcile_orphaned_analysis_runs() -> int:
+    """Startup reconcile (D10): the in-memory queue dies with the process, so any
+    analysis run left `draining` at boot has no live queue behind it. Flip it to
+    `interrupted` - an honest terminal state - stamping why. Idempotent: a second
+    boot finds nothing `draining`. Queue persistence (#88) later upgrades this to a
+    true resume. Returns the number reconciled."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE analysis_runs SET status='interrupted', finished_at=now(), "
+            "stats = COALESCE(stats, '{}'::jsonb) || jsonb_build_object("
+            "  'interrupted', true,"
+            "  'interrupted_at', to_char(now() AT TIME ZONE 'UTC', "
+            "                            'YYYY-MM-DD\"T\"HH24:MI:SS\"Z\"'),"
+            "  'interrupt_reason', 'process ended mid-drain: the in-memory chunk queue "
+            "did not survive the restart (queue persistence is deferred to #88)'"
+            ") WHERE status='draining'",
+        )
+        return cur.rowcount
 
 
 def create_project(project_id: str, name: str) -> None:

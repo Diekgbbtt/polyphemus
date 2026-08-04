@@ -228,7 +228,7 @@ def test_post_recon_no_target_domain_400(monkeypatch):
     monkeypatch.setattr(pg, "load_settings", lambda pid: {})
     launched = []
     monkeypatch.setattr(routes, "_launch_pipeline",
-                        lambda project_id, run_id, jobs: launched.append(run_id))
+                        lambda project_id, run_id, jobs, **kw: launched.append(run_id))
 
     resp = client.post("/projects/p1/recon", json={"jobs": ["subfinder", "dnsx"]})
 
@@ -243,7 +243,7 @@ def test_post_recon_valid_launches_pipeline_and_returns_run_id(monkeypatch):
     events = []
     monkeypatch.setattr(pg, "create_run", lambda run_id, pid: events.append(("create_run", pid, run_id)))
     monkeypatch.setattr(
-        routes, "_launch_pipeline", lambda project_id, run_id, jobs: events.append(("launch", project_id, run_id, jobs))
+        routes, "_launch_pipeline", lambda project_id, run_id, jobs, **kw: events.append(("launch", project_id, run_id, jobs))
     )
 
     resp = client.post("/projects/p1/recon", json={"jobs": ["subfinder", "dnsx"]})
@@ -265,7 +265,7 @@ def test_post_recon_valid_no_jobs_launches_full_pipeline(monkeypatch):
     monkeypatch.setattr(pg, "create_run", lambda run_id, pid: None)
     launched = []
     monkeypatch.setattr(
-        routes, "_launch_pipeline", lambda project_id, run_id, jobs: launched.append((project_id, run_id, jobs))
+        routes, "_launch_pipeline", lambda project_id, run_id, jobs, **kw: launched.append((project_id, run_id, jobs))
     )
 
     resp = client.post("/projects/p1/recon", json={})
@@ -286,7 +286,7 @@ def test_post_recon_then_get_status_no_404_race(monkeypatch):
                      "current_phase": None, "started_at": None, "finished_at": None}
         ),
     )
-    monkeypatch.setattr(routes, "_launch_pipeline", lambda project_id, run_id, jobs: None)
+    monkeypatch.setattr(routes, "_launch_pipeline", lambda project_id, run_id, jobs, **kw: None)
     monkeypatch.setattr(pg, "get_run", lambda run_id: store.get(run_id))
     monkeypatch.setattr(pg, "get_run_jobs", lambda run_id: [])
 
@@ -351,7 +351,7 @@ def test_post_recon_with_removed_gau_job_returns_error(monkeypatch):
     monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_domain": "example.com"})
     launched = []
     monkeypatch.setattr(routes, "_launch_pipeline",
-                        lambda project_id, run_id, jobs: launched.append(run_id))
+                        lambda project_id, run_id, jobs, **kw: launched.append(run_id))
 
     resp = client.post("/projects/p1/recon", json={"jobs": ["httpx", "gau"]})
 
@@ -371,7 +371,7 @@ def test_post_recon_baseline_pipeline_still_launches_without_gau(monkeypatch):
     monkeypatch.setattr(pg, "create_run", lambda run_id, pid: None)
     launched = []
     monkeypatch.setattr(routes, "_launch_pipeline",
-                        lambda project_id, run_id, jobs: launched.append(run_id))
+                        lambda project_id, run_id, jobs, **kw: launched.append(run_id))
 
     resp = client.post("/projects/p1/recon", json={})
 
@@ -491,3 +491,30 @@ def test_bootstrap_does_not_open_a_recon_run(monkeypatch):
 
     assert client.post("/projects/p1/bootstrap", json={"operator_kb": "kb"}).status_code == 200
     assert opened == []
+
+
+# --- #75: the analysis-only dispatch validates the run exists ------------------
+
+def test_post_analysis_unknown_run_is_404_not_a_zombie(monkeypatch):
+    """Starting a consumer for an unknown run_id would create a `draining` analysis
+    run whose queue no recon will ever end - a zombie. The dispatch must 404 first,
+    and must NOT start a consumer."""
+    started = []
+    monkeypatch.setattr(pg, "get_run", lambda run_id: None)         # run does not exist
+    import polymerhus.analysis.lifecycle as lifecycle
+    monkeypatch.setattr(lifecycle, "start_analysis",
+                        lambda pid, rid, **k: started.append(rid) or "should-not-happen")
+
+    resp = client.post("/projects/p1/analysis", json={"run_id": "ghost"})
+    assert resp.status_code == 404
+    assert started == []                                            # no consumer started
+
+
+def test_post_analysis_known_run_starts_the_consumer(monkeypatch):
+    monkeypatch.setattr(pg, "get_run", lambda run_id: {"run_id": run_id, "status": "complete"})
+    import polymerhus.analysis.lifecycle as lifecycle
+    monkeypatch.setattr(lifecycle, "start_analysis", lambda pid, rid, **k: f"{rid}:aid")
+
+    resp = client.post("/projects/p1/analysis", json={"run_id": "real"})
+    assert resp.status_code == 200
+    assert resp.json() == {"run_id": "real", "analysis_run_id": "real:aid"}

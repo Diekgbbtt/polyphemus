@@ -232,15 +232,12 @@ def default_propose_fn(context: dict) -> CurationBatch:
     if the model returns no parseable tool call (fail-open)."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from polymerhus.app.llm.roles import chat_model_for
-    from polymerhus.analysis.pod import _invoke_with_retry
+    from polymerhus.app.llm.roles import invoke_role
 
-    llm = chat_model_for("analyser")
-    structured = llm.with_structured_output(CurationBatch, method="function_calling")
-    result = _invoke_with_retry(structured.invoke, [
+    result = invoke_role("analyser", [
         SystemMessage(content=_load_curation_skill()),
         HumanMessage(content=_curation_prompt(context)),
-    ])
+    ], schema=CurationBatch)
     return result or CurationBatch()
 
 

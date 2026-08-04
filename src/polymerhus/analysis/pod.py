@@ -12,8 +12,8 @@ supervised path (`supervisor.run_analyser_chunked`), the three-role
 
 What survives here, with its live consumers: `AnalyserExport` (broadly),
 `default_read_fn` (`l0_stream`), `_inventory_block` (`bootstrap`, `assigner`,
-`data_modeller`), `_slice_repr` (`assigner`), `_invoke_with_retry` (`sweep`,
-`curation`, `assigner`), `default_curate_fn` and `default_curate_with_enrichment_fn`
+`data_modeller`), `_slice_repr` (`assigner`),
+`default_curate_fn` and `default_curate_with_enrichment_fn`
 (`supervisor`), and `run_analyser` itself. The module is coherent without a pod:
 the analyser's entry point plus shared prompt-render and write helpers.
 """
@@ -116,23 +116,11 @@ def _inventory_block(inventory: dict | None) -> str:
     )
 
 
-def _invoke_with_retry(invoke_fn, messages, *, attempts: int = 3):
-    """Call a structured-output LLM with a bounded retry. `with_structured_output`
-    returns None (no parseable tool call) on a transient provider hiccup - observed
-    live: a run where BOTH analyser passes returned None and zeroed the whole
-    analysis, though the same call succeeds on retry. Retries on a None return OR an
-    exception; returns the first non-None batch, or None if every attempt failed."""
-    result = None
-    for i in range(attempts):
-        try:
-            result = invoke_fn(messages)
-        except Exception:  # transient provider/parse error: retry, don't crash
-            logger.warning("analyser structured call raised (attempt %d/%d)", i + 1, attempts, exc_info=True)
-            result = None
-        if result is not None:
-            return result
-        logger.warning("analyser structured call returned no tool call (attempt %d/%d)", i + 1, attempts)
-    return result
+# `_invoke_with_retry` was RETIRED (#73): structured analyser calls now go through
+# `roles.invoke_role`, whose single escalating-budget retry
+# (`invoke_with_escalating_timeout`) replaces this helper AND the client's own retry
+# (they multiplied, #32). A None return is still the fail-closed unmet-generation
+# signal the callers treat as a valid empty outcome.
 
 
 def default_curate_fn(services, systems, aggregates, project_id: str) -> AnalyserExport:

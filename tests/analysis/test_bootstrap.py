@@ -10,8 +10,6 @@ This file previously tested `bootstrap_from_kb`, the superseded single-call path
 retired in #29; every behaviour it asserted is covered against the reasoned path by
 the C-catalogue.
 """
-import json
-
 import pytest
 
 from polymerhus.analysis import bootstrap
@@ -22,7 +20,6 @@ from polymerhus.analysis.bootstrap import (
     _service_props,
     shells_to_batch,
 )
-from polymerhus.analysis.proposer_reasoning import bounded_retry
 
 
 def _svc_props(batch):
@@ -142,38 +139,9 @@ def test_an_in_vocabulary_system_kind_survives():
     assert "WAF" in {s.kind for s in batch.systems}
 
 
-# --- the shared bounded retry (was untested after the #26 slice) --------------
-# Regression guard for a defect FR-CURE2E hit live: deepseek returned truncated JSON
-# and the un-retried elicitation fail-opened to services=0, zeroing the whole skeleton.
-
-def test_bounded_retry_retries_a_transient_failure_then_succeeds():
-    calls = {"n": 0}
-
-    def flaky():
-        calls["n"] += 1
-        if calls["n"] < 3:
-            raise json.JSONDecodeError("Expecting value", "doc", 6094)
-        return "reasoning"
-
-    assert bounded_retry(flaky, attempts=3) == "reasoning"
-    assert calls["n"] == 3
-
-
-def test_bounded_retry_treats_a_none_return_as_a_failed_attempt():
-    """`with_structured_output` returns None (not raises) on an unparseable response,
-    so None must count as a failure or a single blip silently empties the skeleton."""
-    calls = {"n": 0}
-
-    def none_then_value():
-        calls["n"] += 1
-        return None if calls["n"] < 2 else "ok"
-
-    assert bounded_retry(none_then_value, attempts=3) == "ok"
-
-
-def test_bounded_retry_exhausted_returns_none_the_fail_closed_signal():
-    assert bounded_retry(lambda: None, attempts=3) is None
-    assert bounded_retry(lambda: (_ for _ in ()).throw(RuntimeError("down")), attempts=3) is None
+# The shared bounded retry these tests guarded was RETIRED (#73); the escalating
+# retry that replaces it (transient-failure + None-as-failure + exhaustion) is now
+# covered by tests/test_llm_providers.py::test_escalating_invoke_*.
 
 
 # --- the skill seam (#29) ------------------------------------------------------
@@ -211,13 +179,12 @@ def test_both_layers_actually_reach_the_model(monkeypatch):
     both are present is not."""
     captured = {}
 
-    class _FakeLLM:
-        def invoke(self, messages):
-            captured["system"] = messages[0].content
-            captured["human"] = messages[1].content
-            return type("R", (), {"content": "reasoning"})()
+    def fake_invoke_role(role, messages, *, schema=None, temperature=0):
+        captured["system"] = messages[0].content
+        captured["human"] = messages[1].content
+        return "reasoning"
 
-    monkeypatch.setattr("polymerhus.app.llm.roles.chat_model_for", lambda role: _FakeLLM())
+    monkeypatch.setattr("polymerhus.app.llm.roles.invoke_role", fake_invoke_role)
     assert bootstrap.default_reason_fn("a juice marketplace", ["checkout"]) == "reasoning"
 
     both = captured["system"] + captured["human"]
@@ -237,12 +204,11 @@ def test_the_breadth_sensitive_reasoning_prompt_stays_free_of_the_linchpin_umbre
     in shells_to_batch instead, so the reasoning prompt must stay clean (B-Q2, #31)."""
     captured = {}
 
-    class _FakeLLM:
-        def invoke(self, messages):
-            captured["prompt"] = messages[0].content + messages[1].content
-            return type("R", (), {"content": "reasoning"})()
+    def fake_invoke_role(role, messages, *, schema=None, temperature=0):
+        captured["prompt"] = messages[0].content + messages[1].content
+        return "reasoning"
 
-    monkeypatch.setattr("polymerhus.app.llm.roles.chat_model_for", lambda role: _FakeLLM())
+    monkeypatch.setattr("polymerhus.app.llm.roles.invoke_role", fake_invoke_role)
     bootstrap.default_reason_fn("a juice marketplace", [])
 
     assert "ACCOUNT-SURFACE UMBRELLAS" not in captured["prompt"]
@@ -310,17 +276,16 @@ def test_forced_linchpin_proposed_without_an_exposure_is_filled_from_the_constan
 def _capture_prompt(monkeypatch, config=None):
     captured = {}
 
-    class _FakeLLM:
-        def invoke(self, messages):
-            captured["system"] = messages[0].content
-            captured["human"] = messages[1].content
-            return type("R", (), {"content": "reasoning"})()
+    def fake_invoke_role(role, messages, *, schema=None, temperature=0):
+        captured["system"] = messages[0].content
+        captured["human"] = messages[1].content
+        return "reasoning"
 
     if config is None:
         monkeypatch.delenv("BOOTSTRAP_PROMPT_CONFIG", raising=False)
     else:
         monkeypatch.setenv("BOOTSTRAP_PROMPT_CONFIG", config)
-    monkeypatch.setattr("polymerhus.app.llm.roles.chat_model_for", lambda role: _FakeLLM())
+    monkeypatch.setattr("polymerhus.app.llm.roles.invoke_role", fake_invoke_role)
     bootstrap.default_reason_fn("a juice marketplace", [])
     return captured
 

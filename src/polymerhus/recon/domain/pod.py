@@ -431,16 +431,14 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     """Real collaborator: ask the triager LLM to flag noteworthy observations
     from a completed tool run. Builds its chat model lazily on each call.
     """
-    from polymerhus.app.llm.roles import chat_model_for
+    from polymerhus.app.llm.roles import invoke_role
 
-    llm = chat_model_for("triager")
-    # method="function_calling": the default "json_schema" strict-mode path
-    # rejects Observation.anchor (an open-ended `dict` field with no
-    # `additionalProperties: false`) on OpenAI/OpenRouter-family models -
+    # invoke_role uses method="function_calling" (the single coherent escalating
+    # retry, #73). function_calling is REQUIRED here: the default "json_schema"
+    # strict-mode path rejects Observation.anchor (an open-ended `dict` field with
+    # no `additionalProperties: false`) on OpenAI/OpenRouter-family models -
     # confirmed live against openrouter:openai/gpt-4o-mini, which 400s with
-    # "'additionalProperties' is required to be supplied and to be false"
-    # under the default method. function_calling tolerates the loose schema.
-    structured_llm = llm.with_structured_output(_ObservationBatch, method="function_calling")
+    # "'additionalProperties' is required to be supplied and to be false".
     # Cap the assets serialized into the prompt: a high-volume tool (e.g.
     # subfinder on a large org can yield tens of thousands of Subdomain deltas)
     # would otherwise blow past the model's context window (observed: 41k assets
@@ -466,8 +464,8 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     from langchain_core.messages import SystemMessage, HumanMessage
     skill = _load_triager_skill()
     messages = ([SystemMessage(content=skill)] if skill else []) + [HumanMessage(content=prompt)]
-    result = structured_llm.invoke(messages)
-    return result.observations
+    result = invoke_role("triager", messages, schema=_ObservationBatch)
+    return result.observations if result else []  # None = exhausted generation -> no observations
 
 
 pod_graph = build_pod_graph(exec_fn=default_exec_fn, curate_fn=curate, triage_fn=default_triage_fn)
