@@ -195,15 +195,18 @@ def test_payload_fifo_queue_decoupling_quality_against_eval_target():
         f"exactly-once violated: passes {passes} != advanced + 1 = {advanced + 1}: {stats}"
     )
 
-    produced = sum(
-        (j["stats"] or {}).get("produced_assets", 0)
-        + (j["stats"] or {}).get("produced_observations", 0)
-        for j in status["per_job"]
+    # Exactness is asserted over ASSETS ONLY: `l0_assets_read` counts len(chunk.assets)
+    # (analysis/supervisor.py, `l0_assets_read=len(assets)`), and the chunk's
+    # observations ride a SEPARATE field the counter does not tally. Summing
+    # produced_observations in here compared an assets-only counter against
+    # assets+observations, which no run carrying observations could ever satisfy.
+    produced_assets = sum(
+        (j["stats"] or {}).get("produced_assets", 0) for j in status["per_job"]
     )
-    assert produced >= 1, f"recon produced no surface at all: {per_job}"
-    assert stats.get("l0_assets_read", 0) == produced, (
+    assert produced_assets >= 1, f"recon produced no assets at all: {per_job}"
+    assert stats.get("l0_assets_read", 0) == produced_assets, (
         f"exactness violated: feed read {stats.get('l0_assets_read')} assets, "
-        f"recon curated {produced}: {stats} {per_job}"
+        f"recon curated {produced_assets}: {stats} {per_job}"
     )
 
     # --- the decoupling itself (AST-DEC-09): push never waits on the LLM

@@ -219,6 +219,31 @@ def test_scheduled_but_never_entered_does_not_claim_drained():
     assert _run(scenario()).analysis_drained is False
 
 
+def test_dispatches_entered_accumulates_across_passes_not_just_the_terminal_one():
+    """Regression: `dispatches_entered` is the SUM over every pass, not the value
+    of the last census. The terminal marker is itself a final pass whose real
+    census carries dispatches_entered=0 (it processes no surface), and it always
+    lands last (FIFO) - so reading only `_last_census` reported 0 for a run that
+    did real work (the live juice-shop-remote run: assigner entered 3 dispatches,
+    stats said 0). Here a single working chunk enters 3 dispatches and the terminal
+    pass enters 0; the run must report 3."""
+    async def graded(chunk):
+        if chunk.terminal:
+            # the REAL terminal pass does no dispatch work
+            return _census(terminal=True, dispatches_scheduled=0, dispatches_entered=0)
+        return _census(dispatches_scheduled=3, dispatches_entered=3)
+
+    async def scenario():
+        feed = QueuedAnalysisFeed("p1", "r1", pass_fn=graded).start()
+        await feed.push(_chunk("httpx"))
+        return await _drain(feed)
+
+    stats = _run(scenario())
+    assert stats.dispatches_entered == 3        # accumulated, not the terminal 0
+    assert stats.analysis_drained is True       # and the run still drained
+    assert stats.passes == 2                     # chunk + terminal marker
+
+
 def test_a_slow_pass_drains_naturally_with_no_deadline(monkeypatch):
     """#75 D8: the internal drain deadline/grace is GONE. A pass slower than the
     old 600s deadline is NOT cancelled - the consumer drains naturally because

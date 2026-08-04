@@ -201,6 +201,11 @@ class QueuedAnalysisFeed:
         # needs this because the terminal marker is a no-op by construction.
         self._observed_any = False
         self._l0_assets_read = 0
+        # Dispatches entered across ALL passes. Accumulated (not read from the last
+        # census) because the terminal marker is itself a final pass whose census
+        # carries zero dispatches - reading only `_last_census` would report 0 for a
+        # run that did real work, since the terminal pass always lands last (FIFO).
+        self._dispatches_entered = 0
         # Lifecycle events. `_done` is set when the consumer reaches a terminal state
         # (marker consumed, or graceful stop); `_stop_event` requests a graceful stop.
         self._done = asyncio.Event()
@@ -274,7 +279,9 @@ class QueuedAnalysisFeed:
                     self._passes += 1
                     if result is not None:
                         self._last_census = getattr(result, "census", None)
-                        if getattr(self._last_census, "dispatches_entered", 0):
+                        entered = getattr(self._last_census, "dispatches_entered", 0) or 0
+                        self._dispatches_entered += entered
+                        if entered:
                             self._observed_any = True
                         self._l0_assets_read += len(chunk.assets)
                 except asyncio.CancelledError:
@@ -344,7 +351,7 @@ class QueuedAnalysisFeed:
             advanced=self._advanced, passes=self._passes,
             analysis_drained=drained, consumer=self._consumer_state(),
             l0_assets_read=self._l0_assets_read,
-            dispatches_entered=getattr(census, "dispatches_entered", 0) or 0,
+            dispatches_entered=self._dispatches_entered,
             **self._timings.as_stats(),
         )
 
