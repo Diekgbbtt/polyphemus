@@ -35,7 +35,7 @@ from collections import defaultdict
 
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk
-from polymerhus.analysis.proposer_reasoning import bounded_retry, cot_scaffold, role_header
+from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
 
 logger = logging.getLogger(__name__)
 
@@ -388,16 +388,13 @@ def _linking_prompt(prose: str, systems_batch: L1DeltaBatch, primary: list[str],
 # --- the injected LLM seam ----------------------------------------------------
 
 def _default_invoke_fn(messages, *, schema=None):
-    """Real collaborator: the analyser-role model. `schema=None` returns the free-text
-    content (the reflection call); a pydantic `schema` returns structured output via
-    function_calling (the extraction/linking calls). Same model as the pod/assigner."""
-    from polymerhus.app.llm.roles import chat_model_for
+    """Real collaborator: the analyser-role model behind the single coherent
+    escalating retry (#73). `schema=None` returns free-text content (the reflection
+    call); a pydantic `schema` returns structured output via function_calling (the
+    extraction/linking calls). Same model as the pod/assigner."""
+    from polymerhus.app.llm.roles import invoke_role
 
-    llm = chat_model_for("analyser")
-    if schema is None:
-        resp = llm.invoke(messages)
-        return getattr(resp, "content", None) or None
-    return llm.with_structured_output(schema, method="function_calling").invoke(messages)
+    return invoke_role("analyser", messages, schema=schema)
 
 
 def _load_skill() -> str:
@@ -440,10 +437,12 @@ def type_mechanisms(
     skill = _load_skill()
 
     # Call 1 - REFLECTION (reason). Exhaustion => fail-closed (whole step empty).
-    prose = bounded_retry(lambda: invoke_fn(
+    # The escalating retry lives inside invoke_fn (invoke_role) now; a None return
+    # is the exhausted-generation fail-closed signal, exactly as before.
+    prose = invoke_fn(
         [SystemMessage(content=skill), HumanMessage(content=_reflection_prompt(chunk, inventory))],
         schema=None,
-    ))
+    )
     if not prose:
         logger.warning("mechanism_typist: reflection exhausted; fail-closed to empty batch")
         return L1DeltaBatch()
@@ -456,19 +455,19 @@ def type_mechanisms(
     trace_reasoning(prose, call="typist-reflection")
 
     # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
-    systems_batch = bounded_retry(lambda: invoke_fn(
+    systems_batch = invoke_fn(
         [SystemMessage(content=skill), HumanMessage(content=_systems_prompt(prose, inventory))],
         schema=L1DeltaBatch,
-    )) or L1DeltaBatch()
+    ) or L1DeltaBatch()
 
     # Call 3 - SERVICES LINKING (extract). Soft pass-through on exhaustion.
     all_services = frozenset((inventory or {}).get("services") or [])
     primary, secondary, owned = partition_services(chunk.assets, aggregations or [], all_services)
-    link_batch = bounded_retry(lambda: invoke_fn(
+    link_batch = invoke_fn(
         [SystemMessage(content=skill),
          HumanMessage(content=_linking_prompt(prose, systems_batch, primary, secondary, owned, inventory))],
         schema=L1DeltaBatch,
-    )) or L1DeltaBatch()
+    ) or L1DeltaBatch()
 
     # #18/observability: persist the typist's STRUCTURED output (systems + edges, with each
     # system's kind/discriminator) alongside its reflection prose - otherwise the WHAT it

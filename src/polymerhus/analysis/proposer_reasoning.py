@@ -10,10 +10,6 @@ structured-extraction second call - deliberately WITHOUT hardcoded domain exampl
 """
 from __future__ import annotations
 
-import logging
-
-logger = logging.getLogger(__name__)
-
 
 def role_header(role: str, goal: str) -> str:
     """The system-prompt role/goal fragment (prompt-engineering: establish role +
@@ -38,28 +34,8 @@ def few_shot_block(exemplars: list[str]) -> str:
     return "\n\n".join(parts)
 
 
-def bounded_retry(fn, *, attempts: int = 3):
-    """Call `fn` up to `attempts` times until it returns a non-None result; return
-    that result, or None if every attempt yielded None or raised (exhausted).
-
-    The LLM client handles service-level failures (credits / rate-limit) upstream
-    (#26 Q6), so this retry targets the low-probability transient empty/malformed
-    generation - a 200 response carrying unusable content, which the client layer
-    cannot see. Its exhaustion (a None return) is the caller's FAIL-CLOSED block
-    signal - the two-call proposer must not proceed on an unmet generation.
-
-    The two layers are complementary in KIND but they still MULTIPLY: this runs
-    on top of a client that retries too, so the worst case is
-    `attempts x (1 + providers.MAX_RETRIES)` provider round-trips, each bounded
-    by `providers.request_timeout()`. Both client-side numbers are set
-    explicitly there precisely so that product stays visible and finite (#32);
-    do not raise `attempts` without re-reading that budget."""
-    for _ in range(attempts):
-        try:
-            result = fn()
-        except Exception:  # a raised attempt counts as a failed one; retry then block
-            logger.warning("bounded_retry: attempt raised; retrying", exc_info=True)
-            continue
-        if result is not None:
-            return result
-    return None
+# `bounded_retry` was RETIRED (#73): the analysis retry is now the single coherent
+# escalating-budget layer `invoke_with_escalating_timeout` in `app.llm.providers`,
+# invoked via `roles.invoke_role`. It replaces both this helper and the client's own
+# retry (which multiplied with it, #32), so one logical call's worst case is the
+# explicit SUM of the escalating schedule rather than an invisible product.

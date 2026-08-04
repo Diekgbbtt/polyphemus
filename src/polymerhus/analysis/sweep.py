@@ -171,12 +171,9 @@ def default_stale_propose_fn(context: dict) -> StaleOwnershipBatch:
     parseable tool call (fail-open); `resolve_stale_owners` also guards the call."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from polymerhus.app.llm.roles import chat_model_for
-    from polymerhus.analysis.pod import _invoke_with_retry
+    from polymerhus.app.llm.roles import invoke_role
 
-    llm = chat_model_for("analyser")
-    structured = llm.with_structured_output(StaleOwnershipBatch, method="function_calling")
-    result = _invoke_with_retry(structured.invoke, [
+    result = invoke_role("analyser", [
         SystemMessage(content=(
             "You place unassigned attack-surface assets onto the Services/Systems "
             "already defined for the project. Reuse existing identities first; only "
@@ -184,7 +181,7 @@ def default_stale_propose_fn(context: dict) -> StaleOwnershipBatch:
             "nothing you cannot ground - an empty result is a valid honest answer."
         )),
         HumanMessage(content=stale_ownership_prompt(context)),
-    ])
+    ], schema=StaleOwnershipBatch)
     return result or StaleOwnershipBatch()
 
 

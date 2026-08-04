@@ -67,7 +67,6 @@ _LINCHPIN_SYSTEMS = ("IdentificationSystem", "AuthenticationMechanism", "Authori
 # persisted, so absence keeps meaning not-yet-filled for the later proposers.
 _ALLOWED_SERVICE_PROPS = frozenset({"exposure", "service_contract"})
 _EXPOSURE_VALUES = frozenset({"public", "authenticated"})
-_REASON_ATTEMPTS = 3
 
 # `service_contract` length cap (#29). A contract is a brief functional PROFILE for
 # semantic matching, not documentation: past that length the model has stopped
@@ -536,8 +535,6 @@ def bootstrap_reasoned(
     `curate_fn(services, systems, project_id) -> (int, int)` are injected."""
     import uuid
 
-    from polymerhus.analysis.proposer_reasoning import bounded_retry
-
     if run_id is None:
         run_id = str(uuid.uuid4())
     if reason_fn is None:
@@ -568,9 +565,9 @@ def bootstrap_reasoned(
     with _bootstrap_span(project_id, run_id):
         # Empty KB is a valid minimal bootstrap (linchpins-only), NOT a block: no LLM call.
         if operator_kb and operator_kb.strip():
-            reasoning = bounded_retry(
-                lambda: reason_fn(operator_kb, service_slugs), attempts=_REASON_ATTEMPTS
-            )
+            # The escalating retry lives inside reason_fn/extract_fn (invoke_role) now;
+            # a None return is still the exhausted-generation fail-closed signal.
+            reasoning = reason_fn(operator_kb, service_slugs)
             if reasoning is None:  # FAIL-CLOSED: call-1 exhausted -> block the analysis
                 logger.warning(
                     "bootstrap_reasoned: call-1 (reason) exhausted for project=%s; BLOCKING", project_id
@@ -581,7 +578,7 @@ def bootstrap_reasoned(
             # proposed, so it is logged before the shells discard it.
             _trace_reasoning(reasoning)
 
-            extracted = bounded_retry(lambda: extract_fn(reasoning), attempts=_REASON_ATTEMPTS)
+            extracted = extract_fn(reasoning)
             if extracted is None:  # FAIL-CLOSED: call-2 exhausted -> block
                 logger.warning(
                     "bootstrap_reasoned: call-2 (extract) exhausted for project=%s; BLOCKING", project_id
@@ -873,7 +870,7 @@ def default_reason_fn(operator_kb: str, service_slugs: list[str] | None = None) 
     `_PROMPT_CONFIGS`."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from polymerhus.app.llm.roles import chat_model_for
+    from polymerhus.app.llm.roles import invoke_role
     from polymerhus.analysis.pod import _inventory_block
     from polymerhus.analysis.proposer_reasoning import few_shot_block
 
@@ -911,12 +908,10 @@ def default_reason_fn(operator_kb: str, service_slugs: list[str] | None = None) 
     if cfg not in ("skill_in_prompt", "combined"):
         system = f"{system}\n\n{skill}"
     logger.info("bootstrap call-1 prompt config=%s (%d exemplars)", cfg, len(exemplars))
-    result = chat_model_for("analyser").invoke([
+    return invoke_role("analyser", [
         SystemMessage(content=system),
         HumanMessage(content=human),
-    ])
-    text = getattr(result, "content", None)
-    return text or None
+    ], schema=None)
 
 
 def default_extract_fn(reasoning: str):
@@ -925,11 +920,8 @@ def default_extract_fn(reasoning: str):
     system_shells), or None when the model emits no parseable extraction."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
-    from polymerhus.app.llm.roles import chat_model_for
+    from polymerhus.app.llm.roles import invoke_role
 
-    structured = chat_model_for("analyser").with_structured_output(
-        BootstrapElicitation, method="function_calling"
-    )
     prompt = (
         "Extract the Service and System SHELLS decided in the reasoning below. For each "
         "Service set ONLY business_function_slug + exposure (public/authenticated, or omit) "
@@ -955,10 +947,10 @@ def default_extract_fn(reasoning: str):
         "owns the payout record and its status. Deals in payouts, earnings, balances "
         "and payment schedules.\"\n\nREASONING:\n" + reasoning
     )
-    result = structured.invoke([
+    result = invoke_role("analyser", [
         SystemMessage(content="You extract typed shells from prior reasoning; you never invent beyond it."),
         HumanMessage(content=prompt),
-    ])
+    ], schema=BootstrapElicitation)
     if result is None:
         return None
     return list(result.services), list(result.systems)

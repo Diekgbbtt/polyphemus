@@ -173,17 +173,18 @@ def default_webpage_profile_fn(signals: dict) -> WebpageProfileProposal:
     from `signals`, guided by the webpage-profile skill. Structured output via
     function_calling (same pattern as the analyser)."""
     from langchain_core.messages import SystemMessage, HumanMessage
-    from polymerhus.app.llm.roles import chat_model_for
+    from polymerhus.app.llm.roles import invoke_role
 
-    llm = chat_model_for("analyser")
-    structured = llm.with_structured_output(WebpageProfileProposal, method="function_calling")
     prompt = (
         "Classify the webpage profile from these runtime signals. Remember: the two "
         "dimensions are INDEPENDENT and a fingerprint alone is never sufficient.\n\n"
         f"Signals: {signals}"
     )
-    return structured.invoke([SystemMessage(content=_load_webpage_skill()),
-                              HumanMessage(content=prompt)])
+    result = invoke_role("analyser", [SystemMessage(content=_load_webpage_skill()),
+                                      HumanMessage(content=prompt)], schema=WebpageProfileProposal)
+    if result is None:  # exhausted generation - let the caller's fail-open path take over
+        raise RuntimeError("webpage-profile generation exhausted")
+    return result
 
 
 def webpage_profile(

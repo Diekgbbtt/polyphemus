@@ -36,7 +36,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from polymerhus.analysis.analyser_types import L1DeltaBatch
 from polymerhus.analysis.chunking import Chunk, admit_for_role
 from polymerhus.analysis.l1_types import L0Ref
-from polymerhus.analysis.proposer_reasoning import bounded_retry, cot_scaffold, role_header
+from polymerhus.analysis.proposer_reasoning import cot_scaffold, role_header
 
 logger = logging.getLogger(__name__)
 
@@ -680,16 +680,13 @@ def _system_prompt() -> str:
 # --- the injected LLM seam (typist's shape: prose | structured) ----------------
 
 def _default_invoke_fn(messages, *, schema=None):
-    """Real collaborator: the analyser-role model. `schema=None` returns free-text
-    content (the reflection call); a pydantic `schema` returns structured output
-    via function_calling (the extraction call). Same model as the assigner/typist."""
-    from polymerhus.app.llm.roles import chat_model_for
+    """Real collaborator: the analyser-role model behind the single coherent
+    escalating retry (#73). `schema=None` returns free-text content (the reflection
+    call); a pydantic `schema` returns structured output via function_calling (the
+    extraction call). Same model as the assigner/typist."""
+    from polymerhus.app.llm.roles import invoke_role
 
-    llm = chat_model_for("analyser")
-    if schema is None:
-        resp = llm.invoke(messages)
-        return getattr(resp, "content", None) or None
-    return llm.with_structured_output(schema, method="function_calling").invoke(messages)
+    return invoke_role("analyser", messages, schema=schema)
 
 
 # --- the two-call proposer body (section 3/7.1) ---------------------------------
@@ -717,11 +714,11 @@ def model_data(
     system_prompt = _system_prompt()
     candidates = owning_services(admitted, aggregations or [])
 
-    prose = bounded_retry(lambda: invoke_fn(
+    prose = invoke_fn(
         [SystemMessage(content=system_prompt),
          HumanMessage(content=_reflection_prompt(chunk, inventory, candidates))],
         schema=None,
-    ))
+    )
     admitted_counts: dict[str, int] = defaultdict(int)
     for a in admitted:
         admitted_counts[a.type] += 1
@@ -738,11 +735,11 @@ def model_data(
             reflection_exhausted=True,
         ))
 
-    raw = bounded_retry(lambda: invoke_fn(
+    raw = invoke_fn(
         [SystemMessage(content=system_prompt),
          HumanMessage(content=_extraction_prompt(prose, inventory, candidates))],
         schema=L1DeltaBatch,
-    ))
+    )
     extraction_exhausted = raw is None
     raw = raw or L1DeltaBatch()
 

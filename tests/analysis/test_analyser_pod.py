@@ -171,32 +171,9 @@ def test_default_curate_with_enrichment_skips_enrich_when_no_enrichment_deltas(m
     assert export.services_written == 1
 
 
-# --- _invoke_with_retry: the shared bounded-retry helper (survives the retirement,
-# still used by sweep/curation/assigner) ----------------------------------------
-
-def test_invoke_with_retry_returns_first_non_none():
-    """Bounded retry returns the first non-None structured result."""
-    seq = iter([None, None, L1DeltaBatch(services=[ServiceProposal(business_function_slug="ok")])])
-    out = analyser_pod._invoke_with_retry(lambda m: next(seq), ["m"], attempts=3)
-    assert [s.business_function_slug for s in out.services] == ["ok"]
-
-
-def test_invoke_with_retry_survives_exceptions_then_succeeds():
-    """A raising attempt is retried, not propagated (transient provider error)."""
-    calls = []
-
-    def flaky(m):
-        calls.append(1)
-        if len(calls) == 1:
-            raise RuntimeError("transient 503")
-        return L1DeltaBatch(services=[ServiceProposal(business_function_slug="ok")])
-
-    out = analyser_pod._invoke_with_retry(flaky, ["m"], attempts=3)
-    assert out is not None and [s.business_function_slug for s in out.services] == ["ok"]
-
-
-def test_invoke_with_retry_gives_up_after_attempts():
-    assert analyser_pod._invoke_with_retry(lambda m: None, ["m"], attempts=2) is None
+# `_invoke_with_retry` was RETIRED (#73): structured analyser calls now retry via the
+# single escalating-budget layer, covered by
+# tests/test_llm_providers.py::test_escalating_invoke_*.
 
 
 def test_vocabulary_prompt_lists_controlled_values():
