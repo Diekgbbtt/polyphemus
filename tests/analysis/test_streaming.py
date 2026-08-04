@@ -116,21 +116,46 @@ class _StatsRegistry(FakeRegistry):
         self.run_stats[run_id] = stats
 
 
-def _run_queued(settings, pass_fn, registry=None):
-    """Drive run_pipeline with the QUEUED feed and an injected pass."""
+def _run_queued(settings, pass_fn, registry=None, monkeypatch=None):
+    """Drive run_pipeline with the QUEUED feed and an injected pass, then AWAIT the
+    independent analysis run to settle and return (recon-registry, analysis-stats).
+
+    Under #75 the queued pipeline no longer writes analysis stats onto the recon
+    run: analysis is its own run, started by the pipeline via lifecycle.start_analysis
+    and recorded through pg.set_analysis_run_status. We patch those pg calls with a
+    recorder (unit tier: no DB) and read back the terminal analysis stats."""
+    import polymerhus.app.clients.pg as pg
+    from polymerhus.analysis import lifecycle
+
+    captured: dict = {}
+    if monkeypatch is not None:
+        monkeypatch.setattr(pg, "create_analysis_run", lambda *a, **k: None)
+        monkeypatch.setattr(
+            pg, "set_analysis_run_status",
+            lambda arid, status, stats=None: captured.update(status=status, stats=stats or {}))
+
     async def _run_job(job, input_assets, *, run_id, phase, extra):
         return [PodExport(input_asset={}, verdict="success", assets_merged=1,
                           observations_merged=1)]
 
     reg = registry or _StatsRegistry()
-    asyncio.run(pipeline.run_pipeline(
-        "proj1", run_id="run1", job_subset=["subfinder", "dnsx"],
-        run_job=_run_job, load_settings=lambda project_id: settings,
-        registry=reg,
-        read_assets=lambda node_type, project_id, where=None: [{"name": "seed"}],
-        feed_mode="queued", pass_fn=pass_fn,
-    ))
-    return reg
+
+    async def _drive():
+        await pipeline.run_pipeline(
+            "proj1", run_id="run1", job_subset=["subfinder", "dnsx"],
+            run_job=_run_job, load_settings=lambda project_id: settings,
+            registry=reg,
+            read_assets=lambda node_type, project_id, where=None: [{"name": "seed"}],
+            feed_mode="queued", pass_fn=pass_fn,
+        )
+        # recon has enqueued the terminal marker; await the analysis supervisor to
+        # drain the FIFO and persist its terminal status (the decoupled join point).
+        task = lifecycle._SUPERVISORS.get("run1")
+        if task is not None:
+            await task
+
+    asyncio.run(_drive())
+    return reg, captured
 
 
 _QUEUED_SETTINGS = {"target_domain": "*.t.com", "streaming_analysis": True,
@@ -145,9 +170,9 @@ async def _ok_census(chunk):
         unprocessed_after=0))
 
 
-def test_AST_DEC_01_queued_feed_never_runs_a_pass_inside_the_job_loop():
+def test_AST_DEC_01_queued_feed_never_runs_a_pass_inside_the_job_loop(monkeypatch):
     """The stall this design removes: with the queued feed the pipeline's per-job
-    hook returns before any pass is entered."""
+    hook returns before any pass is entered, and analysis is its own run (#75)."""
     events = []
 
     async def slow_pass(chunk):
@@ -155,29 +180,33 @@ def test_AST_DEC_01_queued_feed_never_runs_a_pass_inside_the_job_loop():
         await asyncio.sleep(0.02)
         return await _ok_census(chunk)
 
-    reg = _run_queued(_QUEUED_SETTINGS, slow_pass)
+    reg, analysis = _run_queued(_QUEUED_SETTINGS, slow_pass, monkeypatch=monkeypatch)
 
     # every recon job reached a terminal status, and a terminal pass ran
     assert [c["status"] for c in reg.upsert_job_calls if c["status"] != "in_progress"] == \
         ["success", "success"]
     assert any(e[0] == "pass" for e in events)          # non-vacuity: passes ran
-    assert reg.run_stats["run1"]["mode"] == "queued"
+    assert analysis["stats"]["mode"] == "queued"        # the ANALYSIS run's own stats
 
 
-def test_AST_DEC_03_a_failing_analysis_leaves_every_recon_job_untouched():
+def test_AST_DEC_03_a_failing_analysis_leaves_every_recon_job_untouched(monkeypatch):
     async def boom(chunk):
         raise RuntimeError("provider down")
 
-    reg = _run_queued(_QUEUED_SETTINGS, boom)
+    reg, analysis = _run_queued(_QUEUED_SETTINGS, boom, monkeypatch=monkeypatch)
     assert [c["status"] for c in reg.upsert_job_calls if c["status"] != "in_progress"] == \
         ["success", "success"]
-    assert ("run1", "complete", None) in reg.set_run_status_calls   # run still completes
-    assert reg.run_stats["run1"]["analysis_drained"] is False       # claims nothing
+    assert ("run1", "complete", None) in reg.set_run_status_calls   # recon still completes
+    # recon does NOT wait on analysis (#75 D3): recon completed regardless, and the
+    # analysis run claims nothing (a failing pass -> withheld, not drained).
+    assert analysis["stats"]["analysis_drained"] is False
+    assert analysis["status"] == "withheld"
 
 
-def test_AST_DEC_04_run_stats_record_the_terminal_pass_census():
-    reg = _run_queued(_QUEUED_SETTINGS, _ok_census)
-    stats = reg.run_stats["run1"]
+def test_AST_DEC_04_analysis_run_records_the_terminal_pass_census(monkeypatch):
+    reg, analysis = _run_queued(_QUEUED_SETTINGS, _ok_census, monkeypatch=monkeypatch)
+    assert analysis["status"] == "drained"
+    stats = analysis["stats"]
     assert stats["analysis_drained"] is True
     assert stats["l0_assets_read"] == 0  # the pushed chunks carried no payload
     assert stats["dispatches_entered"] == 1
@@ -248,6 +277,9 @@ class _RecordingFeed:
     async def push(self, chunk):
         self.pushed_jobs.append(chunk.job)
 
+    async def signal_end(self):
+        pass
+
     async def drain(self, *a, **k):
         from polymerhus.analysis.feed import FeedStats
         return FeedStats(mode=self.mode)
@@ -264,7 +296,10 @@ def test_endpoint_reprofile_job_does_not_advance_the_analyser(monkeypatch):
     from polymerhus.analysis import feed as feed_mod
 
     recording = _RecordingFeed()
-    monkeypatch.setattr(feed_mod, "start_analysis_feed", lambda *a, **k: recording)
+    # #75: the pipeline gets its queued feed from the per-run registry; hand it the
+    # recorder. `with_analysis=False` so the pipeline does not also start a real
+    # consumer (we only care about WHICH jobs push).
+    monkeypatch.setattr(feed_mod, "get_or_create_feed", lambda *a, **k: recording)
 
     async def _run_job(job, input_assets, *, run_id, phase, extra):
         return [PodExport(input_asset={}, verdict="success", assets_merged=1,
@@ -279,6 +314,7 @@ def test_endpoint_reprofile_job_does_not_advance_the_analyser(monkeypatch):
             "async_analysis_consumer": True},
         registry=_StatsRegistry(),
         read_assets=lambda node_type, project_id, where=None: [{"name": "seed"}],
+        with_analysis=False,
     ))
 
     assert "httpx" in recording.pushed_jobs                 # ordinary producer still signals

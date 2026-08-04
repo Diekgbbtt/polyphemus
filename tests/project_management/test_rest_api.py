@@ -228,7 +228,7 @@ def test_post_recon_no_target_domain_400(monkeypatch):
     monkeypatch.setattr(pg, "load_settings", lambda pid: {})
     launched = []
     monkeypatch.setattr(routes, "_launch_pipeline",
-                        lambda project_id, run_id, jobs: launched.append(run_id))
+                        lambda project_id, run_id, jobs, **kw: launched.append(run_id))
 
     resp = client.post("/projects/p1/recon", json={"jobs": ["subfinder", "dnsx"]})
 
@@ -243,7 +243,7 @@ def test_post_recon_valid_launches_pipeline_and_returns_run_id(monkeypatch):
     events = []
     monkeypatch.setattr(pg, "create_run", lambda run_id, pid: events.append(("create_run", pid, run_id)))
     monkeypatch.setattr(
-        routes, "_launch_pipeline", lambda project_id, run_id, jobs: events.append(("launch", project_id, run_id, jobs))
+        routes, "_launch_pipeline", lambda project_id, run_id, jobs, **kw: events.append(("launch", project_id, run_id, jobs))
     )
 
     resp = client.post("/projects/p1/recon", json={"jobs": ["subfinder", "dnsx"]})
@@ -265,7 +265,7 @@ def test_post_recon_valid_no_jobs_launches_full_pipeline(monkeypatch):
     monkeypatch.setattr(pg, "create_run", lambda run_id, pid: None)
     launched = []
     monkeypatch.setattr(
-        routes, "_launch_pipeline", lambda project_id, run_id, jobs: launched.append((project_id, run_id, jobs))
+        routes, "_launch_pipeline", lambda project_id, run_id, jobs, **kw: launched.append((project_id, run_id, jobs))
     )
 
     resp = client.post("/projects/p1/recon", json={})
@@ -286,7 +286,7 @@ def test_post_recon_then_get_status_no_404_race(monkeypatch):
                      "current_phase": None, "started_at": None, "finished_at": None}
         ),
     )
-    monkeypatch.setattr(routes, "_launch_pipeline", lambda project_id, run_id, jobs: None)
+    monkeypatch.setattr(routes, "_launch_pipeline", lambda project_id, run_id, jobs, **kw: None)
     monkeypatch.setattr(pg, "get_run", lambda run_id: store.get(run_id))
     monkeypatch.setattr(pg, "get_run_jobs", lambda run_id: [])
 
@@ -351,7 +351,7 @@ def test_post_recon_with_removed_gau_job_returns_error(monkeypatch):
     monkeypatch.setattr(pg, "load_settings", lambda pid: {"target_domain": "example.com"})
     launched = []
     monkeypatch.setattr(routes, "_launch_pipeline",
-                        lambda project_id, run_id, jobs: launched.append(run_id))
+                        lambda project_id, run_id, jobs, **kw: launched.append(run_id))
 
     resp = client.post("/projects/p1/recon", json={"jobs": ["httpx", "gau"]})
 
@@ -371,7 +371,7 @@ def test_post_recon_baseline_pipeline_still_launches_without_gau(monkeypatch):
     monkeypatch.setattr(pg, "create_run", lambda run_id, pid: None)
     launched = []
     monkeypatch.setattr(routes, "_launch_pipeline",
-                        lambda project_id, run_id, jobs: launched.append(run_id))
+                        lambda project_id, run_id, jobs, **kw: launched.append(run_id))
 
     resp = client.post("/projects/p1/recon", json={})
 
