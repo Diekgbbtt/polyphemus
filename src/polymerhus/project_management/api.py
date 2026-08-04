@@ -41,6 +41,18 @@ class SettingsUpdate(BaseModel):
 class ReconLaunch(BaseModel):
     jobs: list[str] | None = None
     settings: dict | None = None
+    # #75: the recon endpoint is the COMBINED dispatch by default (recon + an
+    # independent analysis consumer for the same run). Set false for the recon-ONLY
+    # dispatch: recon pushes chunks to the run's FIFO and a later `POST /analysis`
+    # drains them.
+    with_analysis: bool = True
+
+
+class AnalysisLaunch(BaseModel):
+    """#75: start the analysis-only dispatch - a consumer that drains an existing
+    run's FIFO. `run_id` is the recon run whose queue to drain."""
+
+    run_id: str
 
 
 class BootstrapLaunch(BaseModel):
@@ -104,9 +116,12 @@ def update_settings(project_id: str, body: SettingsUpdate) -> dict:
 # run died because its container was recreated underneath it. The reference is kept
 # anyway because "narrow" is not "closed" and the cost is one set.
 _IN_FLIGHT: set[asyncio.Task] = set()
+# #75: recon tasks keyed by run_id so a recon-stop dispatch can cancel exactly one.
+_RECON_TASKS: dict[str, asyncio.Task] = {}
 
 
-def _launch_pipeline(project_id: str, run_id: str, jobs: list[str] | None) -> None:
+def _launch_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
+                     *, with_analysis: bool = True) -> None:
     """Schedule `run_pipeline` as a fire-and-forget background task.
 
     The pipeline itself is best-effort for job/pod failures (design §10.6),
@@ -116,7 +131,8 @@ def _launch_pipeline(project_id: str, run_id: str, jobs: list[str] | None) -> No
 
     async def _run() -> None:
         try:
-            await run_pipeline(project_id, run_id=run_id, job_subset=jobs)
+            await run_pipeline(project_id, run_id=run_id, job_subset=jobs,
+                               with_analysis=with_analysis)
         except Exception:  # noqa: BLE001 - best-effort launch, must not crash the loop
             logger.exception("recon pipeline run %s (project %s) failed", run_id, project_id)
 
@@ -125,11 +141,17 @@ def _launch_pipeline(project_id: str, run_id: str, jobs: list[str] | None) -> No
     # grow without bound. `discard` (not `remove`) because the callback may fire
     # after a shutdown that already cleared the set.
     _IN_FLIGHT.add(task)
+    _RECON_TASKS[run_id] = task
     task.add_done_callback(_IN_FLIGHT.discard)
+    task.add_done_callback(
+        lambda t: _RECON_TASKS.pop(run_id, None) if _RECON_TASKS.get(run_id) is t else None)
 
 
 @router.post("/projects/{project_id}/recon")
 async def launch_recon(project_id: str, body: ReconLaunch) -> dict:
+    """The dispatcher's recon entrypoint (#75). COMBINED by default
+    (`with_analysis=True`): starts recon AND the independent analysis consumer for
+    the run. `with_analysis=false` is the recon-ONLY dispatch."""
     try:
         repository.validate_launch(project_id, body.jobs)
     except ProjectNotFound:
@@ -138,8 +160,54 @@ async def launch_recon(project_id: str, body: ReconLaunch) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     run_id = repository.open_run(project_id)
-    _launch_pipeline(project_id, run_id, body.jobs)
+    _launch_pipeline(project_id, run_id, body.jobs, with_analysis=body.with_analysis)
     return {"run_id": run_id}
+
+
+@router.post("/projects/{project_id}/recon/{run_id}/stop")
+async def stop_recon(project_id: str, run_id: str) -> dict:
+    """Stop recon ONLY (#75 D6): cancel the recon task. Its `finally` enqueues the
+    terminal marker so the independent analysis consumer can still drain what was
+    already pushed; analysis is never touched here. (The instant per-job kill +
+    output suppression is #76.)"""
+    task = _RECON_TASKS.get(run_id)
+    if task is None or task.done():
+        raise HTTPException(status_code=404, detail="no running recon for that run_id")
+    task.cancel()
+    return {"run_id": run_id, "stopping": True}
+
+
+@router.post("/projects/{project_id}/analysis")
+async def launch_analysis(project_id: str, body: AnalysisLaunch) -> dict:
+    """The dispatcher's analysis-ONLY entrypoint (#75): start a consumer that drains
+    an existing run's FIFO. Also the RESUME path after a graceful stop (D7)."""
+    from polymerhus.analysis.lifecycle import start_analysis
+
+    analysis_run_id = start_analysis(project_id, body.run_id)
+    if analysis_run_id is None:
+        raise HTTPException(status_code=409, detail="analysis already running for that run_id")
+    return {"run_id": body.run_id, "analysis_run_id": analysis_run_id}
+
+
+@router.post("/projects/{project_id}/analysis/{run_id}/stop")
+async def stop_analysis_run(project_id: str, run_id: str) -> dict:
+    """Graceful stop of the analysis consumer (#75 D7): finish the in-flight chunk,
+    consume no further, preserve the queue for a resume."""
+    from polymerhus.analysis.lifecycle import stop_analysis
+
+    await stop_analysis(run_id)
+    return {"run_id": run_id, "stopped": True}
+
+
+@router.get("/projects/{project_id}/analysis/{run_id}")
+async def get_analysis_status(project_id: str, run_id: str) -> dict:
+    """The analysis run's own status row (#75), independent of the recon run."""
+    from polymerhus.app.clients import pg
+
+    row = await asyncio.to_thread(pg.get_analysis_run, run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no analysis run for that run_id")
+    return row
 
 
 @router.post("/projects/{project_id}/bootstrap")

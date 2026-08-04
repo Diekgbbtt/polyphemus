@@ -1,45 +1,49 @@
-"""The analysis feed - recon's one touchpoint on analysis, and the seam that takes
-the analyser off recon's critical path.
+"""The analysis feed - the in-memory seam between the recon module and the
+independent analysis module (#75, building on #74's payload FIFO).
 
-This module replaces the old inline `stream_analyser_step` call site with a
-handle carrying two methods, so the pipeline keeps exactly one analysis
-touchpoint plus one drain, and the mode is a settings flag rather than a branch
-at the call site:
+Recon and analysis are two independent runtime units (asyncio tasks) that share
+ONLY a per-run in-memory FIFO of curated `L0Chunk` payloads. This module owns:
 
-  - `InlineAnalysisFeed`  - today's blocking behaviour, the rollback path.
-  - `QueuedAnalysisFeed`  - one consumer task per run, fed by an UNBOUNDED
-    in-memory FIFO of curated `L0Chunk` payloads.
+  - `L0Chunk`            - the queue element (curated AssetDeltas + observations).
+  - a PROCESS-LEVEL REGISTRY of one feed per run, keyed by `run_id`, so recon can
+    push before analysis starts and analysis can attach to the same queue - and so
+    the feed OUTLIVES the recon pipeline task (recon no longer owns it).
+  - `QueuedAnalysisFeed` - the consumer engine: one task drains the FIFO, one chunk
+    per pass, each consumed exactly once in push order, holding
+    `ANALYSER_PASS_SEMAPHORE` per pass.
+  - `InlineAnalysisFeed` - the rollback path (analysis on recon's task).
 
-WHAT THE QUEUE CARRIES, AND WHY IT MATTERS (#74). A chunk is a curated slice of
-surface, never a signal: recon pushes each freshly-curated job's `AssetDelta`s
-+ observations (the payload the job's pods merged into the graph), and the
-consumer pops ONE chunk per pass and consumes EXACTLY that chunk - no graph
-re-read, no cumulative-surface pass, no coalescing. Each pushed chunk is
-consumed exactly once, in order, so the union over consumed chunks is
-by construction the run's settled surface (L1D-23 as a union over chunks, not
-over re-read passes).
+WHAT THE QUEUE CARRIES (#74). A chunk is a curated slice of surface, never a
+signal: recon pushes each freshly-curated job's `AssetDelta`s + observations, and
+the consumer pops ONE chunk per pass and consumes EXACTLY that chunk - no graph
+re-read, no coalescing. Each pushed chunk is consumed exactly once, in order.
 
-THE GUARANTEE (#74, inheriting #34 DQ1a/DQ2b). At-least-once OBSERVATION of
-surface: every chunk pushed during the run is consumed by the analyser before
-the run reaches its terminal state. Nothing is claimed about what the analyser
-concluded. Because every layer beneath this one is fail-open, `drain` decides
-`analysis_drained` from the TERMINAL chunk's CENSUS - what the consumer
-actually entered - never from the fact that a coroutine returned.
+THE END-OF-STREAM SIGNAL (#75 D4). For the consumer to ever claim it drained the
+run, it must know recon will push no more chunks. Recon signals this by enqueuing
+a TERMINAL `L0Chunk` (via `signal_end`) on BOTH its complete and its stop/kill
+paths - fire-and-forget, never waiting for analysis. The consumer consumes the
+marker LAST (FIFO) and only then classifies the run `drained` (marker consumed AND
+a pass entered a dispatch) or `withheld` (marker consumed but vacuous).
 
-MEMORY. The FIFO is unbounded BY OPERATOR DECISION: chunks are KB-scale (the
-historical OOM was analyser residency, not queue payload), and a bound would
-reintroduce exactly the recon<->analysis coupling this redesign removes. The
-process-wide `ANALYSER_PASS_SEMAPHORE` of one in-flight pass remains the memory
-guard that makes a concurrent consumer admissible at all.
+GRACEFUL STOP (#75 D7). Stopping the consumer lets the CURRENTLY-RUNNING chunk
+finish; only FURTHER chunks are not consumed. The queue and its un-consumed chunks
+are preserved (stop is "stop pulling new chunks", never "cancel the in-flight one"
+and never "discard the queue"), so a fresh consumer can resume where it left off.
 
-Back-pressure is ABSENT on purpose: recon's push is best-effort and
-non-blocking, and analysis never fails a healthy recon run.
+NO INTERNAL LENGTH GATE (#75 D8). There is no drain deadline or grace: with every
+LLM call bounded by the escalating per-call budget (#73), a chunk pass always
+self-terminates, so the consumer drains the queue naturally. Total wall-clock
+gating lives in the e2e scripts, not here.
+
+MEMORY. The FIFO is unbounded by operator decision (chunks are KB-scale); process
+memory is bounded by run lifetime - a feed is dropped from the registry on
+teardown. `ANALYSER_PASS_SEMAPHORE` (one pass in flight process-wide) is the
+residency guard that makes a concurrent consumer admissible.
 """
 from __future__ import annotations
 
 import asyncio
 import logging
-import os
 import time
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -56,30 +60,13 @@ logger = logging.getLogger(__name__)
 # a live tool run may be held inside it.
 ANALYSER_PASS_SEMAPHORE = asyncio.Semaphore(1)
 
-# How long `drain` waits for the terminal chunk's pass. On expiry the run completes
-# with `analysis_drained: false` - an honest hole rather than an unbounded wait, and
-# never a failed run.
-ANALYSIS_DRAIN_DEADLINE_S = float(os.environ.get("ANALYSIS_DRAIN_DEADLINE_S", "600"))
-
-# The BOUNDED grace the graceful stop (Fix 4) grants the in-flight pass after the
-# deadline: long enough that a pass a little slower than the deadline still finishes
-# and its work + Langfuse traces survive, but FINITE so a pass that HANGS cannot hold
-# the run open forever. This closes the live wedge on run 27386f9c: the graceful path
-# used to `await self._idle.wait()` with NO timeout, so a terminal pass blocked on a
-# wedged provider socket (a dead half-open connection whose per-read timeout never
-# trips) kept the run `running` indefinitely. On grace expiry the in-flight pass is
-# cancelled and the run completes with the claim withheld - the deadline's original
-# "honest hole, never an unbounded wait" contract, now honoured on the graceful path
-# too. The total ceiling drain can spend is therefore `deadline + grace`.
-ANALYSIS_DRAIN_GRACE_S = float(os.environ.get("ANALYSIS_DRAIN_GRACE_S", "300"))
-
 
 class L0Chunk(BaseModel):
     """The queue element: a curated slice of L0 surface a recon job produced.
 
     Carries the job's curated `AssetDelta`s + triager `Observation`s - the exact
     payload the analyser consumes, exactly once - plus the provenance of the
-    push. `terminal` marks the drain's end-marker (a property of the run, never
+    push. `terminal` marks the end-of-stream marker (a property of the run, never
     of a job's payload)."""
 
     project_id: str
@@ -92,13 +79,15 @@ class L0Chunk(BaseModel):
 
 
 class FeedStats(BaseModel):
-    """What the feed reports back into the run's stats. `analysis_drained` is the
+    """What the consumer reports about a run's drain. `analysis_drained` is the
     load-bearing field and is FALSE unless the terminal marker was consumed AND a
-    pass actually entered dispatches (#34 DQ2b)."""
+    pass actually entered dispatches (#34 DQ2b). `status` is the analysis-run
+    terminal status the analysis module persists (#75)."""
 
     model_config = ConfigDict(frozen=True)
 
     mode: str = "inline"
+    status: str = ""            # drained | withheld | stopped (analysis-run status, #75)
     advanced: int = 0
     passes: int = 0
     analysis_drained: bool = False
@@ -107,18 +96,7 @@ class FeedStats(BaseModel):
     dispatches_entered: int = 0
 
     # THE stall predicate (#34 AST-DEC-09). `advance_blocked_s_max` is the longest
-    # any single `push` held the recon job loop, measured at the seam itself -
-    # which is the quantity the decoupling exists to drive to zero, and is directly
-    # comparable between the two modes: under `inline` it IS the pass duration
-    # (on run 64f2ccb8, up to 1157 s), under `queued` it must stay near zero even
-    # while `pass_seconds_max` remains large.
-    #
-    # This supersedes the originally specified observable, "the gap between a job's
-    # finished_at and the next job's started_at", which is unimplementable:
-    # `upsert_job` stamps `started_at` with `now()` on INSERT and does not touch it
-    # ON CONFLICT (`app/clients/pg.py:207-212`), and the pipeline inserts the
-    # `in_progress` row for EVERY job of a phase during phase setup, before any of
-    # them runs. So `started_at` measures phase setup, not job start.
+    # any single `push` held the recon job loop, measured at the seam itself.
     advance_blocked_s_max: float = 0.0
     advance_blocked_s_total: float = 0.0
     pass_seconds_max: float = 0.0
@@ -126,11 +104,7 @@ class FeedStats(BaseModel):
 
 
 class _Timings:
-    """Max/total accumulators for the two durations that decide AST-DEC-09.
-
-    Kept as a tiny value holder rather than four loose attributes so both feeds
-    measure the same two things the same way, and the assertion can compare
-    inline against queued without knowing which class produced the numbers."""
+    """Max/total accumulators for the two durations that decide AST-DEC-09."""
 
     def __init__(self) -> None:
         self.blocked_max = 0.0
@@ -158,7 +132,8 @@ class _Timings:
 class InlineAnalysisFeed:
     """The rollback path: `push` runs the chunk's pass on the caller's task and
     returns only when it is done. Kept so the flag is a genuine two-way door and
-    no analysis code is forked."""
+    no analysis code is forked. It is fully COUPLED (no independent analysis run):
+    it exists only for `async_analysis_consumer=False`."""
 
     mode = "inline"
 
@@ -180,9 +155,10 @@ class InlineAnalysisFeed:
             logger.warning("inline analysis pass raised for run %s job %s (recon continues)",
                            self._run_id, chunk.job, exc_info=True)
         finally:
-            # For the inline feed the blocked time IS the pass time - which is
-            # exactly the fact the assertion needs to be able to state.
             self._timings.record_blocked(time.monotonic() - started)
+
+    async def signal_end(self) -> None:  # no-op: inline has nothing outstanding
+        return None
 
     async def _run_pass(self, chunk: L0Chunk):
         if self._pass_fn is not None:
@@ -190,22 +166,24 @@ class InlineAnalysisFeed:
         from polymerhus.analysis.supervisor import analyse_chunked
         return await analyse_chunked(chunk)
 
-    async def drain(self, deadline: float = ANALYSIS_DRAIN_DEADLINE_S) -> FeedStats:
-        """No-op: the inline feed has nothing outstanding by construction, because
-        every `push` already ran to completion. It makes NO drained claim -
-        `analysis_drained` stays false, because no terminal chunk pass was
-        engineered (the last inline pass ran before the run's end)."""
+    async def drain(self) -> FeedStats:
+        """No-op: every inline `push` already ran to completion. Makes no drained
+        claim (`analysis_drained` stays false)."""
         return FeedStats(mode=self.mode, advanced=self._advanced, passes=self._passes,
                          **self._timings.as_stats())
 
+    async def stop(self) -> None:
+        return None
+
 
 class QueuedAnalysisFeed:
-    """The decoupled feed: `push` enqueues a curated chunk and returns immediately.
+    """The decoupled consumer engine (#74/#75): recon pushes chunks, the analysis
+    module runs the consumer.
 
-    One consumer task per run drains an UNBOUNDED FIFO of `L0Chunk` payloads,
-    one chunk per pass, each consumed exactly once in push order. The consumer
-    holds `ANALYSER_PASS_SEMAPHORE` for the duration of each pass, so
-    concurrency across runs never becomes accumulation."""
+    ONE consumer task per run drains an UNBOUNDED per-run FIFO, one chunk per pass,
+    each consumed exactly once in push order, holding `ANALYSER_PASS_SEMAPHORE` per
+    pass. The consumer ENDS NATURALLY when it consumes the terminal marker (D4) or
+    is gracefully STOPPED (D7): there is no drain deadline (D8)."""
 
     mode = "queued"
 
@@ -216,63 +194,106 @@ class QueuedAnalysisFeed:
         self._queue: asyncio.Queue[L0Chunk] = asyncio.Queue()
         self._advanced = 0
         self._passes = 0
-        self._idle = asyncio.Event()
-        self._idle.set()
         self._last_census = None
         self._task: asyncio.Task | None = None
         self._timings = _Timings()
-        # Cumulative non-vacuity: did ANY pass this run actually enter a dispatch? The drained
-        # claim needs this because a terminal chunk is a no-op by construction (it carries no
-        # assets), yet the surface WAS observed - just not by it.
+        # Non-vacuity across the run: did ANY pass enter a dispatch? The drained claim
+        # needs this because the terminal marker is a no-op by construction.
         self._observed_any = False
-        # Run-total surface read across consumed chunks (each chunk exactly once, so this
-        # IS the run's settled-surface size).
         self._l0_assets_read = 0
+        # Lifecycle events. `_done` is set when the consumer reaches a terminal state
+        # (marker consumed, or graceful stop); `_stop_event` requests a graceful stop.
+        self._done = asyncio.Event()
+        self._stop_event = asyncio.Event()
+        self._status = ""  # drained | withheld | stopped, set when the consumer ends
+
+    # --- producer side (recon) ------------------------------------------------
+
+    async def push(self, chunk: L0Chunk) -> None:
+        """Non-blocking, best-effort: enqueue a curated chunk. No back-pressure -
+        the FIFO is unbounded by operator decision (a bound would reintroduce the
+        recon<->analysis coupling this redesign removes). Async only to match the
+        inline feed's signature; it never awaits."""
+        self._advanced += 1
+        started = time.monotonic()
+        self._queue.put_nowait(chunk)
+        # Measured on EVERY path: the claim is about the caller (the recon loop).
+        self._timings.record_blocked(time.monotonic() - started)
+
+    async def signal_end(self) -> None:
+        """Enqueue the terminal marker: recon telling analysis "no more chunks"
+        (D4). Fire-and-forget, on BOTH recon-complete and recon-stop. Idempotent
+        enough - a second marker is just consumed as another no-op terminal pass."""
+        self._queue.put_nowait(L0Chunk(
+            project_id=self._project_id, run_id=self._run_id, terminal=True,
+        ))
+
+    # --- consumer side (analysis) ---------------------------------------------
 
     def start(self) -> "QueuedAnalysisFeed":
+        self._done.clear()
+        self._stop_event.clear()
         self._task = asyncio.create_task(self._consume(), name=f"analysis-consumer-{self._run_id}")
         return self
 
-    async def push(self, chunk: L0Chunk) -> None:
-        """Non-blocking, best-effort: enqueue the curated chunk. There is no
-        back-pressure - the FIFO is unbounded by operator decision, and a bound
-        would reintroduce the recon<->analysis coupling this redesign removes."""
-        self._advanced += 1
-        started = time.monotonic()
-        self._idle.clear()
-        self._queue.put_nowait(chunk)
-        # Measured on EVERY path: the claim being made is about the caller - the
-        # recon job loop - not about the happy path through this method.
-        self._timings.record_blocked(time.monotonic() - started)
-
     async def _consume(self) -> None:
-        while True:
-            chunk = await self._queue.get()
-            try:
-                async with self._sem:
-                    # Timed INSIDE the semaphore: `pass_seconds` must mean the work
-                    # a pass did, not how long it queued behind another run's pass,
-                    # or the non-vacuity guard ("some pass took real time") could be
-                    # satisfied by contention alone.
-                    started = time.monotonic()
-                    result = await self._run_pass(chunk)
-                    self._timings.record_pass(time.monotonic() - started)
-                self._passes += 1
-                if result is not None:
-                    self._last_census = getattr(result, "census", None)
-                    if getattr(self._last_census, "dispatches_entered", 0):
-                        self._observed_any = True
-                    self._l0_assets_read += len(chunk.assets)
-            except asyncio.CancelledError:
-                self._queue.task_done()
-                raise
-            except Exception:  # a failed pass degrades that chunk, never the run
-                logger.warning("analysis pass raised for run %s job %s (recon continues)",
-                               self._run_id, chunk.job, exc_info=True)
-            finally:
-                self._queue.task_done()
-                if self._queue.empty():
-                    self._idle.set()
+        """Drain the FIFO one chunk per pass. Ends on the terminal marker (natural
+        drain) or a graceful stop. The stop race NEVER cancels a get that already
+        returned a chunk (that would lose it); it only cancels a still-pending get,
+        which has removed nothing from the queue - so a stop leaves un-consumed
+        chunks intact and in order for a resume."""
+        pending_get: asyncio.Task | None = None
+        try:
+            while True:
+                if self._stop_event.is_set():
+                    self._status = "stopped"
+                    break
+                if pending_get is None:
+                    pending_get = asyncio.ensure_future(self._queue.get())
+                stop_wait = asyncio.ensure_future(self._stop_event.wait())
+                try:
+                    done, _ = await asyncio.wait(
+                        {pending_get, stop_wait}, return_when=asyncio.FIRST_COMPLETED)
+                finally:
+                    if not stop_wait.done():
+                        stop_wait.cancel()
+                if pending_get not in done:
+                    # Stop won while we were waiting for a chunk: no pass is in flight
+                    # and `pending_get` has dequeued nothing, so it is safe to abandon.
+                    self._status = "stopped"
+                    break
+                chunk = pending_get.result()
+                pending_get = None
+                # Process this chunk FULLY - it is the in-flight pass a graceful stop
+                # must let finish (D7). A pass failure degrades that chunk, not the run.
+                try:
+                    async with self._sem:
+                        started = time.monotonic()
+                        result = await self._run_pass(chunk)
+                        self._timings.record_pass(time.monotonic() - started)
+                    self._passes += 1
+                    if result is not None:
+                        self._last_census = getattr(result, "census", None)
+                        if getattr(self._last_census, "dispatches_entered", 0):
+                            self._observed_any = True
+                        self._l0_assets_read += len(chunk.assets)
+                except asyncio.CancelledError:
+                    self._queue.task_done()
+                    raise
+                except Exception:
+                    logger.warning("analysis pass raised for run %s job %s (drain continues)",
+                                   self._run_id, chunk.job, exc_info=True)
+                finally:
+                    self._queue.task_done()
+                if chunk.terminal:
+                    # The marker is consumed LAST (FIFO), so every pushed chunk has been
+                    # consumed. Classify the run (D4): drained iff a pass observed surface.
+                    self._status = "drained" if self._observed_any else "withheld"
+                    break
+        finally:
+            if pending_get is not None and not pending_get.done():
+                pending_get.cancel()  # still-pending get dequeued nothing - safe
+            self._done.set()
 
     async def _run_pass(self, chunk: L0Chunk):
         if self._pass_fn is not None:
@@ -280,59 +301,48 @@ class QueuedAnalysisFeed:
         from polymerhus.analysis.supervisor import analyse_chunked
         return await analyse_chunked(chunk)
 
-    async def drain(self, deadline: float = ANALYSIS_DRAIN_DEADLINE_S,
-                    grace: float = ANALYSIS_DRAIN_GRACE_S) -> FeedStats:
-        """Enqueue a TERMINAL chunk and wait for the consumer to go idle.
+    async def wait_until_done(self) -> FeedStats:
+        """Await the consumer's natural end (terminal marker) or graceful stop.
+        NO deadline (D8): a slow drain settles naturally because every pass
+        self-terminates (#73). Returns the run's FeedStats."""
+        await self._done.wait()
+        return self._stats()
 
-        The terminal marker is what makes the at-least-once-observation guarantee
-        real: being consumed LAST (FIFO), it is consumed only after every pushed
-        chunk has been - so the queue being empty when it is done IS the run's
-        settled surface having been consumed, exactly once each. `analysis_drained`
-        is decided from the terminal pass's census plus run non-vacuity: a run
-        whose passes entered no dispatch cannot claim convergence. On deadline
-        expiry the run still completes within a BOUNDED grace, with the claim
-        explicitly withheld - never an unbounded wait."""
-        await self.push(L0Chunk(
-            project_id=self._project_id, run_id=self._run_id, terminal=True,
-        ))
-        try:
-            await asyncio.wait_for(self._idle.wait(), timeout=deadline)
-        except asyncio.TimeoutError:
-            # Fix 4 - GRACEFUL, not a mid-pass hard cancel: a hard cancel discards the
-            # in-flight chunk's work and its Langfuse traces (the moodique cc29fd4a failure -
-            # the whole terminal pass was killed, losing the katana surface). Instead stop
-            # consuming and let the in-flight one finish. The fixed deadline is a test knob
-            # (operator): a real run is not time-bounded and waits for analysis to settle.
-            #
-            # But the graceful wait is itself BOUNDED (run 27386f9c): it used to be an
-            # unconditional `await self._idle.wait()`, so a terminal pass that HANGS - blocked
-            # on a wedged provider socket whose per-read timeout never trips - held the run
-            # `running` forever. Grant the in-flight pass a finite grace to finish on its own
-            # (preserving its work + traces); if even that expires, fall through to `stop()`
-            # below, which cancels it, and complete with `analysis_drained: false`.
-            logger.warning("analysis drain deadline (%.0fs) reached for run %s; stopping new "
-                           "passes, awaiting the in-flight pass (grace %.0fs)",
-                           deadline, self._run_id, grace)
+    async def stop(self) -> FeedStats:
+        """Graceful stop (D7): request the consumer to finish its in-flight chunk
+        and consume no further chunk. Preserves the queue for a resume. Awaits the
+        consumer to settle, then returns its stats."""
+        self._stop_event.set()
+        if self._task is not None and not self._task.done():
             try:
-                await asyncio.wait_for(self._idle.wait(), timeout=grace)
-            except asyncio.TimeoutError:
-                logger.warning("analysis drain grace (%.0fs) expired for run %s; abandoning the "
-                               "in-flight pass, completing with analysis_drained=false",
-                               grace, self._run_id)
+                await self._task
+            except (asyncio.CancelledError, Exception):  # noqa: B014 - stop must not raise
+                pass
+        return self._stats()
+
+    async def cancel(self) -> None:
+        """Hard cancel (process shutdown / abnormal only). Unlike `stop`, this does
+        not wait for the in-flight chunk - use only when the process is going away."""
+        if self._task is None or self._task.done():
+            return
+        self._task.cancel()
+        try:
+            await self._task
+        except (asyncio.CancelledError, Exception):  # noqa: B014
+            pass
+
+    def _stats(self) -> FeedStats:
         census = self._last_census
-        # Drained iff the terminal pass was observed (FIFO order makes this mean every
-        # pushed chunk was consumed) AND some pass this run actually entered dispatches.
         drained = bool(
             census is not None
             and getattr(census, "terminal", False)
             and getattr(census, "unprocessed_after", 0) == 0
             and self._observed_any
         )
-        await self.stop()
         return FeedStats(
-            mode=self.mode, advanced=self._advanced, passes=self._passes,
-            analysis_drained=drained,
-            consumer=self._consumer_state(),
+            mode=self.mode, status=self._status,
+            advanced=self._advanced, passes=self._passes,
+            analysis_drained=drained, consumer=self._consumer_state(),
             l0_assets_read=self._l0_assets_read,
             dispatches_entered=getattr(census, "dispatches_entered", 0) or 0,
             **self._timings.as_stats(),
@@ -347,38 +357,39 @@ class QueuedAnalysisFeed:
             return "stopped"
         return "dead" if self._task.exception() is not None else "finished"
 
-    async def stop(self) -> None:
-        """Cancel the consumer. Called on the drain path AND on abnormal
-        termination (#34 DQ4a): a cancelled or failed run finishes no outstanding
-        pass and makes no convergence claim, because finishing analysis the operator
-        asked to abandon serves nobody."""
-        if self._task is None or self._task.done():
-            return
-        self._task.cancel()
-        try:
-            await self._task
-        except (asyncio.CancelledError, Exception):  # noqa: B014 - shutdown must not raise
-            pass
+
+# --- process-level per-run feed registry (#75 D1) -----------------------------
+#
+# One feed per run, keyed by run_id, so recon (producer) and analysis (consumer)
+# reference the SAME queue and the feed OUTLIVES the recon pipeline task. The
+# registry is the seam that decouples the two modules' lifecycles.
+
+_FEEDS: dict[str, QueuedAnalysisFeed] = {}
 
 
-def start_analysis_feed(project_id: str, run_id: str, *, mode: str = "inline", pass_fn=None):
-    """The ONE seam the pipeline calls. `mode` comes from settings, so the call site
-    never branches and rollback is a flag flip."""
-    if mode == "queued":
-        return QueuedAnalysisFeed(project_id, run_id, pass_fn=pass_fn).start()
-    return InlineAnalysisFeed(project_id, run_id, pass_fn=pass_fn)
+def get_or_create_feed(project_id: str, run_id: str, *, pass_fn=None) -> QueuedAnalysisFeed:
+    """Return the run's feed, creating (and registering) it on first touch. Recon
+    calls this to push; the analysis module calls it to start the consumer - both
+    get the same instance for a run_id."""
+    feed = _FEEDS.get(run_id)
+    if feed is None:
+        feed = QueuedAnalysisFeed(project_id, run_id, pass_fn=pass_fn)
+        _FEEDS[run_id] = feed
+    return feed
+
+
+def get_feed(run_id: str) -> QueuedAnalysisFeed | None:
+    return _FEEDS.get(run_id)
+
+
+def drop_feed(run_id: str) -> None:
+    """Discard a run's feed (and its queue) on teardown - the memory bound (D12)."""
+    _FEEDS.pop(run_id, None)
 
 
 def resolve_feed_mode(settings: dict | None) -> str:
     """`queued` is the DEFAULT whenever streaming analysis is on; `inline` only when
     explicitly opted back into (`async_analysis_consumer=False`).
-
-    The default flipped (#9): with the mechanism_typist dispatched in the streaming
-    schedule, an analyser pass is ~126 s/chunk (its 3 LLM calls), and the inline feed
-    runs that pass ON the recon critical path - so recon stalls behind the typist.
-    Queued hands each chunk's pass to a per-run consumer (unbounded FIFO), keeping
-    recon off the analyser's latency. `inline` remains the rollback path (the pre-#9
-    behaviour) for a caller that sets `async_analysis_consumer=False` explicitly.
 
     The terminal pass stays gated on `streaming_analysis` (#34 DQ5a): off means off,
     byte-for-byte as today, so this flag cannot introduce post-recon batch analysis

@@ -57,6 +57,18 @@ CREATE TABLE IF NOT EXISTS recon_jobs (
     error       TEXT,
     CONSTRAINT recon_jobs_run_phase_job_key UNIQUE (run_id, phase, job)
 );
+-- #75: analysis is its own run, decoupled from the recon run. Surrogate PK with
+-- run_id a NON-UNIQUE indexed correlation column so a relaunch never collides (D5).
+CREATE TABLE IF NOT EXISTS analysis_runs (
+    analysis_run_id TEXT PRIMARY KEY,
+    run_id          TEXT NOT NULL,
+    project_id      TEXT NOT NULL,
+    status          TEXT NOT NULL,
+    started_at      TIMESTAMPTZ,
+    finished_at     TIMESTAMPTZ,
+    stats           JSONB NOT NULL DEFAULT '{}'::jsonb
+);
+CREATE INDEX IF NOT EXISTS analysis_runs_run_idx ON analysis_runs (run_id);
 ALTER TABLE recon_runs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS recon_runs_status_idx ON recon_runs (status);
 -- Interface agreement B (L1D-26): a targeted AnalyserReconRequest job carries a

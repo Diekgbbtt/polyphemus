@@ -270,8 +270,14 @@ async def run_pipeline(
     decide_routing=None,
     feed_mode: str | None = None,
     pass_fn=None,
+    with_analysis: bool = True,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
+
+    `with_analysis` (#75): when True (the combined dispatch) recon also STARTS the
+    independent analysis consumer for this run; when False (the recon-only
+    dispatch) recon only pushes chunks to the run's FIFO and a later analysis-only
+    dispatch drains them. Either way recon NEVER waits on analysis.
 
     Best-effort: a job whose pods all fail, or whose `run_job` call raises,
     is marked "degraded" and the pipeline continues - it always reaches a
@@ -305,15 +311,24 @@ async def run_pipeline(
     # hands the pass to a per-run consumer so recon never waits on an LLM. The mode
     # is a settings flag, so this call site does not branch and rollback is a flip.
     from polymerhus.analysis.feed import (
-        L0Chunk, resolve_feed_mode, start_analysis_feed,
+        InlineAnalysisFeed, L0Chunk, get_or_create_feed, resolve_feed_mode,
     )
     _mode = feed_mode or resolve_feed_mode(settings)
-    # `start_analysis_feed` decides the worker placement: `queued` hands the pass
-    # to a per-run consumer so recon never waits on an LLM; `inline` (the rollback
-    # path) runs each pass on the caller's task. Both consume the pushed chunk via
-    # `analyse_chunked(chunk)` - identical semantics, different executor. The feed
-    # falls back to that pass internally, so no seam to inject here.
-    feed = start_analysis_feed(project_id, run_id, mode=_mode, pass_fn=pass_fn) if streaming else None
+    # #75: recon is the PRODUCER. For the `queued` (decoupled) mode it pushes onto
+    # the run's per-run FIFO in the process-level registry - a feed that OUTLIVES
+    # this task, so analysis can drain it independently. Recon starts the analysis
+    # consumer itself only on the COMBINED dispatch (`with_analysis`); the recon-only
+    # dispatch leaves the chunks for a later analysis-only dispatch. `inline` is the
+    # coupled rollback path (analysis runs on this task), unchanged.
+    feed = None
+    if streaming:
+        if _mode == "inline":
+            feed = InlineAnalysisFeed(project_id, run_id, pass_fn=pass_fn)
+        else:
+            feed = get_or_create_feed(project_id, run_id, pass_fn=pass_fn)
+            if with_analysis:
+                from polymerhus.analysis.lifecycle import start_analysis
+                start_analysis(project_id, run_id, pass_fn=pass_fn)
 
     if job_subset is not None:
         validate_job_subset(job_subset)
@@ -594,37 +609,36 @@ async def run_pipeline(
                 await _run_one(name)
             signals = await asyncio.to_thread(read_steering_signals, project_id)
 
-        # DRAIN, inside the try so the heartbeat is still ticking through it: the
-        # reaper flips a run whose heartbeat stalls, and a terminal analyser pass
-        # can outlive REAP_TTL_SECONDS. The terminal pass is what makes the
-        # at-least-once-observation guarantee real (#34 DQ1a/DQ2b).
-        if feed is not None:
+        # #75: recon and analysis are DECOUPLED. For the INLINE rollback path only,
+        # analysis ran on this task, so record its stats onto the recon run as
+        # before. The queued (decoupled) path records nothing here - the analysis
+        # run owns its own status row.
+        if feed is not None and getattr(feed, "mode", None) == "inline":
             try:
                 feed_stats = await feed.drain()
                 write_stats = getattr(registry, "set_run_stats", None)
                 if write_stats is not None:
                     await asyncio.to_thread(write_stats, run_id, feed_stats.model_dump())
             except Exception:  # a drain failure must never fail a healthy recon run
-                logger.warning("analysis drain raised for run %s (recon continues)",
+                logger.warning("inline analysis drain raised for run %s (recon continues)",
                                run_id, exc_info=True)
     finally:
-        # #34 DQ4a: no DRAIN on abnormal termination - a cancelled or failed run
-        # finishes no outstanding pass and makes no convergence claim, because
-        # finishing analysis the operator asked to abandon serves nobody. The drain
-        # therefore lives in the `try` above and only the STOP is unconditional:
-        # `stop` is idempotent, and calling it on every path is what guarantees the
-        # consumer task cannot outlive its run (a `drain` that raised before its own
-        # cleanup would otherwise leak it).
+        # #75 D4: on EVERY exit path (clean complete OR stop/kill) tell the analysis
+        # consumer "no more chunks" by enqueuing the terminal marker - fire-and-forget,
+        # never waiting for analysis. The consumer is owned by the analysis lifecycle
+        # module (NOT this task), so recon never cancels it: it drains the FIFO
+        # naturally and records its own status. For the inline feed this is a no-op.
         if feed is not None:
-            stop = getattr(feed, "stop", None)
-            if stop is not None:
-                try:
-                    await stop()
-                except Exception:
-                    logger.warning("analysis consumer stop raised for run %s", run_id, exc_info=True)
+            try:
+                await feed.signal_end()
+            except Exception:
+                logger.warning("analysis signal_end raised for run %s (recon continues)",
+                               run_id, exc_info=True)
         hb.cancel()
         try:
             await hb
         except asyncio.CancelledError:
             pass
+    # Recon reaches complete the instant its jobs finish - it does NOT wait on
+    # analysis (#75 D3). Analysis settles independently on its own run row.
     await asyncio.to_thread(registry.set_run_status, run_id, "complete")
