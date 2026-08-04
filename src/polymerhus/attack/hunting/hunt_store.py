@@ -20,6 +20,7 @@ section 6).
 from __future__ import annotations
 
 import logging
+import re
 from pathlib import Path
 
 import yaml
@@ -102,8 +103,14 @@ class HuntStore:
         path = self._file(run_id, kind)
         if not path.exists():
             return []
+        # Split on the `## <seq>` headers, NOT on "\n## ": a naive split on the
+        # bare header leaves the sequence number on the leading line of every
+        # block after the first, which is not valid YAML ("0006\n_ref: ...").
+        # Keeping the header as the split delimiter leaves each block's body
+        # clean, so every record round-trips - a two-hunt file must yield two
+        # records, never just the first.
         records: list[dict] = []
-        for block in path.read_text(encoding="utf-8").split("\n## "):
+        for block in re.split(r"(?m)^## \d+\n", path.read_text(encoding="utf-8")):
             block = block.strip()
             if not block:
                 continue

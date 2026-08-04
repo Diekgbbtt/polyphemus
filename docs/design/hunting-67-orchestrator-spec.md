@@ -209,6 +209,39 @@ Terminal: two hunt records, one back-edge record, one `unresolved`-free run; the
 Observed: the store's back-edge records and both hunt records.
 Yields: `...::test_yellow_park_resume`. Blocked by the hunting-agent ticket.
 
+### 6.3 Orchestrator-in-isolation predicates (e2e tier)
+
+The orchestrator's OWN infrastructure seams are exercised for real here - a live L0/L1 graph the read-only view grounds on, and a real append-only markdown hunt store on the filesystem - while the agent-side collaborators (reason turn Q8, dispatch IA-2, re-match, KB retrieval, back-edge) are the spec-sanctioned fixture agents (section 3). This closes the coverage hole left by C1-C12 (which mock the graph view empty) and the blocked E1/E2 (which need the real hunting agent): nothing else asserts the orchestrator grounds in real index-cards, never writes L0/L1, or persists the full lifecycle into real store files. Every happy path H1-H4 and every outlier O1-O10 takes its orchestrator shape here.
+
+E3 - Full run against the real graph (H1 + D67-04): given two applies candidates over a live project carrying a Service and a System with edges, exercising success, the gate's surface is the REAL index-cards (typed spine + per-family edge degrees), both `HuntConfig`s carry that surface and the KB's tool registry, the store ends with run/config/hunt/dispatch/result records chained by `config_ref`, and the L0/L1 graph is byte-identical before and after the run.
+Yields: `tests/e2e/test_hunt_orchestrator_isolated_e2e.py::test_E3_full_run_grounds_in_real_graph_and_never_writes`.
+E4 - Park/resume unresolved at the depth cap (O8, IA-6): given a yellow candidate whose re-match is still `insufficient-evidence`, exercising degradation, the candidate terminates `unresolved` with its revival key and a `back_edge` record; the back-edge path writes nothing to the graph.
+Yields: `...::test_E4_park_resume_unresolved_at_depth_cap`.
+E5 - Park/resume re-match applies (H3, IA-6): given a yellow candidate whose re-match flips to `applies`, exercising success, the second hunt dispatches and its `HuntConfig` carries the back-edge caveat; the store has two hunt records and one back-edge record.
+Yields: `...::test_E5_park_resume_rematch_applies_dispatches`.
+E6 - Deterministic prune before the gate (H2, Q8 level 1): given an applies and a does-not-apply candidate, exercising success, only one direction survives to dispatch, `pruned_by_verdict` counts one, and the gate still grounds in the real graph.
+Yields: `...::test_E6_deterministic_prune_before_the_gate`.
+E7 - Empty candidate set (O1): given zero candidates, exercising empty-valid, the run records the empty pass with `candidates_received == 0` and dispatches nothing.
+Yields: `...::test_E7_empty_candidate_set_is_an_empty_pass`.
+E8 - Duplicate + malformed intake (O7/O10): given a duplicate identity and a missing-witness candidate, exercising malformed, both are dropped counted and one hunt proceeds.
+Yields: `...::test_E8_duplicate_and_malformed_dropped_counted`.
+E9 - KB degradation at the gate (H4/D67-11): given a failing KB retrieval, exercising degradation, the gate reasons degraded (`kb_degraded`), the direction is kept, the minted config's tool registry is empty, and the dispatch still happens.
+Yields: `...::test_E9_kb_failure_degrades_the_gate_never_prunes`.
+E10 - Store write failure (O3, IA-7): given failing store writes at S7, exercising degradation, warnings are logged, the run completes, and the failure count is reported.
+Yields: `...::test_E10_store_write_failure_degrades_to_warning`.
+E11 - Store read failure (O4, IA-7): given a failing store read, exercising degradation, the hunt proceeds with empty prior-hunt insights.
+Yields: `...::test_E11_store_read_failure_degrades_prior_insights`.
+E12 - Graph-view query failure (O5): given a failing graph read, exercising degradation, the gate degrades to the candidate set + KB evidences alone and the hunt still dispatches.
+Yields: `...::test_E12_graph_view_failure_degrades_the_gate`.
+E13 - Dispatch target failure (O6, IA-2): given a hunting agent that raises, exercising degradation, the hunt record is `degraded` with the error, the run continues.
+Yields: `...::test_E13_dispatch_failure_degrades_the_hunt`.
+E14 - Budget cut (O9): given a budget governor that cuts one of two directions, exercising ordering, the cut direction is recorded, not dispatched, and one config/hunt pair results.
+Yields: `...::test_E14_budget_cut_records_undispatched_direction`.
+E15 - Cross-run memory by revival key (#70, E1): given a completed first pass, exercising persistence, the first pass's feedback becomes the second pass's prior-hunt insight, read back out of the real cross-run `memory.md`.
+Yields: `...::test_E15_cross_run_memory_by_revival_key`.
+E16 - The read-only view over the live graph (D67-04): given a write-shaped call through the real view, exercising malformed, the view rejects the write and still serves reads against the live graph.
+Yields: `...::test_read_only_view_rejects_writes`.
+
 ## 7. Out of scope
 
 The ranker body (#71), the budget governor (#71), the `FaultSource` engine (#66/#71), the hunt-store persistence design (#68), the memory system (#70), the back-edge trigger wiring (#64), and the hunting agent itself (its own spec doc).
