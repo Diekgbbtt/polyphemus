@@ -1,0 +1,61 @@
+# Authoring sidecar: matching facet for CWE-102..CWE-199 (#66, spec 5.6).
+entries:
+  CWE-102:
+    nl: "The unit uses multiple Struts validation forms with the same name."
+    enum_kinds: [WebPresentation]
+  CWE-103:
+    nl: "The unit's Struts validator form lacks a working validate() method."
+    enum_kinds: [WebPresentation]
+  CWE-104:
+    nl: "The unit's Struts form bean does not extend the validator framework's validation class."
+    enum_kinds: [WebPresentation]
+  CWE-105:
+    nl: "The unit has a form field without a corresponding Struts validator."
+    enum_kinds: [WebPresentation]
+  CWE-106:
+    nl: "The unit does not use an input validation framework for its forms."
+    enum_kinds: [WebPresentation]
+  CWE-108:
+    nl: "The unit's Struts Action Form lacks a corresponding validation form."
+    enum_kinds: [WebPresentation]
+  CWE-109:
+    nl: "The unit disables its Struts validation mechanism."
+    enum_kinds: [WebPresentation]
+  CWE-112:
+    nl: "The unit accepts XML from an untrusted source without validating it against a schema."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-113:
+    nl: "The unit passes CRLF sequences from external input into HTTP response headers."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-114:
+    nl: "The unit executes commands or loads libraries from an untrusted source."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-115:
+    nl: "The unit misinterprets an input in a security-relevant way."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-117:
+    nl: "The unit writes external input into a log message without neutralizing it."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-129:
+    nl: "The unit uses untrusted input as an array index without validation."
+  CWE-130:
+    nl: "The unit mishandles a length-parameter inconsistency when parsing input."
+  CWE-134:
+    nl: "The unit passes externally controlled input as a format string."
+  CWE-166:
+    nl: "The unit mishandles a missing special element in incoming input."
+  CWE-167:
+    nl: "The unit mishandles an unexpected extra special element in incoming input."
+  CWE-168:
+    nl: "The unit mishandles inconsistent special elements in incoming input."
+  CWE-179:
+    nl: "The unit validates input before applying a protection mechanism that modifies it."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-180:
+    nl: "The unit validates input before canonicalizing it."
+  CWE-181:
+    nl: "The unit validates input before filtering it."
+  CWE-183:
+    nl: "The unit enforces a permissive allowlist of inputs."
+  CWE-184:
+    nl: "The unit enforces an incomplete denylist of inputs."

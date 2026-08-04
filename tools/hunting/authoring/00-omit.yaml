@@ -1,0 +1,72 @@
+# Authoring sidecar: OMITS - the curator's web-relevance disposition (#66).
+#
+# Entries the mechanical platform filter could not reject (neutral / missing
+# platform data) but that are NOT web-application faults: hardware / embedded /
+# physical-fault weaknesses, and OS-desktop / kernel / dead-platform faults.
+# Omitting keeps the phase-1 checklist honest (catalogue-grounded, web-app).
+# Review in the PR is the gate; re-adding an entry here is a one-line revert.
+#
+# All other authoring files carry the matching facet (nl / enum_kinds /
+# predicate) for the kept entries.
+entries:
+  CWE-364: {omit: true, omit_reason: "signal-handler race: OS process-level, not a web-app fault"}
+  CWE-403: {omit: true, omit_reason: "file-descriptor exposure to child processes: OS process-level"}
+  CWE-422: {omit: true, omit_reason: "Windows Messaging System channel: desktop OS, not web"}
+  CWE-432: {omit: true, omit_reason: "signal handler sharing state: OS process-level"}
+  CWE-479: {omit: true, omit_reason: "non-reentrant function in signal handler: OS process-level"}
+  CWE-560: {omit: true, omit_reason: "umask()/chmod-style argument: UNIX process-level"}
+  CWE-582: {omit: true, omit_reason: "public final static array: pre-Java-5 mobile-code pattern, not web"}
+  CWE-583: {omit: true, omit_reason: "public finalize(): pre-Java-5 mobile-code pattern, not web"}
+  CWE-587: {omit: true, omit_reason: "pointer assigned to a fixed address: low-level memory fault"}
+  CWE-618: {omit: true, omit_reason: "ActiveX control exposing methods: dead browser-plugin platform"}
+  CWE-623: {omit: true, omit_reason: "ActiveX safe-for-scripting flag: dead browser-plugin platform"}
+  CWE-781: {omit: true, omit_reason: "IOCTL METHOD_NEITHER: Windows kernel driver fault"}
+  CWE-782: {omit: true, omit_reason: "exposed IOCTL: Windows kernel driver fault"}
+  CWE-828: {omit: true, omit_reason: "non-async-safe signal handler: OS process-level"}
+  CWE-831: {omit: true, omit_reason: "signal handler for multiple signals: OS process-level"}
+  CWE-1191: {omit: true, omit_reason: "on-chip debug/test interface: hardware"}
+  CWE-1231: {omit: true, omit_reason: "lock-bit modification: hardware register control"}
+  CWE-1233: {omit: true, omit_reason: "hardware register lock-bit protection: hardware"}
+  CWE-1243: {omit: true, omit_reason: "fuse-stored security information during debug: hardware"}
+  CWE-1248: {omit: true, omit_reason: "semiconductor defects in hardware logic: hardware"}
+  CWE-1253: {omit: true, omit_reason: "fuse value selection: hardware"}
+  CWE-1255: {omit: true, omit_reason: "power side-channel comparison: hardware"}
+  CWE-1256: {omit: true, omit_reason: "software interfaces to hardware features: hardware"}
+  CWE-1259: {omit: true, omit_reason: "SoC security token assignment: hardware"}
+  CWE-1261: {omit: true, omit_reason: "single-event upsets in hardware logic: hardware"}
+  CWE-1262: {omit: true, omit_reason: "memory-mapped I/O register interface: hardware"}
+  CWE-1267: {omit: true, omit_reason: "obsolete encoding in hardware policies: hardware"}
+  CWE-1268: {omit: true, omit_reason: "hardware-enforced access control consistency: hardware"}
+  CWE-1270: {omit: true, omit_reason: "hardware security-token generation: hardware"}
+  CWE-1273: {omit: true, omit_reason: "device unlock credential sharing: hardware"}
+  CWE-1274: {omit: true, omit_reason: "secure-boot NVM transfer access control: hardware"}
+  CWE-1276: {omit: true, omit_reason: "hardware IP block connection: hardware"}
+  CWE-1277: {omit: true, omit_reason: "firmware not updateable: hardware/firmware"}
+  CWE-1278: {omit: true, omit_reason: "hardware reverse engineering protection: hardware"}
+  CWE-1280: {omit: true, omit_reason: "hardware access-control check ordering: hardware"}
+  CWE-1282: {omit: true, omit_reason: "immutable data in writable hardware memory: hardware"}
+  CWE-1283: {omit: true, omit_reason: "attestation register mutability: hardware"}
+  CWE-1290: {omit: true, omit_reason: "decoding bus-transaction security identifiers: hardware"}
+  CWE-1291: {omit: true, omit_reason: "public key reuse for debug/production signing: hardware"}
+  CWE-1292: {omit: true, omit_reason: "conversion of bus-transaction security identifiers: hardware"}
+  CWE-1293: {omit: true, omit_reason: "single-source data correlation: hardware/firmware attestation"}
+  CWE-1295: {omit: true, omit_reason: "debug components revealing information: hardware debug"}
+  CWE-1296: {omit: true, omit_reason: "hardware debug component chaining: hardware"}
+  CWE-1297: {omit: true, omit_reason: "confidential information on device: hardware"}
+  CWE-1299: {omit: true, omit_reason: "alternate hardware interfaces protection: hardware"}
+  CWE-1300: {omit: true, omit_reason: "physical side-channel protection: hardware"}
+  CWE-1302: {omit: true, omit_reason: "on-chip security identifier in transactions: hardware"}
+  CWE-1303: {omit: true, omit_reason: "microarchitectural resource sharing: hardware"}
+  CWE-1304: {omit: true, omit_reason: "power save/restore hardware configuration integrity: hardware"}
+  CWE-1311: {omit: true, omit_reason: "fabric bridge security-attribute translation: hardware"}
+  CWE-1312: {omit: true, omit_reason: "mirrored on-chip fabric regions: hardware"}
+  CWE-1313: {omit: true, omit_reason: "runtime activation of hardware test/debug logic: hardware"}
+  CWE-1315: {omit: true, omit_reason: "bus controlling capability in fabric: hardware"}
+  CWE-1316: {omit: true, omit_reason: "fabric-address map overlap: hardware"}
+  CWE-1317: {omit: true, omit_reason: "fabric bridge access control: hardware"}
+  CWE-1318: {omit: true, omit_reason: "on-chip fabric security features: hardware"}
+  CWE-1326: {omit: true, omit_reason: "immutable root of trust in hardware: hardware"}
+  CWE-1328: {omit: true, omit_reason: "hardware security-version rollback: hardware"}
+  CWE-1331: {omit: true, omit_reason: "Network-on-Chip isolation: hardware"}
+  CWE-1334: {omit: true, omit_reason: "hardware redundancy error injection: hardware"}
+  CWE-1338: {omit: true, omit_reason: "hardware overheating protection: hardware"}

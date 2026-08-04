@@ -1,0 +1,188 @@
+# Authoring sidecar: matching facet for CWE-005..CWE-099 (#66, spec 5.6).
+# nl = unit-level natural-language applies-if (one sentence, observable);
+# enum_kinds = technical-axis gate tag (subset of SYSTEM_KINDS, fail-open).
+entries:
+  CWE-5:
+    nl: "A J2EE-style unit transmits sensitive data over a channel that does not encrypt it."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-6:
+    nl: "The unit's session identifiers are configured to be too short to resist guessing."
+    enum_kinds: [IdentificationSystem, RESTApi, WebPresentation]
+  CWE-7:
+    nl: "The unit serves a default error page that reveals internal product or environment details."
+    enum_kinds: [WebPresentation]
+  CWE-8:
+    nl: "The unit exposes a remote interface whose methods reach an EJB entity bean."
+    enum_kinds: [RESTApi]
+  CWE-9:
+    nl: "The unit assigns weak access permissions to EJB methods."
+    enum_kinds: [RESTApi]
+  CWE-11:
+    nl: "The unit ships a debug build of a web application to a production-facing deployment."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-12:
+    nl: "The unit serves default ASP.NET error pages that leak stack or version information."
+    enum_kinds: [WebPresentation]
+  CWE-13:
+    nl: "The unit stores a plaintext password in a readable configuration file."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-15:
+    nl: "The unit allows an external actor to control a system or configuration setting."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-22:
+    nl: "The unit builds a filesystem path from external input and does not confine it to a restricted directory."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation, RESTApi, GraphQLApi]}
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-23:
+    nl: "The unit builds a path from external input and resolves it relative to a parent directory."
+  CWE-24:
+    nl: "The unit accepts a '../'-style path segment in externally supplied input."
+  CWE-25:
+    nl: "The unit accepts a '/../'-style path segment in externally supplied input."
+  CWE-26:
+    nl: "The unit accepts a '/dir/../filename'-style path segment in externally supplied input."
+  CWE-27:
+    nl: "The unit accepts a 'dir/../../filename'-style path segment in externally supplied input."
+  CWE-28:
+    nl: "The unit accepts a '..\\'-style path segment in externally supplied input."
+  CWE-29:
+    nl: "The unit accepts a '\\..\\'-style path segment in externally supplied input."
+  CWE-30:
+    nl: "The unit accepts a '\\dir\\..\\filename'-style path segment in externally supplied input."
+  CWE-31:
+    nl: "The unit accepts a 'dir\\..\\..\\filename'-style path segment in externally supplied input."
+  CWE-32:
+    nl: "The unit accepts a triple-dot '...' path segment in externally supplied input."
+  CWE-33:
+    nl: "The unit accepts a multiple-dot '....' path segment in externally supplied input."
+  CWE-34:
+    nl: "The unit accepts a '....//'-style path segment in externally supplied input."
+  CWE-35:
+    nl: "The unit accepts a '.../...//'-style path segment in externally supplied input."
+  CWE-36:
+    nl: "The unit accepts an absolute path in externally supplied input and resolves it outside a restricted directory."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-37:
+    nl: "The unit accepts a '/absolute/pathname' form in externally supplied input."
+  CWE-38:
+    nl: "The unit accepts a '\\absolute\\pathname' form in externally supplied input."
+  CWE-39:
+    nl: "The unit accepts a drive-letter path form such as 'C:dirname' in externally supplied input."
+  CWE-40:
+    nl: "The unit accepts a Windows UNC share path form in externally supplied input."
+  CWE-41:
+    nl: "The unit resolves different path spellings to the same file without treating them uniformly."
+  CWE-42:
+    nl: "The unit accepts a trailing-dot path form such as 'filename.' in externally supplied input."
+  CWE-43:
+    nl: "The unit accepts a multiple-trailing-dot path form in externally supplied input."
+  CWE-44:
+    nl: "The unit accepts an internal-dot path form such as 'file.name' in externally supplied input."
+  CWE-45:
+    nl: "The unit accepts a multiple-internal-dot path form in externally supplied input."
+  CWE-46:
+    nl: "The unit accepts a trailing-space path form in externally supplied input."
+  CWE-47:
+    nl: "The unit accepts a leading-space path form in externally supplied input."
+  CWE-48:
+    nl: "The unit accepts an internal-whitespace path form in externally supplied input."
+  CWE-49:
+    nl: "The unit accepts a trailing-slash path form in externally supplied input."
+  CWE-50:
+    nl: "The unit accepts a multiple-leading-slash path form in externally supplied input."
+  CWE-51:
+    nl: "The unit accepts a multiple-internal-slash path form in externally supplied input."
+  CWE-52:
+    nl: "The unit accepts a multiple-trailing-slash path form in externally supplied input."
+  CWE-53:
+    nl: "The unit accepts a multiple-internal-backslash path form in externally supplied input."
+  CWE-54:
+    nl: "The unit accepts a trailing-backslash path form in externally supplied input."
+  CWE-55:
+    nl: "The unit accepts a '/./' single-dot-directory path form in externally supplied input."
+  CWE-56:
+    nl: "The unit accepts a wildcard path form such as 'filedir*' in externally supplied input."
+  CWE-57:
+    nl: "The unit constructs a path that mixes protected and unprotected segments from external input."
+  CWE-58:
+    nl: "The unit resolves Windows 8.3 short filenames that bypass a longer-name protection mechanism."
+  CWE-59:
+    nl: "The unit accesses a file by name where a symlink can redirect the access to a different file."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-61:
+    nl: "The unit follows a UNIX symbolic link when opening a file or directory."
+  CWE-62:
+    nl: "The unit follows a UNIX hard link when opening a file or directory."
+  CWE-64:
+    nl: "The unit follows a Windows .LNK shortcut when opening a file or directory."
+  CWE-65:
+    nl: "The unit follows a Windows hard link when opening a file or directory."
+  CWE-73:
+    nl: "The unit lets external input control a filesystem path or file name."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-75:
+    nl: "The unit fails to sanitize special elements that carry control meaning in a downstream plan."
+  CWE-76:
+    nl: "The unit neutralizes one set of special elements but misses equivalent alternate spellings."
+  CWE-78:
+    nl: "The unit builds an OS command from externally influenced input."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation, RESTApi, GraphQLApi]}
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-79:
+    nl: "The unit places user-controllable input into rendered output without neutralizing it."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation]}
+    enum_kinds: [WebPresentation]
+  CWE-80:
+    nl: "The unit renders script-related HTML tags from input it received from an upstream component."
+  CWE-81:
+    nl: "The unit renders script in a web error message from unsanitized input."
+  CWE-82:
+    nl: "The unit renders scripting elements inside an IMG tag attribute from unsanitized input."
+  CWE-83:
+    nl: "The unit renders dangerous URI schemes in web page attributes from unsanitized input."
+  CWE-84:
+    nl: "The unit renders encoded URI schemes in web pages from unsanitized input."
+  CWE-85:
+    nl: "The unit renders doubled-character script in web pages from unsanitized input."
+  CWE-86:
+    nl: "The unit renders invalid characters in identifiers from unsanitized input."
+  CWE-87:
+    nl: "The unit renders alternate XSS syntax from unsanitized input."
+  CWE-88:
+    nl: "The unit builds a command argument string with externally influenced delimiters."
+  CWE-89:
+    nl: "The unit builds an SQL statement from externally influenced input."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation, RESTApi, GraphQLApi]}
+        - {form: data-edge-exists, key: CONSUMES}
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-90:
+    nl: "The unit builds an LDAP query from externally influenced input."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-91:
+    nl: "The unit builds XML or XPath queries from unsanitized external input."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-93:
+    nl: "The unit passes CRLF sequences from external input into a downstream protocol."
+  CWE-94:
+    nl: "The unit constructs code from externally influenced input and executes it."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-95:
+    nl: "The unit evaluates dynamically generated directives from unsanitized input."
+  CWE-96:
+    nl: "The unit evaluates statically saved directives from unsanitized input."
+  CWE-97:
+    nl: "The unit embeds user-controllable input into server-side includes."
+  CWE-98:
+    nl: "The unit builds an include/require file name from externally influenced input."
