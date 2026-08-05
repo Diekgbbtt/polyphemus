@@ -323,6 +323,49 @@
     related_attack_patterns: []
   name: Improper Neutralization of Formula Elements in a CSV File
   owasp_2025: []
+- abstraction: Base
+  applies_if:
+    nl: The unit's comparison logic compares a value in steps rather than as a whole.
+    predicate: null
+  enum_kinds:
+  - AuthenticationMechanism
+  - RESTApi
+  fault_id: CWE-1254
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product's comparison logic is performed over a series of steps rather than across the entire string in one operation. If there is a comparison logic failure on one of these steps, the operation may be vulnerable to a timing attack that can result in the interception of the process for nefarious purposes.
+    extended_description: Comparison logic is used to compare a variety of objects including passwords, Message Authentication Codes (MACs), and responses to verification challenges. When comparison logic is implemented at a finer granularity (e.g., byte-by-byte comparison) and breaks in the case of a comparison failure, an attacker can exploit this implementation to identify when exactly the failure occurred. With multiple attempts, the attacker may be able to guesses the correct password/response to challenge and elevate their privileges.
+    likelihood: null
+    related_attack_patterns:
+    - CAPEC-26
+  name: Incorrect Comparison Logic Granularity
+  owasp_2025: []
+- abstraction: Base
+  applies_if:
+    nl: The unit is released in a pre-production or manufacturing configuration.
+    predicate: null
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
+  fault_id: CWE-1269
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product released to market is released in pre-production or manufacturing configuration.
+    extended_description: |-
+      Products in the pre-production or manufacturing stages are configured to have many debug hooks and debug capabilities, including but not limited to:
+
+      Ability to override/bypass various cryptographic checks (including authentication, authorization, and integrity) Ability to read/write/modify/dump internal state (including registers and memory) Ability to change system configurations Ability to run hidden or private commands that are not allowed during production (as they expose IP).
+
+      The above is by no means an exhaustive list, but it alludes to the greater capability and the greater state of vulnerability of a product during it's preproduction or manufacturing state.
+
+      Complexity increases when multiple parties are involved in executing the tests before the final production version. For example, a chipmaker might fabricate a chip and run its own preproduction tests, following which the chip would be delivered to the Original Equipment Manufacturer (OEM), who would now run a second set of different preproduction tests on the same chip. Only after both of these sets of activities are complete, can the overall manufacturing phase be called "complete" and have the "Manufacturing Complete" fuse blown. However, if the OEM forgets to blow the Manufacturing Complete fuse, then the system remains in the manufacturing stage, rendering the system both exposed and vulnerable.
+    likelihood: null
+    related_attack_patterns:
+    - CAPEC-439
+  name: Product Released in Non-Release Configuration
+  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit sets sensitive cookies without a proper SameSite attribute.
@@ -342,6 +385,23 @@
   name: Sensitive Cookie with Improper SameSite Attribute
   owasp_2025:
   - A01
+- abstraction: Base
+  applies_if:
+    nl: The unit does not validate that an input used as a resource identifier is safe.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-1289
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product receives an input value that is used as a resource identifier or other type of reference, but it does not validate or incorrectly validates that the input is equivalent to a potentially-unsafe value.
+    extended_description: Attackers can sometimes bypass input validation schemes by finding inputs that appear to be safe, but will be dangerous when processed at a lower layer or by a downstream component. For example, a simple XSS protection mechanism might try to validate that an input has no "<script>" tags using case-sensitive matching, but since HTML is case-insensitive when processed by web browsers, an attacker could inject "<ScrIpT>" and trigger XSS.
+    likelihood: null
+    related_attack_patterns: []
+  name: Improper Validation of Unsafe Equivalence in Input
+  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit stores a plaintext password in a readable configuration file.
@@ -881,6 +941,23 @@
   name: Relative Path Traversal
   owasp_2025:
   - A01
+- abstraction: Variant
+  applies_if:
+    nl: The unit mishandles extra values supplied for a parameter, field, or argument.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-231
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product does not handle or incorrectly handles when more values are provided than expected.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: Improper Handling of Extra Values
+  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '../'-style path segment in externally supplied input.
@@ -2314,6 +2391,23 @@
   name: Unprotected Primary Channel
   owasp_2025:
   - A06
+- abstraction: Variant
+  applies_if:
+    nl: The unit accepts a trailing-dot path form such as 'filename.' in externally supplied input.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-42
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product accepts path input in the form of trailing dot ('filedir.') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: 'Path Equivalence: ''filename.'' (Trailing Dot)'
+  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit does not enforce authorization on all restricted URLs.
@@ -2345,6 +2439,23 @@
   name: Direct Request ('Forced Browsing')
   owasp_2025:
   - A01
+- abstraction: Variant
+  applies_if:
+    nl: The unit accepts a multiple-trailing-dot path form in externally supplied input.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-43
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product accepts path input in the form of multiple trailing dot ('filedir....') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: 'Path Equivalence: ''filename....'' (Multiple Trailing Dot)'
+  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit serves raw web content under the document root with a non-executing extension.
@@ -2381,6 +2492,23 @@
   name: Unrestricted Upload of File with Dangerous Type
   owasp_2025:
   - A06
+- abstraction: Variant
+  applies_if:
+    nl: The unit accepts an internal-dot path form such as 'file.name' in externally supplied input.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-44
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product accepts path input in the form of internal dot ('file.ordir') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: 'Path Equivalence: ''file.name'' (Internal Dot)'
+  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit interprets HTTP requests inconsistently with another intermediary.
@@ -2411,6 +2539,41 @@
   name: Inconsistent Interpretation of HTTP Requests ('HTTP Request/Response Smuggling')
   owasp_2025:
   - A06
+- abstraction: Variant
+  applies_if:
+    nl: The unit accepts a multiple-internal-dot path form in externally supplied input.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-45
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product accepts path input in the form of multiple internal dot ('file...dir') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: 'Path Equivalence: ''file...name'' (Multiple Internal Dot)'
+  owasp_2025: []
+- abstraction: Variant
+  applies_if:
+    nl: The unit accepts a trailing-space path form in externally supplied input.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-46
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product accepts path input in the form of trailing space ('filedir ') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns:
+    - CAPEC-649
+  name: 'Path Equivalence: ''filename '' (Trailing Space)'
+  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit selects classes or code by externally controlled input.
@@ -2777,6 +2940,40 @@
   owasp_2025: []
 - abstraction: Variant
   applies_if:
+    nl: The unit exposes access-control list files to unauthorized actors.
+    predicate: null
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
+  fault_id: CWE-529
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product stores access control list files in a directory or other container that is accessible to actors outside of the intended control sphere.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: Exposure of Access Control List Files to an Unauthorized Control Sphere
+  owasp_2025: []
+- abstraction: Variant
+  applies_if:
+    nl: The unit accepts a multiple-internal-backslash path form in externally supplied input.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-53
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product accepts path input in the form of multiple internal backslash ('\multiple\trailing\\slash') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: 'Path Equivalence: ''\multiple\\internal\backslash'''
+  owasp_2025: []
+- abstraction: Variant
+  applies_if:
     nl: The unit exposes a backup file to unauthorized actors.
     predicate: null
   enum_kinds:
@@ -2919,6 +3116,23 @@
   name: Use of Persistent Cookies Containing Sensitive Information
   owasp_2025:
   - A06
+- abstraction: Variant
+  applies_if:
+    nl: The unit accepts a trailing-backslash path form in externally supplied input.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-54
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product accepts path input in the form of trailing backslash ('filedir\') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: 'Path Equivalence: ''filedir\'' (Trailing Backslash)'
+  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit ships source code containing sensitive information.
@@ -3114,6 +3328,23 @@
   owasp_2025: []
 - abstraction: Variant
   applies_if:
+    nl: The unit accepts a wildcard path form such as 'filedir*' in externally supplied input.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-56
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product accepts path input in the form of asterisk wildcard ('filedir*') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: 'Path Equivalence: ''filedir*'' (Wildcard)'
+  owasp_2025: []
+- abstraction: Variant
+  applies_if:
     nl: The unit builds a Hibernate query with user-controlled input.
     predicate: null
   enum_kinds:
@@ -3191,6 +3422,48 @@
     related_attack_patterns: []
   name: 'Path Equivalence: ''fakedir/../realdir/filename'''
   owasp_2025: []
+- abstraction: Variant
+  applies_if:
+    nl: The unit resolves Windows 8.3 short filenames that bypass a longer-name protection mechanism.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-58
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product contains a protection mechanism that restricts access to a long filename on a Windows operating system, but it does not properly restrict access to the equivalent short "8.3" filename.
+    extended_description: null
+    likelihood: null
+    related_attack_patterns: []
+  name: 'Path Equivalence: Windows 8.3 Filename'
+  owasp_2025: []
+- abstraction: Base
+  applies_if:
+    nl: The unit accesses a file by name where a symlink can redirect the access to a different file.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - GraphQLApi
+  - WebPresentation
+  fault_id: CWE-59
+  materialisation:
+    alternate_terms:
+    - Zip Slip "Zip slip" is an attack that uses file archives (e.g., ZIP, tar, rar, etc.) that contain filenames with path traversal sequences that cause the files to be written outside of the directory under which the archive is expected to be extracted [REF-1282]. It is most commonly used for relative path traversal (CWE-23) and link following (CWE-59).
+    - insecure temporary file Some people use the phrase "insecure temporary file" when referring to a link following weakness, but other weaknesses can produce insecure temporary files without any symlink involvement at all.
+    common_consequences: []
+    description: The product attempts to access a file based on the filename, but it does not properly prevent that filename from identifying a link or shortcut that resolves to an unintended resource.
+    extended_description: null
+    likelihood: Medium
+    related_attack_patterns:
+    - CAPEC-132
+    - CAPEC-17
+    - CAPEC-35
+    - CAPEC-76
+  name: Improper Link Resolution Before File Access ('Link Following')
+  owasp_2025:
+  - A01
 - abstraction: Variant
   applies_if:
     nl: The unit passes sensitive information in an HTTP query string.
@@ -3310,6 +3583,27 @@
     related_attack_patterns: []
   name: 'Struts: Non-private Field in ActionForm Class'
   owasp_2025: []
+- abstraction: Compound
+  applies_if:
+    nl: The unit follows a UNIX symbolic link when opening a file or directory.
+    predicate: null
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
+  fault_id: CWE-61
+  materialisation:
+    alternate_terms:
+    - Symlink following
+    - symlink vulnerability
+    common_consequences: []
+    description: The product, when opening a file or directory, does not sufficiently account for when the file is a symbolic link that resolves to a target outside of the intended control sphere. This could allow an attacker to cause the product to operate on unauthorized files.
+    extended_description: null
+    likelihood: High
+    related_attack_patterns:
+    - CAPEC-27
+  name: UNIX Symbolic Link (Symlink) Following
+  owasp_2025:
+  - A01
 - abstraction: Base
   applies_if:
     nl: The unit processes an XML document with external entity references.
@@ -3641,6 +3935,24 @@
     likelihood: High
     related_attack_patterns: []
   name: Use of Non-Canonical URL Paths for Authorization Decisions
+  owasp_2025: []
+- abstraction: Base
+  applies_if:
+    nl: The unit relies on obfuscation or encryption of mutable inputs as a security mechanism.
+    predicate: null
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
+  fault_id: CWE-649
+  materialisation:
+    alternate_terms: []
+    common_consequences: []
+    description: The product uses obfuscation or encryption of inputs that should not be mutable by an external actor, but the product does not use integrity checks to detect if those inputs have been modified.
+    extended_description: null
+    likelihood: High
+    related_attack_patterns:
+    - CAPEC-463
+  name: Reliance on Obfuscation or Encryption of Security-Relevant Inputs without Integrity Checking
   owasp_2025: []
 - abstraction: Variant
   applies_if:

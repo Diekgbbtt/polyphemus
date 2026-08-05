@@ -4,13 +4,14 @@ Status: reported artifact (spec section 8). Not a runtime gate.
 Date: 2026-08-05 (cwec_v4.20.xml of 2026-04-30, catalogue commit TBD at PR).
 
 The produced fault-KB (`src/polymerhus/attack/hunting/data/fault-kb.yaml`,
-231 entries) risks being non-exhaustive: the CWE catalogue is not optimised
+248 entries) risks being non-exhaustive: the CWE catalogue is not optimised
 for modern web vulns, and scraping can be inaccurate.
 This report measures the produced list against authoritative web-security
 sources (PortSwigger Web Security Academy, HTB Academy) along the two spec
 measures: checklist-coverage and depth-of-expressiveness.
 The catalogue was relevance-filtered from 419 to 231 entries by four
-critic subagents (0-1 relevance score, keep >= 0.6) with a semantic
+critic subagents, then amended back to 248 after an adversarial
+critique pass (17 restores, see hunting-66-fault-omit-critique.md) (0-1 relevance score, keep >= 0.6) with a semantic
 second pass on the 0.5-0.7 band, one topic-coverage constraint restore
 (CWE-367 TOCTOU) and one semantic keep (CWE-1394 default crypto keys),
 plus the DNS-rebinding family already retained (CWE-350).
@@ -108,14 +109,14 @@ degrade gracefully in their absence.
 
 ## 2. Depth-of-expressiveness
 
-Materialisation content per entry (of 231):
+Materialisation content per entry (of 248):
 
-- description: 231/231 (avg 170 chars).
-- extended_description: 61/231.
-- alternate_terms: 37/231.
-- related_attack_patterns (CAPEC): 107/231.
-- likelihood: 57/231.
-- common_consequences: 0/231 - the v4.20 XML uses the plural tag
+- description: 248/248 (avg 170 chars).
+- extended_description: 64/248.
+- alternate_terms: 39/248.
+- related_attack_patterns (CAPEC): 113/248.
+- likelihood: 60/248.
+- common_consequences: 0/248 - the v4.20 XML uses the plural tag
   `Common_Consequences` while the curator parses the legacy singular
   `Common_Consequence`, so no consequence text is flattened (documented
   parser limitation; verified data-side via the CWE REST API probe in
@@ -138,12 +139,12 @@ A10 20).
 
 - checklist-coverage: 100% of the scraped PortSwigger ground truth plus the
   HTB-derived DNS-rebinding class (CWE-350) is preserved under the
-  relevance filter (419 -> 231); two documented seed-lens gaps (CWE-190,
+  relevance filter (419 -> 248); two documented seed-lens gaps (CWE-190,
   CWE-1333) sit outside the scraped syllabus and are follow-up enrichment
   candidates.
-- depth-of-expressiveness: every entry carries a description; 71% carry
+- depth-of-expressiveness: every entry carries a description; 69% carry
   at least one of {extended description, CAPEC patterns, likelihood,
-  alternate terms}; 230/231 entries carry an enum_kinds tag, so the
+  alternate terms}; 247/248 entries carry an enum_kinds tag, so the
   matching facet is effectively all-hardened/tagged with a single
   fail-open NL entry (CWE-841) as designed.
 - The catalogue is fit as the phase-1 FaultSource vocabulary; the two

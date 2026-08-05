@@ -1,0 +1,111 @@
+# Hunting #66 - Fault-KB omission critique (adversarial pass)
+
+Status: reported artifact (operator-requested). Not a runtime gate.
+Date: 2026-08-05.
+Method: three parallel critic subagents (general agents, each loading the
+`critical-thinking-logical-reasoning` skill at
+`/Users/diekgbbtt/.claude/skills/critical-thinking-logical-reasoning/SKILL.md`),
+each argued AGAINST the omission rationales in
+`tools/hunting/authoring/10-web-relevance-omit.yaml` for a third of the 188
+entries, reflecting per entry on concrete web target profiles where the
+fault actually applies. Per-fault verdicts: UPHOLD (omission correct),
+RESTORE (omission wrong), REASON (omission correct, rationale flawed).
+
+Verdict totals: UPHOLD 148, RESTORE 17, REASON 23 (188 entries).
+
+## 1. Amendments applied - 17 entries restored
+
+The catalogue grows from 231 to 248 entries. All 17 already carry `nl`
+authoring in the range sidecars; `enum_kinds` were added on restore
+(CWE-59 was already tagged). All restore verdicts were argued on concrete,
+currently-exercised web target profiles, not hypotheticals.
+
+### 1.1 Windows path-equivalence family (9 entries, all three batches converged)
+
+| fault_id | name | critic confidence | target profile |
+| --- | --- | --- | --- |
+| CWE-42 | Path Traversal: 'filename.' (Trailing Dot) | 0.7 | Windows/IIS apps with upload extension filters and file-serving endpoints; Win32 strips trailing dots, so `shell.asp.` bypasses extension black/allow-lists |
+| CWE-43 | Path Traversal: '....' (Multiple Dot) | 0.6 | Filters that learned to strip a single trailing dot; the multi-dot form evades them |
+| CWE-44 | Path Equivalence: Internal Dot | 0.55 | IIS/ASP.NET file endpoints; internal-dot forms defeat string-based path checks |
+| CWE-45 | Path Equivalence: Multiple Internal Dot | 0.65 | IIS upload and file-access bypass class, documented and probeable |
+| CWE-46 | Path Traversal: 'file ' (Trailing Space) | 0.6 | Classic IIS trailing-space bypass; MITRE marks the entry web-based |
+| CWE-53 | Path Traversal: '\dir\file' (Backslash) | 0.6 | Windows-hosted Tomcat/Node/Java apps where filters block only `/`; documented CVE lineage |
+| CWE-54 | Path Traversal: '\dir\filename' (Trailing Backslash) | 0.65 | Classic IIS extension-truncation bypass (`file.asp\`) |
+| CWE-56 | Path Equivalence: '*' (Wildcard) | 0.5 | Windows-hosted file endpoints with wildcard-capable path matching; restore with the family |
+| CWE-58 | Path Traversal: Windows 8.3 Filename | 0.6 | IIS `~`/8.3 short-name enumeration exposes backup/source files; NTFS 8.3 still default-on |
+
+Rationale for the family: the retained catalogue already admits
+Windows-specific web path faults (CWE-40 UNC at 0.60, CWE-41 at 0.70);
+the nine restore variants encode the concrete bypass recipes (extension
+truncation, separator bypass, 8.3 enumeration) that the generic kept
+entries do not, and all sat just under the 0.6 bar on scores that
+underweight the family. CWE-47 (leading space) and CWE-48 (internal
+whitespace) stay omitted: Win32 does not strip leading spaces, and
+internal whitespace has no documented web exploit lineage.
+
+### 1.2 Recon-observable findings (3 entries)
+
+| fault_id | name | critic confidence | target profile |
+| --- | --- | --- | --- |
+| CWE-1269 | Incorrect Resource Transfer Between Spheres | 0.75 | `APP_DEBUG=true` / `DEBUG=True` / `display_errors=On` production deployments; verbose stack traces, env-var dumps, dev routes - a first-order OWASP/ASVS recon finding |
+| CWE-529 | Exposure of Access Control List Files | 0.55 | `GET /.htaccess` via Apache misconfiguration; documented IIS/ASP.NET `web.config` disclosure class; "web relevance theoretical" is factually wrong |
+| CWE-1289 | Improper Validation of Specified Quantity in Input | 0.7 | SSRF/URL-parser differentials (decimal/octal/compressed-IPv6 literals, userinfo tricks, proxy-vs-app parsing disagreement, CVE-2016-10099 class); "marginal web exposure" is wrong and the class is growing |
+
+### 1.3 Web attack classes (5 entries)
+
+| fault_id | name | critic confidence | target profile |
+| --- | --- | --- | --- |
+| CWE-649 | Reliance on Obfuscation or Encryption of Security-Relevant Inputs | 0.6 | ASP.NET ViewState-without-MAC (.NET deserialisation RCE campaigns), CBC padding-oracle / bit-flipping on encrypted cookies; RCE-adjacent |
+| CWE-1254 | Comparison Logic is Vulnerable to Timing Side-Channel Attacks | 0.55 | Custom token / API-key verification comparing byte-by-byte without constant-time; measurable from the network; mechanism-level entry behind CWE-208 |
+| CWE-231 | Improper Handling of Extra Values | 0.55 | HTTP parameter pollution and PHP array injection (`?id[]=`), proxy-vs-backend parsing disagreement; OWASP-listed with real bypass CVEs |
+| CWE-59 | Improper Link Resolution Before File Access ('Link Following') | 0.6 | "Symlink-slip" via web archive upload-and-extract; real CVE class in file managers and backup/restore features |
+| CWE-61 | UNIX Symbolic Link Following | 0.55 | The operative UNIX variant of CWE-59 for the dominant Linux web estate; restore with CWE-59 |
+
+## 2. REASON verdicts - 23 rationales corrected, no restore
+
+The omission stands but the stated rationale mischaracterises the fault.
+Highest-value corrections (rationale text kept in
+`fault-relevance-rankings.md` amendment section):
+
+- CWE-115/130/437: not "no concrete web mechanism" - they are the
+  request-smuggling / parser-length family, superseded by retained CWE-444.
+- CWE-348: X-Forwarded-For trust bypass is a common bug-bounty finding,
+  not "rarely observed".
+- CWE-420: alternate-channel checks (Actuator, debug ports, HTTP variants)
+  are core daily recon, not "secondary exposure".
+- CWE-454: httpoxy (CVE-2016-5385) was a mass web class; "unusual env/CLI
+  paths" misstates history.
+- CWE-624: rationale conflates the class with ReDoS; `preg_replace /e`
+  was a mass RCE class pre-PHP-7 (now dead; ReDoS retained as CWE-1333).
+- CWE-323/353: crypto/checksum rationales misattribute the web-relevant
+  gap (missing MAC on app data vs TLS mootness).
+- CWE-205/343: behavioural-discrepancy oracles and token predictability
+  are core recon techniques, mislabelled "broader"/"narrow".
+- CWE-167: double-encoding filter evasion is a core web mechanism,
+  mislabelled "weak web relevance".
+- CWE-183: permissive allow-lists (SVG upload, redirect URIs, CSP) are
+  routinely probed; "abstract, indirect" understates reachability.
+- CWE-134: rationale misses the embedded/IoT C web-UI population.
+- Struts family (CWE-102/103/104/105/106/108/109): "extinct" overstates -
+  Struts 2 OGNL RCEs (CVE-2017-5638) kept the estate alive; omission
+  stands because the variants are non-observable architecture signals
+  subsumed by retained input-validation entries.
+
+## 3. UPHOLD verdicts - 148 confirmed
+
+Includes all malware-taxonomy entries (CWE-508/509/512), OS-filesystem
+faults, hardware TRNG (CWE-333), C-level memory faults (CWE-785),
+desktop GUI (CWE-317), Lisp alist (CWE-462), and the generic/abstract
+bases whose concrete web forms are already retained (CWE-20/22/79/89/
+209/444/502/1333 families). The filter pass is confirmed sound on these.
+
+## 4. Verdict
+
+- Amendment space existed and was applied: 17/188 omissions (9%) were
+  wrong, driven by (a) the Windows path-equivalence family sitting just
+  under an underweighted threshold and (b) three recon-observable
+  findings dismissed as "theoretical" or "marginal".
+- 23 rationales misstate the fault; corrections are recorded in the
+  rankings artifact so the rationale corpus is honest for future passes.
+- The catalogue is now 248 entries; still 100% of the scraped
+  PortSwigger ground truth is preserved (the restores only ADD).

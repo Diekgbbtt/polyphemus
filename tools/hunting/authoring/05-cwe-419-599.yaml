@@ -127,6 +127,7 @@ entries:
   CWE-528:
     nl: "The unit exposes a core dump file to unauthorized actors."
   CWE-529:
+    enum_kinds: [WebPresentation, RESTApi]
     nl: "The unit exposes access-control list files to unauthorized actors."
   CWE-530:
     nl: "The unit exposes a backup file to unauthorized actors."
