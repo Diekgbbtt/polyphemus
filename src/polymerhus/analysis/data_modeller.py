@@ -714,11 +714,15 @@ def model_data(
     system_prompt = _system_prompt()
     candidates = owning_services(admitted, aggregations or [])
 
-    prose = invoke_fn(
-        [SystemMessage(content=system_prompt),
-         HumanMessage(content=_reflection_prompt(chunk, inventory, candidates))],
-        schema=None,
-    )
+    try:
+        prose = invoke_fn(
+            [SystemMessage(content=system_prompt),
+             HumanMessage(content=_reflection_prompt(chunk, inventory, candidates))],
+            schema=None,
+        )
+    except Exception:  # fail-open: LLM error -> empty outcome, never crash (DPL-DEC fail-open)
+        logger.warning("data_modeller: reflection invoke failed; degrading to empty outcome", exc_info=True)
+        return DataPlaneOutcome()
     admitted_counts: dict[str, int] = defaultdict(int)
     for a in admitted:
         admitted_counts[a.type] += 1
@@ -735,11 +739,15 @@ def model_data(
             reflection_exhausted=True,
         ))
 
-    raw = invoke_fn(
-        [SystemMessage(content=system_prompt),
-         HumanMessage(content=_extraction_prompt(prose, inventory, candidates))],
-        schema=L1DeltaBatch,
-    )
+    try:
+        raw = invoke_fn(
+            [SystemMessage(content=system_prompt),
+             HumanMessage(content=_extraction_prompt(prose, inventory, candidates))],
+            schema=L1DeltaBatch,
+        )
+    except Exception:  # fail-open: extraction LLM error -> empty outcome, never crash
+        logger.warning("data_modeller: extraction invoke failed; degrading to empty outcome", exc_info=True)
+        return DataPlaneOutcome()
     extraction_exhausted = raw is None
     raw = raw or L1DeltaBatch()
 
