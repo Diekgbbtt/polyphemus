@@ -209,7 +209,9 @@ def test_AST_DEC_04_analysis_run_records_the_terminal_pass_census(monkeypatch):
     stats = analysis["stats"]
     assert stats["analysis_drained"] is True
     assert stats["l0_assets_read"] == 0  # the pushed chunks carried no payload
-    assert stats["dispatches_entered"] == 1
+    # dispatches_entered ACCUMULATES across every pass (c53af87): two job chunks
+    # plus the terminal marker = 3 passes, each entering 1 dispatch.
+    assert stats["dispatches_entered"] == 3
     assert stats["passes"] >= 1
 
 

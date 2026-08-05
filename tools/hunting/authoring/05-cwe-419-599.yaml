@@ -1,0 +1,199 @@
+# Authoring sidecar: matching facet for CWE-419..CWE-599 (#66, spec 5.6).
+entries:
+  CWE-419:
+    nl: "The unit's primary administration channel is not protected."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-420:
+    nl: "The unit protects a primary channel but not an alternate channel."
+  CWE-421:
+    nl: "The unit races over an alternate channel's access state."
+  CWE-425:
+    nl: "The unit does not enforce authorization on all restricted URLs."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation]}
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-426:
+    nl: "The unit searches for critical resources via an externally supplied search path."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-427:
+    nl: "The unit uses a search path containing an uncontrolled element."
+  CWE-428:
+    nl: "The unit uses an unquoted search-path element containing whitespace."
+  CWE-433:
+    nl: "The unit serves raw web content under the document root with a non-executing extension."
+    enum_kinds: [WebPresentation]
+  CWE-434:
+    nl: "The unit allows upload of a file type that the server will process."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-437:
+    nl: "The unit acts as an intermediary without a complete model of endpoint features."
+  CWE-444:
+    nl: "The unit interprets HTTP requests inconsistently with another intermediary."
+    enum_kinds: [WAF, CDN, ReverseProxy, APIGateway]
+  CWE-447:
+    nl: "The unit's UI claims support for a security feature it does not implement."
+  CWE-450:
+    nl: "The unit's UI selects among multiple interpretations of input without prompting."
+  CWE-453:
+    nl: "The unit initializes an internal variable with an insecure default."
+  CWE-454:
+    nl: "The unit initializes trusted variables or data stores from modifiable inputs."
+  CWE-455:
+    nl: "The unit does not stop when security-relevant errors occur at initialization."
+  CWE-460:
+    nl: "The unit does not clean up state when an exception is thrown."
+  CWE-462:
+    nl: "The unit allows duplicate keys in an associative list."
+  CWE-470:
+    nl: "The unit selects classes or code by externally controlled input."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-472:
+    nl: "The unit treats a web parameter as immutable when it can be modified."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-476:
+    nl: "The unit dereferences a NULL pointer."
+  CWE-478:
+    nl: "The unit's multi-condition expression lacks a default case."
+  CWE-484:
+    nl: "The unit omits a break statement in a switch-like construct."
+  CWE-488:
+    nl: "The unit fails to enforce boundaries between sessions."
+    enum_kinds: [IdentificationSystem]
+  CWE-489:
+    nl: "The unit ships with active debug code."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-491:
+    nl: "The unit exposes a cloneable() method that is not final."
+  CWE-492:
+    nl: "The unit uses an inner class that exposes sensitive data at package scope."
+  CWE-493:
+    nl: "The unit declares a critical public variable without final."
+  CWE-494:
+    nl: "The unit downloads and executes code without an integrity check."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-497:
+    nl: "The unit exposes sensitive system information to unauthorized actors."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-498:
+    nl: "The unit contains a cloneable class holding sensitive data."
+  CWE-499:
+    nl: "The unit contains a serializable class holding sensitive data."
+  CWE-500:
+    nl: "The unit exposes a public static field that is not final."
+  CWE-501:
+    nl: "The unit mixes trusted and untrusted data in the same structure."
+  CWE-502:
+    nl: "The unit deserializes untrusted data."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation, RESTApi, GraphQLApi]}
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-507:
+    nl: "The unit contains hidden code that appears benign."
+  CWE-508:
+    nl: "The unit contains non-replicating malicious code."
+  CWE-509:
+    nl: "The unit contains replicating malicious code."
+  CWE-510:
+    nl: "The unit contains a trapdoor reachable by special input."
+  CWE-512:
+    nl: "The unit collects personally identifiable information covertly."
+  CWE-520:
+    nl: "The unit misconfigures .NET identity impersonation."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-521:
+    nl: "The unit does not require strong passwords."
+    predicate:
+      target: System
+      clauses:
+        - {form: kind-is, values: [AuthenticationMechanism]}
+    enum_kinds: [AuthenticationMechanism]
+  CWE-523:
+    nl: "The unit transmits credentials without adequate transport protection."
+    enum_kinds: [AuthenticationMechanism, WebPresentation, RESTApi]
+  CWE-524:
+    nl: "The unit's cache holds sensitive information readable by outsiders."
+  CWE-525:
+    nl: "The unit's web browser caching policy retains sensitive information."
+    enum_kinds: [WebPresentation]
+  CWE-526:
+    nl: "The unit stores unencrypted sensitive information in an environment variable."
+  CWE-527:
+    nl: "The unit exposes a version-control repository to unauthorized actors."
+    enum_kinds: [WebPresentation]
+  CWE-528:
+    nl: "The unit exposes a core dump file to unauthorized actors."
+  CWE-529:
+    nl: "The unit exposes access-control list files to unauthorized actors."
+  CWE-530:
+    nl: "The unit exposes a backup file to unauthorized actors."
+    enum_kinds: [WebPresentation]
+  CWE-531:
+    nl: "The unit ships accessible test code containing sensitive information."
+  CWE-532:
+    nl: "The unit writes sensitive information into a log file."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-535:
+    nl: "The unit's command-shell error message reveals unhandled exception details."
+  CWE-536:
+    nl: "The unit's servlet runtime error message reveals sensitive details."
+  CWE-537:
+    nl: "The unit's Java runtime error message reveals unhandled-exception details."
+  CWE-538:
+    nl: "The unit places sensitive information into externally accessible files or directories."
+    enum_kinds: [WebPresentation]
+  CWE-539:
+    nl: "The unit uses persistent cookies containing sensitive information."
+    enum_kinds: [IdentificationSystem, WebPresentation]
+  CWE-540:
+    nl: "The unit ships source code containing sensitive information."
+  CWE-541:
+    nl: "The unit ships an accessible include file containing sensitive information."
+  CWE-544:
+    nl: "The unit lacks a standardized error-handling mechanism."
+  CWE-547:
+    nl: "The unit hard-codes security-relevant constants."
+  CWE-548:
+    nl: "The unit exposes a directory listing."
+    enum_kinds: [WebPresentation]
+  CWE-549:
+    nl: "The unit does not mask passwords during entry."
+  CWE-550:
+    nl: "The unit's server-generated error message reveals sensitive information."
+  CWE-551:
+    nl: "The unit authorizes before fully parsing the requested URL."
+    enum_kinds: [WAF, CDN, ReverseProxy, APIGateway]
+  CWE-552:
+    nl: "The unit makes files or directories accessible to external parties."
+    enum_kinds: [WebPresentation]
+  CWE-553:
+    nl: "The unit leaves a command shell in an externally accessible directory."
+    enum_kinds: [WebPresentation]
+  CWE-554:
+    nl: "The unit's ASP.NET application does not use an input validation framework."
+    enum_kinds: [WebPresentation]
+  CWE-555:
+    nl: "The unit's J2EE application stores a plaintext password in a configuration file."
+  CWE-556:
+    nl: "The unit misconfigures ASP.NET identity impersonation."
+  CWE-564:
+    nl: "The unit builds a Hibernate query with user-controlled input."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-565:
+    nl: "The unit relies on cookies without validating their integrity for security decisions."
+    enum_kinds: [IdentificationSystem]
+  CWE-566:
+    nl: "The unit authorizes access using a user-controlled SQL primary key."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-593:
+    nl: "The unit modifies its OpenSSL CTX object after connection creation begins."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-598:
+    nl: "The unit passes sensitive information in an HTTP query string."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-599:
+    nl: "The unit trusts an OpenSSL certificate without verifying the verification result."
+    enum_kinds: [RESTApi, WebPresentation]

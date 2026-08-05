@@ -1,0 +1,64 @@
+# Authoring sidecar: matching facet for CWE-1220..CWE-1428 (#66, spec 5.6).
+entries:
+  CWE-1220:
+    nl: "The unit's access control is too coarse-grained to enforce the policy."
+    enum_kinds: [AuthorizationSystem]
+  CWE-1230:
+    nl: "The unit hides a sensitive resource but leaks it through metadata."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1236:
+    nl: "The unit writes user-supplied data into a CSV file without neutralizing formula elements."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-1254:
+    nl: "The unit's comparison logic compares a value in steps rather than as a whole."
+  CWE-1269:
+    nl: "The unit is released in a pre-production or manufacturing configuration."
+  CWE-1275:
+    nl: "The unit sets sensitive cookies without a proper SameSite attribute."
+    enum_kinds: [IdentificationSystem, WebPresentation]
+  CWE-1284:
+    nl: "The unit does not validate a specified quantity such as size or length in input."
+  CWE-1285:
+    nl: "The unit does not validate a specified index, position, or offset in input."
+  CWE-1286:
+    nl: "The unit does not validate the syntactic correctness of input."
+  CWE-1287:
+    nl: "The unit does not validate the type of input."
+  CWE-1288:
+    nl: "The unit does not validate consistency among the fields of a complex input."
+  CWE-1289:
+    nl: "The unit does not validate that an input used as a resource identifier is safe."
+  CWE-1321:
+    nl: "The unit modifies an object's prototype attributes from externally influenced input."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-1327:
+    nl: "The unit binds a service to an unrestricted IP address."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1329:
+    nl: "The unit relies on a component that cannot be updated or patched."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1336:
+    nl: "The unit inserts externally influenced input into a template without neutralizing it."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1385:
+    nl: "The unit's WebSocket endpoint does not verify the origin of connections."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1386:
+    nl: "The unit opens a file or directory without preventing Windows junction/mount-point resolution."
+  CWE-1392:
+    nl: "The unit uses default credentials for critical functionality."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-1393:
+    nl: "The unit uses a default password for critical functionality."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-1394:
+    nl: "The unit uses a default cryptographic key for critical functionality."
+  CWE-1395:
+    nl: "The unit depends on a third-party component with a known vulnerability."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1427:
+    nl: "The unit builds LLM prompts from externally provided input without neutralization."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1428:
+    nl: "The unit relies on HTTP where HTTPS is available."
+    enum_kinds: [WebPresentation, RESTApi]
