@@ -20,6 +20,7 @@ entries:
     enum_kinds: [AuthenticationMechanism]
   CWE-837:
     nl: "The unit fails to enforce that an action happens only once per actor."
+    enum_kinds: [AuthorizationSystem, WebPresentation]
   CWE-838:
     nl: "The unit uses an encoding inappropriate for the output context."
     enum_kinds: [WebPresentation, RESTApi]

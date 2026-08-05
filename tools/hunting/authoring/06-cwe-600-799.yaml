@@ -2,6 +2,7 @@
 entries:
   CWE-600:
     nl: "The unit's servlet does not catch all exceptions, revealing debug information."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-601:
     nl: "The unit redirects users to an external site based on user-controlled input."
     predicate:
@@ -13,6 +14,7 @@ entries:
     nl: "The unit uses unchecked external input in a loop condition."
   CWE-608:
     nl: "The unit's Struts ActionForm contains a non-private field."
+    enum_kinds: [WebPresentation]
   CWE-611:
     nl: "The unit processes an XML document with external entity references."
     predicate:
@@ -22,6 +24,7 @@ entries:
     enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
   CWE-612:
     nl: "The unit's search index of sensitive documents is not access-restricted."
+    enum_kinds: [AuthorizationSystem, WebPresentation]
   CWE-613:
     nl: "The unit allows sessions to persist beyond their intended lifetime."
     enum_kinds: [IdentificationSystem]
@@ -30,6 +33,7 @@ entries:
     enum_kinds: [IdentificationSystem, WebPresentation]
   CWE-615:
     nl: "The unit ships source-code comments containing sensitive information."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-616:
     nl: "The unit reads uploaded files via legacy PHP globals."
     enum_kinds: [WebPresentation]
@@ -69,6 +73,7 @@ entries:
     enum_kinds: [AuthenticationMechanism, WebPresentation]
   CWE-641:
     nl: "The unit constructs resource names from upstream input without restricting them."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-643:
     nl: "The unit builds an XPath expression from external input."
     enum_kinds: [RESTApi, GraphQLApi]
@@ -83,19 +88,23 @@ entries:
     enum_kinds: [WebPresentation, RESTApi]
   CWE-647:
     nl: "The unit makes authorization decisions based on non-canonical URL paths."
+    enum_kinds: [AuthorizationSystem, WebPresentation]
   CWE-648:
     nl: "The unit uses privileged APIs incorrectly."
   CWE-649:
     nl: "The unit relies on obfuscation or encryption of mutable inputs as a security mechanism."
   CWE-650:
     nl: "The unit trusts the HTTP method as a permission mechanism."
+    enum_kinds: [AuthorizationSystem, WebPresentation]
   CWE-651:
     nl: "The unit exposes a WSDL file containing sensitive information."
     enum_kinds: [RESTApi]
   CWE-652:
     nl: "The unit builds an XQuery expression from external input."
+    enum_kinds: [RESTApi, GraphQLApi]
   CWE-654:
     nl: "The unit bases a security decision on a single factor."
+    enum_kinds: [AuthenticationMechanism]
   CWE-655:
     nl: "The unit's protection mechanism is too inconvenient to use."
   CWE-656:

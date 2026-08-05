@@ -53,6 +53,7 @@ entries:
     enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
   CWE-180:
     nl: "The unit validates input before canonicalizing it."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-181:
     nl: "The unit validates input before filtering it."
   CWE-183:

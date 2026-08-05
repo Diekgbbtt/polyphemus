@@ -10,6 +10,7 @@ entries:
     enum_kinds: [WebPresentation, RESTApi]
   CWE-204:
     nl: "The unit returns observably different responses that reveal internal state."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-205:
     nl: "The unit's observable behaviors differ in ways that reveal secret-relevant state."
   CWE-206:
@@ -18,19 +19,23 @@ entries:
     nl: "The unit's behavior lets an observer distinguish it from an equivalent product."
   CWE-208:
     nl: "The unit's operations take observably different times depending on secret-dependent conditions."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-209:
     nl: "The unit emits an error message containing sensitive environment or user information."
     enum_kinds: [WebPresentation, RESTApi]
   CWE-210:
     nl: "The unit's own error message contains sensitive information."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-211:
     nl: "The unit triggers an externally generated error message containing sensitive information."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-213:
     nl: "The unit exposes sensitive information to actors the intended policy excludes."
   CWE-214:
     nl: "The unit invokes a process with sensitive data visible in arguments or environment."
   CWE-215:
     nl: "The unit's debugging code emits sensitive information."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-219:
     nl: "The unit stores a sensitive file under the web document root without access control."
     enum_kinds: [WebPresentation]
@@ -131,6 +136,7 @@ entries:
     nl: "The unit fails to preserve permissions when copying or restoring a resource."
   CWE-283:
     nl: "The unit does not verify that a critical resource is owned by the proper entity."
+    enum_kinds: [AuthorizationSystem]
   CWE-288:
     nl: "The unit requires authentication but leaves an alternate path that does not."
     predicate:
@@ -158,9 +164,13 @@ entries:
     enum_kinds: [AuthenticationMechanism, RESTApi, WebPresentation]
   CWE-296:
     nl: "The unit does not follow a certificate's chain of trust correctly."
+    enum_kinds: [AuthenticationMechanism]
   CWE-297:
     nl: "The unit does not validate a certificate against the expected host."
+    enum_kinds: [AuthenticationMechanism]
   CWE-298:
     nl: "The unit does not validate a certificate's expiration."
+    enum_kinds: [AuthenticationMechanism]
   CWE-299:
     nl: "The unit does not check a certificate's revocation status."
+    enum_kinds: [AuthenticationMechanism]

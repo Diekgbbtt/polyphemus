@@ -133,15 +133,19 @@ entries:
     enum_kinds: [WebPresentation]
   CWE-531:
     nl: "The unit ships accessible test code containing sensitive information."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-532:
     nl: "The unit writes sensitive information into a log file."
     enum_kinds: [WebPresentation, RESTApi]
   CWE-535:
     nl: "The unit's command-shell error message reveals unhandled exception details."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-536:
     nl: "The unit's servlet runtime error message reveals sensitive details."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-537:
     nl: "The unit's Java runtime error message reveals unhandled-exception details."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-538:
     nl: "The unit places sensitive information into externally accessible files or directories."
     enum_kinds: [WebPresentation]
@@ -150,8 +154,10 @@ entries:
     enum_kinds: [IdentificationSystem, WebPresentation]
   CWE-540:
     nl: "The unit ships source code containing sensitive information."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-541:
     nl: "The unit ships an accessible include file containing sensitive information."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-544:
     nl: "The unit lacks a standardized error-handling mechanism."
   CWE-547:
@@ -163,6 +169,7 @@ entries:
     nl: "The unit does not mask passwords during entry."
   CWE-550:
     nl: "The unit's server-generated error message reveals sensitive information."
+    enum_kinds: [WebPresentation, RESTApi]
   CWE-551:
     nl: "The unit authorizes before fully parsing the requested URL."
     enum_kinds: [WAF, CDN, ReverseProxy, APIGateway]
@@ -177,8 +184,10 @@ entries:
     enum_kinds: [WebPresentation]
   CWE-555:
     nl: "The unit's J2EE application stores a plaintext password in a configuration file."
+    enum_kinds: [AuthenticationMechanism]
   CWE-556:
     nl: "The unit misconfigures ASP.NET identity impersonation."
+    enum_kinds: [WebPresentation]
   CWE-564:
     nl: "The unit builds a Hibernate query with user-controlled input."
     enum_kinds: [RESTApi, GraphQLApi]

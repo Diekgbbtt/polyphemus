@@ -409,7 +409,11 @@ def _ensure_runtime_constants() -> None:
 def load_authoring(dir_path: Path) -> dict[str, dict]:
     """Load + validate the authoring sidecar files (sorted by name, one file
     per range). Returns fault_id -> authoring dict. Duplicate authoring of the
-    same fault across files is a hard error."""
+    same fault across files is a hard error, EXCEPT that a later file may
+    override an earlier entry with an OMIT marker (the relevance-filter layer,
+    e.g. 10-web-relevance-omit.yaml): a filtered-out fault keeps its prior
+    nl/enum_kinds authoring in the source but is dropped from the catalogue.
+    The override is deterministic: files apply in sorted-name order."""
     authoring: dict[str, dict] = {}
     for path in sorted(dir_path.glob("*.yaml")):
         with open(path, encoding="utf-8") as fh:
@@ -422,6 +426,12 @@ def load_authoring(dir_path: Path) -> dict[str, dict]:
                 raise ValueError(f"authoring file {path}: entry {fault_id} is "
                                  f"{type(spec).__name__}, expected a mapping")
             if fault_id in authoring:
+                if spec.get("omit") and authoring[fault_id].get("omit"):
+                    raise ValueError(
+                        f"authoring file {path}: duplicate OMIT for {fault_id}")
+                if spec.get("omit"):
+                    authoring[fault_id] = spec
+                    continue
                 raise ValueError(
                     f"authoring file {path}: duplicate authoring for {fault_id}")
             authoring[fault_id] = spec

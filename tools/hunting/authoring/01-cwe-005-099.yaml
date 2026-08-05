@@ -38,43 +38,61 @@ entries:
     enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
   CWE-23:
     nl: "The unit builds a path from external input and resolves it relative to a parent directory."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-24:
     nl: "The unit accepts a '../'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-25:
     nl: "The unit accepts a '/../'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-26:
     nl: "The unit accepts a '/dir/../filename'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-27:
     nl: "The unit accepts a 'dir/../../filename'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-28:
     nl: "The unit accepts a '..\\'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-29:
     nl: "The unit accepts a '\\..\\'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-30:
     nl: "The unit accepts a '\\dir\\..\\filename'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-31:
     nl: "The unit accepts a 'dir\\..\\..\\filename'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-32:
     nl: "The unit accepts a triple-dot '...' path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-33:
     nl: "The unit accepts a multiple-dot '....' path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-34:
     nl: "The unit accepts a '....//'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-35:
     nl: "The unit accepts a '.../...//'-style path segment in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-36:
     nl: "The unit accepts an absolute path in externally supplied input and resolves it outside a restricted directory."
     enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
   CWE-37:
     nl: "The unit accepts a '/absolute/pathname' form in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-38:
     nl: "The unit accepts a '\\absolute\\pathname' form in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-39:
     nl: "The unit accepts a drive-letter path form such as 'C:dirname' in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-40:
     nl: "The unit accepts a Windows UNC share path form in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-41:
     nl: "The unit resolves different path spellings to the same file without treating them uniformly."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-42:
     nl: "The unit accepts a trailing-dot path form such as 'filename.' in externally supplied input."
   CWE-43:
@@ -91,22 +109,28 @@ entries:
     nl: "The unit accepts an internal-whitespace path form in externally supplied input."
   CWE-49:
     nl: "The unit accepts a trailing-slash path form in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-50:
     nl: "The unit accepts a multiple-leading-slash path form in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-51:
     nl: "The unit accepts a multiple-internal-slash path form in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-52:
     nl: "The unit accepts a multiple-trailing-slash path form in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-53:
     nl: "The unit accepts a multiple-internal-backslash path form in externally supplied input."
   CWE-54:
     nl: "The unit accepts a trailing-backslash path form in externally supplied input."
   CWE-55:
     nl: "The unit accepts a '/./' single-dot-directory path form in externally supplied input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-56:
     nl: "The unit accepts a wildcard path form such as 'filedir*' in externally supplied input."
   CWE-57:
     nl: "The unit constructs a path that mixes protected and unprotected segments from external input."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-58:
     nl: "The unit resolves Windows 8.3 short filenames that bypass a longer-name protection mechanism."
   CWE-59:
@@ -127,6 +151,7 @@ entries:
     nl: "The unit fails to sanitize special elements that carry control meaning in a downstream plan."
   CWE-76:
     nl: "The unit neutralizes one set of special elements but misses equivalent alternate spellings."
+    enum_kinds: [WebPresentation]
   CWE-78:
     nl: "The unit builds an OS command from externally influenced input."
     predicate:
@@ -143,22 +168,31 @@ entries:
     enum_kinds: [WebPresentation]
   CWE-80:
     nl: "The unit renders script-related HTML tags from input it received from an upstream component."
+    enum_kinds: [WebPresentation]
   CWE-81:
     nl: "The unit renders script in a web error message from unsanitized input."
+    enum_kinds: [WebPresentation]
   CWE-82:
     nl: "The unit renders scripting elements inside an IMG tag attribute from unsanitized input."
+    enum_kinds: [WebPresentation]
   CWE-83:
     nl: "The unit renders dangerous URI schemes in web page attributes from unsanitized input."
+    enum_kinds: [WebPresentation]
   CWE-84:
     nl: "The unit renders encoded URI schemes in web pages from unsanitized input."
+    enum_kinds: [WebPresentation]
   CWE-85:
     nl: "The unit renders doubled-character script in web pages from unsanitized input."
+    enum_kinds: [WebPresentation]
   CWE-86:
     nl: "The unit renders invalid characters in identifiers from unsanitized input."
+    enum_kinds: [WebPresentation]
   CWE-87:
     nl: "The unit renders alternate XSS syntax from unsanitized input."
+    enum_kinds: [WebPresentation]
   CWE-88:
     nl: "The unit builds a command argument string with externally influenced delimiters."
+    enum_kinds: [RESTApi]
   CWE-89:
     nl: "The unit builds an SQL statement from externally influenced input."
     predicate:
@@ -175,14 +209,19 @@ entries:
     enum_kinds: [RESTApi, GraphQLApi]
   CWE-93:
     nl: "The unit passes CRLF sequences from external input into a downstream protocol."
+    enum_kinds: [WebPresentation]
   CWE-94:
     nl: "The unit constructs code from externally influenced input and executes it."
     enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
   CWE-95:
     nl: "The unit evaluates dynamically generated directives from unsanitized input."
+    enum_kinds: [WebPresentation]
   CWE-96:
     nl: "The unit evaluates statically saved directives from unsanitized input."
+    enum_kinds: [WebPresentation]
   CWE-97:
     nl: "The unit embeds user-controllable input into server-side includes."
+    enum_kinds: [WebPresentation]
   CWE-98:
     nl: "The unit builds an include/require file name from externally influenced input."
+    enum_kinds: [WebPresentation, RESTApi]

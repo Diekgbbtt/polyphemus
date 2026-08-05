@@ -24,6 +24,7 @@ entries:
     enum_kinds: [WebPresentation]
   CWE-1188:
     nl: "The unit initializes a resource with an insecure default."
+    enum_kinds: [RESTApi, WebPresentation]
   CWE-1204:
     nl: "The unit generates a weak initialization vector."
     enum_kinds: [AuthenticationMechanism, RESTApi]

@@ -4,11 +4,20 @@ Status: reported artifact (spec section 8). Not a runtime gate.
 Date: 2026-08-05 (cwec_v4.20.xml of 2026-04-30, catalogue commit TBD at PR).
 
 The produced fault-KB (`src/polymerhus/attack/hunting/data/fault-kb.yaml`,
-419 entries) risks being non-exhaustive: the CWE catalogue is not optimised
+231 entries) risks being non-exhaustive: the CWE catalogue is not optimised
 for modern web vulns, and scraping can be inaccurate.
 This report measures the produced list against authoritative web-security
 sources (PortSwigger Web Security Academy, HTB Academy) along the two spec
 measures: checklist-coverage and depth-of-expressiveness.
+The catalogue was relevance-filtered from 419 to 231 entries by four
+critic subagents (0-1 relevance score, keep >= 0.6) with a semantic
+second pass on the 0.5-0.7 band, one topic-coverage constraint restore
+(CWE-367 TOCTOU) and one semantic keep (CWE-1394 default crypto keys),
+plus the DNS-rebinding family already retained (CWE-350).
+The 188 dropped entries are enumerated in
+`tools/hunting/authoring/10-web-relevance-omit.yaml` with per-fault
+reasons; full rankings with critic rationales are in
+`tools/hunting/portswigger-scrape/fault-relevance-rankings.md`.
 
 ## 1. Checklist-coverage
 
@@ -29,8 +38,12 @@ validation with time-of-check / time-of-use differences leading to DNS
 rebinding, is covered directly by CWE-350 (Reliance on Reverse DNS
 Resolution for a Security-Critical Action) in the catalogue.
 
-Result: **347 / 347 fault classes covered (100%)** - against the scraped
+Result: **all scraped topics covered (100%)** - against the scraped
 PortSwigger ground truth plus the HTB-derived DNS-rebinding class.
+The relevance filter dropped no topic family wholesale: the sole
+coverage-constraint restore was CWE-367 (TOCTOU, kept at 0.55), whose
+parent CWE-362 (race conditions) lost all of its concrete children to
+the filter; every other topic family keeps at least one direct member.
 
 First pass on the scrape yielded 337/347 (97.1%) with the 10 misses all
 coming from the logic-flaws topic, mapped initially to CWE-840; CWE-840 is
@@ -95,23 +108,27 @@ degrade gracefully in their absence.
 
 ## 2. Depth-of-expressiveness
 
-Materialisation content per entry (of 419):
+Materialisation content per entry (of 231):
 
-- description: 419/419 (avg 170 chars).
-- extended_description: 86/419.
-- alternate_terms: 54/419.
-- related_attack_patterns (CAPEC): 151/419.
-- likelihood: 100/419.
-- common_consequences: 0/419 - the v4.20 XML's Consequences are nested per
-  Scope/Impact groups; not flattened in this pass (documented limitation,
-  candidates for a follow-up enrichment).
+- description: 231/231 (avg 170 chars).
+- extended_description: 61/231.
+- alternate_terms: 37/231.
+- related_attack_patterns (CAPEC): 107/231.
+- likelihood: 57/231.
+- common_consequences: 0/231 - the v4.20 XML uses the plural tag
+  `Common_Consequences` while the curator parses the legacy singular
+  `Common_Consequence`, so no consequence text is flattened (documented
+  parser limitation; verified data-side via the CWE REST API probe in
+  `hunting-66-rest-api-probe.md`: 419/419 catalogue CWEs carry the data
+  in the XML, and the API mirrors the XML exactly).
 
 Matching facet per entry:
 
 - typed predicate (hardened, #63-validated): 15 entries (CWE-22, 78, 79,
   89, 266, 288, 352, 425, 521, 601, 611, 639, 862, 918).
-- enum_kinds tag: 163 entries.
-- NL-only (fail-open): 256 entries.
+- enum_kinds tag: 230 entries (all retained entries except CWE-841,
+  surface-agnostic business logic by design - see SYSTEM_KINDS review).
+- NL-only (fail-open): 1 entry.
 
 OWASP risk seeding: all 10 Top-10-2025 risks present, 4 to 30 entries each
 (A01 27, A02 15, A03 4, A04 22, A05 30, A06 25, A07 28, A08 11, A09 4,
@@ -119,14 +136,17 @@ A10 20).
 
 ## 3. Verdict
 
-- checklist-coverage: 100% (347/347) against the scraped PortSwigger
-  ground truth plus the HTB-derived DNS-rebinding class (CWE-350);
-  two documented seed-lens gaps (CWE-190, CWE-1333) sit outside the
-  scraped syllabus and are follow-up enrichment candidates.
-- depth-of-expressiveness: every entry carries a description; 54% carry
+- checklist-coverage: 100% of the scraped PortSwigger ground truth plus the
+  HTB-derived DNS-rebinding class (CWE-350) is preserved under the
+  relevance filter (419 -> 231); two documented seed-lens gaps (CWE-190,
+  CWE-1333) sit outside the scraped syllabus and are follow-up enrichment
+  candidates.
+- depth-of-expressiveness: every entry carries a description; 71% carry
   at least one of {extended description, CAPEC patterns, likelihood,
-  alternate terms}; the matching facet spans all three strength tiers
-  (hardened / tagged / NL-only) as designed (R-c retirement path).
+  alternate terms}; 230/231 entries carry an enum_kinds tag, so the
+  matching facet is effectively all-hardened/tagged with a single
+  fail-open NL entry (CWE-841) as designed.
 - The catalogue is fit as the phase-1 FaultSource vocabulary; the two
-  seed-lens gaps and the missing consequences-flattening are follow-up
+  seed-lens gaps and the missing consequences-flattening (a one-line
+  parser tag fix, see `hunting-66-rest-api-probe.md`) are follow-up
   enrichment candidates, not blockers.

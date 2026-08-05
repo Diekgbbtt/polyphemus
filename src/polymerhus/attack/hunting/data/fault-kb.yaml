@@ -34,42 +34,6 @@
   - A02
 - abstraction: Base
   applies_if:
-    nl: The unit displays identifiers that are visually indistinguishable homoglyphs.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1007
-  materialisation:
-    alternate_terms:
-    - Homograph Attack "Homograph" is often used as a synonym of "homoglyph" by researchers, but according to Wikipedia, a homograph is a word that has multiple, distinct meanings.
-    common_consequences: []
-    description: The product displays information or identifiers to a user, but the display mechanism does not make it easy for the user to distinguish between visually similar or identical glyphs (homoglyphs), which may cause the user to misinterpret a glyph and perform an unintended, insecure action.
-    extended_description: |-
-      Some glyphs, pictures, or icons can be semantically distinct to a program, while appearing very similar or identical to a human user. These are referred to as homoglyphs. For example, the lowercase "l" (ell) and uppercase "I" (eye) have different character codes, but these characters can be displayed in exactly the same way to a user, depending on the font. This can also occur between different character sets. For example, the Latin capital letter "A" and the Greek capital letter "Α" (Alpha) are treated as distinct by programs, but may be displayed in exactly the same way to a user. Accent marks may also cause letters to appear very similar, such as the Latin capital letter grave mark "À" and its equivalent "Á" with the acute accent.
-
-      Adversaries can exploit this visual similarity for attacks such as phishing, e.g. by providing a link to an attacker-controlled hostname that looks like a hostname that the victim trusts. In a different use of homoglyphs, an adversary may create a back door username that is visually similar to the username of a regular user, which then makes it more difficult for a system administrator to detect the malicious username while reviewing logs.
-    likelihood: Medium
-    related_attack_patterns:
-    - CAPEC-632
-  name: Insufficient Visual Distinction of Homoglyphs Presented to User
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit uses multiple Struts validation forms with the same name.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-102
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses multiple validation forms with the same name, which might cause the Struts Validator to validate a form that the programmer does not expect.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Struts: Duplicate Validation Forms'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit does not restrict rendered UI layers or frames from other origins.
     predicate: null
   enum_kinds:
@@ -113,131 +77,6 @@
   name: Use of Web Link to Untrusted Target with window.opener Access
   owasp_2025:
   - A06
-- abstraction: Variant
-  applies_if:
-    nl: The unit's Struts validator form lacks a working validate() method.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-103
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product has a validator form that either does not define a validate() method, or defines a validate() method but does not call super.validate().
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Struts: Incomplete validate() Method Definition'
-  owasp_2025:
-  - A05
-- abstraction: Class
-  applies_if:
-    nl: The unit's automated input recognition fails to handle adversarial perturbations.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-1039
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses an automated mechanism such as machine learning to recognize complex data inputs (e.g. image or audio) as a particular concept or category, but it does not properly detect or handle inputs that have been modified or constructed in a way that causes the mechanism to detect a different, incorrect concept.
-    extended_description: |-
-      When techniques such as machine learning are used to automatically classify input streams, and those classifications are used for security-critical decisions, then any mistake in classification can introduce a vulnerability that allows attackers to cause the product to make the wrong security decision or disrupt service of the automated mechanism. If the mechanism is not developed or "trained" with enough input data or has not adequately undergone test and evaluation, then attackers may be able to craft malicious inputs that intentionally trigger the incorrect classification.
-
-      Targeted technologies include, but are not necessarily limited to:
-
-      automated speech recognition automated image recognition automated cyber defense Chatbot, LLMs, generative AI
-
-      For example, an attacker might modify road signs or road surface markings to trick autonomous vehicles into misreading the sign/marking and performing a dangerous action. Another example includes an attacker that crafts highly specific and complex prompts to "jailbreak" a chatbot to bypass safety or privacy mechanisms, better known as prompt injection attacks.
-    likelihood: null
-    related_attack_patterns: []
-  name: Inadequate Detection or Handling of Adversarial Input Perturbations in Automated Recognition Mechanism
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's Struts form bean does not extend the validator framework's validation class.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-104
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: If a form bean does not extend an ActionForm subclass of the Validator framework, it can expose the application to other weaknesses related to insufficient input validation.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Struts: Form Bean Does Not Extend Validation Class'
-  owasp_2025:
-  - A05
-- abstraction: Variant
-  applies_if:
-    nl: The unit has a form field without a corresponding Struts validator.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-105
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product has a form field that is not validated by a corresponding validation form, which can introduce other weaknesses related to insufficient input validation.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Struts: Form Field Without Validator'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit does not use an input validation framework for its forms.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-106
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: When an application does not use an input validation framework such as the Struts Validator, there is a greater risk of introducing weaknesses related to insufficient input validation.
-    extended_description: |-
-      Unchecked input is the leading cause of vulnerabilities in J2EE applications. Unchecked input leads to cross-site scripting, process control, and SQL injection vulnerabilities, among others.
-
-      Although J2EE applications are not generally susceptible to memory corruption attacks, if a J2EE application interfaces with native code that does not perform array bounds checking, an attacker may be able to use an input validation mistake in the J2EE application to launch a buffer overflow attack.
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Struts: Plug-in Framework not in Use'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's Struts Action Form lacks a corresponding validation form.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-108
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Every Action Form must have a corresponding validation form.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Struts: Unvalidated Action Form'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit disables its Struts validation mechanism.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-109
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Automatic filtering via a Struts bean has been turned off, which disables the Struts Validator and custom validation logic. This exposes the application to other weaknesses related to insufficient input validation.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Struts: Validator Turned Off'
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit ships a debug build of a web application to a production-facing deployment.
@@ -294,22 +133,6 @@
   name: Missing XML Validation
   owasp_2025:
   - A05
-- abstraction: Base
-  applies_if:
-    nl: The unit exposes an excessively large attack surface.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1125
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product has an attack surface whose quantitative measurement exceeds a desirable maximum.
-    extended_description: Originating from software security, an "attack surface" measure typically reflects the number of input points and output points that can be utilized by an untrusted party, i.e. a potential attacker. A larger attack surface provides more places to attack, and more opportunities for developers to introduce weaknesses. In some cases, this measure may reflect other aspects of quality besides security; e.g., a product with many inputs and outputs may require a large number of tests in order to improve code coverage.
-    likelihood: null
-    related_attack_patterns: []
-  name: Excessive Attack Surface
-  owasp_2025:
-  - A06
 - abstraction: Variant
   applies_if:
     nl: The unit passes CRLF sequences from external input into HTTP response headers.
@@ -371,25 +194,6 @@
   - A05
 - abstraction: Base
   applies_if:
-    nl: The unit misinterprets an input in a security-relevant way.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - GraphQLApi
-  - WebPresentation
-  fault_id: CWE-115
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product misinterprets an input, whether from an attacker or another product, in a security-relevant fashion.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Misinterpretation of Input
-  owasp_2025:
-  - A05
-- abstraction: Base
-  applies_if:
     nl: The unit writes external input into a log message without neutralizing it.
     predicate: null
   enum_kinds:
@@ -410,23 +214,6 @@
   name: Improper Output Neutralization for Logs
   owasp_2025:
   - A09
-- abstraction: Base
-  applies_if:
-    nl: The unit does not use its provided input validation framework.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-1173
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not use, or incorrectly uses, an input validation framework that is provided by the source language or an independent library.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Use of Validation Framework
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit's ASP.NET model validation is improperly configured.
@@ -448,7 +235,9 @@
   applies_if:
     nl: The unit initializes a resource with an insecure default.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-1188
   materialisation:
     alternate_terms: []
@@ -475,25 +264,6 @@
     likelihood: null
     related_attack_patterns: []
   name: 'ASP.NET Misconfiguration: Missing Custom Error Page'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit generates a weak initialization vector.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  - RESTApi
-  fault_id: CWE-1204
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses a cryptographic primitive that uses an Initialization Vector (IV), but the product does not generate IVs that are sufficiently unpredictable or unique according to the expected cryptographic requirements for that primitive.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-20
-    - CAPEC-97
-  name: Generation of Weak Initialization Vector (IV)
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -553,45 +323,6 @@
     related_attack_patterns: []
   name: Improper Neutralization of Formula Elements in a CSV File
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit's comparison logic compares a value in steps rather than as a whole.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1254
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product's comparison logic is performed over a series of steps rather than across the entire string in one operation. If there is a comparison logic failure on one of these steps, the operation may be vulnerable to a timing attack that can result in the interception of the process for nefarious purposes.
-    extended_description: Comparison logic is used to compare a variety of objects including passwords, Message Authentication Codes (MACs), and responses to verification challenges. When comparison logic is implemented at a finer granularity (e.g., byte-by-byte comparison) and breaks in the case of a comparison failure, an attacker can exploit this implementation to identify when exactly the failure occurred. With multiple attempts, the attacker may be able to guesses the correct password/response to challenge and elevate their privileges.
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-26
-  name: Incorrect Comparison Logic Granularity
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit is released in a pre-production or manufacturing configuration.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1269
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product released to market is released in pre-production or manufacturing configuration.
-    extended_description: |-
-      Products in the pre-production or manufacturing stages are configured to have many debug hooks and debug capabilities, including but not limited to:
-
-      Ability to override/bypass various cryptographic checks (including authentication, authorization, and integrity) Ability to read/write/modify/dump internal state (including registers and memory) Ability to change system configurations Ability to run hidden or private commands that are not allowed during production (as they expose IP).
-
-      The above is by no means an exhaustive list, but it alludes to the greater capability and the greater state of vulnerability of a product during it's preproduction or manufacturing state.
-
-      Complexity increases when multiple parties are involved in executing the tests before the final production version. For example, a chipmaker might fabricate a chip and run its own preproduction tests, following which the chip would be delivered to the Original Equipment Manufacturer (OEM), who would now run a second set of different preproduction tests on the same chip. Only after both of these sets of activities are complete, can the overall manufacturing phase be called "complete" and have the "Manufacturing Complete" fuse blown. However, if the OEM forgets to blow the Manufacturing Complete fuse, then the system remains in the manufacturing stage, rendering the system both exposed and vulnerable.
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-439
-  name: Product Released in Non-Release Configuration
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit sets sensitive cookies without a proper SameSite attribute.
@@ -611,121 +342,6 @@
   name: Sensitive Cookie with Improper SameSite Attribute
   owasp_2025:
   - A01
-- abstraction: Base
-  applies_if:
-    nl: The unit does not validate a specified quantity such as size or length in input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1284
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product receives input that is expected to specify a quantity (such as size or length), but it does not validate or incorrectly validates that the quantity has the required properties.
-    extended_description: Specified quantities include size, length, frequency, price, rate, number of operations, time, and others. Code may rely on specified quantities to allocate resources, perform calculations, control iteration, etc.
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Validation of Specified Quantity in Input
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not validate a specified index, position, or offset in input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1285
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product receives input that is expected to specify an index, position, or offset into an indexable resource such as a buffer or file, but it does not validate or incorrectly validates that the specified index/position/offset has the required properties.
-    extended_description: Often, indexable resources such as memory buffers or files can be accessed using a specific position, index, or offset, such as an index for an array or a position for a file. When untrusted input is not properly validated before it is used as an index, attackers could access (or attempt to access) unauthorized portions of these resources. This could be used to cause buffer overflows, excessive resource allocation, or trigger unexpected failures.
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Validation of Specified Index, Position, or Offset in Input
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not validate the syntactic correctness of input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1286
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product receives input that is expected to be well-formed - i.e., to comply with a certain syntax - but it does not validate or incorrectly validates that the input complies with the syntax.
-    extended_description: Often, complex inputs are expected to follow a particular syntax, which is either assumed by the input itself, or declared within metadata such as headers. The syntax could be for data exchange formats, markup languages, or even programming languages. When untrusted input is not properly validated for the expected syntax, attackers could cause parsing failures, trigger unexpected errors, or expose latent vulnerabilities that might not be directly exploitable if the input had conformed to the syntax.
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-66
-    - CAPEC-676
-  name: Improper Validation of Syntactic Correctness of Input
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not validate the type of input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1287
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product receives input that is expected to be of a certain type, but it does not validate or incorrectly validates that the input is actually of the expected type.
-    extended_description: |-
-      When input does not comply with the expected type, attackers could trigger unexpected errors, cause incorrect actions to take place, or exploit latent vulnerabilities that would not be possible if the input conformed with the expected type.
-
-      This weakness can appear in type-unsafe programming languages, or in programming languages that support casting or conversion of an input to another type.
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Validation of Specified Type of Input
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not validate consistency among the fields of a complex input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1288
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product receives a complex input with multiple elements or fields that must be consistent with each other, but it does not validate or incorrectly validates that the input is actually consistent.
-    extended_description: Some input data can be structured with multiple elements or fields that must be consistent with each other, e.g. a number-of-items field that is followed by the expected number of elements. When such complex inputs are inconsistent, attackers could trigger unexpected errors, cause incorrect actions to take place, or exploit latent vulnerabilities.
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Validation of Consistency within Input
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not validate that an input used as a resource identifier is safe.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1289
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product receives an input value that is used as a resource identifier or other type of reference, but it does not validate or incorrectly validates that the input is equivalent to a potentially-unsafe value.
-    extended_description: Attackers can sometimes bypass input validation schemes by finding inputs that appear to be safe, but will be dangerous when processed at a lower layer or by a downstream component. For example, a simple XSS protection mechanism might try to validate that an input has no "<script>" tags using case-sensitive matching, but since HTML is case-insensitive when processed by web browsers, an attacker could inject "<ScrIpT>" and trigger XSS.
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Validation of Unsafe Equivalence in Input
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit uses untrusted input as an array index without validation.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-129
-  materialisation:
-    alternate_terms:
-    - array index underflow
-    - index-out-of-range
-    - out-of-bounds array index
-    common_consequences: []
-    description: The product uses untrusted input when calculating or using an array index, but the product does not validate or incorrectly validates the index to ensure the index references a valid position within the array.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns:
-    - CAPEC-100
-  name: Improper Validation of Array Index
-  owasp_2025:
-  - A05
 - abstraction: Variant
   applies_if:
     nl: The unit stores a plaintext password in a readable configuration file.
@@ -744,24 +360,6 @@
   name: 'ASP.NET Misconfiguration: Password in Configuration File'
   owasp_2025:
   - A02
-- abstraction: Base
-  applies_if:
-    nl: The unit mishandles a length-parameter inconsistency when parsing input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-130
-  materialisation:
-    alternate_terms:
-    - length manipulation
-    - length tampering
-    common_consequences: []
-    description: The product parses a formatted message or structure, but it does not handle or incorrectly handles a length field that is inconsistent with the actual length of the associated data.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-47
-  name: Improper Handling of Length Parameter Inconsistency
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit modifies an object's prototype attributes from externally influenced input.
@@ -850,23 +448,6 @@
     related_attack_patterns: []
   name: Improper Neutralization of Special Elements Used in a Template Engine
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit passes externally controlled input as a format string.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-134
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses a function that accepts a format string as an argument, but the format string originates from an external source.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns:
-    - CAPEC-135
-    - CAPEC-67
-  name: Use of Externally-Controlled Format String
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit's WebSocket endpoint does not verify the origin of connections.
@@ -887,24 +468,6 @@
     likelihood: null
     related_attack_patterns: []
   name: Missing Origin Validation in WebSockets
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit opens a file or directory without preventing Windows junction/mount-point resolution.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-1386
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product opens a file or directory, but it does not properly prevent the name from being associated with a junction or mount point to a destination that is outside of the intended control sphere.
-    extended_description: |-
-      Depending on the intended action being performed, this could allow an attacker to cause the product to read, write, delete, or otherwise operate on unauthorized files.
-
-      In Windows, NTFS5 allows for file system objects called reparse points. Applications can create a hard link from one directory to another directory, called a junction point. They can also create a mapping from a directory to a drive letter, called a mount point. If a file is used by a privileged program, but it can be replaced with a hard link to a sensitive file (e.g., AUTOEXEC.BAT), an attacker could escalate privileges. When the process opens the file, the attacker can assume the privileges of that process, tricking the privileged process to read, modify, or delete the sensitive file, preventing the program from accurately processing data. Note that one can also point to registries and semaphores.
-    likelihood: null
-    related_attack_patterns: []
-  name: Insecure Operation on Windows Junction / Mount Point
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -944,7 +507,8 @@
   applies_if:
     nl: The unit uses a default cryptographic key for critical functionality.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthenticationMechanism
   fault_id: CWE-1394
   materialisation:
     alternate_terms: []
@@ -1039,51 +603,6 @@
   - A02
 - abstraction: Base
   applies_if:
-    nl: The unit mishandles a missing special element in incoming input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-166
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product receives input from an upstream component, but it does not handle or incorrectly handles when an expected special element is missing.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Missing Special Element
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit mishandles an unexpected extra special element in incoming input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-167
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product receives input from an upstream component, but it does not handle or incorrectly handles when an additional unexpected special element is provided.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Additional Special Element
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit mishandles inconsistent special elements in incoming input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-168
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not properly handle input in which an inconsistency exists between two or more special characters or reserved words.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Inconsistent Special Elements
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit validates input before applying a protection mechanism that modifies it.
     predicate: null
   enum_kinds:
@@ -1107,7 +626,9 @@
   applies_if:
     nl: The unit validates input before canonicalizing it.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-180
   materialisation:
     alternate_terms: []
@@ -1123,79 +644,6 @@
     - CAPEC-79
     - CAPEC-80
   name: 'Incorrect Behavior Order: Validate Before Canonicalize'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit validates input before filtering it.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-181
-  materialisation:
-    alternate_terms:
-    - Validate-before-cleanse
-    common_consequences: []
-    description: The product validates data before it has been filtered, which prevents the product from detecting data that becomes invalid after the filtering step.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-120
-    - CAPEC-267
-    - CAPEC-3
-    - CAPEC-43
-    - CAPEC-78
-    - CAPEC-79
-    - CAPEC-80
-  name: 'Incorrect Behavior Order: Validate Before Filter'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit enforces a permissive allowlist of inputs.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-183
-  materialisation:
-    alternate_terms:
-    - Allowlist / Allow List This is used by CWE and CAPEC instead of other commonly-used terms. Its counterpart is denylist.
-    - Safelist / Safe List This is often used by security tools such as firewalls, email or web gateways, proxies, etc.
-    - Whitelist / White List This term is frequently used, but usage has been declining as organizations have started to adopt other terms.
-    common_consequences: []
-    description: The product implements a protection mechanism that relies on a list of inputs (or properties of inputs) that are explicitly allowed by policy because the inputs are assumed to be safe, but the list is too permissive - that is, it allows an input that is unsafe, leading to resultant weaknesses.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-120
-    - CAPEC-3
-    - CAPEC-43
-    - CAPEC-71
-  name: Permissive List of Allowed Inputs
-  owasp_2025:
-  - A06
-- abstraction: Base
-  applies_if:
-    nl: The unit enforces an incomplete denylist of inputs.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-184
-  materialisation:
-    alternate_terms:
-    - Blacklist / Black List This term is frequently used, but usage has been declining as organizations have started to adopt other terms.
-    - Blocklist / Block List This is often used by security tools such as firewalls, email or web gateways, proxies, etc.
-    - Denylist / Deny List This is used by CWE and CAPEC instead of other commonly-used terms. Its counterpart is allowlist.
-    common_consequences: []
-    description: The product implements a protection mechanism that relies on a list of inputs (or properties of inputs) that are not allowed by policy or otherwise require other action to neutralize before additional processing takes place, but the list is incomplete.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-120
-    - CAPEC-15
-    - CAPEC-182
-    - CAPEC-3
-    - CAPEC-43
-    - CAPEC-6
-    - CAPEC-71
-    - CAPEC-73
-    - CAPEC-85
-  name: Incomplete List of Disallowed Inputs
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -1227,21 +675,6 @@
   - A01
 - abstraction: Base
   applies_if:
-    nl: The unit's data queries let an attacker infer confidential information.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-202
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: When trying to keep information confidential, an attacker can often infer some of the information by using statistics.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Exposure of Sensitive Information Through Data Queries
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit's behavior or responses differ observably based on secret-dependent conditions.
     predicate: null
   enum_kinds:
@@ -1263,7 +696,9 @@
   applies_if:
     nl: The unit returns observably different responses that reveal internal state.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-204
   materialisation:
     alternate_terms: []
@@ -1280,56 +715,11 @@
   owasp_2025: []
 - abstraction: Base
   applies_if:
-    nl: The unit's observable behaviors differ in ways that reveal secret-relevant state.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-205
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product's behaviors indicate important differences that may be observed by unauthorized actors in a way that reveals (1) its internal state or decision process, or (2) differences from other products with equivalent functionality.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-541
-    - CAPEC-580
-  name: Observable Behavioral Discrepancy
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's combined behaviors reveal internal state differences.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-206
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product performs multiple behaviors that are combined to produce a single result, but the individual behaviors are observable separately in a way that allows attackers to reveal internal state or internal decision points.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Observable Internal Behavioral Discrepancy
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's behavior lets an observer distinguish it from an equivalent product.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-207
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product operates in an environment in which its existence or specific identity should not be known, but it behaves differently than other products with equivalent functionality, in a way that is observable to an attacker.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Observable Behavioral Discrepancy With Equivalent Products
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit's operations take observably different times depending on secret-dependent conditions.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-208
   materialisation:
     alternate_terms: []
@@ -1369,7 +759,9 @@
   applies_if:
     nl: The unit's own error message contains sensitive information.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-210
   materialisation:
     alternate_terms: []
@@ -1384,7 +776,9 @@
   applies_if:
     nl: The unit triggers an externally generated error message containing sensitive information.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-211
   materialisation:
     alternate_terms: []
@@ -1397,39 +791,11 @@
   owasp_2025: []
 - abstraction: Base
   applies_if:
-    nl: The unit exposes sensitive information to actors the intended policy excludes.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-213
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product's intended functionality exposes information to certain actors in accordance with the developer's security policy, but this information is regarded as sensitive according to the intended security policies of other stakeholders such as the product's administrator, users, or others whose information is being processed.
-    extended_description: When handling information, the developer must consider whether the information is regarded as sensitive by different stakeholders, such as users or administrators. Each stakeholder effectively has its own intended security policy that the product is expected to uphold. When a developer does not treat that information as sensitive, this can introduce a vulnerability that violates the expectations of the product's users.
-    likelihood: null
-    related_attack_patterns: []
-  name: Exposure of Sensitive Information Due to Incompatible Policies
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit invokes a process with sensitive data visible in arguments or environment.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-214
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A process is invoked with sensitive command-line arguments, environment variables, or other elements that can be seen by other processes on the operating system.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Invocation of Process Using Visible Sensitive Information
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit's debugging code emits sensitive information.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-215
   materialisation:
     alternate_terms: []
@@ -1494,87 +860,13 @@
   name: Improper Limitation of a Pathname to a Restricted Directory ('Path Traversal')
   owasp_2025:
   - A01
-- abstraction: Variant
-  applies_if:
-    nl: The unit stores a sensitive file under an FTP root without access control.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-220
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product stores sensitive data under the FTP server root with insufficient access control, which might make it accessible to untrusted parties.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Storage of File With Sensitive Data Under FTP Root
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit truncates security-relevant information in display, recording, or processing.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-222
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product truncates the display, recording, or processing of security-relevant information in a way that can obscure the source or nature of an attack.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Truncation of Security-relevant Information
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit omits security-relevant information from logs or displays.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-223
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not record or display information that would be important for identifying the source or nature of an attack, or determining if an action is safe.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Omission of Security-relevant Information
-  owasp_2025:
-  - A09
-- abstraction: Base
-  applies_if:
-    nl: The unit records security-relevant information under an alternate name that obscures it.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-224
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product records security-relevant information according to an alternate name of the affected entity, instead of the canonical name.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Obscured Security-relevant Information by Alternate Name
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit mishandles unexpected numbers of parameter values.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-229
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not properly handle when the expected number of values for parameters, fields, or arguments is not provided in input, or if those values are undefined.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Values
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit builds a path from external input and resolves it relative to a parent directory.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-23
   materialisation:
     alternate_terms:
@@ -1591,163 +883,11 @@
   - A01
 - abstraction: Variant
   applies_if:
-    nl: The unit mishandles a missing value for a parameter, field, or argument.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-230
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles when a parameter, field, or argument name is specified, but the associated value is missing, i.e. it is empty, blank, or null.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Missing Values
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit mishandles extra values supplied for a parameter, field, or argument.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-231
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles when more values are provided than expected.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Extra Values
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit mishandles an undefined or unsupported value.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-232
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles when a value is not defined or supported for the associated parameter, field, or argument name.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Undefined Values
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit mishandles unexpected numbers of parameters, fields, or arguments.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-233
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not properly handle when the expected number of parameters, fields, or arguments is not provided in input, or if those parameters are undefined.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-39
-  name: Improper Handling of Parameters
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit does not handle a missing function parameter.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-234
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: If too few arguments are sent to a function, the function will still pop the expected number of arguments from the stack. Potentially, a variable number of arguments could be exhausted in a function as well.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns: []
-  name: Failure to Handle Missing Parameter
-  owasp_2025:
-  - A10
-- abstraction: Variant
-  applies_if:
-    nl: The unit mishandles extra parameters, fields, or arguments.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-235
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles when the number of parameters, fields, or arguments with the same name exceeds the expected amount.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-460
-  name: Improper Handling of Extra Parameters
-  owasp_2025:
-  - A10
-- abstraction: Variant
-  applies_if:
-    nl: The unit mishandles a parameter, field, or argument with an unexpected name.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-236
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles when a particular parameter, field, or argument name is not defined or supported by the product.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Undefined Parameters
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit mishandles complex structural input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-237
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles inputs that are related to complex structures.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Structural Elements
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit mishandles an incompletely specified structural element.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-238
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles when a particular structural element is not completely specified.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Incomplete Structural Elements
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit does not handle an incompletely specified element.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-239
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not properly handle when a particular element is not completely specified.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Failure to Handle Incomplete Element
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
     nl: The unit accepts a '../'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-24
   materialisation:
     alternate_terms: []
@@ -1761,58 +901,13 @@
     related_attack_patterns: []
   name: 'Path Traversal: ''../filedir'''
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit mishandles inconsistent structural elements.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-240
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles when two or more structural elements should be consistent, but are not.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Inconsistent Structural Elements
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit mishandles an unexpected data type.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-241
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles when a particular element is not the expected type, e.g. it expects a digit (0-9) but is provided with a letter (A-Z).
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-48
-  name: Improper Handling of Unexpected Data Type
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit throws an exception that is never caught.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-248
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: An exception is thrown from a function, but it is not caught.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Uncaught Exception
-  owasp_2025:
-  - A10
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '/../'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-25
   materialisation:
     alternate_terms: []
@@ -1825,56 +920,6 @@
     likelihood: null
     related_attack_patterns: []
   name: 'Path Traversal: ''/../filedir'''
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit executes operations with higher privileges than required.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-250
-  materialisation:
-    alternate_terms:
-    - Excessive Agency a term used by OWASP in its 2025 LLM Top Ten [REF-1524] that includes "excessive functionality" and "excessive permissions". This term might apply to multiple weaknesses.
-    common_consequences: []
-    description: The product performs an operation at a privilege level that is higher than the minimum level required, which creates new weaknesses or amplifies the consequences of other weaknesses.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns:
-    - CAPEC-104
-    - CAPEC-470
-    - CAPEC-69
-  name: Execution with Unnecessary Privileges
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not check a method's or function's return value.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-252
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not check the return value from a method or function, which can prevent it from detecting unexpected states and conditions.
-    extended_description: null
-    likelihood: Low
-    related_attack_patterns: []
-  name: Unchecked Return Value
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit checks a return value incorrectly.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-253
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product incorrectly checks a return value from a function, which prevents it from detecting errors or exceptional conditions.
-    extended_description: null
-    likelihood: Low
-    related_attack_patterns: []
-  name: Incorrect Check of Function Return Value
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -1915,7 +960,9 @@
   applies_if:
     nl: The unit accepts a '/dir/../filename'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-26
   materialisation:
     alternate_terms: []
@@ -1966,68 +1013,6 @@
   name: Weak Encoding for Password
   owasp_2025:
   - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit lacks a mechanism for managing password aging.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-262
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not have a mechanism in place for managing password aging.
-    extended_description: |-
-      Password aging (or password rotation) is a policy that forces users to change their passwords after a defined time period passes, such as every 30 or 90 days. Without mechanisms such as aging, users might not change their passwords in a timely manner.
-
-      Note that while password aging was once considered an important security feature, it has since fallen out of favor by many, because it is not as effective against modern threats compared to other mechanisms such as slow hashes. In addition, forcing frequent changes can unintentionally encourage users to select less-secure passwords. However, password aging is still in use due to factors such as compliance requirements, e.g., Payment Card Industry Data Security Standard (PCI DSS).
-    likelihood: Low
-    related_attack_patterns:
-    - CAPEC-16
-    - CAPEC-49
-    - CAPEC-509
-    - CAPEC-55
-    - CAPEC-555
-    - CAPEC-560
-    - CAPEC-561
-    - CAPEC-565
-    - CAPEC-600
-    - CAPEC-652
-    - CAPEC-653
-    - CAPEC-70
-  name: Not Using Password Aging
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit allows password expiration periods that are too long.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-263
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product supports password aging, but the expiration period is too long.
-    extended_description: |-
-      Password aging (or password rotation) is a policy that forces users to change their passwords after a defined time period passes, such as every 30 or 90 days. A long expiration provides more time for attackers to conduct password cracking before users are forced to change to a new password.
-
-      Note that while password aging was once considered an important security feature, it has since fallen out of favor by many, because it is not as effective against modern threats compared to other mechanisms such as slow hashes. In addition, forcing frequent changes can unintentionally encourage users to select less-secure passwords. However, password aging is still in use due to factors such as compliance requirements, e.g., Payment Card Industry Data Security Standard (PCI DSS).
-    likelihood: Low
-    related_attack_patterns:
-    - CAPEC-16
-    - CAPEC-49
-    - CAPEC-509
-    - CAPEC-55
-    - CAPEC-555
-    - CAPEC-560
-    - CAPEC-561
-    - CAPEC-565
-    - CAPEC-600
-    - CAPEC-652
-    - CAPEC-653
-    - CAPEC-70
-  name: Password Aging with Long Expiration
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit assigns a privilege to an actor creating an unintended privilege sphere.
@@ -2093,7 +1078,9 @@
   applies_if:
     nl: The unit accepts a 'dir/../../filename'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-27
   materialisation:
     alternate_terms: []
@@ -2106,57 +1093,6 @@
     likelihood: null
     related_attack_patterns: []
   name: 'Path Traversal: ''dir/../../filename'''
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit mishandles privilege state while switching security contexts.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-270
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not properly manage privileges while it is switching between different contexts that have different privileges or spheres of control.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-17
-    - CAPEC-30
-    - CAPEC-35
-  name: Privilege Context Switching Error
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit fails to drop elevated privileges when they are no longer needed.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-272
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The elevated privilege level required to perform operations such as chroot() should be dropped immediately after the operation is performed.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-17
-    - CAPEC-35
-    - CAPEC-76
-  name: Least Privilege Violation
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not verify that privileges were actually dropped.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-273
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product attempts to drop privileges but does not check or incorrectly checks to see if the drop succeeded.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Improper Check for Dropped Privileges
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -2198,55 +1134,11 @@
   - A01
 - abstraction: Variant
   applies_if:
-    nl: The unit's insecure permissions are inherited by created objects.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-277
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A product defines a set of insecure permissions that are inherited by objects that are created by the program.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Insecure Inherited Permissions
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit preserves insecure permissions on an object.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-278
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A product inherits a set of insecure permissions for an object, e.g. when copying from an archive file, without user awareness or involvement.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Insecure Preserved Inherited Permissions
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit assigns execution permissions in a way that violates the intended policy.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-279
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: While it is executing, the product sets the permissions of an object in a way that violates the intended permissions that have been specified by the user.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-81
-  name: Incorrect Execution-Assigned Permissions
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
     nl: The unit accepts a '..\'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-28
   materialisation:
     alternate_terms: []
@@ -2262,41 +1154,10 @@
   owasp_2025: []
 - abstraction: Base
   applies_if:
-    nl: The unit mishandles insufficient permissions or privileges on a resource.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-280
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not handle or incorrectly handles when it has insufficient privileges to access resources or functionality as specified by their permissions. This may cause it to follow unexpected code paths that may leave the product in an invalid state.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Handling of Insufficient Permissions or Privileges
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit fails to preserve permissions when copying or restoring a resource.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-281
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not preserve permissions or incorrectly preserves permissions when copying, restoring, or sharing objects, which can cause them to have less restrictive permissions than intended.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Preservation of Permissions
-  owasp_2025:
-  - A01
-- abstraction: Base
-  applies_if:
     nl: The unit does not verify that a critical resource is owned by the proper entity.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthorizationSystem
   fault_id: CWE-283
   materialisation:
     alternate_terms: []
@@ -2354,7 +1215,9 @@
   applies_if:
     nl: The unit accepts a '\..\'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-29
   materialisation:
     alternate_terms: []
@@ -2484,7 +1347,8 @@
   applies_if:
     nl: The unit does not follow a certificate's chain of trust correctly.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthenticationMechanism
   fault_id: CWE-296
   materialisation:
     alternate_terms: []
@@ -2503,7 +1367,8 @@
   applies_if:
     nl: The unit does not validate a certificate against the expected host.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthenticationMechanism
   fault_id: CWE-297
   materialisation:
     alternate_terms: []
@@ -2522,7 +1387,8 @@
   applies_if:
     nl: The unit does not validate a certificate's expiration.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthenticationMechanism
   fault_id: CWE-298
   materialisation:
     alternate_terms: []
@@ -2538,7 +1404,8 @@
   applies_if:
     nl: The unit does not check a certificate's revocation status.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthenticationMechanism
   fault_id: CWE-299
   materialisation:
     alternate_terms: []
@@ -2554,7 +1421,9 @@
   applies_if:
     nl: The unit accepts a '\dir\..\filename'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-30
   materialisation:
     alternate_terms: []
@@ -2603,26 +1472,6 @@
   name: Channel Accessible by Non-Endpoint
   owasp_2025:
   - A07
-- abstraction: Base
-  applies_if:
-    nl: The unit's authentication protocol is vulnerable to reflection attacks.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-301
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Simple authentication protocols are subject to reflection attacks if a malicious user can use the target machine to impersonate a trusted user.
-    extended_description: |-
-      A mutual authentication protocol requires each party to respond to a random challenge by the other party by encrypting it with a pre-shared key. Often, however, such protocols employ the same pre-shared key for communication with a number of different entities. A malicious user or an attacker can easily compromise this protocol without possessing the correct key by employing a reflection attack on the protocol.
-
-      Reflection attacks capitalize on mutual authentication schemes in order to trick the target into revealing the secret shared between it and another valid user. In a basic mutual-authentication scheme, a secret is known to both the valid user and the server; this allows them to authenticate. In order that they may verify this shared secret without sending it plainly over the wire, they utilize a Diffie-Hellman-style scheme in which they each pick a value, then request the hash of that value as keyed by the shared secret. In a reflection attack, the attacker claims to be a valid user and requests the hash of a random value from the server. When the server returns this value and requests its own value to be hashed, the attacker opens another connection to the server. This time, the hash requested by the attacker is the value which the server requested in the first connection. When the server returns this hashed value, it is used in the first connection, authenticating the attacker successfully as the impersonated valid user.
-    likelihood: Medium
-    related_attack_patterns:
-    - CAPEC-90
-  name: Reflection Attack in an Authentication Protocol
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit authenticates using key data elements assumed immutable but attacker-modifiable.
@@ -2811,7 +1660,9 @@
   applies_if:
     nl: The unit accepts a 'dir\..\..\filename'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-31
   materialisation:
     alternate_terms: []
@@ -2848,7 +1699,8 @@
   applies_if:
     nl: The unit stores sensitive information in cleartext in a file or on disk.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
   fault_id: CWE-313
   materialisation:
     alternate_terms: []
@@ -2860,22 +1712,6 @@
   name: Cleartext Storage in a File or on Disk
   owasp_2025:
   - A06
-- abstraction: Variant
-  applies_if:
-    nl: The unit stores sensitive information in cleartext in a registry.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-314
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product stores sensitive information in cleartext in the registry.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-37
-  name: Cleartext Storage in the Registry
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit stores sensitive information in cleartext in a cookie.
@@ -2898,57 +1734,6 @@
   name: Cleartext Storage of Sensitive Information in a Cookie
   owasp_2025:
   - A02
-- abstraction: Variant
-  applies_if:
-    nl: The unit stores sensitive information in cleartext in memory.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-316
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product stores sensitive information in cleartext in memory.
-    extended_description: |-
-      The sensitive memory might be saved to disk, stored in a core dump, or remain uncleared if the product crashes, or if the programmer does not properly clear the memory before freeing it.
-
-      It could be argued that such problems are usually only exploitable by those with administrator privileges. However, swapping could cause the memory to be written to disk and leave it accessible to physical attack afterwards. Core dump files might have insecure permissions or be stored in archive files that are accessible to untrusted people. Or, uncleared sensitive memory might be inadvertently exposed to attackers due to another weakness.
-    likelihood: null
-    related_attack_patterns: []
-  name: Cleartext Storage of Sensitive Information in Memory
-  owasp_2025:
-  - A06
-- abstraction: Variant
-  applies_if:
-    nl: The unit stores sensitive information in cleartext in a GUI.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-317
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product stores sensitive information in cleartext within the GUI.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Cleartext Storage of Sensitive Information in GUI
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit stores sensitive information in cleartext in an executable.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-318
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product stores sensitive information in cleartext in an executable.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-37
-    - CAPEC-65
-  name: Cleartext Storage of Sensitive Information in Executable
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit transmits sensitive data in cleartext over a communication channel.
@@ -2977,7 +1762,9 @@
   applies_if:
     nl: The unit accepts a triple-dot '...' path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-32
   materialisation:
     alternate_terms: []
@@ -2995,7 +1782,8 @@
   applies_if:
     nl: The unit performs a key exchange without verifying the peer's identity.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthenticationMechanism
   fault_id: CWE-322
   materialisation:
     alternate_terms: []
@@ -3007,60 +1795,13 @@
   name: Key Exchange without Entity Authentication
   owasp_2025:
   - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit reuses a nonce or key pair across uses.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-323
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Nonces should be used for the present occasion and only once.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns: []
-  name: Reusing a Nonce, Key Pair in Encryption
-  owasp_2025:
-  - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit uses a cryptographic key past its expiration date.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-324
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses a cryptographic key or password past its expiration date, which diminishes its safety significantly by increasing the timing window for cracking attacks against that key.
-    extended_description: null
-    likelihood: Low
-    related_attack_patterns: []
-  name: Use of a Key Past its Expiration Date
-  owasp_2025:
-  - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit omits a required step in a cryptographic algorithm.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-325
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not implement a required step in a cryptographic algorithm, resulting in weaker encryption than advertised by the algorithm.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-68
-  name: Missing Cryptographic Step
-  owasp_2025:
-  - A04
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a multiple-dot '....' path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-33
   materialisation:
     alternate_terms: []
@@ -3078,7 +1819,9 @@
   applies_if:
     nl: The unit's randomness source produces insufficient entropy.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-331
   materialisation:
     alternate_terms: []
@@ -3095,7 +1838,9 @@
   applies_if:
     nl: The unit's PRNG has insufficient entropy.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-332
   materialisation:
     alternate_terms: []
@@ -3107,26 +1852,13 @@
   name: Insufficient Entropy in PRNG
   owasp_2025:
   - A04
-- abstraction: Variant
-  applies_if:
-    nl: The unit's TRNG has insufficient entropy.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-333
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: True random number generators (TRNG) generally have a limited source of entropy and therefore can fail or block.
-    extended_description: null
-    likelihood: Low
-    related_attack_patterns: []
-  name: Improper Handling of Insufficient Entropy in TRNG
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit's random value space is smaller than needed.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-334
   materialisation:
     alternate_terms: []
@@ -3142,7 +1874,9 @@
   applies_if:
     nl: The unit seeds its PRNG incorrectly.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-335
   materialisation:
     alternate_terms: []
@@ -3167,7 +1901,9 @@
   applies_if:
     nl: The unit's PRNG uses the same seed on every initialization.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-336
   materialisation:
     alternate_terms: []
@@ -3183,7 +1919,9 @@
   applies_if:
     nl: The unit initializes its PRNG from a predictable seed.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-337
   materialisation:
     alternate_terms: []
@@ -3199,7 +1937,9 @@
   applies_if:
     nl: The unit uses a cryptographically weak PRNG in a security context.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-338
   materialisation:
     alternate_terms: []
@@ -3218,7 +1958,9 @@
   applies_if:
     nl: The unit's PRNG seed space is too small.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-339
   materialisation:
     alternate_terms: []
@@ -3233,7 +1975,9 @@
   applies_if:
     nl: The unit accepts a '....//'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-34
   materialisation:
     alternate_terms: []
@@ -3251,7 +1995,9 @@
   applies_if:
     nl: The unit generates numbers or objects predictable from observable state.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-341
   materialisation:
     alternate_terms: []
@@ -3266,7 +2012,9 @@
   applies_if:
     nl: The unit generates random values predictable from previous values.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - IdentificationSystem
+  - AuthenticationMechanism
   fault_id: CWE-342
   materialisation:
     alternate_terms: []
@@ -3278,36 +2026,6 @@
   name: Predictable Exact Value from Previous Values
   owasp_2025:
   - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit generates random values whose range is predictable from previous values.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-343
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product's random number generator produces a series of values which, when observed, can be used to infer a relatively small range of possibilities for the next value that could be generated.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Predictable Value Range from Previous Values
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit uses a constant value where a dynamic one is required.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-344
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses a constant value, name, or reference, but this value can (or should) vary across different environments.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Use of Invariant Value in Dynamically Changing Context
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit does not verify a cryptographic signature correctly.
@@ -3327,49 +2045,13 @@
   name: Improper Verification of Cryptographic Signature
   owasp_2025:
   - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit uses a less-trusted source when a trusted source of the same data exists.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-348
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product has two different sources of the same data or information, but it uses the source that has less support for verification, is less trusted, or is less resistant to attack.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-141
-    - CAPEC-142
-    - CAPEC-73
-    - CAPEC-76
-    - CAPEC-85
-  name: Use of Less Trusted Source
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit accepts untrusted data mixed with trusted data when processing.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-349
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product, when processing trusted data, accepts any untrusted data that is also included with the trusted data, treating the untrusted data as if it were trusted.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-141
-    - CAPEC-142
-    - CAPEC-75
-  name: Acceptance of Extraneous Untrusted Data With Trusted Data
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '.../...//'-style path segment in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-35
   materialisation:
     alternate_terms: []
@@ -3384,7 +2066,8 @@
   applies_if:
     nl: The unit performs reverse DNS resolution for a security-critical decision.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
   fault_id: CWE-350
   materialisation:
     alternate_terms: []
@@ -3405,21 +2088,6 @@
   name: Reliance on Reverse DNS Resolution for a Security-Critical Action
   owasp_2025:
   - A07
-- abstraction: Base
-  applies_if:
-    nl: The unit fails to distinguish between different types of elements.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-351
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not properly distinguish between different types of elements in a way that leads to insecure behavior.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Insufficient Type Distinction
-  owasp_2025: []
 - abstraction: Compound
   applies_if:
     nl: The unit cannot verify whether a request was intentionally submitted by an authenticated user.
@@ -3455,93 +2123,6 @@
   - A01
 - abstraction: Base
   applies_if:
-    nl: The unit's transmission protocol lacks an integrity-check mechanism.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-353
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses a transmission protocol that does not include a mechanism for verifying the integrity of the data during transmission, such as a checksum.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns:
-    - CAPEC-13
-    - CAPEC-14
-    - CAPEC-389
-    - CAPEC-39
-    - CAPEC-665
-    - CAPEC-74
-    - CAPEC-75
-  name: Missing Support for Integrity Check
-  owasp_2025:
-  - A08
-- abstraction: Base
-  applies_if:
-    nl: The unit does not validate an integrity check value.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-354
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not validate or incorrectly validates the integrity check values or "checksums" of a message. This may prevent it from detecting if the data has been modified or corrupted in transmission.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns:
-    - CAPEC-145
-    - CAPEC-463
-    - CAPEC-75
-  name: Improper Validation of Integrity Check Value
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit's UI does not warn the user before an unsafe action.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-356
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product's user interface does not warn the user before undertaking an unsafe action on behalf of that user. This makes it easier for attackers to trick users into inflicting damage to their system.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Product UI does not Warn User of Unsafe Actions
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit's UI gives insufficient warning of dangerous operations.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-357
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The user interface provides a warning to a user regarding dangerous or sensitive operations, but the warning is not noticeable enough to warrant attention.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Insufficient UI Warning of Dangerous Operations
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit misimplements a security-relevant standard check.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-358
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not implement or incorrectly implements one or more security-relevant checks as specified by the design of a standardized algorithm, protocol, or technique.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improperly Implemented Security Check for Standard
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit accepts an absolute path in externally supplied input and resolves it outside a restricted directory.
     predicate: null
   enum_kinds:
@@ -3562,57 +2143,11 @@
   - A01
 - abstraction: Base
   applies_if:
-    nl: The unit trusts event-source information that can be spoofed.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-360
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Security based on event locations are insecure and can be spoofed.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns: []
-  name: Trust of System Event Data
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit checks a file's status before access in a way that races with link changes.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-363
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product checks the status of a file or directory before accessing it, which produces a race condition in which the file can be replaced with a link before the access is performed, causing the product to access the wrong file.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-26
-  name: Race Condition Enabling Link Following
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit races threads over a shared resource.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-366
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: If two threads of execution use a resource simultaneously, there exists the possibility that resources may be used while invalid, in turn making the state of execution undefined.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns:
-    - CAPEC-26
-    - CAPEC-29
-  name: Race Condition within a Thread
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit checks a resource's state before using it in a TOCTOU race.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-367
   materialisation:
     alternate_terms:
@@ -3627,44 +2162,13 @@
     - CAPEC-29
   name: Time-of-check Time-of-use (TOCTOU) Race Condition
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit performs non-atomic actions across a context switch crossing privilege boundaries.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-368
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A product performs a series of non-atomic actions to switch between contexts that cross privilege or other security boundaries, but a race condition allows an attacker to modify or misrepresent the product's behavior during the switch.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-26
-    - CAPEC-29
-  name: Context Switching Race Condition
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit divides a value by zero.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-369
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product divides a value by zero.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Divide By Zero
-  owasp_2025:
-  - A10
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '/absolute/pathname' form in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-37
   materialisation:
     alternate_terms: []
@@ -3679,7 +2183,8 @@
   applies_if:
     nl: The unit does not re-check certificate revocation after the initial check.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthenticationMechanism
   fault_id: CWE-370
   materialisation:
     alternate_terms: []
@@ -3692,72 +2197,13 @@
     - CAPEC-29
   name: Missing Check for Certificate Revocation after Initial Check
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit passes mutable data to an untrusted method.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-374
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product sends non-cloned mutable data as an argument to a method or function.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Passing Mutable Objects to an Untrusted Method
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit returns a mutable object to an untrusted caller.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-375
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Sending non-cloned mutable data as a return value may result in that data being altered or deleted by the calling function.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Returning a Mutable Object to an Untrusted Caller
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit creates a temporary file with insecure permissions.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-378
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Opening temporary files without appropriate measures or controls can leave the file, its contents and any function that it impacts vulnerable to attack.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns: []
-  name: Creation of Temporary File With Insecure Permissions
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit creates a temporary file in a directory with insecure permissions.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-379
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product creates a temporary file in a directory whose permissions allow unintended actors to determine the file's existence or otherwise access that file.
-    extended_description: null
-    likelihood: Low
-    related_attack_patterns: []
-  name: Creation of Temporary File in Directory with Insecure Permissions
-  owasp_2025:
-  - A01
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '\absolute\pathname' form in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-38
   materialisation:
     alternate_terms: []
@@ -3768,22 +2214,6 @@
     related_attack_patterns: []
   name: 'Path Traversal: ''\absolute\pathname\here'''
   owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: A J2EE-style unit calls System.exit() during a request.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-382
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A J2EE application uses System.exit(), which also shuts down its container.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'J2EE Bad Practices: Use of System.exit()'
-  owasp_2025:
-  - A06
 - abstraction: Compound
   applies_if:
     nl: The unit establishes a new user session without invalidating the existing one.
@@ -3817,7 +2247,9 @@
   applies_if:
     nl: The unit accepts a drive-letter path form such as 'C:dirname' in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-39
   materialisation:
     alternate_terms: []
@@ -3828,141 +2260,13 @@
     related_attack_patterns: []
   name: 'Path Traversal: ''C:dirname'''
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit detects an error condition but takes no action.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-390
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product detects a specific error, but takes no actions to handle the error.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Detection of Error Condition Without Action
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit leaves an error condition unchecked.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-391
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: '[PLANNED FOR DEPRECATION. SEE MAINTENANCE NOTES AND CONSIDER CWE-252, CWE-248, OR CWE-1069.] Ignoring exceptions and other error conditions may allow an attacker to induce unexpected behavior unnoticed.'
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Unchecked Error Condition
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit does not report an error condition it encountered.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-392
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product encounters an error but does not provide a status code or return value to indicate that an error has occurred.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Missing Report of Error Condition
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit returns a wrong status code or return value.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-393
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A function or operation returns an incorrect return value or status code that does not indicate the true result of execution, causing the product to modify its behavior based on the incorrect result.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Return of Wrong Status Code
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not check a status code or return value properly.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-394
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not properly check when a function or operation returns a value that is legitimate for the function, but is not expected by the product.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Unexpected Status Code or Return Value
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit catches NullPointerException instead of checking for NULL programmatically.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-395
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Catching NullPointerException should not be used as an alternative to programmatic checks to prevent dereferencing a null pointer.
-    extended_description: |-
-      Programmers typically catch NullPointerException under three circumstances:
-
-      The program contains a null pointer dereference. Catching the resulting exception was easier than fixing the underlying problem. The program explicitly throws a NullPointerException to signal an error condition. The code is part of a test harness that supplies unexpected input to the classes under test.
-
-      Of these three circumstances, only the last is acceptable.
-    likelihood: null
-    related_attack_patterns: []
-  name: Use of NullPointerException Catch to Detect NULL Pointer Dereference
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit declares a catch for an overly generic exception.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-396
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Catching overly broad exceptions promotes complex error handling code that is more likely to contain security vulnerabilities.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Declaration of Catch for Generic Exception
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit declares throws for an overly generic exception.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-397
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product throws or raises an overly broad exceptions that can hide important details and produce inappropriate responses to certain conditions.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Declaration of Throws for Generic Exception
-  owasp_2025:
-  - A10
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a Windows UNC share path form in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-40
   materialisation:
     alternate_terms: []
@@ -3977,7 +2281,9 @@
   applies_if:
     nl: The unit resolves different path spellings to the same file without treating them uniformly.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-41
   materialisation:
     alternate_terms: []
@@ -4008,51 +2314,6 @@
   name: Unprotected Primary Channel
   owasp_2025:
   - A06
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts a trailing-dot path form such as 'filename.' in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-42
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of trailing dot ('filedir.') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: ''filename.'' (Trailing Dot)'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit protects a primary channel but not an alternate channel.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-420
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product protects a primary channel, but it does not use the same level of protection for an alternate channel.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Unprotected Alternate Channel
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit races over an alternate channel's access state.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-421
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product opens an alternate channel to communicate with an authorized user, but the channel is accessible to other actors.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Race Condition During Access to Alternate Channel
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit does not enforce authorization on all restricted URLs.
@@ -4084,96 +2345,6 @@
   name: Direct Request ('Forced Browsing')
   owasp_2025:
   - A01
-- abstraction: Base
-  applies_if:
-    nl: The unit searches for critical resources via an externally supplied search path.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-426
-  materialisation:
-    alternate_terms:
-    - Untrusted Path
-    common_consequences: []
-    description: The product searches for critical resources using an externally-supplied search path that can point to resources that are not under the product's direct control.
-    extended_description: |-
-      This might allow attackers to execute their own programs, access unauthorized data files, or modify configuration in unexpected ways. If the product uses a search path to locate critical resources such as programs, then an attacker could modify that search path to point to a malicious program, which the targeted product would then execute. The problem extends to any type of critical resource that the product trusts.
-
-      Some of the most common variants of untrusted search path are:
-
-      In various UNIX and Linux-based systems, the PATH environment variable may be consulted to locate executable programs, and LD_PRELOAD may be used to locate a separate library. In various Microsoft-based systems, the PATH environment variable is consulted to locate a DLL, if the DLL is not found in other paths that appear earlier in the search order.
-    likelihood: High
-    related_attack_patterns:
-    - CAPEC-38
-  name: Untrusted Search Path
-  owasp_2025:
-  - A08
-- abstraction: Base
-  applies_if:
-    nl: The unit uses a search path containing an uncontrolled element.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-427
-  materialisation:
-    alternate_terms:
-    - Binary planting This term is one of several that are used to describe exploitation of untrusted search path elements in Windows systems, which received wide attention in August 2010. From a weakness perspective, the term is imprecise because it can apply to both CWE-426 and CWE-427.
-    - DLL preloading This term is one of several that are used to describe exploitation of untrusted search path elements in Windows systems, which received wide attention in August 2010. From a weakness perspective, the term is imprecise because it can apply to both CWE-426 and CWE-427.
-    - Dependency confusion As of February 2021, this term is used to describe CWE-427 in the context of managing installation of software package dependencies, in which attackers release packages on public sites where the names are the same as package names used by private repositories, and the search for the dependent package tries the public site first, downloading untrusted code. It may also be referred to as a "substitution attack."
-    - Insecure library loading This term is one of several that are used to describe exploitation of untrusted search path elements in Windows systems, which received wide attention in August 2010. From a weakness perspective, the term is imprecise because it can apply to both CWE-426 and CWE-427.
-    common_consequences: []
-    description: The product uses a fixed or controlled search path to find resources, but one or more locations in that path can be under the control of unintended actors.
-    extended_description: |-
-      Although this weakness can occur with any type of resource, it is frequently introduced when a product uses a directory search path to find executables or code libraries, but the path contains a directory that can be modified by an attacker, such as "/tmp" or the current working directory.
-
-      In Windows-based systems, when the LoadLibrary or LoadLibraryEx function is called with a DLL name that does not contain a fully qualified path, the function follows a search order that includes two path elements that might be uncontrolled:
-
-      the directory from which the program has been loaded the current working directory
-
-      In some cases, the attack can be conducted remotely, such as when SMB or WebDAV network shares are used.
-
-      One or more locations in that path could include the Windows drive root or its subdirectories. This often exists in Linux-based code assuming the controlled nature of the root directory (/) or its subdirectories (/etc, etc), or a code that recursively accesses the parent directory. In Windows, the drive root and some of its subdirectories have weak permissions by default, which makes them uncontrolled.
-
-      In some Unix-based systems, a PATH might be created that contains an empty element, e.g. by splicing an empty variable into the PATH. This empty element can be interpreted as equivalent to the current working directory, which might be an untrusted search element.
-
-      In software package management frameworks (e.g., npm, RubyGems, or PyPi), the framework may identify dependencies on third-party libraries or other packages, then consult a repository that contains the desired package. The framework may search a public repository before a private repository. This could be exploited by attackers by placing a malicious package in the public repository that has the same name as a package from the private repository. The search path might not be directly under control of the developer relying on the framework, but this search order effectively contains an untrusted element.
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-38
-    - CAPEC-471
-  name: Uncontrolled Search Path Element
-  owasp_2025:
-  - A08
-- abstraction: Base
-  applies_if:
-    nl: The unit uses an unquoted search-path element containing whitespace.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-428
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses a search path that contains an unquoted element, in which the element contains whitespace or other separators. This can cause the product to access resources in a parent path.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Unquoted Search Path or Element
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts a multiple-trailing-dot path form in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-43
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of multiple trailing dot ('filedir....') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: ''filename....'' (Multiple Trailing Dot)'
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit serves raw web content under the document root with a non-executing extension.
@@ -4212,36 +2383,6 @@
   - A06
 - abstraction: Base
   applies_if:
-    nl: The unit acts as an intermediary without a complete model of endpoint features.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-437
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A product acts as an intermediary or monitor between two or more endpoints, but it does not have a complete model of an endpoint's features, behaviors, or state, potentially causing the product to perform incorrect actions based on this incomplete model.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Incomplete Model of Endpoint Features
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts an internal-dot path form such as 'file.name' in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-44
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of internal dot ('file.ordir') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: ''file.name'' (Internal Dot)'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit interprets HTTP requests inconsistently with another intermediary.
     predicate: null
   enum_kinds:
@@ -4270,160 +2411,6 @@
   name: Inconsistent Interpretation of HTTP Requests ('HTTP Request/Response Smuggling')
   owasp_2025:
   - A06
-- abstraction: Base
-  applies_if:
-    nl: The unit's UI claims support for a security feature it does not implement.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-447
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A UI function for a security feature appears to be supported and gives feedback to the user that suggests that it is supported, but the underlying functionality is not implemented.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Unimplemented or Unsupported Feature in UI
-  owasp_2025:
-  - A03
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts a multiple-internal-dot path form in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-45
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of multiple internal dot ('file...dir') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: ''file...name'' (Multiple Internal Dot)'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit's UI selects among multiple interpretations of input without prompting.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-450
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The UI has multiple interpretations of user input but does not prompt the user when it selects the less secure interpretation.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Multiple Interpretations of UI Input
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit initializes an internal variable with an insecure default.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-453
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product, by default, initializes an internal variable with an insecure or less secure value than is possible.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Insecure Default Variable Initialization
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit initializes trusted variables or data stores from modifiable inputs.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-454
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product initializes critical internal variables or data stores using inputs that can be modified by untrusted actors.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: External Initialization of Trusted Variables or Data Stores
-  owasp_2025:
-  - A06
-- abstraction: Base
-  applies_if:
-    nl: The unit does not stop when security-relevant errors occur at initialization.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-455
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not exit or otherwise modify its operation when security-relevant errors occur during initialization, such as when a configuration file has a format error or a hardware security module (HSM) cannot be activated, which can cause the product to execute in a less secure fashion than intended by the administrator.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Non-exit on Failed Initialization
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts a trailing-space path form in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-46
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of trailing space ('filedir ') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-649
-  name: 'Path Equivalence: ''filename '' (Trailing Space)'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not clean up state when an exception is thrown.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-460
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not clean up its state or incorrectly cleans up its state when an exception is thrown, leading to unexpected state or control flow.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Improper Cleanup on Thrown Exception
-  owasp_2025:
-  - A10
-- abstraction: Variant
-  applies_if:
-    nl: The unit allows duplicate keys in an associative list.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-462
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Duplicate keys in associative lists can lead to non-unique keys being mistaken for an error.
-    extended_description: null
-    likelihood: Low
-    related_attack_patterns: []
-  name: Duplicate Key in Associative List (Alist)
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts a leading-space path form in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-47
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of leading space (' filedir') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: '' filename'' (Leading Space)'
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit selects classes or code by externally controlled input.
@@ -4472,73 +2459,6 @@
   - A06
 - abstraction: Base
   applies_if:
-    nl: The unit dereferences a NULL pointer.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-476
-  materialisation:
-    alternate_terms:
-    - NPD Common abbreviation for Null Pointer Dereference
-    - NPE Common abbreviation for Null Pointer Exception
-    - nil pointer dereference used for access of nil in Go programs
-    - null deref Common abbreviation for Null Pointer Dereference
-    common_consequences: []
-    description: The product dereferences a pointer that it expects to be valid but is NULL.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: NULL Pointer Dereference
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit's multi-condition expression lacks a default case.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-478
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The code does not have a default case in an expression with multiple conditions, such as a switch statement.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Missing Default Case in Multiple Condition Expression
-  owasp_2025:
-  - A10
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts an internal-whitespace path form in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-48
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of internal space ('file(SPACE)name') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: ''file name'' (Internal Whitespace)'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit omits a break statement in a switch-like construct.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-484
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product omits a break statement within a switch or similar construct, causing code associated with multiple conditions to execute. This can cause problems when the programmer only intended to execute code associated with one condition.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Omitted Break Statement in Switch
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
     nl: The unit fails to enforce boundaries between sessions.
     predicate: null
   enum_kinds:
@@ -4583,7 +2503,9 @@
   applies_if:
     nl: The unit accepts a trailing-slash path form in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-49
   materialisation:
     alternate_terms: []
@@ -4594,52 +2516,6 @@
     related_attack_patterns: []
   name: 'Path Equivalence: ''filename/'' (Trailing Slash)'
   owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit exposes a cloneable() method that is not final.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-491
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A class has a cloneable() method that is not declared final, which allows an object to be created without calling the constructor. This can cause the object to be in an unexpected state.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Public cloneable() Method Without Final ('Object Hijack')
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit uses an inner class that exposes sensitive data at package scope.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-492
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Inner classes are translated into classes that are accessible at package scope and may expose code that the programmer intended to keep private to attackers.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Use of Inner Class Containing Sensitive Data
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit declares a critical public variable without final.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-493
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product has a critical public variable that is not final, which allows the variable to be modified to contain unexpected values.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns: []
-  name: Critical Public Variable Without Final Modifier
-  owasp_2025:
-  - A05
 - abstraction: Base
   applies_if:
     nl: The unit downloads and executes code without an integrity check.
@@ -4695,36 +2571,6 @@
   - A01
 - abstraction: Variant
   applies_if:
-    nl: The unit contains a cloneable class holding sensitive data.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-498
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The code contains a class with sensitive data, but the class is cloneable. The data can then be accessed by cloning the class.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Cloneable Class Containing Sensitive Information
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit contains a serializable class holding sensitive data.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-499
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The code contains a class with sensitive data, but the class does not explicitly deny serialization. The data can be accessed by serializing the class through another class.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns: []
-  name: Serializable Class Containing Sensitive Data
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
     nl: A J2EE-style unit transmits sensitive data over a channel that does not encrypt it.
     predicate: null
   enum_kinds:
@@ -4746,7 +2592,9 @@
   applies_if:
     nl: The unit accepts a multiple-leading-slash path form in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-50
   materialisation:
     alternate_terms: []
@@ -4757,38 +2605,6 @@
     related_attack_patterns: []
   name: 'Path Equivalence: ''//multiple/leading/slash'''
   owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit exposes a public static field that is not final.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-500
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: An object contains a public static field that is not marked final, which might allow it to be modified in unexpected ways.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns: []
-  name: Public Static Field Not Marked Final
-  owasp_2025:
-  - A05
-- abstraction: Base
-  applies_if:
-    nl: The unit mixes trusted and untrusted data in the same structure.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-501
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product mixes trusted and untrusted data in the same data structure or structured message.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Trust Boundary Violation
-  owasp_2025:
-  - A06
 - abstraction: Base
   applies_if:
     nl: The unit deserializes untrusted data.
@@ -4821,58 +2637,13 @@
   name: Deserialization of Untrusted Data
   owasp_2025:
   - A08
-- abstraction: Base
-  applies_if:
-    nl: The unit contains hidden code that appears benign.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-507
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product appears to contain benign or useful functionality, but it also contains code that is hidden from normal operation that violates the intended security policy of the user or the system administrator.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-698
-  name: Trojan Horse
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit contains non-replicating malicious code.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-508
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Non-replicating malicious code only resides on the target system or product that is attacked; it does not attempt to spread to other systems.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Non-Replicating Malicious Code
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit contains replicating malicious code.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-509
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: Replicating malicious code, including viruses and worms, will attempt to attack other systems once it has successfully compromised the target system or the product.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Replicating Malicious Code (Virus or Worm)
-  owasp_2025:
-  - A08
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a multiple-internal-slash path form in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-51
   materialisation:
     alternate_terms: []
@@ -4883,41 +2654,13 @@
     related_attack_patterns: []
   name: 'Path Equivalence: ''/multiple//internal/slash'''
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit contains a trapdoor reachable by special input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-510
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: A trapdoor is a hidden piece of code that responds to a special input, allowing its user access to resources without passing through the normal security enforcement mechanism.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Trapdoor
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit collects personally identifiable information covertly.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-512
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product collects personally identifiable information about a human user or the user's activities, but the product accesses this information using other resources besides itself, and it does not require that user's explicit approval or direct input into the product.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Spyware
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a multiple-trailing-slash path form in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-52
   materialisation:
     alternate_terms: []
@@ -4998,22 +2741,6 @@
   name: Unprotected Transport of Credentials
   owasp_2025:
   - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit's cache holds sensitive information readable by outsiders.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-524
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The code uses a cache that contains sensitive information, but the cache can be read by an actor outside of the intended control sphere.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-204
-  name: Use of Cache Containing Sensitive Information
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit's web browser caching policy retains sensitive information.
@@ -5034,22 +2761,6 @@
   - A06
 - abstraction: Variant
   applies_if:
-    nl: The unit stores unencrypted sensitive information in an environment variable.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-526
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses an environment variable to store unencrypted sensitive information.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Cleartext Storage of Sensitive Information in an Environment Variable
-  owasp_2025:
-  - A02
-- abstraction: Variant
-  applies_if:
     nl: The unit exposes a version-control repository to unauthorized actors.
     predicate: null
   enum_kinds:
@@ -5063,51 +2774,6 @@
     likelihood: null
     related_attack_patterns: []
   name: Exposure of Version-Control Repository to an Unauthorized Control Sphere
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit exposes a core dump file to unauthorized actors.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-528
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product generates a core dump file in a directory, archive, or other resource that is stored, transferred, or otherwise made accessible to unauthorized actors.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Exposure of Core Dump File to an Unauthorized Control Sphere
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit exposes access-control list files to unauthorized actors.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-529
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product stores access control list files in a directory or other container that is accessible to actors outside of the intended control sphere.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Exposure of Access Control List Files to an Unauthorized Control Sphere
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts a multiple-internal-backslash path form in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-53
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of multiple internal backslash ('\multiple\trailing\\slash') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: ''\multiple\\internal\backslash'''
   owasp_2025: []
 - abstraction: Variant
   applies_if:
@@ -5129,7 +2795,9 @@
   applies_if:
     nl: The unit ships accessible test code containing sensitive information.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-531
   materialisation:
     alternate_terms: []
@@ -5163,7 +2831,9 @@
   applies_if:
     nl: The unit's command-shell error message reveals unhandled exception details.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-535
   materialisation:
     alternate_terms: []
@@ -5178,7 +2848,9 @@
   applies_if:
     nl: The unit's servlet runtime error message reveals sensitive details.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-536
   materialisation:
     alternate_terms: []
@@ -5193,7 +2865,9 @@
   applies_if:
     nl: The unit's Java runtime error message reveals unhandled-exception details.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-537
   materialisation:
     alternate_terms: []
@@ -5245,26 +2919,13 @@
   name: Use of Persistent Cookies Containing Sensitive Information
   owasp_2025:
   - A06
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts a trailing-backslash path form in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-54
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of trailing backslash ('filedir\') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: ''filedir\'' (Trailing Backslash)'
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit ships source code containing sensitive information.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-540
   materialisation:
     alternate_terms: []
@@ -5280,7 +2941,9 @@
   applies_if:
     nl: The unit ships an accessible include file containing sensitive information.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-541
   materialisation:
     alternate_terms: []
@@ -5291,37 +2954,6 @@
     related_attack_patterns: []
   name: Inclusion of Sensitive Information in an Include File
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit lacks a standardized error-handling mechanism.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-544
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not use a standardized method for handling errors throughout the code, which might introduce inconsistent error handling and resultant weaknesses.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Missing Standardized Error Handling Mechanism
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit hard-codes security-relevant constants.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-547
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses hard-coded constants instead of symbolic names for security-critical values, which increases the likelihood of mistakes during code maintenance or security policy change.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Use of Hard-coded, Security-relevant Constants
-  owasp_2025:
-  - A02
 - abstraction: Variant
   applies_if:
     nl: The unit exposes a directory listing.
@@ -5339,26 +2971,13 @@
   name: Exposure of Information Through Directory Listing
   owasp_2025:
   - A01
-- abstraction: Base
-  applies_if:
-    nl: The unit does not mask passwords during entry.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-549
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not mask passwords during entry, increasing the potential for attackers to observe and capture passwords.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Missing Password Field Masking
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '/./' single-dot-directory path form in externally supplied input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-55
   materialisation:
     alternate_terms: []
@@ -5373,7 +2992,9 @@
   applies_if:
     nl: The unit's server-generated error message reveals sensitive information.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-550
   materialisation:
     alternate_terms: []
@@ -5463,7 +3084,8 @@
   applies_if:
     nl: The unit's J2EE application stores a plaintext password in a configuration file.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthenticationMechanism
   fault_id: CWE-555
   materialisation:
     alternate_terms: []
@@ -5478,7 +3100,8 @@
   applies_if:
     nl: The unit misconfigures ASP.NET identity impersonation.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-556
   materialisation:
     alternate_terms: []
@@ -5488,21 +3111,6 @@
     likelihood: null
     related_attack_patterns: []
   name: 'ASP.NET Misconfiguration: Use of Identity Impersonation'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit accepts a wildcard path form such as 'filedir*' in externally supplied input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-56
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product accepts path input in the form of asterisk wildcard ('filedir*') without appropriate validation, which can lead to ambiguous path resolution and allow an attacker to traverse the file system to unintended locations or access arbitrary files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: ''filedir*'' (Wildcard)'
   owasp_2025: []
 - abstraction: Variant
   applies_if:
@@ -5570,7 +3178,9 @@
   applies_if:
     nl: The unit constructs a path that mixes protected and unprotected segments from external input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-57
   materialisation:
     alternate_terms: []
@@ -5580,64 +3190,6 @@
     likelihood: null
     related_attack_patterns: []
   name: 'Path Equivalence: ''fakedir/../realdir/filename'''
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit resolves Windows 8.3 short filenames that bypass a longer-name protection mechanism.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-58
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product contains a protection mechanism that restricts access to a long filename on a Windows operating system, but it does not properly restrict access to the equivalent short "8.3" filename.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: 'Path Equivalence: Windows 8.3 Filename'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit accesses a file by name where a symlink can redirect the access to a different file.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - GraphQLApi
-  - WebPresentation
-  fault_id: CWE-59
-  materialisation:
-    alternate_terms:
-    - Zip Slip "Zip slip" is an attack that uses file archives (e.g., ZIP, tar, rar, etc.) that contain filenames with path traversal sequences that cause the files to be written outside of the directory under which the archive is expected to be extracted [REF-1282]. It is most commonly used for relative path traversal (CWE-23) and link following (CWE-59).
-    - insecure temporary file Some people use the phrase "insecure temporary file" when referring to a link following weakness, but other weaknesses can produce insecure temporary files without any symlink involvement at all.
-    common_consequences: []
-    description: The product attempts to access a file based on the filename, but it does not properly prevent that filename from identifying a link or shortcut that resolves to an unintended resource.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns:
-    - CAPEC-132
-    - CAPEC-17
-    - CAPEC-35
-    - CAPEC-76
-  name: Improper Link Resolution Before File Access ('Link Following')
-  owasp_2025:
-  - A01
-- abstraction: Variant
-  applies_if:
-    nl: The unit modifies its OpenSSL CTX object after connection creation begins.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-593
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product modifies the SSL context after connection creation has begun.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-94
-  name: 'Authentication Bypass: OpenSSL CTX Object Modified after SSL Objects are Created'
   owasp_2025: []
 - abstraction: Variant
   applies_if:
@@ -5698,7 +3250,9 @@
   applies_if:
     nl: The unit's servlet does not catch all exceptions, revealing debug information.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-600
   materialisation:
     alternate_terms:
@@ -5740,26 +3294,12 @@
   name: URL Redirection to Untrusted Site ('Open Redirect')
   owasp_2025:
   - A01
-- abstraction: Base
-  applies_if:
-    nl: The unit uses unchecked external input in a loop condition.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-606
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not properly check inputs that are used for loop conditions, potentially leading to a denial of service or other consequences because of excessive looping.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Unchecked Input for Loop Condition
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit's Struts ActionForm contains a non-private field.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-608
   materialisation:
     alternate_terms: []
@@ -5770,25 +3310,6 @@
     related_attack_patterns: []
   name: 'Struts: Non-private Field in ActionForm Class'
   owasp_2025: []
-- abstraction: Compound
-  applies_if:
-    nl: The unit follows a UNIX symbolic link when opening a file or directory.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-61
-  materialisation:
-    alternate_terms:
-    - Symlink following
-    - symlink vulnerability
-    common_consequences: []
-    description: The product, when opening a file or directory, does not sufficiently account for when the file is a symbolic link that resolves to a target outside of the intended control sphere. This could allow an attacker to cause the product to operate on unauthorized files.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns:
-    - CAPEC-27
-  name: UNIX Symbolic Link (Symlink) Following
-  owasp_2025:
-  - A01
 - abstraction: Base
   applies_if:
     nl: The unit processes an XML document with external entity references.
@@ -5823,7 +3344,9 @@
   applies_if:
     nl: The unit's search index of sensitive documents is not access-restricted.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthorizationSystem
+  - WebPresentation
   fault_id: CWE-612
   materialisation:
     alternate_terms: []
@@ -5874,7 +3397,9 @@
   applies_if:
     nl: The unit ships source-code comments containing sensitive information.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-615
   materialisation:
     alternate_terms: []
@@ -5886,52 +3411,6 @@
   name: Inclusion of Sensitive Information in Source Code Comments
   owasp_2025:
   - A01
-- abstraction: Variant
-  applies_if:
-    nl: The unit reads uploaded files via legacy PHP globals.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-616
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The PHP application uses an old method for processing uploaded files by referencing the four global variables that are set for each file (e.g. $varname, $varname_size, $varname_name, $varname_type). These variables could be overwritten by attackers, causing the application to process unauthorized files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Incomplete Identification of Uploaded File Variables (PHP)
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit leaves a database cursor dangling and accessible to other users.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-619
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: If a database cursor is not closed properly, then it could become accessible to other users while retaining the same privileges that were originally assigned, leaving the cursor "dangling."
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Dangling Database Cursor ('Cursor Injection')
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit follows a UNIX hard link when opening a file or directory.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-62
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product, when opening a file or directory, does not sufficiently account for when the name is associated with a hard link to a target that is outside of the intended control sphere. This could allow an attacker to cause the product to operate on unauthorized files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: UNIX Hard Link
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit allows password changes without verifying the original password.
@@ -5951,55 +3430,6 @@
   - A07
 - abstraction: Variant
   applies_if:
-    nl: The unit uses external input to determine the names of variables to extract into.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-621
-  materialisation:
-    alternate_terms:
-    - Variable overwrite
-    common_consequences: []
-    description: The product uses external input to determine the names of variables into which information is extracted, without verifying that the names of the specified variables are valid. This could cause the program to overwrite unintended variables.
-    extended_description: |-
-      For example, in PHP, extraction can be used to provide functionality similar to register_globals, a dangerous functionality that is frequently disabled in production systems. Calling extract() or import_request_variables() without the proper arguments could allow arbitrary global variables to be overwritten, including superglobals.
-
-      Similar functionality is possible in other interpreted languages, including custom languages.
-    likelihood: null
-    related_attack_patterns: []
-  name: Variable Extraction Error
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit validates hook arguments incorrectly on user-accessible API functions.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-622
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product adds hooks to user-accessible API functions, but it does not properly validate the arguments. This could lead to resultant vulnerabilities.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Validation of Function Hook Arguments
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit uses a regular expression containing an executable component with user input.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-624
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses a regular expression that either (1) contains an executable component with user-controlled inputs, or (2) allows a user to enable execution by inserting pattern modifiers.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Executable Regular Expression Error
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
     nl: The unit mishandles null bytes when passing data between components.
     predicate: null
   enum_kinds:
@@ -6017,57 +3447,6 @@
     likelihood: null
     related_attack_patterns: []
   name: Null Byte Interaction Error (Poison Null Byte)
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit evaluates variable names influenced by the user at runtime.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-627
-  materialisation:
-    alternate_terms:
-    - Dynamic evaluation
-    common_consequences: []
-    description: In a language where the user can influence the name of a variable at runtime, if the variable names are not controlled, an attacker can read or write to arbitrary variables, or access arbitrary functions.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Dynamic Variable Evaluation
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit calls a function with incorrectly specified arguments.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-628
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product calls a function, procedure, or routine with arguments that are not correctly specified, leading to always-incorrect behavior and resultant weaknesses.
-    extended_description: |-
-      There are multiple ways in which this weakness can be introduced, including:
-
-      the wrong variable or reference; an incorrect number of arguments; incorrect order of arguments; wrong type of arguments; or wrong value.
-    likelihood: null
-    related_attack_patterns: []
-  name: Function Call with Incorrectly Specified Arguments
-  owasp_2025:
-  - A06
-- abstraction: Class
-  applies_if:
-    nl: The unit's protection mechanism is unnecessarily complex.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-637
-  materialisation:
-    alternate_terms:
-    - Unnecessary Complexity
-    common_consequences: []
-    description: The product uses a more complex mechanism than necessary, which could lead to resultant weaknesses when the mechanism is not correctly understood, modeled, configured, implemented, or used.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Unnecessary Complexity in Protection Mechanism (Not Using 'Economy of Mechanism')
   owasp_2025: []
 - abstraction: Class
   applies_if:
@@ -6127,23 +3506,6 @@
   name: Authorization Bypass Through User-Controlled Key
   owasp_2025:
   - A01
-- abstraction: Variant
-  applies_if:
-    nl: The unit follows a Windows .LNK shortcut when opening a file or directory.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-64
-  materialisation:
-    alternate_terms:
-    - Windows symbolic link following
-    - symlink
-    common_consequences: []
-    description: The product, when opening a file or directory, does not sufficiently handle when the file is a Windows shortcut (.LNK) whose target is outside of the intended control sphere. This could allow an attacker to cause the product to operate on unauthorized files.
-    extended_description: null
-    likelihood: Low
-    related_attack_patterns: []
-  name: Windows Shortcut Following (.LNK)
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit's password recovery mechanism can be abused to change passwords without knowing the original.
@@ -6170,7 +3532,9 @@
   applies_if:
     nl: The unit constructs resource names from upstream input without restricting them.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - WebPresentation
   fault_id: CWE-641
   materialisation:
     alternate_terms: []
@@ -6260,7 +3624,9 @@
   applies_if:
     nl: The unit makes authorization decisions based on non-canonical URL paths.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthorizationSystem
+  - WebPresentation
   fault_id: CWE-647
   materialisation:
     alternate_terms: []
@@ -6276,67 +3642,13 @@
     related_attack_patterns: []
   name: Use of Non-Canonical URL Paths for Authorization Decisions
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit uses privileged APIs incorrectly.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-648
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not conform to the API requirements for a function call that requires extra privileges. This could allow attackers to gain privileges by causing the function to be called incorrectly.
-    extended_description: |-
-      When a product contains certain functions that perform operations requiring an elevated level of privilege, the caller of a privileged API must be careful to:
-
-      ensure that assumptions made by the APIs are valid, such as validity of arguments account for known weaknesses in the design/implementation of the API call the API from a safe context
-
-      If the caller of the API does not follow these requirements, then it may allow a malicious user or process to elevate their privilege, hijack the process, or steal sensitive data.
-
-      For instance, it is important to know if privileged APIs do not shed their privileges before returning to the caller or if the privileged function might make certain assumptions about the data, context or state information passed to it by the caller. It is important to always know when and how privileged APIs can be called in order to ensure that their elevated level of privilege cannot be exploited.
-    likelihood: Low
-    related_attack_patterns:
-    - CAPEC-107
-    - CAPEC-234
-  name: Incorrect Use of Privileged APIs
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit relies on obfuscation or encryption of mutable inputs as a security mechanism.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-649
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses obfuscation or encryption of inputs that should not be mutable by an external actor, but the product does not use integrity checks to detect if those inputs have been modified.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns:
-    - CAPEC-463
-  name: Reliance on Obfuscation or Encryption of Security-Relevant Inputs without Integrity Checking
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit follows a Windows hard link when opening a file or directory.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-65
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product, when opening a file or directory, does not sufficiently handle when the name is associated with a hard link to a target that is outside of the intended control sphere. This could allow an attacker to cause the product to operate on unauthorized files.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Windows Hard Link
-  owasp_2025:
-  - A01
 - abstraction: Variant
   applies_if:
     nl: The unit trusts the HTTP method as a permission mechanism.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthorizationSystem
+  - WebPresentation
   fault_id: CWE-650
   materialisation:
     alternate_terms: []
@@ -6370,7 +3682,9 @@
   applies_if:
     nl: The unit builds an XQuery expression from external input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
+  - GraphQLApi
   fault_id: CWE-652
   materialisation:
     alternate_terms: []
@@ -6385,7 +3699,8 @@
   applies_if:
     nl: The unit bases a security decision on a single factor.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthenticationMechanism
   fault_id: CWE-654
   materialisation:
     alternate_terms:
@@ -6406,161 +3721,6 @@
     - CAPEC-653
     - CAPEC-70
   name: Reliance on a Single Factor in a Security Decision
-  owasp_2025: []
-- abstraction: Class
-  applies_if:
-    nl: The unit's protection mechanism is too inconvenient to use.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-655
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product has a protection mechanism that is too difficult or inconvenient to use, encouraging non-malicious users to disable or bypass the mechanism, whether by accident or on purpose.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Insufficient Psychological Acceptability
-  owasp_2025: []
-- abstraction: Class
-  applies_if:
-    nl: The unit relies on security through obscurity.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-656
-  materialisation:
-    alternate_terms:
-    - Never Assuming your secrets are safe
-    common_consequences: []
-    description: The product uses a protection mechanism whose strength depends heavily on its obscurity, such that knowledge of its algorithms or key data is sufficient to defeat the mechanism.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Reliance on Security Through Obscurity
-  owasp_2025:
-  - A06
-- abstraction: Base
-  applies_if:
-    nl: The unit invokes a potentially dangerous function.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-676
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product invokes a potentially dangerous function that could introduce a vulnerability if it is used incorrectly, but the function can also be used safely.
-    extended_description: null
-    likelihood: High
-    related_attack_patterns: []
-  name: Use of Potentially Dangerous Function
-  owasp_2025:
-  - A06
-- abstraction: Variant
-  applies_if:
-    nl: The unit calls a function with arguments in the wrong order.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-683
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product calls a function, procedure, or routine, but the caller specifies the arguments in an incorrect order, leading to resultant weaknesses.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Function Call With Incorrect Order of Arguments
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit calls a function with too many or too few arguments.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-685
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product calls a function, procedure, or routine, but the caller specifies too many arguments, or too few arguments, which may lead to undefined behavior and resultant weaknesses.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Function Call With Incorrect Number of Arguments
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit calls a function with an argument of the wrong type.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-686
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product calls a function, procedure, or routine, but the caller specifies an argument that is the wrong data type, which may lead to resultant weaknesses.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Function Call With Incorrect Argument Type
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit calls a function with an argument value outside its valid range.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-687
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product calls a function, procedure, or routine, but the caller specifies an argument that contains the wrong value, which may lead to resultant weaknesses.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Function Call With Incorrectly Specified Argument Value
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit calls a function with the wrong variable or reference as an argument.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-688
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product calls a function, procedure, or routine, but the caller specifies the wrong variable or reference as one of the arguments, which may lead to undefined behavior and resultant weaknesses.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Function Call With Incorrect Variable or Reference as Argument
-  owasp_2025: []
-- abstraction: Compound
-  applies_if:
-    nl: The unit races on resource permissions during a copy.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-689
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product, while copying or cloning a resource, does not set the resource's permissions or access control until the copy is complete, leaving the resource exposed to other spheres while the copy is taking place.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-26
-    - CAPEC-27
-  name: Permission Race Condition During Resource Copy
-  owasp_2025: []
-- abstraction: Compound
-  applies_if:
-    nl: The unit does not check a function's return value for NULL before dereferencing.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-690
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not check for an error after calling a function that can return with a NULL pointer if the function fails, which leads to a resultant NULL pointer dereference.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Unchecked Return Value to NULL Pointer Dereference
   owasp_2025: []
 - abstraction: Compound
   applies_if:
@@ -6583,21 +3743,6 @@
     - CAPEC-85
   name: Incomplete Denylist to Cross-Site Scripting
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit uses multiple resources with the same identifier where uniqueness is required.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-694
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses multiple resources that can have the same identifier, in a context in which unique identifiers are required.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Use of Multiple Resources with Duplicate Identifier
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit serves a default error page that reveals internal product or environment details.
@@ -6616,21 +3761,6 @@
     likelihood: null
     related_attack_patterns: []
   name: 'J2EE Misconfiguration: Missing Custom Error Page'
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit assigns an owner to a resource outside the intended control sphere.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-708
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product assigns an owner to a resource, but the owner is outside of the intended control sphere.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Incorrect Ownership Assignment
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -6691,23 +3821,6 @@
   name: Exposed Dangerous Method or Function
   owasp_2025:
   - A01
-- abstraction: Class
-  applies_if:
-    nl: The unit fails to sanitize special elements that carry control meaning in a downstream plan.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-75
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not adequately filter user-controlled input for special elements with control implications.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns:
-    - CAPEC-81
-    - CAPEC-93
-  name: Failure to Sanitize Special Elements into a Different Plane (Special Element Injection)
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit does not return custom error pages, exposing sensitive information.
@@ -6771,7 +3884,8 @@
   applies_if:
     nl: The unit neutralizes one set of special elements but misses equivalent alternate spellings.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-76
   materialisation:
     alternate_terms: []
@@ -6803,36 +3917,6 @@
   name: Use of a One-Way Hash with a Predictable Salt
   owasp_2025:
   - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit declares a critical data element public.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-766
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product declares a critical variable, field, or member to be public when intended security policy requires it to be private.
-    extended_description: This issue makes it more difficult to maintain the product, which indirectly affects security by making it more difficult or time-consuming to find and/or fix vulnerabilities. It also might make it easier to introduce vulnerabilities.
-    likelihood: null
-    related_attack_patterns: []
-  name: Critical Data Element Declared Public
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit exposes a private variable through a public method.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-767
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product defines a public method that reads or modifies a private variable.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Access to Critical Private Variable via Public Method
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit allows recursive entity references in DTDs.
@@ -6921,22 +4005,6 @@
   - A05
 - abstraction: Variant
   applies_if:
-    nl: The unit uses RSA without OAEP padding.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-780
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product uses the RSA algorithm but does not incorporate Optimal Asymmetric Encryption Padding (OAEP), which might weaken the encryption.
-    extended_description: null
-    likelihood: Medium
-    related_attack_patterns: []
-  name: Use of RSA Algorithm without OAEP
-  owasp_2025:
-  - A04
-- abstraction: Variant
-  applies_if:
     nl: The unit relies on cookie values for protection without validating them.
     predicate: null
   enum_kinds:
@@ -6952,21 +4020,6 @@
   name: Reliance on Cookies without Validation and Integrity Checking in a Security Decision
   owasp_2025:
   - A08
-- abstraction: Variant
-  applies_if:
-    nl: The unit calls a path-normalization function with a buffer too small for the path.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-785
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product invokes a function for normalizing paths or file names, but it provides an output buffer that is smaller than the maximum possible size, such as PATH_MAX.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Use of Path Manipulation Function without Maximum-sized Buffer
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit places user-controllable input into rendered output without neutralizing it.
@@ -7023,7 +4076,8 @@
   applies_if:
     nl: The unit renders script-related HTML tags from input it received from an upstream component.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-80
   materialisation:
     alternate_terms: []
@@ -7084,7 +4138,8 @@
   applies_if:
     nl: The unit renders script in a web error message from unsanitized input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-81
   materialisation:
     alternate_terms: []
@@ -7103,7 +4158,8 @@
   applies_if:
     nl: The unit renders scripting elements inside an IMG tag attribute from unsanitized input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-82
   materialisation:
     alternate_terms: []
@@ -7169,7 +4225,8 @@
   applies_if:
     nl: The unit renders dangerous URI schemes in web page attributes from unsanitized input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-83
   materialisation:
     alternate_terms: []
@@ -7234,7 +4291,9 @@
   applies_if:
     nl: The unit fails to enforce that an action happens only once per actor.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - AuthorizationSystem
+  - WebPresentation
   fault_id: CWE-837
   materialisation:
     alternate_terms: []
@@ -7274,7 +4333,8 @@
   applies_if:
     nl: The unit renders encoded URI schemes in web pages from unsanitized input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-84
   materialisation:
     alternate_terms: []
@@ -7310,26 +4370,12 @@
   name: Improper Enforcement of Behavioral Workflow
   owasp_2025:
   - A06
-- abstraction: Base
-  applies_if:
-    nl: The unit places a user into an incorrect group.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-842
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product or the administrator places a user into an incorrect group.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Placement of User into Incorrect Group
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit renders doubled-character script in web pages from unsanitized input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-85
   materialisation:
     alternate_terms: []
@@ -7345,7 +4391,8 @@
   applies_if:
     nl: The unit renders invalid characters in identifiers from unsanitized input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-86
   materialisation:
     alternate_terms: []
@@ -7390,7 +4437,8 @@
   applies_if:
     nl: The unit renders alternate XSS syntax from unsanitized input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-87
   materialisation:
     alternate_terms: []
@@ -7406,7 +4454,8 @@
   applies_if:
     nl: The unit builds a command argument string with externally influenced delimiters.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - RESTApi
   fault_id: CWE-88
   materialisation:
     alternate_terms: []
@@ -7520,21 +4569,6 @@
   - A05
 - abstraction: Base
   applies_if:
-    nl: The unit fails to restrict reads or writes to dynamically identified variables.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-914
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product does not properly restrict reading from or writing to dynamically-identified variables.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Control of Dynamically-Identified Variables
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit improperly controls modification of dynamically determined object attributes.
     predicate: null
   enum_kinds:
@@ -7638,24 +4672,10 @@
   - A01
 - abstraction: Base
   applies_if:
-    nl: The unit does not enforce message integrity over a communication channel.
-    predicate: null
-  enum_kinds: []
-  fault_id: CWE-924
-  materialisation:
-    alternate_terms: []
-    common_consequences: []
-    description: The product establishes a communication channel with an endpoint and receives a message from that endpoint, but it does not sufficiently ensure that the message was not modified during transmission.
-    extended_description: null
-    likelihood: null
-    related_attack_patterns: []
-  name: Improper Enforcement of Message Integrity During Transmission in a Communication Channel
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
     nl: The unit passes CRLF sequences from external input into a downstream protocol.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-93
   materialisation:
     alternate_terms: []
@@ -7714,7 +4734,8 @@
   applies_if:
     nl: The unit evaluates dynamically generated directives from unsanitized input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-95
   materialisation:
     alternate_terms: []
@@ -7731,7 +4752,8 @@
   applies_if:
     nl: The unit evaluates statically saved directives from unsanitized input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-96
   materialisation:
     alternate_terms: []
@@ -7752,7 +4774,8 @@
   applies_if:
     nl: The unit embeds user-controllable input into server-side includes.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
   fault_id: CWE-97
   materialisation:
     alternate_terms: []
@@ -7770,7 +4793,9 @@
   applies_if:
     nl: The unit builds an include/require file name from externally influenced input.
     predicate: null
-  enum_kinds: []
+  enum_kinds:
+  - WebPresentation
+  - RESTApi
   fault_id: CWE-98
   materialisation:
     alternate_terms:

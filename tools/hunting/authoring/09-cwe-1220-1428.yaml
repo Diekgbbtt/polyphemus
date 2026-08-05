@@ -53,6 +53,7 @@ entries:
     enum_kinds: [AuthenticationMechanism]
   CWE-1394:
     nl: "The unit uses a default cryptographic key for critical functionality."
+    enum_kinds: [AuthenticationMechanism]
   CWE-1395:
     nl: "The unit depends on a third-party component with a known vulnerability."
     enum_kinds: [WebPresentation, RESTApi]

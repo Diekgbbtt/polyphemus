@@ -31,6 +31,7 @@ from tools.hunting.curate_fault_kb import (
     curate,
     emit_catalogue,
     fold_authoring,
+    load_authoring,
     load_seed,
     parse_catalogue,
     walk_descendants,
@@ -187,6 +188,30 @@ def test_fold_authoring_rejects_absent_id(tmp_path):
     authoring = {"CWE-999": {"omit": True}}
     with pytest.raises(ValueError, match="does not contain it"):
         fold_authoring(entries, authoring)
+
+
+def test_load_authoring_late_omit_overrides_earlier_entry(tmp_path):
+    """The relevance-filter layer: a later file (sorted by name) may override
+    an earlier authored entry with an omit marker; the entry is dropped."""
+    d = tmp_path / "authoring"
+    d.mkdir()
+    (d / "01-range.yaml").write_text(
+        "entries:\n  CWE-3:\n    nl: 'Rendered output.'\n")
+    (d / "10-relevance.yaml").write_text(
+        "entries:\n  CWE-3:\n    omit: true\n    omit_reason: 'fixture'\n")
+    authoring = load_authoring(d)
+    assert authoring["CWE-3"] == {"omit": True, "omit_reason": "fixture"}
+
+
+def test_load_authoring_late_non_omit_duplicate_still_rejected(tmp_path):
+    d = tmp_path / "authoring"
+    d.mkdir()
+    (d / "01-range.yaml").write_text(
+        "entries:\n  CWE-3:\n    nl: 'Rendered output.'\n")
+    (d / "10-relevance.yaml").write_text(
+        "entries:\n  CWE-3:\n    nl: 'Other output.'\n")
+    with pytest.raises(ValueError, match="duplicate authoring"):
+        load_authoring(d)
 
 
 # --- determinism (spec 5.7) ------------------------------------------------------
