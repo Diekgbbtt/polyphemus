@@ -156,7 +156,7 @@ PROVIDERS: dict[str, str] = {
 # the zen catalog (bare ids), not the provider-prefixed app-style ids.
 _ZEN_FAMILY = frozenset({"opencode", "zen"})
 
-ROLES: tuple[str, ...] = ("configurator", "triager", "job_orchestrator", "crawler", "analyser")
+ROLES: tuple[str, ...] = ("configurator", "triager", "job_orchestrator", "crawler", "analyser", "hunting")
 
 def _key_env(provider: str) -> str:
     return f"API_KEY_{provider.upper()}"

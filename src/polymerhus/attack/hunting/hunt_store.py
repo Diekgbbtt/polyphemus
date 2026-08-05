@@ -37,9 +37,16 @@ logger = logging.getLogger(__name__)
 #   cut         - one per direction cut by the budget (O9)
 #   back_edge   - one per targeted-recon request raised by a hunt (IA-6)
 #   memory      - one per completed hunt, the revive-keyed insight (#70)
+# Record kinds written by the hunting agent (#83, Q6) - exactly the two Q6
+# declares, nothing more:
+#   spec        - one per authored TestImplementationSpec instance (D4), with
+#                 parent_spec_ref for re-author lineages (D67-03/D67-08)
+#   evidence    - one per pod outcome (D5 + D6 consumption), hypothesis-
+#                 indexed, carrying the derived D7 verdict
 KINDS = (
     "run", "config", "hunt", "dispatch", "result",
     "unresolved", "cut", "back_edge", "memory",
+    "spec", "evidence",
 )
 
 
