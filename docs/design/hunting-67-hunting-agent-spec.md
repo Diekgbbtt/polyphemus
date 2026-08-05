@@ -217,6 +217,8 @@ E8 - INIT-rejection lineage over the real files (Q3/Q5): two spec records with `
 Yields: `...::test_E8_init_rejection_lineage_over_real_files`.
 E9 - Tracing seam against the observability stack: with the env configured, the hunting span is really open (trace id present) and flush completes without raising; with the client raising, a dispatch completes identically - tracing is best-effort and never perturbs a hunt.
 Yields: `...::test_E9_tracing_seam_live_and_fail_open`.
+E10 - Re-entry after an INIT re-author judges the LATEST committed spec (D67-08, added 2026-08-05): a hunt whose spec was rejected at INIT is re-authored, run, and returns insufficient-evidence; a routed back-edge then re-enters the candidate and the judgment turn consumes the re-authored spec's evidence trail (its interpretations), never the superseded original's - the latest experiment-log entry stands.
+Yields: `...::test_E10_reentry_after_reauth_uses_latest_spec`.
 
 ## 7. Out of scope
 

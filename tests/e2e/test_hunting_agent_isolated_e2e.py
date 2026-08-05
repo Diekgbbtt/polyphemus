@@ -35,50 +35,33 @@ import uuid
 import pytest
 
 from polymerhus.attack.hunting.hunt_orchestrator import (
-    DispatchResult,
     HuntConfig,
     HuntPromptTemplate,
 )
 from polymerhus.attack.hunting.hunt_store import HuntStore
-from polymerhus.attack.hunting.hunting_agent import (
-    build_hunting_agent,
-    derive_technological_axis,
-)
+from polymerhus.attack.hunting.hunting_agent import derive_technological_axis
 from polymerhus.attack.hunting.hunting_tracing import (
     flush_hunting_traces,
     hunting_span,
 )
-from polymerhus.recon.control.targeted import (
-    AnalyserReconRequest,
-    ReconScope,
-    TargetedReconResult,
+from tests.hunting_fixtures import (
+    SPEC,
+    SPEC_REAUTHORED,
+    _agent,
+    _author,
+    _judge,
+    _kb,
+    _need,
+    _no_judge,
+    _outcome,
+    _pod,
+    _route,
 )
 
 SERVICE_A = "Service:slug:a"
 SYSTEM_B = "System:key:b"
 FAULT_X = "fault-x"
 FAULT_Y = "fault-y"
-
-# The D4 fixture the authoring turn returns (typed base + NL core, section 7).
-SPEC = {
-    "target_identity": "Service:slug:a via GET /api/a",
-    "verification_symptoms": ["HTTP 200 with the reflected parameter value"],
-    "testing_pattern": "csrf-probe baseline",
-    "assumptions": ["public exposure", "no WAF on /api/a"],
-    "payload_vector_space": {"parameter": "q", "encodings": ["urlencoded", "json"]},
-    "rationale": "fixture rationale from the spec's H1",
-    "interpretation_guidance": "fixture guidance: map each status to evidence",
-}
-
-SPEC_REAUTHORED = {
-    "target_identity": "Service:slug:a via GET /api/a",
-    "verification_symptoms": ["HTTP status code in the 2xx/4xx band"],
-    "testing_pattern": "csrf-probe baseline",
-    "assumptions": ["public exposure", "no WAF on /api/a"],
-    "payload_vector_space": {"parameter": "q", "encodings": ["urlencoded"]},
-    "rationale": "fixture rationale from the spec's H1",
-    "interpretation_guidance": "fixture guidance: map each status to evidence",
-}
 
 # The real adapted index-cards (D3 part 2): a Service riding a REST mechanism
 # (api_paradigm on its spine) and a System riding a CSR mechanism
@@ -120,109 +103,6 @@ def _config(unit_id: str, fault_class: str, *, card: dict, **overrides) -> HuntC
         tool_registry=[{"technique": "csrf-probe"}],
     )
     return base.model_copy(update=overrides)
-
-
-def _kb(queries: list | None = None, *, result=None, raise_on: bool = False):
-    """The fixture symptom-technique KB (IA-8): records every join key it was
-    queried on; returns the canned result, an empty result, or raises."""
-    record = queries if queries is not None else []
-
-    def kb(query):
-        record.append(query)
-        if raise_on:
-            raise RuntimeError("KB unavailable (fixture)")
-        return result or {"symptoms": [], "probing_techniques": []}
-
-    return kb
-
-
-def _outcome(terminal_reason: str, *, verdict: str = "unsuccessful",
-             evidence: dict | None = None, iterations: int = 1) -> dict:
-    """One D5+D6 envelope a pod run returns (IA-4)."""
-    return {
-        "verdict": verdict,
-        "evidence": {
-            "terminal_reason": terminal_reason,
-            "iterations": iterations,
-            **(evidence or {}),
-        },
-    }
-
-
-def _pod(calls: list | None = None, *, outcomes: list[dict] | None = None):
-    """The fixture pod (IA-3/IA-4): records every received spec and replays
-    the canned outcomes in order."""
-    record = calls if calls is not None else []
-    sequence = list(outcomes or [])
-
-    def pod(spec):
-        record.append(spec)
-        return sequence.pop(0)
-
-    return pod
-
-
-def _author(specs: list[dict] | None = None, *, calls: list | None = None):
-    """The fixture spec-authoring turn: records every received prompt text
-    (the REAL composed system+user turn) and returns the canned D4 dicts."""
-    record = calls if calls is not None else []
-    sequence = list(specs or [SPEC])
-
-    def author(text):
-        record.append(text)
-        if not sequence:
-            return None
-        return sequence.pop(0)
-
-    return author
-
-
-def _judge(judgments: list[dict], *, calls: list | None = None):
-    """The fixture D5 continuation judgment: records every received prompt
-    text; consulted ONLY on an insufficient-evidence derivation."""
-    record = calls if calls is not None else []
-    sequence = list(judgments)
-
-    def judge(text):
-        record.append(text)
-        return sequence.pop(0)
-
-    return judge
-
-
-def _no_judge():
-    def judge(text):
-        pytest.fail("the D5 judgment must not be consulted on a terminal verdict")
-
-    return judge
-
-
-def _agent(store: HuntStore, run_id: str, *, kb=None, pod=None, author=None,
-           judge=None, **kw):
-    return build_hunting_agent(
-        store=store, run_id=run_id, kb=kb, pod=pod,
-        author=author, judge=judge, **kw,
-    )
-
-
-def _need() -> AnalyserReconRequest:
-    return AnalyserReconRequest(
-        job="httpx_reprofile",
-        scope=ReconScope(unit_id=SERVICE_A, note=f"hunt gap on {FAULT_X}"),
-        origin="hunting",
-        requester_id="fixture-requester",
-    )
-
-
-def _route(need: AnalyserReconRequest) -> TargetedReconResult:
-    """The orchestrator's IA-6 side of the inline back-edge (D67-14)."""
-    return TargetedReconResult(
-        correlation_id=need.correlation_id,
-        requester_id=need.requester_id,
-        origin="hunting",
-        status="success",
-        observations_merged=1,
-    )
 
 
 def _skill_text() -> str:
@@ -502,7 +382,7 @@ def test_E8_init_rejection_lineage_over_real_files(tmp_path):
 # (when the env is configured), and the degraded leg (the client raising)
 # never perturbs a dispatch.
 
-def test_E9_tracing_seam_live_and_fail_open(tmp_path):
+def test_E9_tracing_seam_live_and_fail_open(tmp_path, monkeypatch):
     store = HuntStore(tmp_path)
     run_id = "run-e9"
     _live = all(os.environ.get(k) for k in
@@ -517,35 +397,89 @@ def test_E9_tracing_seam_live_and_fail_open(tmp_path):
         flush_hunting_traces()  # no raise against the live host
 
     # The real dispatch completes identically whether the client is available
-    # or raising: tracing is best-effort and must never perturb the hunt.
-    agent = _agent(
-        store, run_id,
-        kb=_kb(result={"symptoms": [], "probing_techniques": ["csrf-probe"]}),
-        pod=_pod(outcomes=[_outcome("symptom-confirmed", verdict="successful")]),
-        author=_author(),
-        judge=_no_judge(),
-    )
+    # or raising: tracing is best-effort and must never perturb the hunt. All
+    # seams read `langfuse.get_client` / `propagate_attributes` lazily, so the
+    # monkeypatch raises right where the harness reaches them (auto-reverted
+    # by the fixture - no module pollution). One agent per leg: each leg is a
+    # full hunt consuming its own pod outcome.
 
-    def _degraded_agent():
-        import langfuse
-        import polymerhus.attack.hunting.hunting_tracing as tracing
-
-        def _boom(*args, **kwargs):
-            raise RuntimeError("langfuse unavailable (fixture)")
-
-        langfuse.get_client = _boom
-        langfuse.propagate_attributes = _boom
-        tracing.flush_hunting_traces = _boom
+    def _happy_leg(run_id: str):
         return _agent(
-            store, "run-e9-degraded",
+            store, run_id,
             kb=_kb(result={"symptoms": [], "probing_techniques": ["csrf-probe"]}),
             pod=_pod(outcomes=[_outcome("symptom-confirmed", verdict="successful")]),
             author=_author(),
             judge=_no_judge(),
         )
 
-    ok = agent(_config(SERVICE_A, FAULT_X, card=CARD_SERVICE))
-    degraded = _degraded_agent()(_config(SERVICE_A, FAULT_X, card=CARD_SERVICE))
+    ok = _happy_leg("run-e9-ok")(_config(SERVICE_A, FAULT_X, card=CARD_SERVICE))
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("langfuse unavailable (fixture)")
+
+    monkeypatch.setattr("langfuse.get_client", _boom)
+    monkeypatch.setattr("langfuse.propagate_attributes", _boom)
+
+    degraded = _happy_leg("run-e9-degraded")(
+        _config(SERVICE_A, FAULT_X, card=CARD_SERVICE))
     assert ok.hypothesis_verdict == degraded.hypothesis_verdict == "successful"
     assert ok.spec_ref and degraded.spec_ref
     assert ok.feedback == degraded.feedback  # tracing perturbed nothing
+
+
+# --- E10: re-entry after an INIT re-author judges the LATEST spec -------------
+# D67-08: a routed re-entry after a re-authoring pass must evaluate the CURRENT
+# committed spec (the last experiment-log entry), never the superseded
+# original. The judgment consumes the latest snapshot; asserted through the
+# interpretation the re-authored run uniquely carries.
+
+def test_E10_reentry_after_reauth_uses_latest_spec(tmp_path):
+    store = HuntStore(tmp_path)
+    pod_calls: list = []
+    judge_calls: list = []
+    run_id = "run-e10"
+    agent = _agent(
+        store, run_id,
+        kb=_kb(),
+        pod=_pod(pod_calls, outcomes=[
+            _outcome(
+                "technical-infeasibility",
+                evidence={"clean": False, "interpretations": [], "init_validation": [
+                    "verification_symptoms references an unobservable surface",
+                ]},
+            ),
+            _outcome(
+                "no-symptom-evidence",
+                evidence={"clean": False, "interpretations": [
+                    {"variant": "re-authored-v1", "note": "re-authored surface still blocked"},
+                ]},
+            ),
+        ]),
+        author=_author([SPEC, SPEC_REAUTHORED]),
+        judge=_judge([
+            {"meaningful_insight": True, "next_step": "back_edge",
+             "rationale": "recon the re-authored surface",
+             "back_edge_requests": [_need()]},
+            {"meaningful_insight": False, "next_step": "end",
+             "rationale": "still no reachable surface"},
+        ], calls=judge_calls),
+    )
+    config = _config(SERVICE_A, FAULT_X, card=CARD_SERVICE)
+
+    first = agent(config)
+    assert first.back_edge_needs  # the dispatch returned an inline need
+    second = agent(config, routed=(_route(first.back_edge_needs[0]),))
+
+    # Exactly two pod dispatches in total (init-reject + re-authored run); the
+    # re-entry triggered no third dispatch.
+    assert len(pod_calls) == 2
+    # The judgment on re-entry read the RE-AUTHORED evidence trail: the
+    # re-authored run's terminal reason and unique interpretation note reached
+    # the turn - not the superseded original's INIT rejection. (The skill the
+    # judge embeds itself quotes the INIT-validation trigger, so the terminal
+    # reason, not phrase presence, is the discriminator.)
+    assert len(judge_calls) == 2
+    assert "terminal reason: no-symptom-evidence" in judge_calls[1]
+    assert "terminal reason: technical-infeasibility" not in judge_calls[1]
+    assert "re-authored surface still blocked" in judge_calls[1]
+    assert second.hypothesis_verdict == "unsuccessful"  # the guard ended it

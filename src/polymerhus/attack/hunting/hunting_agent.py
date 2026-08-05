@@ -223,6 +223,40 @@ def _nonempty(parts: list[str]) -> list[str]:
     return [p for p in parts if p]
 
 
+def _result(verdict: str, feedback: list[str], *, spec_ref=None, pod_result_ref=None,
+            back_edge_needs=()):
+    """The one DispatchResult assembly (IA-2/D11): the joined non-empty
+    feedback and the optional delivered refs / inline back-edge needs."""
+    return DispatchResult(
+        spec_ref=spec_ref, pod_result_ref=pod_result_ref,
+        hypothesis_verdict=verdict,
+        feedback=" ".join(_nonempty(feedback)),
+        back_edge_needs=list(back_edge_needs),
+    )
+
+
+def _append_spec(store_append, ws: dict, config: HuntConfig, spec: dict, *,
+                 parent_spec_ref: str | None) -> str:
+    """Commit one authored D4 (SPEC-WRITE, Q5/C9): the spec record with hunt
+    identity and the D67-03/D67-08 parent lineage, plus its canonical-hash
+    experiment-log entry. Returns the record ref."""
+    spec_hash = _canonical_hash(spec)
+    spec_ref = store_append("spec", {
+        "hunt_id": config.hunt_id,
+        "hypothesis_id": config.hunt_id,
+        "unit_id": config.unit_id,
+        "fault_class": config.fault_class,
+        "parent_spec_ref": parent_spec_ref,
+        "canonical_hash": spec_hash,
+        **spec,
+    })
+    ws["log"][spec_hash] = {
+        "hash": spec_hash, "spec": spec, "spec_ref": spec_ref,
+        "pod_result_ref": None, "evidence": {},
+    }
+    return spec_ref
+
+
 def _first_card(config: HuntConfig) -> dict | None:
     cards = (config.surface_context or {}).get("cards") or []
     return cards[0] if cards else None
@@ -361,10 +395,8 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                 return _dispatch(config, tuple(routed), ws)
         except Exception as exc:  # noqa: BLE001 - never raise out of dispatch_fn
             logger.warning("hunt %s degraded (%s)", hunt_id, exc, exc_info=True)
-            return DispatchResult(
-                hypothesis_verdict="unsuccessful",
-                feedback=f"hunt {hunt_id} degraded: {exc}",
-            )
+            return _result("unsuccessful",
+                           [f"hunt {hunt_id} degraded: {exc}"])
         finally:
             flush_hunting_traces()
 
@@ -402,35 +434,22 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
             # SPEC-WRITE for the committed candidate slot (one per hunt in this
             # build; a future phase may fan a hunt out into several hypotheses).
             try:
-                spec = author(_with_stable_skill(compose_authoring_prompt(
+                turn = _with_stable_skill(compose_authoring_prompt(
                     config, kb_result, axis_value,
                     kb_degraded=kb_degraded,
                     working_set="fresh hunt: no prior dispatch; begin at GROUND",
-                )))
+                ))
+                trace_span("spec-composition", input={"prompt": turn})
+                spec = author(turn)
             except Exception as exc:  # noqa: BLE001 - fail-open
                 logger.warning("hunt %s spec authoring degraded (%s)", hunt_id, exc)
                 feedback.append(f"spec authoring unavailable ({exc})")
-                return DispatchResult(hypothesis_verdict="unsuccessful",
-                                      feedback=" ".join(_nonempty(feedback)))
+                return _result("unsuccessful", feedback)
             if not isinstance(spec, dict) or not spec:
                 feedback.append("the authoring turn returned no spec; "
                                 "the hypothesis is not testable")
-                return DispatchResult(hypothesis_verdict="unsuccessful",
-                                      feedback=" ".join(_nonempty(feedback)))
-            spec_hash = _canonical_hash(spec)
-            spec_ref = _append("spec", {
-                "hunt_id": hunt_id,
-                "hypothesis_id": hunt_id,
-                "unit_id": config.unit_id,
-                "fault_class": config.fault_class,
-                "parent_spec_ref": None,
-                "canonical_hash": spec_hash,
-                **spec,
-            })
-            ws["log"][spec_hash] = {
-                "hash": spec_hash, "spec": spec, "spec_ref": spec_ref,
-                "pod_result_ref": None, "evidence": {},
-            }
+                return _result("unsuccessful", feedback)
+            spec_ref = _append_spec(_append, ws, config, spec, parent_spec_ref=None)
 
         return _pod_loop(config, ws, feedback)
 
@@ -439,7 +458,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         outcome: the INIT-rejection re-authoring pass (exactly once, Q5), the
         pure verdict derivation, and the D5 continuation judgment."""
         hunt_id = config.hunt_id
-        re_authored = False
+        re_authored = 0
         entry = next(iter(ws["log"].values()))
         spec, spec_ref = entry["spec"], entry["spec_ref"]
 
@@ -456,9 +475,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                     "error": message,
                     "derived_verdict": "unsuccessful",
                 })
-                return DispatchResult(spec_ref=spec_ref, pod_result_ref=None,
-                                      hypothesis_verdict="unsuccessful",
-                                      feedback=" ".join(_nonempty(feedback)))
+                return _result("unsuccessful", feedback, spec_ref=spec_ref)
 
             outcome = outcome if isinstance(outcome, dict) else {}
             envelope = outcome.get("evidence") or {}
@@ -491,41 +508,28 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
             if terminal == "technical-infeasibility" and init_validation:
                 # INIT rejection (Q3/Q5): exactly ONE re-authoring pass; a second
                 # rejection lands underspecified-spec with the validation evidence.
-                if re_authored:
+                if re_authored >= _MAX_RE_AUTHORING_PASSES:
                     feedback.append("the re-authored spec was rejected again at "
                                     "INIT; landing underspecified-spec")
-                    return DispatchResult(spec_ref=spec_ref,
-                                          pod_result_ref=entry["pod_result_ref"],
-                                          hypothesis_verdict=derived,
-                                          feedback=" ".join(_nonempty(feedback)))
+                    return _result(derived, feedback, spec_ref=spec_ref,
+                                   pod_result_ref=entry["pod_result_ref"])
                 try:
-                    re_spec = author(_with_stable_skill(
-                        compose_reauthoring_prompt(config, init_validation)))
+                    turn = _with_stable_skill(
+                        compose_reauthoring_prompt(config, init_validation))
+                    trace_span("spec-composition", input={"prompt": turn})
+                    re_spec = author(turn)
                 except Exception as exc:  # noqa: BLE001 - fail-open
                     re_spec = None
                     feedback.append(f"re-authoring unavailable ({exc})")
                 if not isinstance(re_spec, dict) or not re_spec:
                     feedback.append("re-authoring evidence unaddressable; "
                                     "landing underspecified-spec")
-                    return DispatchResult(spec_ref=spec_ref,
-                                          pod_result_ref=entry["pod_result_ref"],
-                                          hypothesis_verdict=derived,
-                                          feedback=" ".join(_nonempty(feedback)))
+                    return _result(derived, feedback, spec_ref=spec_ref,
+                                   pod_result_ref=entry["pod_result_ref"])
+                re_ref = _append_spec(_append, ws, config, re_spec,
+                                      parent_spec_ref=spec_ref)  # D67-08 lineage
                 re_hash = _canonical_hash(re_spec)
-                re_ref = _append("spec", {
-                    "hunt_id": hunt_id,
-                    "hypothesis_id": hunt_id,
-                    "unit_id": config.unit_id,
-                    "fault_class": config.fault_class,
-                    "parent_spec_ref": spec_ref,  # D67-03/D67-08 lineage
-                    "canonical_hash": re_hash,
-                    **re_spec,
-                })
-                ws["log"][re_hash] = {
-                    "hash": re_hash, "spec": re_spec, "spec_ref": re_ref,
-                    "pod_result_ref": None, "evidence": {},
-                }
-                re_authored = True
+                re_authored += 1
                 entry = ws["log"][re_hash]
                 spec, spec_ref = re_spec, re_ref
                 continue
@@ -536,10 +540,8 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                 # only here; it may surface an inline need or end the evaluation.
                 return _judge_and_finish(config, spec_ref, entry["pod_result_ref"],
                                          snapshot, (), feedback)
-            return DispatchResult(spec_ref=spec_ref,
-                                  pod_result_ref=entry["pod_result_ref"],
-                                  hypothesis_verdict=derived,
-                                  feedback=" ".join(_nonempty(feedback)))
+            return _result(derived, feedback, spec_ref=spec_ref,
+                           pod_result_ref=entry["pod_result_ref"])
 
     def _reenter(config: HuntConfig, routed: tuple, ws: dict,
                  feedback: list[str]) -> DispatchResult:
@@ -550,9 +552,12 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         routed evidence, never a second pod run."""
         if not ws["log"]:
             feedback.append("no committed experiment to re-evaluate; hunt degraded")
-            return DispatchResult(hypothesis_verdict="unsuccessful",
-                                  feedback=" ".join(_nonempty(feedback)))
-        entry = next(iter(ws["log"].values()))
+            return _result("unsuccessful", feedback)
+        # The CURRENTLY committed spec is the LAST log entry: a re-authoring
+        # pass inserts the derived variant and the pod loop continues on it
+        # (Q5), so a routed re-entry must judge against THAT spec's evidence,
+        # never the superseded original (D67-08 lineage).
+        entry = list(ws["log"].values())[-1]
         snapshot = entry.get("evidence") or {}
         feedback.append("re-entered the evaluation with the routed back-edge result")
         feedback.extend(_evidence_notes(snapshot))
@@ -584,15 +589,12 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
             needs = list(judgment["back_edge_requests"])
             feedback.append(judgment.get("rationale") or
                             "back-edge surfaced for the residual gap")
-            return DispatchResult(spec_ref=spec_ref, pod_result_ref=pod_result_ref,
-                                  hypothesis_verdict=derived,
-                                  feedback=" ".join(_nonempty(feedback)),
-                                  back_edge_needs=needs)
+            return _result(derived, feedback, spec_ref=spec_ref,
+                           pod_result_ref=pod_result_ref, back_edge_needs=needs)
         if not judgment.get("meaningful_insight", False):
             derived = "unsuccessful"  # D67-12: the guard ended the evaluation
         feedback.append(judgment.get("rationale") or _verdict_line(derived, snapshot))
-        return DispatchResult(spec_ref=spec_ref, pod_result_ref=pod_result_ref,
-                              hypothesis_verdict=derived,
-                              feedback=" ".join(_nonempty(feedback)))
+        return _result(derived, feedback, spec_ref=spec_ref,
+                       pod_result_ref=pod_result_ref)
 
     return dispatch_fn

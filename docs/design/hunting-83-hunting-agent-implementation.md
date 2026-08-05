@@ -565,14 +565,14 @@ The per-invocation user prompts (sections 4.7-4.9) are composed by the agent cod
 
 ### 5.3 Caps and guards
 
-- Exactly one re-authoring pass per hunt after an INIT rejection (Q5); the second rejection lands `underspecified-spec` with the validation evidence.
-- Per-invocation variant re-dispatch cap: an internal constant in the harness.
-- The formulation tree is bounded by the fixed-point rule (D2) and the per-invocation caps; the D5 meaningfulness guard is the primary termination discipline.
+- Exactly one re-authoring pass per hunt after an INIT rejection (Q5), enforced by the `_MAX_RE_AUTHORING_PASSES` constant wired into the pod-loop guard; the second rejection lands `underspecified-spec` with the validation evidence.
+- The formulation tree is bounded by the fixed-point rule (D2); the D5 meaningfulness guard is the primary termination discipline.
 
 ### 5.4 Observability
 
-- The shared recipe (merged spec section 8): one Langfuse trace per spec-authoring turn, spans per step (KB retrieval, spec composition), session = run id, Langfuse optional and fail-open.
+- The shared recipe (merged spec section 8): one Langfuse trace per hunt dispatch, spans per step (KB retrieval and the spec-composition turn, both authoring and re-authoring), session = run id, Langfuse optional and fail-open.
 - Verdicts are measured via the hunt-store records and the eval harness, never Langfuse score identifiers.
+- The `hunting` role joins the app boot (`validate_llm_config` requires `LLM_MODEL_HUNTING`), so a fresh environment must ship it (see `.env.example`).
 
 ## 6. Testing decisions
 
@@ -580,6 +580,7 @@ The per-invocation user prompts (sections 4.7-4.9) are composed by the agent cod
 - The integration tier mechanises the contract predicates C1-C17 (per-agent spec section 6.1) in `tests/integration/test_hunting_agent_contracts.py`, using the fixture pod and the fixture KB; expected values are taken from the spec, never recomputed the way the code computes them.
 - C7 is amended per the Q3 verdict map (section 2.3): the infeasibility case derives `unsuccessful` (structural blocker), and the INIT-rejection case derives `underspecified-spec`; the amended derivation drives the rewritten predicate.
 - The e2e tier carries E1-E2 as declared-and-blocked in `tests/e2e/test_hunting_agent_walkthrough.py` with a comment (the pod and the real orchestrator are not built); never faked, never downgraded.
+- The isolated e2e tier (spec section 6.3) mechanises E3-E10 in `tests/e2e/test_hunting_agent_isolated_e2e.py`: the REAL harness seams (skill embedding, store files with provenance, join-key derivation, tracing) with the un-built collaborators as fixtures.
 - The verdict derivation and the axis extraction are pure functions unit-tested in the red/green loop; the catalogue stays out of that loop.
 - Prior art: `tests/integration/test_hunt_orchestrator_contracts.py` (the #82 seam agreement, the `_ok_dispatch` fixture shape), `tests/e2e/test_fault_source_walkthrough.py` (the blocked-walkthrough precedent), `tests/test_llm_providers.py` (the ROLES/validate pattern for the new role).
 
