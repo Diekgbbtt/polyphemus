@@ -18,7 +18,7 @@ It is dispatched by the hunt-orchestrator (IA-2) and is the pod's parent (IA-3/I
 
 ### 1.2 Goal
 
-Author, for its dispatched `HuntConfig`, a `TestImplementationSpec` that a test-executor pod can meaningfully execute, covering the low-level techniques grounded in the retrieved symptom-technique KB entries and the concrete surface evidence; then verify hypotheses through the pod and evaluate the three-valued hypothesis verdicts (D67-02, D67-12).
+Author, for its dispatched `HuntConfig`, a `TestImplementationSpec` that a test-executor pod can meaningfully execute, covering the low-level techniques grounded in the retrieved symptom-technique KB entries and the concrete surface evidence; then verify hypotheses through the pod and evaluate the four-valued hypothesis verdicts (D67-02, D67-12, Q3-amended).
 
 ### 1.3 Workflow
 
@@ -26,7 +26,7 @@ Author, for its dispatched `HuntConfig`, a `TestImplementationSpec` that a test-
 2. Query the symptom-technique KB (the `fault KB` handle) for symptoms and probing-techniques on the join key `(fault-class, unit technological-axis)` (IA-8).
 3. Author the `TestImplementationSpec` (D4, merged spec section 7): the core NL over the fundamental typed base.
 4. Yield the spec plus feedback to the orchestrator (IA-5).
-5. Run the hypothesis-evaluation loop: dispatch the pod (IA-3) on the spec, consume `{verdict, evidence}` (IA-4), derive the three-valued hypothesis verdict (D67-02), and either confirm success, land unsuccessful, or pursue `insufficient-evidence` via a narrow tool exec or an inline back-edge need surfaced through feedback (D67-14, IA-5 -> IA-6).
+5. Run the hypothesis-evaluation loop: dispatch the pod (IA-3) on the spec, consume `{verdict, evidence}` (IA-4), derive the four-valued hypothesis verdict by the harness's deterministic trail-driven function (D67-02, Q3-amended), and either confirm success, land unsuccessful, or pursue `insufficient-evidence` via a narrow tool exec or an inline back-edge need surfaced through feedback (D67-14, IA-5 -> IA-6).
 6. Worst case and failure state per D67-12 (section 4 below).
 
 ### 1.4 Tools
@@ -43,7 +43,7 @@ The index-card projection is a live re-derive at authoring time, never a pipelin
 ### 1.6 Output template
 
 - The `TestImplementationSpec` (D4): typed base (target identity, verification symptom(s), testing pattern, assumptions list, payload vector space) over the NL core (rationale, interpretation guidance).
-- The hypothesis verdict (D7): `{verdict: successful | unsuccessful | insufficient-evidence, evidence_mapping, revival_key}`.
+- The hypothesis verdict (D7): `{verdict: successful | unsuccessful | insufficient-evidence | underspecified-spec, evidence_mapping, revival_key}`.
 - Orchestrator feedback (D11): NL feedback text plus any hypothesis verdict already derived.
 
 ### 1.7 Produced outcome
@@ -64,7 +64,8 @@ The shared recipe (merged spec section 8): one Langfuse trace per spec-authoring
 ## 2. Domain peculiarities
 
 - The hypothesis-evaluation loop: this is the agent's second core activity after spec authoring.
-  Per hypothesis: dispatch the pod (IA-3), consume `{verdict, evidence}` (IA-4), map the binary pod outcome to the three-valued hypothesis verdict (D67-02): a pod-`successful` maps to hypothesis-`successful`; a pod-`unsuccessful` carrying a clean symptom-absent maps to hypothesis-`unsuccessful`; a pod-`unsuccessful` carrying infeasibility or noise in the trail maps to hypothesis-`insufficient-evidence`.
+  Per hypothesis: dispatch the pod (IA-3), consume `{verdict, evidence}` (IA-4), and derive the D7 hypothesis verdict (D67-02, Q3-amended): the verdict is a four-valued enum `{successful, unsuccessful, insufficient-evidence, underspecified-spec}`, derived by a PURE deterministic trail-driven harness function of the binary pod outcome plus the evidence trail - never LLM-judged.
+  The ratified map: `{successful, symptom-confirmed}` -> `successful`; `{unsuccessful, space-exhausted}` with a clean trail -> `unsuccessful`; `{unsuccessful, technical-infeasibility}` -> `unsuccessful` (a structural blocker); `{unsuccessful, specific-defence-prevention}` -> `unsuccessful`; `{unsuccessful, no-symptom-evidence}` -> `insufficient-evidence` or `unsuccessful` (trail-driven); `{unsuccessful, budget-timeout}` -> `insufficient-evidence` or `unsuccessful` (trail-driven); a pod rejection at INIT carrying the validation evidence -> `underspecified-spec`.
 - The inline re-evaluation loop (D67-14): hypothesis-`insufficient-evidence` triggers a narrow tool exec or an inline back-edge need (surfaced via IA-5; the orchestrator executes IA-6 and routes the result back).
   Re-evaluation is unbounded while each response yields meaningful insights; a no-meaningful-insight response ends the evaluation (the D67-12 failure state).
   The termination guard is the meaningfulness test on the returned evidence, not a depth count.
@@ -106,7 +107,7 @@ Reuses:
 
 H1 - Confirmed: the `HuntConfig` covers a normal pair; the KB returns symptoms and probing-techniques; the spec is authored with a full typed base and NL core; the pod returns `{successful, symptom-confirmed}`; the hypothesis verdict is `successful`; the hunt lands successful with the spec and feedback in the store.
 H2 - Clean absent: the pod returns `{unsuccessful, space-exhausted}` with a clean trail; the hypothesis verdict is `unsuccessful`.
-H3 - Insufficiency resolved: the pod returns `{unsuccessful, infeasibility in trail}`; the hypothesis verdict is `insufficient-evidence`; a narrow tool exec (or an inline back-edge returning a meaningful insight) revises the evaluation to a verdict.
+H3 - Insufficiency resolved: the pod returns `{unsuccessful, no-symptom-evidence}` with a non-clean envelope (the single `clean` flag False: blocked or unreachable observations); the hypothesis verdict is `insufficient-evidence`; a narrow tool exec (or an inline back-edge returning a meaningful insight) revises the evaluation to a verdict. (Q3-amended: a `technical-infeasibility` terminal derives `unsuccessful`, never `insufficient-evidence`.)
 H4 - Worst case (D67-12): the hostile pair yields one test that is technically unfeasible or strongly blocked after many variants; graceful degradation: the hunt lands unsuccessful and the feedback carries the evidence-backed insights.
 H5 - Failure state (D67-12): no hypothesis verifiable and the inline back-edge returns no meaningful insights; the hunt lands unsuccessful with the attempted hypotheses' evidence trail.
 
@@ -117,7 +118,7 @@ O2 - KB unavailable (raises): the same degrade; nothing raises.
 O3 - Malformed `HuntConfig` (a part missing): the agent authors from the present parts and flags the gap in the feedback; nothing raises.
 O4 - Index-card projection unavailable: the agent authors without the surface context (degraded).
 O5 - Pod raises at IA-3: the agent treats the run as unsuccessful with the error in the evidence and continues the evaluation or enters the failure state; nothing raises.
-O6 - Pod rejects the spec at INIT: the agent re-authors (declining attributes per D67-03) or lands unsuccessful with the validation evidence; the re-authoring is bounded by the evaluation loop's budget.
+O6 - Pod rejects the spec at INIT: the agent re-authors exactly once (declining attributes per D67-03); a second rejection lands the verdict `underspecified-spec` with the validation evidence; the re-authoring is bounded by the evaluation loop's budget and there is no third attempt.
 O7 - Duplicate hypothesis: an identical spec is not re-dispatched to the pod (idempotent; the experiment log records one execution).
 O8 - Inline back-edge returns `error`/`degraded` status: the result is folded into the evidence trail (IA-6 vocabulary) and the evaluation continues or ends.
 O9 - Inline back-edge keeps returning non-meaningful results: the meaningfulness guard ends the evaluation (D67-14); the hunt enters the failure state; no unbounded loop escapes the guard.
@@ -128,7 +129,7 @@ O10 - Spec-authoring turn LLM exhaustion: the hunt degrades to unsuccessful with
 Delivery canon (merged spec section 3): all delivery is synchronous and in-process in phase 1.
 
 - IA-3 (agent -> pod): synchronous typed handoff of D4.
-  A spec failing INIT validation is rejected; the pod lands `unsuccessful` with the validation evidence; the agent re-authors or lands unsuccessful; no silent hang.
+  A spec failing INIT validation is rejected; the pod lands `unsuccessful` with the validation evidence; the agent re-authors exactly once, or lands `underspecified-spec` with the validation evidence; no silent hang.
 - IA-4 (pod -> agent): synchronous typed return of D5 + D6.
   A raising pod degrades to `unsuccessful` with the error in the evidence (the pod's own contract; the agent handles the double's raise defensively too); nothing raises.
 - IA-5 (agent -> orchestrator): synchronous best-effort feedback.
@@ -155,10 +156,10 @@ C5 - Pod success mapping at IA-4 (D67-02): given `{successful, symptom-confirmed
 Yields: `...::test_pod_success_maps_to_hypothesis_success`.
 C6 - Clean-absent mapping at IA-4 (D67-02): given `{unsuccessful, space-exhausted}` with a clean trail, exercising success, the hypothesis verdict is `unsuccessful`.
 Yields: `...::test_clean_absent_maps_to_hypothesis_unsuccessful`.
-C7 - Infeasibility mapping at IA-4 (D67-02): given `{unsuccessful, infeasibility-asserted}` with the infeasibility in the trail, exercising success, the hypothesis verdict is `insufficient-evidence`.
-Yields: `...::test_infeasibility_maps_to_insufficient_evidence`.
-C8 - Pod reject at IA-3: given the pod rejecting the spec at INIT, exercising malformed, the agent re-authors once and lands a verdict or unsuccessful with the validation evidence; nothing raises.
-Yields: `...::test_pod_init_rejection_triggers_reauthoring`.
+C7 - Infeasibility mapping at IA-4 (D67-02, Q3-amended): given `{unsuccessful, technical-infeasibility}` with the infeasibility in the trail, exercising success, the hypothesis verdict is `unsuccessful` (a structural blocker, never `insufficient-evidence`).
+Yields: `...::test_infeasibility_maps_to_unsuccessful`.
+C8 - Pod reject at IA-3 (Q3/Q5): given the pod rejecting the spec at INIT, exercising malformed, the agent re-authors exactly once; a second rejection lands the verdict `underspecified-spec` with the validation evidence; nothing raises.
+Yields: `...::test_pod_init_rejection_lands_underspecified_spec`.
 C9 - Duplicate hypothesis at IA-3: given an identical spec already dispatched, exercising duplicate-idempotent, no second dispatch occurs.
 Yields: `...::test_duplicate_hypothesis_not_redispatched`.
 C10 - Inline no-meaningful-insight at IA-5 (D67-14): given an inline back-edge result that yields no meaningful insight, exercising ordering, the evaluation ends and the hunt enters the D67-12 failure state (no unbounded loop).
@@ -167,6 +168,16 @@ C11 - Pod raise at IA-3: given the pod raising, exercising degradation, the agen
 Yields: `...::test_raising_pod_degrades`.
 C12 - Worst case at IA-4 (D67-12): given a hostile pair whose single test is technically unfeasible, exercising degradation, the hunt lands unsuccessful and the feedback carries the evidence-backed insights (never an empty feedback).
 Yields: `...::test_worst_case_graceful_degradation_feeds_back`.
+C13 - Defence-prevention mapping at IA-4 (D67-02, Q3-amended): given `{unsuccessful, specific-defence-prevention}` with the blocking defence in the trail, exercising success, the hypothesis verdict is `unsuccessful` (never `insufficient-evidence`).
+Yields: `...::test_defence_prevention_maps_to_unsuccessful`.
+C14 - Trail-driven insufficiency at IA-4 (D67-02, Q3-amended): given `{unsuccessful, no-symptom-evidence}` with a non-clean envelope (`clean` False: blocked or unreachable observations), exercising success, the hypothesis verdict is `insufficient-evidence`.
+Yields: `...::test_no_symptom_evidence_blocked_maps_to_insufficient_evidence`.
+C15 - Trail-driven clean absence at IA-4 (D67-02, Q3-amended): given `{unsuccessful, no-symptom-evidence}` with a clean envelope (`clean` True: clean completed observations), exercising success, the hypothesis verdict is `unsuccessful`.
+Yields: `...::test_no_symptom_evidence_clean_maps_to_unsuccessful`.
+C16 - Budget-timeout partial trail at IA-4 (D67-02, Q3-amended): given `{unsuccessful, budget-timeout}` with a non-clean envelope (`clean` False: the loop cut mid-flight), exercising success, the hypothesis verdict is `insufficient-evidence`.
+Yields: `...::test_budget_timeout_partial_maps_to_insufficient_evidence`.
+C17 - Budget-timeout clean trail at IA-4 (D67-02, Q3-amended): given `{unsuccessful, budget-timeout}` with a clean envelope (`clean` True), exercising success, the hypothesis verdict is `unsuccessful`.
+Yields: `...::test_budget_timeout_clean_maps_to_unsuccessful`.
 
 ### 6.2 Walkthrough predicates (e2e tier)
 
@@ -182,11 +193,30 @@ Observed: the hunt record read back from the store shows spec_ref, hypothesis ve
 Yields: `tests/e2e/test_hunting_agent_walkthrough.py::test_confirmed_hypothesis`. Blocked by the pod ticket.
 E2 - Inline back-edge re-evaluation: grounds H3 and D67-14.
 Entry seam: the `HuntConfig` dispatch (IA-2).
-Input: a fixture `HuntConfig` for a pair whose pod runs land `{unsuccessful, infeasibility-asserted}`.
+Input: a fixture `HuntConfig` for a pair whose pod runs land `{unsuccessful, no-symptom-evidence}` with blocked observations in the trail (Q3-amended: `technical-infeasibility` would derive `unsuccessful`, never `insufficient-evidence`).
 Path: hypothesis-`insufficient-evidence` -> inline need surfaced via feedback -> orchestrator executes the recon -> meaningful insight routes back -> revised verdict.
 Terminal: the hypothesis verdict is revised (not `insufficient-evidence`); the evidence trail contains the recon result.
 Observed: the store's hunt record and the back-edge record on the `correlation_id`.
 Yields: `...::test_inline_back_edge_revision`. Blocked by the pod ticket (and the real orchestrator).
+
+### 6.3 Isolated predicates (e2e tier, added 2026-08-05)
+
+The isolated tier walks the REAL hunting agent end-to-end through its REAL infrastructure seams - the append-only markdown hunt-store files (S7), the stable system prompt resolved from the repo skill (implementation doc 4.10, embedded ahead of every LLM turn), the automated technological-axis derivation forming the IA-8 join key, and the tracing seam against the configured observability stack - with only the un-built collaborators as fixtures at their contract boundaries: the pod (#84), the spec-authoring and continuation-judgment LLM turns, and the symptom-technique KB content (operator-built external). That is the fixture-agent contract spec section 3 sanctions; the REAL pod chain remains the blocked E1/E2 walkthrough's live edge, never substituted here.
+
+E3 - Ratified verbatims reach every LLM turn (implementation doc 4.10): the authored and judged turns both embed the REAL repo skill ahead of the per-invocation user prompt; the pass markers (`GROUND` / `DECOMPOSE` / `SPEC-WRITE` / `VERIFY-CLAIMS` / `RANK`) and the section headings are present, the fallback is not substituted.
+Yields: `tests/e2e/test_hunting_agent_isolated_e2e.py::test_E3_real_skill_reaches_authoring_and_judgment_turns`.
+E4 - S7 persistence is real files with provenance: the `spec.md` and `evidence.md` files exist under the run dir and carry the records; `_seq`/`_ref` carry run, kind, and store-wide ordering; the result's `spec_ref`/`pod_result_ref` equal the file records' `_ref`; the spec record is the flattened D4 typed base plus the hunt identity; the evidence record carries `derived_verdict` and the terminal reason.
+Yields: `...::test_E4_real_file_persistence_with_provenance`.
+E5 - Automated KB join key, once per hunt (IA-8/D10): across a Service and a System hunt, exactly one query per hunt, on `(fault_class, axis)` with the axis derived deterministically per card (`api_paradigm` preferred, then `navigation_model`, then the kind).
+Yields: `...::test_E5_kb_join_key_derived_per_unit_kind`.
+E6 - KB raise degrades over the real files (O2/C3): the agent authors from the HuntConfig alone, flags the gap in the feedback, and the spec still persists.
+Yields: `...::test_E6_kb_raise_degrades_and_still_persists`.
+E7 - Inline re-entry dedups over the real files (D67-14/C9): a routed back-edge re-enters the SAME candidate - one pod dispatch, one `spec.md` and one `evidence.md` record, stable refs, and the routed result reaches the judgment turn.
+Yields: `...::test_E7_reentry_dedup_over_real_files`.
+E8 - INIT-rejection lineage over the real files (Q3/Q5): two spec records with `parent_spec_ref` lineage, the re-authoring turn embeds the skill and the INIT validation evidence, and the second rejection lands `underspecified-spec` with the validation evidence on the evidence record.
+Yields: `...::test_E8_init_rejection_lineage_over_real_files`.
+E9 - Tracing seam against the observability stack: with the env configured, the hunting span is really open (trace id present) and flush completes without raising; with the client raising, a dispatch completes identically - tracing is best-effort and never perturbs a hunt.
+Yields: `...::test_E9_tracing_seam_live_and_fail_open`.
 
 ## 7. Out of scope
 

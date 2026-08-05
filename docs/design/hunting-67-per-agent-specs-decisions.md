@@ -40,6 +40,14 @@ The pod is an instrument, not a judge of the hypothesis.
 
 **Glossary delta.** The `three-level verdict model` entry's level-3 wording must be sharpened to make the pod binary and the hypothesis verdict derived one level up.
 
+**Amended (2026-08-04, Q3 of the #83 grilling, ratified by the operator).** The hypothesis verdict is a four-valued enum `{successful, unsuccessful, insufficient-evidence, underspecified-spec}`.
+The derivation is a PURE deterministic trail-driven function of the binary pod outcome plus the evidence trail, executed by the harness, never by the LLM - there is no one-to-one terminal-reason-to-verdict map.
+The ratified derivation: `symptom-confirmed` -> `successful`; `space-exhausted` with a clean trail -> `unsuccessful`; `technical-infeasibility` -> `unsuccessful` (a structural blocker); `specific-defence-prevention` -> `unsuccessful`; `no-symptom-evidence` -> `insufficient-evidence` or `unsuccessful` (trail-driven: blocked/unreachable observations derive `insufficient-evidence`, clean completed observations derive `unsuccessful`); `budget-timeout` -> `insufficient-evidence` or `unsuccessful` (trail-driven: a partial mid-flight trail derives `insufficient-evidence`, a clean trail derives `unsuccessful`); a pod rejection at INIT carrying the validation evidence -> `underspecified-spec`.
+The amendment lands in the per-agent spec (D67-02 section, H3, O6, IA-3), the assertion catalogue (C7 invalidated and rewritten; C8 amended; C13-C17 added), and `src/polymerhus/attack/hunting/CONTEXT.md` in the same change as the #83 implementation.
+The machine-checkable trail signal (operator-ratified 2026-08-04, during to-assertions): the derivation reads ONLY the terminal reason plus a single `clean` boolean on the pod envelope - no per-variant machine outcomes.
+`clean` True = the loop completed with clean observations (a symptom-absent is established); False = observations were blocked, unreachable, or the loop was cut mid-flight (the absence is not established).
+`init_validation` (a list of strings) is present only when the pod rejected the spec at INIT.
+
 ### D67-03 - TestImplementationSpec: core NL over a fundamental typed base
 
 **Claim.** The spec is option-3-shaped: a core NL body inside a typed envelope, where the typed base is fundamental (mandatory), not decorative.
