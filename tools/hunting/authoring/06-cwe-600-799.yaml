@@ -92,6 +92,7 @@ entries:
   CWE-648:
     nl: "The unit uses privileged APIs incorrectly."
   CWE-649:
+    enum_kinds: [WebPresentation, RESTApi]
     nl: "The unit relies on obfuscation or encryption of mutable inputs as a security mechanism."
   CWE-650:
     nl: "The unit trusts the HTTP method as a permission mechanism."

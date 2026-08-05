@@ -94,14 +94,19 @@ entries:
     nl: "The unit resolves different path spellings to the same file without treating them uniformly."
     enum_kinds: [RESTApi, WebPresentation]
   CWE-42:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit accepts a trailing-dot path form such as 'filename.' in externally supplied input."
   CWE-43:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit accepts a multiple-trailing-dot path form in externally supplied input."
   CWE-44:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit accepts an internal-dot path form such as 'file.name' in externally supplied input."
   CWE-45:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit accepts a multiple-internal-dot path form in externally supplied input."
   CWE-46:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit accepts a trailing-space path form in externally supplied input."
   CWE-47:
     nl: "The unit accepts a leading-space path form in externally supplied input."
@@ -120,23 +125,28 @@ entries:
     nl: "The unit accepts a multiple-trailing-slash path form in externally supplied input."
     enum_kinds: [RESTApi, WebPresentation]
   CWE-53:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit accepts a multiple-internal-backslash path form in externally supplied input."
   CWE-54:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit accepts a trailing-backslash path form in externally supplied input."
   CWE-55:
     nl: "The unit accepts a '/./' single-dot-directory path form in externally supplied input."
     enum_kinds: [RESTApi, WebPresentation]
   CWE-56:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit accepts a wildcard path form such as 'filedir*' in externally supplied input."
   CWE-57:
     nl: "The unit constructs a path that mixes protected and unprotected segments from external input."
     enum_kinds: [RESTApi, WebPresentation]
   CWE-58:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit resolves Windows 8.3 short filenames that bypass a longer-name protection mechanism."
   CWE-59:
     nl: "The unit accesses a file by name where a symlink can redirect the access to a different file."
     enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
   CWE-61:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit follows a UNIX symbolic link when opening a file or directory."
   CWE-62:
     nl: "The unit follows a UNIX hard link when opening a file or directory."

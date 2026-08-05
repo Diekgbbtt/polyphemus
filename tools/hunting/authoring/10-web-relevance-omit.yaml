@@ -1,6 +1,9 @@
 comment: 'Web-domain relevance filter (operator task 2). Scores from the critic subagent pass (fault-relevance-rankings.md);
-  threshold 0.6 with semantic evaluation of the 0.5-0.7 band. Kept-below-0.6: CWE-841 (logic-flaws topic family),
-  CWE-1394 (default crypto keys), CWE-367 (TOCTOU, race-conditions topic family).'
+  threshold 0.6 with semantic evaluation of the 0.5-0.7 band. Adversarial critique pass (critical-thinking-logical-reasoning
+  skill, 2026-08-05) argued against each rationale and restored 17 entries: Windows path-equivalence family (CWE-42,43,44,45,46,53,54,56,58),
+  CWE-59/61 (symlink-slip via archive extraction), CWE-231 (HTTP parameter pollution), CWE-529 (.htaccess/web.config
+  exposure), CWE-649 (client-state crypto without integrity), CWE-1254 (timing side-channel), CWE-1269 (non-release
+  configuration), CWE-1289 (unsafe identifier equivalence, SSRF/URL-parser differentials). Full verdicts in docs/design/hunting-66-fault-omit-critique.md.'
 entries:
   CWE-1007:
     omit: true
@@ -41,12 +44,6 @@ entries:
   CWE-1204:
     omit: true
     omit_reason: 'web-relevance 0.35: Crypto-primitive misuse; web exposure only via app-level crypto, uncommon.'
-  CWE-1254:
-    omit: true
-    omit_reason: 'web-relevance 0.40: Generic comparison bug; web relevance speculative.'
-  CWE-1269:
-    omit: true
-    omit_reason: 'web-relevance 0.50: Deployment configuration concern; web-app relevant but generic.'
   CWE-1284:
     omit: true
     omit_reason: 'web-relevance 0.40: Generic input-validation base; possible in web parsers but abstract.'
@@ -62,9 +59,6 @@ entries:
   CWE-1288:
     omit: true
     omit_reason: 'web-relevance 0.40: Generic multi-field consistency; no common web attack mapping.'
-  CWE-1289:
-    omit: true
-    omit_reason: 'web-relevance 0.40: Path/identifier equivalence issues; marginal web exposure.'
   CWE-129:
     omit: true
     omit_reason: 'web-relevance 0.35: Buffer-overrun family; mostly memory-safety domains, rare in web.'
@@ -131,9 +125,6 @@ entries:
   CWE-230:
     omit: true
     omit_reason: 'web-relevance 0.45: Null/empty parameter handling; web applicable but generic.'
-  CWE-231:
-    omit: true
-    omit_reason: 'web-relevance 0.45: Extra values; HTTP parameter-related edge cases.'
   CWE-232:
     omit: true
     omit_reason: 'web-relevance 0.45: Undefined parameter values; web applicable but generic.'
@@ -319,10 +310,6 @@ entries:
   CWE-397:
     omit: true
     omit_reason: 'web-relevance 0.30: Broad exception declaration hides detail; code quality, minimal web exposure.'
-  CWE-42:
-    omit: true
-    omit_reason: 'web-relevance 0.55: Windows trailing-dot equivalence bypass; narrower but exploitable in web file
-      access.'
   CWE-420:
     omit: true
     omit_reason: 'web-relevance 0.55: Alternate web-adjacent channels (FTP, debug ports) less protected; secondary
@@ -339,21 +326,12 @@ entries:
   CWE-428:
     omit: true
     omit_reason: 'web-relevance 0.15: Windows service binary-loading flaw; outside the web application domain.'
-  CWE-43:
-    omit: true
-    omit_reason: 'web-relevance 0.55: Windows multiple trailing-dot equivalence; narrow but web-reachable file bypass.'
   CWE-437:
     omit: true
     omit_reason: 'web-relevance 0.50: Proxy/WAF state-model gap; web-adjacent but rarely evidenced in recon.'
-  CWE-44:
-    omit: true
-    omit_reason: 'web-relevance 0.55: Windows internal-dot equivalence bypass; narrow but web file-reachable.'
   CWE-447:
     omit: true
     omit_reason: 'web-relevance 0.50: Fake security control in UI is generic; web UI relevance indirect.'
-  CWE-45:
-    omit: true
-    omit_reason: 'web-relevance 0.55: Windows multiple internal-dot equivalence; narrow web file bypass.'
   CWE-450:
     omit: true
     omit_reason: 'web-relevance 0.45: UI confusion between interpretations; web relevance indirect and uncommon.'
@@ -366,9 +344,6 @@ entries:
   CWE-455:
     omit: true
     omit_reason: 'web-relevance 0.30: Fails-open on init error is generic code behavior; web exposure indirect.'
-  CWE-46:
-    omit: true
-    omit_reason: 'web-relevance 0.55: Windows trailing-space equivalence; narrow web file-access bypass.'
   CWE-460:
     omit: true
     omit_reason: 'web-relevance 0.25: State/lock cleanup flaw is generic code quality; not web-specific.'
@@ -436,15 +411,6 @@ entries:
   CWE-528:
     omit: true
     omit_reason: 'web-relevance 0.15: Core dump exposure is OS/process-level; not web domain.'
-  CWE-529:
-    omit: true
-    omit_reason: 'web-relevance 0.20: ACL file exposure is filesystem/OS-level; web relevance theoretical.'
-  CWE-53:
-    omit: true
-    omit_reason: 'web-relevance 0.55: Windows backslash equivalence; narrow but web file-reachable.'
-  CWE-54:
-    omit: true
-    omit_reason: 'web-relevance 0.55: Windows trailing-backslash equivalence; narrow web file bypass.'
   CWE-544:
     omit: true
     omit_reason: 'web-relevance 0.35: Generic error-handling inconsistency; security impact indirect.'
@@ -454,24 +420,12 @@ entries:
   CWE-549:
     omit: true
     omit_reason: 'web-relevance 0.35: Shoulder-surfing UI concern; marginal for modern web and remote attacks.'
-  CWE-56:
-    omit: true
-    omit_reason: 'web-relevance 0.50: Windows wildcard equivalence; narrow and increasingly historical.'
-  CWE-58:
-    omit: true
-    omit_reason: 'web-relevance 0.45: Windows 8.3 short-name bypass; platform-specific and rare in modern web.'
-  CWE-59:
-    omit: true
-    omit_reason: 'web-relevance 0.55: Symlink following in web file features; mostly local, reachable via upload/extract.'
   CWE-593:
     omit: true
     omit_reason: 'web-relevance 0.55: OpenSSL lifecycle misuse in TLS servers; web-reachable but very narrow.'
   CWE-606:
     omit: true
     omit_reason: 'web-relevance 0.35: Loop-based DoS is generic code behavior; web exposure conditional and indirect.'
-  CWE-61:
-    omit: true
-    omit_reason: 'web-relevance 0.40: OS filesystem attack; only via file-upload/temp-file handling paths.'
   CWE-616:
     omit: true
     omit_reason: 'web-relevance 0.50: Legacy PHP upload handling, genuinely web but dated.'
@@ -505,9 +459,6 @@ entries:
   CWE-648:
     omit: true
     omit_reason: 'web-relevance 0.30: OS/library privilege API misuse, mostly non-web.'
-  CWE-649:
-    omit: true
-    omit_reason: 'web-relevance 0.55: Hidden-field/client-state integrity flaw, narrower web case.'
   CWE-65:
     omit: true
     omit_reason: 'web-relevance 0.15: Desktop-OS filesystem attack, non-web.'

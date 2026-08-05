@@ -10,8 +10,10 @@ entries:
     nl: "The unit writes user-supplied data into a CSV file without neutralizing formula elements."
     enum_kinds: [RESTApi, WebPresentation]
   CWE-1254:
+    enum_kinds: [AuthenticationMechanism, RESTApi]
     nl: "The unit's comparison logic compares a value in steps rather than as a whole."
   CWE-1269:
+    enum_kinds: [WebPresentation, RESTApi]
     nl: "The unit is released in a pre-production or manufacturing configuration."
   CWE-1275:
     nl: "The unit sets sensitive cookies without a proper SameSite attribute."
@@ -27,6 +29,7 @@ entries:
   CWE-1288:
     nl: "The unit does not validate consistency among the fields of a complex input."
   CWE-1289:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit does not validate that an input used as a resource identifier is safe."
   CWE-1321:
     nl: "The unit modifies an object's prototype attributes from externally influenced input."

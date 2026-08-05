@@ -428,3 +428,37 @@ topic family).
 | CWE-96 | Improper Neutralization of Directives in Statically Saved Code | 0.60 | KEEP | Injection into config/executable files, conditionally web. |
 | CWE-97 | Improper Neutralization of Server-Side Includes (SSI) Within a Web Page | 0.70 | KEEP | SSI injection, legacy web-server directive attack. |
 | CWE-98 | Improper Control of Filename for Include/Require Statement in PHP Program | 0.85 | KEEP | PHP RFI, classic web file-inclusion attack. |
+
+
+## Amendment pass - adversarial critique (2026-08-05)
+
+Three parallel critic subagents (critical-thinking-logical-reasoning skill)
+argued against every omission rationale with concrete web target profiles;
+full verdicts in docs/design/hunting-66-fault-omit-critique.md. 17 of the
+188 omissions were wrong (RESTORE) and are re-admitted to the catalogue
+(231 -> 248); 23 rationales were corrected (REASON, no restore). The
+restored rows, with the critic's counter-argument:
+
+| fault_id | name | score | verdict | critic counter-argument (condensed) |
+| --- | --- | --- | --- | --- |
+| CWE-42 | Path Traversal: 'filename.' (Trailing Dot) | 0.55 | RESTORE | Win32 strips trailing dots; `shell.asp.` bypasses extension filters on Windows/IIS file endpoints - documented IIS6->modern class |
+| CWE-43 | Path Traversal: '....' (Multiple Dot) | 0.55 | RESTORE | Multi-dot evades filters that learned to block single dots; same Windows family |
+| CWE-44 | Path Equivalence: Internal Dot | 0.55 | RESTORE | Internal-dot forms defeat string path checks on IIS/ASP.NET endpoints |
+| CWE-45 | Path Equivalence: Multiple Internal Dot | 0.55 | RESTORE | Documented IIS upload/file-access bypass family |
+| CWE-46 | Path Traversal: 'file ' (Trailing Space) | 0.55 | RESTORE | MITRE marks web-based; classic IIS trailing-space bypass |
+| CWE-53 | Path Traversal: '\dir\file' (Backslash) | 0.55 | RESTORE | Backslash traversal with CVE lineage on Windows-hosted Tomcat/apps where filters block only `/` |
+| CWE-54 | Path Traversal: '\dir\filename' (Trailing Backslash) | 0.55 | RESTORE | Classic IIS extension-truncation bypass |
+| CWE-56 | Path Equivalence: '*' (Wildcard) | 0.50 | RESTORE | Wildcard semantics bypass denylists on Windows-hosted servers |
+| CWE-58 | Path Traversal: Windows 8.3 Filename | 0.45 | RESTORE | `~`/8.3 short-name enumeration exposes backup/source files; NTFS 8.3 still default-on |
+| CWE-59 | Improper Link Resolution Before File Access | 0.55 | RESTORE | Symlink-slip via web archive upload-extract is a real CVE class |
+| CWE-61 | UNIX Symbolic Link Following | 0.40 | RESTORE | Operative UNIX variant of CWE-59 for the Linux estate |
+| CWE-231 | Improper Handling of Extra Values | 0.45 | RESTORE | HTTP parameter pollution / PHP array injection, OWASP-listed with real bypass CVEs |
+| CWE-529 | Exposure of Access Control List Files | 0.20 | RESTORE | GET /.htaccess and IIS web.config disclosure are classic, directly probed findings |
+| CWE-649 | Reliance on Obfuscation or Encryption of Security-Relevant Inputs | 0.55 | RESTORE | ViewState-without-MAC / CBC padding oracles; RCE-adjacent |
+| CWE-1254 | Comparison Logic is Vulnerable to Timing Side-Channel Attacks | 0.40 | RESTORE | Timing side channel on token/API-key comparison is a documented web-auth class |
+| CWE-1269 | Incorrect Resource Transfer Between Spheres | 0.50 | RESTORE | Debug-mode-in-production is a first-order recon finding (stack traces, env dumps) |
+| CWE-1289 | Improper Validation of Specified Quantity in Input | 0.40 | RESTORE | Unsafe identifier equivalence drives SSRF/URL-parser differential bypasses (CVE-2016-10099 class) |
+
+Score column is the original critic score; the verdict column is the
+amendment-pass verdict. Corrected rationales for the 23 REASON entries
+are embedded in the critique report (section 2).

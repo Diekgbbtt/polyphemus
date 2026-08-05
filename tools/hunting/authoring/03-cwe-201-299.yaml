@@ -52,6 +52,7 @@ entries:
   CWE-230:
     nl: "The unit mishandles a missing value for a parameter, field, or argument."
   CWE-231:
+    enum_kinds: [RESTApi, WebPresentation]
     nl: "The unit mishandles extra values supplied for a parameter, field, or argument."
   CWE-232:
     nl: "The unit mishandles an undefined or unsupported value."
