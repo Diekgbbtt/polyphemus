@@ -1,7 +1,8 @@
 # Hunting #66 - Fault-KB omission critique (adversarial pass)
 
-Status: reported artifact (operator-requested). Not a runtime gate.
-Date: 2026-08-05.
+Status: reported artifact (operator-requested); amendments reframed by the
+operator feedback + fold follow-up (2026-08-06). Not a runtime gate.
+Date: 2026-08-05 (follow-up 2026-08-06).
 Method: three parallel critic subagents (general agents, each loading the
 `critical-thinking-logical-reasoning` skill at
 `/Users/diekgbbtt/.claude/skills/critical-thinking-logical-reasoning/SKILL.md`),
@@ -109,3 +110,74 @@ bases whose concrete web forms are already retained (CWE-20/22/79/89/
   rankings artifact so the rationale corpus is honest for future passes.
 - The catalogue is now 248 entries; still 100% of the scraped
   PortSwigger ground truth is preserved (the restores only ADD).
+
+## 5. Operator feedback + fold follow-up (2026-08-06)
+
+The operator read the amendments skeptically; that skepticism was
+correct on the substance:
+
+- the 17 restored entries are CONCRETE faults, each mappable to a
+  retained higher-level capture. The critic mis-targeted: its real
+  value is a FAULT-FAULT OVERLAP critique (too many entries, one
+  matching loop), not an omission rationale pass;
+- the correct grading is "taxed as base, not class": a restored entry
+  is captured by its NEAREST retained Base, so its selection cost is
+  ~0 and its recipe content survives;
+- the "closest parent" aggregation is deterministic (CWE View-1000
+  ChildOf chains), not an imprecise many-to-many match.
+
+The fold stage (`fold_variants` in `tools/hunting/curate_fault_kb.py`)
+implements exactly that: every Variant/Compound entry gets a
+`fold_parent` naming its nearest retained Base/Class ancestor (BFS up
+the View-1000 chains, Variant/Compound waypoints skipped); the
+matching facet filters folded entries out (`load_fault_entries`,
+"fold at curation, filter at read") while the materialisation facet
+keeps all 248 recipes by own id.
+
+Applied to the real catalogue: 97 folded, 151 selection-tier entries
+(133 Base/Class + 18 orphans kept fail-open). All 9 Windows
+path-equivalence restores fold into CWE-41, CWE-529 into CWE-552,
+CWE-61 into CWE-59; the 17 restores no longer inflate the matching
+loop.
+
+## 6. The overlap critic rerun (2026-08-06)
+
+Three parallel critic subagents (critical-thinking method, one batch
+per ~12 fold targets + 6 orphans) reviewed EVERY fold edge and orphan
+of the folded catalogue, arguing per closest-parent family (97 family
+judgments + 18 orphan decisions; verdicts cross-verified against the
+MITRE View-1000 edges by the critics):
+
+- **SPLIT 3** (a folded variant is a genuinely distinct fault class,
+  kept as its own selection entry): CWE-1022 (tabnabbing is a
+  link-rendering control fault, not privilege assignment; CWE-266's
+  authz-gated capture prunes plain presentation units), CWE-539
+  (cookies are not files - the CWE-552 capture could never fire for a
+  cookie-only unit; true siblings CWE-1004/1275 are selection-tier),
+  CWE-827 (DTD control is an XML-parsing fault, not executable-code
+  inclusion; CWE-829's predicate would drop XXE-family detection).
+- **PROMOTE-AND-FOLD 7**: CWE-1173 (<- CWE-1174/554), CWE-346
+  (<- CWE-1385), CWE-229 (<- CWE-231), CWE-524 (<- CWE-525), CWE-248
+  (<- CWE-600), CWE-184 (<- CWE-692). CWE-1173/229/248/524/184 were
+  curated-but-omitted (web-relevance < 0.5): the promotion REVERSES
+  those omits (removed from `10-web-relevance-omit.yaml` with a
+  pointer here); CWE-346 was absent from the curated set entirely and
+  is added by the promotion stage. The catalogue grows to 254
+  entries; the selection tier shrinks to 153 (12 Variants = 3 splits
+  + 9 orphans kept).
+- **KEEP-STANDALONE 11**: CWE-1004, 1275, 352 (CSRF), 384, 608, 626,
+  644, 646, 650, 8, 942 - each candidate parent is non-web (CWE-345),
+  umbrella-broad with catalogue-poisoning overlap (CWE-116/436/183),
+  or duplicates a retained entry (CWE-668 vs CWE-497).
+
+Carried follow-ups (recorded, not blocking): CWE-266's capture kinds
+disjoint from its folded children's (impersonation/tabnabbing units
+pruned by tag - widen the capture's enum_kinds/predicate in a later
+pass); CWE-553 (RCE-grade recipe under a disclosure-grade capture);
+thin recipe materialisation (CWE-550/535/536/537/9/11/615/258/531/6/
+85/86/87/7); known multi-fire pairs (traversal 22/23/36 vs CWE-41
+equivalence; cookie attributes 315/614/1004/1275; CWE-536 vs CWE-600;
+CWE-646 vs CWE-434; CWE-692 vs CWE-79) - accepted as fail-open
+multi-fire, deduped by the LLM match stage; dual-parentage notes
+(CWE-647/350/784) rechecked if the second parent ever enters the
+catalogue.

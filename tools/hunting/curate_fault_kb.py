@@ -93,6 +93,8 @@ class Weakness:
     attack_patterns: tuple[str, ...]  # "CAPEC-<id>" strings, sorted
     likelihood: str | None
     common_consequences: tuple[str, ...]
+    potential_mitigations: tuple[str, ...]
+    functional_areas: tuple[str, ...]
     parents_view1000: frozenset[int]  # ChildOf parents in View 1000
     tech_classes: frozenset[str]      # Applicable_Platforms Technology classes
     tech_names: frozenset[str]        # Applicable_Platforms Technology names
@@ -175,7 +177,7 @@ def parse_catalogue(xml_path: Path) -> dict[int, Weakness]:
             likelihood = like.text.strip()
 
         consequences: list[str] = []
-        for cc in w.iter(f"{_NS}Common_Consequence"):
+        for cc in w.iter(f"{_NS}Common_Consequences"):
             scopes = [s.text.strip() for s in cc.iter(f"{_NS}Scope")
                       if s.text and s.text.strip()]
             impacts = [i.text.strip() for i in cc.iter(f"{_NS}Impact")
@@ -187,6 +189,27 @@ def parse_catalogue(xml_path: Path) -> dict[int, Weakness]:
                 parts.append(f"impact: {'; '.join(impacts)}")
             if parts:
                 consequences.append(" - ".join(parts))
+
+        mitigations: list[str] = []
+        for mit in w.iter(f"{_NS}Potential_Mitigations"):
+            phases = [p.text.strip() for p in mit.iter(f"{_NS}Phase")
+                      if p.text and p.text.strip()]
+            strategies = [s.text.strip() for s in mit.iter(f"{_NS}Strategy")
+                          if s.text and s.text.strip()]
+            parts = []
+            if phases:
+                parts.append(f"phase: {', '.join(phases)}")
+            if strategies:
+                parts.append(f"strategy: {'; '.join(strategies)}")
+            if parts:
+                mitigations.append(" - ".join(parts))
+
+        functional_areas: set[str] = set()
+        for fa in w.iter(f"{_NS}Functional_Areas"):
+            for area in fa.iter(f"{_NS}Functional_Area"):
+                if area.text and area.text.strip():
+                    functional_areas.add(area.text.strip())
+        functional_areas = tuple(sorted(functional_areas))
 
         parents: set[int] = set()
         for rw in w.iter(f"{_NS}Related_Weakness"):
@@ -221,6 +244,8 @@ def parse_catalogue(xml_path: Path) -> dict[int, Weakness]:
             attack_patterns=attack_patterns,
             likelihood=likelihood,
             common_consequences=tuple(consequences),
+            potential_mitigations=tuple(mitigations),
+            functional_areas=functional_areas,
             parents_view1000=frozenset(parents),
             tech_classes=frozenset(tech_classes),
             tech_names=frozenset(tech_names),
@@ -289,6 +314,85 @@ def _risk_of(seed: Mapping[str, tuple[int, ...]], cwe_id: int) -> tuple[str, ...
     return tuple(sorted(r for r, ids in seed.items() if cwe_id in ids))
 
 
+def promote_captures(entries: list[dict], index: Mapping[int, Weakness],
+                     authoring: dict[str, dict]) -> list[dict]:
+    """The promotion stage: add `promote: true` authoring entries to the
+    catalogue as selection captures (the overlap-critic's PROMOTE-AND-FOLD
+    verdicts). A promoted id is either (a) ALREADY in the curated set - its
+    promotion is the web-relevance-omit REVERSAL (the omit entry is removed
+    from 10-web-relevance-omit.yaml, this marker stays as the record), or
+    (b) genuinely absent from the catalogue - a CWE in the XML that the walk
+    never reached (it is an ancestor of an orphan, not a descendant of a
+    seed); it is extracted like any other entry and gets its matching facet
+    from the same authoring dict via fold_authoring afterwards. Pure +
+    deterministic (sorted insertion)."""
+    existing = {e["fault_id"] for e in entries}
+    added = []
+    for fault_id, spec in sorted(authoring.items()):
+        if not spec.get("promote"):
+            continue
+        if fault_id in existing:
+            continue
+        cwe_id = int(fault_id.split("-")[1])
+        if cwe_id not in index:
+            raise ValueError(
+                f"promote names {fault_id}, absent from the XML")
+        entries.append(_extract_entry(index[cwe_id], ()))
+        added.append(fault_id)
+    if added:
+        print(f"note: promoted captures added: {', '.join(sorted(added))}",
+              file=sys.stderr)
+    return sorted(entries, key=lambda e: e["fault_id"])
+
+
+def _fold_target(cwe_id: int, *, in_catalogue: frozenset[int],
+                 index: Mapping[int, Weakness]) -> int | None:
+    """The deterministic fold target of one entry: the NEAREST in-catalogue
+    Base/Class ancestor along the View-1000 ChildOf chains (BFS, multi-parent
+    aware, cycle-guarded). Variant/Compound waypoints are skipped so a chain
+    lands on the narrowest retained capture ("taxed as base, not class"): a
+    Variant whose parent is a folded Variant folds to the same Base. `None`
+    for an orphan (no retained Base/Class ancestor) - the entry STAYS in the
+    selection tier (fail-open recall)."""
+    seen: set[int] = set()
+    frontier = list(index[cwe_id].parents_view1000)
+    while frontier:
+        current = frontier.pop(0)
+        if current in seen:
+            continue
+        seen.add(current)
+        if current in in_catalogue \
+                and index[current].abstraction in ("Base", "Class"):
+            return current
+        frontier.extend(index[current].parents_view1000)
+    return None
+
+
+def fold_variants(entries: list[dict],
+                  index: Mapping[int, Weakness],
+                  keep_separate: frozenset[int] = frozenset()) -> list[dict]:
+    """The fold stage: compute each entry's `fold_parent` (the deterministic
+    nearest retained Base/Class ancestor, `null` for selection-tier entries).
+    Variants/Compounds fold into their capture; Bases/Classes are captures;
+    orphans keep `null` and stay selectable; `keep_separate` ids (the
+    overlap-critic's SPLIT verdicts) are forced to `null` - they are
+    genuinely distinct fault classes even though a View-1000 capture exists.
+    Pure + deterministic (sorted iteration, BFS order)."""
+    in_catalogue = frozenset(
+        int(e["fault_id"].split("-")[1]) for e in entries)
+    for entry in sorted(entries, key=lambda e: e["fault_id"]):
+        cwe_id = int(entry["fault_id"].split("-")[1])
+        if entry["abstraction"] not in ("Variant", "Compound"):
+            entry["fold_parent"] = None
+            continue
+        if cwe_id in keep_separate:
+            entry["fold_parent"] = None
+            continue
+        target = _fold_target(cwe_id, in_catalogue=in_catalogue, index=index)
+        entry["fold_parent"] = f"CWE-{target}" if target is not None else None
+    return entries
+
+
 def _extract_entry(weakness: Weakness, risks: tuple[str, ...]) -> dict:
     """One entry in the schema of spec section 4, matching facet un-authored."""
     return {
@@ -301,6 +405,7 @@ def _extract_entry(weakness: Weakness, risks: tuple[str, ...]) -> dict:
             "predicate": None,
         },
         "enum_kinds": [],
+        "fold_parent": None,
         "materialisation": {
             "description": weakness.description,
             "extended_description": weakness.extended_description or None,
@@ -308,6 +413,8 @@ def _extract_entry(weakness: Weakness, risks: tuple[str, ...]) -> dict:
             "related_attack_patterns": list(weakness.attack_patterns),
             "likelihood": weakness.likelihood,
             "common_consequences": list(weakness.common_consequences),
+            "potential_mitigations": list(weakness.potential_mitigations),
+            "functional_areas": list(weakness.functional_areas),
         },
     }
 
@@ -409,11 +516,19 @@ def _ensure_runtime_constants() -> None:
 def load_authoring(dir_path: Path) -> dict[str, dict]:
     """Load + validate the authoring sidecar files (sorted by name, one file
     per range). Returns fault_id -> authoring dict. Duplicate authoring of the
-    same fault across files is a hard error, EXCEPT that a later file may
-    override an earlier entry with an OMIT marker (the relevance-filter layer,
-    e.g. 10-web-relevance-omit.yaml): a filtered-out fault keeps its prior
-    nl/enum_kinds authoring in the source but is dropped from the catalogue.
-    The override is deterministic: files apply in sorted-name order."""
+    same fault across files is a hard error, EXCEPT for three documented
+    override layers (files apply in sorted-name order, later wins):
+      * an OMIT marker (10-web-relevance-omit.yaml) overrides a prior entry:
+        the fault is dropped from the catalogue, keeping its prior nl in the
+        source only;
+      * a SPLIT marker (70-fold-amendments.yaml) MERGES into the prior entry
+        ({split: true} only): the fault stays selection-tier with its prior
+        matching facet;
+      * a PROMOTE spec (70-fold-amendments.yaml) REVERSES an omit (the
+        overlap-critic's PROMOTE-AND-FOLD verdict supersedes a web-relevance
+        omission) or MERGES into a prior entry: later keys win per-key, the
+        promoted capture keeps the amendment's nl/enum_kinds/predicate.
+    Deterministic: sorted-name file order."""
     authoring: dict[str, dict] = {}
     for path in sorted(dir_path.glob("*.yaml")):
         with open(path, encoding="utf-8") as fh:
@@ -425,8 +540,22 @@ def load_authoring(dir_path: Path) -> dict[str, dict]:
             if not isinstance(spec, dict):
                 raise ValueError(f"authoring file {path}: entry {fault_id} is "
                                  f"{type(spec).__name__}, expected a mapping")
-            if fault_id in authoring:
-                if spec.get("omit") and authoring[fault_id].get("omit"):
+            prior = authoring.get(fault_id)
+            if "promote" in spec or "split" in spec:
+                if prior is None:
+                    authoring[fault_id] = spec
+                    continue
+                if prior.get("omit"):
+                    if "promote" in spec:
+                        authoring[fault_id] = spec
+                        continue
+                    raise ValueError(
+                        f"authoring file {path}: split marker for OMITTED "
+                        f"{fault_id} is contradictory")
+                authoring[fault_id] = {**prior, **spec}
+                continue
+            if prior is not None:
+                if spec.get("omit") and prior.get("omit"):
                     raise ValueError(
                         f"authoring file {path}: duplicate OMIT for {fault_id}")
                 if spec.get("omit"):
@@ -578,8 +707,14 @@ def main(argv: list[str] | None = None) -> int:
     args = parser.parse_args(argv)
 
     authoring = load_authoring(Path(args.authoring))
+    index = parse_catalogue(Path(args.xml))
     entries = curate(Path(args.xml), Path(args.seed))
+    entries = promote_captures(entries, index, authoring)
     entries = fold_authoring(entries, authoring)
+    keep_separate = frozenset(
+        int(fid.split("-")[1]) for fid, spec in authoring.items()
+        if spec.get("split"))
+    entries = fold_variants(entries, index, keep_separate)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(emit_catalogue(entries), encoding="utf-8")

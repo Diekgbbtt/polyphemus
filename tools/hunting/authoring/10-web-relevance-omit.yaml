@@ -38,9 +38,11 @@ entries:
   CWE-115:
     omit: true
     omit_reason: 'web-relevance 0.30: Overly abstract base class; no concrete web exploit mechanism.'
-  CWE-1173:
-    omit: true
-    omit_reason: 'web-relevance 0.50: Generic framework-usage fault; indirect web applicability.'
+  # CWE-1173/229/248/524/184 were omitted here (web-relevance < 0.5) but are
+  # PROMOTED back as fold captures by the 2026-08-06 overlap-critic pass
+  # (70-fold-amendments.yaml): as selection-tier Bases they give the folded
+  # variants (1174/554 -> 1173, 231 -> 229, 600 -> 248, 525 -> 524, 692 ->
+  # 184) a capture to land on - the promotion supersedes these omits.
   CWE-1204:
     omit: true
     omit_reason: 'web-relevance 0.35: Crypto-primitive misuse; web exposure only via app-level crypto, uncommon.'
@@ -86,9 +88,6 @@ entries:
   CWE-183:
     omit: true
     omit_reason: 'web-relevance 0.45: Allow-list philosophy flaw; abstract, indirect web exploitation.'
-  CWE-184:
-    omit: true
-    omit_reason: 'web-relevance 0.45: Deny-list incompleteness; abstract and indirect.'
   CWE-202:
     omit: true
     omit_reason: 'web-relevance 0.40: Statistical side-channel inference; marginal web exploitability.'
@@ -402,9 +401,6 @@ entries:
   CWE-512:
     omit: true
     omit_reason: 'web-relevance 0.10: Malware taxonomy category; outside web application applicability.'
-  CWE-524:
-    omit: true
-    omit_reason: 'web-relevance 0.45: Sensitive server-side cache exposure; web-adjacent, conditions unusual.'
   CWE-526:
     omit: true
     omit_reason: 'web-relevance 0.40: Server env-var secrets are infra-level; weak web observability.'

@@ -68,6 +68,42 @@ def _write_catalogue(tmp_path, entries):
 
 # --- the matching facet --------------------------------------------------------
 
+def test_load_fault_entries_filters_folded_variants(tmp_path):
+    # the selection tier excludes folded entries (fold_parent set): the fold
+    # parent is their capture; the variant content stays in the materialisation
+    # facet only
+    path = _write_catalogue(tmp_path, [
+        _entry_yaml(),
+        _entry_yaml(fault_id="CWE-42", name="XSS Path Equivalent",
+                    fold_parent="CWE-79",
+                    applies_if={"nl": "Equivalent path.", "predicate": None},
+                    enum_kinds=[]),
+    ])
+    entries = load_fault_entries(path)
+    assert {e.fault_id for e in entries} == {"CWE-89"}
+
+
+def test_load_materialisation_serves_folded_variants_with_fold_parent(tmp_path):
+    # the materialisation facet keeps ALL entries by own id - a folded variant
+    # stays addressable as a recipe, carrying the fold_parent pointer
+    path = _write_catalogue(tmp_path, [
+        _entry_yaml(),
+        _entry_yaml(fault_id="CWE-42", name="XSS Path Equivalent",
+                    fold_parent="CWE-89",
+                    applies_if={"nl": "Equivalent path.", "predicate": None},
+                    enum_kinds=[],
+                    materialisation={
+                        "description": "A path-equivalent injection.",
+                        "common_consequences": ["Data corruption"],
+                    }),
+    ])
+    by_id = load_materialisation(path)
+    assert set(by_id) == {"CWE-42", "CWE-89"}
+    assert by_id["CWE-42"].fold_parent == "CWE-89"
+    assert by_id["CWE-89"].fold_parent is None
+    assert by_id["CWE-42"].common_consequences == ("Data corruption",)
+
+
 def test_load_fault_entries_projects_every_yaml_entry(tmp_path):
     path = _write_catalogue(tmp_path, [
         _entry_yaml(),

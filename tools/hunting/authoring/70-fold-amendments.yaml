@@ -1,0 +1,44 @@
+# Authoring sidecar: fold amendments (#66, the 2026-08-06 overlap-critic pass).
+#
+# The per-parent-family overlap critic (3 parallel agents, critical-thinking
+# method) reviewed every fold edge and orphan of the folded catalogue:
+#   * SPLIT  - a folded variant is a genuinely distinct fault class: keep it
+#              as its own selection entry (fold_parent null), it is already
+#              authored in its range sidecar;
+#   * PROMOTE-AND-FOLD - the orphan's nearest retained Base/Class ancestor is
+#              absent from the catalogue: ADD it as a selection capture and
+#              fold the orphan into it (promotion is marked `promote: true`
+#              here; the entry is extracted from the XML like any other, its
+#              matching facet authored here).
+# Verdicts: SPLIT CWE-1022/539/827 (tabnabbing, cookie-vs-file, DTD-vs-code
+# inclusion); PROMOTE-AND-FOLD CWE-1173 (<-1174/554), CWE-346 (<-1385),
+# CWE-229 (<-231), CWE-524 (<-525), CWE-248 (<-600), CWE-184 (<-692).
+# Rationale corpus: docs/design/hunting-66-fault-omit-critique.md.
+entries:
+  CWE-1022: {split: true}
+  CWE-539: {split: true}
+  CWE-827: {split: true}
+  CWE-1173:
+    promote: true
+    nl: "The unit bypasses, misuses, or omits an input validation framework that the platform provides."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-346:
+    promote: true
+    nl: "The unit accepts data or a connection whose origin it never verifies."
+    enum_kinds: [RESTApi, GraphQLApi, IntegrationSystem]
+  CWE-229:
+    promote: true
+    nl: "The unit mishandles input carrying more, fewer, or undefined values than expected."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-524:
+    promote: true
+    nl: "The unit serves sensitive data from a cache that actors outside the intended control sphere can read."
+    enum_kinds: [WebPresentation, CDN, ReverseProxy]
+  CWE-248:
+    promote: true
+    nl: "The unit lets an exception escape uncaught, surfacing failure details or degrading availability."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-184:
+    promote: true
+    nl: "The unit neutralizes input through a denylist that fails to enumerate all dangerous forms."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]

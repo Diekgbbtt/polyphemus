@@ -115,12 +115,15 @@ Each entry:
           key: "EXPOSED_VIA"
           values: ["RESTApi", "GraphQLApi"]
   enum_kinds: []                    # THE FAIL-OPEN GATE TAG: technical-axis SYSTEM_KINDS this fault presupposes
+  fold_parent: null                 # THE FOLD (selection capture): "CWE-41" for a folded Variant/Compound, null for a selection-tier entry
   materialisation:                  # THE MATERIALISATION FACET, LLM-consumed
     description: "..."             # CWE Description + Extended_Description
     alternate_terms: ["SQLi"]
     related_attack_patterns: ["CAPEC-66"]
     likelihood: "High"            # CWE Likelihood_Of_Exploit (a risk-score facet input)
     common_consequences: ["..."]
+    potential_mitigations: ["..."]
+    functional_areas: ["..."]
 ```
 
 Invariants the schema holds:
@@ -128,6 +131,7 @@ Invariants the schema holds:
 - `fault_id` is unique across the catalogue (dedupe key).
 - `applies_if.nl` is always present (phase-1 authors NL); `applies_if.predicate` is optional and, when present, must validate against the #63 `validate_predicate` grammar (hard-reject at curation time, never at runtime).
 - `enum_kinds` is a subset of `SYSTEM_KINDS`, validated at curation time.
+- `fold_parent` is null for a selection-tier entry; for a folded Variant/Compound it names a selection-tier Base/Class in the same catalogue (validated at curation time). A folded entry is excluded from the matching facet; its materialisation stays addressable by own id (the recipe keeps its capture's content).
 - A hardened entry (predicate present) is projected with `enum_kinds` ignored by the consumer (R-c); an unhardened entry degrades to its tag; an untagged unhardened entry prunes nothing (fail-open, high recall).
 - The technological axis NEVER appears as a predicate facet or gate tag (FKB-6).
 
@@ -149,10 +153,12 @@ The algorithm (the ticket's scrape -> filter -> lower -> dedupe):
 4. **Abstract -> concrete replacement.**
    Replace a retained high-level abstract fault (Pillar / Class) with one of its more concrete descendants already in the collected set (Base / Variant), then deduplicate again.
 5. **Extract per-entry content.**
-   From each surviving CWE pull the meaningful content for the materialisation facet (Description, Extended_Description, Alternate_Terms, Related_Attack_Patterns / CAPEC, Likelihood_Of_Exploit, Common_Consequences) and the abstraction/OWASP provenance.
+   From each surviving CWE pull the meaningful content for the materialisation facet (Description, Extended_Description, Alternate_Terms, Related_Attack_Patterns / CAPEC, Likelihood_Of_Exploit, Common_Consequences, Potential_Mitigations, Functional_Areas) and the abstraction/OWASP provenance.
 6. **Author the matching facet.**
    Every entry gets an NL `applies_if`; entries whose necessary preconditions are L1-typed also get a typed-SHAPED `predicate` (validated) and/or an `enum_kinds` tag; the rest stay NL-only (fail-open).
-7. **Emit.** Write the deterministic, sorted YAML catalogue.
+7. **Fold (the selection tier vs the materialisation tier).**
+   A Variant/Compound entry gets a `fold_parent` naming its NEAREST retained Base/Class ancestor along the View-1000 ChildOf chains (BFS, multi-parent aware, cycle-guarded; Variant/Compound waypoints are skipped, so a chain lands on the narrowest retained capture - "taxed as base, not class"). An entry with no retained Base/Class ancestor (an orphan) keeps `fold_parent: null` and STAYS in the selection tier (fail-open recall). Bases/Classes are captures (`fold_parent: null`). The fold-amendments authoring layer (70-fold-amendments.yaml, the overlap-critic pass) may force deviations: `split: true` keeps a folded variant in the selection tier (a genuinely distinct fault class despite its View-1000 capture); `promote: true` ADDS a missing capture to the catalogue (an ancestor the walk never reached) and reverses a web-relevance omit where one exists, so its folded orphans land on it.
+8. **Emit.** Write the deterministic, sorted YAML catalogue.
 
 The script is pure and deterministic (same inputs -> byte-identical output), so its output is reviewable in a diff.
 
@@ -160,8 +166,8 @@ The script is pure and deterministic (same inputs -> byte-identical output), so 
 
 A pure loader module in the hunting context reads the YAML catalogue and exposes:
 
-- `load_fault_entries(path=...) -> tuple[FaultEntry, ...]` - the matching facet: each YAML entry projected into `fault_source.FaultEntry`, the predicate parsed and validated (a malformed predicate is a curation-time hard error, surfaced by the loader's own validation, never silently dropped).
-- `load_materialisation(path=...) -> Mapping[str, FaultMaterialisation]` - the materialisation facet: content by `fault_id` for the prompt-builder.
+- `load_fault_entries(path=...) -> tuple[FaultEntry, ...]` - the MATCHING facet, i.e. the SELECTION TIER: each YAML entry projected into `fault_source.FaultEntry`, the predicate parsed and validated (a malformed predicate is a curation-time hard error, surfaced by the loader's own validation, never silently dropped). Folded entries (`fold_parent` set) are FILTERED OUT at read - the fold parent is their capture ("fold at curation, filter at read").
+- `load_materialisation(path=...) -> Mapping[str, FaultMaterialisation]` - the MATERIALISATION facet: content by `fault_id` for the prompt-builder, serving ALL entries (selection-tier entries AND folded recipes, the latter carrying their `fold_parent` pointer).
 
 The loader imports no driver and performs no I/O at import; the catalogue path resolves lazily (`CODING_STANDARD` §6).
 A missing or malformed catalogue fails open to an empty KB (never crashes the caller), consistent with the fail-open selection contract.
@@ -208,8 +214,8 @@ The evaluation is a reported artifact (a markdown report under `docs/design/`), 
 
 ## 11. Testing decisions
 
-- The curation script: unit tests over a fixture XML slice + a fixture OWASP seed - assert the walk pulls the full child set, the filter drops non-web ids, the abstract->concrete replacement fires, dedupe holds, and the emitted YAML is deterministic.
-- The loader: unit tests over a fixture catalogue - assert projection into `FaultEntry` (predicate parsed + validated, enum_kinds subset of `SYSTEM_KINDS`), the materialisation map by id, and fail-open to empty on a missing/malformed catalogue.
+- The curation script: unit tests over a fixture XML slice + a fixture OWASP seed - assert the walk pulls the full child set, the filter drops non-web ids, the abstract->concrete replacement fires, dedupe holds, the fold marks a Variant with its nearest retained Base (waypoints skipped, orphans kept fail-open), and the emitted YAML is deterministic.
+- The loader: unit tests over a fixture catalogue - assert projection into `FaultEntry` (predicate parsed + validated, enum_kinds subset of `SYSTEM_KINDS`), the materialisation map by id, folded entries excluded from `load_fault_entries` but served (with `fold_parent`) by `load_materialisation`, and fail-open to empty on a missing/malformed catalogue.
 - The consumer-parity test: entries loaded from the real catalogue feed `fault_source.select` without a grammar fork (a walkthrough asserting a hardened entry prunes and an unhardened entry degrades to tag/open).
 - The retrieval-seam contract: unit tests over a fake external KB - assert the typed query/response shapes and fail-open to an empty result when the KB is absent or raises.
 - No unit test touches a DB; the catalogue is a file fixture, the external KB is a fake.

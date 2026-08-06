@@ -1,7 +1,8 @@
 # Hunting #66 - CWE REST API probe (extended typing + attribute gaps)
 
-Status: reported artifact (operator-requested task 1). Not a runtime gate.
-Date: 2026-08-05.
+Status: reported artifact (operator-requested task 1); follow-up applied
+(fault-KB relevance change). Not a runtime gate.
+Date: 2026-08-05 (follow-up 2026-08-06).
 
 The coverage evaluation documented materialisation gaps - most notably
 `common_consequences` at 0/419 - with the hypothesis that the data might
@@ -29,9 +30,11 @@ extended_description, alternate_terms, related_attack_patterns,
 likelihood (plus derived fields: parents, tech classes, risks).
 Untyped by us: Diagram, Structure, BackgroundDetails,
 ModesOfIntroduction, CommonConsequences, DetectionMethods,
-PotentialMitigations, DemonstrativeExamples, ObservedExamples,
-FunctionalAreas, AffectedResources, TaxonomyMappings, References,
-MappingNotes, Notes, WeaknessOrdinalities, ContentHistory.
+DemonstrativeExamples, ObservedExamples, AffectedResources,
+TaxonomyMappings, References, MappingNotes, Notes,
+WeaknessOrdinalities, ContentHistory.
+(CommonConsequences, PotentialMitigations and FunctionalAreas were
+untyped at probe time; all three are materialised now - section 6.)
 
 ## 2. Light probes: 20 CWEs, 100 attribute probes, 0 mismatches
 
@@ -79,6 +82,12 @@ Per-attribute presence in the v4.20 XML across the 419 catalogue CWEs
 | Functional_Areas | 58 | 419 |
 | Background_Details | 35 | 419 |
 
+`Functional_Areas` (CWE's own application-domain tag, e.g. CWE-41 "File
+Processing") is NOT low-value prose: it is the application domain a
+probe would exercise, directly meaningful for adversarial analysis.
+It is reclassified as valuable and materialised with the other two
+(section 6).
+
 ## 4. Per-CWE genuine gaps (same in XML and API)
 
 The probe table (XML/API agreement) shows source-level absence for
@@ -100,8 +109,26 @@ backends - not enrichable.
 - `potential_mitigations` (329/419) is the operator's feedback item 2:
   it is materialisable from the same XML with a one-line tag fix and
   is a candidate for the typing as the mitigation facet.
-- Recommended follow-up (separate, after the shrink): fix the
-  plural-tag parsing and materialise common_consequences +
-  potential_mitigations (minimal candidate set; the remaining
-  14 untyped attributes are low-value prose for the fault-matching
-  use-case and can stay untyped).
+
+## 6. Follow-up applied (2026-08-06)
+
+The recommended follow-up is done, as part of the fault-KB relevance
+change (fold + materialisation):
+
+- plural-tag parsing fixed (`Common_Consequences` > `Consequence`,
+  `Potential_Mitigations` > `Mitigation`, `Functional_Areas` >
+  `Functional_Area`) in `tools/hunting/curate_fault_kb.py`;
+- `common_consequences`, `potential_mitigations`, `functional_areas`
+  added to the `Weakness` dataclass, the entry schema, and the loader
+  facet `FaultMaterialisation` (`src/polymerhus/attack/hunting/
+  fault_kb.py`);
+- over the materialised 248-entry catalogue:
+  `common_consequences` 248/248 (was 0/419 before the fix),
+  `potential_mitigations` 211/248, `functional_areas` 43/248.
+  (The "of 419" probe figures above count the full CWE catalogue; the
+  materialisation facet serves the 248-entry fault catalogue.)
+- `Functional_Areas` is reclassified as valuable for adversarial
+  analysis (section 3) and materialised accordingly.
+
+The remaining 14 untyped attributes stay untyped: low-value prose for
+the fault-matching use-case.

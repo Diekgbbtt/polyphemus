@@ -68,7 +68,9 @@ def _default_catalogue_path() -> Path:
 @dataclass(frozen=True)
 class FaultMaterialisation:
     """The materialisation facet of one fault entry (spec section 4): the rich
-    NL content a hunting agent consumes to materialise a probe."""
+    NL content a hunting agent consumes to materialise a probe. `fold_parent`
+    names the entry's selection-tier capture when the entry is a folded
+    variant (probe recipes stay addressable by their own id)."""
 
     fault_id: str
     name: str
@@ -78,6 +80,9 @@ class FaultMaterialisation:
     related_attack_patterns: tuple[str, ...] = ()
     likelihood: str | None = None
     common_consequences: tuple[str, ...] = ()
+    potential_mitigations: tuple[str, ...] = ()
+    functional_areas: tuple[str, ...] = ()
+    fold_parent: str | None = None
 
 
 def _parse_predicate(raw: object, fault_id: str) -> TypedPredicate | None:
@@ -174,6 +179,13 @@ def _parse_materialisation(raw: object) -> FaultMaterialisation | None:
         common_consequences=tuple(
             str(c) for c in
             (materialisation.get("common_consequences") or ())),
+        potential_mitigations=tuple(
+            str(m) for m in
+            (materialisation.get("potential_mitigations") or ())),
+        functional_areas=tuple(
+            str(f) for f in
+            (materialisation.get("functional_areas") or ())),
+        fold_parent=raw.get("fold_parent"),
     )
 
 
@@ -193,8 +205,13 @@ def _read_catalogue(path: Path | str | None) -> list[object]:
 
 
 def load_fault_entries(path: Path | str | None = None) -> tuple[FaultEntry, ...]:
-    """The MATCHING facet (spec section 6): the catalogue as the selection
-    entry consumes it.
+    """The MATCHING facet (spec section 6): the catalogue as the SELECTION
+    TIER, i.e. the entries a fault_source matches against.
+
+    Folded variants (entries with a `fold_parent`, the materialisation-tier
+    recipes) are filtered out here - the fold parent is their selection
+    capture ("fold at curation, filter at read"). The materialisation facet
+    (`load_materialisation`) still serves their full content by own id.
 
     A missing or malformed catalogue fails open to an EMPTY KB (never crashes
     the caller); a malformed ENTRY is skipped with a logged diagnostic, never
@@ -209,6 +226,8 @@ def load_fault_entries(path: Path | str | None = None) -> tuple[FaultEntry, ...]
         return ()
     entries: list[FaultEntry] = []
     for row in rows:
+        if isinstance(row, dict) and row.get("fold_parent"):
+            continue
         try:
             entries.append(_parse_entry(row))
         except Exception as exc:  # noqa: BLE001 - per-entry fail-open

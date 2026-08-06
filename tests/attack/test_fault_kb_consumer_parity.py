@@ -20,7 +20,10 @@ returns nothing.
 """
 import pytest
 
-from polymerhus.attack.hunting.fault_kb import load_fault_entries
+from polymerhus.attack.hunting.fault_kb import (
+    load_fault_entries,
+    load_materialisation,
+)
 from polymerhus.attack.hunting.fault_source import select
 
 
@@ -60,6 +63,23 @@ def catalogue():
     assert entries, "the real catalogue must load (fault-kb.yaml present)"
     by_id = {e.fault_id: e for e in entries}
     return by_id
+
+
+# --- the two-tier shape holds on the real artifact -------------------------------
+
+def test_selection_tier_excludes_every_folded_variant():
+    """The selection tier must carry no folded entry, and every fold_parent
+    must point at a live selection entry: the fold is a closed capture."""
+    selection = load_fault_entries()
+    materialisation = load_materialisation()
+    selection_ids = {e.fault_id for e in selection}
+    folded = [m for m in materialisation.values() if m.fold_parent]
+    assert folded, "the real catalogue must carry folded recipes"
+    assert all(m.fault_id not in selection_ids for m in folded)
+    assert all(m.fold_parent in selection_ids for m in folded)
+    # the fold demonstrably shrinks the matching loop (selection tier < the
+    # full recipe set) - the phase-1 scaling premise of the fold
+    assert len(selection_ids) < len(materialisation)
 
 
 def _run(by_id, fault_ids, unit_edges):

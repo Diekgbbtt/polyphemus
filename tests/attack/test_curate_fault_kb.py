@@ -28,12 +28,15 @@ import yaml
 from tools.hunting.curate_fault_kb import (
     _abstract_to_concrete,
     _children_map,
+    _fold_target,
     curate,
     emit_catalogue,
     fold_authoring,
+    fold_variants,
     load_authoring,
     load_seed,
     parse_catalogue,
+    promote_captures,
     walk_descendants,
 )
 
@@ -101,6 +104,25 @@ def _fixture_seed(tmp_path):
     return seed_path
 
 
+def _mini_catalogue(tmp_path, weaknesses):
+    """A standalone catalogue XML (same namespace) built from _weakness
+    fragments - for fold-shape assertions that the main fixture lacks."""
+    xml_path = tmp_path / "mini-catalogue.xml"
+    xml_path.write_text(
+        '<?xml version="1.0" encoding="UTF-8"?>\n'
+        '<Catalogue xmlns="http://cwe.mitre.org/cwe-7">\n'
+        f"{''.join(weaknesses)}\n</Catalogue>\n",
+        encoding="utf-8")
+    return xml_path
+
+
+def _mini_seed(tmp_path, cwes):
+    seed_path = tmp_path / "mini-seed.yaml"
+    seed_path.write_text(
+        yaml.safe_dump({"mapped_cwes": {"A01": cwes}}), encoding="utf-8")
+    return seed_path
+
+
 # --- the walk (spec 5.2, the R-a mitigation) ------------------------------------
 
 def test_walk_pulls_the_full_child_set(tmp_path):
@@ -160,6 +182,113 @@ def test_curate_dedupes_multi_seed_reach(tmp_path):
     assert [e["fault_id"] for e in entries].count("CWE-7") == 1
 
 
+# --- the fold (selection tier vs materialisation tier) --------------------------
+
+def _folded_entries(xml_path, seed_path):
+    """curate() + fold_variants(), the same composition main() runs."""
+    index = parse_catalogue(xml_path)
+    return fold_variants(curate(xml_path, seed_path), index)
+
+
+def test_fold_marks_variants_with_nearest_base(tmp_path):
+    entries = _folded_entries(_fixture_xml(tmp_path), _fixture_seed(tmp_path))
+    by_id = {e["fault_id"]: e for e in entries}
+    # CWE-5/CWE-6 are Variants of the retained Base CWE-3: they fold into it
+    # (the catalogue keeps them as recipes, fold_parent names the capture)
+    assert by_id["CWE-5"]["fold_parent"] == "CWE-3"
+    assert by_id["CWE-6"]["fold_parent"] == "CWE-3"
+    # Bases are captures: fold_parent null (selection-tier entries)
+    assert by_id["CWE-3"]["fold_parent"] is None
+    assert by_id["CWE-7"]["fold_parent"] is None
+
+
+def test_fold_skips_variant_waypoints_lands_on_base(tmp_path):
+    # CWE-11 (Variant) -> CWE-12 (Variant) -> CWE-10 (Base): the chain must
+    # land on the retained Base, NOT the intermediate Variant
+    xml = _mini_catalogue(tmp_path, [
+        _weakness(10, "Base Ten", "Base", parents=[], tech_classes=["Web Based"]),
+        _weakness(11, "Variant Eleven", "Variant", parents=[10],
+                  tech_classes=["Web Based"]),
+        _weakness(12, "Variant Twelve", "Variant", parents=[11],
+                  tech_classes=["Web Based"]),
+    ])
+    entries = _folded_entries(xml, _mini_seed(tmp_path, [10]))
+    by_id = {e["fault_id"]: e for e in entries}
+    assert by_id["CWE-12"]["fold_parent"] == "CWE-10"
+    assert by_id["CWE-11"]["fold_parent"] == "CWE-10"
+    assert by_id["CWE-10"]["fold_parent"] is None
+
+
+def test_fold_orphan_without_retained_ancestor_stays(tmp_path):
+    # CWE-13 (Variant) hangs under the Pillar CWE-1 which is NOT retained:
+    # the Pillar is replaced by its smallest-id concrete descendant CWE-13
+    # (abstract->concrete, spec 5.4), and 13 has no retained Base/Class
+    # ancestor -> fold_parent null, the entry STAYS in the selection tier
+    # (fail-open recall)
+    xml = _mini_catalogue(tmp_path, [
+        _weakness(1, "Pillar Root", "Pillar", parents=[]),
+        _weakness(10, "Base Ten", "Base", parents=[],
+                  tech_classes=["Web Based"]),
+        _weakness(13, "Variant Thirteen", "Variant", parents=[1],
+                  tech_classes=["Web Based"]),
+    ])
+    entries = _folded_entries(xml, _mini_seed(tmp_path, [1, 10]))
+    by_id = {e["fault_id"]: e for e in entries}
+    assert "CWE-13" in by_id
+    assert by_id["CWE-13"]["fold_parent"] is None
+
+
+def test_fold_target_is_deterministic_and_cycle_safe(tmp_path):
+    index = parse_catalogue(_fixture_xml(tmp_path))
+    # CWE-5's parent chain (5 -> 3 -> 2 -> 1) has no cycles; direct parent
+    # CWE-3 is the nearest retained Base
+    assert _fold_target(5, in_catalogue={3, 5, 6, 7}, index=index) == 3
+    # a cycle (a parent pointing back) must terminate, not hang: fold_target
+    # is callable on an id absent from in_catalogue (orphan case) and returns
+    # None only when no retained Base/Class ancestor exists
+    assert _fold_target(3, in_catalogue={5, 6}, index=index) is None
+
+
+def test_fold_keeps_split_variants_in_the_selection_tier(tmp_path):
+    # a SPLIT verdict (overlap critic): the variant is a distinct fault class
+    # even though a View-1000 capture exists - keep_separate forces fold
+    # _parent null
+    entries = _folded_entries(_fixture_xml(tmp_path), _fixture_seed(tmp_path))
+    index = parse_catalogue(_fixture_xml(tmp_path))
+    entries = fold_variants(entries, index, keep_separate=frozenset({6}))
+    by_id = {e["fault_id"]: e for e in entries}
+    assert by_id["CWE-6"]["fold_parent"] is None
+    assert by_id["CWE-5"]["fold_parent"] == "CWE-3"
+
+
+# --- promotion (the overlap-critic's PROMOTE-AND-FOLD verdicts) ------------------
+
+def test_promote_captures_adds_absent_capture(tmp_path):
+    # CWE-2 (Class) is replaced by its concrete descendants in curate(): it
+    # is absent from the curated set, so promote_captures ADDS it as a
+    # selection capture (extracted like any other entry)
+    authoring = {"CWE-2": {"promote": True, "nl": "x",
+                           "enum_kinds": ["WebPresentation"]}}
+    entries = curate(_fixture_xml(tmp_path), _fixture_seed(tmp_path))
+    index = parse_catalogue(_fixture_xml(tmp_path))
+    promoted = promote_captures(entries, index, authoring)
+    by_id = {e["fault_id"]: e for e in promoted}
+    assert "CWE-2" in by_id
+    assert by_id["CWE-2"]["abstraction"] == "Class"
+    assert by_id["CWE-2"]["materialisation"]["description"] == "d"
+
+
+def test_promote_captures_skips_already_curated_id(tmp_path):
+    # CWE-3 is already curated (a retained Base): its promotion is just the
+    # web-relevance-omit reversal - the marker must not duplicate it
+    authoring = {"CWE-3": {"promote": True, "nl": "x",
+                           "enum_kinds": ["WebPresentation"]}}
+    entries = curate(_fixture_xml(tmp_path), _fixture_seed(tmp_path))
+    index = parse_catalogue(_fixture_xml(tmp_path))
+    promoted = promote_captures(entries, index, authoring)
+    assert [e["fault_id"] for e in promoted].count("CWE-3") == 1
+
+
 # --- the authoring fold (spec 5.6) ----------------------------------------------
 
 def test_fold_authoring_applies_omit_and_nl(tmp_path):
@@ -211,6 +340,53 @@ def test_load_authoring_late_non_omit_duplicate_still_rejected(tmp_path):
     (d / "10-relevance.yaml").write_text(
         "entries:\n  CWE-3:\n    nl: 'Other output.'\n")
     with pytest.raises(ValueError, match="duplicate authoring"):
+        load_authoring(d)
+
+
+def test_load_authoring_split_merges_into_prior_entry(tmp_path):
+    """The fold-amendments layer: a later pure-split marker merges into the
+    prior entry, keeping its matching facet and marking the fold-split."""
+    d = tmp_path / "authoring"
+    d.mkdir()
+    (d / "01-range.yaml").write_text(
+        "entries:\n  CWE-3:\n    nl: 'Rendered output.'\n"
+        "    enum_kinds: [WebPresentation]\n")
+    (d / "70-amend.yaml").write_text(
+        "entries:\n  CWE-3:\n    split: true\n")
+    authoring = load_authoring(d)
+    assert authoring["CWE-3"] == {"nl": "Rendered output.",
+                                  "enum_kinds": ["WebPresentation"],
+                                  "split": True}
+
+
+def test_load_authoring_promote_reverses_an_omit(tmp_path):
+    """The PROMOTE-AND-FOLD layer: a later promote spec supersedes an omit
+    (the overlap-critic verdict reverses a web-relevance omission) and keeps
+    its own matching facet."""
+    d = tmp_path / "authoring"
+    d.mkdir()
+    (d / "01-range.yaml").write_text(
+        "entries:\n  CWE-3:\n    nl: 'Rendered output.'\n")
+    (d / "10-relevance.yaml").write_text(
+        "entries:\n  CWE-3:\n    omit: true\n    omit_reason: 'fixture'\n")
+    (d / "70-amend.yaml").write_text(
+        "entries:\n  CWE-3:\n    promote: true\n"
+        "    nl: 'The unit validates input via the framework.'\n"
+        "    enum_kinds: [RESTApi]\n")
+    authoring = load_authoring(d)
+    assert authoring["CWE-3"] == {"promote": True,
+                                  "nl": "The unit validates input via the framework.",
+                                  "enum_kinds": ["RESTApi"]}
+
+
+def test_load_authoring_split_on_omit_rejected(tmp_path):
+    d = tmp_path / "authoring"
+    d.mkdir()
+    (d / "10-relevance.yaml").write_text(
+        "entries:\n  CWE-3:\n    omit: true\n    omit_reason: 'fixture'\n")
+    (d / "70-amend.yaml").write_text(
+        "entries:\n  CWE-3:\n    split: true\n")
+    with pytest.raises(ValueError, match="contradictory"):
         load_authoring(d)
 
 
