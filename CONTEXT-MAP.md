@@ -39,6 +39,7 @@ Two boundaries that this map long anticipated have landed:
 Following the domain-driven paradigm, they are shared/helper infrastructure - the technical supporting layer (a shared kernel) - inherently coupled to the domain modules that consume them.
 They carry no independent ubiquitous language of their own; the meaning of what they persist, execute, or invoke belongs to the Recon, Analysis, Project-management (and future Attack) contexts that use them.
 They therefore never get a `CONTEXT.md`, and no glossary should be minted for them (operator's explicit ruling).
+The **session seam** (the stateful-agent runtime: `app/llm/session.py`, `session_address.py`, `checkpoints.py`, `actor.py`, `#94`) is the one technical-support surface with real domain content - its typed `SessionAddress` value objects ARE domain concepts (a session's collision-free instance identity), owned per module (`AnalysisSession`/`PodSession`/`HuntSession`) and reasoned in `domain-model.md` §3.7 - so the seam gets ontology coverage without ever becoming a bounded context of its own.
 
 ## Where the architecture and workflow live
 
@@ -46,6 +47,7 @@ This map and the per-context `CONTEXT.md` files are pure glossary.
 Architecture and development-workflow detail are linked, never duplicated:
 
 - `docs/design/domain-model.md` - the canonical reasoned ontology every term here is derived from.
+- `docs/design/llm-role-architecture-agent-prompt.md` - RATIFIED 2026-08-07 (#93/#94): the role record, the one_shot-vs-session turn-mode axis, the three-axis agent model, the collision-free session addressing, and the stateful migration ledger. The ontology home of the session concept is `domain-model.md` §3.7.
 - `docs/design/recon-pipeline-design.md` - the Layer-0 recon pipeline architecture.
 - `docs/design/l1-domain-model-catalogue.md` - the Layer-1 model catalogue (supersedes parts of `service-system-model-design_1.md`).
 - `docs/design/hunting-system-design.md` - the Layer-2 hunting submodule abstract-overview spec (phase-1); open decisions live on the wayfinder map [#54](https://github.com/Diekgbbtt/polyphemus/issues/54).

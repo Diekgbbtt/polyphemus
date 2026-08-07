@@ -103,16 +103,19 @@ The L1 counterpart is the `l1_curator` (Analysis).
 
 **Triager**:
 The LLM proposer role that reads raw L0 tool output into adversarial Observations; it holds judgment but no write authority.
+STATEFUL as of #94: it runs on a per-concurrent-pod session (`PodSession`, `recon/domain/pod.py::pod_session`), keyed by the pod's `(phase, tool, input-asset)` discriminator so several pods of one run never share context; the triager node binds the session on a ContextVar (`app/llm/session.py::stateful_turn`).
 _Avoid_: analyst, classifier.
 
 **Configurator**:
 The role that resolves a Job's command for a target; a `deterministic` template by default, or an `agent` mode.
 The registered agentic configurator is a reserved-but-dormant seam.
+_Status_: registered `one_shot` (unwired today); it adopts the session pattern when built.
 _Avoid_: planner.
 
 **Job orchestrator**:
-A registered-but-dormant proposer seam reserved for the designed-not-built context-memory scaffold; not a live actor today.
-_Status_: designed-not-built.
+A resumable `session`-mode role (`role_id=job_orchestrator`) validated at app boot; its structured `invoke_role` turns are recon-orchestrator reasoning, not a checkpointer-backed tool-loop in the recon module.
+_Status_: the role is live as the orchestrator's reasoning seam; a checkpointer-backed session for it is designed-not-built.
+_Avoid_: planner.
 
 **Operator**:
 The only human, and the source of intent the system is blind to by design: supplies the target, scope, `operator_kb` framing, and settings.

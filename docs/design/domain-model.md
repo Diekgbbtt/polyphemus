@@ -247,7 +247,19 @@ The MVP is monotonic: it only ever appends via MERGE, and the single true retrac
 
 Streaming inherits this monotonicity as a defect: every speculative early assignment over a partial surface is permanent because there is no retraction, which is the measured cause of streaming's precision decay versus batch (`AMV-16` thesis; streaming 19.7% noise versus batch 0%).
 
-Destructive reconciliation (`merge`/`delete`/`relabel`, `src/polymerhus/analysis/l1_curator.py:651-945`) exists, but it is a *curation-time repair* authority, not a *reasoning-time retraction* - the model can be corrected by a later global pass, but a single judgment cannot yet defease itself as fuller evidence arrives.
+Destructive reconciliation (`merge`/`delete`/`relabel`, `src/polymerhus/analysis/l1_curator.py:716-1002`) exists, but it is a *curation-time repair* authority, not a *reasoning-time retraction* - the model can be corrected by a later global pass, but a single judgment cannot yet defease itself as fuller evidence arrives.
+
+### 3.7 The session - an agent's reasoning memory as a first-class concept
+
+A bounded-context ecosystem bestows on each proposer a fluent vocabulary, but nothing yet explains where a proposer's *accumulated reasoning* lives across the several calls it makes within one run.
+
+The automation-forced answer, operator-corrected 2026-08-07 (`#94`, `docs/design/llm-role-architecture-agent-prompt.md` §0.1): the L1 graph is only the WRITE side - the facts a proposer commits. It is not the agent's memory: calling an agent with `invoke_role` rebuilds its prompt from scratch each call, so nothing of what it decided in chunk N reaches chunk N+1 except what it persisted to the graph. A `session` agent closes that gap: its context is carried in a LangGraph **checkpointer thread** keyed by `thread_id`, so each turn resumes where the previous turn left off and the context window grows across the run.
+
+The identity an agent's memory needs is therefore **not** the cross-run node identity of Section 3.4. It is an *instance* identity: distinct to each concurrent execution unit that shares a run and a role, because the checkpointer would otherwise load one pod's memory into another and mis-route context (`#94`; the `PodSession` collision the operator flagged). The model's answer is the **session address** - a per-module typed value (`src/polymerhus/app/llm/session_address.py`: `AnalysisSession`, `PodSession`, `HuntSession`, satisfying a structural `SessionAddress` `Protocol` with `.thread_id`/`.role_id`) that composes a collision-free thread id (segment-escaped, hash-bounded) from the run plus the module's own instance discriminators - analysis's serialization (none), a recon pod's `(phase, tool, input-asset)`, a hunt's `(hunt_id[, spec])`. The memory itself is the process-wide pooled checkpointer (`app/llm/checkpoints.py`, a `PostgresSaver` over a `ConnectionPool`, fail-open to a shared in-process `InMemorySaver` when Postgres is absent).
+
+Two further seams are deliberately NOT part of this primitive, only exposed by it: context-window compaction + long-term memory (`#98/#99`, the `middleware`/`store` hooks on `app/llm/session.py`), and the adaptive inference-method / capability configuration (`#99`, which adjusts the `thinking` baseline a role currently declares statically in `app/llm/providers.py::Role.thinking`). Both plug into the session seam; neither is this ontology's - the session is the durable reasoning-memory concept, the compaction is a token-budget concern (#98/#99 ticket), and the capability adjustment is a config policy (#99).
+
+_Status_: session (the resumable reasoning-memory primitive) is BUILT for the stateful agents (analysis proposers, recon triager, hunting hunter; `stateful` in `app/llm/session.py`); compaction of the now-growing context is designed-not-built (`#98/#99`); the `store` seam and actor mailbox for cross-unit fusion are scaffolds (`#85`).
 
 ---
 
@@ -330,6 +342,9 @@ Crucially the system is deliberately kept blind to the target's true identity - 
 **The proposer roles** are LLM agents that hold judgment but not write authority.
 
 The `triager` reads L0 tool output into adversarial `Observation` insights (`src/polymerhus/recon/domain/pod.py`, recon design §4.5); the `analyser` reconstructs the L1 service/system model - historically in two passes, an assignment pass and a dedicated data-modelling pass, split because one combined call systematically starved data modelling (`_two_pass_analyse`; STATE.md DataItems=0 defect), and since `#34` dissolved into **responsibility-scoped proposers** behind a supervisor, each consuming a `Chunk` narrowed by its own admission set (the `Assigner` owns `AGGREGATES` and emits nothing else, `src/polymerhus/analysis/assigner.py`; the `mechanism-typist` (`#9`) owns System typing, emitting `Service->System` edges over the same chunk-fed schedule, `src/polymerhus/analysis/supervisor.py`); the anatomy skills (`webpage-profile`, `authorization-pyramid`) classify spine slots that cannot be read off the surface and emit the triple *typed classification -> spine slot, evidence -> Observation, deeper probe -> backward-recon request* (`L1D-31`, `src/polymerhus/analysis/anatomy.py:60-86`).
+
+Two role attributes the model now carries explicitly (Section 3.7, `#94`): **agent_mode** (`one_shot` | `session`, whether a role is a stateless structured call or a checkpointer-backed resumable agent whose context grows) and a declared **thinking** baseline (`Role.thinking` in `src/polymerhus/app/llm/providers.py`, translated to `reasoning_effort`, to be made capability-adaptive by `#99`).
+The stateful proposers are the analysis trio (`assigner`/`mechanism_typist`/`data_modeller`, each on its own per-run `AnalysisSession` thread), the recon triager (per concurrent pod `PodSession`), and the hunting hunter (per-hunt `HuntSession`); the bootstrapper, anatomy, curation and sweep stay `one_shot` (their reasoning is externalised to the graph, no working set to resume).
 
 Two roles are registered but dormant (`configurator`, `job_orchestrator`, `src/polymerhus/app/llm/providers.py:14`), reserved seams for the designed-not-built context-memory scaffold (recon design §9).
 
@@ -439,7 +454,7 @@ The related open question is whether a graded gate belongs on any other edge; to
 
 **`SystemAspect` is designed but not built** (`L1D-16`, `NM-3`): the spec treats reified shared facets as the mechanism that makes the inverse "which services manifest this facet" traversal one hop, but the MVP fence excludes it (FR-NFR asserts no `:SystemAspect` node), so DFS-up over shared trust loci is a designed capability, not a live one.
 
-**The context-memory scaffold is designed but not built** (recon design §9): cross-phase operational-failure memory (`recon_signals`), grounded coverage verdicts, and finding-triggered extension are all specified and none exists; `asset_context` is threaded end to end but is always the empty string (recon design §9.1).
+**The context-memory scaffold is partially built, not wholly designed-not-built** (recon design §9, `#94`): the *per-instance* reasoning memory is now real - a stateful agent resumes its own growing context from the process-wide pooled checkpointer, keyed by its collision-free session address (Section 3.7) - while the *cross-phase operational-failure* memory (`recon_signals`), grounded coverage verdicts, finding-triggered extension, and cross-unit fusion (a parent actor reading a child's persisted memory, `#85`) remain specified and not built; `asset_context` is threaded end to end but is always the empty string (recon design §9.1).
 
 ---
 

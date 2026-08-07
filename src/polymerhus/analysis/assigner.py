@@ -559,15 +559,39 @@ def assign(
 
 
 def default_invoke_fn():
-    """The LIVE structured-output call for the Assigner: the `analyser` role model
-    bound to `L1DeltaBatch` via function-calling, through the single coherent
-    escalating retry (#73, `invoke_role`); returns `None` when no parseable tool
-    call survives the schedule, which `assign` already treats as a valid empty
-    outcome."""
+    """The legacy stateless call, retained for callers/tests that want the one-shot
+    seam: the `analyser` role bound to `L1DeltaBatch` via function-calling through the
+    #73 escalating retry (`invoke_role`); `None` = no parseable tool call, which
+    `assign` treats as a valid empty outcome. Production now uses
+    `stateful_invoke_fn` (below)."""
     from polymerhus.app.llm.roles import invoke_role
 
     def invoke(messages):
         return invoke_role("analyser", messages, schema=L1DeltaBatch)
+
+    return invoke
+
+
+def stateful_invoke_fn(run_id: str, checkpointer):
+    """The STATEFUL Assigner call (#94): the `assigner` role runs as a session whose
+    context PROGRESSES across the run's chunks, resuming from its own per-run checkpoint
+    (`AnalysisSession(run_id, "assigner")`, distinct from every other agent's
+    thread). Structured output is `L1DeltaBatch` via `ToolStrategy` (the
+    function_calling-equivalent, #44-safe). Same `(messages) -> batch | None` shape as
+    the legacy seam, so `make_assigner_body` is unchanged.
+
+    The Assigner is dispatched sequentially (the supervisor's chunk-major schedule holds
+    `ANALYSER_PASS_SEMAPHORE`), so this structurally-sync stateful turn needs no async;
+    its statefulness is what lets chunk N+1 reason with what it proposed for chunk N,
+    not merely re-read the graph."""
+    from polymerhus.app.llm.session import stateful_turn
+    from polymerhus.app.llm.session_address import AnalysisSession
+
+    address = AnalysisSession(run_id, "assigner")
+
+    def invoke(messages):
+        return stateful_turn("assigner", address, messages,
+                             checkpointer=checkpointer, schema=L1DeltaBatch)
 
     return invoke
 

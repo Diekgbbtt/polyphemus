@@ -26,32 +26,77 @@ def test_validate_raises_when_key_missing(monkeypatch):
     assert "OPENROUTER" in str(e.value)
 
 def test_validate_raises_on_unknown_provider(monkeypatch):
-    # Derive from P.ROLES so adding a role (e.g. analyser) never breaks this test.
+    # Derive from P.ROLES so adding a role never breaks this test; each role now
+    # carries its own model_key (records, #93/#94), not `LLM_MODEL_{role.upper()}`.
     for r in P.ROLES:
-        monkeypatch.setenv(f"LLM_MODEL_{r.upper()}", "openai:gpt-4o")
+        monkeypatch.setenv(r.model_key, "openai:gpt-4o")
     monkeypatch.setenv("LLM_MODEL_TRIAGER", "bogus:model")
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
     with pytest.raises(P.LLMConfigError):
         P.validate_llm_config()
 
 def test_validate_passes_when_all_present(monkeypatch):
-    # Derive from P.ROLES so every configured role (incl. analyser) is covered.
+    # Derive from P.ROLES so every configured role's model_key is covered.
     for r in P.ROLES:
-        monkeypatch.setenv(f"LLM_MODEL_{r.upper()}", "swissai:meta-llama/Llama-3.3-70B-Instruct")
+        monkeypatch.setenv(r.model_key, "swissai:meta-llama/Llama-3.3-70B-Instruct")
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     P.validate_llm_config()  # no raise
 
-def test_analyser_role_is_registered_and_required(monkeypatch):
-    """FR-ANALYSER: the analyser is a first-class role, so validate_llm_config
-    requires LLM_MODEL_ANALYSER at boot (AST-ANALYSER-02)."""
-    assert "analyser" in P.ROLES
+def test_analysis_roles_share_the_analyser_key_and_it_is_required(monkeypatch):
+    """#93: `analyser` is split into per-cognitive-job role_ids (assigner,
+    mechanism_typist, data_modeller, ...) that SHARE `LLM_MODEL_ANALYSER`
+    (many-to-one), so validate_llm_config still requires that key at boot."""
+    ids = {r.role_id for r in P.ROLES}
+    assert {"assigner", "mechanism_typist", "data_modeller"} <= ids
+    assert "analyser" not in ids  # the conflated single role is gone
+    assert P.role_record("assigner").model_key == "LLM_MODEL_ANALYSER"
+    assert P.role_record("mechanism_typist").model_key == "LLM_MODEL_ANALYSER"
     for r in P.ROLES:
-        monkeypatch.setenv(f"LLM_MODEL_{r.upper()}", "swissai:x")
-    monkeypatch.delenv("LLM_MODEL_ANALYSER", raising=False)  # analyser unset
+        monkeypatch.setenv(r.model_key, "swissai:x")
+    monkeypatch.delenv("LLM_MODEL_ANALYSER", raising=False)  # the shared analysis key unset
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     with pytest.raises(P.LLMConfigError) as e:
         P.validate_llm_config()
     assert "ANALYSER" in str(e.value)
+
+
+def test_role_record_carries_agent_mode():
+    """agent_mode is a property of the role (one_shot | session), not the model."""
+    assert P.agent_mode("assigner") == "session"
+    assert P.agent_mode("mechanism_typist") == "session"
+    assert P.agent_mode("data_modeller") == "session"
+    assert P.agent_mode("triager") == "one_shot"
+    assert P.agent_mode("curation") == "one_shot"
+    assert P.agent_mode("hunting_hunter") == "session"
+    assert P.agent_mode("unregistered_role") == "one_shot"  # safe default
+
+
+def test_resolve_role_uses_the_shared_key_for_split_analysis_roles(monkeypatch):
+    """Distinct analysis role_ids resolve the SAME model via LLM_MODEL_ANALYSER, and
+    a legacy caller still on the bare `"analyser"` id resolves it via the fallback
+    convention - so callers can migrate incrementally."""
+    monkeypatch.setenv("LLM_MODEL_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
+    assert P.resolve_role("assigner") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
+    assert P.resolve_role("mechanism_typist") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
+    assert P.resolve_role("analyser") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")  # fallback
+
+
+def test_hunting_roles_are_not_validated_at_app_boot(monkeypatch):
+    """Operator ruling 2026-08-06: hunting roles validate at the HUNTING module
+    bootstrap, never app boot. So validate_llm_config() (app boot) must not demand
+    the hunting model keys, while validate_llm_config(HUNTING_ROLES) does."""
+    hunting_ids = {r.role_id for r in P.HUNTING_ROLES}
+    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter"}
+    assert not (hunting_ids & {r.role_id for r in P.ROLES})  # absent from app-boot ROLES
+    for r in P.ROLES:
+        monkeypatch.setenv(r.model_key, "swissai:x")
+    for r in P.HUNTING_ROLES:
+        monkeypatch.delenv(r.model_key, raising=False)  # hunting vars ABSENT
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    P.validate_llm_config()  # app boot: no raise despite hunting vars absent
+    with pytest.raises(P.LLMConfigError) as e:
+        P.validate_llm_config(P.HUNTING_ROLES)  # hunting bootstrap: now demanded
+    assert "HUNTING" in str(e.value)
 
 def test_build_chat_model_sets_base_url_and_key(monkeypatch):
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
@@ -244,3 +289,41 @@ def test_escalating_invoke_fail_closes_to_none_after_all_attempts_raise(monkeypa
 def test_escalating_invoke_returns_none_when_every_attempt_is_unmet(monkeypatch):
     monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1, 2, 3")
     assert P.invoke_with_escalating_timeout(lambda budget: None) is None
+
+
+# --- thinking / reasoning-effort baseline (#94) -------------------------------
+
+def test_thinking_baselines_are_set_on_the_reasoning_agents():
+    """The operator-directed baseline: the hunter reasons `high`; the analysis
+    proposers, the recon triager, and the recon-orchestrator (the `job_orchestrator`
+    role) reason `medium`; every other role stays `off`."""
+    assert P.thinking_for("hunting_hunter") == "high"
+    assert P.thinking_for("assigner") == "medium"
+    assert P.thinking_for("mechanism_typist") == "medium"
+    assert P.thinking_for("data_modeller") == "medium"
+    assert P.thinking_for("triager") == "medium"
+    assert P.thinking_for("job_orchestrator") == "medium"      # = the recon-orchestrator
+    # untouched agents + unregistered ids default off
+    for r in ("bootstrapper", "curation", "sweep", "crawler", "configurator",
+              "hunting_orchestrator", "not_a_role"):
+        assert P.thinking_for(r) == "off"
+
+
+def test_build_chat_model_applies_reasoning_effort_only_when_thinking_on(monkeypatch):
+    monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
+    on = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="high")
+    off = P.build_chat_model("openrouter", "openai/gpt-4.1-mini", thinking="off")
+    assert on.reasoning_effort == "high"
+    assert getattr(off, "reasoning_effort", None) is None
+
+
+def test_chat_model_for_carries_the_roles_thinking_baseline(monkeypatch):
+    """The wiring: a model built for a thinking role reasons at its baseline, so a
+    session/stateful agent off `chat_model_for` inherits it without extra plumbing."""
+    from polymerhus.app.llm.roles import chat_model_for
+    monkeypatch.setenv("LLM_MODEL_HUNTING_HUNTER", "openrouter:openai/gpt-5-mini")
+    monkeypatch.setenv("LLM_MODEL_ANALYSER", "openrouter:openai/gpt-4.1-mini")
+    monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
+    assert chat_model_for("hunting_hunter").reasoning_effort == "high"
+    assert chat_model_for("assigner").reasoning_effort == "medium"
+    assert getattr(chat_model_for("bootstrapper"), "reasoning_effort", None) is None

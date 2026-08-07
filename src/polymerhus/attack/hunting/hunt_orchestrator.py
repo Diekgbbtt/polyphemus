@@ -638,3 +638,52 @@ def run_orchestration(
         budget_cut=tuple(budget_cut_keys),
         store_write_failures=write_failures,
     )
+
+
+async def arun_orchestration(
+    project_id: str,
+    run_id: str,
+    candidates: Sequence[DeliveredCandidate],
+    tools: OrchestratorTools,
+    *,
+    dispatch_fn: Callable[[HuntConfig, tuple], DispatchResult] | None = None,
+    rematch_fn: Callable[[str, str, TargetedReconResult], MatchVerdict] | None = None,
+    reason_fn: Callable[[GateInput], GateDecision] | None = None,
+    kb_retrieve_fn: Callable[[str], dict] | None = None,
+    known_faults: Sequence[str] | None = None,
+    exhausted_faults: Sequence[str] = (),
+    budget_fn: Callable[[Sequence[EnvisionedDirection]], Sequence[EnvisionedDirection]] | None = None,
+) -> OrchestratorReport:
+    """The async-native entry point to one orchestration pass (#94: the
+    hunt-orchestrator is the first async-native parent).
+
+    The orchestrator is a PARENT/coordinator: its value in an async runtime is being
+    decoupled from the blocking pass so an async caller can `await` it WITHOUT
+    stalling its own event loop - dispatching a hunt pass, monitoring other concurrent
+    coordination, and (when #85 lands) fusing live cross-unit insight from persisted
+    memory. This runs the synchronous, fail-open `run_orchestration` off the event
+    loop via `asyncio.to_thread`, so the entire O1-O10 fail-open canon is
+    single-sourced - this NEVER re-implements it - and the return is identical.
+
+    Sync collaborators (`dispatch_fn`/`rematch_fn`/back-edge) are what today's hunting
+    agent (#83) exposes; the pass still sequences its hunts internally. When the
+    hunting agent itself becomes async, this driver grows a native async dispatch loop
+    that gathers the pass's INDEPENDENT hunts (distinct revival keys, so no within-pass
+    read-after-write) concurrently - the #85-gated follow-up, kept out of this seam so
+    the verified sync path carries zero risk."""
+    import asyncio
+
+    return await asyncio.to_thread(
+        run_orchestration,
+        project_id,
+        run_id,
+        candidates,
+        tools,
+        dispatch_fn=dispatch_fn,
+        rematch_fn=rematch_fn,
+        reason_fn=reason_fn,
+        kb_retrieve_fn=kb_retrieve_fn,
+        known_faults=known_faults,
+        exhausted_faults=exhausted_faults,
+        budget_fn=budget_fn,
+    )

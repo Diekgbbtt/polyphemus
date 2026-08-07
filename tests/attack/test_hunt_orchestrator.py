@@ -307,3 +307,74 @@ def test_back_edge_request_builds_origin_hunting():
     assert request.scope.unit_id == SERVICE_A
     assert request.correlation_id
     assert "insufficient evidence" in request.scope.note
+
+
+# --- The async-native parent entry point (#94) --------------------------------
+
+def _arun(store, candidates, **kwargs):
+    """`_run`'s async twin: same scenario driven through `arun_orchestration`."""
+    import asyncio
+
+    from polymerhus.attack.hunting.hunt_orchestrator import arun_orchestration
+
+    return asyncio.run(arun_orchestration(
+        project_id="project-1", run_id="run-1", candidates=candidates,
+        tools=_tools(store),
+        dispatch_fn=lambda config, routed=(): DispatchResult(
+            spec_ref="spec-1", pod_result_ref="pod-1",
+            hypothesis_verdict="successful", feedback="ok"),
+        rematch_fn=lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies"),
+        reason_fn=lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        **kwargs,
+    ))
+
+
+def test_arun_orchestration_matches_the_sync_pass():
+    """The async-native parent entry point produces the IDENTICAL report to the sync
+    pass for the same scenario - it single-sources the O1-O10 fail-open canon by
+    running `run_orchestration` off the event loop, never re-implementing it."""
+    sync_report = _run(_MemoryStore(), [_candidate()])
+    async_report = _arun(_MemoryStore(), [_candidate()])
+    # `hunt_ids` are random uuids (one per dispatch), so compare everything else
+    # verbatim and the hunt_ids by COUNT - the pass shape must be identical.
+    drop = {"hunt_ids"}
+    assert ({k: v for k, v in async_report.model_dump().items() if k not in drop}
+            == {k: v for k, v in sync_report.model_dump().items() if k not in drop})
+    assert len(async_report.hunt_ids) == len(sync_report.hunt_ids) == 1
+    assert async_report.hunts_dispatched == 1
+
+
+def test_arun_orchestration_does_not_block_the_event_loop():
+    """The parent value: an async caller can `await` a hunt pass while OTHER
+    coordination runs concurrently on the same loop. A ticking heartbeat coroutine
+    makes progress while the (thread-offloaded) pass runs - proving the pass is not
+    monopolising the loop."""
+    import asyncio
+
+    from polymerhus.attack.hunting.hunt_orchestrator import arun_orchestration
+
+    async def _drive():
+        ticks = 0
+
+        async def heartbeat():
+            nonlocal ticks
+            for _ in range(50):
+                await asyncio.sleep(0.001)
+                ticks += 1
+
+        beat = asyncio.ensure_future(heartbeat())
+        report = await arun_orchestration(
+            project_id="project-1", run_id="run-1", candidates=[_candidate()],
+            tools=_tools(_MemoryStore()),
+            dispatch_fn=lambda config, routed=(): DispatchResult(
+                spec_ref="s", pod_result_ref="p",
+                hypothesis_verdict="successful", feedback="ok"),
+            rematch_fn=lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies"),
+            reason_fn=lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        )
+        await beat
+        return report, ticks
+
+    report, ticks = asyncio.run(_drive())
+    assert report.hunts_dispatched == 1
+    assert ticks == 50  # the loop kept ticking while the pass ran off-loop

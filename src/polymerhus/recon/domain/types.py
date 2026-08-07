@@ -91,6 +91,11 @@ class PodState(TypedDict, total=False):
     extra: dict
     session_id: str
     project_id: str
+    # The pod's run + phase (#94): carried so the triager node can address its STATEFUL
+    # session per concurrent pod instance (PodSession). Optional - a
+    # directly-invoked pod graph (tests) omits them and the triager stays stateless.
+    run_id: str
+    phase: int
     invocation: ToolInvocation
     exec_result: ExecResult
     iteration: int

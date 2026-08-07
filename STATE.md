@@ -1,6 +1,26 @@
 # Loop State — polymerhus L1-MVP
 
-Last run: 2026-07-27 (**#29 - Bootstrapper finished for API delivery: `service_contract`, the skill seam, legacy retirement, observability. See the amendment directly below.** Before: post-MVP curation + L1 remediation, FR-STREAM (NM-7), the exhaustive soupmarket.shop e2e, and L1-MVP COMPLETE.)
+Last run: 2026-08-07 (**#94 - Session agents: stateful proposers + typed session addresses + the actor runtime, on `feat/hunting-94-session-agents`. See the amendment directly below.** Before: #29 - Bootstrapper finished for API delivery, post-MVP curation + L1 remediation, FR-STREAM (NM-7), the exhaustive soupmarket.shop e2e, and L1-MVP COMPLETE.)
+
+## AMENDMENT 2026-08-07 - #94: session agents (semi-stateful, resumable) (branch `feat/hunting-94-session-agents`)
+
+Ratified design: `docs/design/llm-role-architecture-agent-prompt.md` §0/§0.1 (the three-axis agent model); the reasoned-ontology home of the session concept is `domain-model.md` §3.7.
+
+**What was built.**
+1. **The role record** - `Role(role_id, model_key, agent_mode, thinking)` in `app/llm/providers.py`; `analyser` split per cognitive job (`assigner`, `mechanism_typist`, `data_modeller`, `bootstrapper`, `anatomy`, `curation`, `sweep`, `anti_cluttering`), all sharing `LLM_MODEL_ANALYSER`; hunting roles in `HUNTING_ROLES` validated at the HUNTING bootstrap, never app boot (operator ruling 2026-08-06). `validate_llm_config(roles)` parameterised.
+2. **The session path** - `app/llm/session.py`: `run_session_turn` / `arun_session_turn` on `langchain.agents.create_agent` (tool_calling, `ToolStrategy` structured output, checkpointer-backed memory), plus the UBIQUITOUS `stateful_turn` every stateful agent calls. `app/llm/checkpoints.py`: the process-wide POOLED `PostgresSaver` (fail-open to shared `InMemorySaver`), opened/closed from `app/main.py`.
+3. **Collision-free addressing** - `app/llm/session_address.py`: the typed `SessionAddress` Protocol + frozen dataclasses `AnalysisSession` / `PodSession` / `HuntSession` + `SessionContext`; one private `_compose` single-sources the escape/hash. The recon discriminator resolution stays in recon (`pod.py::pod_session`); app/llm never imports recon.
+4. **Stateful migration** - analysis proposers (assigner/mechanism_typist/data_modeller) run `stateful_turn` on per-run threads; the recon triager runs per-concurrent-pod (PodSession via a ContextVar, leaving the 25+ injected `triage_fn` contracts untouched); the hunting hunter's author/judge/re-entry turns resume ONE per-hunt thread (`attack/hunting/llm.py::hunt_session`).
+5. **Async-native parent runtime** - `app/llm/actor.py` (`AgentInbox`, `run_session_agent`, the post-call-hook delivery scaffold `inbox_post_hook` / `build_inbox_middleware`); `hunt_orchestrator.arun_orchestration` (the first async parent seam, `asyncio.to_thread` over the single-sourced O1-O10 canon). The concurrent-independent-hunts loop + cross-unit memory read are the explicit `#85`-gated follow-up.
+6. **Thinking baseline** - `Role.thinking: ThinkingLevel` (hunter `high`; analysis proposers + triager + recon-orchestrator `medium`; rest `off`), applied as `reasoning_effort` on both invocation paths. The capability-adaptive adjustment is `#99`'s.
+
+**Verification:** 1283 passed / 37 skipped (host, docker-down by design; the 5 docker-stack tests fail identically on base dev). E2e deliberately NOT run - the operator is addressing #98/#99 in another session before e2e.
+
+**Deferred / deliberately NOT built:** no touch to StateGraph checkpoints / session / actor constructs (operator steer); compaction of the now-growing stateful context is `#98/#99` (the `middleware` seam is exposed; a long stateful run before compaction lands is a live, flagged risk); the `store` seam (`#85`) and the capability-adaptive inference-method config (`#99`) are seams only; the #73 escalating-timeout retry is NOT ported onto the session path (client per-turn retry only) - flagged robustness follow-up.
+
+**Operator actions:** the prod base image must carry `langchain>=1.0` (pinned in `requirements-dev.txt` for host/CI test resolution; `create_agent` needs it).
+
+
 
 ## AMENDMENT 2026-07-27 - #29: Bootstrapper finished for API delivery (branch `feat/bootstrapper-service-contract`, commit 8638d3b)
 

@@ -680,13 +680,31 @@ def _system_prompt() -> str:
 # --- the injected LLM seam (typist's shape: prose | structured) ----------------
 
 def _default_invoke_fn(messages, *, schema=None):
-    """Real collaborator: the analyser-role model behind the single coherent
-    escalating retry (#73). `schema=None` returns free-text content (the reflection
-    call); a pydantic `schema` returns structured output via function_calling (the
-    extraction call). Same model as the assigner/typist."""
+    """The legacy stateless call, retained for callers/tests on the one-shot seam: the
+    analyser-role model behind the #73 escalating retry. `schema=None` returns free-text
+    (the reflection call); a pydantic `schema` returns structured output. Production now
+    uses `stateful_invoke_fn`."""
     from polymerhus.app.llm.roles import invoke_role
 
     return invoke_role("analyser", messages, schema=schema)
+
+
+def stateful_invoke_fn(run_id: str, checkpointer):
+    """The STATEFUL data-modeller call (#94): the `data_modeller` role runs as a session
+    resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), so its call chain and
+    every chunk append to ONE growing context. Structured turns go through `ToolStrategy`
+    (#44-safe); a `schema=None` turn returns prose. Same `(messages, *, schema)` shape as
+    `_default_invoke_fn`. Structurally sync (sequential dispatch)."""
+    from polymerhus.app.llm.session import stateful_turn
+    from polymerhus.app.llm.session_address import AnalysisSession
+
+    address = AnalysisSession(run_id, "data_modeller")
+
+    def invoke(messages, *, schema=None):
+        return stateful_turn("data_modeller", address, messages,
+                             checkpointer=checkpointer, schema=schema)
+
+    return invoke
 
 
 # --- the two-call proposer body (section 3/7.1) ---------------------------------

@@ -274,6 +274,8 @@ The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgre
 
 The legacy two-pass analyser monolith dissolves into responsibility-scoped proposers, each consuming a `Chunk` narrowed by its own admission set and writing through the sole-writer. Built as standalone slices (flag OFF) then wired, and fully retired in #48.
 
+All three chunk-fed proposers are **STATEFUL session agents as of #94** (`agent_mode="session"`): `assigner` / `mechanism_typist` / `data_modeller` run their structured turn via `app/llm/session.py::stateful_turn` on their own per-RUN `AnalysisSession(run_id, role_id)` thread, so chunk N+1 reasons with what the agent proposed for chunk N - the graph alone (WRITE side) is not the agent's memory. The supervisor dispatches them sequentially per pass, so `run+role` is already unique and needs no instance discriminator; the shared process-wide pooled checkpointer (`app/llm/checkpoints.py`) is the memory store. The one_shot roles (bootstrapper, anatomy, curation, sweep, anti-cluttering) externalise their reasoning to the graph and stay on `invoke_role`.
+
 **Assigner** (built, #8/#34/#30):
 Sole owner of the `AGGREGATES` hinge: high-precision classification of an observed `Endpoint` onto an EXISTING Service. A.1-only - no minting, no re-assignment, no retraction.
 

@@ -122,4 +122,4 @@ def test_get_crawl_tools_threads_auth_cookies_through_default_factory(monkeypatc
 
 
 def test_crawler_role_present():
-    assert "crawler" in P.ROLES
+    assert "crawler" in {r.role_id for r in P.ROLES}

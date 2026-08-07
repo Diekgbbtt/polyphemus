@@ -265,6 +265,11 @@ def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -
         "extra": extra,
         "session_id": session_id,
         "project_id": project_id,
+        # #94: the pod's run + phase, so the triager node can address its STATEFUL
+        # session per concurrent pod instance (PodSession). Absent in tests
+        # that invoke the pod graph directly -> the triager stays stateless there.
+        "run_id": run_id,
+        "phase": phase,
     }
     # Langfuse tracing: the pod subgraph tree (configurator/execute/parser/
     # triager/curator) becomes the per-pod span tree. Empty list (unconfigured)

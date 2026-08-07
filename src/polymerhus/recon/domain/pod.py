@@ -31,6 +31,27 @@ from polymerhus.recon.domain.findings import finding_to_observation
 from polymerhus.recon.domain.curator import curate
 from polymerhus.recon.config import MAX_POD_ITERS, EXEC_TIMEOUT_S
 
+# The per-pod session context for the triager's STATEFUL turn (#94): (thread_id,
+# checkpointer). The triager NODE (which alone knows the concurrent pod instance) sets
+# it right before calling `triage_fn` (a typed `SessionContext`: address + checkpointer),
+# and the live `default_triage_fn` reads it to run on the pod's own session thread.
+# Passing it out-of-band through a ContextVar keeps the injected
+# `triage_fn(exec_result, assets, job)` contract UNTOUCHED (25+ test fakes stay valid); a
+# fake simply ignores it. Set+read within one synchronous node execution, so concurrent
+# pods (each in its own worker thread) never see each other's context. `None` => stateless
+# (tests, or a pod whose state carries no run_id).
+_pod_session_ctx: "ContextVar" = None  # lazily created below to keep imports light
+
+
+def _pod_ctx():
+    """The module ContextVar, created on first use (import stays free of contextvars)."""
+    global _pod_session_ctx
+    if _pod_session_ctx is None:
+        from contextvars import ContextVar
+        _pod_session_ctx = ContextVar("pod_session_ctx", default=None)
+    return _pod_session_ctx
+
+
 # Tools whose parser module exposes `parse_findings(stdout) -> list[dict]` -
 # a deterministic, non-LLM source of Observations that the triager node
 # merges alongside whatever the LLM triager (triage_fn) produces. Only two
@@ -50,6 +71,34 @@ def _input_asset_url(input_asset: dict) -> str | None:
         or input_asset.get("baseurl")
         or input_asset.get("name")
     )
+
+
+def _pod_asset_discriminator(input_asset: dict) -> str:
+    """The stable token that distinguishes ONE concurrent pod instance (#94): the input
+    asset's url when present, else a stable hash of the whole asset (the operator-chosen
+    `url (+ hash fallback)` scheme). Recon owns HOW a pod is discriminated; the generic
+    `PodSession` (app/llm) only holds the resolved token."""
+    disc = _input_asset_url(input_asset)
+    if disc:
+        return disc
+    import hashlib
+    import json
+
+    return "h" + hashlib.sha1(
+        json.dumps(input_asset, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()[:16]
+
+
+def pod_session(run_id: str, phase, job, input_asset: dict, *, role_id: str):
+    """The typed per-pod session ADDRESS for a recon pod's stateful agents (the triager).
+    Up to MAX_PODS pods run the same role CONCURRENTLY (the job-agent `Send` fan-out), so
+    keying by `(run, role)` alone would collide; `PodSession` discriminates by the pod's
+    phase, tool, and resolved input-asset token, so each concurrent pod has its own
+    checkpoint thread."""
+    from polymerhus.app.llm.session_address import PodSession
+
+    return PodSession(run_id, phase, getattr(job, "tool", ""),
+                      _pod_asset_discriminator(input_asset), role_id)
 
 
 def _call_with_optional_target_url(fn, stdout: str, target_url: str | None):
@@ -245,9 +294,25 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
 
     def triager(state: PodState) -> dict:
         job = state["job"]
-        observations = list(
-            triage_fn(state["exec_result"], state.get("assets", []), job)
-        )
+        # #94: give the triager a STATEFUL session addressed per concurrent pod instance.
+        # The run/phase ride the pod state (only in a real pipeline pod, not test-invoked
+        # graphs), so we set the per-pod (thread_id, checkpointer) on the ContextVar the
+        # live triage_fn reads; the injected triage_fn contract is untouched.
+        run_id = state.get("run_id")
+        if run_id is not None:
+            from polymerhus.app.llm.checkpoints import get_session_checkpointer
+            from polymerhus.app.llm.session_address import SessionContext
+            address = pod_session(run_id, state.get("phase"), job,
+                                  state.get("input_asset", {}), role_id="triager")
+            token = _pod_ctx().set(SessionContext(address, get_session_checkpointer()))
+            try:
+                observations = list(
+                    triage_fn(state["exec_result"], state.get("assets", []), job))
+            finally:
+                _pod_ctx().reset(token)
+        else:
+            observations = list(
+                triage_fn(state["exec_result"], state.get("assets", []), job))
 
         parser_module = _FINDINGS_MODULES.get(job.tool)
         parse_findings_fn = getattr(parser_module, "parse_findings", None)
@@ -464,7 +529,19 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     from langchain_core.messages import SystemMessage, HumanMessage
     skill = _load_triager_skill()
     messages = ([SystemMessage(content=skill)] if skill else []) + [HumanMessage(content=prompt)]
-    result = invoke_role("triager", messages, schema=_ObservationBatch)
+    # #94: when the triager node set a per-pod session context, run STATEFUL - the
+    # `triager` role resumes its per-pod thread (so a re-witness of this unit resumes
+    # what it saw before) via `ToolStrategy`, which is tool-calling and thus KEEPS the
+    # function_calling path `Observation.anchor` needs (NOT native json_schema). With no
+    # context (a directly-invoked pod graph in tests, or a pod carrying no run_id), fall
+    # back to the stateless #73-retry `invoke_role`.
+    ctx = _pod_ctx().get()
+    if ctx is not None:
+        from polymerhus.app.llm.session import stateful_turn
+        result = stateful_turn("triager", ctx.address, messages,
+                               checkpointer=ctx.checkpointer, schema=_ObservationBatch)
+    else:
+        result = invoke_role("triager", messages, schema=_ObservationBatch)
     return result.observations if result else []  # None = exhausted generation -> no observations
 
 

@@ -1,5 +1,8 @@
 import logging
 import os
+from dataclasses import dataclass
+from typing import Literal, Sequence
+
 import httpx
 from langchain_openai import ChatOpenAI
 
@@ -156,23 +159,126 @@ PROVIDERS: dict[str, str] = {
 # the zen catalog (bare ids), not the provider-prefixed app-style ids.
 _ZEN_FAMILY = frozenset({"opencode", "zen"})
 
-ROLES: tuple[str, ...] = ("configurator", "triager", "job_orchestrator", "crawler", "analyser", "hunting")
+# --- The role record (#93/#94) ------------------------------------------------
+#
+# A role is three INDEPENDENT properties (design: llm-role-architecture-agent-prompt.md §2):
+#   role_id    - the stable identity of the cognitive job (the observability label).
+#   model_key  - the env var NAME selecting the model; MANY role_ids may share one
+#                (many-to-one), so splitting a shared model per agent later is a
+#                one-line edit to this field, never a caller change.
+#   agent_mode - `one_shot` (a stateless structured single call, the `invoke_role`
+#                path) vs `session` (a resumable agent whose durable state persists
+#                across invocations). agent_mode is a property of the ROLE's
+#                lifecycle, not of the model, and NOT the same axis as the LLM
+#                invocation mechanism: a `session` agent that externalises its state
+#                (the analysis supervisor's L1 graph, the hunting agent's
+#                working-set-in-prompt) still makes STRUCTURED one-shot `invoke_role`
+#                turns; only a genuine tool-loop / conversation-memory consumer runs
+#                on the checkpointer-backed session seam (`app/llm/session.py`,
+#                `create_agent`). See `llm-role-architecture-agent-prompt.md` §0.
+AgentMode = Literal["one_shot", "session"]
+
+# The provider-agnostic thinking/reasoning-effort BASELINE per role (the enum mirrors
+# pydantic-ai's `ModelSettings.thinking`, evaluated as the reference design). `off` is no
+# reasoning. This is the DECLARED baseline; the dynamic capability-adaptive workstream
+# (#99) is what will ADJUST it to what a given provider/model actually supports and
+# fail-safe when it does not - here we only translate a non-`off` level to the OpenAI
+# `reasoning_effort` param, which the configured (reasoning-capable) models accept.
+ThinkingLevel = Literal["off", "minimal", "low", "medium", "high", "xhigh"]
+
+
+@dataclass(frozen=True)
+class Role:
+    """One LLM role record: cognitive-job identity + model selector + turn mode +
+    thinking baseline."""
+
+    role_id: str
+    model_key: str
+    agent_mode: AgentMode = "one_shot"
+    thinking: ThinkingLevel = "off"
+
+
+# Roles validated at APP BOOT (`validate_llm_config`, from `app/main.py`). The
+# former single `analyser` key is split per cognitive job (#93): each analysis
+# agent is its own role_id but they SHARE `LLM_MODEL_ANALYSER` for now (many-to-one),
+# so no new env var is required and per-agent tuning is a one-line `model_key` edit.
+# The hunting module is deliberately ABSENT - it is validated at the HUNTING module
+# bootstrap, never at app boot (operator ruling 2026-08-06).
+# The `thinking` baseline is set on the agents that reason hard enough to benefit
+# (operator direction): the analysis proposers, the recon triager, and the
+# recon-orchestrator (which shares the `job_orchestrator` role, `orchestrator_agent.py`).
+# The rest stay `off`. `hunting_hunter` is `high` (see HUNTING_ROLES). These are TUNABLE
+# baselines; #99 makes them capability-adaptive and fail-safe per model.
+ROLES: tuple[Role, ...] = (
+    Role("configurator",     "LLM_MODEL_CONFIGURATOR",     "one_shot"),
+    Role("triager",          "LLM_MODEL_TRIAGER",          "one_shot", "medium"),
+    Role("job_orchestrator", "LLM_MODEL_JOB_ORCHESTRATOR", "session",  "medium"),
+    Role("crawler",          "LLM_MODEL_CRAWLER",          "session"),
+    Role("bootstrapper",     "LLM_MODEL_ANALYSER",         "one_shot"),
+    Role("assigner",         "LLM_MODEL_ANALYSER",         "session",  "medium"),
+    Role("mechanism_typist", "LLM_MODEL_ANALYSER",         "session",  "medium"),
+    Role("data_modeller",    "LLM_MODEL_ANALYSER",         "session",  "medium"),
+    Role("anatomy",          "LLM_MODEL_ANALYSER",         "one_shot"),
+    Role("curation",         "LLM_MODEL_ANALYSER",         "one_shot"),
+    Role("sweep",            "LLM_MODEL_ANALYSER",         "one_shot"),
+    Role("anti_cluttering",  "LLM_MODEL_ANALYSER",         "one_shot"),
+)
+
+# The hunting module's OWN roles (one model per agent), validated by the hunting
+# module itself (`attack/hunting/llm.py`), not by app boot - so a fresh
+# environment never needs the hunting vars unless hunting is launched.
+HUNTING_ROLES: tuple[Role, ...] = (
+    Role("hunting_orchestrator", "LLM_MODEL_HUNTING_ORCHESTRATOR", "session"),
+    Role("hunting_hunter",       "LLM_MODEL_HUNTING_HUNTER",       "session", "high"),
+)
+
+_ROLE_BY_ID: dict[str, Role] = {r.role_id: r for r in ROLES + HUNTING_ROLES}
+
+
+def role_record(role_id: str) -> Role | None:
+    """The registered `Role` for a role_id, or None for an unregistered one (which
+    `resolve_role` still resolves via the `LLM_MODEL_{ROLE_ID}` convention for
+    back-compat)."""
+    return _ROLE_BY_ID.get(role_id)
+
+
+def agent_mode(role_id: str) -> AgentMode:
+    """The turn mode of a role_id; unregistered ids default to `one_shot`."""
+    r = _ROLE_BY_ID.get(role_id)
+    return r.agent_mode if r is not None else "one_shot"
+
+
+def thinking_for(role_id: str) -> ThinkingLevel:
+    """The declared thinking/reasoning-effort baseline of a role_id (`off` for an
+    unregistered id). The single source callers pass to `build_chat_model`."""
+    r = _ROLE_BY_ID.get(role_id)
+    return r.thinking if r is not None else "off"
+
 
 def _key_env(provider: str) -> str:
     return f"API_KEY_{provider.upper()}"
 
 def resolve_role(role: str) -> tuple[str, str]:
-    raw = os.environ.get(f"LLM_MODEL_{role.upper()}")
+    """Resolve a role_id to (provider, model) via its record's `model_key`.
+
+    A registered role_id reads its declared `model_key` (several ids may share one,
+    e.g. every analysis role -> `LLM_MODEL_ANALYSER`). An UNregistered id falls back
+    to the `LLM_MODEL_{ID}` convention, so a legacy caller still on `"analyser"`
+    keeps resolving `LLM_MODEL_ANALYSER` unchanged during the migration."""
+    r = _ROLE_BY_ID.get(role)
+    model_key = r.model_key if r is not None else f"LLM_MODEL_{role.upper()}"
+    raw = os.environ.get(model_key)
     if not raw or ":" not in raw:
         raise LLMConfigError(
-            f"LLM_MODEL_{role.upper()} must be set to '<provider>:<model>' (got {raw!r})"
+            f"{model_key} must be set to '<provider>:<model>' (got {raw!r})"
         )
     provider, model = raw.split(":", 1)
     return provider.strip(), model.strip()
 
 def build_chat_model(provider: str, model: str, *, temperature: float = 0,
                      read_timeout: float | None = None,
-                     max_retries: int | None = None) -> ChatOpenAI:
+                     max_retries: int | None = None,
+                     thinking: "ThinkingLevel" = "off") -> ChatOpenAI:
     if provider not in PROVIDERS:
         raise LLMConfigError(f"unknown provider {provider!r}; known: {sorted(PROVIDERS)}")
     if provider in _ZEN_FAMILY:
@@ -201,22 +307,34 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     # not propagate. Empty list (Langfuse unconfigured) is inert. Fail-open.
     from polymerhus.app.observability import get_langfuse_callbacks
 
+    # The thinking BASELINE (#94): a non-`off` level sets the OpenAI-compatible
+    # `reasoning_effort` the configured (reasoning-capable) models accept. The dynamic
+    # capability-adaptive workstream (#99) is what will verify a given model actually
+    # supports it and fail-safe otherwise; here we only translate the declared baseline.
+    extra: dict = {}
+    if thinking != "off":
+        extra["reasoning_effort"] = thinking
     return ChatOpenAI(model=model, api_key=api_key,
                       base_url=PROVIDERS[provider], temperature=temperature,
                       timeout=timeout, max_retries=retries,
-                      callbacks=get_langfuse_callbacks())
+                      callbacks=get_langfuse_callbacks(), **extra)
 
-def validate_llm_config() -> None:
-    """Fail fast: every configured role must name a known provider with a present key."""
+def validate_llm_config(roles: Sequence[Role] | None = None) -> None:
+    """Fail fast: every configured role must name a known provider with a present key.
+
+    `roles` defaults to the app-boot `ROLES`. The hunting module passes its own
+    `HUNTING_ROLES` at its module bootstrap, so app boot never demands the hunting
+    vars (operator ruling 2026-08-06). Roles that share a `model_key` are validated
+    once per role_id, which is harmless (the same env var read twice)."""
     problems: list[str] = []
-    for role in ROLES:
+    for role in (ROLES if roles is None else roles):
         try:
-            provider, _model = resolve_role(role)
+            provider, _model = resolve_role(role.role_id)
         except LLMConfigError as e:
             problems.append(str(e)); continue
         if provider not in PROVIDERS:
-            problems.append(f"role {role}: unknown provider {provider!r}")
+            problems.append(f"role {role.role_id}: unknown provider {provider!r}")
         elif not os.environ.get(_key_env(provider)):
-            problems.append(f"role {role}: missing {_key_env(provider)}")
+            problems.append(f"role {role.role_id}: missing {_key_env(provider)}")
     if problems:
         raise LLMConfigError("LLM configuration invalid:\n  - " + "\n  - ".join(problems))

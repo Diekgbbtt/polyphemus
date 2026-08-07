@@ -26,7 +26,7 @@ from polymerhus.attack.hunting.hunting_agent import (
     derive_technological_axis,
     derive_verdict,
 )
-from polymerhus.app.llm.providers import ROLES
+from polymerhus.app.llm.providers import HUNTING_ROLES, ROLES
 
 
 # --- derive_verdict: the ratified Q3 map (implementation doc 2.3) ------------
@@ -107,10 +107,16 @@ def test_axis_empty_card_defaults():
     assert derive_technological_axis(None) == "unknown"
 
 
-# --- the hunting role joins the LLM role registry (Q1) -----------------------
+# --- the hunting roles join the LLM role registry (Q1, #93/#94) --------------
 
-def test_hunting_role_is_registered():
-    assert "hunting" in ROLES
+def test_hunting_roles_are_registered_off_app_boot():
+    """The hunting agents are their own role_ids in HUNTING_ROLES (validated at the
+    hunting module bootstrap), never in the app-boot ROLES (operator ruling
+    2026-08-06). Both are `session` agents."""
+    hunting_ids = {r.role_id for r in HUNTING_ROLES}
+    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter"}
+    assert not (hunting_ids & {r.role_id for r in ROLES})  # off app boot
+    assert all(r.agent_mode == "session" for r in HUNTING_ROLES)
 
 
 def test_hypothesis_verdict_vocabulary_is_four_valued():

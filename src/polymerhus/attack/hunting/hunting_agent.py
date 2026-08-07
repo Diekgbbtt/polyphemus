@@ -390,8 +390,13 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
     def dispatch_fn(config: HuntConfig, routed: tuple = ()) -> DispatchResult:
         hunt_id = config.hunt_id
         ws = working_sets.setdefault(hunt_id, {"kb_grounded": False, "log": {}})
+        # #94: bind the per-hunt session so the author/judge turns run STATEFUL on ONE
+        # thread per hunt (keyed by hunt_id -> concurrent hunts never collide). A stateful
+        # author/judge (attack/hunting/llm.py) reads this; an injected test double ignores
+        # it. Import lazily so this module stays driver-free at import.
+        from polymerhus.attack.hunting.llm import hunt_session
         try:
-            with hunting_span(run_id, hunt_id):
+            with hunting_span(run_id, hunt_id), hunt_session(run_id, hunt_id):
                 return _dispatch(config, tuple(routed), ws)
         except Exception as exc:  # noqa: BLE001 - never raise out of dispatch_fn
             logger.warning("hunt %s degraded (%s)", hunt_id, exc, exc_info=True)

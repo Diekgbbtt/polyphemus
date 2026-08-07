@@ -37,6 +37,7 @@ Run/Job/Phase remain recon vocabulary (they are elements of the recon pipeline, 
 `neo4j`, `postgres`, `mcp`, and `llm-client` are NOT bounded contexts and will not become independent modules.
 They are shared/helper infrastructure (a shared kernel), inherently coupled to the domain modules that consume them, carrying no independent ubiquitous language.
 Do not mint a `CONTEXT.md` for any of them, and do not invent a glossary for them (`CONTEXT-MAP.md`, operator's explicit ruling).
+The **session seam** (`app/llm/session.py`, `session_address.py`, `checkpoints.py`, `actor.py`, `#94`) is the one technical surface whose value objects ride the ontology: each module owns its `SessionAddress` subtype (`AnalysisSession`/`PodSession`/`HuntSession`) as a domain concept grounded in `domain-model.md` §3.7, but the seam itself stays helper infrastructure - see the `llm-role-architecture-agent-prompt.md` design doc, never a CONTEXT.md.
 
 ## Architectural decisions live in `docs/design/`
 

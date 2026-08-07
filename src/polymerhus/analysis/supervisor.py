@@ -502,6 +502,7 @@ async def analyse_chunked(
     write_fn=None,
     checkpointer=None,
     store=None,
+    session_checkpointer=None,
     observe: bool = True,
 ) -> "PassResult":
     """The CHUNK-FED analyser (#34, completed by #48, payload-fed by #74): consume
@@ -524,17 +525,21 @@ async def analyse_chunked(
     Every collaborator is injectable; the defaults are the live ones. Fail-open
     throughout: a read, LLM or write failure degrades that step, never the run.
     Returns a `PassResult` carrying the export AND the census of what was observed."""
-    from polymerhus.analysis.assigner import default_invoke_fn, make_assigner_body
+    from polymerhus.analysis.assigner import make_assigner_body
+    from polymerhus.analysis.assigner import stateful_invoke_fn as assigner_stateful_invoke_fn
     from polymerhus.analysis.chunking import admit_for_role, chunks_for_job
     from polymerhus.analysis.data_modeller import make_data_modeller_body
+    from polymerhus.analysis.data_modeller import stateful_invoke_fn as dm_stateful_invoke_fn
     from polymerhus.analysis.l1_inventory import read_l1_inventory
     from polymerhus.analysis.l1_read import read_service_aggregations
     from polymerhus.analysis.pod import AnalyserExport
+    from polymerhus.app.llm.checkpoints import get_session_checkpointer
 
     inventory_fn = inventory_fn or read_l1_inventory
     aggregations_fn = aggregations_fn or read_service_aggregations
-    invoke_fn = invoke_fn or default_invoke_fn()
     write_fn = write_fn or _chunked_write_fn
+    # `invoke_fn`s are resolved below, once the run's stateful-session checkpointer is
+    # open (they close over it): each proposer runs STATEFUL on its OWN per-run thread.
 
     # Stamped around the WHOLE body: a pass that spends its time in Neo4j rather
     # than in the provider is still a pass that occupied the analyser, and the
@@ -588,6 +593,18 @@ async def analyse_chunked(
     from functools import partial
 
     from polymerhus.analysis.mechanism_typist import mechanism_typist_body
+    from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as typist_stateful_invoke_fn
+
+    # Each proposer runs STATEFUL on its OWN per-run thread (its `AnalysisSession`
+    # address), resuming across the run's chunks, over the process-wide POOLED
+    # checkpointer (#94) shared by every stateful agent - never a per-run connection.
+    # Tests inject `session_checkpointer` (an isolated `InMemorySaver`); an explicitly
+    # injected `invoke_fn`/`typist_invoke_fn`/`data_modeller_invoke_fn` still wins.
+    session_cp = session_checkpointer if session_checkpointer is not None else get_session_checkpointer()
+    invoke_fn = invoke_fn or assigner_stateful_invoke_fn(run_id, session_cp)
+    typist_invoke_fn = typist_invoke_fn or typist_stateful_invoke_fn(run_id, session_cp)
+    data_modeller_invoke_fn = data_modeller_invoke_fn or dm_stateful_invoke_fn(run_id, session_cp)
+
     assigner_inner = make_assigner_body(invoke_fn=invoke_fn, inventory_fn=inventory_fn)
 
     def _counted(inner):

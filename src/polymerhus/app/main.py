@@ -52,6 +52,11 @@ async def _startup():
     neo4j_client.ensure_schema()
     neo4j_client.ensure_l1_schema()  # L1 substrate constraints (FR-LCUR)
     validate_llm_config()
+    # Open the process-wide pooled checkpointer that backs every stateful agent (#94):
+    # the analysis proposers, the concurrent recon pods, and the hunts share it, each on
+    # its own SessionAddress thread. Fail-open (in-process fallback when Postgres is absent).
+    from polymerhus.app.llm import setup_session_checkpointer
+    setup_session_checkpointer()
     log_tracing_status()
     pg.reap_stale_runs(config.REAP_TTL_SECONDS)  # sweep zombies left by a prior crash
     # #75 D10: the in-memory chunk queue dies with the process, so any analysis run
@@ -78,6 +83,8 @@ async def _shutdown():
     task = getattr(app.state, "reaper_task", None)
     if task:
         task.cancel()
+    from polymerhus.app.llm import close_session_checkpointer
+    close_session_checkpointer()  # close the pooled stateful-session checkpointer
 
 @app.get("/health")
 async def health():
