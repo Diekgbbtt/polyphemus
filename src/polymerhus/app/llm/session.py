@@ -11,9 +11,9 @@ resumes from). This is the counterpart to the stateless `invoke_role` path.
 Two capabilities are deliberately NOT built here - they are separate workstreams
 that plug in through the seams this component exposes:
 
-- **Context-window compaction + memory** (#98/#99): supplied as `middleware`
+- **Context-window compaction + memory** (#95): supplied as `middleware`
   (langchain `AgentMiddleware`: `before_model`/`after_model`/`before_tool`/
-  `after_tool`), which fire at exactly the trigger points those tickets need
+  `after_tool`), which fire at exactly the trigger points that ticket needs
   (after an LLM turn and after tool output), plus the `store` seam (#85) for
   long-term/cross-thread memory. Inert (empty) by default.
 - **Dynamic inference-method / tool-capability configuration**: also supplied as
@@ -95,7 +95,7 @@ def _build_agent(
 ):
     """Build the `create_agent` tool-calling agent shared by the sync/async turns.
 
-    `store` (#85 long-term memory) and `middleware` (#98/#99 compaction + the
+    `store` (#85 long-term memory) and `middleware` (#95 compaction + the
     inference-method-config workstream) are passed straight through - inert when
     empty. This is the ONE place tool_calling is wired, so the two turn entry
     points can never drift."""
