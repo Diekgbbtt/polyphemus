@@ -83,7 +83,8 @@ Cross-context terms get their full definition in the owning context and at most 
 Analysis is now a physically independent module at `src/polymerhus/analysis/`, extracted from under `recon/` in the `src/` restructure (`docs/design/module-restructure.md`), and Project-management is minted as `src/polymerhus/project_management/`.
 Recon itself is now internally layered - a `control` sub-package (orchestration) over a `domain` sub-package (the model and sole-writer). Run/Job/Pod stay recon vocabulary (ruled elements of the recon pipeline); project-management owns the operator's intent over runs, not their execution.
 neo4j/postgres/mcp/llm-client remain shared helper infrastructure, never their own context (`CONTEXT-MAP.md`, "Helper modules"); their vocabulary is still threaded through the pipeline and both curators.
-Respect the one-directional dependency arrows (`project_management -> recon -> app`, `analysis -> recon.domain.types` as the ACL) in new code.
+The one exception is the **session seam** under the llm-client helper (`app/llm/session.py`, `session_address.py`, `checkpoints.py`, `actor.py`, `#94`): its typed `SessionAddress` value objects (`AnalysisSession`/`PodSession`/`HuntSession`) ARE domain concepts - a stateful agent's collision-free instance identity - reasoned in `domain-model.md` §3.7, so this one helper carries real domain content while still not becoming a bounded context of its own.
+Respect the one-directional dependency arrows (`project_management -> recon -> app`, `analysis -> recon.domain.types` as the ACL) in new code; the session seam keeps them intact - each module owns HOW its own address is discriminated (recon's `pod.py::pod_session` resolves the pod token), so `app/llm` never imports a domain module.
 
 ---
 
