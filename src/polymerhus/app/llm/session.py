@@ -30,10 +30,13 @@ section 6): the model and the checkpointer resolve on call, never at import.
 """
 from __future__ import annotations
 
+import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
 from langchain_core.messages import BaseMessage
+
+logger = logging.getLogger(__name__)
 
 # The collision-free session ADDRESSING lives in `session_address.py` (the typed,
 # per-module `SessionAddress` value objects). This module consumes a thread id (or an
@@ -255,12 +258,23 @@ async def _aread_thread_state(checkpointer, thread_id: str) -> dict | None:
     return dict(values)
 
 
-def _turn_from_state(values: dict, thread_id: str) -> SessionTurn:
+def _turn_from_state(values: dict, thread_id: str) -> "SessionTurn | None":
     """Shape a persisted thread state into a `SessionTurn` - the same shape
     `arun_session_turn` reports (`content` = structured_response when a schema was set,
     else the last message's text; `messages` = the full persisted trail). So a parent that
-    READS a child's memory consumes exactly what the child itself reported."""
-    messages = values.get("messages") or []
+    READS a child's memory consumes exactly what the child itself reported.
+
+    The `messages` READ depends on `create_agent`'s persisted channel name. Guarded
+    fail-open (the reviewer-flagged coupling): a thread state whose `channel_values`
+    does not carry a `messages` LIST is treated as UNREADABLE - warn and return None -
+    so a parent never reasons over a silently-empty trail if that channel is ever
+    renamed internally."""
+    if not isinstance(values, dict) or not isinstance(values.get("messages"), list):
+        logger.warning(
+            "session thread %s state lacks the expected 'messages' channel "
+            "(create_agent internal rename?); treating as unreadable", thread_id)
+        return None
+    messages = values["messages"]
     content = values.get("structured_response")
     if content is None and messages:
         content = messages[-1].content

@@ -23,6 +23,9 @@ by `HuntingActorRegistry`) owns the author/judge turns of each hunt on its
 `HuntSession` thread. The factories below remain the thin SYNC lane: explicit
 stateless rollback / test seams (`invoke_role` offers the #73 escalating-timeout
 retry these degrade-prone turns want), injectable through every harness seam.
+DECISION OF RECORD (2026-08-10): the async actor lane is the production default;
+the sync factories above/existing `build_gate_reason_fn`-style seams are the
+test/rollback lane only - no production wiring uses them.
 
 The composed turns are single-sourced from hunting skills when mounted
 (`skills/hunting/hunt-orchestrator/SKILL.md`, authored by #82) and degrade to

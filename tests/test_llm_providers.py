@@ -297,10 +297,12 @@ def test_escalating_invoke_returns_none_when_every_attempt_is_unmet(monkeypatch)
 # --- thinking / reasoning-effort baseline (#94) -------------------------------
 
 def test_thinking_baselines_are_set_on_the_reasoning_agents():
-    """The operator-directed baseline: the hunter reasons `high`; the analysis
-    proposers, the recon triager, and the recon-orchestrator (the `job_orchestrator`
-    role) reason `medium`; every other role stays `off`."""
+    """The operator-directed baseline: the hunter reasons `high` and the
+    hunt-orchestrator (its Q8 gate + D2 re-match turns) `medium`; the analysis
+    proposers, the recon triager, and the recon-orchestrator (the
+    `job_orchestrator` role) reason `medium`; every other role stays `off`."""
     assert P.thinking_for("hunting_hunter") == "high"
+    assert P.thinking_for("hunting_orchestrator") == "medium"   # Q8 gate + D2 re-match
     assert P.thinking_for("assigner") == "medium"
     assert P.thinking_for("mechanism_typist") == "medium"
     assert P.thinking_for("data_modeller") == "medium"
@@ -308,7 +310,7 @@ def test_thinking_baselines_are_set_on_the_reasoning_agents():
     assert P.thinking_for("job_orchestrator") == "medium"      # = the recon-orchestrator
     # untouched agents + unregistered ids default off
     for r in ("bootstrapper", "curation", "sweep", "crawler", "configurator",
-              "hunting_orchestrator", "not_a_role"):
+              "not_a_role"):
         assert P.thinking_for(r) == "off"
 
 
