@@ -120,6 +120,43 @@ class HuntSession:
 
 
 @dataclass(frozen=True)
+class OrchestratorSession:
+    """The recon-orchestrator's session: ONE actor per recon run (feat/async-actor-agents).
+
+    The orchestrator is a run-scoped, macro-routing agent driven by `run_pipeline` - not
+    a per-pod fan-out like the triager - so run + role already identifies the single
+    concurrent instance. There is NO phase discriminator: the actor STAYS ACTIVE across
+    the run, taking one routing turn per pipeline phase on the SAME thread, so its
+    checkpointed memory carries the steering reasoning across phases."""
+
+    run_id: str
+    role_id: str = "job_orchestrator"
+
+    @property
+    def thread_id(self) -> str:
+        return _compose(self.run_id, role_id=self.role_id)
+
+
+@dataclass(frozen=True)
+class HuntingOrchestratorSession:
+    """The hunt-orchestrator's session: ONE actor per hunting run
+    (feat/async-actor-agents).
+
+    The hunt-orchestrator is the run-scoped parent of the hunting effort - the gate
+    reasoning and the re-match judge both run as turns of ONE actor on this thread, so
+    its checkpointed memory carries the pass's reasoning; `run_pipeline`'s recon
+    phase controllers are dispatched from this actor's client (`arun_orchestration`).
+    No per-direction discriminator: the actor stays active across the whole pass."""
+
+    run_id: str
+    role_id: str = "hunting_orchestrator"
+
+    @property
+    def thread_id(self) -> str:
+        return _compose(self.run_id, role_id=self.role_id)
+
+
+@dataclass(frozen=True)
 class SessionContext:
     """A per-instance session binding an owning node sets for a seam that cannot carry
     the address through its OWN contract (the recon `triage_fn`, the hunting

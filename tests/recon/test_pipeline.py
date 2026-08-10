@@ -652,3 +652,96 @@ def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch)
     assert captured_inputs["katana"] == [Y]                 # routed away by the orchestrator agent
     assert set(captured_inputs["steel_crawl"]) == {X, Y}    # steel keeps the flagged host
     assert captured_steering["katana"] == signals           # signals threaded to the job agent
+
+
+def test_pipeline_default_seam_is_the_mailbox_actor_and_reaps_it(monkeypatch):
+    """feat/async-actor-agents: with NO `decide_routing` injected, the pipeline's
+    steering seam is the recon-orchestrator MAILBOX ACTOR - one actor constructed
+    for the run, fed each signal-carrying phase, STOPPED on the run's exit path -
+    and its per-phase exclusions drive the same input filtering."""
+    import asyncio
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from polymerhus.recon.control import pipeline
+    from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor
+
+    X = "https://ib.example.com"
+    Y = "https://app.example.com"
+
+    def fake_read_assets(node_type, project_id, where=None, *, driver=None):
+        if node_type == "Subdomain":
+            return [{"name": "app.example.com"}]
+        if node_type == "BaseURL":
+            return [{"url": X}, {"url": Y}]
+        return []
+
+    captured_inputs = {}
+
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+        captured_inputs[job.tool] = [a.get("url") or a.get("name") for a in input_assets]
+        return []
+
+    class FakeRegistry:
+        def create_run(self, *a, **k): pass
+        def set_run_status(self, *a, **k): pass
+        def upsert_job(self, *a, **k): pass
+
+    from langchain_core.language_models import BaseChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    class _ToolFake(BaseChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(
+                content="",
+                tool_calls=[{"name": "RoutingDecision",
+                             "args": {"exclusions": [{"job": "katana", "exclude_urls": [X]}],
+                                      "rationale": "waf"},
+                             "id": "c1", "type": "tool_call"}],
+            ))])
+
+        @property
+        def _llm_type(self) -> str:
+            return "fake"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    spawned = []
+    stopped = []
+
+    class _SpyActor(ReconOrchestratorActor):
+        def __init__(self, run_id, **kw):
+            super().__init__(run_id, **kw)
+            spawned.append(run_id)
+
+        async def stop(self):
+            stopped.append(self.thread_id)
+            await super().stop()
+
+    def _factory(run_id):
+        return _SpyActor(
+            run_id,
+            checkpointer=InMemorySaver(),
+            model_factory=lambda role_id: _ToolFake(),
+            observe=False,
+        )
+
+    signals = [{"url": X, "macro_kind": "waf_protected", "evidence": "Incapsula"}]
+
+    monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
+
+    asyncio.run(pipeline.run_pipeline(
+        "p1", run_id="r1",
+        job_subset=["subfinder", "httpx", "katana", "steel_crawl"],
+        run_job=fake_run_job,
+        load_settings=lambda pid: {"target_domain": "*.example.com"},
+        registry=FakeRegistry(),
+        read_assets=fake_read_assets,
+        read_steering_signals=lambda project_id, driver=None: signals,
+        orchestrator_factory=_factory,
+    ))
+
+    assert spawned == ["r1"]                    # ONE actor per run (production default)
+    assert stopped == ["r1:job_orchestrator"]   # actor reaped on the run's exit path
+    assert captured_inputs["katana"] == [Y]     # the actor's RoutingDecision excluded X

@@ -13,10 +13,15 @@ clobber each other.
 `pod_invoke` and `preprocess_fn` are injected - production wires
 `default_pod_invoke` (wraps Foundation `polymerhus.recon.domain.pod.pod_graph`) and
 `default_preprocess_fn` (deterministic 1:1 asset->pod_input mapping up to the
-MAX_JOB_ASSETS budget; the LLM-cleaning path via chat_model_for("job_orchestrator")
-is a structured seam for a future enhancement, not exercised by the MVP
-default). Importing this module performs no I/O: building the module-level
-`job_agent` only wires function references, it does not call them.
+MAX_JOB_ASSETS budget; `extra` - including the orchestration-level
+`extra["steering"]` signals - is threaded through verbatim). The per-asset
+throttling decision that once lived here (`decide_pod_selection`, #81) moved into
+the pod graph's configurator node (#94): each pod consults a stateful per-pod
+`configurator` role turn and sets its own `rate_profile`. `notify_fn` (optional)
+is the #94 delivery seam: fired after each pod completes so a parent actor can be
+told a pod finished and go READ that pod's session memory; `pod_completion_notify`
+builds it from a parent `inbox`. Importing this module performs no I/O: building
+the module-level `job_agent` only wires function references, it does not call them.
 """
 from __future__ import annotations
 
@@ -27,15 +32,8 @@ from typing import Annotated, TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.types import Send
-from pydantic import BaseModel, Field
 
 from polymerhus.recon.config import MAX_JOB_ASSETS, MAX_PODS
-from polymerhus.recon.control.steering import (
-    STEERING_PRIMITIVES,
-    describe_job_kind,
-    format_signals,
-    resolve_model,
-)
 from polymerhus.recon.domain.types import JobSpec, PodExport
 
 logger = logging.getLogger(__name__)
@@ -138,101 +136,12 @@ def default_preprocess_fn(
     ]
 
 
-# The recon-job agent's steering responsibility: per-asset THROTTLING within one
-# job. It NEVER selects which assets run - that is the recon-orchestrator's
-# concern (`orchestrator_agent.decide_routing`); every candidate asset always
-# becomes a pod. The JOB_STEERING prompt is the TEMPORARY inline home for this
-# agent's thought process (dedicated skill = D22); it frames the shared
-# STEERING_PRIMITIVES for the job agent's throttle-only scope.
-JOB_STEERING = (
-    "## STEERING DECISIONS (recon-job agent)\n\n"
-    "You are the recon-job agent configuring one job's pods. Every candidate\n"
-    "asset WILL run - which assets a job processes is not your decision. Your\n"
-    "only decision is throttling: given this job, its candidate assets, and the\n"
-    "signals the pipeline has already observed, decide which assets to throttle.\n"
-    "Reason about the signals; do not restate them.\n\n"
-    + STEERING_PRIMITIVES
-    + "\nThrottle only as a deliberate preventive choice against a not-yet-flagged\n"
-    "host; leave every other asset at its default rate. Never skip an asset.\n"
-)
-
-
-class _AssetPlan(BaseModel):
-    url: str
-    throttle: bool = False
-
-
-class PodThrottlePlan(BaseModel):
-    plan: list[_AssetPlan] = Field(default_factory=list)
-    rationale: str = ""
-
-
-def decide_pod_selection(signals: list[dict], job_name: str, assets: list[dict], *, llm=None) -> set[str]:
-    """Given the job's candidate assets and live signals, return the set of
-    BaseURLs to THROTTLE. This agent NEVER drops an asset - asset selection is
-    the recon-orchestrator's concern (`decide_routing`); every candidate always
-    runs. Fail-open to `set()` (nothing throttled)."""
-    urls = [a.get("url") for a in assets if a.get("url")]
-    if not signals or not urls:
-        return set()
-    try:
-        from langchain_core.messages import SystemMessage, HumanMessage  # noqa: PLC0415
-        model = resolve_model("job_orchestrator", llm).with_structured_output(
-            PodThrottlePlan, method="function_calling"
-        )
-        human = (
-            f"Job: {job_name} ({describe_job_kind(job_name)}).\n"
-            "Candidate BaseURLs:\n" + "\n".join(f"- {u}" for u in urls) + "\n\n"
-            f"Signals (flagged BaseURLs):\n{format_signals(signals)}\n\n"
-            "For each candidate, decide whether to throttle it."
-        )
-        decision = model.invoke([SystemMessage(content=JOB_STEERING), HumanMessage(content=human)])
-        return {p.url for p in decision.plan if p.throttle}
-    except Exception:
-        logger.warning("decide_pod_selection failed; throttling nothing", exc_info=True)
-        return set()
-
-
-def steering_preprocess_fn(
-    input_assets: list[dict], job: JobSpec, extra: dict, asset_context: str
-) -> list[dict]:
-    """Recon-job agent steering: when live steering signals are present in
-    `extra["steering"]`, ask the job-orchestrator LLM which of this job's
-    candidate assets to THROTTLE (STEERING DECISIONS), then build one pod per
-    (budget-capped) candidate - EVERY asset always runs; only throttled ones
-    carry `extra["rate_profile"] = "throttle"`. Asset selection is the
-    recon-orchestrator's concern (`decide_routing`), never this agent's.
-    Otherwise fall back to the deterministic default. Fail-open: any error ->
-    default_preprocess_fn.
-
-    `extra["steering"]` is orchestration-only and is stripped from the pod's
-    own extra; a throttled asset instead carries `extra["rate_profile"]`."""
-    signals = (extra or {}).get("steering") or []
-    # A batched job (jsluice) has no per-asset url to throttle and needs the
-    # reduce+pack path; an endpoint-profiling job (httpx_reprofile) needs its
-    # dedup+root-materialisation prep. Both delegate to the deterministic default
-    # so their input-prep always runs, even under steering.
-    if not signals or job.batch or job.endpoint_profiling or job.api_scope:
-        return default_preprocess_fn(input_assets, job, extra, asset_context)
-    try:
-        throttle_urls = decide_pod_selection(signals, job.tool, input_assets or [])
-    except Exception:
-        return default_preprocess_fn(input_assets, job, extra, asset_context)
-
-    capped = list(input_assets or [])[:MAX_JOB_ASSETS]
-    base_extra = dict(extra or {})
-    base_extra.pop("steering", None)  # orchestration-only, never reaches a pod
-    base_extra.pop("apex_registrable", None)  # orchestration-only, never reaches a pod
-
-    pod_inputs = []
-    for asset in capped:
-        pod_extra = dict(base_extra)
-        if asset.get("url") in throttle_urls:
-            pod_extra["rate_profile"] = "throttle"
-        pod_inputs.append(
-            {"input_asset": asset, "asset_context": asset_context or "", "extra": pod_extra}
-        )
-    return pod_inputs
+# Per-asset throttling (#94) is now the POD CONFIGURATOR's decision, exactly
+# like the triager: the pod graph's configurator node consults a stateful,
+# per-pod `configurator` role turn over the job's STEERING signals and sets the
+# pod's `rate_profile`. The recon-job agent is purely deterministic again -
+# `default_preprocess_fn` simply threads `extra["steering"]` through to every
+# pod_input, and the pod itself decides how to run.
 
 
 def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -> PodExport:
@@ -249,7 +158,6 @@ def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -
         from polymerhus.recon.crawl.crawl_pod import crawl_pod_invoke
 
         return crawl_pod_invoke(pod_input, job, run_id, phase)
-
     import uuid
 
     from polymerhus.recon.domain.pod import pod_graph
@@ -284,11 +192,14 @@ def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -
     return result["export"]
 
 
-def build_job_agent(*, pod_invoke, preprocess_fn):
+def build_job_agent(*, pod_invoke, preprocess_fn, notify_fn=None):
     """Compile the per-job orchestrator graph, injecting the two
     side-effecting collaborators: pod_invoke(pod_input, job, run_id, phase)
     -> PodExport, preprocess_fn(input_assets, job, extra, asset_context) ->
-    list[pod_input]."""
+    list[pod_input]. `notify_fn(pod_input, job, run_id, phase, export) -> None`
+    fires after EACH pod completes (success or failure) - the #94 delivery
+    seam a parent wires (`pod_completion_notify`) to be told a pod finished
+    so it can go READ that pod's session memory. Inert when not given."""
 
     def preprocess_node(state: JobState) -> dict:
         job = state["job"]
@@ -326,6 +237,12 @@ def build_job_agent(*, pod_invoke, preprocess_fn):
                 verdict="failed",
                 error=str(exc),
             )
+        if notify_fn is not None:
+            try:
+                notify_fn(pod_input, job, run_id, phase, export)
+            except Exception:  # noqa: BLE001 - a delivery failure never
+                # degrades the pod result; the parent can still be told later
+                logger.warning("pod completion notification failed", exc_info=True)
         return {"pod_exports": [export]}
 
     g = StateGraph(JobState)
@@ -337,7 +254,29 @@ def build_job_agent(*, pod_invoke, preprocess_fn):
     return g.compile()
 
 
-job_agent = build_job_agent(pod_invoke=default_pod_invoke, preprocess_fn=steering_preprocess_fn)
+def pod_completion_notify(inbox, *, kind: str = "pod_complete", source: str | None = None):
+    """Build the `notify_fn` a recon run wires onto its job graphs (#94 delivery):
+    when a pod finishes, post into the parent `inbox` the pod's SESSION thread id
+    (its `PodSession` address - what the parent needs to go READ that pod's memory
+    via `read_session_memory`) plus the pod's terminal export. Thread-safe (pods run
+    in worker threads via `asyncio.to_thread`) and a no-op for a None inbox."""
+    from polymerhus.app.llm.actor import subagent_completion_hook
+
+    hook = subagent_completion_hook(inbox, kind=kind, source=source)
+
+    def notify(pod_input, job, run_id, phase, export):
+        if run_id is None:
+            return  # no run context (test-invoked graphs): nothing addressable
+        from polymerhus.recon.domain.pod import pod_session
+
+        address = pod_session(run_id, phase, job,
+                              pod_input.get("input_asset", {}), role_id="triager")
+        hook(address.thread_id, export)
+
+    return notify
+
+
+job_agent = build_job_agent(pod_invoke=default_pod_invoke, preprocess_fn=default_preprocess_fn)
 
 
 async def run_job(
@@ -348,16 +287,22 @@ async def run_job(
     phase: int,
     extra: dict,
     agent=None,
+    notify_fn=None,
 ) -> list[PodExport]:
     """Convenience async wrapper: invoke the compiled job agent and return
     its collected pod_exports. The Foundation pod subgraph is sync-invokable
     (no async collaborators in the default wiring), but its work (LLM triage,
     the sync Neo4j curate, the exec bridge) is blocking. Calling `.invoke`
-    directly on the event loop would stall the whole API and serialize the
+    directly on the event loop would stall the whole API and serialise the
     pipeline's `asyncio.gather` fan-out, so we offload it to a worker thread
     via `asyncio.to_thread`. Inside that thread there is no running loop, so
-    `run_coro_blocking` (pod exec) cleanly takes its `asyncio.run` path."""
-    graph = agent or job_agent
+    `run_coro_blocking` (pod exec) cleanly takes its `asyncio.run` path.
+    `notify_fn` (a job graph's #94 delivery seam) is threaded into the
+    compiled agent when `agent` is not supplied."""
+    graph = agent or build_job_agent(
+        pod_invoke=default_pod_invoke, preprocess_fn=default_preprocess_fn,
+        notify_fn=notify_fn,
+    )
     initial: JobState = {
         "job": job,
         "input_assets": input_assets,

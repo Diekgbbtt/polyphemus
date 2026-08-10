@@ -7,7 +7,7 @@ hunt-orchestrator first) runs as its OWN independent execution unit (an
 updates from sub-agents and taking a further turn per update - until it decides to
 stop. That is the actor / supervisor (blackboard) shape the async design calls for.
 
-This module has two halves:
+This module has two halves, both BUILT:
 
   BUILT - the durable listening loop and its mailbox:
     * `AgentInbox`   - the message queue an active agent listens on (an
@@ -21,16 +21,24 @@ This module has two halves:
                        across the agent's whole active lifetime. Ends on `STOP`, an
                        idle timeout, a turn cap, or task cancellation.
 
-  DESIGNED-NOT-BUILT (the scaffold you asked for) - the DELIVERY of sub-agent updates
-  into a parent's inbox via post-call hooks. The interface is present and inert so the
-  real sub-agent -> parent routing wires in later WITHOUT refactoring the loop or the
-  turn:
-    * `inbox_post_hook(inbox, ...)` - returns a plain `hook(payload)` callable a
-                       sub-agent invokes when its call completes (thread-safe).
-    * `build_inbox_middleware(inbox, ...)` - a `create_agent` middleware that posts an
-                       update to a target inbox on `after_model` / `after_agent`, so a
-                       sub-agent run through the session seam notifies its parent
-                       automatically. Both no-op when handed no inbox.
+  BUILT - the DELIVERY of sub-agent updates into a parent's inbox via post-call hooks.
+  A sub-agent run through the session seam with the middleware below notifies its
+  parent automatically when its call completes:
+    * `inbox_post_hook(inbox, ...)` - returns the plain `hook(payload)` callable a
+                       sub-agent invokes when its call completes (thread-safe). A
+                       no-op when handed no inbox, so a call site stays inert until
+                       a parent is wired.
+    * `build_inbox_middleware(inbox, ...)` - a `create_agent` middleware that posts
+                       the sub-agent's turn result (final content, message trail, and
+                       the `thread_id` the session ran on) into a target inbox at the
+                       post-call hook point (`after_agent` or `after_model`), so the
+                       parent's loop wakes and can take its next turn on the update.
+                       Returns None when handed no inbox.
+    * `subagent_completion_hook(inbox, ...)` - for a child that does NOT run through
+                       the session seam (a pod dispatched inside a static config-driven
+                       graph): posts the child's `thread_id` plus its result into the
+                       parent's inbox on completion, so the parent can go READ that
+                       child's memory (`read_session_memory`, session.py).
 
 Importing this module performs no I/O and needs no env var (CODING_STANDARD section 6):
 the middleware base class is imported lazily inside the factory, never at import.
@@ -221,7 +229,7 @@ async def run_session_agent(
     return result
 
 
-# --- the post-call-hook DELIVERY scaffold (designed-not-built) -----------------
+# --- the post-call-hook DELIVERY (sub-agent -> parent routing) -----------------
 
 def inbox_post_hook(
     inbox: AgentInbox | None,
@@ -232,17 +240,52 @@ def inbox_post_hook(
     """Return the post-call hook a SUB-AGENT invokes when its call completes, to deliver
     an update into a PARENT's `inbox`. Thread-safe (a sub-agent dispatched via
     `asyncio.to_thread` can call it), and a no-op when `inbox` is None - so a call site
-    can wire the hook unconditionally now and the real routing (which parent, which
-    payload) is a later, refactor-free change.
+    can wire the hook unconditionally now.
 
-    This is the interface half of the not-yet-built delivery: `run_session_agent`
-    already CONSUMES what this posts."""
+    `payload` is free-form; when the sub-agent runs through the session seam,
+    `build_inbox_middleware` calls this with the turn's result."""
+
     def hook(payload: Any = None) -> None:
         if inbox is None:
             return
         inbox.post_threadsafe(AgentMessage(kind=kind, payload=payload, source=source))
 
     return hook
+
+
+def subagent_completion_hook(
+    inbox: AgentInbox | None,
+    *,
+    kind: str = "subagent_complete",
+    source: str | None = None,
+) -> Callable[[str, Any], None]:
+    """Build the post-call hook a PARENT wires onto a child that does NOT run through the
+    session seam (a config-driven pod dispatched inside a static Job StateGraph, a crawl
+    pod, etc., per the #94 hierarchy). When the child's work completes, the hook posts
+    into the parent's `inbox` the child's `thread_id` (so the parent can go READ that
+    child's memory via `read_session_memory` #86 seam) plus the child's free-form result.
+    Thread-safe and a no-op for a None inbox, like `inbox_post_hook`."""
+
+    def hook(thread_id: str, detail: Any = None) -> None:
+        if inbox is None:
+            return
+        inbox.post_threadsafe(AgentMessage(
+            kind=kind, payload={"thread_id": thread_id, "detail": detail}, source=source))
+
+    return hook
+
+
+def _turn_result_payload(state: dict, thread_id: str | None) -> dict:
+    """Shape the agent state at a post-call hook into a delivery payload: the `content`
+    mirroring `SessionTurn` (the parsed `structured_response` when a schema is set, else
+    the last message's text), the full post-turn `messages` trail, and the `thread_id`
+    the session ran on - the same shape `arun_session_turn` reports, so a parent that
+    receives this can route on the agent's actual answer."""
+    messages = state.get("messages") or []
+    content = state.get("structured_response")
+    if content is None and messages:
+        content = messages[-1].content
+    return {"content": content, "messages": list(messages), "thread_id": thread_id}
 
 
 def build_inbox_middleware(
@@ -252,31 +295,42 @@ def build_inbox_middleware(
     source: str | None = None,
     on: str = "after_agent",
 ):
-    """Build a `create_agent` middleware that posts an update to a parent's `inbox` when
-    a sub-agent's session turn finishes (`after_agent`) or after each model reply
-    (`after_model`) - the post-call-hook delivery, expressed on the same middleware seam
-    the session path already exposes. Returns None when `inbox` is None (so
-    `middleware=[m] if m else []` stays trivial). The delivered payload is a stub (the
-    hook point is what matters here); enriching it with the real sub-agent result is the
-    designed-not-built follow-up."""
+    """Build a `create_agent` middleware that posts the sub-agent's result to a parent's
+    inbox at the post-call hook point: `after_agent` (once, when the whole session turn
+    finishes - the default) or `after_model` (after each model reply). The delivered
+    payload is the turn result - `content`, the `messages` trail, and the `thread_id`
+    (read from the run config) - mirroring `SessionTurn`, so the parent wakes and can
+    take its next turn on the actual answer. Returns None when `inbox` is None (so
+    `middleware=[m] if m else []` stays trivial)."""
     if inbox is None:
         return None
 
     from langchain.agents.middleware import AgentMiddleware
+    from langgraph.config import get_config
 
     hook = inbox_post_hook(inbox, kind=kind, source=source)
 
+    def _deliver(state) -> None:
+        config = {}
+        try:
+            config = get_config()
+        except Exception:
+            pass  # not inside a graph run: no thread id to report
+        thread_id = (config.get("configurable") or {}).get("thread_id")
+        hook(_turn_result_payload(state, thread_id))
+
     class InboxDispatchMiddleware(AgentMiddleware):
-        """Notifies a parent inbox at the sub-agent's post-call hook point."""
+        """Notifies a parent inbox with the sub-agent's turn result at the post-call
+        hook point."""
 
         def after_model(self, state, runtime=None):
             if on == "after_model":
-                hook({"hook": "after_model"})
+                _deliver(state)
             return None
 
         def after_agent(self, state, runtime=None):
             if on == "after_agent":
-                hook({"hook": "after_agent"})
+                _deliver(state)
             return None
 
     return InboxDispatchMiddleware()

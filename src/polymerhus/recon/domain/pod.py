@@ -1,19 +1,21 @@
 """Recon pod subgraph: configurator -> execute -> gate -> parser -> triager -> curator.
 
-`build_pod_graph` takes the three side-effecting collaborators (exec_fn,
-curate_fn, triage_fn) as parameters so callers can inject fakes in tests -
-no live Kali/LLM/Neo4j is touched by the unit tests in tests/recon/test_pod.py.
+`build_pod_graph` takes the side-effecting collaborators (exec_fn, curate_fn,
+triage_fn, and optionally configure_fn) as parameters so callers can inject
+fakes in tests - no live Kali/LLM/Neo4j is touched by the unit tests in
+tests/recon/test_pod.py.
 
-`default_exec_fn` and `default_triage_fn` wire the real kali MCP client and
-the triager LLM respectively, but they resolve their clients lazily on first
-call (inside the function body). Importing this module must never perform
-network I/O or require env vars to be set - `pod_graph` is built from the
-defaults at import time, but building it only wires function references, it
-does not invoke them.
+`default_exec_fn`, `default_configure_fn` and `default_triage_fn` wire the real
+kali MCP client and the configurator/triager LLMs respectively, but they
+resolve their clients lazily on first call (inside the function body).
+Importing this module must never perform network I/O or require env vars to be
+set - `pod_graph` is built from the defaults at import time, but building it
+only wires function references, it does not invoke them.
 """
 from __future__ import annotations
 
 import inspect
+import logging
 import shlex
 import time
 
@@ -21,6 +23,7 @@ import os
 
 from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel, Field
+from typing import Literal
 
 from polymerhus.recon.domain.types import (
     PodState, ToolInvocation, PodExport, ExecResult, AssetDelta, Observation, JobSpec,
@@ -161,13 +164,15 @@ _HEADERS_FLAG_TOOLS = {"arjun"}
 # both the default repeated -H flag and arjun's newline-joined --headers blob.
 _COMMA_HEADERS_FLAG_TOOLS = {"graphql-cop"}
 
-# Conservative preventive rate profile, applied ONLY when the job-agent steering
-# marked this pod extra["rate_profile"] == "throttle". Only ffuf currently carries
-# the {rate_flags} slot: it consumes BaseURL, so a WAF-flagged host actually
-# reaches decide_pod_selection and can be throttled. httpx consumes Subdomain and
-# runs in the detection phase BEFORE any WAF signal exists, so it can never be
-# reactively throttled - its {rate_flags} slot was a dead no-op and was removed.
-# katana already carries -rl/-c and is handled by routing, so it is absent too.
+# Conservative preventive rate profile, applied ONLY when the pod CONFIGURATOR
+# marked this pod's extra["rate_profile"] == "throttle" (the per-pod agent turn
+# that replaced the job-level `decide_pod_selection`, #81 -> #94). Only ffuf
+# currently carries the {rate_flags} slot: it consumes BaseURL, so a
+# WAF-flagged host actually reaches the configurator and can be throttled.
+# httpx consumes Subdomain and runs in the detection phase BEFORE any WAF
+# signal exists, so it can never be reactively throttled - its {rate_flags}
+# slot was a dead no-op and was removed. katana already carries -rl/-c and is
+# handled by routing, so it is absent too.
 _RATE_FLAGS = {"ffuf": "-rate 5 -p 0.2"}
 
 
@@ -235,17 +240,57 @@ def _auth_header(auth_context: dict, tool: str) -> str:
     return " ".join(f"-H {shlex.quote(f'{name}: {value}')}" for name, value in pairs)
 
 
-def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
-    """Build the compiled recon-pod subgraph, injecting the three
-    side-effecting collaborators: exec_fn(command, session_id, timeout_s) ->
-    ExecResult, curate_fn(assets, observations, project_id) -> (int, int),
-    triage_fn(exec_result, assets, job) -> list[Observation].
+def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
+    """Build the compiled recon-pod subgraph, injecting the side-effecting
+    collaborators: exec_fn(command, session_id, timeout_s) -> ExecResult,
+    curate_fn(assets, observations, project_id) -> (int, int),
+    triage_fn(exec_result, assets, job) -> list[Observation], and
+    configure_fn(job, input_asset, signals) -> PodConfig | None (the per-pod
+    configuration turn: decides how this pod should run, e.g. its
+    rate_profile). configure_fn is optional - without it the configurator
+    node is the deterministic command-fill only.
     """
 
     def configurator(state: PodState) -> dict:
         job = state["job"]
         extra = dict(state.get("extra") or {})
         input_asset = state["input_asset"]
+        # #94: per-pod configuration is the pod's OWN agent turn (exactly like
+        # the triager). When configure_fn is injected and the pod carries the
+        # orchestration steering signals (`extra["steering"]`), the pod consults
+        # it ONCE (first iteration only - gate retries reuse the decision
+        # already merged into `extra`) and a "throttle" decision is merged into
+        # the pod extra BEFORE the command template is filled. Same per-pod
+        # context discipline as the triager node: run_id present -> STATEFUL
+        # `configurator` role turn on the pod's own session thread (stable
+        # run/phase/tool/asset discriminator); no run_id (a directly-invoked
+        # test graph) -> configure_fn's own stateless fallback. Fail-open: no
+        # signals, an error, or a None decision leaves the pod at its default.
+        if configure_fn is not None and "rate_profile" not in extra:
+            signals = extra.get("steering") or []
+            if signals:
+                config = None
+                try:
+                    run_id = state.get("run_id")
+                    if run_id is not None:
+                        from polymerhus.app.llm.checkpoints import get_session_checkpointer
+                        from polymerhus.app.llm.session_address import SessionContext
+
+                        address = pod_session(run_id, state.get("phase"), job,
+                                              input_asset, role_id="configurator")
+                        token = _pod_ctx().set(
+                            SessionContext(address, get_session_checkpointer()))
+                        try:
+                            config = configure_fn(job, input_asset, signals)
+                        finally:
+                            _pod_ctx().reset(token)
+                    else:
+                        config = configure_fn(job, input_asset, signals)
+                except Exception:  # noqa: BLE001 - throttling never fails a pod
+                    logger.warning("pod configurator failed for %s; pod runs at default rate",
+                                   _input_asset_url(input_asset), exc_info=True)
+                if config is not None and getattr(config, "rate_profile", None) == "throttle":
+                    extra["rate_profile"] = "throttle"
         if job.batch and "batch" in input_asset:
             # Batched job (jsluice, D17/Q6): the pod runs one command over a
             # list of bundle URLs, not a single-asset template fill.
@@ -262,7 +307,7 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             )
         invocation = ToolInvocation(command=command, session_id=state["session_id"])
         iteration = state.get("iteration", 0) + 1
-        return {"invocation": invocation, "iteration": iteration}
+        return {"invocation": invocation, "iteration": iteration, "extra": extra}
 
     def execute(state: PodState) -> dict:
         invocation = state["invocation"]
@@ -492,6 +537,70 @@ def _load_triager_skill() -> str:
     return skill_for("recon/triager/writing-observations")
 
 
+logger = logging.getLogger(__name__)
+
+
+class PodConfig(BaseModel):
+    """The configurator role's per-pod decision: how this pod should run.
+    `rate_profile` "throttle" applies the conservative preventive rate (the
+    `{rate_flags}` command slot) - a deliberate choice against a
+    not-yet-flagged host; "default" leaves the pod at its normal rate."""
+
+    rate_profile: Literal["default", "throttle"] = "default"
+    rationale: str = ""
+
+
+def default_configure_fn(job: JobSpec, input_asset: dict, signals: list[dict]) -> PodConfig | None:
+    """Real collaborator: ask the configurator LLM how this pod should run.
+
+    The per-asset throttle decision that once lived on the job agent
+    (`decide_pod_selection`, #81) moved HERE (#94): a pod now composes its own
+    configurator exactly like its triager - per pod, per asset, statefully.
+    Builds its chat model lazily on each call.
+
+    #94: when the configurator node set a per-pod session context, run
+    STATEFUL - the `configurator` role resumes its per-pod thread via
+    `ToolStrategy`, KEEPING the function_calling path (`PodConfig` is a fully
+    closed schema, so the native json_schema path would also work, but the
+    stateful turn is tool-calling by construction). With no context (a
+    directly-invoked pod graph in tests, or a pod carrying no run_id), fall
+    back to the stateless #73-retry `invoke_role`. Fail-open: None (exhausted
+    generation or an error) -> the pod stays at its default rate. Throttling
+    is an adaptivity nicety - it must NEVER fail a pod."""
+    url = _input_asset_url(input_asset)
+    prompt = (
+        f"Pod for job {job.tool} targeting {url}.\n"
+        f"Job command template: {job.command_template}\n"
+        f"Input asset: {input_asset}\n"
+    )
+    if signals:
+        prompt += (
+            "\nLive pipeline steering signals relevant to this target:\n"
+            + "\n".join(f"- {s}" for s in signals)
+        )
+    prompt += (
+        "\nDecide the pod's rate_profile: 'throttle' only as a deliberate "
+        "preventive choice against a not-yet-flagged host; 'default' for "
+        "everything else."
+    )
+    from langchain_core.messages import HumanMessage
+
+    try:
+        ctx = _pod_ctx().get()
+        if ctx is not None:
+            from polymerhus.app.llm.session import stateful_turn
+
+            return stateful_turn("configurator", ctx.address, [HumanMessage(content=prompt)],
+                                 checkpointer=ctx.checkpointer, schema=PodConfig)
+        from polymerhus.app.llm.roles import invoke_role
+
+        return invoke_role("configurator", [HumanMessage(content=prompt)], schema=PodConfig)
+    except Exception:
+        logger.warning("configurator failed for %s; pod runs at default rate",
+                       url, exc_info=True)
+        return None
+
+
 def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: JobSpec) -> list[Observation]:
     """Real collaborator: ask the triager LLM to flag noteworthy observations
     from a completed tool run. Builds its chat model lazily on each call.
@@ -545,4 +654,7 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     return result.observations if result else []  # None = exhausted generation -> no observations
 
 
-pod_graph = build_pod_graph(exec_fn=default_exec_fn, curate_fn=curate, triage_fn=default_triage_fn)
+pod_graph = build_pod_graph(
+    exec_fn=default_exec_fn, curate_fn=curate, triage_fn=default_triage_fn,
+    configure_fn=default_configure_fn,
+)

@@ -16,7 +16,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     HuntConfig,
     HuntPromptTemplate,
 )
-from polymerhus.attack.hunting.hunting_agent import build_hunting_agent
+from polymerhus.attack.hunting.hunting_agent import build_sync_hunting_agent
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
     ReconScope,
@@ -132,7 +132,9 @@ def _no_judge():
 
 
 def _agent(store, run_id: str, *, kb=None, pod=None, author=None, judge=None, **kw):
-    return build_hunting_agent(
+    # The SYNC lane (build_sync_hunting_agent -> run_coro_blocking over the
+    # async canon): sync test callers invoke `agent(_config())` directly.
+    return build_sync_hunting_agent(
         store=store, run_id=run_id, kb=kb, pod=pod,
         author=author, judge=judge, **kw,
     )

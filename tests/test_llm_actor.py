@@ -147,10 +147,11 @@ def test_inbox_post_hook_delivers_from_a_worker_thread():
     assert len(result.turns) == 1  # initial turn; the update closed the actor
 
 
-def test_build_inbox_middleware_posts_at_the_subagent_post_call_hook():
-    """The middleware form of the delivery scaffold: a sub-agent run through the session
-    seam with `build_inbox_middleware` notifies the parent inbox at its post-call hook
-    (`after_agent`), with no live parent loop required. `None` inbox -> no middleware."""
+def test_build_inbox_middleware_posts_the_real_turn_result_to_the_parent():
+    """The delivery middleware posts the SUB-AGENT'S ACTUAL RESULT at its post-call hook
+    (`after_agent`): `content` (the turn's answer), the `messages` trail, and the
+    `thread_id` the session ran on - so the parent's loop can route on the real answer.
+    `None` inbox -> no middleware."""
     from polymerhus.app.llm.session import run_session_turn
 
     assert build_inbox_middleware(None) is None  # trivially inert
@@ -162,6 +163,96 @@ def test_build_inbox_middleware_posts_at_the_subagent_post_call_hook():
         checkpointer=InMemorySaver(), middleware=[mw],
         model_factory=_seq_factory("done"), observe=False,
     )
-    assert inbox.qsize() == 1
+    assert inbox.qsize() == 1  # exactly one post-call hook per session turn
     msg = asyncio.run(inbox.get())
     assert msg.kind == "subagent_update" and msg.source == "child-1"
+    assert msg.payload["content"] == "done"                       # the real answer
+    assert msg.payload["thread_id"] == "r:hunter"                  # which session it ran on
+    assert [m.content for m in msg.payload["messages"]] == ["go", "done"]
+
+
+def test_build_inbox_middleware_after_model_posts_the_result_no_tools():
+    """With `on="after_model"` the delivery posts at every model reply - still the real
+    content (there are no tools in this turn, so the final reply's content is the answer)
+    - which is the hook point the dynamic-config / progress workstreams target."""
+    from polymerhus.app.llm.session import run_session_turn
+
+    inbox = AgentInbox()
+    mw = build_inbox_middleware(inbox, source="child-1", on="after_model")
+    run_session_turn(
+        "hunting_orchestrator", "r:orch", [HumanMessage(content="go")],
+        checkpointer=InMemorySaver(), middleware=[mw],
+        model_factory=_seq_factory("hi"), observe=False,
+    )
+    assert inbox.qsize() == 1
+    msg = asyncio.run(inbox.get())
+    assert msg.payload["content"] == "hi"
+    assert msg.payload["thread_id"] == "r:orch"
+
+
+def test_subagent_completion_hook_posts_thread_id_for_non_session_children():
+    """A child that does NOT run through the session seam (a pod dispatched inside a
+    static config-driven graph) still notifies its parent on completion: the hook posts
+    the child's `thread_id` plus its result into the parent's inbox, so the parent can go
+    READ that child's memory (`read_session_memory`). No-op for a None inbox."""
+    from polymerhus.app.llm.actor import subagent_completion_hook
+
+    assert subagent_completion_hook(None)("r:pod:1", {"verdict": "success"}) is None  # inert
+
+    inbox = AgentInbox()
+    hook = subagent_completion_hook(inbox, kind="pod_complete", source="pod-1")
+
+    async def _drive():
+        await asyncio.to_thread(hook, "r:0:subfinder:https://a:triager", {"verdict": "success"})
+        return await inbox.get()
+
+    msg = asyncio.run(_drive())
+    assert msg.kind == "pod_complete" and msg.source == "pod-1"
+    assert msg.payload["thread_id"] == "r:0:subfinder:https://a:triager"
+    assert msg.payload["detail"]["verdict"] == "success"
+
+
+def test_read_session_memory_returns_the_persisted_turn():
+    """The parent's memory-read seam: after a child has run a stateful turn, the parent
+    can read the child's PERSISTED session memory (its checkpoint) without making a
+    turn - receiving the same shape `SessionTurn` the child itself reported."""
+    from polymerhus.app.llm.session import read_session_memory, run_session_turn
+
+    saver = InMemorySaver()
+    run_session_turn(
+        "hunting_hunter", "r:hunter", [HumanMessage(content="go")],
+        checkpointer=saver, model_factory=_seq_factory("done"), observe=False,
+    )
+    memory = read_session_memory(saver, "r:hunter")
+    assert memory is not None
+    assert memory.thread_id == "r:hunter"
+    assert memory.content == "done"
+    assert [m.content for m in memory.messages] == ["go", "done"]
+
+
+def test_read_session_memory_missing_thread_is_none():
+    """A thread with no checkpoint yet (or an unreadable store) reads back None - the
+    fail-open contract: the parent can treat "no memory yet" as a plain absent result."""
+    from polymerhus.app.llm.session import read_session_memory
+
+    assert read_session_memory(InMemorySaver(), "r:never-ran") is None
+
+
+def test_aread_session_memory_matches_the_sync_read():
+    """The async variant (an event-loop parent's `on_message` path) reads the same
+    persisted memory as the sync read."""
+    from polymerhus.app.llm.session import aread_session_memory, run_session_turn
+
+    saver = InMemorySaver()
+    run_session_turn(
+        "hunting_hunter", "r:hunter", [HumanMessage(content="go")],
+        checkpointer=saver, model_factory=_seq_factory("done"), observe=False,
+    )
+
+    async def _drive():
+        return await aread_session_memory(saver, "r:hunter")
+
+    memory = asyncio.run(_drive())
+    assert memory is not None
+    assert memory.content == "done"
+    assert [m.content for m in memory.messages] == ["go", "done"]

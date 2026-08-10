@@ -65,9 +65,12 @@ def test_role_record_carries_agent_mode():
     assert P.agent_mode("assigner") == "session"
     assert P.agent_mode("mechanism_typist") == "session"
     assert P.agent_mode("data_modeller") == "session"
-    assert P.agent_mode("triager") == "one_shot"
+    assert P.agent_mode("triager") == "session"
+    assert P.agent_mode("configurator") == "session"
     assert P.agent_mode("curation") == "one_shot"
     assert P.agent_mode("hunting_hunter") == "session"
+    assert P.agent_mode("hunting_orchestrator") == "session"
+    assert P.agent_mode("job_orchestrator") == "session"
     assert P.agent_mode("unregistered_role") == "one_shot"  # safe default
 
 
