@@ -16,15 +16,18 @@ rather than (jobs in phase) x MAX_PODS. The next phase does not start (its
 jobs' `input_assets` are not even resolved) until every job in the current
 phase has returned.
 
-`run_job`, `load_settings`, `registry`, and `read_assets` are all injected so
-tests can fully mock Neo4j/Postgres/pod-graph collaborators; production
-defaults to the real `polymerhus.recon.control.job_agent.run_job`,
+`run_job`, `load_settings`, `registry`, `read_assets`, and `decide_routing` are
+all injected so tests can fully mock Neo4j/Postgres/pod-graph collaborators;
+production defaults to the real `polymerhus.recon.control.job_agent.run_job`,
 `polymerhus.app.clients.pg.load_settings`, the `pg` module itself as the
-registry, and the `read_assets` helper below.
+registry, the `read_assets` helper below, and - since feat/async-actor-agents -
+a mailbox-actor recon-orchestrator (`ReconOrchestratorActor`, see
+`orchestrator_agent.py`) as the steering seam between phases.
 """
 from __future__ import annotations
 
 import asyncio
+import inspect
 import logging
 import time
 from datetime import datetime, timezone
@@ -52,6 +55,23 @@ _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
+
+
+async def _phase_exclusions(decide, signals: list[dict], phase_jobs: list[str]) -> dict[str, list[str]]:
+    """Resolve one phase's routing decision through the `run_pipeline` steering seam.
+
+    Empty signals short-circuit to {} (the orchestrator is only invoked with a
+    non-empty signal list). The seam is polymorphic: an injected SYNC callable
+    (the historical one-shot `decide_routing` lambda) is offloaded via
+    `to_thread`; an async callable (the actor client method,
+    feat/async-actor-agents) is awaited. Either way the decision is
+    {job_name: [urls to exclude]} and a steering blip degrades adaptivity, never
+    the run (fail-open is the collaborator's own contract)."""
+    if not signals or not phase_jobs:
+        return {}
+    if inspect.iscoroutinefunction(decide):
+        return await decide(signals, phase_jobs)
+    return await asyncio.to_thread(decide, signals, phase_jobs)
 
 
 def _exec_window(t0: float, started_at: str) -> dict:
@@ -268,6 +288,7 @@ async def run_pipeline(
     read_assets=None,
     read_steering_signals=None,
     decide_routing=None,
+    orchestrator_factory=None,
     feed_mode: str | None = None,
     pass_fn=None,
     with_analysis: bool = True,
@@ -278,6 +299,17 @@ async def run_pipeline(
     independent analysis consumer for this run; when False (the recon-only
     dispatch) recon only pushes chunks to the run's FIFO and a later analysis-only
     dispatch drains them. Either way recon NEVER waits on analysis.
+
+    `decide_routing` is the steering seam between phases. It is INJECTABLE for
+    tests and rollback: a sync callable (the historical one-shot `decide_routing`
+    lambda) runs via `to_thread`, an async callable is awaited. When None (the
+    production default, feat/async-actor-agents), the recon-orchestrator runs as a
+    persistent MAILBOX ACTOR for the run (`ReconOrchestratorActor`, one
+    `job_orchestrator` session thread) - each phase's steering is fed to its inbox
+    and the parsed `RoutingDecision` awaited, with the actor's checkpointed memory
+    carrying the reasoning across phases; the actor is stopped in the `finally`
+    so no task leaks. `orchestrator_factory(run_id)` builds the actor (tests
+    inject a fake or a real actor with a fake model).
 
     Best-effort: a job whose pods all fail, or whose `run_job` call raises,
     is marked "degraded" and the pipeline continues - it always reaches a
@@ -293,8 +325,20 @@ async def run_pipeline(
         read_assets = globals()["read_assets"]
     if read_steering_signals is None:
         read_steering_signals = globals()["read_steering_signals"]
+
+    orchestrator = None
     if decide_routing is None:
-        from polymerhus.recon.control.orchestrator_agent import decide_routing as decide_routing  # noqa: PLC0414
+        if orchestrator_factory is None:
+            from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor
+
+            def _default_factory(_run_id: str):
+                return ReconOrchestratorActor(run_id=_run_id)
+
+            orchestrator_factory = _default_factory
+        orchestrator = orchestrator_factory(run_id)
+        _decide = orchestrator.decide_routing  # async client method
+    else:
+        _decide = decide_routing  # injected sync or async seam
 
     # All DB helpers below (pg + neo4j) are synchronous/blocking. run_pipeline
     # runs on the API event loop, so every one is offloaded via asyncio.to_thread
@@ -374,9 +418,7 @@ async def run_pipeline(
     try:
         for phase_idx, phase_jobs in enumerate(plan):
             job_configs: dict[str, tuple] = {}
-            exclusions = (
-                await asyncio.to_thread(decide_routing, signals, phase_jobs) if signals else {}
-            )
+            exclusions = await _phase_exclusions(_decide, signals, phase_jobs)
             for name in phase_jobs:
                 job = JOBS[name]
                 try:
@@ -633,6 +675,14 @@ async def run_pipeline(
                 await feed.signal_end()
             except Exception:
                 logger.warning("analysis signal_end raised for run %s (recon continues)",
+                               run_id, exc_info=True)
+        # feat/async-actor-agents: reap the recon-orchestrator actor (if any) so no
+        # orphan task outlives the run - on a clean stop AND on every error path.
+        if orchestrator is not None:
+            try:
+                await orchestrator.stop()
+            except Exception:  # teardown must never fail a healthy recon run
+                logger.warning("recon-orchestrator stop raised for run %s (recon continues)",
                                run_id, exc_info=True)
         hb.cancel()
         try:

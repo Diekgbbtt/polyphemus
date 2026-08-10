@@ -9,28 +9,28 @@ Two things live here, both keyed off the hunting role records in
    hunting model vars, so app boot validates only `ROLES` and this validates
    `HUNTING_ROLES` on the first hunt.
 
-2. The production factories that bind the orchestrator's and the hunting agent's
+2. The production seam factories that bind the orchestrator's and the hunting agent's
    injected LLM seams (`hunt_orchestrator.run_orchestration`'s `reason_fn` /
    `rematch_fn`; `hunting_agent.build_hunting_agent`'s `author` / `judge`) to a
    real model through `roles.invoke_role`.
 
-Why `invoke_role` (the one_shot seam) and not the `session.py` seam, when both
-hunting roles are `agent_mode="session"`: the hunting agent is RESUMABLE, but its
-durable state is externalised - the orchestrator holds the hunt memory/budget and
-the hunting agent carries its working set in the user prompt on every turn
-(design `llm-role-architecture-agent-prompt.md` §3.1-3.2). Each individual LLM
-turn (the Q8 gate reasoning, the D2 re-match, the D4 spec authoring, the D5
-continuation judgment) is therefore a STRUCTURED, SINGLE-SHOT call over externally
-held state, which is exactly what `invoke_role` serves - and it keeps the #73
-escalating-timeout retry that these degrade-prone seams want. The checkpointer-
-backed `session.py` path (tool_calling + conversation memory) is reserved for the
-one hunting collaborator that is a genuine tool-loop: the #84 test-executor pod's
-variant loop, which is out of scope here.
+Statefulness now lives in the MAILBOX ACTORS (`attack/hunting/actors.py`,
+feat/async-actor-agents): `arun_orchestration` drives the gate turn and the
+re-match judge as turns of ONE `HuntOrchestratorActor` per run on the
+`hunting_orchestrator` session thread - purely stateful, exactly like the
+recon-orchestrator - and the per-hunt `HuntingHunterActor` (registered per run
+by `HuntingActorRegistry`) owns the author/judge turns of each hunt on its
+`HuntSession` thread. The factories below remain the thin SYNC lane: explicit
+stateless rollback / test seams (`invoke_role` offers the #73 escalating-timeout
+retry these degrade-prone turns want), injectable through every harness seam.
 
-The composed turns are single-sourced from a hunting skill when one is mounted
-(`skills/hunting/hunt-orchestrator/SKILL.md`, authored by #82) and degrade to the
-terse fallbacks below otherwise - the same skill-as-system-prompt pattern the
-hunting agent uses.
+The composed turns are single-sourced from hunting skills when mounted
+(`skills/hunting/hunt-orchestrator/SKILL.md`, authored by #82) and degrade to
+the terse fallbacks below otherwise - the same skill-as-system-prompt pattern
+the hunting agent uses; the actors reuse the SAME composers (`_gate_skill`,
+`_rematch_skill`, `_compose_gate_prompt`, `_compose_rematch_prompt`) and the
+SAME free-text-then-parse (`_parse_json_object`) as these factories, so the two
+lanes can never drift.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
 section 6): `invoke_role`, the message classes, and the skill read all resolve
@@ -289,4 +289,64 @@ def build_judge_fn() -> Callable[[str], dict | None]:
     thread - so the judgment resumes the author's reasoning; a None return degrades the
     judgment, which the agent treats as no-meaningful-insight (fail-open)."""
     return _hunter_turn
+
+
+# --- the actor-backed SYNC-free lane is composed from `attack/hunting/actors.py` ---
+
+
+def build_actor_author_fn(registry):
+    """The async `author` seam bound to the run's `HuntingActorRegistry`.
+
+    The harness always wraps each dispatch in `hunt_session(run_id, hunt_id)`
+    (see `hunting_agent.build_hunting_agent`), so the in-flight hunt id is read
+    out-of-band from that context and routed to its per-hunt
+    `HuntingHunterActor` - the seam contract `author(text)` stays unchanged."""
+    async def author(text: str) -> dict | None:
+        ctx = _hunt_ctx().get()
+        if ctx is None or getattr(ctx, "address", None) is None:
+            return None
+        hunt_id = getattr(ctx.address, "hunt_id", None)
+        if not hunt_id:
+            return None
+        return await registry.actor_for(hunt_id).author(text)
+    return author
+
+
+def build_actor_judge_fn(registry):
+    """The async `judge` seam bound to the run's `HuntingActorRegistry` - the D5
+    continuation judgment resumes the SAME per-hunt actor thread as `author`."""
+    async def judge(text: str) -> dict | None:
+        ctx = _hunt_ctx().get()
+        if ctx is None or getattr(ctx, "address", None) is None:
+            return None
+        hunt_id = getattr(ctx.address, "hunt_id", None)
+        if not hunt_id:
+            return None
+        return await registry.actor_for(hunt_id).judge(text)
+    return judge
+
+
+def build_actor_hunting_agent(*, store, run_id, kb, pod, axis=None,
+                              checkpointer=None, model_factory=None,
+                              observe: bool = True):
+    """Compose the production hunting-agent dispatch seam (feat/async-actor-agents):
+    a `build_hunting_agent` harness whose `author`/`judge` are per-hunt
+    `HuntingHunterActor` turns, registered per run by a `HuntingActorRegistry`.
+
+    Returns `(dispatch_fn, registry)`: the harness `dispatch_fn` is async-native
+    (see `hunting_agent.build_hunting_agent`); the caller passes it to
+    `run_orchestration`/`arun_orchestration` and reaps the registry (`stop_all`)
+    when the run's orchestration finishes. Construction performs no imports."""
+    from polymerhus.attack.hunting.actors import HuntingActorRegistry  # noqa: PLC0415
+    from polymerhus.attack.hunting.hunting_agent import build_hunting_agent  # noqa: PLC0415
+
+    registry = HuntingActorRegistry(run_id, checkpointer=checkpointer,
+                                    model_factory=model_factory, observe=observe)
+    dispatch_fn = build_hunting_agent(
+        store=store, run_id=run_id, kb=kb, pod=pod,
+        author=build_actor_author_fn(registry),
+        judge=build_actor_judge_fn(registry),
+        axis=axis,
+    )
+    return dispatch_fn, registry
 

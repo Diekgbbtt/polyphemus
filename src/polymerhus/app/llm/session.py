@@ -8,14 +8,18 @@ model<->tool loop, and persists its conversation across invocations through an
 INJECTED checkpointer keyed by `thread_id` (short-term memory the next turn
 resumes from). This is the counterpart to the stateless `invoke_role` path.
 
-Two capabilities are deliberately NOT built here - they are separate workstreams
-that plug in through the seams this component exposes:
+Two capabilities are NOT built here, they plug in through the seams this component
+exposes:
 
-- **Context-window compaction + memory** (#95): supplied as `middleware`
-  (langchain `AgentMiddleware`: `before_model`/`after_model`/`before_tool`/
-  `after_tool`), which fire at exactly the trigger points that ticket needs
-  (after an LLM turn and after tool output), plus the `store` seam (#85) for
-  long-term/cross-thread memory. Inert (empty) by default.
+- **Context-window compaction + memory** (#98/#99): `middleware` (langchain
+  `AgentMiddleware`: `before_model`/`after_model`/`before_tool`/`after_tool`), which
+  fire at the exact trigger points those tickets need (after an LLM turn and after tool
+  output), plus the `store` seam (#85) for long-term/cross-thread memory. Inert
+  (empty) by default.
+- **The parent-to-child memory READ** lives here too: `read_session_memory` /
+  `aread_session_memory` read a sub-agent's OWN persisted thread from the shared
+  checkpointer - the primitive a "read my sub-agent's reasoning" TOOL calls, generic
+  because every stateful child lives in the same store under its `SessionAddress`.
 - **Dynamic inference-method / tool-capability configuration**: also supplied as
   `middleware`, so a provider whose model cannot call tools natively is caught
   early / degraded by that layer - this component never hardcodes the method or
@@ -224,3 +228,70 @@ def stateful_turn(
         checkpointer=checkpointer, response_format=response_format,
         system_prompt=system_prompt, model_factory=model_factory, observe=observe,
     ).content
+
+
+def _read_thread_state(checkpointer, thread_id: str) -> dict | None:
+    """The latest persisted state dict for a session thread, or None when the thread has
+    no checkpoint yet (or the read fails - fail-open, mirroring the rest of the seam)."""
+    try:
+        tup = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+    except Exception:
+        return None
+    if tup is None:
+        return None
+    values = tup.checkpoint.get("channel_values") or {}
+    return dict(values)
+
+
+async def _aread_thread_state(checkpointer, thread_id: str) -> dict | None:
+    """Async variant for an event-loop parent: same contract, via `aget_tuple`."""
+    try:
+        tup = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id}})
+    except Exception:
+        return None
+    if tup is None:
+        return None
+    values = tup.checkpoint.get("channel_values") or {}
+    return dict(values)
+
+
+def _turn_from_state(values: dict, thread_id: str) -> SessionTurn:
+    """Shape a persisted thread state into a `SessionTurn` - the same shape
+    `arun_session_turn` reports (`content` = structured_response when a schema was set,
+    else the last message's text; `messages` = the full persisted trail). So a parent that
+    READS a child's memory consumes exactly what the child itself reported."""
+    messages = values.get("messages") or []
+    content = values.get("structured_response")
+    if content is None and messages:
+        content = messages[-1].content
+    return SessionTurn(content=content, messages=list(messages), thread_id=thread_id)
+
+
+# The parent's memory READ seam (the counterpart to posting completions, `actor.py`):
+# a coordinator that wants a sub-agent's accumulated reasoning reads that child's OWN
+# session thread from the shared checkpointer. This is the primitive a "read sub-agent
+# memory" TOOL would call - generic, because every stateful child lives in the same
+# store under its `SessionAddress` thread.
+
+def read_session_memory(checkpointer, thread) -> SessionTurn | None:
+    """Read a child session's PERSISTED memory (its latest checkpoint) without making a
+    turn: returns the last `SessionTurn`'s worth of state, or None when the thread has no
+    checkpoint yet (or the store cannot be read). Use this - NOT a tool round-trip - to
+    inspect a sub-agent's reasoning when it delivers only a notification to its parent.
+
+    `thread` is a typed `SessionAddress` or a raw thread-id string (back-compat)."""
+    thread_id = _as_thread_id(thread)
+    values = _read_thread_state(checkpointer, thread_id)
+    if values is None:
+        return None
+    return _turn_from_state(values, thread_id)
+
+
+async def aread_session_memory(checkpointer, thread) -> SessionTurn | None:
+    """Async-native variant for a parent running on the event loop (the async actor's
+    `on_message` path). Same contract as `read_session_memory`."""
+    thread_id = _as_thread_id(thread)
+    values = await _aread_thread_state(checkpointer, thread_id)
+    if values is None:
+        return None
+    return _turn_from_state(values, thread_id)

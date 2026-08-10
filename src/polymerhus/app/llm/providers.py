@@ -209,9 +209,12 @@ class Role:
 # recon-orchestrator (which shares the `job_orchestrator` role, `orchestrator_agent.py`).
 # The rest stay `off`. `hunting_hunter` is `high` (see HUNTING_ROLES). These are TUNABLE
 # baselines; #99 makes them capability-adaptive and fail-safe per model.
+# `agent_mode="session"` marks the roles that run STATEFUL per instance (#94): the
+# per-pod triager and configurator (their own pod session thread each), the
+# per-run orchestrator actor, and the analysis proposers (per-pass stateful turns).
 ROLES: tuple[Role, ...] = (
-    Role("configurator",     "LLM_MODEL_CONFIGURATOR",     "one_shot"),
-    Role("triager",          "LLM_MODEL_TRIAGER",          "one_shot", "medium"),
+    Role("configurator",     "LLM_MODEL_CONFIGURATOR",     "session"),
+    Role("triager",          "LLM_MODEL_TRIAGER",          "session",  "medium"),
     Role("job_orchestrator", "LLM_MODEL_JOB_ORCHESTRATOR", "session",  "medium"),
     Role("crawler",          "LLM_MODEL_CRAWLER",          "session"),
     Role("bootstrapper",     "LLM_MODEL_ANALYSER",         "one_shot"),

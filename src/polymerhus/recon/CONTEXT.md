@@ -108,13 +108,18 @@ _Avoid_: analyst, classifier.
 
 **Configurator**:
 The role that resolves a Job's command for a target; a `deterministic` template by default, or an `agent` mode.
-The registered agentic configurator is a reserved-but-dormant seam.
-_Status_: registered `one_shot` (unwired today); it adopts the session pattern when built.
+STATEFUL as of feat/async-actor-agents: the pod graph's configurator node consults a per-concurrent-pod `configurator` session (`PodSession`, keyed like the triager) over the orchestration steering signals (`extra["steering"]`), decides the pod's `rate_profile` (throttling moved HERE from the job-level `decide_pod_selection`), and merges it before the command template is filled; fail-open (never a pod failure) and consulted once per pod even across gate retries.
+_Status_: registered `session` (`LLM_MODEL_CONFIGURATOR`).
 _Avoid_: planner.
 
 **Job orchestrator**:
-A resumable `session`-mode role (`role_id=job_orchestrator`) validated at app boot; its structured `invoke_role` turns are recon-orchestrator reasoning, not a checkpointer-backed tool-loop in the recon module.
-_Status_: the role is live as the orchestrator's reasoning seam; a checkpointer-backed session for it is designed-not-built.
+A resumable `session`-mode role (`role_id=job_orchestrator`) validated at app boot.
+Since feat/async-actor-agents it runs as a per-run MAILBOX actor
+(`orchestrator_agent.py::ReconOrchestratorActor`): one `run_session_agent` on the
+run's `OrchestratorSession` thread, fed each phase's steering signals and replying a
+structured `RoutingDecision` per phase, so its checkpointed memory carries the
+steering reasoning across the run's phases. `decide_routing` remains as the sync
+thin wrapper seam (the injected/rollback path).
 _Avoid_: planner.
 
 **Operator**:

@@ -8,6 +8,14 @@ four-valued hypothesis verdict, and judge the meaningful continuation - then
 writes exactly the two record kinds Q6 declares (`spec` and `evidence`) into
 the append-only hunt store.
 
+The harness is the async-native client (feat/async-actor-agents):
+`build_hunting_agent` returns an `async dispatch_fn`, and the production
+`author`/`judge` seams are per-hunt `HuntingHunterActor` turns
+(`HuntingActorRegistry`), so each hunt resumes ONE mailbox-actor thread. Every
+injected collaborator is called through `_await_seam` - an async seam is
+awaited, a sync seam is offloaded via `asyncio.to_thread` - so thin sync fakes
+stay injectable and the caller's event loop never stalls.
+
 Everything external is a typed seam, injected at construction:
 
   kb(query)     the symptom-technique KB (IA-8) on the (fault-class, axis) join key
@@ -368,14 +376,26 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
     `store`, `run_id`, `kb`, `pod`, `author`, `judge` follow the integration
     contract (tests/integration/test_hunting_agent_contracts.py); `axis`
     overrides the deterministic technological-axis derivation for the KB join
-    key. Returns `dispatch_fn(config: HuntConfig, routed=()) -> DispatchResult`.
+    key. Returns `async dispatch_fn(config: HuntConfig, routed=()) -> DispatchResult`
+    (the async-native harness; callers with a running loop `await` it, sync
+    callers use `asyncio.run`/`run_coro_blocking`). Every collaborator is
+    awaited when async and offloaded via `asyncio.to_thread` when sync.
     The closure holds the per-hunt working set (Q5's in-memory experiment log),
     so a re-entry after a routed back-edge resumes the SAME candidate instead
     of re-dispatching it (D67-14, C9)."""
+    import asyncio
+    import inspect
+
     # hunt_id -> working set: {"kb_grounded": bool,
     #                          "log": {canonical_hash: {"hash", "spec", "spec_ref",
     #                                    "pod_result_ref", "evidence"}}}
     working_sets: dict[str, dict[str, Any]] = {}
+
+    async def _await_seam(fn, *args):
+        """Await an async seam, else offload a sync one to a worker thread."""
+        if inspect.iscoroutinefunction(fn):
+            return await fn(*args)
+        return await asyncio.to_thread(fn, *args)
 
     def _append(kind: str, record: dict) -> str | None:
         """Fail-open store write (O3): a failure warns and the agent keeps
@@ -387,17 +407,18 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                            run_id, kind, exc)
             return None
 
-    def dispatch_fn(config: HuntConfig, routed: tuple = ()) -> DispatchResult:
+    async def dispatch_fn(config: HuntConfig, routed: tuple = ()) -> DispatchResult:
         hunt_id = config.hunt_id
         ws = working_sets.setdefault(hunt_id, {"kb_grounded": False, "log": {}})
-        # #94: bind the per-hunt session so the author/judge turns run STATEFUL on ONE
-        # thread per hunt (keyed by hunt_id -> concurrent hunts never collide). A stateful
-        # author/judge (attack/hunting/llm.py) reads this; an injected test double ignores
-        # it. Import lazily so this module stays driver-free at import.
+        # #94: bind the per-hunt session so a SYNC-lane author/judge (the legacy
+        # `invoke_role` rollback factories) runs STATEFUL on ONE thread per hunt.
+        # The actor-backed production seams ignore it - the per-hunt
+        # `HuntingHunterActor` already owns that thread. Import lazily so this
+        # module stays driver-free at import.
         from polymerhus.attack.hunting.llm import hunt_session
         try:
             with hunting_span(run_id, hunt_id), hunt_session(run_id, hunt_id):
-                return _dispatch(config, tuple(routed), ws)
+                return await _dispatch(config, tuple(routed), ws)
         except Exception as exc:  # noqa: BLE001 - never raise out of dispatch_fn
             logger.warning("hunt %s degraded (%s)", hunt_id, exc, exc_info=True)
             return _result("unsuccessful",
@@ -405,7 +426,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         finally:
             flush_hunting_traces()
 
-    def _dispatch(config: HuntConfig, routed: tuple, ws: dict) -> DispatchResult:
+    async def _dispatch(config: HuntConfig, routed: tuple, ws: dict) -> DispatchResult:
         hunt_id = config.hunt_id
         feedback: list[str] = list(_config_gaps(config))
 
@@ -421,7 +442,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                     "fault_class": config.fault_class,
                     "axis": axis_value,
                 })
-                kb_result = kb(query) or {}
+                kb_result = await _await_seam(kb, query) or {}
             except Exception as exc:  # noqa: BLE001 - C2/C3: degrade, never raise
                 kb_degraded = True
                 logger.warning("symptom-technique KB degraded for %s (%s)",
@@ -433,7 +454,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         # Re-entry after a routed back-edge (D67-14): the candidate is
         # dispatched; the verdict may revise with each returned result.
         if routed:
-            return _reenter(config, routed, ws, feedback)
+            return await _reenter(config, routed, ws, feedback)
 
         if not ws["log"]:
             # SPEC-WRITE for the committed candidate slot (one per hunt in this
@@ -445,7 +466,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                     working_set="fresh hunt: no prior dispatch; begin at GROUND",
                 ))
                 trace_span("spec-composition", input={"prompt": turn})
-                spec = author(turn)
+                spec = await _await_seam(author, turn)
             except Exception as exc:  # noqa: BLE001 - fail-open
                 logger.warning("hunt %s spec authoring degraded (%s)", hunt_id, exc)
                 feedback.append(f"spec authoring unavailable ({exc})")
@@ -456,9 +477,9 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                 return _result("unsuccessful", feedback)
             spec_ref = _append_spec(_append, ws, config, spec, parent_spec_ref=None)
 
-        return _pod_loop(config, ws, feedback)
+        return await _pod_loop(config, ws, feedback)
 
-    def _pod_loop(config: HuntConfig, ws: dict, feedback: list[str]) -> DispatchResult:
+    async def _pod_loop(config: HuntConfig, ws: dict, feedback: list[str]) -> DispatchResult:
         """Dispatch the committed spec to the pod (IA-3/IA-4) and evaluate the
         outcome: the INIT-rejection re-authoring pass (exactly once, Q5), the
         pure verdict derivation, and the D5 continuation judgment."""
@@ -469,7 +490,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
 
         while True:
             try:
-                outcome = pod(spec)
+                outcome = await _await_seam(pod, spec)
             except Exception as exc:  # noqa: BLE001 - O5/C11: degrade, never raise
                 message = f"pod turn exhausted: {exc}"
                 feedback.append(message)
@@ -522,7 +543,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                     turn = _with_stable_skill(
                         compose_reauthoring_prompt(config, init_validation))
                     trace_span("spec-composition", input={"prompt": turn})
-                    re_spec = author(turn)
+                    re_spec = await _await_seam(author, turn)
                 except Exception as exc:  # noqa: BLE001 - fail-open
                     re_spec = None
                     feedback.append(f"re-authoring unavailable ({exc})")
@@ -543,12 +564,12 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
             if derived == "insufficient-evidence":
                 # D67-14: the meaningfulness guard is LLM-judged and consulted
                 # only here; it may surface an inline need or end the evaluation.
-                return _judge_and_finish(config, spec_ref, entry["pod_result_ref"],
-                                         snapshot, (), feedback)
+                return await _judge_and_finish(config, spec_ref, entry["pod_result_ref"],
+                                               snapshot, (), feedback)
             return _result(derived, feedback, spec_ref=spec_ref,
                            pod_result_ref=entry["pod_result_ref"])
 
-    def _reenter(config: HuntConfig, routed: tuple, ws: dict,
+    async def _reenter(config: HuntConfig, routed: tuple, ws: dict,
                  feedback: list[str]) -> DispatchResult:
         """Re-enter the evaluation for the SAME dispatched candidate (D67-14):
         the routed back-edge result may revise the verdict with each returned
@@ -566,11 +587,11 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         snapshot = entry.get("evidence") or {}
         feedback.append("re-entered the evaluation with the routed back-edge result")
         feedback.extend(_evidence_notes(snapshot))
-        return _judge_and_finish(config, entry.get("spec_ref"),
-                                 entry.get("pod_result_ref"), snapshot,
-                                 routed, feedback)
+        return await _judge_and_finish(config, entry.get("spec_ref"),
+                                       entry.get("pod_result_ref"), snapshot,
+                                       routed, feedback)
 
-    def _judge_and_finish(config: HuntConfig, spec_ref, pod_result_ref,
+    async def _judge_and_finish(config: HuntConfig, spec_ref, pod_result_ref,
                           snapshot: dict, routed: tuple,
                           feedback: list[str]) -> DispatchResult:
         """The shared D5 continuation judgment: consult the guard (fail-open),
@@ -583,7 +604,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
             init_validation=(snapshot or {}).get("init_validation"),
         )
         try:
-            judgment = judge(_with_stable_skill(
+            judgment = await _await_seam(judge, _with_stable_skill(
                 compose_judgment_prompt(config, snapshot, routed))) or {}
         except Exception as exc:  # noqa: BLE001 - fail-open
             judgment = {}
@@ -603,3 +624,26 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                        pod_result_ref=pod_result_ref)
 
     return dispatch_fn
+
+
+def build_sync_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
+    """The SYNC lane of the hunting-agent harness: a thin wrapper that runs the
+    async `build_hunting_agent` dispatch to completion, so the harness canon is
+    never re-implemented (the mirror of `hunt_orchestrator.run_orchestration`).
+
+    Sync injectable seams (the legacy `invoke_role` factories, test fakes)
+    travel through `asyncio.to_thread` inside the canon; async seams (the
+    actor-backed defaults) are awaited natively. When called from a running
+    event loop, `run_coro_blocking` runs the dispatch on a separate thread so
+    `asyncio.run` is never re-entered on the caller's loop."""
+    from polymerhus.recon.control.async_bridge import run_coro_blocking  # noqa: PLC0415
+
+    dispatch_fn = build_hunting_agent(
+        store=store, run_id=run_id, kb=kb, pod=pod,
+        author=author, judge=judge, axis=axis,
+    )
+
+    def dispatch(config: HuntConfig, routed: tuple = ()) -> DispatchResult:
+        return run_coro_blocking(dispatch_fn(config, tuple(routed)))
+
+    return dispatch

@@ -574,3 +574,147 @@ def test_fill_template_rate_flags_gated_on_rate_profile():
     off = fill_template(tmpl, {"url": "https://x"}, {}, tool="ffuf")
     assert "-rate" in on and "{rate_flags}" not in on
     assert off.strip() == "ffuf -u https://x/FUZZ -of json"  # no profile -> today's string
+
+
+# --- per-pod CONFIGURATOR (#94): the throttle decision moved here from the
+# job agent (decide_pod_selection, #81); the pod consults a stateful per-pod
+# `configurator` role turn exactly like its triager ---
+
+FFUF_RATE_JOB = JobSpec(
+    tool="ffuf", skill="fuzz",
+    command_template="ffuf -u {target}/FUZZ -of json {rate_flags}",
+    produces=["Endpoint"], consumes="BaseURL")
+
+WAF_SIGNAL = {"url": "https://flagged.example", "macro_kind": "waf_protected", "evidence": "e"}
+
+
+def test_pod_configurator_runs_stateful_per_pod_session_context():
+    seen = {}
+    captured = {"commands": []}
+
+    def configure_fn(job, input_asset, signals):
+        from polymerhus.recon.domain.pod import _pod_ctx
+        seen["ctx"] = _pod_ctx().get()
+        seen["signals"] = signals
+        return pod.PodConfig(rate_profile="throttle", rationale="preventive")
+
+    def exec_fn(cmd, sid, t):
+        captured["commands"].append(cmd)
+        return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
+
+    def curate_fn(a, o, p): return (len(a), len(o), a, o)
+
+    def triage_fn(er, a, j): return []
+
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
+                            configure_fn=configure_fn)
+    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://flagged.example"},
+                    "asset_context": "", "extra": {"steering": [WAF_SIGNAL]},
+                    "session_id": "s1", "iteration": 0, "project_id": "p1",
+                    "run_id": "run9", "phase": 2})
+    assert out["export"].verdict == "success"
+    # #94: the configurator ran under the per-(run, phase, tool, asset) pod session
+    ctx = seen["ctx"]
+    assert ctx is not None, "configurator must run under the per-pod session context"
+    assert ctx.address.run_id == "run9"
+    assert ctx.address.role_id == "configurator"
+    assert ctx.address.phase == 2
+    assert "run9" in ctx.address.thread_id and "configurator" in ctx.address.thread_id
+    assert seen["signals"] == [WAF_SIGNAL]
+    # the throttle decision reached the filled command ({rate_flags} slot)
+    assert captured["commands"], "the pod must have executed"
+    assert "-rate 5 -p 0.2" in captured["commands"][0]
+
+
+def test_pod_configurator_falls_back_stateless_without_run_id():
+    seen = {"ctx": "unset"}
+
+    def configure_fn(job, input_asset, signals):
+        from polymerhus.recon.domain.pod import _pod_ctx
+        seen["ctx"] = _pod_ctx().get()  # no run_id -> None (mirrors the triager)
+        return pod.PodConfig(rate_profile="throttle")
+
+    def exec_fn(cmd, sid, t): return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
+    def curate_fn(a, o, p): return (len(a), len(o), a, o)
+    def triage_fn(er, a, j): return []
+
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
+                            configure_fn=configure_fn)
+    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://flagged.example"},
+                    "asset_context": "", "extra": {"steering": [WAF_SIGNAL]},
+                    "session_id": "s1", "iteration": 0, "project_id": "p1"})
+    assert out["export"].verdict == "success"
+    assert seen["ctx"] is None
+
+
+def test_pod_configurator_fail_open_keeps_default_rate():
+    calls = {"n": 0}
+
+    def configure_fn(job, input_asset, signals):
+        calls["n"] += 1
+        raise RuntimeError("configurator llm down")
+
+    def exec_fn(cmd, sid, t): return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
+    def curate_fn(a, o, p): return (len(a), len(o), a, o)
+    def triage_fn(er, a, j): return []
+
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
+                            configure_fn=configure_fn)
+    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://flagged.example"},
+                    "asset_context": "", "extra": {"steering": [WAF_SIGNAL]},
+                    "session_id": "s1", "iteration": 0, "project_id": "p1",
+                    "run_id": "run9", "phase": 2})
+    # throttling is an adaptivity nicety - it must NEVER fail the pod
+    assert out["export"].verdict == "success"
+    assert calls["n"] == 1
+
+
+def test_pod_configurator_skipped_without_signals():
+    called = {"n": 0}
+
+    def configure_fn(job, input_asset, signals):
+        called["n"] += 1
+        raise AssertionError("must not be consulted without steering signals")
+
+    def exec_fn(cmd, sid, t): return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
+    def curate_fn(a, o, p): return (len(a), len(o), a, o)
+    def triage_fn(er, a, j): return []
+
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
+                            configure_fn=configure_fn)
+    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://clean.example"},
+                    "asset_context": "", "extra": {"project_id": "p1"},
+                    "session_id": "s1", "iteration": 0, "project_id": "p1",
+                    "run_id": "run9", "phase": 2})
+    assert out["export"].verdict == "success"
+    assert called["n"] == 0
+
+
+def test_pod_configurator_consulted_once_across_gate_retries():
+    # gate -> configurator re-entry must NOT re-consult the LLM: the merged
+    # rate_profile persists in the pod state extra, so a retried command still
+    # throttles at the FIRST decision.
+    executions = {"n": 0}
+    calls = {"n": 0}
+
+    def configure_fn(job, input_asset, signals):
+        calls["n"] += 1
+        return pod.PodConfig(rate_profile="throttle")
+
+    def exec_fn(cmd, sid, t):
+        executions["n"] += 1
+        return ExecResult(stdout="", stderr="boom", returncode=0 if executions["n"] > 1 else 1,
+                          duration_ms=1)
+
+    def curate_fn(a, o, p): return (len(a), len(o), a, o)
+    def triage_fn(er, a, j): return []
+
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
+                            configure_fn=configure_fn)
+    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://flagged.example"},
+                    "asset_context": "", "extra": {"steering": [WAF_SIGNAL]},
+                    "session_id": "s1", "iteration": 0, "project_id": "p1",
+                    "run_id": "run9", "phase": 2})
+    assert out["export"].verdict == "success"
+    assert executions["n"] == 2  # one retry
+    assert calls["n"] == 1  # configurator consulted exactly once for the pod
