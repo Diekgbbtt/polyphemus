@@ -1,8 +1,11 @@
 """Analyser control plane: the central supervisor + the message topology.
 
-Increment 0 (#22) built this with HOLLOW agents. Increment 2a (#24) made it the
-"async is runnable" checkpoint, with the durable `AsyncPostgresStore` and the #18
-observability recipe wired. 2b built the per-responsibility decomposition and the
+Increment 0 (#22) built this with HOLLOW agents. Increment 2a (#24) made it
+async-native (`ainvoke`) with the #18 observability recipe wired - the graph
+itself is compiled IN-MEMORY (like the deterministic `job_agent` pipeline):
+each pass builds a fresh graph and schedule, and the run's durable archive
+lives in the proposers' pooled session checkpointer, so an in-memory pass
+loses nothing. 2b built the per-responsibility decomposition and the
 chunk feeding; #48 completed the dissolution of the legacy two-pass analyser
 prompt (the whole legacy pod module) and its `analysis.supervisor_enabled`
 coexistence flag - `analyse_chunked`, below, is now the analyser's ONE
@@ -314,38 +317,22 @@ async def run_supervisor(
 ) -> SupervisorState:
     """Drive the control plane async-native (`ainvoke`). A `checkpointer` (+ `store`)
     is injected in tests (`MemorySaver` / `InMemoryStore`); in production both are
-    left None and the `AsyncPostgresSaver` + `AsyncPostgresStore` are opened here for
-    the run (the Store `setup()` is idempotent). Returns the terminal
-    `SupervisorState`."""
+    left None and the graph is compiled IN-MEMORY - the deterministic-pipeline
+    pattern (like `job_agent`) - since each pass builds a fresh graph and schedule
+    and the durable run archive lives in the proposers' pooled session
+    checkpointer. Returns the terminal `SupervisorState`."""
     builder = builder or build_supervisor_graph()
     state = _initial_state(project_id, run_id, schedule, l0_slice=l0_slice, observations=observations)
     config: dict = {"configurable": {"thread_id": thread_id or run_id}}
     if observe:
         config = _observability_config(config, run_id, observe_metadata)
 
-    if checkpointer is not None:
-        compiled = builder.compile(checkpointer=checkpointer, store=store)
-        try:
-            return await compiled.ainvoke(state, config)
-        finally:
-            if observe:
-                _flush_langfuse()
-
-    from polymerhus.app.config import config as app_config
-    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
-    from langgraph.store.postgres.aio import AsyncPostgresStore
-
-    async with (
-        AsyncPostgresSaver.from_conn_string(app_config.POSTGRES_DSN) as saver,
-        AsyncPostgresStore.from_conn_string(app_config.POSTGRES_DSN) as pg_store,
-    ):
-        await pg_store.setup()
-        compiled = builder.compile(checkpointer=saver, store=pg_store)
-        try:
-            return await compiled.ainvoke(state, config)
-        finally:
-            if observe:
-                _flush_langfuse()
+    compiled = builder.compile(checkpointer=checkpointer, store=store)
+    try:
+        return await compiled.ainvoke(state, config)
+    finally:
+        if observe:
+            _flush_langfuse()
 
 
 def build_schedule(

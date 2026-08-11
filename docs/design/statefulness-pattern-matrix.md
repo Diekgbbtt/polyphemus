@@ -31,7 +31,7 @@ and the thread identity (how concurrent instances avoid collision).
 
 | Agent | Execution | Statefulness | Invocation | Thread identity | File:line |
 |---|---|---|---|---|---|
-| `supervisor` | StateGraph (async `ainvoke`) | **StateGraph checkpointer** (`AsyncPostgresSaver`) | `compiled.ainvoke(state, config)` | `run_id` (one graph per run) | `supervisor.py:329,345` |
+| `supervisor` | StateGraph (async `ainvoke`) | **StateGraph (no checkpointer)** - in-memory, the deterministic-pipeline pattern | `compiled.ainvoke(state, config)` | `run_id` (one graph per run) | `supervisor.py:322-330` |
 | `assigner` | sync leaf | checkpointer (create_agent) | `stateful_turn("assigner", address, ...)` | `AnalysisSession(run_id, "assigner")` | `assigner.py:593` |
 | `mechanism_typist` | sync leaf | checkpointer (create_agent) | `stateful_turn("mechanism_typist", address, ...)` | `AnalysisSession(run_id, "mechanism_typist")` | `mechanism_typist.py:413` |
 | `data_modeller` | sync leaf | checkpointer (create_agent) | `stateful_turn("data_modeller", address, ...)` | `AnalysisSession(run_id, "data_modeller")` | `data_modeller.py:704` |
@@ -70,23 +70,21 @@ fault tolerance without graph-level checkpointing.
 **If checkpointing is desired**: pass a checkpointer to `g.compile(checkpointer=...)`
 and ensure the calling thread has access to the module's checkpointer pool.
 
-### OUTLIER-2: Analysis supervisor opens its own `AsyncPostgresSaver` per run
+### OUTLIER-2: (resolved) the supervisor's per-run `AsyncPostgresSaver` is gone
 
-**Location**: `analysis/supervisor.py:335-339`
+**Location**: `analysis/supervisor.py` (removed in `feat/supervisor-inmemory`)
 
-The supervisor graph does NOT use the shared pooled `PostgresSaver` from
-`checkpoints.py`. It opens a fresh `AsyncPostgresSaver` + `AsyncPostgresStore`
-from `POSTGRES_DSN` inside an `async with` block per run.
+The supervisor graph previously opened a fresh `AsyncPostgresSaver` +
+`AsyncPostgresStore` from `POSTGRES_DSN` per run. That PG open is
+**retired**: the graph is now compiled in-memory - the deterministic-pipeline
+pattern (`job_agent`) - since each pass builds a fresh graph and schedule, and
+the run's durable archive lives in the proposers' pooled session checkpointer
+(`AnalysisSession` threads on `get_session_checkpointer`), not in the
+supervisor's own.
 
-**Rationale**: The supervisor's graph state (`SupervisorState`: schedule, dispatch,
-inflight, receipts) is structurally different from the proposers' session state.
-The supervisor's checkpointer is the graph's own; the proposers' checkpointer is
-their session memory. They serve different purposes and have different retention
-needs.
-
-**Deviation from matrix**: The supervisor is the ONLY agent that uses
-`AsyncPostgresSaver` (async variant). All other checkpointer-backed agents use the
-synchronous `PostgresSaver` from the pooled `checkpoints.py`.
+The future full conversion of the supervisor into an async-native
+actor-with-mailbox (pooled checkpointer + `create_agent`) is ticketed:
+https://github.com/Diekgbbtt/polyphemus/issues/102.
 
 ### OUTLIER-3: `decide_routing` / `build_gate_reason_fn` / `build_rematch_fn` are legacy sync seams
 
@@ -137,5 +135,5 @@ resumes from chunk N's reasoning) without the overhead of a persistent actor loo
 | Agent dispatches subagents and needs cross-turn memory | **async actor** (`run_session_agent` + `AgentInbox`) | `ReconOrchestratorActor`, `HuntOrchestratorActor` |
 | Agent is a leaf with data dependencies, needs session memory | **sync leaf + `stateful_turn`** (`create_agent` with checkpointer) | `assigner`, `mechanism_typist`, `data_modeller`, `triager`, `configurator` |
 | Agent is a leaf, stateless one-shot call | **sync leaf + `invoke_role`** (no checkpointer) | `bootstrapper`, `anatomy`, `curation`, `sweep` |
-| Graph orchestrates multiple nodes with routing logic | **StateGraph with checkpointer** (`AsyncPostgresSaver`) | `supervisor` |
+| Graph orchestrates multiple nodes with routing logic | **StateGraph without checkpointer** (in-memory; durable archive lives in the spawned agents' pooled checkpointer) | `supervisor` (see #102 for the actor-model conversion) |
 | Graph is a deterministic pipeline, short-lived | **StateGraph without checkpointer** (fault tolerance via node-level fail-open) | `pod_graph`, `job_agent` |

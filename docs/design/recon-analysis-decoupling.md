@@ -34,7 +34,7 @@ Each invocation of `run_analyser_chunked` does all of the following, from scratc
 - reads the **cumulative** L0 surface (`src/polymerhus/analysis/supervisor.py:416`, via `src/polymerhus/analysis/l0_stream.py:73`);
 - builds chunks of at most 100 assets (`src/polymerhus/analysis/supervisor.py:425`, `src/polymerhus/analysis/chunking.py:37,184`);
 - builds a **fresh** `StateGraph` and a **fresh** schedule (`src/polymerhus/analysis/supervisor.py:437-438`);
-- calls `asyncio.run(run_supervisor(...))` (`src/polymerhus/analysis/supervisor.py:439`), which opens a **new** `AsyncPostgresSaver` and `AsyncPostgresStore` per invocation (`src/polymerhus/analysis/supervisor.py:324-329`).
+- calls `asyncio.run(run_supervisor(...))` (`src/polymerhus/analysis/supervisor.py:439`), which compiles the graph **in-memory** - the deterministic-pipeline pattern (`job_agent`), since each pass builds a fresh graph and schedule and the durable archive lives in the proposers' pooled session checkpointer.
 
 So cost grows as `jobs x ceil(surface / CHUNK_MAX_ASSETS)` LLM calls and compounds for the whole run.
 
@@ -270,9 +270,9 @@ If the drain deadline expires first, the run completes with `analysis_drained: f
 | The checkpointed thread `stream-<run_id>` (already true today) | The chunk sequence (`chunking.chunks_for_job`) |
 | The process-wide pass semaphore | The schedule (`supervisor.build_schedule`) |
 | | The L1 inventory, read at dispatch time (`assigner.make_assigner_body`) |
-| | The `AsyncPostgresSaver` / `AsyncPostgresStore` for the pass |
+| | The graph's own (in-memory) super-step trail |
 
-The saver and store are deliberately **not** resident, against the letter of the proposal, because the documented postgres crash-recovery would leave a run-scoped connection permanently broken while a per-pass connection costs milliseconds and degrades exactly one pass.
+The supervisor graph's checkpointer is deliberately **not** resident: the graph is compiled in-memory per pass (the deterministic-pipeline pattern, as `job_agent`), because each pass builds a fresh graph and schedule, the run's durable archive lives in the proposers' pooled session checkpointer, and a per-pass connection costs milliseconds and degrades exactly one pass.
 
 ### 4.6 Seams
 
@@ -284,7 +284,6 @@ The saver and store are deliberately **not** resident, against the letter of the
 - `supervisor._aggregates_write_fn` (`supervisor.py:459`)
 - `chunking.chunks_for_job` / `admit_for_role` (`chunking.py:184, 113`)
 - `l0_stream.read_l0_assets` / `read_baseurl_profiles` (`l0_stream.py:73, 88`)
-- the `AsyncPostgresSaver` / `AsyncPostgresStore` opening (`supervisor.py:324-329`)
 - the pipeline's `stream_fn` injection point (`pipeline.py:250, 270-271`)
 
 **New - two, and they are the minimum:**
