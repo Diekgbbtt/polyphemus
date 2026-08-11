@@ -12,7 +12,7 @@ The grilling ran Q1-Q10 with the operator. Each decision below is the ratified a
 LiteLLM runs as a **second ASGI process inside the agent container**, not as a standalone compose service and not as an embedded `litellm.Router` module.
 The agent keeps its existing uvicorn process (`polymerhus.app.main:app`, port 8080); a litellm proxy ASGI process (`litellm.proxy.proxy_server:app`) runs on an **internal** port (4000) in the same container.
 The two processes have **independent lifecycles and reload policies** - the agent's `--reload` does not restart the proxy and vice versa.
-`STORE_MODEL_INDB=True`: the gateway persists its model records in the **shared postgres** (the app's existing DB), under litellm's own tables/schema - no separate database.
+`STORE_MODEL_IN_DB=True`: the gateway persists its model records in the **shared postgres** (the app's existing DB), under litellm's own tables/schema - no separate database.
 
 **Rationale.** A standalone compose service adds a network hop, a separate health surface, and a coordinate-two-services rollout for a thing that is, by the operator's boundary (D3), only routing + metadata + caching - the cost is unjustified. An embedded `litellm.Router` would have forced the agent's process to own model-key custody and the management-API surface, re-creating the "second competing client layer" the spec's §3.5 warns against - the proxy keeps those concerns in their own process. One container keeps the deploy surface unchanged; two decoupled ASGI processes keep the blast radius decoupled.
 
