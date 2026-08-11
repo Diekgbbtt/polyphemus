@@ -1,0 +1,18 @@
+# Gateway dependencies (#100 LLM API gateway - litellm + models.dev glue).
+#
+# Layered on top of the redamon-agent base image in the Dockerfile like
+# requirements-observability.txt: a litellm version bump is a ONE-FILE review,
+# never a base-image rebuild (ADR D10).
+#
+# - `litellm`: the proxy ASGI (`litellm.proxy.proxy_server:app`) co-located
+#   inside the agent container as a second ASGI process on the internal port
+#   4000 (ADR D1). Pinned to the latest stable at install time
+#   (operator-ratified 1.96.0, ADR D10). Bumping is a one-file review here.
+# - `httpx`: the sync CLI (T2, #105) fetches the models.dev registry directly
+#   at `https://models.dev/catalog.json` - there is NO separate "models.dev
+#   client" package (ADR D10, verbatim). The agent already depends on httpx
+#   transitively (it is the langchain/openai SDK HTTP transport); pinning it
+#   here keeps the gateway's own fetch surface auditable and decoupled from the
+#   agent's SDK pin.
+litellm==1.96.0
+httpx==0.28.1

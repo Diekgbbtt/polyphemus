@@ -80,6 +80,25 @@ services:
       POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
       KALI_MCP_URL: http://kali:8000/mcp
       PROJECT_ID: default
+      # --- LLM API gateway (#100) - the co-located litellm proxy (#104 T1) ----
+      # The proxy is the SECOND ASGI process in this container; it starts BEFORE
+      # the agent uvicorn and is polled on /health/liveliness before the agent
+      # starts (ADR D10 ordering, see `gateway_entrypoint.py`).
+      #
+      # `DATABASE_URL` is litellm's own DB pointer. The gateway persists its
+      # model records in the SHARED postgres (STAR_MODEL_IN_DB=True), under
+      # litellm's own tables - the same instance the agent uses for its
+      # checkpoints (POSTGRES_DSN above); the env var names differ between
+      # litellm and the agent's own stack, hence the two keys.
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      # `LITELLM_MASTER_KEY` is the service token authing the management API
+      # the T2 sync uses to register models. A dev default ships here so a
+      # clean clone runs; the operator's .env overrides it for any non-dev
+      # env. NEVER a real production key in the repo (ADR D10).
+      LITELLM_MASTER_KEY: sk-polymerhus-dev-gateway
+      # The proxy listens on the internal port 4000 (D1); the client seam (T4,
+      # #107) will set `LLM_GATEWAY_URL=http://127.0.0.1:4000` to route through
+      # it. The port is NOT published to the host - it is intra-container only.
     env_file:
       - path: .env
         required: false
