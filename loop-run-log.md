@@ -358,3 +358,17 @@ Append one entry per iteration. Prune entries older than 30 days.
 }
 ```
 
+
+```
+{
+  "run_id": "2026-08-11T-llm-gateway-100-T1-APPROVED",
+  "fr_area": "#100 LLM API gateway - T1 (#104 gateway container + entrypoint)",
+  "attempt": 1,
+  "assertions_green": 25,
+  "assertions_total": 25,
+  "tokens_estimate": 0,
+  "escalations": 0,
+  "outcome": "approved (loop-verifier APPROVE; e2e deferred - docker down on host)",
+  "notes": "The #100 grilling program: ADR (docs/design/llm-gateway-100-decisions.md) ratified across Q1-Q10 by the operator; design spec corrected inline (§3.3, §6 cadence superseded to bootstrap-only, §3.4 prompt caching = auto-inject + passthrough, no response cache, §4/D9 cold-stop semantics, §5 unknown gap log-only). Spec mined for distinct work and broken into 5 workflow tickets via the to-tickets skill: #104 (T1 gateway container + entrypoint, no blockers, APPROVED), #105 (T2 sync pipeline, blocked by #104), #106 (T3 capability-profile reader, blocked by #104 + #105), #107 (T4 build_chat_model gateway base_url seam, blocked by #104), #108 (T5 crawl capability refusal, blocked by #106). T1 dispatched to a subagent with the implement + TDD + ask-questions-if-underspecified + using-git-worktrees + verification-before-completion skills; it left work uncommitted (empty task_result) but the worktree held a complete, ADR-faithful implementation - committed on its behalf. Verifier APPROVED with rigorous evidence: 25 ticket tests + 45 regression tests green, no cheating, no skips, no ADR deviations, CODING_STANDARD §6 (no I/O at import) verified. ADR typo (STORE_MODEL_INDB -> STORE_MODEL_IN_DB) fixed on dev in the same change. Two cosmetic notes (a compose comment typo inherited from the ADR, one tautological assertion whose real check lives in the ordering test) - non-blocking. The D9 cold-stop contract (0=ok, 1=HARD halt, 2=SOFT proceed-on-stale, unknown=HARD) is pinned by tests; the find_spec pre-T2 guard keeps the container bootable today (the sync CLI is T2, not yet built). E2E walkthrough deferred - docker is down on the operator host; recorded as environment constraint, not a code defect. Frontier now: T2 (#105), T3 (#106), T4 (#107) all unblocked by T1 - dispatching in parallel (independent file surfaces: app/llm/sync.py, app/llm/capability.py, app/llm/providers.py seam). T5 (#108) blocks on T3."
+}
+```
