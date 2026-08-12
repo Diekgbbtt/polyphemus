@@ -188,6 +188,7 @@ services:
       lightrag: { condition: service_healthy }
     volumes:
       - ./data/ingestion:/data/ingestion
+      - ./data/lightrag/rag_storage:/data/lightrag/rag_storage:ro
     networks: [polymerhus-net]
     healthcheck:
       test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health >/dev/null || exit 1"]
