@@ -1,9 +1,11 @@
 from pathlib import Path
 from uuid import uuid4
 import asyncio
+from typing import Callable
 
 from agent.app.clients import pg
 from agent.app.config import config
+from agent.ingestion.audit import LightRAGStorageReader, run_post_ingestion_audit
 from agent.ingestion.contracts import (
     IngestionError,
     SourceChange,
@@ -20,6 +22,7 @@ from agent.ingestion.source_identity import (
     validate_source_path,
 )
 from agent.lightrag.client import LightRAGHttpClient
+from agent.lightrag.ontology import ENTITY_TYPES
 
 
 class IngestionService:
@@ -29,10 +32,14 @@ class IngestionService:
         ingestion_root: Path,
         normalized_root: Path,
         lightrag_adapter: LightRAGIngestionAdapter | None = None,
+        audit_runner: Callable | None = None,
+        storage_reader: LightRAGStorageReader | None = None,
     ):
         self.ingestion_root = ingestion_root
         self.normalized_root = normalized_root
         self.lightrag_adapter = lightrag_adapter or LightRAGIngestionAdapter(client=LightRAGHttpClient())
+        self.audit_runner = audit_runner or run_post_ingestion_audit
+        self.storage_reader = storage_reader or LightRAGStorageReader(Path(config.LIGHTRAG_STORAGE_DIR))
 
     @classmethod
     def from_config(cls) -> "IngestionService":
@@ -137,8 +144,21 @@ class IngestionService:
             result = self.lightrag_adapter.ingest_markdown(normalized.markdown_path, source_key=source_key)
             record.lightrag_document_id = result.document_id
             self._set_status(record, job_id, SourceStatus.AUDITING)
-            audit = {"critical_issues": 0, "warnings": 0}
-            self._set_status(record, job_id, SourceStatus.PROCESSED, audit=audit)
+
+            # Run the post-ingestion audit gate for NEW-document ingestion only.
+            storage_snapshot = self.storage_reader.snapshot()
+            report = self.audit_runner(
+                job_id=job_id,
+                source_key=source_key,
+                lightrag_document_id=record.lightrag_document_id,
+                storage_snapshot=storage_snapshot,
+                allowed_entity_types=set(ENTITY_TYPES),
+            )
+            audit_payload = report.model_dump(mode="json")
+            if report.critical_issues:
+                self._set_status(record, job_id, SourceStatus.FAILED_AUDIT, audit=audit_payload)
+            else:
+                self._set_status(record, job_id, SourceStatus.PROCESSED, audit=audit_payload)
         except SourceValidationError as exc:
             self._fail(record, job_id, exc.code, str(exc), SourceStatus.PROCESSING)
         except DocprepError as exc:
