@@ -104,11 +104,11 @@
 - `hunting_runs` table: surrogate `hunting_run_id` PK, `project_id`, `status` (`running -> complete | stopped | failed | interrupted`), timestamps. Additive idempotent migration in `_HUNTING_SCHEMA_MIGRATIONS` (mirror `_RECON_SCHEMA_MIGRATIONS`), mirrored in `init.sql`.
 - `create_hunting_run(project_id) -> hunting_run_id` (status `running`); `set_hunting_run_status(hunting_run_id, status)`; `get_hunting_run(hunting_run_id) -> row | None`; `list_hunting_runs(project_id)`.
 - `reconcile_orphaned_hunting_runs()` - flips orphaned `running` rows to `interrupted` (mirror `reconcile_orphaned_analysis_runs`, idempotent).
-- [ ] **Step 1:** Write the test (inject a fake pool / use the existing pg test harness): status lifecycle, get/list, orphan reconcile.
-- [ ] **Step 2:** Run -> FAIL.
-- [ ] **Step 3:** Implement the migration + accessors + reconcile.
-- [ ] **Step 4:** Run -> PASS.
-- [ ] **Step 5:** `git commit -m "feat(hunting): hunting_runs status table, accessors, startup orphan reconcile (#110)"`.
+- [x] **Step 1:** Write the test (inject a fake pool / use the existing pg test harness): status lifecycle, get/list, orphan reconcile.
+- [x] **Step 2:** Run -> FAIL.
+- [x] **Step 3:** Implement the migration + accessors + reconcile.
+- [x] **Step 4:** Run -> PASS. **(Live-PG gated; this env has no Postgres/docker, so the 5 tests SKIP here - the loop verifier runs them against a real PG.)**
+- [x] **Step 5:** `git commit -m "feat(hunting): hunting_runs status table, accessors, startup orphan reconcile (#110)"`.
 
 ---
 

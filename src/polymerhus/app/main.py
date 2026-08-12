@@ -49,6 +49,7 @@ async def _startup():
     )
     await pg.ensure_checkpoint_tables()
     pg.ensure_recon_schema()  # additive interface-B columns; idempotent, self-healing
+    pg.ensure_hunting_schema()  # #110: hunting-run lifecycle status table
     neo4j_client.ensure_schema()
     neo4j_client.ensure_l1_schema()  # L1 substrate constraints (FR-LCUR)
     validate_llm_config()

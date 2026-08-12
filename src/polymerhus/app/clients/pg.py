@@ -67,6 +67,30 @@ _RECON_SCHEMA_MIGRATIONS = (
 # D10). Kept here so every writer agrees on the vocabulary.
 _TERMINAL_ANALYSIS_STATUSES = {"drained", "withheld", "stopped", "interrupted"}
 
+# #110: the hunting-run lifecycle status table. One row per hunting run with a
+# surrogate `hunting_run_id` PK (`running` is the only live state; the rest are
+# terminal). The graph engine is an in-memory actor per run, so the row is the
+# durable footprint of that lifecycle. Mirrored in db/postgres/init.sql; applied
+# at boot by ensure_hunting_schema() (the same self-heal discipline as the
+# recon migrations).
+_HUNTING_SCHEMA_MIGRATIONS = (
+    "CREATE TABLE IF NOT EXISTS hunting_runs ("
+    "  hunting_run_id TEXT PRIMARY KEY,"
+    "  project_id     TEXT NOT NULL,"
+    "  status         TEXT NOT NULL,"
+    "  started_at     TIMESTAMPTZ,"
+    "  finished_at    TIMESTAMPTZ"
+    ")",
+    "CREATE INDEX IF NOT EXISTS hunting_runs_project_idx ON hunting_runs (project_id)",
+)
+
+# Hunting-run statuses (#110). `running` is the only live state; the rest are
+# terminal: `complete` = orchestration persisted its terminal report, `stopped` =
+# phase-1 operator stop, `failed` = the run errored but persisted (fail-open),
+# `interrupted` = the process died mid-run (startup reconcile). Kept here so
+# every writer agrees on the vocabulary.
+_TERMINAL_HUNTING_STATUSES = {"complete", "stopped", "failed", "interrupted"}
+
 
 def ensure_recon_schema() -> None:
     """Apply the idempotent recon-registry migrations. Mirrors
@@ -75,6 +99,15 @@ def ensure_recon_schema() -> None:
     destructive volume reset. Safe to call repeatedly."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         for stmt in _RECON_SCHEMA_MIGRATIONS:
+            cur.execute(stmt)
+
+
+def ensure_hunting_schema() -> None:
+    """Apply the idempotent hunting-runs migrations (#110). Mirrored in
+    db/postgres/init.sql; applied at boot so the persistent dev DB and CI
+    self-heal without a volume reset. Safe to call repeatedly."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        for stmt in _HUNTING_SCHEMA_MIGRATIONS:
             cur.execute(stmt)
 
 
@@ -156,6 +189,84 @@ def reconcile_orphaned_analysis_runs() -> int:
             "  'interrupt_reason', 'process ended mid-drain: the in-memory chunk queue "
             "did not survive the restart (queue persistence is deferred to #88)'"
             ") WHERE status='draining'",
+        )
+        return cur.rowcount
+
+
+# --- hunting runs (#110): the orchestration lifecycle's status row -------------
+
+def create_hunting_run(project_id: str) -> str:
+    """Open a hunting-run row in the live `running` state and return its surrogate
+    `hunting_run_id` (generated here, not caller-supplied - the engine owns the
+    lifecycle the row records). Idempotent on the surrogate PK."""
+    import uuid
+
+    hunting_run_id = str(uuid.uuid4())
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO hunting_runs (hunting_run_id, project_id, status, started_at) "
+            "VALUES (%s, %s, 'running', now()) "
+            "ON CONFLICT (hunting_run_id) DO NOTHING",
+            (hunting_run_id, project_id),
+        )
+    return hunting_run_id
+
+
+def set_hunting_run_status(hunting_run_id: str, status: str) -> None:
+    """Set a hunting run's status, stamping finished_at on a terminal status."""
+    finished = "finished_at = now(), " if status in _TERMINAL_HUNTING_STATUSES else ""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"UPDATE hunting_runs SET status = %s, {finished}"
+            " WHERE hunting_run_id = %s",
+            (status, hunting_run_id),
+        )
+
+
+def get_hunting_run(hunting_run_id: str) -> dict | None:
+    """The 1:1 read path for a hunting run's lifecycle row."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT hunting_run_id, project_id, status, started_at, finished_at "
+            "FROM hunting_runs WHERE hunting_run_id = %s",
+            (hunting_run_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "hunting_run_id": row[0], "project_id": row[1], "status": row[2],
+            "started_at": row[3], "finished_at": row[4],
+        }
+
+
+def list_hunting_runs(project_id: str) -> list[dict]:
+    """All of a project's hunting runs, oldest first."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT hunting_run_id, project_id, status, started_at, finished_at "
+            "FROM hunting_runs WHERE project_id = %s ORDER BY started_at NULLS LAST",
+            (project_id,),
+        )
+        return [
+            {
+                "hunting_run_id": r[0], "project_id": r[1], "status": r[2],
+                "started_at": r[3], "finished_at": r[4],
+            }
+            for r in cur.fetchall()
+        ]
+
+
+def reconcile_orphaned_hunting_runs() -> int:
+    """Startup reconcile (#110): the per-run orchestration actor is in-memory and
+    dies with the process, so any hunting run left `running` at boot has no live
+    engine behind it. Flip it to `interrupted` - an honest terminal state -
+    stamping when. Idempotent: a second boot finds nothing `running`. Returns the
+    number reconciled."""
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE hunting_runs SET status='interrupted', finished_at=now() "
+            "WHERE status='running'",
         )
         return cur.rowcount
 

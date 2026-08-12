@@ -69,6 +69,18 @@ CREATE TABLE IF NOT EXISTS analysis_runs (
     stats           JSONB NOT NULL DEFAULT '{}'::jsonb
 );
 CREATE INDEX IF NOT EXISTS analysis_runs_run_idx ON analysis_runs (run_id);
+-- #110: the hunting-run lifecycle status row. `running` is the only live state;
+-- the rest are terminal (complete | stopped | failed | interrupted). Also applied
+-- at runtime by app/clients/pg.py::ensure_hunting_schema so the persistent dev
+-- DB and CI self-heal without a volume reset.
+CREATE TABLE IF NOT EXISTS hunting_runs (
+    hunting_run_id TEXT PRIMARY KEY,
+    project_id     TEXT NOT NULL,
+    status         TEXT NOT NULL,
+    started_at     TIMESTAMPTZ,
+    finished_at    TIMESTAMPTZ
+);
+CREATE INDEX IF NOT EXISTS hunting_runs_project_idx ON hunting_runs (project_id);
 ALTER TABLE recon_runs ADD COLUMN IF NOT EXISTS last_heartbeat_at TIMESTAMPTZ;
 CREATE INDEX IF NOT EXISTS recon_runs_status_idx ON recon_runs (status);
 -- Interface agreement B (L1D-26): a targeted AnalyserReconRequest job carries a
