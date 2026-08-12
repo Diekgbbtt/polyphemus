@@ -71,6 +71,15 @@ def _app_runtime():
         return None
 
 
+def hunting_control_plane_available() -> bool:
+    """True once the control plane's `polymerhus.app.runtime` has landed (the
+    hunting LOOP exists to schedule real runs). The API's fail-closed gate: a
+    real orchestration pass (LLM turns) must never be smuggled onto the uvicorn
+    request loop by the in-process fallback, so the launch surface 503s until
+    the control plane is present."""
+    return _app_runtime() is not None
+
+
 def schedule_hunting(coro: Coroutine[Any, Any, Any], *, name: str) -> Any:
     """Schedule a hunting-run coroutine onto the hunting loop (seam 2.2).
 
