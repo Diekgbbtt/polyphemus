@@ -17,4 +17,8 @@ data/lightrag/prompts/*
 !data/lightrag/prompts/.gitkeep
 !data/lightrag/prompts/entity_type/
 !data/lightrag/prompts/entity_type/*.yml
+data/lightrag/preprocessing_pipeline/docs_to_process/
+data/lightrag/preprocessing_pipeline/normalized/
+data/lightrag/preprocessing_pipeline/preprocessed_docs/
+data/lightrag/preprocessing_pipeline/src/lightrag_docprep.egg-info/
 docs/.DS_Store
