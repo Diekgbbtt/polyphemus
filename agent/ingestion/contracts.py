@@ -37,6 +37,14 @@ class SourceRecord(BaseModel):
     source_uri: str
     content_hash: str
     status: SourceStatus
+    parser: str | None = None
+    parser_version: str | None = None
+    normalization_version: str | None = None
+    lightrag_document_id: str | None = None
+    normalized_markdown_path: str | None = None
+    normalized_json_path: str | None = None
+    last_error_code: str | None = None
+    last_error_message: str | None = None
 
 
 class SourceClassification(BaseModel):

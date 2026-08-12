@@ -93,3 +93,34 @@ CREATE TABLE IF NOT EXISTS methodology_bundles (
 );
 CREATE INDEX IF NOT EXISTS methodology_bundles_run_id_idx ON methodology_bundles (run_id);
 CREATE INDEX IF NOT EXISTS methodology_bundles_query_id_idx ON methodology_bundles (query_id);
+
+CREATE TABLE IF NOT EXISTS ingestion_sources (
+    source_key TEXT PRIMARY KEY,
+    source_kind TEXT NOT NULL CHECK (source_kind IN ('file', 'url')),
+    source_uri TEXT NOT NULL,
+    content_hash TEXT NOT NULL,
+    status TEXT NOT NULL,
+    parser TEXT,
+    parser_version TEXT,
+    normalization_version TEXT,
+    lightrag_document_id TEXT,
+    normalized_markdown_path TEXT,
+    normalized_json_path TEXT,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    last_error_code TEXT,
+    last_error_message TEXT
+);
+
+CREATE TABLE IF NOT EXISTS ingestion_jobs (
+    job_id UUID PRIMARY KEY,
+    source_key TEXT NOT NULL REFERENCES ingestion_sources(source_key) ON DELETE CASCADE,
+    status TEXT NOT NULL,
+    audit JSONB,
+    error JSONB,
+    created_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    updated_at TIMESTAMPTZ NOT NULL DEFAULT now(),
+    finished_at TIMESTAMPTZ
+);
+
+CREATE INDEX IF NOT EXISTS ingestion_jobs_source_key_idx ON ingestion_jobs (source_key);
