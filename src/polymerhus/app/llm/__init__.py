@@ -11,3 +11,6 @@ from polymerhus.app.llm.session_address import (  # noqa: F401
 from polymerhus.app.llm.checkpoints import (  # noqa: F401
     get_session_checkpointer, setup_session_checkpointer, close_session_checkpointer,
 )
+from polymerhus.app.llm.capability import (  # noqa: F401
+    CapabilityProfile, resolve_capability, DEFAULT_CONTEXT_LIMIT,
+)
