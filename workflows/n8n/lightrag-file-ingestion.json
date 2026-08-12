@@ -91,7 +91,7 @@
             {
               "value1": "={{ $json.status }}",
               "operation": "regex",
-              "value2": "^(PROCESSED|SKIPPED_DUPLICATE|FAILED)$"
+              "value2": "^(PROCESSED|SKIPPED_DUPLICATE|FAILED|FAILED_AUDIT)$"
             }
           ]
         }
