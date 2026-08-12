@@ -143,7 +143,21 @@ class IngestionService:
             self._set_status(record, job_id, SourceStatus.INGESTING)
             result = self.lightrag_adapter.ingest_markdown(normalized.markdown_path, source_key=source_key)
             record.lightrag_document_id = result.document_id
-            self._set_status(record, job_id, SourceStatus.PROCESSED)
+            self._set_status(record, job_id, SourceStatus.AUDITING)
+
+            storage_snapshot = self.storage_reader.snapshot()
+            report = self.audit_runner(
+                job_id=job_id,
+                source_key=source_key,
+                lightrag_document_id=record.lightrag_document_id,
+                storage_snapshot=storage_snapshot,
+                allowed_entity_types=set(ENTITY_TYPES),
+            )
+            audit_payload = report.model_dump(mode="json")
+            if report.critical_issues:
+                self._set_status(record, job_id, SourceStatus.FAILED_AUDIT, audit=audit_payload)
+            else:
+                self._set_status(record, job_id, SourceStatus.PROCESSED, audit=audit_payload)
         except SourceValidationError as exc:
             self._fail(record, job_id, exc.code, str(exc), SourceStatus.PROCESSING)
         except DocprepError as exc:
@@ -181,7 +195,7 @@ class IngestionService:
                     "last_error_message": None,
                 }
             )
-            self._set_status(candidate_record, job_id, SourceStatus.AUDITING)
+            self._set_job_status(job_id, SourceStatus.AUDITING)
 
             storage_snapshot = self.storage_reader.snapshot()
             report = self.audit_runner(
@@ -194,10 +208,18 @@ class IngestionService:
             audit_payload = report.model_dump(mode="json")
 
             if not report.critical_issues:
+                # Activate the new version only after a successful audit.
                 self._set_status(candidate_record, job_id, SourceStatus.PROCESSED, audit=audit_payload)
             else:
-                self._set_job_status(job_id, SourceStatus.FAILED_AUDIT, audit=audit_payload)
-                self._rollback_after_failed_audit(job_id, previous_record, audit_payload)
+                # Do not upsert candidate_record for a failed audit.
+                self._restore_previous_after_update_failure(
+                    job_id,
+                    previous_record,
+                    None,
+                    job_status=SourceStatus.FAILED_AUDIT,
+                    audit=audit_payload,
+                    error_stage=SourceStatus.AUDITING,
+                )
         except DocprepError as exc:
             self._fail_job(job_id, exc.code, str(exc), SourceStatus.PROCESSING)
         except LightRAGAdapterError as exc:
@@ -210,7 +232,11 @@ class IngestionService:
         self,
         job_id: str,
         previous_record: SourceRecord,
-        original_error: LightRAGAdapterError,
+        original_error: LightRAGAdapterError | None = None,
+        *,
+        job_status: SourceStatus = SourceStatus.FAILED,
+        audit: dict | None = None,
+        error_stage: SourceStatus = SourceStatus.INGESTING,
     ) -> None:
         previous_markdown_path = Path(previous_record.normalized_markdown_path or "")
         if not previous_markdown_path.is_file():
@@ -222,105 +248,78 @@ class IngestionService:
                 }
             )
             pg.upsert_ingestion_source(failed_record)
+            if job_status == SourceStatus.FAILED_AUDIT:
+                self._set_job_status(
+                    job_id,
+                    SourceStatus.FAILED_AUDIT,
+                    audit=audit,
+                    error=IngestionError(
+                        code="UPDATE_ROLLBACK_FAILED",
+                        message="Previous normalized markdown artifact is unavailable",
+                        stage=error_stage.value,
+                    ).model_dump(),
+                )
+            else:
+                self._fail_job(
+                    job_id,
+                    "UPDATE_ROLLBACK_FAILED",
+                    "Previous normalized markdown artifact is unavailable",
+                    error_stage,
+                )
+            return
+
+        try:
+            restored = self.lightrag_adapter.ingest_markdown(
+                previous_markdown_path,
+                source_key=previous_record.source_key,
+            )
+        except LightRAGAdapterError as rollback_error:
+            failed_record = previous_record.model_copy(
+                update={
+                    "status": SourceStatus.FAILED,
+                    "last_error_code": "UPDATE_ROLLBACK_FAILED",
+                    "last_error_message": str(rollback_error),
+                }
+            )
+            pg.upsert_ingestion_source(failed_record)
+            if job_status == SourceStatus.FAILED_AUDIT:
+                self._set_job_status(
+                    job_id,
+                    SourceStatus.FAILED_AUDIT,
+                    audit=audit,
+                    error=IngestionError(
+                        code="UPDATE_ROLLBACK_FAILED",
+                        message=str(rollback_error),
+                        stage=error_stage.value,
+                    ).model_dump(),
+                )
+            else:
+                self._fail_job(job_id, "UPDATE_ROLLBACK_FAILED", str(rollback_error), error_stage)
+            return
+
+        restored_record = previous_record.model_copy(
+            update={
+                "status": SourceStatus.PROCESSED,
+                "lightrag_document_id": restored.document_id,
+                "last_error_code": None,
+                "last_error_message": None,
+            }
+        )
+        pg.upsert_ingestion_source(restored_record)
+
+        if job_status == SourceStatus.FAILED_AUDIT:
+            self._set_job_status(
+                job_id,
+                SourceStatus.FAILED_AUDIT,
+                audit=audit,
+            )
+        else:
             self._fail_job(
                 job_id,
-                "UPDATE_ROLLBACK_FAILED",
-                "Previous normalized markdown artifact is unavailable",
-                SourceStatus.INGESTING,
+                original_error.code if original_error else "UPDATE_ROLLBACK_FAILED",
+                f"{original_error}; previous version restored" if original_error else "Previous version restored",
+                error_stage,
             )
-            return
-
-        try:
-            restored = self.lightrag_adapter.ingest_markdown(
-                previous_markdown_path,
-                source_key=previous_record.source_key,
-            )
-        except LightRAGAdapterError as rollback_error:
-            failed_record = previous_record.model_copy(
-                update={
-                    "status": SourceStatus.FAILED,
-                    "last_error_code": "UPDATE_ROLLBACK_FAILED",
-                    "last_error_message": str(rollback_error),
-                }
-            )
-            pg.upsert_ingestion_source(failed_record)
-            self._fail_job(job_id, "UPDATE_ROLLBACK_FAILED", str(rollback_error), SourceStatus.INGESTING)
-            return
-
-        restored_record = previous_record.model_copy(
-            update={
-                "status": SourceStatus.PROCESSED,
-                "lightrag_document_id": restored.document_id,
-                "last_error_code": None,
-                "last_error_message": None,
-            }
-        )
-        pg.upsert_ingestion_source(restored_record)
-        self._fail_job(job_id, original_error.code, f"{original_error}; previous version restored", SourceStatus.INGESTING)
-
-    def _rollback_after_failed_audit(
-        self,
-        job_id: str,
-        previous_record: SourceRecord,
-        audit_payload: dict,
-    ) -> None:
-        previous_markdown_path = Path(previous_record.normalized_markdown_path or "")
-        if not previous_markdown_path.is_file():
-            failed_record = previous_record.model_copy(
-                update={
-                    "status": SourceStatus.FAILED,
-                    "last_error_code": "UPDATE_ROLLBACK_FAILED",
-                    "last_error_message": "Previous normalized markdown artifact is unavailable",
-                }
-            )
-            pg.upsert_ingestion_source(failed_record)
-            self._set_job_status(
-                job_id,
-                SourceStatus.FAILED_AUDIT,
-                audit=audit_payload,
-                error=IngestionError(
-                    code="UPDATE_ROLLBACK_FAILED",
-                    message="Previous normalized markdown artifact is unavailable",
-                    stage=SourceStatus.INGESTING.value,
-                ).model_dump(),
-            )
-            return
-
-        try:
-            restored = self.lightrag_adapter.ingest_markdown(
-                previous_markdown_path,
-                source_key=previous_record.source_key,
-            )
-        except LightRAGAdapterError as rollback_error:
-            failed_record = previous_record.model_copy(
-                update={
-                    "status": SourceStatus.FAILED,
-                    "last_error_code": "UPDATE_ROLLBACK_FAILED",
-                    "last_error_message": str(rollback_error),
-                }
-            )
-            pg.upsert_ingestion_source(failed_record)
-            self._set_job_status(
-                job_id,
-                SourceStatus.FAILED_AUDIT,
-                audit=audit_payload,
-                error=IngestionError(
-                    code="UPDATE_ROLLBACK_FAILED",
-                    message=str(rollback_error),
-                    stage=SourceStatus.INGESTING.value,
-                ).model_dump(),
-            )
-            return
-
-        restored_record = previous_record.model_copy(
-            update={
-                "status": SourceStatus.PROCESSED,
-                "lightrag_document_id": restored.document_id,
-                "last_error_code": None,
-                "last_error_message": None,
-            }
-        )
-        pg.upsert_ingestion_source(restored_record)
 
     def _set_status(
         self,

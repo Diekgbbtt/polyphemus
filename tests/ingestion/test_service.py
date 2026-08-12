@@ -795,6 +795,250 @@ def test_update_rollback_failure_follows_existing_recoverable_failure(tmp_path, 
     assert audit_calls[0]["lightrag_document_id"] == "doc-new"
 
 
+def _make_new_document_fixture(tmp_path):
+    root = tmp_path / "ingestion"
+    inbox = root / "inbox"
+    inbox.mkdir(parents=True)
+    source = inbox / "new.md"
+    source.write_text("# New content\n", encoding="utf-8")
+
+    normalized_md = root / "normalized" / "new" / "document.md"
+    normalized_json = root / "normalized" / "new" / "document.json"
+    normalized_md.parent.mkdir(parents=True)
+    normalized_md.write_text("# New content\n", encoding="utf-8")
+    normalized_json.write_text("{}", encoding="utf-8")
+
+    record = SourceRecord(
+        source_key="file:inbox/new.md",
+        source_kind="file",
+        source_uri="inbox/new.md",
+        content_hash="hash-irrelevant",
+        status=SourceStatus.DISCOVERED,
+    )
+    job = {
+        "job_id": "job-1",
+        "source_key": record.source_key,
+        "source_uri": record.source_uri,
+        "status": SourceStatus.DISCOVERED.value,
+        "content_hash": record.content_hash,
+        "lightrag_document_id": None,
+        "audit": None,
+        "error": None,
+    }
+    return root, source, normalized_md, normalized_json, record, job
+
+
+def test_new_document_success_audit_results_in_processed(tmp_path, monkeypatch):
+    root, source, normalized_md, normalized_json, record, job = _make_new_document_fixture(tmp_path)
+
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None]] = []
+
+    class FakeAdapter:
+        def __init__(self):
+            self.deleted: list[str] = []
+
+        def delete_document(self, document_id):
+            self.deleted.append(document_id)
+
+        def ingest_markdown(self, markdown_path, *, source_key):
+            return LightRAGIngestionResult(track_id="track", document_id="doc-new", status="processed")
+
+    adapter = FakeAdapter()
+    storage_reader = _FakeStorageReader()
+    audit_calls = []
+    report = AuditReport(
+        job_id="job-1",
+        source_key=record.source_key,
+        critical_issues=[],
+        warnings=[],
+        merge_candidates=[],
+        checked_at="2024-01-01T00:00:00Z",
+    )
+    audit_runner = _make_fake_audit_runner(audit_calls, report)
+
+    monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: job)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: record)
+    monkeypatch.setattr(
+        service_module.pg,
+        "upsert_ingestion_source",
+        lambda rec: upserts.append(rec.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(
+        service_module.pg,
+        "set_ingestion_job_status",
+        lambda job_id, status, **kwargs: job_statuses.append((job_id, status, kwargs.get("audit"))),
+    )
+
+    async def normalize(source_path, *, output_root):
+        return NormalizedDocument(
+            output_dir=normalized_md.parent,
+            markdown_path=normalized_md,
+            json_path=normalized_json,
+            parser="markdown",
+            warnings=[],
+        )
+
+    monkeypatch.setattr(service_module, "normalize_document", normalize)
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=adapter,
+        audit_runner=audit_runner,
+        storage_reader=storage_reader,
+    )
+
+    service.process_job("job-1")
+
+    assert upserts[-1].status == SourceStatus.PROCESSED
+    assert job_statuses[-1][1] == SourceStatus.PROCESSED
+    assert audit_calls[0]["lightrag_document_id"] == "doc-new"
+    assert audit_calls[0]["source_key"] == record.source_key
+    assert audit_calls[0]["job_id"] == "job-1"
+    assert storage_reader.calls == 1
+    assert adapter.deleted == []
+    assert job_statuses[-1][2] == report.model_dump(mode="json")
+
+
+def test_new_document_audit_critical_results_in_failed_audit(tmp_path, monkeypatch):
+    root, source, normalized_md, normalized_json, record, job = _make_new_document_fixture(tmp_path)
+
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None]] = []
+
+    class FakeAdapter:
+        def __init__(self):
+            self.deleted: list[str] = []
+
+        def delete_document(self, document_id):
+            self.deleted.append(document_id)
+
+        def ingest_markdown(self, markdown_path, *, source_key):
+            return LightRAGIngestionResult(track_id="track", document_id="doc-new", status="processed")
+
+    adapter = FakeAdapter()
+    storage_reader = _FakeStorageReader()
+    audit_calls = []
+    report = AuditReport(
+        job_id="job-1",
+        source_key=record.source_key,
+        critical_issues=[
+            AuditIssue(code="CRIT", message="critical problem", severity="critical", evidence={})
+        ],
+        warnings=[],
+        merge_candidates=[],
+        checked_at="2024-01-01T00:00:00Z",
+    )
+    audit_runner = _make_fake_audit_runner(audit_calls, report)
+
+    monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: job)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: record)
+    monkeypatch.setattr(
+        service_module.pg,
+        "upsert_ingestion_source",
+        lambda rec: upserts.append(rec.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(
+        service_module.pg,
+        "set_ingestion_job_status",
+        lambda job_id, status, **kwargs: job_statuses.append((job_id, status, kwargs.get("audit"))),
+    )
+
+    async def normalize(source_path, *, output_root):
+        return NormalizedDocument(
+            output_dir=normalized_md.parent,
+            markdown_path=normalized_md,
+            json_path=normalized_json,
+            parser="markdown",
+            warnings=[],
+        )
+
+    monkeypatch.setattr(service_module, "normalize_document", normalize)
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=adapter,
+        audit_runner=audit_runner,
+        storage_reader=storage_reader,
+    )
+
+    service.process_job("job-1")
+
+    assert upserts[-1].status == SourceStatus.FAILED_AUDIT
+    assert job_statuses[-1][1] == SourceStatus.FAILED_AUDIT
+    assert not any(status == SourceStatus.PROCESSED for _, status, _ in job_statuses)
+    assert not any(rec.status == SourceStatus.PROCESSED for rec in upserts)
+    assert adapter.deleted == []
+
+
+def test_new_document_audit_warnings_do_not_block_processed(tmp_path, monkeypatch):
+    root, source, normalized_md, normalized_json, record, job = _make_new_document_fixture(tmp_path)
+
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None]] = []
+
+    class FakeAdapter:
+        def __init__(self):
+            self.deleted: list[str] = []
+
+        def delete_document(self, document_id):
+            self.deleted.append(document_id)
+
+        def ingest_markdown(self, markdown_path, *, source_key):
+            return LightRAGIngestionResult(track_id="track", document_id="doc-new", status="processed")
+
+    adapter = FakeAdapter()
+    storage_reader = _FakeStorageReader()
+    audit_calls = []
+    report = AuditReport(
+        job_id="job-1",
+        source_key=record.source_key,
+        critical_issues=[],
+        warnings=[AuditIssue(code="WARN", message="warning", severity="warning", evidence={})],
+        merge_candidates=[],
+        checked_at="2024-01-01T00:00:00Z",
+    )
+    audit_runner = _make_fake_audit_runner(audit_calls, report)
+
+    monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: job)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: record)
+    monkeypatch.setattr(
+        service_module.pg,
+        "upsert_ingestion_source",
+        lambda rec: upserts.append(rec.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(
+        service_module.pg,
+        "set_ingestion_job_status",
+        lambda job_id, status, **kwargs: job_statuses.append((job_id, status, kwargs.get("audit"))),
+    )
+
+    async def normalize(source_path, *, output_root):
+        return NormalizedDocument(
+            output_dir=normalized_md.parent,
+            markdown_path=normalized_md,
+            json_path=normalized_json,
+            parser="markdown",
+            warnings=[],
+        )
+
+    monkeypatch.setattr(service_module, "normalize_document", normalize)
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=adapter,
+        audit_runner=audit_runner,
+        storage_reader=storage_reader,
+    )
+
+    service.process_job("job-1")
+
+    assert upserts[-1].status == SourceStatus.PROCESSED
+    assert job_statuses[-1][1] == SourceStatus.PROCESSED
+    assert len(job_statuses[-1][2]["warnings"]) == 1
+    assert adapter.deleted == []
+
+
 def test_default_storage_reader_uses_configured_storage_dir(tmp_path, monkeypatch):
     storage_dir = tmp_path / "lightrag_storage"
     monkeypatch.setattr(service_module.config, "LIGHTRAG_STORAGE_DIR", str(storage_dir))
