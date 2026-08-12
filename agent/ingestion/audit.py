@@ -3,7 +3,7 @@ from __future__ import annotations
 import json
 import xml.etree.ElementTree as ET
 from pathlib import Path
-from typing import Any, Literal
+from typing import Any, Collection, Literal
 
 from pydantic import BaseModel, Field
 
@@ -194,3 +194,170 @@ class LightRAGStorageReader:
             if attr_name:
                 attrs[attr_name] = value
         return attrs
+
+
+_SUCCESSFUL_TERMINAL_STATUSES = frozenset({"processed", "completed", "done"})
+
+
+def _chunk_full_doc_id(chunk_data: Any) -> str | None:
+    if isinstance(chunk_data, dict):
+        return chunk_data.get("full_doc_id") or chunk_data.get("doc_id")
+    return None
+
+
+def _vdb_chunk_doc_id(chunk_data: Any) -> str | None:
+    if isinstance(chunk_data, dict):
+        metadata = chunk_data.get("metadata")
+        if isinstance(metadata, dict):
+            return metadata.get("doc_id") or metadata.get("full_doc_id")
+    return None
+
+
+def run_post_ingestion_audit(
+    *,
+    job_id: str,
+    source_key: str,
+    lightrag_document_id: str | None,
+    storage_snapshot: LightRAGStorageSnapshot,
+    allowed_entity_types: Collection[str],
+) -> AuditReport:
+    """Run the critical non‑destructive post‑ingestion audit checks."""
+    issues: list[AuditIssue] = []
+
+    def add_issue(code: str, message: str, evidence: dict[str, Any]) -> None:
+        issues.append(
+            AuditIssue(
+                code=code,
+                message=message,
+                severity="critical",
+                evidence=evidence,
+            )
+        )
+
+    document_id = (lightrag_document_id or "").strip()
+
+    if not document_id:
+        add_issue(
+            "LIGHTRAG_DOCUMENT_ID_MISSING",
+            "Missing LightRAG document id for audit.",
+            {"lightrag_document_id": lightrag_document_id},
+        )
+
+    if document_id:
+        status_record = storage_snapshot.kv_store_doc_status.get(document_id)
+        status: Any = None
+        if status_record is not None:
+            if isinstance(status_record, dict):
+                status = status_record.get("status")
+            else:
+                status = status_record
+
+        if status_record is None:
+            add_issue(
+                "DOCUMENT_STATUS_MISSING",
+                f"No document status entry for {document_id!r}.",
+                {"document_id": document_id},
+            )
+        else:
+            status_str = str(status or "").strip().lower()
+            if status_str not in _SUCCESSFUL_TERMINAL_STATUSES:
+                add_issue(
+                    "DOCUMENT_STATUS_FAILED",
+                    f"Document {document_id!r} is not in a successful terminal state (status={status!r}).",
+                    {"document_id": document_id, "status": status},
+                )
+
+        # Chunk linkage (only when the document actually exists and is successful)
+        linked_chunk_ids = sorted(
+            chunk_id
+            for chunk_id, chunk_data in storage_snapshot.kv_store_text_chunks.items()
+            if _chunk_full_doc_id(chunk_data) == document_id
+        )
+
+        if (
+            status_record is not None
+            and str(status or "").strip().lower() in _SUCCESSFUL_TERMINAL_STATUSES
+            and not linked_chunk_ids
+        ):
+            add_issue(
+                "DOCUMENT_HAS_NO_CHUNKS",
+                f"Successful document {document_id!r} has no linked text chunks.",
+                {"document_id": document_id},
+            )
+
+        # Missing vector chunks for chunks that belong to the audited document
+        for chunk_id in linked_chunk_ids:
+            if chunk_id not in storage_snapshot.vdb_chunks:
+                add_issue(
+                    "VECTOR_CHUNK_MISSING",
+                    f"Text chunk {chunk_id!r} of document {document_id!r} is missing from vdb_chunks.",
+                    {"document_id": document_id, "chunk_id": chunk_id},
+                )
+
+        # Vector chunks that are tagged with the audited document but have no KV text chunk
+        for chunk_id, chunk_data in storage_snapshot.vdb_chunks.items():
+            if _vdb_chunk_doc_id(chunk_data) == document_id and chunk_id not in storage_snapshot.kv_store_text_chunks:
+                add_issue(
+                    "KV_VECTOR_CHUNK_MISMATCH",
+                    f"Vector chunk {chunk_id!r} for document {document_id!r} has no corresponding KV text chunk.",
+                    {"document_id": document_id, "chunk_id": chunk_id},
+                )
+
+    # Graph checks (independent of the audited document id)
+    allowed_set = set(allowed_entity_types)
+
+    for node in storage_snapshot.graph.nodes:
+        entity_type = node.entity_type.strip()
+        if entity_type and entity_type not in allowed_set:
+            add_issue(
+                "ENTITY_TYPE_NOT_ALLOWED",
+                f"Graph node {node.id!r} uses disallowed entity type {entity_type!r}.",
+                {
+                    "node_id": node.id,
+                    "entity_type": entity_type,
+                    "allowed_entity_types": sorted(allowed_set),
+                },
+            )
+
+    node_ids = {node.id for node in storage_snapshot.graph.nodes}
+
+    for edge in storage_snapshot.graph.edges:
+        edge_label = f"{edge.source}->{edge.target}"
+        if edge.source not in node_ids:
+            add_issue(
+                "ORPHAN_RELATION_ENDPOINT",
+                f"Graph edge {edge_label!r} has source node not present in the graph.",
+                {"edge": edge_label, "endpoint": "source", "node_id": edge.source},
+            )
+        if edge.target not in node_ids:
+            add_issue(
+                "ORPHAN_RELATION_ENDPOINT",
+                f"Graph edge {edge_label!r} has target node not present in the graph.",
+                {"edge": edge_label, "endpoint": "target", "node_id": edge.target},
+            )
+
+    for node in storage_snapshot.graph.nodes:
+        if node.entity_type.strip() and not node.source_id:
+            add_issue(
+                "GRAPH_NODE_WITHOUT_PROVENANCE",
+                f"Graph entity node {node.id!r} has no source_id.",
+                {"node_id": node.id, "entity_type": node.entity_type},
+            )
+
+    for edge in storage_snapshot.graph.edges:
+        if not edge.source_id:
+            edge_label = f"{edge.source}->{edge.target}"
+            add_issue(
+                "GRAPH_EDGE_WITHOUT_PROVENANCE",
+                f"Graph edge {edge_label!r} has no source_id.",
+                {"edge": edge_label},
+            )
+
+    return AuditReport(
+        job_id=job_id,
+        source_key=source_key,
+        critical_issues=issues,
+        warnings=[],
+        merge_candidates=[],
+        checked_at="",
+    )

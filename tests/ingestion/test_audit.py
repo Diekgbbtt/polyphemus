@@ -5,9 +5,13 @@ import pytest
 from agent.ingestion.audit import (
     AuditIssue,
     AuditReport,
+    GraphEdge,
+    GraphNode,
     LightRAGStorageReader,
+    LightRAGStorageSnapshot,
     StorageParseError,
     has_critical_issues,
+    run_post_ingestion_audit,
 )
 
 
@@ -68,6 +72,235 @@ def test_audit_report_mutable_defaults_are_not_shared():
         AuditIssue(code="X", message="x", severity="critical")
     )
     assert report_b.critical_issues == []
+
+
+def test_audit_valid_snapshot_has_zero_critical_issues():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "processed"}},
+        kv_store_text_chunks={"chunk1": {"full_doc_id": "doc1"}},
+        vdb_chunks={"chunk1": {"metadata": {"doc_id": "doc1"}}},
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="n1", entity_type="Server", source_id="doc1"),
+                GraphNode(id="n2", entity_type="Client", source_id="doc1"),
+            ],
+            edges=[
+                GraphEdge(source="n1", target="n2", source_id="doc1"),
+            ],
+        ),
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server", "Client"},
+    )
+    assert report.critical_issues == []
+
+
+def test_audit_missing_lightrag_document_id():
+    snapshot = LightRAGStorageSnapshot()
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    assert [i.code for i in report.critical_issues] == ["LIGHTRAG_DOCUMENT_ID_MISSING"]
+
+
+def test_audit_missing_document_status():
+    snapshot = LightRAGStorageSnapshot()
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    assert [i.code for i in report.critical_issues] == ["DOCUMENT_STATUS_MISSING"]
+
+
+def test_audit_failed_document_status():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "failed"}},
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    assert "DOCUMENT_STATUS_FAILED" in [i.code for i in report.critical_issues]
+
+
+def test_audit_successful_doc_with_no_chunks():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "processed"}},
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    assert "DOCUMENT_HAS_NO_CHUNKS" in [i.code for i in report.critical_issues]
+
+
+def test_audit_entity_type_not_allowed():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="n1", entity_type="Server", source_id="doc1"),
+                GraphNode(id="n2", entity_type="Evil", source_id="doc1"),
+            ]
+        ),
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server"},
+    )
+    codes = [i.code for i in report.critical_issues]
+    assert "ENTITY_TYPE_NOT_ALLOWED" in codes
+
+
+def test_audit_orphan_edge_source():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[GraphNode(id="n1", source_id="doc1")],
+            edges=[GraphEdge(source="missing", target="n1", source_id="doc1")],
+        )
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    codes = [i.code for i in report.critical_issues]
+    assert "ORPHAN_RELATION_ENDPOINT" in codes
+
+
+def test_audit_orphan_edge_target():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[GraphNode(id="n1", source_id="doc1")],
+            edges=[GraphEdge(source="n1", target="missing", source_id="doc1")],
+        )
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    codes = [i.code for i in report.critical_issues]
+    assert "ORPHAN_RELATION_ENDPOINT" in codes
+
+
+def test_audit_graph_node_without_provenance():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[GraphNode(id="n1", entity_type="Server")],
+        )
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server"},
+    )
+    codes = [i.code for i in report.critical_issues]
+    assert "GRAPH_NODE_WITHOUT_PROVENANCE" in codes
+
+
+def test_audit_graph_edge_without_provenance():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="n1", source_id="doc1"),
+                GraphNode(id="n2", source_id="doc1"),
+            ],
+            edges=[GraphEdge(source="n1", target="n2", source_id="")],
+        )
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    codes = [i.code for i in report.critical_issues]
+    assert "GRAPH_EDGE_WITHOUT_PROVENANCE" in codes
+
+
+def test_audit_missing_vector_chunk():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "processed"}},
+        kv_store_text_chunks={"chunk1": {"full_doc_id": "doc1"}},
+        vdb_chunks={},
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    codes = [i.code for i in report.critical_issues]
+    assert "VECTOR_CHUNK_MISSING" in codes
+
+
+def test_audit_kv_vector_chunk_mismatch():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "processed"}},
+        kv_store_text_chunks={"chunk1": {"full_doc_id": "doc1"}},
+        vdb_chunks={"chunk1": {"metadata": {"doc_id": "doc1"}}},
+    )
+    snapshot.kv_store_text_chunks = {"other": {"full_doc_id": "doc2"}}
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    codes = [i.code for i in report.critical_issues]
+    assert "KV_VECTOR_CHUNK_MISMATCH" in codes
+
+
+def test_audit_does_not_mutate_input_snapshot():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "processed"}},
+        kv_store_text_chunks={"chunk1": {"full_doc_id": "doc1"}},
+        vdb_chunks={"chunk1": {"metadata": {"doc_id": "doc1"}}},
+        graph=GraphMLGraph(
+            nodes=[GraphNode(id="n1", entity_type="Server", source_id="doc1")],
+            edges=[GraphEdge(source="n1", target="n2", source_id="doc1")],
+        ),
+    )
+    original = snapshot.model_copy(deep=True)
+
+    run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server"},
+    )
+
+    assert snapshot == original
 
 
 def test_json_kv_files_are_loaded(tmp_path):
