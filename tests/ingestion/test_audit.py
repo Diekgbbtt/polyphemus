@@ -445,3 +445,186 @@ def test_malformed_graphml_raises_storage_parse_error(tmp_path):
     (tmp_path / "graph_chunk_entity_relation.graphml").write_text("<graphml><graph>")
     with pytest.raises(StorageParseError):
         LightRAGStorageReader(tmp_path).snapshot()
+
+
+# ---------------------------------------------------------------------------
+# New tests for warnings and merge candidates
+# ---------------------------------------------------------------------------
+
+
+def test_missing_storage_file_creates_warning():
+    snapshot = LightRAGStorageSnapshot(missing_files=["kv_store_doc_status.json"])
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    assert any(i.code == "MISSING_STORAGE_FILE" for i in report.warnings)
+
+
+def test_successful_doc_with_explicit_zero_chunks_warning():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "processed", "chunks_count": 0}},
+        kv_store_text_chunks={},
+        vdb_chunks={},
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    assert any(i.code == "DOCUMENT_EXPLICIT_ZERO_CHUNKS" for i in report.warnings)
+
+
+def test_ontology_divergence_warning():
+    snapshot = LightRAGStorageSnapshot()
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types=set(),
+    )
+    assert any(i.code == "ONTOLOGY_DIVERGENCE" for i in report.warnings)
+
+
+def test_warnings_do_not_block_successful_audit():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "processed"}},
+        kv_store_text_chunks={"chunk1": {"full_doc_id": "doc1"}},
+        vdb_chunks={"chunk1": {"metadata": {"doc_id": "doc1"}}},
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="n1", entity_type="Server", source_id="doc1"),
+                GraphNode(id="n2", entity_type="Client", source_id="doc1"),
+            ],
+            edges=[GraphEdge(source="n1", target="n2", source_id="doc1")],
+        ),
+        missing_files=["vdb_relationships.json"],
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server", "Client"},
+    )
+    assert has_critical_issues(report) is False
+    assert any(i.code == "MISSING_STORAGE_FILE" for i in report.warnings)
+    assert any(i.code == "ONTOLOGY_DIVERGENCE" for i in report.warnings)
+
+
+def test_exact_duplicate_entities_create_merge_candidates():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="n1", entity_type="Server", source_id="doc1",
+                          description="Apache server", keywords="apache"),
+                GraphNode(id="n2", entity_type="Server", source_id="doc1",
+                          description="Apache server", keywords="apache"),
+            ]
+        )
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server"},
+    )
+    entity_candidates = [
+        c for c in report.merge_candidates if c["candidate_type"] == "entity_duplicate"
+    ]
+    assert len(entity_candidates) == 1
+    assert entity_candidates[0]["node_ids"] == ["n1", "n2"]
+
+
+def test_exact_duplicate_relations_create_merge_candidates():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="n1", entity_type="Server", source_id="doc1",
+                          description="Apache server", keywords="apache"),
+                GraphNode(id="n2", entity_type="Client", source_id="doc1",
+                          description="Browser client", keywords="browser"),
+            ],
+            edges=[
+                GraphEdge(source="n1", target="n2", source_id="doc1",
+                          description="serves", keywords="http"),
+                GraphEdge(source="n1", target="n2", source_id="doc1",
+                          description="serves", keywords="http"),
+            ],
+        )
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server", "Client"},
+    )
+    rel_candidates = [
+        c for c in report.merge_candidates if c["candidate_type"] == "relation_duplicate"
+    ]
+    assert len(rel_candidates) == 1
+    assert rel_candidates[0]["edges"] == [
+        {"source": "n1", "target": "n2"},
+        {"source": "n1", "target": "n2"},
+    ]
+
+
+def test_non_exact_candidates_not_reported():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="n1", entity_type="Server", source_id="doc1",
+                          description="Apache server", keywords="apache"),
+                GraphNode(id="n2", entity_type="Server", source_id="doc1",
+                          description="Nginx server", keywords="nginx"),
+            ]
+        )
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server"},
+    )
+    assert all(
+        c["candidate_type"] != "entity_duplicate" for c in report.merge_candidates
+    )
+
+
+def test_audit_execution_has_no_side_effects_on_warnings_and_merge_candidates():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "processed"}},
+        kv_store_text_chunks={"chunk1": {"full_doc_id": "doc1"}},
+        vdb_chunks={"chunk1": {"metadata": {"doc_id": "doc1"}}},
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="n1", entity_type="Server", source_id="doc1",
+                          description="Apache server", keywords="apache"),
+                GraphNode(id="n2", entity_type="Server", source_id="doc1",
+                          description="Apache server", keywords="apache"),
+            ],
+            edges=[GraphEdge(source="n1", target="n2", source_id="doc1",
+                             description="serves", keywords="http")],
+        ),
+        missing_files=["vdb_chunks.json"],
+    )
+    original = snapshot.model_copy(deep=True)
+
+    run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server"},
+    )
+
+    assert snapshot == original

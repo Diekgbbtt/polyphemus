@@ -7,6 +7,8 @@ from typing import Any, Collection, Literal
 
 from pydantic import BaseModel, Field
 
+from agent.lightrag.ontology import ENTITY_TYPES
+
 
 class AuditIssue(BaseModel):
     code: str
@@ -198,6 +200,20 @@ class LightRAGStorageReader:
 
 _SUCCESSFUL_TERMINAL_STATUSES = frozenset({"processed", "completed", "done"})
 
+PREVIOUSLY_AGREED_ENTITY_TYPES = frozenset(
+    {
+        "PreconditionEnvironment",
+        "TechnologyStack",
+        "DefensiveControl",
+        "VulnerabilityClass",
+        "AttackGoal",
+        "AttackerCapability",
+        "AttackTechnique",
+        "PayloadPattern",
+        "Artifact",
+    }
+)
+
 
 def _chunk_full_doc_id(chunk_data: Any) -> str | None:
     if isinstance(chunk_data, dict):
@@ -213,6 +229,47 @@ def _vdb_chunk_doc_id(chunk_data: Any) -> str | None:
     return None
 
 
+def _extract_chunk_count(record: Any) -> int | None:
+    if not isinstance(record, dict):
+        return None
+    for key in ("chunks_count", "chunk_count", "chunks", "num_chunks", "total_chunks"):
+        val = record.get(key)
+        if val is not None:
+            try:
+                return int(val)
+            except (TypeError, ValueError):
+                return None
+    return None
+
+
+def _norm_text(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
+def _norm_identifier(value: str) -> str:
+    return " ".join(value.strip().split())
+
+
+def _entity_identity(node: GraphNode) -> tuple[str, ...]:
+    return (
+        _norm_text(node.entity_type),
+        _norm_identifier(node.source_id),
+        _norm_identifier(node.file_path),
+        _norm_text(node.description),
+        _norm_text(node.keywords),
+    )
+
+
+def _relation_identity(edge: GraphEdge) -> tuple[str, ...]:
+    return (
+        _norm_identifier(edge.source),
+        _norm_identifier(edge.target),
+        _norm_identifier(edge.source_id),
+        _norm_text(edge.description),
+        _norm_text(edge.keywords),
+    )
+
+
 def run_post_ingestion_audit(
     *,
     job_id: str,
@@ -223,6 +280,8 @@ def run_post_ingestion_audit(
 ) -> AuditReport:
     """Run the critical non‑destructive post‑ingestion audit checks."""
     issues: list[AuditIssue] = []
+    warnings: list[AuditIssue] = []
+    merge_candidates: list[dict[str, Any]] = []
 
     def add_issue(code: str, message: str, evidence: dict[str, Any]) -> None:
         issues.append(
@@ -231,6 +290,37 @@ def run_post_ingestion_audit(
                 message=message,
                 severity="critical",
                 evidence=evidence,
+            )
+        )
+
+    # Missing storage file warnings (always relevant)
+    for fname in storage_snapshot.missing_files:
+        warnings.append(
+            AuditIssue(
+                code="MISSING_STORAGE_FILE",
+                message=f"Missing storage file: {fname}",
+                severity="warning",
+                evidence={"filename": fname},
+            )
+        )
+
+    # Ontology divergence warning (independent of any audited document)
+    current_types = set(ENTITY_TYPES)
+    previous_types = set(PREVIOUSLY_AGREED_ENTITY_TYPES)
+    added_types = sorted(current_types - previous_types)
+    removed_types = sorted(previous_types - current_types)
+    if added_types or removed_types:
+        warnings.append(
+            AuditIssue(
+                code="ONTOLOGY_DIVERGENCE",
+                message="Configured LightRAG ontology diverges from the previously agreed ontology.",
+                severity="warning",
+                evidence={
+                    "current_ontology_types": sorted(current_types),
+                    "previously_agreed_types": sorted(previous_types),
+                    "added": added_types,
+                    "removed": removed_types,
+                },
             )
         )
 
@@ -265,6 +355,22 @@ def run_post_ingestion_audit(
                     "DOCUMENT_STATUS_FAILED",
                     f"Document {document_id!r} is not in a successful terminal state (status={status!r}).",
                     {"document_id": document_id, "status": status},
+                )
+
+            # Warning when a successful terminal status explicitly reports zero chunks
+            chunk_count = _extract_chunk_count(status_record)
+            if (
+                status_str in _SUCCESSFUL_TERMINAL_STATUSES
+                and chunk_count is not None
+                and chunk_count == 0
+            ):
+                warnings.append(
+                    AuditIssue(
+                        code="DOCUMENT_EXPLICIT_ZERO_CHUNKS",
+                        message=f"Successful document {document_id!r} explicitly reports zero chunks.",
+                        severity="warning",
+                        evidence={"document_id": document_id, "chunk_count": 0},
+                    )
                 )
 
         # Chunk linkage (only when the document actually exists and is successful)
@@ -353,11 +459,56 @@ def run_post_ingestion_audit(
                 {"edge": edge_label},
             )
 
+    # Non‑destructive merge candidates
+    entity_groups: dict[tuple[str, ...], list[str]] = {}
+    for node in storage_snapshot.graph.nodes:
+        key = _entity_identity(node)
+        entity_groups.setdefault(key, []).append(node.id)
+
+    for key, ids in entity_groups.items():
+        if len(ids) > 1:
+            merge_candidates.append(
+                {
+                    "candidate_type": "entity_duplicate",
+                    "node_ids": sorted(ids),
+                    "identity": {
+                        "entity_type": key[0],
+                        "source_id": key[1],
+                        "file_path": key[2],
+                        "description": key[3],
+                        "keywords": key[4],
+                    },
+                }
+            )
+
+    relation_groups: dict[tuple[str, ...], list[dict[str, str]]] = {}
+    for edge in storage_snapshot.graph.edges:
+        key = _relation_identity(edge)
+        relation_groups.setdefault(key, []).append(
+            {"source": edge.source, "target": edge.target}
+        )
+
+    for key, edges_list in relation_groups.items():
+        if len(edges_list) > 1:
+            merge_candidates.append(
+                {
+                    "candidate_type": "relation_duplicate",
+                    "edges": sorted(edges_list, key=lambda e: (e["source"], e["target"])),
+                    "identity": {
+                        "source": key[0],
+                        "target": key[1],
+                        "source_id": key[2],
+                        "description": key[3],
+                        "keywords": key[4],
+                    },
+                }
+            )
+
     return AuditReport(
         job_id=job_id,
         source_key=source_key,
         critical_issues=issues,
-        warnings=[],
-        merge_candidates=[],
+        warnings=warnings,
+        merge_candidates=merge_candidates,
         checked_at="",
     )
