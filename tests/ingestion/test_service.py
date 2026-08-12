@@ -854,7 +854,7 @@ def test_update_critical_audit_delete_rejected_document_failure(tmp_path, monkey
     assert job_statuses[-1][1] == SourceStatus.FAILED_AUDIT
     assert job_statuses[-1][2] == report.model_dump(mode="json")
     assert job_statuses[-1][3]["code"] == "UPDATE_ROLLBACK_FAILED"
-    assert adapter.deleted == ["doc-old"]
+    assert adapter.deleted == ["doc-old", "doc-new"]
     assert adapter.ingested == [new_md]
     assert audit_calls[0]["lightrag_document_id"] == "doc-new"
 
