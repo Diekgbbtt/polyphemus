@@ -159,6 +159,30 @@ PROVIDERS: dict[str, str] = {
 # the zen catalog (bare ids), not the provider-prefixed app-style ids.
 _ZEN_FAMILY = frozenset({"opencode", "zen"})
 
+# --- #107 (D4 item 1): the LLM_GATEWAY_URL base_url resolution seam ------------
+#
+# Two LLM-facing paths live, selected by a single env var (ADR D3 + D5):
+#   UNSET -> direct per-provider mode (today's behaviour, UNCHANGED): base_url is
+#            `PROVIDERS[provider]` and the zen-family id strip runs client-side.
+#   SET   -> gateway mode: base_url is the gateway's (internal port 4000), the
+#            zen-family id strip does NOT run client-side (the gateway's mapping
+#            layer owns id translation, D5), and the client sends today's
+#            `provider:model` string verbatim. The gateway is a hop with
+#            `num_retries=0`, never a retry layer (D3), so the client's retry axis
+#            and its Langfuse callbacks at construction are untouched in both modes.
+def gateway_base_url() -> str | None:
+    """The LLM gateway base URL when `LLM_GATEWAY_URL` is set, else None.
+
+    An unset or blank value selects direct per-provider mode - the same
+    unset-equivalent convention `request_timeout()` and `attempt_timeouts()` use
+    for their overrides. A set value is returned VERBATIM (no trailing-slash
+    normalisation), so an operator misconfiguration surfaces at the gateway
+    instead of being silently masked here."""
+    raw = os.environ.get("LLM_GATEWAY_URL")
+    if raw is None or raw.strip() == "":
+        return None
+    return raw
+
 # --- The role record (#93/#94) ------------------------------------------------
 #
 # A role is three INDEPENDENT properties (design: llm-role-architecture-agent-prompt.md §2):
@@ -286,13 +310,21 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
                      thinking: "ThinkingLevel" = "off") -> ChatOpenAI:
     if provider not in PROVIDERS:
         raise LLMConfigError(f"unknown provider {provider!r}; known: {sorted(PROVIDERS)}")
-    if provider in _ZEN_FAMILY:
-        # The zen gateway speaks its own catalog ids (bare, no provider prefix -
-        # e.g. `deepseek-v4-flash-free`), while the operator configures the
-        # opencode-app style ids (`deepseek/deepseek-v4-flash-free`). The gateway
-        # rejects the prefixed form, so strip the prefix here. The zen catalog
-        # contains no `/`, so the last segment is always the id.
-        model = model.rsplit("/", 1)[-1]
+    # #107 (D4 item 1): the gateway base_url resolution seam. Direct mode (UNSET)
+    # keeps today's behaviour exactly - `PROVIDERS[provider]` base_url and the
+    # client-side zen-family id strip. Gateway mode (SET) routes the client at the
+    # gateway; the id strip is NOT run client-side (the gateway's mapping layer
+    # owns id translation, D5) and the `provider:model` string goes verbatim.
+    base_url = gateway_base_url()
+    if base_url is None:
+        base_url = PROVIDERS[provider]
+        if provider in _ZEN_FAMILY:
+            # The zen gateway speaks its own catalog ids (bare, no provider prefix -
+            # e.g. `deepseek-v4-flash-free`), while the operator configures the
+            # opencode-app style ids (`deepseek/deepseek-v4-flash-free`). The gateway
+            # rejects the prefixed form, so strip the prefix here. The zen catalog
+            # contains no `/`, so the last segment is always the id.
+            model = model.rsplit("/", 1)[-1]
     api_key = os.environ.get(_key_env(provider))
     if not api_key:
         raise LLMConfigError(f"missing {_key_env(provider)} for provider {provider!r}")
@@ -320,7 +352,7 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     if thinking != "off":
         extra["reasoning_effort"] = thinking
     return ChatOpenAI(model=model, api_key=api_key,
-                      base_url=PROVIDERS[provider], temperature=temperature,
+                      base_url=base_url, temperature=temperature,
                       timeout=timeout, max_retries=retries,
                       callbacks=get_langfuse_callbacks(), **extra)
 

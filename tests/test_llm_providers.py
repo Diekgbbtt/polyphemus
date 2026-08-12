@@ -102,6 +102,10 @@ def test_hunting_roles_are_not_validated_at_app_boot(monkeypatch):
     assert "HUNTING" in str(e.value)
 
 def test_build_chat_model_sets_base_url_and_key(monkeypatch):
+    """Direct mode: the base_url is `PROVIDERS[provider]`. `LLM_GATEWAY_URL` is
+    pinned UNSET so a gateway-configured shell cannot silently flip this test
+    into gateway mode (#107) - these pre-seam assertions are direct-mode ones."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
     assert str(m.openai_api_base) == P.PROVIDERS["swissai"]
@@ -118,6 +122,10 @@ def test_resolve_role_parses_the_qwen_swissai_swap(monkeypatch):
 
 
 def test_build_chat_model_accepts_the_qwen_swissai_model_id(monkeypatch):
+    """Direct-mode pin (as in the base_url test above): the qwen id passes
+    VERBATIM to the direct provider, with the strip a no-op for a non-zen
+    provider."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     m = P.build_chat_model("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
     assert m.model_name == "Qwen/Qwen3.5-397B-A17B-ETar"
@@ -191,6 +199,10 @@ def test_a_hung_provider_fails_within_the_timeout(monkeypatch):
     port = listener.getsockname()[1]
     accepted: list[socket.socket] = []
     stop = threading.Event()
+
+    # Direct-mode pin (#107): the hang scenario is a DIRECT provider that accepts
+    # and never answers; a gateway-configured shell must not redirect this probe.
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
 
     def accept_and_stall():
         listener.settimeout(0.5)
@@ -332,3 +344,194 @@ def test_chat_model_for_carries_the_roles_thinking_baseline(monkeypatch):
     assert chat_model_for("hunting_hunter").reasoning_effort == "high"
     assert chat_model_for("assigner").reasoning_effort == "medium"
     assert getattr(chat_model_for("bootstrapper"), "reasoning_effort", None) is None
+
+
+# --- #107 (D4 item 1): the LLM_GATEWAY_URL base_url resolution seam ------------
+#
+# Two LLM-facing paths live, selected by a single env var (ADR D3 + D5):
+#   LLM_GATEWAY_URL UNSET -> direct per-provider mode (today's behaviour, unchanged)
+#   LLM_GATEWAY_URL SET   -> route the client at the gateway (internal port 4000);
+#                            the zen-family id strip does NOT run client-side (the
+#                            gateway's mapping layer owns id translation).
+# In BOTH modes the client sends today's `provider:model` string verbatim, keeps
+# `max_retries=0` under the escalating wrapper (#73 - the client owns the SINGLE
+# retry layer; the gateway is a hop with `num_retries=0`, never nested), and
+# attaches Langfuse callbacks at construction (D8 passthrough).
+# `validate_llm_config` keeps requiring `API_KEY_<PROVIDER>` in both modes
+# (operator decision: the per-provider key stays the auth surface; the gateway
+# trusts the authenticated caller and routes upstream with its own key custody).
+
+def test_gateway_unset_direct_mode_uses_provider_base_url_and_strips_zen_id(monkeypatch):
+    """UNSET = today's direct mode: base_url is PROVIDERS[provider], and the zen
+    family id strip RUNS client-side (the opencode/zen gateway speaks bare catalog
+    ids, so the `provider/` prefix is stripped before the request)."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_OPENCODE", "tok")
+    m = P.build_chat_model("opencode", "deepseek/deepseek-v4-flash-free")
+    assert str(m.openai_api_base) == P.PROVIDERS["opencode"]
+    assert m.model_name == "deepseek-v4-flash-free"  # the strip ran client-side
+
+
+def test_gateway_unset_direct_mode_keeps_non_zen_id_verbatim(monkeypatch):
+    """UNSET + a non-zen provider: the strip is a no-op (the id has no provider
+    prefix to remove). Pin both the base_url and the verbatim model name."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
+    assert str(m.openai_api_base) == P.PROVIDERS["swissai"]
+    assert m.model_name == "Qwen/Qwen3.5-397B-A17B-ETar"
+
+
+def test_gateway_set_routes_at_the_gateway_url(monkeypatch):
+    """SET = gateway mode: base_url points at the env var's URL (internal port
+    4000), NOT at PROVIDERS[provider]. The gateway then routes upstream."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    monkeypatch.setenv("API_KEY_OPENAI", "tok")
+    m = P.build_chat_model("openai", "gpt-4o")
+    assert str(m.openai_api_base) == "http://gateway:4000"
+    assert str(m.openai_api_base) != P.PROVIDERS["openai"]
+
+
+def test_gateway_set_does_not_strip_zen_id_client_side(monkeypatch):
+    """SET + a zen-family provider: the id strip is owned by the gateway's mapping
+    layer in gateway mode (ADR D5), NOT run client-side. The client sends today's
+    `provider:model` string VERBATIM - so the gateway receives the prefixed form and
+    performs the translation itself."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    monkeypatch.setenv("API_KEY_OPENCODE", "tok")
+    m = P.build_chat_model("opencode", "deepseek/deepseek-v4-flash-free")
+    assert m.model_name == "deepseek/deepseek-v4-flash-free"  # VERBATIM, unstripped
+    assert str(m.openai_api_base) == "http://gateway:4000"
+
+
+def test_gateway_set_sends_provider_model_verbatim_across_providers(monkeypatch):
+    """SET mode contract: the client sends the operator-configured
+    `provider:model` string verbatim to the gateway in EVERY case (openai,
+    openrouter, swissai) - the gateway's mapping layer is the sole id translator."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    monkeypatch.setenv("API_KEY_OPENAI", "tok")
+    monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    assert P.build_chat_model("openai", "gpt-4o").model_name == "gpt-4o"
+    assert (P.build_chat_model("openrouter", "anthropic/claude-3.5-sonnet").model_name
+            == "anthropic/claude-3.5-sonnet")
+    assert (P.build_chat_model("swissai", "Qwen/Qwen3.5-397B-A17B-ETar").model_name
+            == "Qwen/Qwen3.5-397B-A17B-ETar")
+
+
+def test_gateway_set_sends_per_provider_api_key_to_the_gateway(monkeypatch):
+    """Operator decision: API_KEY_<PROVIDER> stays required in BOTH modes; in
+    gateway mode the per-provider key is the auth surface the client presents to
+    the gateway (the gateway holds the upstream keys itself, ADR D3)."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    monkeypatch.setenv("API_KEY_OPENAI", "sk-client-to-gateway")
+    m = P.build_chat_model("openai", "gpt-4o")
+    assert m.openai_api_key.get_secret_value() == "sk-client-to-gateway"
+
+
+def test_gateway_unset_and_set_keep_max_retries_zero_for_escalating_wrapper(monkeypatch):
+    """#73 non-regression: the escalating-budget wrapper passes `max_retries=0`
+    because it OWNS the retry; the client must not silently re-multiply the budget.
+    This holds in BOTH modes - the gateway is a hop with its own `num_retries=0`,
+    never a nested retry layer (ADR D3)."""
+    monkeypatch.setenv("API_KEY_OPENAI", "tok")
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    assert P.build_chat_model("openai", "x", max_retries=0).root_client.max_retries == 0
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    assert P.build_chat_model("swissai", "x", max_retries=0).root_client.max_retries == 0
+
+
+def test_gateway_default_max_retries_unchanged_in_both_modes(monkeypatch):
+    """The DEFAULT `max_retries` (the agent per-turn retry, MAX_RETRIES=1) is
+    unchanged in both modes - the gateway seam touches base_url + the zen-strip,
+    never the retry axis."""
+    monkeypatch.setenv("API_KEY_OPENAI", "tok")
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    assert P.build_chat_model("openai", "x").root_client.max_retries == P.MAX_RETRIES == 1
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    assert P.build_chat_model("openai", "x").root_client.max_retries == P.MAX_RETRIES == 1
+
+
+def test_gateway_set_keeps_langfuse_callbacks_at_construction(monkeypatch):
+    """D8 passthrough: Langfuse callbacks are attached at construction in BOTH
+    modes (no observability regression). The gateway must pass them through.
+    `providers.py` imports `get_langfuse_callbacks` lazily INSIDE
+    `build_chat_model`, so patching the observability module's function observes
+    the real construction path - it must be invoked once per model built, in
+    direct mode AND in gateway mode."""
+    monkeypatch.setenv("API_KEY_OPENAI", "tok")
+    seen_calls = []
+    import polymerhus.app.observability as obs
+
+    def fake_get():
+        seen_calls.append(True)
+        return []
+
+    monkeypatch.setattr(obs, "get_langfuse_callbacks", fake_get)
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    P.build_chat_model("openai", "x")
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    P.build_chat_model("openai", "x")
+    assert len(seen_calls) == 2, "Langfuse callbacks must be fetched at construction in BOTH modes"
+
+
+def test_gateway_set_unknown_provider_still_raises(monkeypatch):
+    """The known-provider check is invariant: gateway mode does NOT relax the
+    provider gate (an unknown provider is a config error in both modes), because
+    the client's `provider:model` contract is what the gateway maps to upstream -
+    a provider the client does not know cannot be sent verbatim."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    with pytest.raises(P.LLMConfigError):
+        P.build_chat_model("bogus", "x")
+
+
+def test_validate_llm_config_still_requires_per_provider_key_in_gateway_mode(monkeypatch):
+    """Operator decision (this ticket's open question, resolved): API_KEY_<PROVIDER>
+    stays REQUIRED in BOTH modes - the per-provider key is the auth surface the
+    client presents to the gateway. So `validate_llm_config` is UNCHANGED; setting
+    LLM_GATEWAY_URL does not relax the boot-time key check."""
+    for r in P.ROLES:
+        monkeypatch.setenv(r.model_key, "openrouter:some/model")
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    monkeypatch.delenv("API_KEY_OPENROUTER", raising=False)
+    with pytest.raises(P.LLMConfigError) as e:
+        P.validate_llm_config()
+    assert "OPENROUTER" in str(e.value)
+
+
+def test_validate_llm_config_passes_in_gateway_mode_when_per_provider_key_present(monkeypatch):
+    """Gateway mode is transparent to validate_llm_config: with the per-provider
+    key present and a known provider, boot validation passes - the same green path
+    as direct mode. The seam does not alter the boot-time role->provider->key
+    chain."""
+    for r in P.ROLES:
+        monkeypatch.setenv(r.model_key, "swissai:meta-llama/Llama-3.3-70B-Instruct")
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    P.validate_llm_config()  # no raise
+
+
+def test_gateway_url_with_trailing_slash_is_sent_as_configured(monkeypatch):
+    """The seam sends the env var's URL VERBATIM as the base_url - it does not
+    silently normalise a trailing slash away (a normalisation could mask an
+    operator misconfiguration that the gateway then rejects, which is the
+    hard-to-spot failure the conservative-unknown principle names)."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000/")
+    monkeypatch.setenv("API_KEY_OPENAI", "tok")
+    m = P.build_chat_model("openai", "gpt-4o")
+    assert str(m.openai_api_base) == "http://gateway:4000/"
+
+
+def test_gateway_base_url_is_none_when_unset_or_blank(monkeypatch):
+    """The mode selector: an unset, empty, or whitespace-only `LLM_GATEWAY_URL`
+    all select DIRECT mode (None) - the same unset-equivalent convention the
+    timeout overrides use - and a set value is returned verbatim."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    assert P.gateway_base_url() is None
+    monkeypatch.setenv("LLM_GATEWAY_URL", "")
+    assert P.gateway_base_url() is None
+    monkeypatch.setenv("LLM_GATEWAY_URL", "   ")
+    assert P.gateway_base_url() is None
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    assert P.gateway_base_url() == "http://gateway:4000"
