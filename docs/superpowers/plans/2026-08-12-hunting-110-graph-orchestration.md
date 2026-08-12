@@ -122,11 +122,11 @@
 - `flush_hunting_checkpointer()` - the tear-down flush hook (in-memory checkpointer index -> pooled PG saver), fail-open.
 - `HuntStore` default root = the FIXED path `src/polymerhus/attack/hunting/data/hunts/` (no env var; keep the explicit-root constructor for tests).
 - The `runtime.schedule` / `cancel_run` marshalling harness: lazy `import polymerhus.app.runtime`, degrade to a local in-process fallback + warning when absent.
-- [ ] **Step 1:** Write the test: `start_hunting` writes `running` then `complete`; a failing orchestration still writes a terminal status (fail-open, no raise); `stop_hunting` writes `stopped`; `flush_hunting_checkpointer` is a no-op/safe when PG is absent; store default path is the fixed path. Use a fake runtime + fake pg accessors.
-- [ ] **Step 2:** Run -> FAIL.
-- [ ] **Step 3:** Implement.
-- [ ] **Step 4:** Run -> PASS.
-- [ ] **Step 5:** `git commit -m "feat(hunting): start/stop lifecycle, fixed store path, tear-down flush (#110)"`.
+- [x] **Step 1:** Write the test: `start_hunting` writes `running` then `complete`; a failing orchestration still writes a terminal status (fail-open, no raise); `stop_hunting` writes `stopped`; `flush_hunting_checkpointer` is a no-op/safe when PG is absent; store default path is the fixed path. Use a fake runtime + fake pg accessors.
+- [x] **Step 2:** Run -> FAIL.
+- [x] **Step 3:** Implement.
+- [x] **Step 4:** Run -> PASS.
+- [x] **Step 5:** `git commit -m "feat(hunting): start/stop lifecycle, fixed store path, tear-down flush (#110)"`.
 
 ---
 

@@ -27,6 +27,11 @@ import yaml
 
 logger = logging.getLogger(__name__)
 
+# The FIXED store root (seam 3.4, #110): the append-only hunt store lives at
+# `src/polymerhus/attack/hunting/data/hunts/` - no env var. The explicit-root
+# constructor is kept for the tests/the module tests' temp stores.
+HUNT_STORE_ROOT = Path(__file__).resolve().parent / "data" / "hunts"
+
 # Record kinds written by the orchestrator (spec O12, D67-13):
 #   run         - one per orchestration pass
 #   config      - one per dispatched direction (D3 HuntConfig)
@@ -53,8 +58,10 @@ KINDS = (
 class HuntStore:
     """Append-only markdown hunt-store stub keyed by `(run_id, kind)`."""
 
-    def __init__(self, root_dir: str | Path):
-        self._root = Path(root_dir)
+    def __init__(self, root_dir: str | Path | None = None):
+        """The append-only store rooted under `root_dir` (default: the FIXED
+        seam root `src/polymerhus/attack/hunting/data/hunts/`)."""
+        self._root = Path(root_dir) if root_dir is not None else HUNT_STORE_ROOT
 
     def _file(self, run_id: str, kind: str) -> Path:
         if kind not in KINDS:
