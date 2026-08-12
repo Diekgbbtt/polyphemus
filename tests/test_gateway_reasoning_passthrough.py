@@ -12,10 +12,10 @@ openai-compatible upstream. litellm is NOT a dependency of the dev venv
 (gateway-only, ADR D10); this file therefore runs under the dedicated
 verification venv `~/.cache/polymerhus-gateway-verify-venv` which carries
 the exact requirements-gateway.txt pin set (`litellm[proxy]==1.96.0`,
-`fastapi==0.140.2`, `httpx==0.28.1`). Reproduce with:
+`fastapi==0.140.6`, `httpx==0.28.1`). Reproduce with:
 
     ~/.cache/polymerhus-gateway-verify-venv/bin/pip install \
-        "litellm[proxy]==1.96.0" fastapi==0.140.2 httpx==0.28.1 pytest
+        "litellm[proxy]==1.96.0" fastapi==0.140.6 httpx==0.28.1 pytest
 
     PYTHONPATH=src ~/.cache/polymerhus-gateway-verify-venv/bin/python -m pytest \
         tests/test_gateway_reasoning_passthrough.py -q
@@ -297,6 +297,10 @@ def test_replayed_reasoning_details_reaches_upstream_unchanged():
     received = _StubUpstreamHandler.bodies[-1]
     assert received["messages"][1] == replay_message
     assert received["messages"][1]["reasoning_details"] == PREVIOUS_DETAILS
+    message = response.json()["choices"][0]["message"]
+    assert message["content"] == ANSWER_CONTENT
+    assert message["role"] == "assistant"
+    assert _client_side_reasoning(message) == REASONING_DETAILS_SENTINEL
 
 
 def test_replay_then_next_turn_keeps_flowing():
