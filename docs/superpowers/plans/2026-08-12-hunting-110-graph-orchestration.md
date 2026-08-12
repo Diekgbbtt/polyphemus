@@ -139,11 +139,11 @@
 - `POST /projects/{project_id}/hunting/{hunting_run_id}/stop` - hard-cancel, return the stopping acknowledgement.
 - `GET /projects/{project_id}/hunting/{hunting_run_id}` - the run's status row (404 when absent).
 - Additive block AFTER the runtime-independence PR lands; for now, guards on the harness availability with a fail-open 503 "hunting runtime unavailable" when `app.runtime` is absent (so the endpoint set is live and testable now, wired when runtime lands).
-- [ ] **Step 1:** Write the test (FastAPI TestClient, mocked harness/runtime): launch returns an id; stop acknowledges; status returns the row; unknown id -> 404; runtime absent -> 503.
-- [ ] **Step 2:** Run -> FAIL.
-- [ ] **Step 3:** Implement.
-- [ ] **Step 4:** Run -> PASS.
-- [ ] **Step 5:** `git commit -m "feat(hunting): the three seam endpoints (launch/stop/status) (#110)"`.
+- [x] **Step 1:** Write the test (FastAPI TestClient, mocked harness/runtime): launch returns an id; stop acknowledges; status returns the row; unknown id -> 404; runtime absent -> 503.
+- [x] **Step 2:** Run -> FAIL.
+- [x] **Step 3:** Implement.
+- [x] **Step 4:** Run -> PASS.
+- [x] **Step 5:** `git commit -m "feat(hunting): the three seam endpoints (launch/stop/status) (#110)"`.
 
 ---
 

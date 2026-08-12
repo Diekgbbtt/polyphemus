@@ -253,3 +253,93 @@ def get_recon_status(project_id: str, run_id: str) -> dict:
         return repository.recon_status(run_id)
     except RunNotFound:
         raise HTTPException(status_code=404, detail="unknown run")
+
+
+# --- #110: the three hunting seam endpoints (seam contract 3.3) -----------------
+
+class _HuntingCandidateIn(BaseModel):
+    """The wire shape of one candidate: a `(unit_id, fault_class)` pair with the
+    match verdict + applicability witnesses. The orchestrator's normalize stage
+    still drops malformed / de-duplicates downstream (O7/O10)."""
+    unit_id: str
+    fault_class: str
+    verdict: str = "applies"
+    deterministic_witness: str | None = None
+    llm_witness: str | None = None
+
+
+class HuntingLaunch(BaseModel):
+    """The hunting launch body (#110): the optional initial candidate batch. An
+    omitted/empty batch launches an empty pass (O1) to be fed later."""
+    candidates: list[_HuntingCandidateIn] = []
+
+
+@router.post("/projects/{project_id}/hunting", status_code=201)
+async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
+    """Launch a hunting run (seam 3.3): open the `hunting_runs` row `running`,
+    schedule `start_hunting` onto the hunting loop via the marshalling harness,
+    return `{hunting_run_id}`. The row opens HERE so the id exists the instant
+    the POST returns and a follow-up GET never 404-races.
+
+    Fail-closed on the control plane: while `polymerhus.app.runtime` has not
+    landed the launch is a 503, NOT an in-process run - a real orchestration
+    pass (LLM turns) must never ride the uvicorn request loop."""
+    from polymerhus.app.clients import pg
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        DeliveredCandidate,
+        Witness,
+    )
+
+    if not await asyncio.to_thread(pg.project_exists, project_id):
+        raise HTTPException(status_code=404, detail="unknown project")
+    if not hunting_runtime.hunting_control_plane_available():
+        raise HTTPException(
+            status_code=503,
+            detail="hunting control-plane runtime has not landed",
+        )
+
+    candidates = [DeliveredCandidate(
+        unit_id=c.unit_id,
+        fault_class=c.fault_class,
+        applies_witnesses=Witness(
+            deterministic=c.deterministic_witness, llm=c.llm_witness,
+        ),
+        match_verdict=c.verdict,
+    ) for c in body.candidates]
+
+    hunting_run_id = await asyncio.to_thread(pg.create_hunting_run, project_id)
+    hunting_runtime.schedule_hunting(
+        hunting_runtime.start_hunting(
+            project_id, run_id=hunting_run_id, candidates=candidates,
+        ),
+        name=f"hunting:{hunting_run_id}",
+    )
+    return {"hunting_run_id": hunting_run_id}
+
+
+@router.post("/projects/{project_id}/hunting/{hunting_run_id}/stop")
+async def stop_hunting_run(project_id: str, hunting_run_id: str) -> dict:
+    """Phase-1 hard stop (seam 3.3): cancel the run's task on the hunting loop,
+    reap the run's actor, persist `stopped`. The append-only store preserves the
+    partial trail. A run that was never opened 404s."""
+    from polymerhus.app.clients import pg
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+
+    row = await asyncio.to_thread(pg.get_hunting_run, hunting_run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no hunting run for that hunting_run_id")
+
+    await hunting_runtime.stop_hunting(hunting_run_id)
+    return {"hunting_run_id": hunting_run_id, "stopping": True}
+
+
+@router.get("/projects/{project_id}/hunting/{hunting_run_id}")
+async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
+    """The hunting run's status row (seam 3.3): `running` -> terminal."""
+    from polymerhus.app.clients import pg
+
+    row = await asyncio.to_thread(pg.get_hunting_run, hunting_run_id)
+    if row is None:
+        raise HTTPException(status_code=404, detail="no hunting run for that hunting_run_id")
+    return row
