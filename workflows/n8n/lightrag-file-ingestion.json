@@ -3,8 +3,15 @@
   "nodes": [
     {
       "parameters": {
+        "triggerOn": "folder",
         "path": "/data/ingestion/inbox",
-        "events": ["add"]
+        "events": ["add"],
+        "options": {
+          "awaitWriteFinish": true,
+          "ignored": "**/.*/**,**/*.tmp,**/*.part",
+          "ignoreInitial": true,
+          "depth": 0
+        }
       },
       "id": "local-file-trigger",
       "name": "Inbox File Trigger",
@@ -44,7 +51,7 @@
     {
       "parameters": {
         "method": "POST",
-        "url": "http://agent:8080/v1/ingestions",
+        "url": "http://ingestion:8080/v1/ingestions",
         "sendBody": true,
         "specifyBody": "json",
         "jsonBody": "={\"source_kind\":\"file\",\"source_uri\":\"{{ $json.path || $json.filePath }}\"}"
@@ -69,7 +76,7 @@
     {
       "parameters": {
         "method": "GET",
-        "url": "=http://agent:8080/v1/ingestions/{{ $json.job_id }}"
+        "url": "=http://ingestion:8080/v1/ingestions/{{ $json.job_id }}"
       },
       "id": "get-ingestion-status",
       "name": "GET job status",
@@ -115,25 +122,23 @@
     },
     {
       "parameters": {
-        "operation": "move",
-        "sourcePath": "=/data/ingestion/{{ $json.source_uri }}",
-        "destinationPath": "=/data/ingestion/processed/{{ $json.source_uri.split('/').slice(-1)[0] }}"
+        "executeOnce": true,
+        "command": "=mv -- \"/data/ingestion/{{ $json.source_uri }}\" \"/data/ingestion/processed/{{ $json.source_uri.split('/').slice(-1)[0] }}\""
       },
       "id": "move-processed",
       "name": "Move to processed",
-      "type": "n8n-nodes-base.readWriteFile",
+      "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [1760, -240]
     },
     {
       "parameters": {
-        "operation": "move",
-        "sourcePath": "=/data/ingestion/{{ $json.source_uri }}",
-        "destinationPath": "=/data/ingestion/failed/{{ $json.source_uri.split('/').slice(-1)[0] }}"
+        "executeOnce": true,
+        "command": "=mv -- \"/data/ingestion/{{ $json.source_uri }}\" \"/data/ingestion/failed/{{ $json.source_uri.split('/').slice(-1)[0] }}\""
       },
       "id": "move-failed",
       "name": "Move to failed",
-      "type": "n8n-nodes-base.readWriteFile",
+      "type": "n8n-nodes-base.executeCommand",
       "typeVersion": 1,
       "position": [1760, -80]
     }
