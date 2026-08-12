@@ -116,3 +116,22 @@ def test_ingestion_error_serializes_stable_code_and_safe_message():
         "message": "LightRAG did not finish before timeout",
         "stage": "INGESTING",
     }
+
+
+def test_failed_audit_is_terminal():
+    assert SourceStatus.FAILED_AUDIT.can_transition_to(SourceStatus.PROCESSED) is False
+    assert SourceStatus.FAILED_AUDIT.can_transition_to(SourceStatus.PROCESSING) is False
+    assert SourceStatus.FAILED_AUDIT.can_transition_to(SourceStatus.FAILED) is False
+    assert SourceStatus.FAILED_AUDIT.can_transition_to(SourceStatus.SKIPPED_DUPLICATE) is False
+
+
+def test_auditing_to_failed_audit_allowed():
+    assert SourceStatus.AUDITING.can_transition_to(SourceStatus.FAILED_AUDIT)
+    assert SourceStatus.AUDITING.can_transition_to(SourceStatus.PROCESSED)
+    assert SourceStatus.AUDITING.can_transition_to(SourceStatus.FAILED)
+
+
+def test_invalid_transitions_remain_rejected():
+    assert not SourceStatus.PROCESSED.can_transition_to(SourceStatus.FAILED_AUDIT)
+    assert not SourceStatus.DISCOVERED.can_transition_to(SourceStatus.PROCESSED)
+    assert not SourceStatus.SKIPPED_DUPLICATE.can_transition_to(SourceStatus.PROCESSED)

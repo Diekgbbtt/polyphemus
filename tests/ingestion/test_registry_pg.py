@@ -213,3 +213,21 @@ def test_set_ingestion_job_status_serializes_error_and_audit(monkeypatch):
     assert params[0] == "FAILED"
     assert json.loads(params[1]) == {"critical_issues": 1, "warnings": 0}
     assert json.loads(params[2])["code"] == "PARSE_FAILED"
+
+
+def test_set_ingestion_job_status_with_failed_audit_is_terminal_and_serializes_audit(monkeypatch):
+    cur = patch_connect(monkeypatch, FakeCursor())
+
+    pg.set_ingestion_job_status(
+        "11111111-1111-1111-1111-111111111111",
+        SourceStatus.FAILED_AUDIT,
+        error={"code": "FAILED_AUDIT", "message": "Audit failed", "stage": "AUDITING"},
+        audit={"critical_issues": 2, "warnings": 1},
+    )
+
+    query, params = cur.executed[0]
+    assert "UPDATE ingestion_jobs" in query
+    assert "finished_at = now()" in query
+    assert params[0] == "FAILED_AUDIT"
+    assert json.loads(params[1]) == {"critical_issues": 2, "warnings": 1}
+    assert json.loads(params[2])["code"] == "FAILED_AUDIT"

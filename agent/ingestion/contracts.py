@@ -13,6 +13,7 @@ class SourceStatus(StrEnum):
     PROCESSED = "PROCESSED"
     FAILED = "FAILED"
     SKIPPED_DUPLICATE = "SKIPPED_DUPLICATE"
+    FAILED_AUDIT = "FAILED_AUDIT"
 
     def can_transition_to(self, target: "SourceStatus") -> bool:
         return target in _ALLOWED_TRANSITIONS[self]
@@ -24,10 +25,11 @@ _ALLOWED_TRANSITIONS: dict[SourceStatus, set[SourceStatus]] = {
     SourceStatus.PROCESSING: {SourceStatus.NORMALIZED, SourceStatus.FAILED},
     SourceStatus.NORMALIZED: {SourceStatus.INGESTING, SourceStatus.FAILED},
     SourceStatus.INGESTING: {SourceStatus.AUDITING, SourceStatus.FAILED},
-    SourceStatus.AUDITING: {SourceStatus.PROCESSED, SourceStatus.FAILED},
+    SourceStatus.AUDITING: {SourceStatus.PROCESSED, SourceStatus.FAILED, SourceStatus.FAILED_AUDIT},
     SourceStatus.PROCESSED: set(),
     SourceStatus.FAILED: {SourceStatus.PROCESSING},
     SourceStatus.SKIPPED_DUPLICATE: set(),
+    SourceStatus.FAILED_AUDIT: set(),
 }
 
 

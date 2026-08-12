@@ -279,6 +279,7 @@ _TERMINAL_INGESTION_STATUSES = {
     SourceStatus.PROCESSED,
     SourceStatus.FAILED,
     SourceStatus.SKIPPED_DUPLICATE,
+    SourceStatus.FAILED_AUDIT,
 }
 
 
