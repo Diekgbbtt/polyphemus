@@ -5,7 +5,12 @@ from typing import Callable
 
 from agent.app.clients import pg
 from agent.app.config import config
-from agent.ingestion.audit import LightRAGStorageReader, run_post_ingestion_audit
+from agent.ingestion.audit import (
+    LightRAGStorageReader,
+    StorageParseError,
+    build_storage_parse_error_report,
+    run_post_ingestion_audit,
+)
 from agent.ingestion.contracts import (
     IngestionError,
     SourceChange,
@@ -174,6 +179,24 @@ class IngestionService:
             self._fail(record, job_id, exc.code, str(exc), SourceStatus.PROCESSING)
         except LightRAGAdapterError as exc:
             self._fail(record, job_id, exc.code, str(exc), SourceStatus.INGESTING)
+        except StorageParseError as exc:
+            report = build_storage_parse_error_report(
+                job_id=job_id,
+                source_key=source_key,
+                error=exc,
+            )
+            audit_payload = report.model_dump(mode="json")
+            self._set_status(
+                record,
+                job_id,
+                SourceStatus.FAILED_AUDIT,
+                audit=audit_payload,
+                error=IngestionError(
+                    code="AUDIT_FAILED",
+                    message="Post-ingestion audit encountered a storage parse error",
+                    stage=SourceStatus.AUDITING.value,
+                ).model_dump(),
+            )
 
     def _process_update(
         self,
@@ -237,6 +260,21 @@ class IngestionService:
                 self._restore_previous_after_update_failure(job_id, previous_record, exc)
                 return
             self._fail_job(job_id, exc.code, str(exc), SourceStatus.INGESTING)
+        except StorageParseError as exc:
+            report = build_storage_parse_error_report(
+                job_id=job_id,
+                source_key=previous_record.source_key,
+                error=exc,
+            )
+            self._restore_previous_after_update_failure(
+                job_id,
+                previous_record,
+                None,
+                rejected_document_id=result.document_id,
+                job_status=SourceStatus.FAILED_AUDIT,
+                audit=report.model_dump(mode="json"),
+                error_stage=SourceStatus.AUDITING,
+            )
 
     def _restore_previous_after_update_failure(
         self,

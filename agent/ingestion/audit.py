@@ -31,6 +31,34 @@ def has_critical_issues(report: AuditReport) -> bool:
     return len(report.critical_issues) > 0
 
 
+def build_storage_parse_error_report(
+    *,
+    job_id: str,
+    source_key: str,
+    error: Exception,
+) -> AuditReport:
+    """Create a complete audit report for a StorageParseError."""
+    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+    return AuditReport(
+        job_id=job_id,
+        source_key=source_key,
+        critical_issues=[
+            AuditIssue(
+                code="STORAGE_PARSE_ERROR",
+                message=f"Failed to parse LightRAG storage snapshot: {error}",
+                severity="critical",
+                evidence={
+                    "error_type": type(error).__name__,
+                    "error": str(error),
+                },
+            )
+        ],
+        warnings=[],
+        merge_candidates=[],
+        checked_at=checked_at,
+    )
+
+
 class LightRAGStorageError(RuntimeError):
     pass
 
