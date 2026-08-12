@@ -65,6 +65,22 @@ class LightRAGIngestionAdapter:
             retryable=True,
         )
 
+    def delete_document(self, document_id: str, *, delete_llm_cache: bool = True) -> dict[str, Any]:
+        try:
+            return self.client.delete_document(document_id, delete_llm_cache=delete_llm_cache)
+        except httpx.HTTPStatusError as exc:
+            raise LightRAGAdapterError(
+                "LIGHTRAG_DELETE_FAILED",
+                f"LightRAG document delete failed with HTTP {exc.response.status_code}",
+                retryable=exc.response.status_code >= 500,
+            ) from exc
+        except (httpx.ConnectError, httpx.TimeoutException) as exc:
+            raise LightRAGAdapterError(
+                "LIGHTRAG_UNAVAILABLE",
+                "LightRAG is unavailable",
+                retryable=True,
+            ) from exc
+
     def _upload_with_retry(self, markdown_path: Path) -> dict[str, Any]:
         last_error: LightRAGAdapterError | None = None
         for _ in range(self.max_upload_attempts):

@@ -2,6 +2,7 @@ import pytest
 
 from agent.ingestion.contracts import (
     IngestionError,
+    SourceChange,
     SourceRecord,
     SourceStatus,
     classify_source,
@@ -76,6 +77,31 @@ def test_classify_identical_processed_source_as_skipped_duplicate():
 
     assert result.status == SourceStatus.SKIPPED_DUPLICATE
     assert result.should_ingest is False
+    assert result.change == SourceChange.UNCHANGED
+
+
+def test_classify_missing_source_as_new():
+    result = classify_source(None, incoming_hash="abc123")
+
+    assert result.status == SourceStatus.DISCOVERED
+    assert result.should_ingest is True
+    assert result.change == SourceChange.NEW
+
+
+def test_classify_changed_processed_source_as_updated():
+    existing = SourceRecord(
+        source_key="file:inbox/example.md",
+        source_kind="file",
+        source_uri="inbox/example.md",
+        content_hash="old-hash",
+        status=SourceStatus.PROCESSED,
+    )
+
+    result = classify_source(existing, incoming_hash="new-hash")
+
+    assert result.status == SourceStatus.DISCOVERED
+    assert result.should_ingest is True
+    assert result.change == SourceChange.UPDATED
 
 
 def test_ingestion_error_serializes_stable_code_and_safe_message():

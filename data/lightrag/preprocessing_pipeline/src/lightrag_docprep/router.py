@@ -1,21 +1,13 @@
 from __future__ import annotations
 
 import re
+from importlib import import_module
 from pathlib import Path
 from typing import Iterable
 
 from .config import PreprocessorConfig
 from .errors import UnsupportedSourceError
-from .parsers import (
-    DoclingParser,
-    HtmlParser,
-    MarkdownParser,
-    MinerUParser,
-    OxdfParser,
-    ParserAdapter,
-    PyMuPDF4LLMParser,
-    WstgParser,
-)
+from .parsers.base import ParserAdapter
 
 _HINT_RE = re.compile(r"\.\[(mineru|docling|pymupdf4llm)\](?=\.[^.]+$)", re.IGNORECASE)
 _WSTG_MARKER_RE = re.compile(r"\bWSTG-[A-Z]{4}-\d{2}", re.IGNORECASE)
@@ -25,6 +17,27 @@ SUPPORTED_SOURCE_SUFFIXES = frozenset({
     ".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp", ".txt",
 })
 
+_PARSER_SPECS: tuple[tuple[str, str], ...] = (
+    ("wstg", "WstgParser"),
+    ("oxdf", "OxdfParser"),
+    ("markdown", "MarkdownParser"),
+    ("html", "HtmlParser"),
+    ("mineru", "MinerUParser"),
+    ("docling", "DoclingParser"),
+    ("pymupdf4llm", "PyMuPDF4LLMParser"),
+)
+
+
+def _default_parsers() -> list[ParserAdapter]:
+    parsers: list[ParserAdapter] = []
+    for module_name, class_name in _PARSER_SPECS:
+        try:
+            module = import_module(f".parsers.{module_name}", __package__)
+        except ModuleNotFoundError:
+            continue
+        parsers.append(getattr(module, class_name)())
+    return parsers
+
 
 class ParserRouter:
     def __init__(
@@ -33,15 +46,7 @@ class ParserRouter:
         parsers: Iterable[ParserAdapter] | None = None,
     ) -> None:
         self.config = config
-        default = [
-            WstgParser(),
-            OxdfParser(),
-            MarkdownParser(),
-            HtmlParser(),
-            MinerUParser(),
-            DoclingParser(),
-            PyMuPDF4LLMParser(),
-        ]
+        default = _default_parsers()
         self._parsers = {parser.name: parser for parser in (list(parsers) if parsers is not None else default)}
 
     def _get(self, names: list[str]) -> list[ParserAdapter]:

@@ -10,11 +10,13 @@ from agent.ingestion.lightrag_adapter import (
 
 
 class FakeLightRAGClient:
-    def __init__(self, *, upload_responses=None, status_responses=None):
+    def __init__(self, *, upload_responses=None, status_responses=None, delete_responses=None):
         self.upload_responses = list(upload_responses or [])
         self.status_responses = list(status_responses or [])
+        self.delete_responses = list(delete_responses or [])
         self.uploaded: list[Path] = []
         self.tracked: list[str] = []
+        self.deleted: list[tuple[str, bool]] = []
 
     def upload_file(self, source_path):
         self.uploaded.append(Path(source_path))
@@ -26,6 +28,13 @@ class FakeLightRAGClient:
     def track_status(self, track_id):
         self.tracked.append(track_id)
         return self.status_responses.pop(0)
+
+    def delete_document(self, doc_id, *, delete_llm_cache=False):
+        self.deleted.append((doc_id, delete_llm_cache))
+        response = self.delete_responses.pop(0)
+        if isinstance(response, Exception):
+            raise response
+        return response
 
 
 def status_error(code: int) -> httpx.HTTPStatusError:
@@ -190,3 +199,24 @@ def test_ingest_markdown_maps_track_status_document_failure_to_error(tmp_path):
 
     assert exc.value.code == "LIGHTRAG_INGESTION_FAILED"
     assert "embedding failed" in str(exc.value)
+
+
+def test_delete_document_uses_selective_delete_with_llm_cache_cleanup():
+    client = FakeLightRAGClient(delete_responses=[{"status": "ok"}])
+    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0)
+
+    result = adapter.delete_document("doc-old")
+
+    assert result == {"status": "ok"}
+    assert client.deleted == [("doc-old", True)]
+
+
+def test_delete_document_maps_4xx_to_nonretryable_error():
+    client = FakeLightRAGClient(delete_responses=[status_error(404)])
+    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0)
+
+    with pytest.raises(LightRAGAdapterError) as exc:
+        adapter.delete_document("missing-doc")
+
+    assert exc.value.code == "LIGHTRAG_DELETE_FAILED"
+    assert exc.value.retryable is False

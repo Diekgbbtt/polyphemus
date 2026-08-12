@@ -31,6 +31,12 @@ _ALLOWED_TRANSITIONS: dict[SourceStatus, set[SourceStatus]] = {
 }
 
 
+class SourceChange(StrEnum):
+    NEW = "NEW"
+    UNCHANGED = "UNCHANGED"
+    UPDATED = "UPDATED"
+
+
 class SourceRecord(BaseModel):
     source_key: str
     source_kind: str
@@ -48,6 +54,7 @@ class SourceRecord(BaseModel):
 
 
 class SourceClassification(BaseModel):
+    change: SourceChange
     status: SourceStatus
     should_ingest: bool
 
@@ -60,7 +67,13 @@ class IngestionError(BaseModel):
 
 def classify_source(existing: SourceRecord | None, incoming_hash: str) -> SourceClassification:
     if existing is None:
-        return SourceClassification(status=SourceStatus.DISCOVERED, should_ingest=True)
+        return SourceClassification(change=SourceChange.NEW, status=SourceStatus.DISCOVERED, should_ingest=True)
     if existing.status == SourceStatus.PROCESSED and existing.content_hash == incoming_hash:
-        return SourceClassification(status=SourceStatus.SKIPPED_DUPLICATE, should_ingest=False)
-    return SourceClassification(status=SourceStatus.DISCOVERED, should_ingest=True)
+        return SourceClassification(
+            change=SourceChange.UNCHANGED,
+            status=SourceStatus.SKIPPED_DUPLICATE,
+            should_ingest=False,
+        )
+    if existing.status == SourceStatus.PROCESSED and existing.content_hash != incoming_hash:
+        return SourceClassification(change=SourceChange.UPDATED, status=SourceStatus.DISCOVERED, should_ingest=True)
+    return SourceClassification(change=SourceChange.NEW, status=SourceStatus.DISCOVERED, should_ingest=True)

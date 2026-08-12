@@ -1,5 +1,11 @@
 import os
+import sys
 import time
+from pathlib import Path
+
+DOCPREP_SRC = Path(__file__).resolve().parents[1] / "data" / "lightrag" / "preprocessing_pipeline" / "src"
+if DOCPREP_SRC.is_dir():
+    sys.path.insert(0, str(DOCPREP_SRC))
 
 # Unit tests import config-backed modules (agent.app.config eager-reads these
 # env vars at import time). setdefault fills safe dummies ONLY when the var is
