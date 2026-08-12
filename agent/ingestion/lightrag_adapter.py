@@ -1,6 +1,8 @@
 from pathlib import Path
 from time import sleep
 from typing import Any
+import hashlib
+import shutil
 
 import httpx
 from pydantic import BaseModel
@@ -34,8 +36,11 @@ class LightRAGIngestionAdapter:
         self.max_poll_attempts = max_poll_attempts
 
     def ingest_markdown(self, markdown_path: Path, *, source_key: str) -> LightRAGIngestionResult:
-        del source_key
-        upload_response = self._upload_with_retry(Path(markdown_path))
+        upload_path = _upload_named_copy(Path(markdown_path), source_key)
+        try:
+            upload_response = self._upload_with_retry(upload_path)
+        finally:
+            upload_path.unlink(missing_ok=True)
         track_id = _extract_track_id(upload_response)
         for _ in range(self.max_poll_attempts):
             status_response = self.client.track_status(track_id)
@@ -49,7 +54,7 @@ class LightRAGIngestionAdapter:
             if status == "failed":
                 raise LightRAGAdapterError(
                     "LIGHTRAG_INGESTION_FAILED",
-                    str(status_response.get("error") or "LightRAG ingestion failed"),
+                    _extract_error_message(status_response),
                     retryable=False,
                 )
             if self.poll_interval_seconds > 0:
@@ -98,15 +103,63 @@ def _extract_track_id(payload: dict[str, Any]) -> str:
     return str(track_id)
 
 
+def _upload_named_copy(markdown_path: Path, source_key: str) -> Path:
+    digest = hashlib.sha256(source_key.encode("utf-8")).hexdigest()[:16]
+    upload_path = markdown_path.with_name(f"source-{digest}.md")
+    shutil.copyfile(markdown_path, upload_path)
+    return upload_path
+
+
 def _extract_document_id(payload: dict[str, Any]) -> str | None:
     document_id = payload.get("document_id") or payload.get("doc_id") or payload.get("id")
+    if not document_id:
+        documents = payload.get("documents")
+        if isinstance(documents, list) and documents:
+            first_document = documents[0]
+            if isinstance(first_document, dict):
+                document_id = first_document.get("id") or first_document.get("document_id") or first_document.get("doc_id")
     return str(document_id) if document_id else None
 
 
 def _normalize_status(payload: dict[str, Any]) -> str:
+    document_status = _documents_status(payload)
+    if document_status:
+        return document_status
     status = str(payload.get("status") or "").lower()
     if status in {"processed", "completed", "complete", "done"}:
         return "processed"
     if status in {"failed", "error"}:
         return "failed"
     return status or "processing"
+
+
+def _documents_status(payload: dict[str, Any]) -> str | None:
+    documents = payload.get("documents")
+    if not isinstance(documents, list) or not documents:
+        return None
+
+    statuses = [
+        str(document.get("status") or "").lower()
+        for document in documents
+        if isinstance(document, dict)
+    ]
+    if any(status in {"failed", "error"} for status in statuses):
+        return "failed"
+    if statuses and all(status in {"processed", "completed", "complete", "done"} for status in statuses):
+        return "processed"
+    return "processing"
+
+
+def _extract_error_message(payload: dict[str, Any]) -> str:
+    error = payload.get("error") or payload.get("error_msg")
+    if error:
+        return str(error)
+    documents = payload.get("documents")
+    if isinstance(documents, list):
+        for document in documents:
+            if not isinstance(document, dict):
+                continue
+            document_error = document.get("error") or document.get("error_msg")
+            if document_error:
+                return str(document_error)
+    return "LightRAG ingestion failed"

@@ -2,7 +2,6 @@ import json
 from typing import Any
 
 import psycopg
-from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from agent.app.config import config
 from agent.ingestion.contracts import SourceRecord, SourceStatus
 
@@ -13,6 +12,8 @@ def check() -> bool:
 
 async def ensure_checkpoint_tables() -> None:
     """Create LangGraph checkpoint tables (idempotent)."""
+    from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
+
     async with AsyncPostgresSaver.from_conn_string(config.POSTGRES_DSN) as saver:
         await saver.setup()
 
@@ -285,7 +286,7 @@ def get_ingestion_source(source_key: str) -> SourceRecord | None:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
             "SELECT source_key, source_kind, source_uri, content_hash, status, "
-            "parser, normalization_version, lightrag_document_id, "
+            "parser, parser_version, normalization_version, lightrag_document_id, "
             "normalized_markdown_path, normalized_json_path, "
             "last_error_code, last_error_message "
             "FROM ingestion_sources WHERE source_key = %s",
@@ -294,20 +295,42 @@ def get_ingestion_source(source_key: str) -> SourceRecord | None:
         row = cur.fetchone()
         if row is None:
             return None
-        return SourceRecord(
-            source_key=row[0],
-            source_kind=row[1],
-            source_uri=row[2],
-            content_hash=row[3],
-            status=SourceStatus(row[4]),
-            parser=row[5],
-            normalization_version=row[6],
-            lightrag_document_id=row[7],
-            normalized_markdown_path=row[8],
-            normalized_json_path=row[9],
-            last_error_code=row[10],
-            last_error_message=row[11],
+        return _source_record_from_row(row)
+
+
+def get_processed_ingestion_source_by_hash(content_hash: str) -> SourceRecord | None:
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT source_key, source_kind, source_uri, content_hash, status, "
+            "parser, parser_version, normalization_version, lightrag_document_id, "
+            "normalized_markdown_path, normalized_json_path, "
+            "last_error_code, last_error_message "
+            "FROM ingestion_sources WHERE content_hash = %s AND status = %s "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (content_hash, SourceStatus.PROCESSED.value),
         )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return _source_record_from_row(row)
+
+
+def _source_record_from_row(row) -> SourceRecord:
+    return SourceRecord(
+        source_key=row[0],
+        source_kind=row[1],
+        source_uri=row[2],
+        content_hash=row[3],
+        status=SourceStatus(row[4]),
+        parser=row[5],
+        parser_version=row[6],
+        normalization_version=row[7],
+        lightrag_document_id=row[8],
+        normalized_markdown_path=row[9],
+        normalized_json_path=row[10],
+        last_error_code=row[11],
+        last_error_message=row[12],
+    )
 
 
 def upsert_ingestion_source(record: SourceRecord) -> None:

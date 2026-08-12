@@ -64,6 +64,7 @@ def test_get_ingestion_source_maps_row_to_source_record(monkeypatch):
         "abc123",
         "PROCESSED",
         "markdown",
+        "markdown-router",
         "docprep-0.3.4",
         "doc-1",
         "normalized/key/document.md",
@@ -82,6 +83,7 @@ def test_get_ingestion_source_maps_row_to_source_record(monkeypatch):
         content_hash="abc123",
         status=SourceStatus.PROCESSED,
         parser="markdown",
+        parser_version="markdown-router",
         normalization_version="docprep-0.3.4",
         lightrag_document_id="doc-1",
         normalized_markdown_path="normalized/key/document.md",
@@ -92,6 +94,36 @@ def test_get_ingestion_source_maps_row_to_source_record(monkeypatch):
     query, params = cur.executed[0]
     assert "FROM ingestion_sources" in query
     assert params == ("file:inbox/example.md",)
+
+
+def test_get_processed_ingestion_source_by_hash_filters_processed_rows(monkeypatch):
+    row = (
+        "file:inbox/original.md",
+        "file",
+        "inbox/original.md",
+        "abc123",
+        "PROCESSED",
+        "markdown",
+        "markdown-router",
+        "docprep-0.3.4",
+        "doc-1",
+        "normalized/key/document.md",
+        "normalized/key/document.json",
+        None,
+        None,
+    )
+    cur = patch_connect(monkeypatch, FakeCursor(fetch_result=row))
+
+    record = pg.get_processed_ingestion_source_by_hash("abc123")
+
+    assert record is not None
+    assert record.source_key == "file:inbox/original.md"
+    assert record.status == SourceStatus.PROCESSED
+    query, params = cur.executed[0]
+    assert "FROM ingestion_sources" in query
+    assert "content_hash = %s" in query
+    assert "status = %s" in query
+    assert params == ("abc123", "PROCESSED")
 
 
 def test_upsert_ingestion_source_uses_source_key_conflict(monkeypatch):

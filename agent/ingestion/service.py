@@ -64,6 +64,31 @@ class IngestionService:
                 "run_in_background": False,
             }
 
+        processed_duplicate = pg.get_processed_ingestion_source_by_hash(content_hash)
+        if processed_duplicate is not None:
+            duplicate_record = SourceRecord(
+                source_key=source_key,
+                source_kind="file",
+                source_uri=source_record.source_uri,
+                content_hash=content_hash,
+                status=SourceStatus.SKIPPED_DUPLICATE,
+                parser=processed_duplicate.parser,
+                parser_version=processed_duplicate.parser_version,
+                normalization_version=processed_duplicate.normalization_version,
+                lightrag_document_id=processed_duplicate.lightrag_document_id,
+                normalized_markdown_path=processed_duplicate.normalized_markdown_path,
+                normalized_json_path=processed_duplicate.normalized_json_path,
+            )
+            pg.upsert_ingestion_source(duplicate_record)
+            pg.create_ingestion_job(job_id=job_id, source_key=source_key, status=SourceStatus.SKIPPED_DUPLICATE)
+            pg.set_ingestion_job_status(job_id, SourceStatus.SKIPPED_DUPLICATE)
+            return {
+                "job_id": job_id,
+                "source_key": source_key,
+                "status": SourceStatus.SKIPPED_DUPLICATE,
+                "run_in_background": False,
+            }
+
         pg.upsert_ingestion_source(source_record)
         pg.create_ingestion_job(job_id=job_id, source_key=source_key, status=SourceStatus.DISCOVERED)
         return {

@@ -48,11 +48,27 @@ def test_ingest_markdown_uploads_and_polls_until_processed(tmp_path):
 
     result = adapter.ingest_markdown(document, source_key="file:inbox/example.md")
 
-    assert client.uploaded == [document]
+    assert client.uploaded[0].name != "document.md"
+    assert client.uploaded[0].name.endswith(".md")
     assert client.tracked == ["track-1", "track-1"]
     assert result.track_id == "track-1"
     assert result.document_id == "doc-1"
     assert result.status == "processed"
+
+
+def test_ingest_markdown_preserves_canonical_artifact_name(tmp_path):
+    document = tmp_path / "document.md"
+    document.write_text("# Methodology\n", encoding="utf-8")
+    client = FakeLightRAGClient(
+        upload_responses=[{"track_id": "track-1"}],
+        status_responses=[{"status": "processed", "document_id": "doc-1"}],
+    )
+    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0, max_poll_attempts=1)
+
+    adapter.ingest_markdown(document, source_key="file:inbox/example.md")
+
+    assert document.exists()
+    assert document.name == "document.md"
 
 
 def test_ingest_markdown_retries_5xx_upload_once(tmp_path):
@@ -119,3 +135,58 @@ def test_ingest_markdown_maps_failed_status_to_error(tmp_path):
 
     assert exc.value.code == "LIGHTRAG_INGESTION_FAILED"
     assert exc.value.retryable is False
+
+
+def test_ingest_markdown_maps_track_status_documents_to_terminal_state(tmp_path):
+    document = tmp_path / "document.md"
+    document.write_text("# Methodology\n", encoding="utf-8")
+    client = FakeLightRAGClient(
+        upload_responses=[{"track_id": "track-1"}],
+        status_responses=[
+            {
+                "track_id": "track-1",
+                "documents": [
+                    {
+                        "id": "doc-1",
+                        "status": "processed",
+                        "error_msg": None,
+                    }
+                ],
+                "status_summary": {"DocStatus.PROCESSED": 1},
+            }
+        ],
+    )
+    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0, max_poll_attempts=1)
+
+    result = adapter.ingest_markdown(document, source_key="file:inbox/example.md")
+
+    assert result.document_id == "doc-1"
+    assert result.status == "processed"
+
+
+def test_ingest_markdown_maps_track_status_document_failure_to_error(tmp_path):
+    document = tmp_path / "document.md"
+    document.write_text("# Methodology\n", encoding="utf-8")
+    client = FakeLightRAGClient(
+        upload_responses=[{"track_id": "track-1"}],
+        status_responses=[
+            {
+                "track_id": "track-1",
+                "documents": [
+                    {
+                        "id": "doc-1",
+                        "status": "failed",
+                        "error_msg": "embedding failed",
+                    }
+                ],
+                "status_summary": {"DocStatus.FAILED": 1},
+            }
+        ],
+    )
+    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0, max_poll_attempts=1)
+
+    with pytest.raises(LightRAGAdapterError) as exc:
+        adapter.ingest_markdown(document, source_key="file:inbox/example.md")
+
+    assert exc.value.code == "LIGHTRAG_INGESTION_FAILED"
+    assert "embedding failed" in str(exc.value)
