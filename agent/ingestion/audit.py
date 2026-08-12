@@ -67,9 +67,9 @@ class LightRAGStorageSnapshot(BaseModel):
     kv_store_full_relations: dict[str, Any] = Field(default_factory=dict)
     kv_store_entity_chunks: dict[str, Any] = Field(default_factory=dict)
     kv_store_relation_chunks: dict[str, Any] = Field(default_factory=dict)
-    vdb_chunks: list[Any] = Field(default_factory=list)
-    vdb_entities: list[Any] = Field(default_factory=list)
-    vdb_relationships: list[Any] = Field(default_factory=list)
+    vdb_chunks: dict[str, Any] = Field(default_factory=dict)
+    vdb_entities: dict[str, Any] = Field(default_factory=dict)
+    vdb_relationships: dict[str, Any] = Field(default_factory=dict)
     graph: GraphMLGraph = Field(default_factory=GraphMLGraph)
     missing_files: list[str] = Field(default_factory=list)
 
@@ -125,7 +125,7 @@ class LightRAGStorageReader:
         path = self.storage_root / name
         if not path.exists():
             missing.append(name)
-            return {} if name in self._JSON_FILES else []
+            return {}
         try:
             with path.open("r", encoding="utf-8") as f:
                 return json.load(f)

@@ -101,12 +101,18 @@ def test_json_kv_files_are_loaded(tmp_path):
 
 
 def test_vdb_chunks_json_is_loaded(tmp_path):
-    vdb = [{"id": "chunk1", "vector": [0.1, 0.2], "metadata": {"doc_id": "doc1"}}]
+    vdb = {
+        "chunk1": {
+            "id": "chunk1",
+            "vector": [0.1, 0.2],
+            "metadata": {"doc_id": "doc1"},
+        }
+    }
     (tmp_path / "vdb_chunks.json").write_text(json.dumps(vdb))
     snap = LightRAGStorageReader(tmp_path).snapshot()
     assert snap.vdb_chunks == vdb
-    assert snap.vdb_entities == []
-    assert snap.vdb_relationships == []
+    assert snap.vdb_entities == {}
+    assert snap.vdb_relationships == {}
 
 
 def test_graphml_with_one_node_and_one_edge_is_parsed(tmp_path):
@@ -119,6 +125,8 @@ def test_graphml_with_one_node_and_one_edge_is_parsed(tmp_path):
   <key id="d4" for="node" attr.name="keywords" attr.type="string"/>
   <key id="d5" for="edge" attr.name="source_id" attr.type="string"/>
   <key id="d6" for="edge" attr.name="file_path" attr.type="string"/>
+  <key id="d7" for="edge" attr.name="description" attr.type="string"/>
+  <key id="d8" for="edge" attr.name="keywords" attr.type="string"/>
   <graph id="G" edgedefault="directed">
     <node id="n1">
       <data key="d0">Server</data>
@@ -130,6 +138,8 @@ def test_graphml_with_one_node_and_one_edge_is_parsed(tmp_path):
     <edge id="e1" source="n1" target="n2">
       <data key="d5">doc1</data>
       <data key="d6">report.md</data>
+      <data key="d7">A relationship</data>
+      <data key="d8">needs-merge</data>
     </edge>
   </graph>
 </graphml>"""
@@ -149,12 +159,16 @@ def test_graphml_with_one_node_and_one_edge_is_parsed(tmp_path):
     assert edge.target == "n2"
     assert edge.source_id == "doc1"
     assert edge.file_path == "report.md"
+    assert edge.description == "A relationship"
+    assert edge.keywords == "needs-merge"
 
 
 def test_missing_files_do_not_break_snapshot_and_are_recorded(tmp_path):
     snap = LightRAGStorageReader(tmp_path).snapshot()
     assert snap.kv_store_doc_status == {}
-    assert snap.vdb_chunks == []
+    assert snap.vdb_chunks == {}
+    assert snap.vdb_entities == {}
+    assert snap.vdb_relationships == {}
     assert snap.graph.nodes == []
     assert snap.graph.edges == []
     expected = [
@@ -189,5 +203,11 @@ def test_snapshot_does_not_write_delete_or_modify_files(tmp_path):
 
 def test_malformed_json_raises_storage_parse_error(tmp_path):
     (tmp_path / "kv_store_doc_status.json").write_text("{not valid json")
+    with pytest.raises(StorageParseError):
+        LightRAGStorageReader(tmp_path).snapshot()
+
+
+def test_malformed_graphml_raises_storage_parse_error(tmp_path):
+    (tmp_path / "graph_chunk_entity_relation.graphml").write_text("<graphml><graph>")
     with pytest.raises(StorageParseError):
         LightRAGStorageReader(tmp_path).snapshot()
