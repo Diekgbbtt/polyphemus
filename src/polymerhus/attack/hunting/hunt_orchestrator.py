@@ -9,11 +9,21 @@ budget, and writes the D8 hunt records. It never writes L0/L1 (its graph
 access is the read-only view, D67-04); the hunting agent (#83), not this
 module, is the test-DESIGN actor.
 
-The pass runs NATIVE-ASYNC (feat/async-actor-agents): `arun_orchestration` is
-the single O1-O10 canon and drives the gate turn and the re-match judge as
-inbox-request turns of ONE `HuntOrchestratorActor` per run on the
-`hunting_orchestrator` session thread (purely stateful, exactly like the
-recon-orchestrator); `run_orchestration` is its thin sync wrapper.
+The pass runs NATIVE-ASYNC (feat/async-actor-agents) on the #110 GRAPH engine:
+`arun_orchestration` is the single O1-O10 canon and its body IS a
+supervisor-state schedule loop (the ONE flexible StateGraph in
+`orchestrator_graph.py`) - per candidate pair, a stateful REASON turn runs on
+the run's `HuntOrchestratorActor` thread (`hunting_orchestrator` session,
+monotonic across ALL pairs), then a deterministic budget stage cuts the
+accumulated directions, then each allowed direction is DISPATCHED. Each node
+closure delegates to the canon helpers in THIS module; the O1-O10 seam shapes
+stay single-sourced here. `run_orchestration` is its thin sync wrapper.
+
+The actor is the PURELY STATEFUL parent, exactly like the recon-orchestrator -
+but it now LIVES in a per-run registry (`_ORCHESTRATOR_ACTORS`) instead of being
+reaped in a pass's `finally` (#110): the SAME `HuntOrchestratorActor` (same
+thread) serves every pair of a pass and stays live listening between passes;
+the module's runtime stop path (Task 6) reaps it.
 
 Degradations are the spec's failure canon: KB unavailable -> the gate reasons
 degraded, never prunes (D67-11); dispatch failure -> degraded hunt record
@@ -31,11 +41,15 @@ from __future__ import annotations
 
 import logging
 import re
+import threading
 import uuid
 from dataclasses import dataclass
-from typing import Any, Callable, Literal, Sequence
+from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
 
 from pydantic import BaseModel, Field
+
+if TYPE_CHECKING:  # the actor is a lazy import (CODING_STANDARD section 6)
+    from polymerhus.attack.hunting.actors import HuntOrchestratorActor
 
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
@@ -48,6 +62,14 @@ logger = logging.getLogger(__name__)
 # The orchestrator's tool surface (#67 D67-04, spec 5.1): exactly these three,
 # nothing more.
 TOOL_SURFACE = frozenset({"back_edge", "store_reads", "graph_view"})
+
+# The per-run orchestration actor registry (#110): ONE `HuntOrchestratorActor`
+# per run_id, lazily resolved on the pass's first LLM turn and HELD after the
+# graph completes - so the SAME actor (same `hunting_orchestrator` thread)
+# serves every pair of the run and stays live until the module's stop path
+# reaps it. Reaping is never a pass's `finally` responsibility.
+_ORCHESTRATOR_ACTORS: dict[str, "HuntOrchestratorActor"] = {}
+_ORCHESTRATOR_LOCK = threading.Lock()
 
 # The default targeted job a park/resume back-edge runs (a re-witness of the
 # unit's surface); the agent's inline needs carry their own job.
@@ -89,7 +111,9 @@ class EnvisionedDirection(BaseModel):
 class GateInput(BaseModel):
     """The single embedded reasoning turn's input (Q8): the accepted candidate
     set, the KB evidence (empty + degraded flag when the KB is unavailable,
-    D67-11), and the read-only graph surface."""
+    D67-11), and the read-only graph surface. The #110 engine drives it PER
+    PAIR: `candidates` carries the ONE pair this turn reasons over, so every
+    turn is stateful on the run's orchestration thread."""
 
     candidates: list[DeliveredCandidate] = Field(default_factory=list)
     kb_degraded: bool = False
@@ -340,6 +364,20 @@ def _registry_from_kb(kb_entry: dict) -> list[dict]:
     return []
 
 
+async def _reap_orchestrator(run_id: str) -> None:
+    """The module's stop path for the per-run orchestration actor (#110): reap
+    and drop the actor the registry holds for `run_id`, if any. Called by the
+    runtime teardown (Task 6) - never by a pass's `finally`."""
+    with _ORCHESTRATOR_LOCK:
+        actor = _ORCHESTRATOR_ACTORS.pop(run_id, None)
+    if actor is not None:
+        try:
+            await actor.stop()
+        except Exception:  # noqa: BLE001 - teardown must never raise
+            logger.warning("hunt-orchestrator actor reap failed for %s", run_id,
+                           exc_info=True)
+
+
 async def arun_orchestration(
     project_id: str,
     run_id: str,
@@ -355,16 +393,20 @@ async def arun_orchestration(
     budget_fn: Callable[[Sequence[EnvisionedDirection]], Sequence[EnvisionedDirection]] | None = None,
     orchestrator_factory: Callable[[str], "HuntOrchestratorActor"] | None = None,
 ) -> OrchestratorReport:
-    """One orchestration pass, NATIVE-ASYNC (spec 4.1): intake -> gate turn ->
-    budget -> per-direction park/resume + mint + dispatch, every event appended
-    to the hunt store. Fail-open on every collaborator.
+    """One orchestration pass, NATIVE-ASYNC (spec 4.1), driven by the #110 graph
+    engine: intake -> KB evidence -> surface read -> ONE supervisor-state
+    schedule loop over the candidate pairs (a stateful REASON turn per pair ->
+    a deterministic budget stage -> a DISPATCH turn per allowed direction),
+    every event appended to the hunt store. Fail-open on every collaborator.
 
     The hunt-orchestrator is the async-native parent of the hunting effort
     (feat/async-actor-agents): when `reason_fn`/`rematch_fn` are None (the
     production default) ONE `HuntOrchestratorActor` per run drives both LLM
-    turns as inbox-request turns on the SAME `hunting_orchestrator` thread, so
+    turns, serving EVERY pair of this pass (and of later passes on the same
+    run) as inbox-request turns on the SAME `hunting_orchestrator` thread, so
     its checkpointed memory carries the pass's reasoning - PURELY stateful,
-    exactly like the recon-orchestrator. The actor is reaped in `finally`.
+    exactly like the recon-orchestrator. The actor is held in the per-run
+    registry and reaped only by the module's stop path.
 
     Every injected collaborator is called through `_await_seam` (an async seam
     is awaited; a sync seam is offloaded via `asyncio.to_thread`), so the pass
@@ -381,12 +423,18 @@ async def arun_orchestration(
 
     def _resolve_orchestrator() -> "HuntOrchestratorActor":
         nonlocal orchestrator
-        if orchestrator is None:
-            if orchestrator_factory is not None:
-                orchestrator = orchestrator_factory(run_id)
-            else:
+        if orchestrator is not None:
+            return orchestrator
+        if orchestrator_factory is not None:
+            orchestrator = orchestrator_factory(run_id)
+            return orchestrator
+        with _ORCHESTRATOR_LOCK:
+            actor = _ORCHESTRATOR_ACTORS.get(run_id)
+            if actor is None:
                 from polymerhus.attack.hunting.actors import HuntOrchestratorActor  # noqa: PLC0415
-                orchestrator = HuntOrchestratorActor(run_id)
+                actor = HuntOrchestratorActor(run_id)
+                _ORCHESTRATOR_ACTORS[run_id] = actor
+            orchestrator = actor
         return orchestrator
 
     async def _await_seam(fn, *args):
@@ -397,141 +445,161 @@ async def arun_orchestration(
         return await asyncio.to_thread(fn, *args)
 
     if reason_fn is None:
-        # The gate turn rides the run's orchestration thread.
+        # The gate turn rides the run's orchestration thread, per pair.
         reason_fn = lambda inp: _resolve_orchestrator().reason(inp)  # noqa: E731
     if rematch_fn is None:
         # The re-match judge rides the SAME orchestration thread.
         rematch_fn = lambda u, f, r: _resolve_orchestrator().rematch(u, f, r)  # noqa: E731
 
-    try:
-        write_failures = 0
+    write_failures = 0
 
-        def _write(kind: str, record: dict) -> str | None:
-            nonlocal write_failures
+    def _write(kind: str, record: dict) -> str | None:
+        nonlocal write_failures
+        try:
+            if tools.store_reads is None:
+                raise OSError("no hunt store configured")
+            return tools.store_reads.append(run_id, kind, record)
+        except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
+            write_failures += 1
+            logger.warning("hunt store: %s record write failed (%s)", kind, exc)
+            return None
+
+    async def _record_back_edge(request: AnalyserReconRequest) -> TargetedReconResult:
+        if tools.back_edge is None:
+            result = TargetedReconResult(
+                correlation_id=request.correlation_id,
+                requester_id=request.requester_id,
+                origin="hunting",
+                status="error",
+                error="no back-edge tool configured",
+            )
+        else:
             try:
-                if tools.store_reads is None:
-                    raise OSError("no hunt store configured")
-                return tools.store_reads.append(run_id, kind, record)
-            except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
-                write_failures += 1
-                logger.warning("hunt store: %s record write failed (%s)", kind, exc)
-                return None
-
-        async def _record_back_edge(request: AnalyserReconRequest) -> TargetedReconResult:
-            if tools.back_edge is None:
+                result = await _await_seam(tools.back_edge, request, run_id, project_id)
+            except Exception as exc:  # noqa: BLE001 - IA-6 fail-open
+                logger.warning("hunt back-edge failed for cid=%s (%s)",
+                               request.correlation_id, exc)
                 result = TargetedReconResult(
                     correlation_id=request.correlation_id,
                     requester_id=request.requester_id,
                     origin="hunting",
                     status="error",
-                    error="no back-edge tool configured",
+                    error=str(exc),
                 )
-            else:
-                try:
-                    result = await _await_seam(tools.back_edge, request, run_id, project_id)
-                except Exception as exc:  # noqa: BLE001 - IA-6 fail-open
-                    logger.warning("hunt back-edge failed for cid=%s (%s)",
-                                   request.correlation_id, exc)
-                    result = TargetedReconResult(
-                        correlation_id=request.correlation_id,
-                        requester_id=request.requester_id,
-                        origin="hunting",
-                        status="error",
-                        error=str(exc),
-                    )
-            # One evidence-trail record per back-edge: the request's identity and
-            # the routed outcome (the fault joins via the correlation_id, D9).
-            _write("back_edge", {
-                "correlation_id": result.correlation_id,
-                "unit_id": request.scope.unit_id or "",
-                "origin": request.origin,
-                "status": result.status,
-                "error": result.error,
-            })
-            return result
+        # One evidence-trail record per back-edge: the request's identity and
+        # the routed outcome (the fault joins via the correlation_id, D9).
+        _write("back_edge", {
+            "correlation_id": result.correlation_id,
+            "unit_id": request.scope.unit_id or "",
+            "origin": request.origin,
+            "status": result.status,
+            "error": result.error,
+        })
+        return result
 
-        def _unresolved(key: str, unit_id: str, fault_class: str) -> None:
-            unresolved_keys.append(key)
-            _write("unresolved", {
-                "revival_key": key,
-                "unit_id": unit_id,
-                "fault_class": fault_class,
-            })
-
-        _write("run", {
-            "project_id": project_id,
-            "run_id": run_id,
-            "candidates_received": len(candidates),
+    def _unresolved(key: str, unit_id: str, fault_class: str) -> None:
+        _write("unresolved", {
+            "revival_key": key,
+            "unit_id": unit_id,
+            "fault_class": fault_class,
         })
 
-        intake = normalize_candidates(candidates, known_faults=known_faults)
-        if intake.malformed_dropped:
-            logger.warning("%s malformed candidate(s) dropped (counted)", intake.malformed_dropped)
-        gate_pruned: list[str] = []
-        unresolved_keys: list[str] = []
-        budget_cut_keys: list[str] = []
-        hunt_ids: list[str] = []
-        hunts_dispatched = 0
+    _write("run", {
+        "project_id": project_id,
+        "run_id": run_id,
+        "candidates_received": len(candidates),
+    })
 
-        if not intake.accepted:
-            return OrchestratorReport(
-                hunts_dispatched=hunts_dispatched,
-                hunt_ids=hunt_ids,
-                duplicates_dropped=intake.duplicates_dropped,
-                malformed_dropped=intake.malformed_dropped,
-                pruned_by_verdict=intake.pruned_by_verdict,
-                exhausted_faults=tuple(exhausted_faults),
-                unresolved=tuple(unresolved_keys),
-                budget_cut=tuple(budget_cut_keys),
-                store_write_failures=write_failures,
-            )
+    intake = normalize_candidates(candidates, known_faults=known_faults)
+    if intake.malformed_dropped:
+        logger.warning("%s malformed candidate(s) dropped (counted)", intake.malformed_dropped)
 
-        # KB evidence, per fault (D67-11: an unavailable KB degrades the gate, and
-        # the gate must never prune on degraded grounds).
-        kb_evidences: dict[str, dict] = {}
-        kb_degraded = kb_retrieve_fn is None
-        if kb_retrieve_fn is not None:
-            for candidate in intake.accepted:
-                try:
-                    kb_evidences[candidate.fault_class] = await _await_seam(
-                        kb_retrieve_fn, candidate.fault_class)
-                except Exception as exc:  # noqa: BLE001 - D67-11 fail-open
-                    kb_degraded = True
-                    logger.warning("KB retrieval degraded for %s (%s)",
-                                   candidate.fault_class, exc)
+    if not intake.accepted:
+        # Empty pass (O1): nothing for the gate, budget, or dispatch stages.
+        return OrchestratorReport(
+            hunts_dispatched=0,
+            hunt_ids=[],
+            duplicates_dropped=intake.duplicates_dropped,
+            malformed_dropped=intake.malformed_dropped,
+            pruned_by_verdict=intake.pruned_by_verdict,
+            exhausted_faults=tuple(exhausted_faults),
+            unresolved=(),
+            budget_cut=(),
+            store_write_failures=write_failures,
+        )
 
-        # The read-only graph surface (D67-04): grounding for the gate's turn.
-        surface: list[dict] = []
-        if tools.graph_view is not None:
+    # KB evidence, per fault (D67-11: an unavailable KB degrades the gate, and
+    # the gate must never prune on degraded grounds).
+    kb_evidences: dict[str, dict] = {}
+    kb_degraded = kb_retrieve_fn is None
+    if kb_retrieve_fn is not None:
+        for candidate in intake.accepted:
             try:
-                surface = await _await_seam(tools.graph_view.index_cards)
-            except Exception as exc:  # noqa: BLE001 - O5: degrade to an empty view
-                logger.warning("graph view read failed, gate grounds degraded (%s)", exc)
+                kb_evidences[candidate.fault_class] = await _await_seam(
+                    kb_retrieve_fn, candidate.fault_class)
+            except Exception as exc:  # noqa: BLE001 - D67-11 fail-open
+                kb_degraded = True
+                logger.warning("KB retrieval degraded for %s (%s)",
+                               candidate.fault_class, exc)
 
-        # The single embedded reasoning turn (Q8), on the run's orchestration thread.
+    # The read-only graph surface (D67-04): grounding for the gate's turns.
+    surface: list[dict] = []
+    if tools.graph_view is not None:
+        try:
+            surface = await _await_seam(tools.graph_view.index_cards)
+        except Exception as exc:  # noqa: BLE001 - O5: degrade to an empty view
+            logger.warning("graph view read failed, gate grounds degraded (%s)", exc)
+
+    # --- The #110 graph engine -------------------------------------------------
+    # Build the node closures over the canon helpers, compile IN-MEMORY per pass
+    # (the durable memory stays in the actor's pooled session checkpointer and
+    # the hunt store, the deterministic-pipeline discipline), and derive the
+    # report deterministically from the intake counts + the returned trail.
+    from polymerhus.attack.hunting.orchestrator_graph import (  # noqa: PLC0415
+        build_hunting_graph,
+    )
+
+    by_identity = {(c.unit_id, c.fault_class): c for c in intake.accepted}
+
+    async def _reason_node(state) -> dict:
+        """The per-pair stateful REASON stretch: ONE gate turn for the current
+        pair on the run's orchestration thread, appending its carried
+        directions + gate-pruned trail events. Fail-open: a raising/empty turn
+        carries the pair bare."""
+        current = state.get("current")
+        if current is None:
+            return {"directions": [], "trail": []}
         directions: list[EnvisionedDirection] = []
         if reason_fn is not None:
             try:
-                directions = (await _await_seam(reason_fn, GateInput(
-                    candidates=intake.accepted,
+                decision = await _await_seam(reason_fn, GateInput(
+                    candidates=[current],
                     kb_degraded=kb_degraded,
                     kb_evidences=kb_evidences,
                     surface=surface,
-                ))).directions
-            except Exception as exc:  # noqa: BLE001 - fail-open: carry everything
-                logger.warning("gate reasoning failed, carrying all candidates (%s)", exc)
+                ))
+                directions = list(getattr(decision, "directions", None) or [])
+            except Exception as exc:  # noqa: BLE001 - fail-open: carry the pair
+                logger.warning("gate reasoning failed for %s, carrying (%s)",
+                               revival_key(current.unit_id, current.fault_class), exc)
         if not directions:
             directions = [
-                EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class)
-                for c in intake.accepted
+                EnvisionedDirection(unit_id=current.unit_id,
+                                    fault_class=current.fault_class)
             ]
-
         carried = [d for d in directions if d.carried]
-        for direction in directions:
-            if not direction.carried:
-                gate_pruned.append(revival_key(direction.unit_id, direction.fault_class))
+        trail = [
+            {"kind": "gate_pruned",
+             "revival_key": revival_key(d.unit_id, d.fault_class)}
+            for d in directions if not d.carried
+        ]
+        return {"directions": carried, "trail": trail}
 
-        # The budget (O9): cut directions are recorded, never dispatched.
+    async def _budget_node(state) -> dict:
+        """The deterministic budget stage (O9): a batch cut over the whole
+        accumulated carried set, recording the cut directions, never dispatching
+        them. Fail-open: a raising `budget_fn` cuts nothing."""
+        carried = list(state.get("directions") or [])
         allowed: Sequence[EnvisionedDirection] = carried
         if budget_fn is not None:
             try:
@@ -539,161 +607,200 @@ async def arun_orchestration(
             except Exception as exc:  # noqa: BLE001 - fail-open: no cut
                 logger.warning("budget call failed, no directions cut (%s)", exc)
                 allowed = carried
+        trail: list[dict] = []
         for direction in carried:
             if direction not in allowed:
-                budget_cut_keys.append(revival_key(direction.unit_id, direction.fault_class))
-                _write("cut", {"direction": revival_key(direction.unit_id, direction.fault_class)})
+                key = revival_key(direction.unit_id, direction.fault_class)
+                trail.append({"kind": "cut", "revival_key": key})
+                _write("cut", {"direction": key})
+        return {"worklist": list(allowed), "phase": "dispatch", "trail": trail}
 
-        by_identity = {(c.unit_id, c.fault_class): c for c in intake.accepted}
+    async def _dispatch_node(state) -> dict:
+        """The DISPATCH stretch: park/resume + rematch for a yellow candidate,
+        the deterministic mint (D3), then the per-config dispatch (IA-2) with
+        the inline back-edge rounds (S5/S6, D67-14) - the current canon's
+        per-direction loop body, in graph form. Fail-open at every step."""
+        from polymerhus.recon.control.targeted import (  # noqa: PLC0415
+            TargetedReconResult,
+        )
+        direction = state.get("current_direction")
+        if direction is None:
+            return {"trail": []}
+        key = revival_key(direction.unit_id, direction.fault_class)
+        candidate = by_identity.get((direction.unit_id, direction.fault_class))
+        if candidate is None:
+            logger.warning("direction %s has no candidate in the intake", key)
+            return {"trail": []}
 
-        for direction in allowed:
-            key = revival_key(direction.unit_id, direction.fault_class)
-            candidate = by_identity.get((direction.unit_id, direction.fault_class))
-            if candidate is None:
-                logger.warning("direction %s has no candidate in the intake", key)
-                continue
-
-            # Prior-hunt insights by revival key (O4: a read failure degrades to
-            # an empty insight set, never aborts the hunt).
-            try:
-                prior_insights = (
-                    await _await_seam(tools.store_reads.read_memory, key)
-                    if tools.store_reads else []
-                )
-            except Exception as exc:  # noqa: BLE001
-                prior_insights = []
-                logger.warning("hunt store read degraded for %s (%s)", key, exc)
-
-            routed: list[TargetedReconResult] = []
-            if candidate.match_verdict != "applies":
-                # Park/resume (S3/O8): raise the hunt back-edge, re-match on the
-                # returned recon evidence, hard depth-1 cap.
-                request = build_back_edge_request(
-                    direction.unit_id,
-                    direction.fault_class,
-                    requester_id=f"hunt-orchestrator-{run_id}",
-                    note=f"yellow match for {direction.fault_class}: "
-                         f"{candidate.applies_witnesses.llm or ''}",
-                )
-                routed.append(await _record_back_edge(request))
-                if rematch_fn is None:
-                    logger.warning("re-match unavailable for %s; unresolved", key)
-                    _unresolved(key, direction.unit_id, direction.fault_class)
-                    continue
-                try:
-                    verdict = await _await_seam(
-                        rematch_fn, direction.unit_id, direction.fault_class, routed[-1])
-                except Exception as exc:  # noqa: BLE001 - IA-1 fail-open
-                    logger.warning("re-match exhausted for %s; unresolved (%s)", key, exc)
-                    _unresolved(key, direction.unit_id, direction.fault_class)
-                    continue
-                if verdict.verdict == "insufficient-evidence":
-                    logger.info("re-match still yellow at the depth cap; %s unresolved", key)
-                    _unresolved(key, direction.unit_id, direction.fault_class)
-                    continue
-                if verdict.verdict != "applies":
-                    logger.info("re-match refutes %s; no hunt", key)
-                    continue
-
-            caveats = (["yellow match re-matched after back-edge"] if routed else [])
-
-            # Mint (D3), dispatch (IA-2), record (D8) - fail-open at every step.
-            hunt_id = uuid.uuid4().hex
-            config = mint_hunt_config(
-                direction,
-                candidate,
-                hunt_id,
-                surface_context={"cards": surface},
-                prior_hunt_insights=prior_insights,
-                tool_registry=_registry_from_kb(kb_evidences.get(direction.fault_class, {})),
-                target_caveats=caveats,
+        # Prior-hunt insights by revival key (O4: a read failure degrades to
+        # an empty insight set, never aborts the hunt).
+        try:
+            prior_insights = (
+                await _await_seam(tools.store_reads.read_memory, key)
+                if tools.store_reads else []
             )
-            config_ref = _write("config", config.model_dump())
+        except Exception as exc:  # noqa: BLE001
+            prior_insights = []
+            logger.warning("hunt store read degraded for %s (%s)", key, exc)
 
-            hunt: dict[str, Any] = {
-                "hunt_id": hunt_id,
-                "revival_key": key,
-                "config_ref": config_ref,
-                "degraded": False,
-                "error": None,
-            }
-            round_no = 1
-            while True:
-                if dispatch_fn is None:
-                    hunt.update({"degraded": True, "error": "hunting agent unavailable"})
-                    _write("dispatch", {
-                        "hunt_id": hunt_id, "round": round_no,
-                        "error": "hunting agent unavailable",
-                    })
-                    break
-                try:
-                    result = await _await_seam(dispatch_fn, config, tuple(routed))
-                except Exception as exc:  # noqa: BLE001 - O6: degrade the hunt
-                    logger.warning("hunt %s dispatch failed (%s)", hunt_id, exc)
-                    hunt.update({"degraded": True, "error": str(exc)})
-                    _write("dispatch", {
-                        "hunt_id": hunt_id, "round": round_no, "error": str(exc),
-                    })
-                    break
-                if result.back_edge_needs:
-                    # Inline request-response (S5/S6, D67-14): each returned
-                    # back-edge result re-evaluates the hypothesis verdict, and the
-                    # evaluation continues unbounded while needs keep surfacing -
-                    # the agent ends it by returning a result without needs.
-                    _write("dispatch", {
-                        "hunt_id": hunt_id, "round": round_no,
-                        "back_edge_needs": [n.correlation_id for n in result.back_edge_needs],
-                    })
-                    for need in result.back_edge_needs:
-                        routed.append(await _record_back_edge(need))
-                    round_no += 1
-                    continue
+        routed: list[TargetedReconResult] = []
+        if candidate.match_verdict != "applies":
+            # Park/resume (S3/O8): raise the hunt back-edge, re-match on the
+            # returned recon evidence, hard depth-1 cap.
+            request = build_back_edge_request(
+                direction.unit_id,
+                direction.fault_class,
+                requester_id=f"hunt-orchestrator-{run_id}",
+                note=f"yellow match for {direction.fault_class}: "
+                     f"{candidate.applies_witnesses.llm or ''}",
+            )
+            routed.append(await _record_back_edge(request))
+            if rematch_fn is None:
+                logger.warning("re-match unavailable for %s; unresolved", key)
+                _unresolved(key, direction.unit_id, direction.fault_class)
+                return {"trail": [{"kind": "unresolved", "revival_key": key}]}
+            try:
+                verdict = await _await_seam(
+                    rematch_fn, direction.unit_id, direction.fault_class, routed[-1])
+            except Exception as exc:  # noqa: BLE001 - IA-1 fail-open
+                logger.warning("re-match exhausted for %s; unresolved (%s)", key, exc)
+                _unresolved(key, direction.unit_id, direction.fault_class)
+                return {"trail": [{"kind": "unresolved", "revival_key": key}]}
+            if verdict.verdict == "insufficient-evidence":
+                logger.info("re-match still yellow at the depth cap; %s unresolved", key)
+                _unresolved(key, direction.unit_id, direction.fault_class)
+                return {"trail": [{"kind": "unresolved", "revival_key": key}]}
+            if verdict.verdict != "applies":
+                logger.info("re-match refutes %s; no hunt", key)
+                return {"trail": []}
+
+        caveats = (["yellow match re-matched after back-edge"] if routed else [])
+
+        # Mint (D3), dispatch (IA-2), record (D8) - fail-open at every step.
+        hunt_id = uuid.uuid4().hex
+        config = mint_hunt_config(
+            direction,
+            candidate,
+            hunt_id,
+            surface_context={"cards": surface},
+            prior_hunt_insights=prior_insights,
+            tool_registry=_registry_from_kb(kb_evidences.get(direction.fault_class, {})),
+            target_caveats=caveats,
+        )
+        config_ref = _write("config", config.model_dump())
+
+        hunt: dict[str, Any] = {
+            "hunt_id": hunt_id,
+            "revival_key": key,
+            "config_ref": config_ref,
+            "degraded": False,
+            "error": None,
+        }
+        round_no = 1
+        while True:
+            if dispatch_fn is None:
+                hunt.update({"degraded": True, "error": "hunting agent unavailable"})
                 _write("dispatch", {
                     "hunt_id": hunt_id, "round": round_no,
-                    "spec_ref": result.spec_ref,
-                    "pod_result_ref": result.pod_result_ref,
-                    "hypothesis_verdict": result.hypothesis_verdict,
-                    "feedback": result.feedback,
-                })
-                _write("result", {
-                    "hunt_id": hunt_id,
-                    "spec_ref": result.spec_ref,
-                    "pod_result_ref": result.pod_result_ref,
-                    "hypothesis_verdict": result.hypothesis_verdict,
-                    "feedback": result.feedback,
-                })
-                hunt.update({
-                    "spec_ref": result.spec_ref,
-                    "pod_result_ref": result.pod_result_ref,
-                    "hypothesis_verdict": result.hypothesis_verdict,
-                })
-                # The revive-keyed memory (#70): the feedback becomes the
-                # prior-hunt insight the next pass on this key retrieves.
-                _write("memory", {
-                    "revival_key": key,
-                    "hunt_id": hunt_id,
-                    "insight": result.feedback,
+                    "error": "hunting agent unavailable",
                 })
                 break
-            _write("hunt", hunt)
-            hunt_ids.append(hunt_id)
-            hunts_dispatched += 1
+            try:
+                result = await _await_seam(dispatch_fn, config, tuple(routed))
+            except Exception as exc:  # noqa: BLE001 - O6: degrade the hunt
+                logger.warning("hunt %s dispatch failed (%s)", hunt_id, exc)
+                hunt.update({"degraded": True, "error": str(exc)})
+                _write("dispatch", {
+                    "hunt_id": hunt_id, "round": round_no, "error": str(exc),
+                })
+                break
+            if result.back_edge_needs:
+                # Inline request-response (S5/S6, D67-14): each returned
+                # back-edge result re-evaluates the hypothesis verdict, and the
+                # evaluation continues unbounded while needs keep surfacing -
+                # the agent ends it by returning a result without needs.
+                _write("dispatch", {
+                    "hunt_id": hunt_id, "round": round_no,
+                    "back_edge_needs": [n.correlation_id for n in result.back_edge_needs],
+                })
+                for need in result.back_edge_needs:
+                    routed.append(await _record_back_edge(need))
+                round_no += 1
+                continue
+            _write("dispatch", {
+                "hunt_id": hunt_id, "round": round_no,
+                "spec_ref": result.spec_ref,
+                "pod_result_ref": result.pod_result_ref,
+                "hypothesis_verdict": result.hypothesis_verdict,
+                "feedback": result.feedback,
+            })
+            _write("result", {
+                "hunt_id": hunt_id,
+                "spec_ref": result.spec_ref,
+                "pod_result_ref": result.pod_result_ref,
+                "hypothesis_verdict": result.hypothesis_verdict,
+                "feedback": result.feedback,
+            })
+            hunt.update({
+                "spec_ref": result.spec_ref,
+                "pod_result_ref": result.pod_result_ref,
+                "hypothesis_verdict": result.hypothesis_verdict,
+            })
+            # The revive-keyed memory (#70): the feedback becomes the
+            # prior-hunt insight the next pass on this key retrieves.
+            _write("memory", {
+                "revival_key": key,
+                "hunt_id": hunt_id,
+                "insight": result.feedback,
+            })
+            break
+        _write("hunt", hunt)
+        return {"trail": [{
+            "kind": "hunt", "revival_key": key, "hunt_id": hunt_id,
+            "degraded": bool(hunt.get("degraded")),
+        }]}
 
-        return OrchestratorReport(
-            hunts_dispatched=hunts_dispatched,
-            hunt_ids=hunt_ids,
-            duplicates_dropped=intake.duplicates_dropped,
-            malformed_dropped=intake.malformed_dropped,
-            pruned_by_verdict=intake.pruned_by_verdict,
-            gate_pruned=tuple(gate_pruned),
-            exhausted_faults=tuple(exhausted_faults),
-            unresolved=tuple(unresolved_keys),
-            budget_cut=tuple(budget_cut_keys),
-            store_write_failures=write_failures,
-        )
-    finally:
-        if orchestrator is not None:
-            await orchestrator.stop()
+    initial = {
+        "project_id": project_id,
+        "run_id": run_id,
+        "phase": "reason",
+        "schedule": list(intake.accepted),
+        "current": None,
+        "worklist": [],
+        "current_direction": None,
+        "directions": [],
+        "trail": [],
+        "kb_evidences": kb_evidences,
+        "kb_degraded": kb_degraded,
+        "surface": surface,
+        "tools": tools,
+        "store_reads": tools.store_reads,
+        "reason_fn": reason_fn,
+        "budget_fn": budget_fn,
+        "dispatch_fn": dispatch_fn,
+        "rematch_fn": rematch_fn,
+        "exhausted_faults": tuple(exhausted_faults),
+    }
+    graph = build_hunting_graph(
+        reason_node=_reason_node, budget_node=_budget_node, dispatch_node=_dispatch_node,
+    )
+    terminal = await graph.compile().ainvoke(
+        initial, {"configurable": {"thread_id": run_id}},
+    )
+    trail = list(terminal.get("trail") or [])
+    hunts = [t for t in trail if t.get("kind") == "hunt"]
+    return OrchestratorReport(
+        hunts_dispatched=len(hunts),
+        hunt_ids=[t["hunt_id"] for t in hunts],
+        duplicates_dropped=intake.duplicates_dropped,
+        malformed_dropped=intake.malformed_dropped,
+        pruned_by_verdict=intake.pruned_by_verdict,
+        gate_pruned=tuple(t["revival_key"] for t in trail if t.get("kind") == "gate_pruned"),
+        exhausted_faults=tuple(exhausted_faults),
+        unresolved=tuple(t["revival_key"] for t in trail if t.get("kind") == "unresolved"),
+        budget_cut=tuple(t["revival_key"] for t in trail if t.get("kind") == "cut"),
+        store_write_failures=write_failures,
+    )
 
 
 def run_orchestration(

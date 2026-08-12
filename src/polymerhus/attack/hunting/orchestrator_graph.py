@@ -31,6 +31,7 @@ degradation canon). No driver and no I/O at import (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
+import inspect
 import logging
 import operator
 from typing import Annotated, Any, Callable, TypedDict
@@ -111,16 +112,32 @@ def _carry_current(state: HuntOrchestrationState) -> dict:
     ]}
 
 
-def _make_reason(reason_node: Callable | None) -> Callable[[HuntOrchestrationState], dict]:
-    """Build the `reason` node: run the LLM-analysis stretch for the current
-    pair (the injected body), or carry the pair when the stretch is absent or
-    raises (fail-open - the O1-O10 gate-carry). The body (Task 2) performs the
-    stateful actor turn and returns the pair's `directions` + trail events."""
+def _call_maybe_await(body: Callable | None, state: HuntOrchestrationState):
+    """Invoke an injected node body, awaiting it when it is (or returns) a
+    coroutine, so both the sync test fixtures and the async driver closures
+    (which must await seam calls) ride the same wrapper."""
+    if body is None:
+        return None
+    out = body(state)
+    if inspect.isawaitable(out):
+        return out
+    return out
 
-    def reason(state: HuntOrchestrationState) -> dict:
+
+def _make_reason(reason_node: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
+    """Build the `reason` node: run the LLM-analysis stretch for the current
+    pair (the injected body - sync or async), or carry the pair when the stretch
+    is absent or raises (fail-open - the O1-O10 gate-carry). The body (Task 2)
+    performs the stateful actor turn and returns the pair's `directions` + trail
+    events."""
+
+    async def reason(state: HuntOrchestrationState) -> dict:
         try:
-            if reason_node is not None:
-                return reason_node(state)
+            out = _call_maybe_await(reason_node, state)
+            if inspect.isawaitable(out):
+                out = await out
+            if out is not None:
+                return out
         except Exception as exc:  # noqa: BLE001 - fail-open: carry the pair
             logger.warning("reason stretch failed for %s, carrying (%s)",
                            _pair_label(state.get("current")), exc)
@@ -129,16 +146,19 @@ def _make_reason(reason_node: Callable | None) -> Callable[[HuntOrchestrationSta
     return reason
 
 
-def _make_budget(budget_node: Callable | None) -> Callable[[HuntOrchestrationState], dict]:
+def _make_budget(budget_node: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
     """Build the `budget` node: the deterministic batch stage. The injected body
     cuts over the WHOLE accumulated `directions` set and returns the `worklist`
     + any cut trail events; the default (no body) passes every carried direction
     through uncut. Sets `phase="dispatch"` so the supervisor enters the DISPATCH
     phase when it pops next."""
 
-    def budget(state: HuntOrchestrationState) -> dict:
-        if budget_node is not None:
-            return budget_node(state)
+    async def budget(state: HuntOrchestrationState) -> dict:
+        out = _call_maybe_await(budget_node, state)
+        if inspect.isawaitable(out):
+            out = await out
+        if out is not None:
+            return out
         return {
             "worklist": list(state.get("directions") or []),
             "phase": "dispatch",
@@ -148,7 +168,7 @@ def _make_budget(budget_node: Callable | None) -> Callable[[HuntOrchestrationSta
     return budget
 
 
-def _make_dispatch(dispatch_node: Callable | None) -> Callable[[HuntOrchestrationState], dict]:
+def _make_dispatch(dispatch_node: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
     """Build the `dispatch` node: the per-direction dispatch stage. The injected
     body (Task 2) does park/resume + rematch for a yellow candidate, the
     deterministic mint, and the per-config dispatch with inline back-edge
@@ -156,9 +176,12 @@ def _make_dispatch(dispatch_node: Callable | None) -> Callable[[HuntOrchestratio
     `hunting agent unavailable` trail event - fail-open, exactly the canon's
     no-`dispatch_fn` outcome."""
 
-    def dispatch(state: HuntOrchestrationState) -> dict:
-        if dispatch_node is not None:
-            return dispatch_node(state)
+    async def dispatch(state: HuntOrchestrationState) -> dict:
+        out = _call_maybe_await(dispatch_node, state)
+        if inspect.isawaitable(out):
+            out = await out
+        if out is not None:
+            return out
         direction = state.get("current_direction")
         if direction is None:
             return {"trail": []}
