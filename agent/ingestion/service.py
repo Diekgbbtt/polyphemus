@@ -143,22 +143,7 @@ class IngestionService:
             self._set_status(record, job_id, SourceStatus.INGESTING)
             result = self.lightrag_adapter.ingest_markdown(normalized.markdown_path, source_key=source_key)
             record.lightrag_document_id = result.document_id
-            self._set_status(record, job_id, SourceStatus.AUDITING)
-
-            # Run the post-ingestion audit gate for NEW-document ingestion only.
-            storage_snapshot = self.storage_reader.snapshot()
-            report = self.audit_runner(
-                job_id=job_id,
-                source_key=source_key,
-                lightrag_document_id=record.lightrag_document_id,
-                storage_snapshot=storage_snapshot,
-                allowed_entity_types=set(ENTITY_TYPES),
-            )
-            audit_payload = report.model_dump(mode="json")
-            if report.critical_issues:
-                self._set_status(record, job_id, SourceStatus.FAILED_AUDIT, audit=audit_payload)
-            else:
-                self._set_status(record, job_id, SourceStatus.PROCESSED, audit=audit_payload)
+            self._set_status(record, job_id, SourceStatus.PROCESSED)
         except SourceValidationError as exc:
             self._fail(record, job_id, exc.code, str(exc), SourceStatus.PROCESSING)
         except DocprepError as exc:
@@ -182,10 +167,11 @@ class IngestionService:
             if previous_record.lightrag_document_id:
                 self.lightrag_adapter.delete_document(previous_record.lightrag_document_id)
             result = self.lightrag_adapter.ingest_markdown(normalized.markdown_path, source_key=previous_record.source_key)
-            updated_record = previous_record.model_copy(
+
+            candidate_record = previous_record.model_copy(
                 update={
                     "content_hash": current_hash,
-                    "status": SourceStatus.PROCESSED,
+                    "status": SourceStatus.AUDITING,
                     "parser": normalized.parser,
                     "normalization_version": "lightrag_docprep",
                     "normalized_markdown_path": str(normalized.markdown_path),
@@ -195,10 +181,23 @@ class IngestionService:
                     "last_error_message": None,
                 }
             )
-            audit = {"critical_issues": 0, "warnings": 0}
-            self._set_job_status(job_id, SourceStatus.AUDITING)
-            pg.upsert_ingestion_source(updated_record)
-            self._set_job_status(job_id, SourceStatus.PROCESSED, audit=audit)
+            self._set_status(candidate_record, job_id, SourceStatus.AUDITING)
+
+            storage_snapshot = self.storage_reader.snapshot()
+            report = self.audit_runner(
+                job_id=job_id,
+                source_key=previous_record.source_key,
+                lightrag_document_id=result.document_id,
+                storage_snapshot=storage_snapshot,
+                allowed_entity_types=set(ENTITY_TYPES),
+            )
+            audit_payload = report.model_dump(mode="json")
+
+            if not report.critical_issues:
+                self._set_status(candidate_record, job_id, SourceStatus.PROCESSED, audit=audit_payload)
+            else:
+                self._set_job_status(job_id, SourceStatus.FAILED_AUDIT, audit=audit_payload)
+                self._rollback_after_failed_audit(job_id, previous_record, audit_payload)
         except DocprepError as exc:
             self._fail_job(job_id, exc.code, str(exc), SourceStatus.PROCESSING)
         except LightRAGAdapterError as exc:
@@ -259,6 +258,70 @@ class IngestionService:
         pg.upsert_ingestion_source(restored_record)
         self._fail_job(job_id, original_error.code, f"{original_error}; previous version restored", SourceStatus.INGESTING)
 
+    def _rollback_after_failed_audit(
+        self,
+        job_id: str,
+        previous_record: SourceRecord,
+        audit_payload: dict,
+    ) -> None:
+        previous_markdown_path = Path(previous_record.normalized_markdown_path or "")
+        if not previous_markdown_path.is_file():
+            failed_record = previous_record.model_copy(
+                update={
+                    "status": SourceStatus.FAILED,
+                    "last_error_code": "UPDATE_ROLLBACK_FAILED",
+                    "last_error_message": "Previous normalized markdown artifact is unavailable",
+                }
+            )
+            pg.upsert_ingestion_source(failed_record)
+            self._set_job_status(
+                job_id,
+                SourceStatus.FAILED_AUDIT,
+                audit=audit_payload,
+                error=IngestionError(
+                    code="UPDATE_ROLLBACK_FAILED",
+                    message="Previous normalized markdown artifact is unavailable",
+                    stage=SourceStatus.INGESTING.value,
+                ).model_dump(),
+            )
+            return
+
+        try:
+            restored = self.lightrag_adapter.ingest_markdown(
+                previous_markdown_path,
+                source_key=previous_record.source_key,
+            )
+        except LightRAGAdapterError as rollback_error:
+            failed_record = previous_record.model_copy(
+                update={
+                    "status": SourceStatus.FAILED,
+                    "last_error_code": "UPDATE_ROLLBACK_FAILED",
+                    "last_error_message": str(rollback_error),
+                }
+            )
+            pg.upsert_ingestion_source(failed_record)
+            self._set_job_status(
+                job_id,
+                SourceStatus.FAILED_AUDIT,
+                audit=audit_payload,
+                error=IngestionError(
+                    code="UPDATE_ROLLBACK_FAILED",
+                    message=str(rollback_error),
+                    stage=SourceStatus.INGESTING.value,
+                ).model_dump(),
+            )
+            return
+
+        restored_record = previous_record.model_copy(
+            update={
+                "status": SourceStatus.PROCESSED,
+                "lightrag_document_id": restored.document_id,
+                "last_error_code": None,
+                "last_error_message": None,
+            }
+        )
+        pg.upsert_ingestion_source(restored_record)
+
     def _set_status(
         self,
         record: SourceRecord,
@@ -279,8 +342,9 @@ class IngestionService:
         status: SourceStatus,
         *,
         audit: dict | None = None,
+        error: dict | None = None,
     ) -> None:
-        pg.set_ingestion_job_status(job_id, status, audit=audit)
+        pg.set_ingestion_job_status(job_id, status, audit=audit, error=error)
 
     def _fail(
         self,
