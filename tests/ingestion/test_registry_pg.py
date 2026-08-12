@@ -141,6 +141,7 @@ def test_get_ingestion_job_returns_observable_status(monkeypatch):
     row = (
         "11111111-1111-1111-1111-111111111111",
         "file:inbox/example.md",
+        "inbox/example.md",
         "PROCESSED",
         "abc123",
         "doc-1",
@@ -155,6 +156,7 @@ def test_get_ingestion_job_returns_observable_status(monkeypatch):
     assert result == {
         "job_id": "11111111-1111-1111-1111-111111111111",
         "source_key": "file:inbox/example.md",
+        "source_uri": "inbox/example.md",
         "status": "PROCESSED",
         "content_hash": "abc123",
         "lightrag_document_id": "doc-1",

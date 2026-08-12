@@ -7,6 +7,7 @@ networks:
 volumes:
   neo4j-data:
   pg-data:
+  n8n-data:
   kali-tools:      # persists massdns/puredns/kr so recreation never recompiles
   resolvers:
   work:
@@ -144,6 +145,8 @@ services:
       LIGHTRAG_API_URL: http://lightrag:9621
       LIGHTRAG_BASE_API_URL: http://lightrag:9621
       LIGHTRAG_WRITEUP_API_URL: http://lightrag-writeups:9621
+      INGESTION_ROOT: /data/ingestion
+      INGESTION_NORMALIZED_DIR: /data/ingestion/normalized
     env_file:
       - path: .env
         required: false
@@ -152,4 +155,37 @@ services:
       postgres: { condition: service_healthy }
       neo4j: { condition: service_healthy }
       kali: { condition: service_started }
+    volumes:
+      - ./data/ingestion:/data/ingestion
     networks: [polymerhus-net]
+
+  n8n:
+    image: n8nio/n8n:1.102.4
+    profiles: ["lightrag"]
+    environment:
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_USER_FOLDER: /home/node/.n8n
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-local-dev-change-me-32-bytes-min}
+      POLYPHEMUS_AGENT_URL: http://agent:8080
+      POLYPHEMUS_INGESTION_INBOX: /data/ingestion/inbox
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - ./data/ingestion:/data/ingestion
+    depends_on:
+      agent: { condition: service_started }
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s

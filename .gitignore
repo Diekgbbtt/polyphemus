@@ -21,4 +21,6 @@ data/lightrag/preprocessing_pipeline/docs_to_process/
 data/lightrag/preprocessing_pipeline/normalized/
 data/lightrag/preprocessing_pipeline/preprocessed_docs/
 data/lightrag/preprocessing_pipeline/src/lightrag_docprep.egg-info/
+data/ingestion/*
+!data/ingestion/.gitkeep
 docs/.DS_Store

@@ -13,6 +13,7 @@ class FakeService:
             "job-1": {
                 "job_id": "job-1",
                 "source_key": "file:inbox/example.md",
+                "source_uri": "inbox/example.md",
                 "status": "PROCESSED",
                 "content_hash": "abc123",
                 "lightrag_document_id": "doc-1",

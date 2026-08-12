@@ -1,0 +1,185 @@
+{
+  "name": "LightRAG watched folder ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "path": "/data/ingestion/inbox",
+        "events": ["add"]
+      },
+      "id": "local-file-trigger",
+      "name": "Inbox File Trigger",
+      "type": "n8n-nodes-base.localFileTrigger",
+      "typeVersion": 1,
+      "position": [0, 0]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.path || $json.filePath }}",
+              "operation": "notRegex",
+              "value2": "(^|/)\\.|\\.(tmp|part)$"
+            }
+          ]
+        }
+      },
+      "id": "filter-temp-hidden",
+      "name": "Filter temp and hidden files",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "amount": 5,
+        "unit": "seconds"
+      },
+      "id": "stabilization-wait",
+      "name": "Stabilization wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [440, -80]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://agent:8080/v1/ingestions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_kind\":\"file\",\"source_uri\":\"{{ $json.path || $json.filePath }}\"}"
+      },
+      "id": "post-ingestion",
+      "name": "POST ingestion job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [660, -80]
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "id": "poll-wait",
+      "name": "Polling wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [880, -80]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://agent:8080/v1/ingestions/{{ $json.job_id }}"
+      },
+      "id": "get-ingestion-status",
+      "name": "GET job status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1100, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "operation": "regex",
+              "value2": "^(PROCESSED|SKIPPED_DUPLICATE|FAILED)$"
+            }
+          ]
+        }
+      },
+      "id": "terminal-state",
+      "name": "Terminal state?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1320, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "string": [
+            {
+              "value1": "={{ $json.status }}",
+              "operation": "regex",
+              "value2": "^(PROCESSED|SKIPPED_DUPLICATE)$"
+            }
+          ]
+        }
+      },
+      "id": "success-state",
+      "name": "Success or duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 1,
+      "position": [1540, -160]
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "sourcePath": "=/data/ingestion/{{ $json.source_uri }}",
+        "destinationPath": "=/data/ingestion/processed/{{ $json.source_uri.split('/').slice(-1)[0] }}"
+      },
+      "id": "move-processed",
+      "name": "Move to processed",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1760, -240]
+    },
+    {
+      "parameters": {
+        "operation": "move",
+        "sourcePath": "=/data/ingestion/{{ $json.source_uri }}",
+        "destinationPath": "=/data/ingestion/failed/{{ $json.source_uri.split('/').slice(-1)[0] }}"
+      },
+      "id": "move-failed",
+      "name": "Move to failed",
+      "type": "n8n-nodes-base.readWriteFile",
+      "typeVersion": 1,
+      "position": [1760, -80]
+    }
+  ],
+  "connections": {
+    "Inbox File Trigger": {
+      "main": [[{"node": "Filter temp and hidden files", "type": "main", "index": 0}]]
+    },
+    "Filter temp and hidden files": {
+      "main": [
+        [{"node": "Stabilization wait", "type": "main", "index": 0}],
+        []
+      ]
+    },
+    "Stabilization wait": {
+      "main": [[{"node": "POST ingestion job", "type": "main", "index": 0}]]
+    },
+    "POST ingestion job": {
+      "main": [[{"node": "Polling wait", "type": "main", "index": 0}]]
+    },
+    "Polling wait": {
+      "main": [[{"node": "GET job status", "type": "main", "index": 0}]]
+    },
+    "GET job status": {
+      "main": [[{"node": "Terminal state?", "type": "main", "index": 0}]]
+    },
+    "Terminal state?": {
+      "main": [
+        [{"node": "Success or duplicate?", "type": "main", "index": 0}],
+        [{"node": "Polling wait", "type": "main", "index": 0}]
+      ]
+    },
+    "Success or duplicate?": {
+      "main": [
+        [{"node": "Move to processed", "type": "main", "index": 0}],
+        [{"node": "Move to failed", "type": "main", "index": 0}]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "lightrag-file-ingestion-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

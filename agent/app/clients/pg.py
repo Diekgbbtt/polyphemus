@@ -362,7 +362,7 @@ def create_ingestion_job(job_id: str, source_key: str, status: SourceStatus) -> 
 def get_ingestion_job(job_id: str) -> dict | None:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT j.job_id, j.source_key, j.status, s.content_hash, "
+            "SELECT j.job_id, j.source_key, s.source_uri, j.status, s.content_hash, "
             "s.lightrag_document_id, j.audit, j.error, j.finished_at "
             "FROM ingestion_jobs j "
             "JOIN ingestion_sources s ON s.source_key = j.source_key "
@@ -375,11 +375,12 @@ def get_ingestion_job(job_id: str) -> dict | None:
         return {
             "job_id": str(row[0]),
             "source_key": row[1],
-            "status": row[2],
-            "content_hash": row[3],
-            "lightrag_document_id": row[4],
-            "audit": row[5],
-            "error": row[6],
+            "source_uri": row[2],
+            "status": row[3],
+            "content_hash": row[4],
+            "lightrag_document_id": row[5],
+            "audit": row[6],
+            "error": row[7],
         }
 
 
