@@ -523,9 +523,9 @@ def test_exact_duplicate_entities_create_merge_candidates():
     snapshot = LightRAGStorageSnapshot(
         graph=GraphMLGraph(
             nodes=[
-                GraphNode(id="n1", entity_type="Server", source_id="doc1",
+                GraphNode(id=" Apache ", entity_type="Server", source_id="doc1",
                           description="Apache server", keywords="apache"),
-                GraphNode(id="n2", entity_type="Server", source_id="doc1",
+                GraphNode(id="apache", entity_type="Server", source_id="doc1",
                           description="Apache server", keywords="apache"),
             ]
         )
@@ -541,7 +541,7 @@ def test_exact_duplicate_entities_create_merge_candidates():
         c for c in report.merge_candidates if c["candidate_type"] == "entity_duplicate"
     ]
     assert len(entity_candidates) == 1
-    assert entity_candidates[0]["node_ids"] == ["n1", "n2"]
+    assert entity_candidates[0]["node_ids"] == [" Apache ", "apache"]
 
 
 def test_exact_duplicate_relations_create_merge_candidates():
