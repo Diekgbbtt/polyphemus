@@ -333,3 +333,54 @@ def test_budget_cut_records_undispatched_direction(tmp_path):
     assert len(cuts) == 1
     assert cuts[0]["direction"] == revival_key(SYSTEM_B, FAULT_Y)
     assert len(store.list_records(RUN_ID, "config")) == 1
+
+
+# --- NEW (#110): the gate turn runs per pair, one candidate at a time ----------
+
+def test_gate_turn_is_invoked_per_pair_with_one_candidate(tmp_path):
+    """#110 stateful per-fault-unit loop: the reasoning stretch is invoked ONCE
+    per accepted pair, each turn receiving exactly that pair (never the batched
+    candidate set), in schedule order - so the actor's checkpointed memory
+    carries the pass's reasoning across pairs."""
+    store = HuntStore(tmp_path)
+    seen: list[list[tuple[str, str]]] = []
+
+    def reason_fn(inp):
+        seen.append([(c.unit_id, c.fault_class) for c in inp.candidates])
+        return GateDecision(directions=[_carry(c) for c in inp.candidates])
+
+    report = _run(
+        store,
+        [_candidate(SERVICE_A, FAULT_X), _candidate(SYSTEM_B, FAULT_Y)],
+        reason_fn=reason_fn,
+    )
+    assert seen == [[(SERVICE_A, FAULT_X)], [(SYSTEM_B, FAULT_Y)]]
+    assert report.hunts_dispatched == 2
+    assert len(store.list_records(RUN_ID, "config")) == 2
+
+
+# --- NEW (#110): the orchestration actor lives per run, never reaped in-pass ---
+
+def test_orchestration_actor_survives_the_pass_and_is_reused(tmp_path):
+    """#110 actor-lives-per-run: the registry-held `HuntOrchestratorActor` is NOT
+    reaped when the graph completes - a second pass on the same run_id reuses
+    the SAME actor, so the same `hunting_orchestrator` thread serves every pair
+    AND every pass of the run (monotonic statefulness)."""
+    import asyncio
+
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        _ORCHESTRATOR_ACTORS,
+        _reap_orchestrator,
+    )
+
+    store = HuntStore(tmp_path)
+    _run(store, [_candidate(SERVICE_A, FAULT_X)])
+    first = _ORCHESTRATOR_ACTORS.get(RUN_ID)
+    assert first is not None  # the pass registered the actor and did NOT reap it
+
+    _run(store, [_candidate(SERVICE_A, FAULT_X)])
+    second = _ORCHESTRATOR_ACTORS.get(RUN_ID)
+    assert second is first  # a later pass on the same run reuses the SAME actor
+
+    asyncio.run(_reap_orchestrator(RUN_ID))  # teardown: the stop path reaps it
+    assert _ORCHESTRATOR_ACTORS.get(RUN_ID) is None
