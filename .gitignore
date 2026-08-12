@@ -23,4 +23,16 @@ data/lightrag/preprocessing_pipeline/preprocessed_docs/
 data/lightrag/preprocessing_pipeline/src/lightrag_docprep.egg-info/
 data/ingestion/*
 !data/ingestion/.gitkeep
+!data/ingestion/inbox/
+data/ingestion/inbox/*
+!data/ingestion/inbox/.gitkeep
+!data/ingestion/processed/
+data/ingestion/processed/*
+!data/ingestion/processed/.gitkeep
+!data/ingestion/failed/
+data/ingestion/failed/*
+!data/ingestion/failed/.gitkeep
+!data/ingestion/normalized/
+data/ingestion/normalized/*
+!data/ingestion/normalized/.gitkeep
 docs/.DS_Store
