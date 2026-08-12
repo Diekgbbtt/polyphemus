@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from agent.ingestion.audit import AuditIssue, AuditReport, LightRAGStorageSnapshot
+from agent.ingestion.audit import AuditIssue, AuditReport, LightRAGStorageReader, LightRAGStorageSnapshot
 from agent.ingestion.contracts import SourceRecord, SourceStatus
 from agent.ingestion.docprep_adapter import NormalizedDocument
 from agent.ingestion.lightrag_adapter import LightRAGAdapterError, LightRAGIngestionResult
@@ -736,3 +736,17 @@ def test_new_document_audit_warnings_do_not_block_processed(tmp_path, monkeypatc
     assert job_statuses[-1][1] == SourceStatus.PROCESSED
     assert len(job_statuses[-1][2]["warnings"]) == 1
     assert adapter.deleted == []
+
+
+def test_default_storage_reader_uses_configured_storage_dir(tmp_path, monkeypatch):
+    storage_dir = tmp_path / "lightrag_storage"
+    monkeypatch.setattr(service_module.config, "LIGHTRAG_STORAGE_DIR", str(storage_dir))
+
+    service = IngestionService(
+        ingestion_root=tmp_path / "ingestion",
+        normalized_root=tmp_path / "normalized",
+        lightrag_adapter=None,
+    )
+
+    assert isinstance(service.storage_reader, LightRAGStorageReader)
+    assert service.storage_reader.storage_root == storage_dir

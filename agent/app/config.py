@@ -14,8 +14,10 @@ class Config:
     PROJECT_ID = os.environ.get("PROJECT_ID", "default")
     HEARTBEAT_TICK_SECONDS = int(os.environ.get("HEARTBEAT_TICK_SECONDS", "10"))
     LIVENESS_TTL_SECONDS = int(os.environ.get("LIVENESS_TTL_SECONDS", "30"))
+    # How long a run can go without a heartbeat before being reaped
     REAP_TTL_SECONDS = int(os.environ.get("REAP_TTL_SECONDS", "300"))
     REAPER_SWEEP_SECONDS = int(os.environ.get("REAPER_SWEEP_SECONDS", "60"))
+    # Number of worker threads used by the async executor
     WORKER_THREADS = int(os.environ.get("WORKER_THREADS", "64"))
     LIGHTRAG_APPROVED_SOURCES = _csv_env(
         "LIGHTRAG_APPROVED_SOURCES",
@@ -24,7 +26,7 @@ class Config:
     LIGHTRAG_WORK_DIR = os.environ.get("LIGHTRAG_WORK_DIR", "/tmp/polyphemus-lightrag")
     LIGHTRAG_STORAGE_DIR = os.environ.get(
         "LIGHTRAG_STORAGE_DIR",
-        "data/lightrag/rag_storage",
+        "/data/lightrag/rag_storage",
     )
     LIGHTRAG_MAX_CANDIDATES = int(os.environ.get("LIGHTRAG_MAX_CANDIDATES", "5"))
     LIGHTRAG_API_URL = os.environ.get("LIGHTRAG_API_URL", "http://lightrag:9621")

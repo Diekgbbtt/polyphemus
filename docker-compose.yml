@@ -175,6 +175,7 @@ services:
       KALI_MCP_URL: http://kali:8000/mcp
       LIGHTRAG_API_URL: http://lightrag:9621
       LIGHTRAG_BASE_API_URL: http://lightrag:9621
+      LIGHTRAG_STORAGE_DIR: ${LIGHTRAG_STORAGE_DIR:-/data/lightrag/rag_storage}
       INGESTION_ROOT: /data/ingestion
       INGESTION_NORMALIZED_DIR: /data/ingestion/normalized
     env_file:
