@@ -43,11 +43,11 @@
 - `_budget(state) -> dict`: deterministic batch `budget_fn` over `directions`; sets `worklist`, `phase="dispatch"`, writes cut trail events; returns via static edge to supervisor (set phase in returned update, supervisor sees it).
 - `_dispatch(state) -> dict`: park/resume + rematch for yellow, deterministic mint, per-config dispatch (build_hunting_agent or injected `dispatch_fn`), inline back-edge rounds, trail events.
 
-- [ ] **Step 1:** Write `tests/attack/test_orchestrator_graph.py` (no LLM/Neo4j): assert `build_hunting_graph()` compiles; a schedule of 2 pairs with fixture reason/dispatch nodes visits supervisor-reason-dispatch-supervisor-... in order and ENDs on an empty worklist; an empty schedule ENDs after budget; routing never fires both paths (a single `Command` return shape); `directions`/`trail` reduce (append) not overwrite; a raising reason node carries the pair (fail-open) and the graph still reaches END.
-- [ ] **Step 2:** Run `.venv/bin/pytest tests/attack/test_orchestrator_graph.py -v` -> FAIL.
-- [ ] **Step 3:** Implement `orchestrator_graph.py`.
-- [ ] **Step 4:** Run -> PASS.
-- [ ] **Step 5:** `git commit -m "feat(hunting): supervisor-state orchestration graph skeleton (#110)"`.
+- [x] **Step 1:** Write `tests/attack/test_orchestrator_graph.py` (no LLM/Neo4j): assert `build_hunting_graph()` compiles; a schedule of 2 pairs with fixture reason/dispatch nodes visits supervisor-reason-dispatch-supervisor-... in order and ENDs on an empty worklist; an empty schedule ENDs after budget; routing never fires both paths (a single `Command` return shape); `directions`/`trail` reduce (append) not overwrite; a raising reason node carries the pair (fail-open) and the graph still reaches END.
+- [x] **Step 2:** Run `.venv/bin/pytest tests/attack/test_orchestrator_graph.py -v` -> FAIL.
+- [x] **Step 3:** Implement `orchestrator_graph.py`.
+- [x] **Step 4:** Run -> PASS.
+- [x] **Step 5:** `git commit -m "feat(hunting): supervisor-state orchestration graph skeleton (#110)"`.
 
 ---
 
@@ -60,11 +60,11 @@
 - `HuntingActorRegistry`-style per-run actor resolution in the driver (lazy, keyed by run_id) so the SAME `HuntOrchestratorActor` (same `hunting_orchestrator` thread) serves every pair of the pass and survives for the next pass.
 - All node closures delegate to the existing canon helpers (`mint_hunt_config`, `build_back_edge_request`, `_write`, `_record_back_edge`, `_unresolved`, `_await_seam`) - the canon stays single-sourced.
 
-- [ ] **Step 1:** Run the existing `tests/attack/test_hunt_orchestrator.py` -> confirm green on current code (baseline).
-- [ ] **Step 2:** Re-wire `arun_orchestration` to drive the graph; keep every seam signature. Run the suite -> RED where behaviour drifted (expected: the fail-open gate-carry, park/resume, dedup, budget, ordering assertions).
-- [ ] **Step 3:** Fix to GREEN, asserting the report/trail derivation is byte-identical to the old canon for the fixture inputs.
-- [ ] **Step 4:** `.venv/bin/pytest tests/attack/test_hunt_orchestrator.py tests/attack/test_orchestrator_graph.py -v` -> PASS.
-- [ ] **Step 5:** `git commit -m "feat(hunting): drive O1-O10 canon through the graph engine; actor lives per-run (#110)"`.
+- [x] **Step 1:** Run the existing `tests/attack/test_hunt_orchestrator.py` -> confirm green on current code (baseline).
+- [x] **Step 2:** Re-wire `arun_orchestration` to drive the graph; keep every seam signature. Run the suite -> RED where behaviour drifted (expected: the fail-open gate-carry, park/resume, dedup, budget, ordering assertions).
+- [x] **Step 3:** Fix to GREEN, asserting the report/trail derivation is byte-identical to the old canon for the fixture inputs.
+- [x] **Step 4:** `.venv/bin/pytest tests/attack/test_hunt_orchestrator.py tests/attack/test_orchestrator_graph.py -v` -> PASS.
+- [x] **Step 5:** `git commit -m "feat(hunting): drive O1-O10 canon through the graph engine; actor lives per-run (#110)"`.
 
 ---
 
@@ -76,10 +76,10 @@
 - Each C1-C12 contract predicate is re-expressed against the graph engine (same assertions, driven through `run_orchestration`, unchanged seam fixtures). New assertions added where the engine changes observability:
   - C1 (empty pass O1), C2 (partial exhaustion O2/IA-1), C3 (dedup O7), C4 (malformed O10), C5 (graph-view rejects writes D67-04), C6 (dispatch degrade O6/IA-2), C7 (KB degrade D67-11), C8 (park/resume depth-1 O8/IA-6), C9 (inline back-edge routes on correlation_id IA-6/D67-14), C10 (store write failure O3/IA-7), C11 (record ordering IA-7), C12 (budget cut O9).
   - NEW contract: the LLM stretch is invoked PER PAIR and the same actor thread serves all pairs of a pass (assert via a reason_fn recording the thread/run; the fixture receives one candidate at a time). NEW: after graph completion the actor is NOT reaped - assert the registry-held actor is alive post-pass and a second pass on the same run_id reuses it (stateful across passes).
-- [ ] **Step 1:** Run the existing file -> RED (engine change breaks ordering/lifecycle assumptions).
-- [ ] **Step 2:** Re-derive the file to the new engine, preserving every contract's expected values from the spec.
-- [ ] **Step 3:** `.venv/bin/pytest tests/integration/test_hunt_orchestrator_contracts.py -v` -> PASS.
-- [ ] **Step 4:** `git commit -m "test(hunting): re-derive C1-C12 integration catalogue to the graph engine (#110)"`.
+- [x] **Step 1:** Run the existing file -> RED (engine change breaks ordering/lifecycle assumptions).
+- [x] **Step 2:** Re-derive the file to the new engine, preserving every contract's expected values from the spec.
+- [x] **Step 3:** `.venv/bin/pytest tests/integration/test_hunt_orchestrator_contracts.py -v` -> PASS.
+- [x] **Step 4:** `git commit -m "test(hunting): re-derive C1-C12 integration catalogue to the graph engine (#110)"`.
 
 ---
 
@@ -89,9 +89,9 @@
 
 **Interfaces - Produces:**
 - Each E3-E16 walkthrough is re-expressed against the graph engine. Real graph grounding (index_cards via `ReadOnlyGraphView`) still feeds the reason stretch; the e2e asserts the engine's loop-restart behaviour (multiple pairs in one pass) and the actor-live-after-completion property with the real store.
-- [ ] **Step 1:** Run the existing file -> RED where the engine changed behaviour.
-- [ ] **Step 2:** Re-derive to the new engine (same predicates, new engine-driven expectations).
-- [ ] **Step 3:** `.venv/bin/pytest tests/e2e/test_hunt_orchestrator_isolated_e2e.py -v` -> PASS (requires the e2e harness/Neo4j; if the environment lacks it, mark and note - the loop verifier runs it).
+- [x] **Step 1:** Run the existing file -> RED where the engine changed behaviour. (This env has NO docker/Neo4j; the module's skip gate precludes a live RED/GREEN observation here - the loop verifier runs the file with the e2e harness. The predicates were verified engine-agnostic via the C1-C12 re-expression + the new E16 below.)
+- [x] **Step 2:** Re-derive to the new engine (same predicates, new engine-driven expectations): unchanged E3-E15 plus new `test_E16_actor_lives_past_completion_and_reuses_the_run_thread` (loop-restart / actor-live-after-completion with the real store + real graph grounding; reaps in teardown).
+- [ ] **Step 3:** `.venv/bin/pytest tests/e2e/test_hunt_orchestrator_isolated_e2e.py -v` -> PASS (requires the e2e harness/Neo4j; if the environment lacks it, mark and note - the loop verifier runs it). **MARKED FOR THE LOOP VERIFIER: docker is unavailable in this worktree env, so the module skips. 15 tests collect cleanly; pyflakes clean.**
 - [ ] **Step 4:** `git commit -m "test(hunting): re-derive E3-E16 e2e walkthroughs to the graph engine (#110)"`.
 
 ---

@@ -37,7 +37,6 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     HuntConfig,
     MatchVerdict,
-    OrchestratorReport,
     OrchestratorTools,
     ReadOnlyGraphView,
     ReadOnlyGraphViewError,
@@ -563,6 +562,44 @@ def test_E15_cross_run_memory_by_revival_key(project, tmp_path):
             "insight": "form Z carries no CSRF token",
         }
     ]
+
+
+# --- E16 (#110): the graph engine's actor lives past a completed pass ----------
+
+def test_E16_actor_lives_past_completion_and_reuses_the_run_thread(project, tmp_path):
+    """#110 loop-restart property with the real store + real graph grounding: the
+    registry-held orchestration actor is NOT reaped when a pass completes - a
+    second pass on the same run_id reuses the SAME actor (the same
+    hunting_orchestrator thread serves every pair AND every pass of the run)."""
+    import asyncio
+
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        _ORCHESTRATOR_ACTORS,
+        _reap_orchestrator,
+    )
+
+    store = HuntStore(tmp_path)
+    tools = _tools(store, project)
+    first = run_orchestration(
+        project_id=project, run_id="run-e16",
+        candidates=[_candidate(SERVICE_A, FAULT_X)],
+        tools=tools, dispatch_fn=_recording_dispatch([]), rematch_fn=_ok_rematch(),
+    )
+    actor_after_first = _ORCHESTRATOR_ACTORS.get("run-e16")
+    assert first.hunts_dispatched == 1
+    assert actor_after_first is not None  # the completed pass did NOT reap it
+
+    second = run_orchestration(
+        project_id=project, run_id="run-e16",
+        candidates=[_candidate(SERVICE_A, FAULT_X)],
+        tools=tools, dispatch_fn=_recording_dispatch([]), rematch_fn=_ok_rematch(),
+    )
+    actor_after_second = _ORCHESTRATOR_ACTORS.get("run-e16")
+    assert second.hunts_dispatched == 1
+    assert actor_after_second is actor_after_first  # the SAME thread across passes
+
+    asyncio.run(_reap_orchestrator("run-e16"))  # teardown: the stop path reaps it
+    assert _ORCHESTRATOR_ACTORS.get("run-e16") is None
 
 
 # --- The read-only view rejects a write through the REAL seam ------------------
