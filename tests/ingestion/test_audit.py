@@ -6,6 +6,7 @@ from agent.ingestion.audit import (
     AuditIssue,
     AuditReport,
     GraphEdge,
+    GraphMLGraph,
     GraphNode,
     LightRAGStorageReader,
     LightRAGStorageSnapshot,
