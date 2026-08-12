@@ -1,4 +1,5 @@
 import json
+from datetime import datetime
 
 import pytest
 
@@ -628,3 +629,136 @@ def test_audit_execution_has_no_side_effects_on_warnings_and_merge_candidates():
     )
 
     assert snapshot == original
+
+
+# ---------------------------------------------------------------------------
+# New tests for the reviewed findings
+# ---------------------------------------------------------------------------
+
+
+def test_vdb_chunks_container_schema_no_false_missing_or_mismatch():
+    snapshot = LightRAGStorageSnapshot(
+        kv_store_doc_status={"doc1": {"status": "processed"}},
+        kv_store_text_chunks={"chunk-1": {"full_doc_id": "doc1"}},
+        vdb_chunks={
+            "embedding_dim": 3,
+            "matrix": [],
+            "data": [
+                {"__id__": "chunk-1", "full_doc_id": "doc1"},
+            ],
+        },
+        graph=GraphMLGraph(
+            nodes=[GraphNode(id="n1", entity_type="Server", source_id="doc1")],
+            edges=[],
+        ),
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id="doc1",
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server"},
+    )
+    codes = [i.code for i in report.critical_issues]
+    assert "VECTOR_CHUNK_MISSING" not in codes
+    assert "KV_VECTOR_CHUNK_MISMATCH" not in codes
+
+
+def test_checked_at_is_non_empty_utc_rfc3339():
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=LightRAGStorageSnapshot(),
+        allowed_entity_types=set(),
+    )
+    assert report.checked_at
+    dt = datetime.fromisoformat(report.checked_at)
+    assert dt.tzinfo is not None
+    assert dt.utcoffset().total_seconds() == 0
+
+
+def test_duplicate_entity_requires_same_normalized_id():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="AES128", entity_type="Crypto", source_id="doc1",
+                          description="AES128", keywords="aes"),
+                GraphNode(id="AES256", entity_type="Crypto", source_id="doc1",
+                          description="AES128", keywords="aes"),
+            ]
+        )
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Crypto"},
+    )
+    entity_candidates = [
+        c for c in report.merge_candidates if c["candidate_type"] == "entity_duplicate"
+    ]
+    assert entity_candidates == []
+
+
+def test_exact_normalized_duplicate_entities_detected():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="Server-1", entity_type="Server", source_id="doc1",
+                          description="Apache", keywords="web"),
+                GraphNode(id="server-1", entity_type="Server", source_id="doc1",
+                          description="Apache", keywords="web"),
+            ]
+        )
+    )
+    report = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server"},
+    )
+    entity_candidates = [
+        c for c in report.merge_candidates if c["candidate_type"] == "entity_duplicate"
+    ]
+    assert len(entity_candidates) == 1
+    assert entity_candidates[0]["node_ids"] == ["Server-1", "server-1"]
+
+
+def test_duplicate_candidate_ordering_is_deterministic():
+    snapshot = LightRAGStorageSnapshot(
+        graph=GraphMLGraph(
+            nodes=[
+                GraphNode(id="z-a", entity_type="Server", source_id="doc1",
+                          description="x", keywords="k"),
+                GraphNode(id="z-b", entity_type="Server", source_id="doc1",
+                          description="x", keywords="k"),
+                GraphNode(id="a-a", entity_type="Client", source_id="doc1",
+                          description="y", keywords="l"),
+                GraphNode(id="a-b", entity_type="Client", source_id="doc1",
+                          description="y", keywords="l"),
+            ]
+        )
+    )
+    report1 = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server", "Client"},
+    )
+    report2 = run_post_ingestion_audit(
+        job_id="job-1",
+        source_key="docs/foo.md",
+        lightrag_document_id=None,
+        storage_snapshot=snapshot,
+        allowed_entity_types={"Server", "Client"},
+    )
+    assert report1.merge_candidates == report2.merge_candidates
+    entity_ids = [
+        c["node_ids"] for c in report1.merge_candidates
+        if c["candidate_type"] == "entity_duplicate"
+    ]
+    assert all(ids == sorted(ids) for ids in entity_ids)

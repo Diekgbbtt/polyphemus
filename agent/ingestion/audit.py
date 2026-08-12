@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import json
 import xml.etree.ElementTree as ET
+from datetime import datetime, timezone
 from pathlib import Path
-from typing import Any, Collection, Literal
+from typing import Any, Collection, Iterator, Literal
 
 from pydantic import BaseModel, Field
 
@@ -222,11 +223,47 @@ def _chunk_full_doc_id(chunk_data: Any) -> str | None:
 
 
 def _vdb_chunk_doc_id(chunk_data: Any) -> str | None:
-    if isinstance(chunk_data, dict):
-        metadata = chunk_data.get("metadata")
-        if isinstance(metadata, dict):
-            return metadata.get("doc_id") or metadata.get("full_doc_id")
+    """Return the document id for a vector chunk.
+
+    Priority:
+      1. top-level ``full_doc_id`` / ``doc_id`` (real LightRAG schema)
+      2. ``metadata.full_doc_id`` / ``metadata.doc_id`` (legacy fixtures)
+    """
+    if not isinstance(chunk_data, dict):
+        return None
+    for key in ("full_doc_id", "doc_id"):
+        val = chunk_data.get(key)
+        if val:
+            return str(val)
+    metadata = chunk_data.get("metadata")
+    if isinstance(metadata, dict):
+        for key in ("full_doc_id", "doc_id"):
+            val = metadata.get(key)
+            if val:
+                return str(val)
     return None
+
+
+def _iter_vdb_chunks(vdb_data: Any) -> Iterator[tuple[str | None, Any]]:
+    """Yield ``(record_id, record)`` from either supported schema.
+
+    Real LightRAG container: ``{"embedding_dim": ..., "matrix": ..., "data": [...]}``
+    where each record in ``data`` carries ``__id__`` (or ``id``) and
+    top-level ``full_doc_id``.
+
+    Legacy simple schema: ``{record_id: {...}}``.
+    """
+    if not isinstance(vdb_data, dict):
+        return
+    data = vdb_data.get("data")
+    if isinstance(data, list):
+        for record in data:
+            if isinstance(record, dict):
+                rec_id = record.get("__id__") or record.get("id")
+                yield rec_id, record
+        return
+    for rec_id, record in vdb_data.items():
+        yield rec_id, record
 
 
 def _extract_chunk_count(record: Any) -> int | None:
@@ -250,8 +287,13 @@ def _norm_identifier(value: str) -> str:
     return " ".join(value.strip().split())
 
 
+def _norm_entity_id(value: str) -> str:
+    return " ".join(value.strip().lower().split())
+
+
 def _entity_identity(node: GraphNode) -> tuple[str, ...]:
     return (
+        _norm_entity_id(node.id),
         _norm_text(node.entity_type),
         _norm_identifier(node.source_id),
         _norm_identifier(node.file_path),
@@ -391,9 +433,16 @@ def run_post_ingestion_audit(
                 {"document_id": document_id},
             )
 
+        # Build an ID index of the vector chunks without mutating the snapshot
+        vdb_chunk_ids = {
+            chunk_id
+            for chunk_id, _ in _iter_vdb_chunks(storage_snapshot.vdb_chunks)
+            if chunk_id is not None
+        }
+
         # Missing vector chunks for chunks that belong to the audited document
         for chunk_id in linked_chunk_ids:
-            if chunk_id not in storage_snapshot.vdb_chunks:
+            if chunk_id not in vdb_chunk_ids:
                 add_issue(
                     "VECTOR_CHUNK_MISSING",
                     f"Text chunk {chunk_id!r} of document {document_id!r} is missing from vdb_chunks.",
@@ -401,8 +450,12 @@ def run_post_ingestion_audit(
                 )
 
         # Vector chunks that are tagged with the audited document but have no KV text chunk
-        for chunk_id, chunk_data in storage_snapshot.vdb_chunks.items():
-            if _vdb_chunk_doc_id(chunk_data) == document_id and chunk_id not in storage_snapshot.kv_store_text_chunks:
+        for chunk_id, chunk_data in _iter_vdb_chunks(storage_snapshot.vdb_chunks):
+            if (
+                chunk_id is not None
+                and _vdb_chunk_doc_id(chunk_data) == document_id
+                and chunk_id not in storage_snapshot.kv_store_text_chunks
+            ):
                 add_issue(
                     "KV_VECTOR_CHUNK_MISMATCH",
                     f"Vector chunk {chunk_id!r} for document {document_id!r} has no corresponding KV text chunk.",
@@ -465,18 +518,20 @@ def run_post_ingestion_audit(
         key = _entity_identity(node)
         entity_groups.setdefault(key, []).append(node.id)
 
-    for key, ids in entity_groups.items():
+    for key in sorted(entity_groups):
+        ids = entity_groups[key]
         if len(ids) > 1:
             merge_candidates.append(
                 {
                     "candidate_type": "entity_duplicate",
                     "node_ids": sorted(ids),
                     "identity": {
-                        "entity_type": key[0],
-                        "source_id": key[1],
-                        "file_path": key[2],
-                        "description": key[3],
-                        "keywords": key[4],
+                        "entity_id": key[0],
+                        "entity_type": key[1],
+                        "source_id": key[2],
+                        "file_path": key[3],
+                        "description": key[4],
+                        "keywords": key[5],
                     },
                 }
             )
@@ -488,7 +543,8 @@ def run_post_ingestion_audit(
             {"source": edge.source, "target": edge.target}
         )
 
-    for key, edges_list in relation_groups.items():
+    for key in sorted(relation_groups):
+        edges_list = relation_groups[key]
         if len(edges_list) > 1:
             merge_candidates.append(
                 {
@@ -504,11 +560,13 @@ def run_post_ingestion_audit(
                 }
             )
 
+    checked_at = datetime.now(timezone.utc).isoformat(timespec="seconds")
+
     return AuditReport(
         job_id=job_id,
         source_key=source_key,
         critical_issues=issues,
         warnings=warnings,
         merge_candidates=merge_candidates,
-        checked_at="",
+        checked_at=checked_at,
     )

@@ -43,7 +43,7 @@ The audit is designed to be **non-destructive**: it never modifies or deletes st
 
 ### Merge Candidates
 
-- `entity_duplicate`: nodes with identical identity (`entity_type`, `source_id`, `file_path`, `description`, `keywords`).
+- `entity_duplicate`: nodes with identical identity (`entity_type`, `source_id`, `file_path`, `description`, `keywords`), **including** the normalized GraphML node `id`.
 - `relation_duplicate`: edges with identical identity (`source`, `target`, `source_id`, `description`, `keywords`).
 
 ## Storage Snapshot
@@ -56,5 +56,7 @@ The audit does not read directly from running services. Instead it uses `LightRA
 
 Missing files are recorded in `snapshot.missing_files` rather than raising an error. Malformed JSON or GraphML raises `StorageParseError`.
 
-## Usage Example
+### `vdb_chunks.json` container structure
+
+The real LightRAG vector‑chunk store is a **top‑level container object**, **not** a flat mapping of chunk IDs to records.
 

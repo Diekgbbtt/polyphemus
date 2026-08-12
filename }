@@ -1,0 +1,8 @@
+
+- The `data` field is a list of vector records.
+- Each vector record contains a chunk identifier in the `__id__` field (the legacy `id` field is also supported as a safe compatibility fallback).
+- Document linkage is taken primarily from the top‑level `full_doc_id` field of each vector record. A legacy `metadata.doc_id` (or `metadata.full_doc_id`) is used only when the top‑level field is absent.
+- The audit builds a read‑only index from these records and never mutates the snapshot.
+
+## Usage Example
+
