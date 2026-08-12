@@ -7,11 +7,13 @@ from agent.app.config import config
 from agent.app.llm import validate_llm_config
 from agent.app.observability import disabled_reason, get_langfuse_callbacks
 from agent.app.routes import router as recon_router
+from agent.ingestion.routes import router as ingestion_router
 
 logger = logging.getLogger(__name__)
 
 app = FastAPI(title="polymerhus-agent")
 app.include_router(recon_router)
+app.include_router(ingestion_router)
 
 
 def log_tracing_status() -> None:

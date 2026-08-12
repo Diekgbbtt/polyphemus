@@ -38,5 +38,7 @@ class Config:
     )
     LIGHTRAG_API_KEY = os.environ.get("LIGHTRAG_API_KEY", "")
     LIGHTRAG_TIMEOUT_SECONDS = float(os.environ.get("LIGHTRAG_TIMEOUT_SECONDS", "30"))
+    INGESTION_ROOT = os.environ.get("INGESTION_ROOT", "/data/ingestion")
+    INGESTION_NORMALIZED_DIR = os.environ.get("INGESTION_NORMALIZED_DIR", "/data/ingestion/normalized")
 
 config = Config()
