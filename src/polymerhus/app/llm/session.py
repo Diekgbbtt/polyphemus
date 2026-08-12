@@ -73,10 +73,19 @@ def _default_model_factory(role_id: str) -> Any:
     return chat_model_for(role_id)
 
 
-def _observe_config(config: dict, role_id: str, thread_id: str) -> dict:
+def _observe_config(config: dict, role_id: str, thread_id: str, *,
+                    checkpointer=None) -> dict:
     """Attach Langfuse callbacks + honest per-role_id/thread attribution (the #18
     recipe, mirrored from `analysis/supervisor._observability_config`). Empty
-    callbacks (Langfuse unconfigured) are inert; fail-open."""
+    callbacks (Langfuse unconfigured) are inert; fail-open.
+
+    T6 (D11 item 4): when a checkpointer is in play, the config metadata also
+    carries the dedicated `reasoning_readability` llm-response field, read
+    from the PERSISTED thread's last assistant message - "replayed" when the
+    turn before last had its reasoning re-persisted by the replay pipeline,
+    "absent" otherwise (same session trace: `langfuse_session_id`). The field
+    rides the metadata the Langfuse CallbackHandler records onto the llm
+    response; fail-open - any read failure simply omits the field."""
     from polymerhus.app.observability import get_langfuse_callbacks
 
     config = dict(config)
@@ -86,6 +95,14 @@ def _observe_config(config: dict, role_id: str, thread_id: str) -> dict:
         "langfuse_tags": ["session", role_id],
         "role_id": role_id,
     }
+    if checkpointer is not None:
+        from polymerhus.app.llm.reasoning import reasoning_readability_metadata
+
+        values = _read_thread_state(checkpointer, thread_id)
+        if values is not None:
+            messages = values.get("messages")
+            if isinstance(messages, list):
+                config["metadata"].update(reasoning_readability_metadata(messages))
     return config
 
 
@@ -121,9 +138,9 @@ def _build_agent(
     return create_agent(model, **kwargs)
 
 
-def _turn_config(role_id: str, thread_id: str, observe: bool) -> dict:
+def _turn_config(role_id: str, thread_id: str, observe: bool, *, checkpointer=None) -> dict:
     config: dict = {"configurable": {"thread_id": thread_id}}
-    return _observe_config(config, role_id, thread_id) if observe else config
+    return _observe_config(config, role_id, thread_id, checkpointer=checkpointer) if observe else config
 
 
 def _to_turn(result: dict, response_format, thread_id: str) -> SessionTurn:
@@ -133,6 +150,96 @@ def _to_turn(result: dict, response_format, thread_id: str) -> SessionTurn:
     else:
         content = messages[-1].content if messages else None
     return SessionTurn(content=content, messages=list(messages), thread_id=thread_id)
+
+
+def _resolve_reasoning_profile(role_id: str):
+    """The T3 capability profile for the replay pipeline, fail-open (D7).
+
+    Resolves the role's (provider, model) and reads the held profile from the
+    process-lifetime capability cache (`capability.py`, resolve-and-hold - the
+    read is a cache hit from the second resolution on, off the #73 retry
+    axis). ANY failure - unset role env vars, a degraded reader, a config lie
+    - degrades to None (profile unknown per D5 Rule 1): the session must
+    always start. Unknown means the pipeline no-ops and gaps are logged."""
+    try:
+        from polymerhus.app.llm.capability import resolve_capability
+        from polymerhus.app.llm.providers import resolve_role
+
+        provider, model = resolve_role(role_id)
+        return resolve_capability(provider, model)
+    except Exception:  # noqa: BLE001 - fail-open, never into the turn path
+        return None
+
+
+def _log_replay_observability(report: dict, role_id: str, thread_id: str) -> None:
+    """CACHE-TRACK + readability: the per-turn llm-response observability line.
+    `cached_tokens` (usage observability) and the D11 grey-point heuristic
+    (interleaved + shape + cache-presence - low confidence) are recorded as
+    fields, NEVER gating and never on the #73 retry/timeout axis (D7):
+    this hook is purely descriptive, non-blocking, fail-open."""
+    logger.info(
+        "llm-response: role=%s thread=%s reasoning_readability=%s surface=%s "
+        "encrypted=%s cached_tokens=%s heuristic=%s",
+        role_id, thread_id, report.get("readability"), report.get("surface"),
+        report.get("encrypted"), report.get("cached_tokens"), report.get("heuristic"))
+
+
+def _replay_reasoning(agent, config: dict, result: dict, role_id: str,
+                      thread_id: str) -> None:
+    """T6 REPLAY at the session seam boundary: parse the turn's assistant
+    message(s) per the T3 profile and RE-PERSIST them with the reasoning
+    attached, byte-identical, so the next turn restores the replay-ready
+    prefix and provider-native KV caching can hit (D8.1/D11.4).
+
+    The re-persist goes through `agent.update_state` - the official langgraph
+    state-replacement API - so it works on any checkpointer. Encrypted
+    reasoning is re-persisted as well (readability tracked, never skipped).
+    Failure to re-persist is logged and swallowed: replay is best-effort and
+    must never break the turn."""
+    from polymerhus.app.llm.reasoning import (
+        replay_assistant_reasoning,
+    )
+
+    profile = _resolve_reasoning_profile(role_id)
+    messages = result.get("messages", [])
+    if not isinstance(messages, list):
+        return
+    replacement, report = replay_assistant_reasoning(list(messages), profile)
+    if replacement is not None:
+        try:
+            agent.update_state(config, {"messages": replacement})
+        except Exception as exc:  # noqa: BLE001 - replay must never break the turn
+            logger.warning(
+                "reasoning replay re-persist failed for %s/%s: %s (turn result "
+                "unchanged; replay is best-effort, never gating)",
+                role_id, thread_id, exc)
+            return
+    _log_replay_observability(report, role_id, thread_id)
+
+
+async def _areplay_reasoning(agent, config: dict, result: dict, role_id: str,
+                             thread_id: str) -> None:
+    """Async replay re-persist (`aupdate_state`) - identical contract to
+    `_replay_reasoning`, for the event-loop parent entry point."""
+    from polymerhus.app.llm.reasoning import (
+        replay_assistant_reasoning,
+    )
+
+    profile = _resolve_reasoning_profile(role_id)
+    messages = result.get("messages", [])
+    if not isinstance(messages, list):
+        return
+    replacement, report = replay_assistant_reasoning(list(messages), profile)
+    if replacement is not None:
+        try:
+            await agent.aupdate_state(config, {"messages": replacement})
+        except Exception as exc:  # noqa: BLE001 - replay must never break the turn
+            logger.warning(
+                "reasoning replay re-persist failed for %s/%s: %s (turn result "
+                "unchanged; replay is best-effort, never gating)",
+                role_id, thread_id, exc)
+            return
+    _log_replay_observability(report, role_id, thread_id)
 
 
 def run_session_turn(
@@ -160,7 +267,9 @@ def run_session_turn(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
         middleware=middleware, store=store, checkpointer=checkpointer, model_factory=model_factory,
     )
-    result = agent.invoke({"messages": list(new_messages)}, _turn_config(role_id, thread_id, observe))
+    config = _turn_config(role_id, thread_id, observe, checkpointer=checkpointer)
+    result = agent.invoke({"messages": list(new_messages)}, config)
+    _replay_reasoning(agent, config, result, role_id, thread_id)
     return _to_turn(result, response_format, thread_id)
 
 
@@ -187,7 +296,9 @@ async def arun_session_turn(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
         middleware=middleware, store=store, checkpointer=checkpointer, model_factory=model_factory,
     )
-    result = await agent.ainvoke({"messages": list(new_messages)}, _turn_config(role_id, thread_id, observe))
+    config = _turn_config(role_id, thread_id, observe, checkpointer=checkpointer)
+    result = await agent.ainvoke({"messages": list(new_messages)}, config)
+    await _areplay_reasoning(agent, config, result, role_id, thread_id)
     return _to_turn(result, response_format, thread_id)
 
 
