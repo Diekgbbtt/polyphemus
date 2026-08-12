@@ -155,7 +155,17 @@ class IngestionService:
             )
             audit_payload = report.model_dump(mode="json")
             if report.critical_issues:
-                self._set_status(record, job_id, SourceStatus.FAILED_AUDIT, audit=audit_payload)
+                self._set_status(
+                    record,
+                    job_id,
+                    SourceStatus.FAILED_AUDIT,
+                    audit=audit_payload,
+                    error=IngestionError(
+                        code="AUDIT_FAILED",
+                        message="Post-ingestion audit found critical issues",
+                        stage=SourceStatus.AUDITING.value,
+                    ).model_dump(),
+                )
             else:
                 self._set_status(record, job_id, SourceStatus.PROCESSED, audit=audit_payload)
         except SourceValidationError as exc:
@@ -208,7 +218,6 @@ class IngestionService:
             audit_payload = report.model_dump(mode="json")
 
             if not report.critical_issues:
-                # Activate the new version only after a successful audit.
                 self._set_status(candidate_record, job_id, SourceStatus.PROCESSED, audit=audit_payload)
             else:
                 # Do not upsert candidate_record for a failed audit.
@@ -216,6 +225,7 @@ class IngestionService:
                     job_id,
                     previous_record,
                     None,
+                    rejected_document_id=result.document_id,
                     job_status=SourceStatus.FAILED_AUDIT,
                     audit=audit_payload,
                     error_stage=SourceStatus.AUDITING,
@@ -234,10 +244,35 @@ class IngestionService:
         previous_record: SourceRecord,
         original_error: LightRAGAdapterError | None = None,
         *,
+        rejected_document_id: str | None = None,
         job_status: SourceStatus = SourceStatus.FAILED,
         audit: dict | None = None,
         error_stage: SourceStatus = SourceStatus.INGESTING,
     ) -> None:
+        if rejected_document_id is not None:
+            try:
+                self.lightrag_adapter.delete_document(rejected_document_id)
+            except LightRAGAdapterError as delete_error:
+                failed_record = previous_record.model_copy(
+                    update={
+                        "status": SourceStatus.FAILED,
+                        "last_error_code": "UPDATE_ROLLBACK_FAILED",
+                        "last_error_message": str(delete_error),
+                    }
+                )
+                pg.upsert_ingestion_source(failed_record)
+                self._set_job_status(
+                    job_id,
+                    SourceStatus.FAILED_AUDIT,
+                    audit=audit,
+                    error=IngestionError(
+                        code="UPDATE_ROLLBACK_FAILED",
+                        message=f"Failed to delete rejected LightRAG document {rejected_document_id}: {delete_error}",
+                        stage=SourceStatus.AUDITING.value,
+                    ).model_dump(),
+                )
+                return
+
         previous_markdown_path = Path(previous_record.normalized_markdown_path or "")
         if not previous_markdown_path.is_file():
             failed_record = previous_record.model_copy(
@@ -312,6 +347,11 @@ class IngestionService:
                 job_id,
                 SourceStatus.FAILED_AUDIT,
                 audit=audit,
+                error=IngestionError(
+                    code="AUDIT_FAILED",
+                    message="Post-ingestion audit found critical issues",
+                    stage=SourceStatus.AUDITING.value,
+                ).model_dump(),
             )
         else:
             self._fail_job(
@@ -328,12 +368,13 @@ class IngestionService:
         status: SourceStatus,
         *,
         audit: dict | None = None,
+        error: dict | None = None,
     ) -> None:
         record.status = status
         record.last_error_code = None
         record.last_error_message = None
         pg.upsert_ingestion_source(record)
-        self._set_job_status(job_id, status, audit=audit)
+        self._set_job_status(job_id, status, audit=audit, error=error)
 
     def _set_job_status(
         self,

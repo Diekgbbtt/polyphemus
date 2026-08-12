@@ -675,13 +675,16 @@ def test_update_critical_audit_triggers_rollback_to_previous_version(tmp_path, m
     )
     service.process_job("job-1")
 
-    assert adapter.deleted == ["doc-old"]
+    assert adapter.deleted == ["doc-old", "doc-new"]
     assert adapter.ingested == [new_md, old_md]
     assert upserts[-1].status == SourceStatus.PROCESSED
     assert upserts[-1].content_hash == "old-hash"
     assert upserts[-1].lightrag_document_id == "doc-restored"
     assert job_statuses[-1][1] == SourceStatus.FAILED_AUDIT
     assert job_statuses[-1][2] == report.model_dump(mode="json")
+    assert job_statuses[-1][3] is not None
+    assert job_statuses[-1][3]["code"] == "AUDIT_FAILED"
+    assert job_statuses[-1][3]["stage"] == "AUDITING"
     assert not any(status == SourceStatus.PROCESSED for _, status, _, _ in job_statuses)
     assert audit_calls[0]["lightrag_document_id"] == "doc-new"
 
@@ -791,7 +794,68 @@ def test_update_rollback_failure_follows_existing_recoverable_failure(tmp_path, 
     assert job_statuses[-1][1] == SourceStatus.FAILED_AUDIT
     assert job_statuses[-1][2] == report.model_dump(mode="json")
     assert job_statuses[-1][3]["code"] == "UPDATE_ROLLBACK_FAILED"
+    assert adapter.deleted == ["doc-old", "doc-new"]
+    assert adapter.ingested == [new_md]
+    assert audit_calls[0]["lightrag_document_id"] == "doc-new"
+
+
+def test_update_critical_audit_delete_rejected_document_failure(tmp_path, monkeypatch):
+    root, source, old_md, new_md, new_json, active, job, current_hash = _make_update_fixture(tmp_path)
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    _install_update_mocks(monkeypatch, active, job, upserts, job_statuses)
+
+    class FailingDeleteOnNewAdapter:
+        def __init__(self):
+            self.deleted: list[str] = []
+            self.ingested: list[Path] = []
+
+        def delete_document(self, document_id):
+            self.deleted.append(document_id)
+            if document_id == "doc-new":
+                raise LightRAGAdapterError("LIGHTRAG_DELETE_FAILED", "delete failed", retryable=True)
+            return {"status": "ok"}
+
+        def ingest_markdown(self, markdown_path, *, source_key):
+            self.ingested.append(Path(markdown_path))
+            return LightRAGIngestionResult(track_id="track-new", document_id="doc-new", status="processed")
+
+    adapter = FailingDeleteOnNewAdapter()
+    storage_reader = _FakeStorageReader()
+    audit_calls = []
+    report = AuditReport(
+        job_id="job-1",
+        source_key=active.source_key,
+        critical_issues=[
+            AuditIssue(code="CRIT", message="critical problem", severity="critical", evidence={})
+        ],
+        warnings=[],
+        merge_candidates=[],
+        checked_at="2024-01-01T00:00:00Z",
+    )
+    audit_runner = _make_fake_audit_runner(audit_calls, report)
+
+    async def normalize(source_path, *, output_root):
+        return NormalizedDocument(output_dir=new_md.parent, markdown_path=new_md, json_path=new_json, parser="markdown", warnings=[])
+
+    monkeypatch.setattr(service_module, "normalize_document", normalize)
+
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=adapter,
+        audit_runner=audit_runner,
+        storage_reader=storage_reader,
+    )
+    service.process_job("job-1")
+
+    assert upserts[-1].status == SourceStatus.FAILED
+    assert upserts[-1].last_error_code == "UPDATE_ROLLBACK_FAILED"
+    assert job_statuses[-1][1] == SourceStatus.FAILED_AUDIT
+    assert job_statuses[-1][2] == report.model_dump(mode="json")
+    assert job_statuses[-1][3]["code"] == "UPDATE_ROLLBACK_FAILED"
     assert adapter.deleted == ["doc-old"]
+    assert adapter.ingested == [new_md]
     assert audit_calls[0]["lightrag_document_id"] == "doc-new"
 
 
@@ -904,7 +968,7 @@ def test_new_document_audit_critical_results_in_failed_audit(tmp_path, monkeypat
     root, source, normalized_md, normalized_json, record, job = _make_new_document_fixture(tmp_path)
 
     upserts: list[SourceRecord] = []
-    job_statuses: list[tuple[str, SourceStatus, dict | None]] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
 
     class FakeAdapter:
         def __init__(self):
@@ -941,7 +1005,7 @@ def test_new_document_audit_critical_results_in_failed_audit(tmp_path, monkeypat
     monkeypatch.setattr(
         service_module.pg,
         "set_ingestion_job_status",
-        lambda job_id, status, **kwargs: job_statuses.append((job_id, status, kwargs.get("audit"))),
+        lambda job_id, status, **kwargs: job_statuses.append((job_id, status, kwargs.get("audit"), kwargs.get("error"))),
     )
 
     async def normalize(source_path, *, output_root):
@@ -966,7 +1030,11 @@ def test_new_document_audit_critical_results_in_failed_audit(tmp_path, monkeypat
 
     assert upserts[-1].status == SourceStatus.FAILED_AUDIT
     assert job_statuses[-1][1] == SourceStatus.FAILED_AUDIT
-    assert not any(status == SourceStatus.PROCESSED for _, status, _ in job_statuses)
+    assert job_statuses[-1][2] == report.model_dump(mode="json")
+    assert job_statuses[-1][3] is not None
+    assert job_statuses[-1][3]["code"] == "AUDIT_FAILED"
+    assert job_statuses[-1][3]["stage"] == "AUDITING"
+    assert not any(status == SourceStatus.PROCESSED for _, status, _, _ in job_statuses)
     assert not any(rec.status == SourceStatus.PROCESSED for rec in upserts)
     assert adapter.deleted == []
 
