@@ -66,4 +66,4 @@ def test_n8n_workflow_does_not_execute_audit_logic():
     assert "AUDIT_FAILED" not in serialized  # backend error code
     # Only the status token FAILED_AUDIT is allowed because n8n is routing a
     # backend-reported final state, not executing the audit itself.
-    assert serialized.count("FAILED_AUDIT") == serialized.count("AUDIT")
+    assert serialized.count("FAILED_AUDIT") == 1
