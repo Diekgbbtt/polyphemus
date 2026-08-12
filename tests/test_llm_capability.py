@@ -77,6 +77,7 @@ def test_profile_fields_default_to_none():
     p = C.CapabilityProfile()
     assert p.context_limit is None
     assert p.output_limit is None
+    assert p.supports_tool_calling is None
     assert p.source is None
     assert p.synced_at is None
     assert p.reasoning_in_response is None
@@ -212,6 +213,76 @@ def test_reasoning_in_response_false_is_trusted_not_unknown(monkeypatch):
     ]})
     p = C.resolve_capability("openrouter", "no-reasoning", http=fake)
     assert p.reasoning_in_response is False
+
+
+# ---------------------------------------------------------------------------
+# The D5 tool-calling surface (the T5 #108 crawl gate consumes this) ---------
+# ---------------------------------------------------------------------------
+
+def test_tool_calling_is_provenance_gated(monkeypatch):
+    """D5: supports_tool_calling maps to the wire key `supports_function_calling`
+    (the sync authors it, `sync_mapping.py`). Rule 1: an UNTAGGED record's
+    tool-calling flag is NEVER trusted (litellm could be echoing something of
+    its own); a TAGGED record's flag is trusted."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    untagged = FakeHttp({"data": [
+        _record("openrouter/untagged-toolcaller",
+                supports_function_calling=True, supports_parallel_function_calling=True),
+    ]})
+    p = C.resolve_capability("openrouter", "untagged-toolcaller", http=untagged)
+    assert p.supports_tool_calling is None
+
+    tagged = FakeHttp({"data": [
+        _tagged("openrouter/tagged-toolcaller", supports_function_calling=True),
+    ]})
+    p = C.resolve_capability("openrouter", "tagged-toolcaller", http=tagged)
+    assert p.supports_tool_calling is True
+
+
+def test_tool_calling_true_is_read_from_the_function_calling_key(monkeypatch):
+    """The profile value comes from the mapped `supports_function_calling` key -
+    the D5 wire field the sync authors from the canonical record."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/function-calling-wire",
+                supports_function_calling=True, supports_parallel_function_calling=True),
+    ]})
+    p = C.resolve_capability("openrouter", "function-calling-wire", http=fake)
+    assert p.supports_tool_calling is True
+
+
+def test_tool_calling_absent_field_is_unknown(monkeypatch):
+    """Tag present but the tool-calling field absent -> unknown (None), never
+    guessed - the crawl gate must REFUSE on this state (spec §5)."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/tagged-no-toolkey", max_input_tokens=200_000),
+    ]})
+    p = C.resolve_capability("openrouter", "tagged-no-toolkey", http=fake)
+    assert p.supports_tool_calling is None
+
+
+def test_tool_calling_false_is_trusted_not_unknown(monkeypatch):
+    """An explicitly authored False is a trustworthy value - the crawl gate
+    REFUSES on it, distinct from the unknown (None) state it also refuses on."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/no-tool-calling", supports_function_calling=False),
+    ]})
+    p = C.resolve_capability("openrouter", "no-tool-calling", http=fake)
+    assert p.supports_tool_calling is False
+
+
+def test_tool_calling_wrong_typed_wire_value_degrades_to_unknown(monkeypatch):
+    """The typed profile contract: a wrong-typed wire value degrades to
+    unknown (None) - the crawl gate then REFUSES rather than trusting a
+    string that looks true."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/toolkey-wrong-typed", supports_function_calling="yes"),
+    ]})
+    p = C.resolve_capability("openrouter", "toolkey-wrong-typed", http=fake)
+    assert p.supports_tool_calling is None
 
 
 # ---------------------------------------------------------------------------

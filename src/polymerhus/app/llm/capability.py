@@ -51,10 +51,22 @@ absent field = `None`, never asserted). There is NO reasoning-CACHING field
 on the profile (D11 grey point - unassertable from the registry; runtime
 cache-hit tracking is T6's work).
 
+D5 tool-calling surface (consumed by the T5 crawl gate, #108):
+`supports_tool_calling` (bool) is read from the tagged record's mapped
+`supports_function_calling` key (the sync authors it, `sync_mapping.py`,
+from the canonical record's `supports_tool_calling`; it authors
+`supports_parallel_function_calling` with the SAME value - the crawl
+`bind_tools` path may consume the parallel key separately later, D5).
+Rule 1 applies exactly as to the other fields: absent tag or absent field
+= `None` (unknown), and the conservative-unknown policy (spec §5) treats
+`None` as `false` for capability gating - the crawl seam REFUSES the
+tool-loop on both `False` and `None` (#108).
+
 Wire shape: the /model/info bodies read here are exactly what the sync (T2,
 `sync_mapping.py`) authors - provenance keys `capability_source` /
 `capability_synced_at` / `capability_staleness`, the D5 mapped fields
-`max_input_tokens` / `max_output_tokens`, the D11 keys, and the slash-form
+`max_input_tokens` / `max_output_tokens` / `supports_function_calling`
+(+ `supports_parallel_function_calling`), the D11 keys, and the slash-form
 registered model name `<provider>/<id>` (zen-family id stripped) - which is
 also the reader's lookup key. The gateway is the co-located litellm proxy
 (D1); `/model/info` is litellm's standard `{"data": [{"model_name": ...,
@@ -119,6 +131,12 @@ class CapabilityProfile:
     - `context_limit` / `output_limit`: the model's input/output window in
       tokens; `output_limit` has NO env fallback (resolves `None` when the
       gateway lacks it; #95 decides).
+    - `supports_tool_calling` (D5): whether the model can call tools - the
+      crawl `bind_tools` gate (#108). Read from the mapped
+      `supports_function_calling` key; the sync authors the parallel-calling
+      key with the same value (a later consumer may read it separately).
+      Rule 1: absent tag or absent field = `None` (unknown) - `None` is
+      treated as `false` by the gating consumers (spec §5).
     - `source` / `synced_at`: full provenance (`capability_source` /
       `capability_synced_at`) for logging and staleness; `source` may be the
       literal `"unknown"` (D9 unknown-model path).
@@ -130,6 +148,7 @@ class CapabilityProfile:
 
     context_limit: int | None = None
     output_limit: int | None = None
+    supports_tool_calling: bool | None = None
     source: str | None = None
     synced_at: dt.datetime | None = None
     reasoning_in_response: bool | None = None
@@ -249,6 +268,7 @@ def _profile_from_record(provider: str, model: str, body: Any) -> CapabilityProf
         profile = CapabilityProfile(
             context_limit=_typed_positive_int(info.get("max_input_tokens")),
             output_limit=_typed_positive_int(info.get("max_output_tokens")),
+            supports_tool_calling=_typed_bool(info.get("supports_function_calling")),
             source=_typed_str(info[PROVENANCE_SOURCE_KEY]),
             synced_at=synced_at,
             reasoning_in_response=_typed_bool(info.get("reasoning_in_response")),
@@ -328,6 +348,9 @@ def resolve_capability(
     held = CapabilityProfile(
         context_limit=context_limit,
         output_limit=profile.output_limit if profile is not None else None,
+        supports_tool_calling=(
+            profile.supports_tool_calling if profile is not None else None
+        ),
         source=profile.source if profile is not None else None,
         synced_at=profile.synced_at if profile is not None else None,
         reasoning_in_response=profile.reasoning_in_response if profile is not None else None,

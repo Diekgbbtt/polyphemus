@@ -11,6 +11,10 @@ Notable design points (kept minimal + marked in-line with `D23`/`SP4`):
    branch in `_run_agentic_crawl` (D23): when credentials are supplied and no
    human-interactive session is precreated, the agent is instructed to log in
    autonomously before crawling.
+3. The T5 (#108) capability gate `_refuse_crawl_without_tool_calling` runs
+   BEFORE `llm.bind_tools`: a model whose `supports_tool_calling` resolves
+   `false`/`unknown` (T3 reader, ADR D5 Rule 1) refuses the tool-loop with a
+   warn log and degrades to the empty manifest (no emulation - #99's work).
 The lazy `from api import _build_llm_with_model_for_user` fallback in
 `_run_agentic_crawl` is left in place verbatim - our adapter (`crawl_agent.py`)
 always injects `build_llm_fn`, so that import never fires on our host.
@@ -21,6 +25,9 @@ from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel
+
+from polymerhus.app.llm.capability import resolve_capability
+from polymerhus.app.llm.providers import _ZEN_FAMILY, resolve_role
 
 CRAWL_TOOL_NAMES = {
     "steel_crawl_start",
@@ -138,6 +145,83 @@ def _payload_from_tool_result(out) -> dict:
     return {}
 
 
+def _registered_lookup_key(provider: str, model: str) -> str:
+    """Mirror of `capability.py:_registered_name` (the T2 registered-name
+    convention, ADR D5): `<provider>/<model>` with the zen-family id stripped.
+    The reader resolves a (provider, model) pair against exactly this key;
+    the seam mirrors it only for the warn log's transparency."""
+    if provider in _ZEN_FAMILY:
+        model = model.rsplit("/", 1)[-1]
+    return f"{provider}/{model}"
+
+
+def _refuse_crawl_without_tool_calling(body: AgenticCrawlRequest) -> str | None:
+    """T5 (#108): the crawl capability gate - runs BEFORE `llm.bind_tools`.
+
+    Queries the T3 reader (`app.llm.capability.resolve_capability`, ADR D5
+    Rule 1 provenance-gated) for the crawl model's `supports_tool_calling`
+    and returns the REFUSAL reason when the model cannot call tools - or
+    None when the tool-loop may run:
+
+    - `true` -> None: the loop proceeds exactly as today (no behavior change).
+    - `false` / `unknown` (None) -> refusal reason: the caller must NOT call
+      `bind_tools` / run the tool-loop, and degrades fail-open to the empty
+      manifest. This is the REFUSAL branch only - no silent emulation (that
+      is #99's strategy-level work), no silent retry, no #73 axis involvement.
+    - the reader raising `LLMConfigError` (a config-lie context-limit env)
+      -> treated as unknown: warn + refuse, NEVER crash the caller.
+    - unresolvable model identity (the role has no bound `model_key` env):
+      the gate cannot classify and warns; it then proceeds as today. This
+      branch is reachable only on the injected pre-built-client seam (the
+      adapter's `llm is not None` path), where the caller vetted the client
+      itself and the env-less identity would also have crashed
+      `build_llm_fn` before the gate on the production path.
+
+    Model identity at the seam, per the implementer prompt: the crawl does
+    NOT carry a provider:model string - `body.model` is the ROLE id
+    ("crawler"; the adapter resolves the client from the role,
+    `chat_model_for`). The (provider, model) pair comes from
+    `resolve_role(body.model)`, and the reader then applies the registered-
+    name + zen-strip lookup convention internally (`capability.py:
+    _registered_name`). Documented here because the seam has no direct
+    provider:model surface of its own.
+    """
+    import logging  # noqa: PLC0415
+
+    logger = logging.getLogger("crawl_agentic")
+
+    try:
+        provider, model = resolve_role(body.model)
+    except Exception:  # noqa: BLE001 - the identity failure must never crash the caller
+        logger.warning(
+            "crawl capability gate cannot identify the model for role %r; "
+            "proceeding without the gate (injected/pre-built client path)",
+            body.model, exc_info=True)
+        return None
+
+    try:
+        profile = resolve_capability(provider, model)
+    except Exception as exc:  # noqa: BLE001 - fail-open: degrade, never crash
+        logger.warning(
+            "crawl capability gate could not resolve %s:%s (reader raised %s); "
+            "treating as unknown - refusing the tool-loop",
+            provider, model, exc)
+        return f"{provider}:{model}"
+
+    if profile.supports_tool_calling is True:
+        return None
+    state = "false" if profile.supports_tool_calling is False else "unknown"
+    logger.warning(
+        "crawl REFUSED the tool-loop: model=%s:%s registered_key=%s "
+        "supports_tool_calling=%s capability_source=%s synced_at=%s; "
+        "gap: add the model to the gateway registry or set a manual "
+        "override (spec §5) - bind_tools not attempted, returning the "
+        "empty manifest",
+        provider, model, _registered_lookup_key(provider, model),
+        state, profile.source, profile.synced_at)
+    return f"{provider}:{model}"
+
+
 async def _run_agentic_crawl(
     body: AgenticCrawlRequest,
     mcp_manager,
@@ -171,6 +255,12 @@ async def _run_agentic_crawl(
         bound_names.discard("steel_await_auth")
     tools = [t for t in all_tools if getattr(t, "name", "") in bound_names]
     by_name = {t.name: t for t in tools}
+    # T5 (#108): the capability gate - a model that cannot call tools (false
+    # or unknown, provenance-gated per ADR D5 Rule 1) REFUSES the tool-loop:
+    # bind_tools is never attempted and the crawl degrades fail-open to the
+    # empty manifest (warn-refuse-degrade; never crashes the caller).
+    if _refuse_crawl_without_tool_calling(body) is not None:
+        return {"endpoints": [], "js_urls": []}
     llm_t = llm.bind_tools(tools)
 
     sys_prompt = _load_steel_crawl_skill()
