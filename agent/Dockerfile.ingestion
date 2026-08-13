@@ -14,6 +14,8 @@ RUN pip install --no-cache-dir \
     "uvicorn[standard]==0.34.0" \
     "psycopg[binary]==3.2.3" \
     "httpx>=0.27,<1" \
+    "h11>=0.16,<0.17" \
+    "dnspython>=2.8,<3" \
     "pydantic>=2.10,<3"
 RUN pip install --no-cache-dir /srv/lightrag_docprep
 

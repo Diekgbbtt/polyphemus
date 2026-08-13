@@ -1,8 +1,31 @@
 import os
+import math
 
 
 def _csv_env(name: str, default: str) -> tuple[str, ...]:
     return tuple(part.strip() for part in os.environ.get(name, default).split(",") if part.strip())
+
+
+def _float_env(name: str, default: float) -> float:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = float(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be a float, got {raw!r}") from exc
+    if not math.isfinite(value) or value <= 0:
+        raise ValueError(f"{name} must be a finite positive float, got {raw!r}")
+    return value
+
+
+def _int_env(name: str, default: int) -> int:
+    raw = os.environ.get(name, str(default))
+    try:
+        value = int(raw)
+    except (TypeError, ValueError) as exc:
+        raise ValueError(f"{name} must be an integer, got {raw!r}") from exc
+    if value <= 0:
+        raise ValueError(f"{name} must be a positive integer, got {raw!r}")
+    return value
 
 
 class Config:
@@ -39,5 +62,12 @@ class Config:
     LIGHTRAG_TIMEOUT_SECONDS = float(os.environ.get("LIGHTRAG_TIMEOUT_SECONDS", "30"))
     INGESTION_ROOT = os.environ.get("INGESTION_ROOT", "/data/ingestion")
     INGESTION_NORMALIZED_DIR = os.environ.get("INGESTION_NORMALIZED_DIR", "/data/ingestion/normalized")
+    URL_DOWNLOAD_CONNECT_TIMEOUT = _float_env("URL_DOWNLOAD_CONNECT_TIMEOUT", 10.0)
+    URL_DOWNLOAD_READ_TIMEOUT = _float_env("URL_DOWNLOAD_READ_TIMEOUT", 30.0)
+    URL_DOWNLOAD_TOTAL_TIMEOUT = _float_env("URL_DOWNLOAD_TOTAL_TIMEOUT", 120.0)
+    URL_DOWNLOAD_MAX_REDIRECTS = _int_env("URL_DOWNLOAD_MAX_REDIRECTS", 5)
+    URL_DOWNLOAD_MAX_WIRE_BYTES = _int_env("URL_DOWNLOAD_MAX_WIRE_BYTES", 10 * 1024 * 1024)
+    URL_DOWNLOAD_MAX_DECODED_BYTES = _int_env("URL_DOWNLOAD_MAX_DECODED_BYTES", 10 * 1024 * 1024)
+    URL_DOWNLOAD_STREAM_CHUNK_SIZE = _int_env("URL_DOWNLOAD_STREAM_CHUNK_SIZE", 64 * 1024)
 
 config = Config()
