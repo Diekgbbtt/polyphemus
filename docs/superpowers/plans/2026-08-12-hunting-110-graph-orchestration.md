@@ -151,8 +151,8 @@
 
 **Files:** Modify `src/polymerhus/attack/hunting/CONTEXT.md` (+ `CONTEXT-MAP.md` if the engine names a new bounded term); commit together with any doc drift.
 
-- [ ] **Step 1:** Update the hunting CONTEXT.md: the hunt-orchestrator entry (graph engine, per-pair stateful stretch, actor-lives-across-pairs), the runtime obligations (`hunting_runs`, `start_hunting`, three endpoints, fixed store path).
-- [ ] **Step 2:** Full suite: `.venv/bin/pytest tests/attack tests/integration -q` (unit + integration green, no live LLM/Neo4j). If the e2e harness is available, run `tests/e2e/test_hunt_orchestrator_isolated_e2e.py`.
-- [ ] **Step 3:** `git status` clean of unintended files; `git log` one commit per task, all on `feat/hunting-110-runtime-wiring`.
-- [ ] **Step 4:** `git commit -m "docs(hunting): keep model current - graph engine + runtime seam obligations (#110)"`.
+- [x] **Step 1:** Update the hunting CONTEXT.md: the hunt-orchestrator entry (graph engine, per-pair stateful stretch, actor-lives-across-pairs), the runtime obligations (`hunting_runs`, `start_hunting`, three endpoints, fixed store path).
+- [x] **Step 2:** Full suite: `.venv/bin/pytest tests/attack tests/integration -q` (unit + integration green, no live LLM/Neo4j). If the e2e harness is available, run `tests/e2e/test_hunt_orchestrator_isolated_e2e.py`. **GREEN: `tests/attack`=164 pass; `tests/integration`=161 pass / 49 skip (infra-gated), excluding the two live-Neo4j files (`test_assigner_eval_live.py`, `test_decoupling_contracts.py`) which ERROR/FAIL with `ConnectionRefused` pre-existingly (no docker in this env; they lack a clean skip gate - reported as a work item, NOT #110's scope). The e2e module collects 15 and skips (no Neo4j) - the loop verifier runs it.**
+- [x] **Step 3:** `git status` clean of unintended files; `git log` one commit per task, all on `feat/hunting-110-runtime-wiring`.
+- [x] **Step 4:** `git commit -m "docs(hunting): keep model current - graph engine + runtime seam obligations (#110)"`.
 - [ ] **Step 5:** Hand off to the loop verifier: run the full catalogue, report the ticket for verifier APPROVAL, then open the PR against `main` (one PR per ticket).
