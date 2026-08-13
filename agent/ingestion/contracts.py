@@ -1,6 +1,7 @@
 from enum import StrEnum
+from typing import Literal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 
 class SourceStatus(StrEnum):
@@ -41,9 +42,9 @@ class SourceChange(StrEnum):
 
 class SourceRecord(BaseModel):
     source_key: str
-    source_kind: str
+    source_kind: Literal["file", "url"]
     source_uri: str
-    content_hash: str
+    content_hash: str | None = None
     status: SourceStatus
     parser: str | None = None
     parser_version: str | None = None
@@ -53,6 +54,7 @@ class SourceRecord(BaseModel):
     normalized_json_path: str | None = None
     last_error_code: str | None = None
     last_error_message: str | None = None
+    source_metadata: dict[str, object] = Field(default_factory=dict)
 
 
 class SourceClassification(BaseModel):

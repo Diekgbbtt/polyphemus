@@ -1,4 +1,5 @@
 import json
+import re
 from pathlib import Path
 
 from agent.app.clients import pg
@@ -48,12 +49,20 @@ def patch_connect(monkeypatch, cursor):
 def test_schema_defines_ingestion_sources_and_jobs_tables():
     schema = Path("db/postgres/init.sql").read_text(encoding="utf-8")
 
+    # Isolate the ingestion_sources CREATE TABLE block so the nullability
+    # assertion cannot accidentally pass on a substring from another table.
+    start = schema.index("CREATE TABLE IF NOT EXISTS ingestion_sources")
+    end = schema.find(");", start)
+    ingestion_sources_block = schema[start:end + 2]
+
     assert "CREATE TABLE IF NOT EXISTS ingestion_sources" in schema
     assert "CREATE TABLE IF NOT EXISTS ingestion_jobs" in schema
     assert "source_key TEXT PRIMARY KEY" in schema
-    assert "content_hash TEXT NOT NULL" in schema
     assert "lightrag_document_id TEXT" in schema
     assert "job_id UUID PRIMARY KEY" in schema
+
+    assert "content_hash TEXT" in ingestion_sources_block
+    assert re.search(r"content_hash\s+TEXT\s+NOT\s+NULL", ingestion_sources_block) is None
 
 
 def test_get_ingestion_source_maps_row_to_source_record(monkeypatch):
@@ -63,6 +72,7 @@ def test_get_ingestion_source_maps_row_to_source_record(monkeypatch):
         "inbox/example.md",
         "abc123",
         "PROCESSED",
+        {},
         "markdown",
         "markdown-router",
         "docprep-0.3.4",
@@ -82,6 +92,7 @@ def test_get_ingestion_source_maps_row_to_source_record(monkeypatch):
         source_uri="inbox/example.md",
         content_hash="abc123",
         status=SourceStatus.PROCESSED,
+        source_metadata={},
         parser="markdown",
         parser_version="markdown-router",
         normalization_version="docprep-0.3.4",
@@ -103,6 +114,7 @@ def test_get_processed_ingestion_source_by_hash_filters_processed_rows(monkeypat
         "inbox/original.md",
         "abc123",
         "PROCESSED",
+        {},
         "markdown",
         "markdown-router",
         "docprep-0.3.4",
@@ -123,7 +135,19 @@ def test_get_processed_ingestion_source_by_hash_filters_processed_rows(monkeypat
     assert "FROM ingestion_sources" in query
     assert "content_hash = %s" in query
     assert "status = %s" in query
+    assert "content_hash IS NOT NULL" in query
     assert params == ("abc123", "PROCESSED")
+
+
+def test_get_processed_ingestion_source_by_hash_none_returns_none_without_connect(monkeypatch):
+    def fail_connect(*args, **kwargs):
+        raise AssertionError("database connection should not be opened for None content_hash")
+
+    monkeypatch.setattr(pg.psycopg, "connect", fail_connect)
+
+    result = pg.get_processed_ingestion_source_by_hash(None)
+
+    assert result is None
 
 
 def test_upsert_ingestion_source_uses_source_key_conflict(monkeypatch):
@@ -231,3 +255,51 @@ def test_set_ingestion_job_status_with_failed_audit_is_terminal_and_serializes_a
     assert params[0] == "FAILED_AUDIT"
     assert json.loads(params[1]) == {"critical_issues": 2, "warnings": 1}
     assert json.loads(params[2])["code"] == "FAILED_AUDIT"
+
+
+def test_url_stub_source_metadata_round_trip(monkeypatch):
+    cur = patch_connect(monkeypatch, FakeCursor())
+    record = SourceRecord(
+        source_key="url:https://example.com/doc",
+        source_kind="url",
+        source_uri="https://example.com/doc",
+        content_hash=None,
+        status=SourceStatus.DISCOVERED,
+        source_metadata={"active_download": None, "latest_attempt": None},
+    )
+
+    pg.upsert_ingestion_source(record)
+
+    query, params = cur.executed[0]
+    assert params[4] == "DISCOVERED"  # status still before source_metadata in the tuple
+    assert json.loads(params[5]) == {"active_download": None, "latest_attempt": None}
+
+
+def test_null_content_hash_is_allowed_and_never_picked_by_duplicate_lookup(monkeypatch):
+    cur = patch_connect(monkeypatch, FakeCursor())
+    record = SourceRecord(
+        source_key="url:https://example.com/doc",
+        source_kind="url",
+        source_uri="https://example.com/doc",
+        content_hash=None,
+        status=SourceStatus.DISCOVERED,
+    )
+
+    pg.upsert_ingestion_source(record)
+
+    query, params = cur.executed[0]
+    assert params[3] is None
+
+
+def test_url_migration_executes_same_idempotent_statements_on_repeated_calls(monkeypatch):
+    cur = patch_connect(monkeypatch, FakeCursor())
+    pg.apply_url_ingestion_migrations()
+
+    queries = [q for q, _ in cur.executed]
+    assert any("ADD COLUMN IF NOT EXISTS source_metadata" in q for q in queries)
+    assert any("ALTER COLUMN content_hash DROP NOT NULL" in q for q in queries)
+
+    cur.executed.clear()
+    pg.apply_url_ingestion_migrations()
+    repeated_queries = [q for q, _ in cur.executed]
+    assert repeated_queries == queries

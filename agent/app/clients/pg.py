@@ -283,14 +283,19 @@ _TERMINAL_INGESTION_STATUSES = {
 }
 
 
+def _source_select_columns() -> str:
+    return (
+        "source_key, source_kind, source_uri, content_hash, status, source_metadata, "
+        "parser, parser_version, normalization_version, lightrag_document_id, "
+        "normalized_markdown_path, normalized_json_path, "
+        "last_error_code, last_error_message"
+    )
+
+
 def get_ingestion_source(source_key: str) -> SourceRecord | None:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT source_key, source_kind, source_uri, content_hash, status, "
-            "parser, parser_version, normalization_version, lightrag_document_id, "
-            "normalized_markdown_path, normalized_json_path, "
-            "last_error_code, last_error_message "
-            "FROM ingestion_sources WHERE source_key = %s",
+            f"SELECT {_source_select_columns()} FROM ingestion_sources WHERE source_key = %s",
             (source_key,),
         )
         row = cur.fetchone()
@@ -299,14 +304,14 @@ def get_ingestion_source(source_key: str) -> SourceRecord | None:
         return _source_record_from_row(row)
 
 
-def get_processed_ingestion_source_by_hash(content_hash: str) -> SourceRecord | None:
+def get_processed_ingestion_source_by_hash(content_hash: str | None) -> SourceRecord | None:
+    if content_hash is None:
+        return None
+
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            "SELECT source_key, source_kind, source_uri, content_hash, status, "
-            "parser, parser_version, normalization_version, lightrag_document_id, "
-            "normalized_markdown_path, normalized_json_path, "
-            "last_error_code, last_error_message "
-            "FROM ingestion_sources WHERE content_hash = %s AND status = %s "
+            f"SELECT {_source_select_columns()} FROM ingestion_sources "
+            "WHERE content_hash = %s AND status = %s AND content_hash IS NOT NULL "
             "ORDER BY updated_at DESC LIMIT 1",
             (content_hash, SourceStatus.PROCESSED.value),
         )
@@ -323,14 +328,15 @@ def _source_record_from_row(row) -> SourceRecord:
         source_uri=row[2],
         content_hash=row[3],
         status=SourceStatus(row[4]),
-        parser=row[5],
-        parser_version=row[6],
-        normalization_version=row[7],
-        lightrag_document_id=row[8],
-        normalized_markdown_path=row[9],
-        normalized_json_path=row[10],
-        last_error_code=row[11],
-        last_error_message=row[12],
+        source_metadata=row[5] or {},
+        parser=row[6],
+        parser_version=row[7],
+        normalization_version=row[8],
+        lightrag_document_id=row[9],
+        normalized_markdown_path=row[10],
+        normalized_json_path=row[11],
+        last_error_code=row[12],
+        last_error_message=row[13],
     )
 
 
@@ -338,15 +344,16 @@ def upsert_ingestion_source(record: SourceRecord) -> None:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO ingestion_sources ("
-            "source_key, source_kind, source_uri, content_hash, status, parser, "
-            "parser_version, normalization_version, lightrag_document_id, "
+            "source_key, source_kind, source_uri, content_hash, status, source_metadata, "
+            "parser, parser_version, normalization_version, lightrag_document_id, "
             "normalized_markdown_path, normalized_json_path, last_error_code, last_error_message"
-            ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
             "ON CONFLICT (source_key) DO UPDATE SET "
             "source_kind = EXCLUDED.source_kind, "
             "source_uri = EXCLUDED.source_uri, "
             "content_hash = EXCLUDED.content_hash, "
             "status = EXCLUDED.status, "
+            "source_metadata = EXCLUDED.source_metadata, "
             "parser = EXCLUDED.parser, "
             "parser_version = EXCLUDED.parser_version, "
             "normalization_version = EXCLUDED.normalization_version, "
@@ -362,6 +369,7 @@ def upsert_ingestion_source(record: SourceRecord) -> None:
                 record.source_uri,
                 record.content_hash,
                 record.status.value,
+                json.dumps(record.source_metadata) if record.source_metadata else "{}",
                 record.parser,
                 record.parser_version,
                 record.normalization_version,
@@ -427,3 +435,26 @@ def set_ingestion_job_status(
                 job_id,
             ),
         )
+
+
+# --- Milestone 4 schema migration (explicit, idempotent) --------------------
+# Existing pg-data volumes must run this before using URL ingestion.
+# init.sql only initializes a *fresh* database; this function is the migration
+# path for volumes that already have ingestion_sources without source_metadata
+# and with content_hash NOT NULL.
+
+_URL_INGESTION_MIGRATION_SQL = [
+    "ALTER TABLE ingestion_sources ADD COLUMN IF NOT EXISTS source_metadata JSONB NOT NULL DEFAULT '{}'",
+    "ALTER TABLE ingestion_sources ALTER COLUMN content_hash DROP NOT NULL",
+]
+
+def apply_url_ingestion_migrations() -> None:
+    """Idempotently migrate an existing PostgreSQL volume for Milestone 4.
+
+    Safe to run against a fresh init.sql database; each statement is a no-op
+    if the new schema is already present.
+    """
+    with psycopg.connect(config.POSTGRES_DSN) as conn:
+        with conn.cursor() as cur:
+            for statement in _URL_INGESTION_MIGRATION_SQL:
+                cur.execute(statement)
