@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
 
 from bs4 import BeautifulSoup
@@ -33,7 +34,18 @@ class HtmlParser(ParserAdapter):
         return markdown, title, metadata
 
     async def parse(self, path: Path) -> RawParseResult:
-        markdown, title, metadata = await asyncio.to_thread(self._convert, path)
+        loop = asyncio.get_running_loop()
+        executor = ThreadPoolExecutor(max_workers=1)
+        try:
+            markdown, title, metadata = await loop.run_in_executor(
+                executor, self._convert, path
+            )
+        finally:
+            try:
+                executor.shutdown(wait=True, cancel_futures=True)
+            except TypeError:
+                executor.shutdown(wait=True)
+
         return RawParseResult(
             parser_name=self.name,
             source_path=str(path),
