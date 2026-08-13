@@ -248,12 +248,14 @@ def test_canonicalize_url_preserves_query_raw_escapes_and_order():
     assert canonicalize_url("http://example.com/path?x=%7e&x=%2f;z=1") == "http://example.com/path?x=%7e&x=%2f;z=1"
 
 
-def test_canonicalize_url_retains_empty_query_marker():
-    assert canonicalize_url("http://example.com/path?") == "http://example.com/path?"
-
-
-def test_canonicalize_url_does_not_add_empty_query_marker_without_question():
+def test_canonicalize_url_empty_and_absent_query_are_identical():
+    assert canonicalize_url("http://example.com/path?") == "http://example.com/path"
     assert canonicalize_url("http://example.com/path") == "http://example.com/path"
+
+
+def test_build_url_source_key_empty_and_absent_query_are_identical():
+    assert build_url_source_key("http://example.com/path?") == "url:http://example.com/path"
+    assert build_url_source_key("http://example.com/path") == "url:http://example.com/path"
 
 
 @pytest.mark.parametrize("host", ["127.1", "2130706433", "0x7f000001"])

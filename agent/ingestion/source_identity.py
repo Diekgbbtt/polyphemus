@@ -304,16 +304,13 @@ def canonicalize_url(raw: str) -> str:
 
     query = parsed.query
     # Preserve the query component exactly as submitted, including byte case,
-    # percent escapes, duplicate keys, separators, order, and an explicit
-    # empty-query marker when present in the raw URL.
-    has_query_delimiter = raw.split("#", 1)[0].find("?") != -1
+    # percent escapes, duplicate keys, separators, and order. Empty and absent
+    # query components intentionally canonicalize to the same URL.
 
     netloc = host_canonical  # port is always omitted after validation
     result = f"{scheme}://{netloc}{path}"
     if query:
         result += f"?{query}"
-    elif has_query_delimiter:
-        result += "?"
     return result
 
 
