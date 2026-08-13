@@ -4,6 +4,8 @@ from dataclasses import dataclass
 from typing import Literal, Sequence
 
 import httpx
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration
 from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
@@ -304,6 +306,87 @@ def resolve_role(role: str) -> tuple[str, str]:
     provider, model = raw.split(":", 1)
     return provider.strip(), model.strip()
 
+class ReasoningPreservingChatOpenAI(ChatOpenAI):
+    """The T6 reasoning-replay seam (D11 items 3-5): a ChatOpenAI subclass
+    that preserves the wire reasoning fields the pinned langchain-openai
+    otherwise strips at both conversion boundaries.
+
+    INBOUND (parse): stock `_convert_dict_to_message` drops `reasoning_content`
+    and `provider_specific_fields.reasoning_details` from responses - an
+    AIMessage comes back with `additional_kwargs={}`. This subclass overrides
+    `_create_chat_result` (the one funnel both `_generate` and `_agenerate`
+    end in) to capture the RAW response and land the wire values onto the
+    AIMessage's `additional_kwargs` (byte-identical), where the T6 extractor
+    reads them. Fail-open: any capture failure degrades to the stock strip.
+
+    OUTBOUND (replay): stock `_convert_message_to_dict` serializes only
+    whitelisted keys, so a replayed `additional_kwargs` reasoning never
+    reaches the wire. This subclass overrides `_get_request_payload` to
+    re-serialize the messages and re-emit the reasoning at MESSAGE level
+    (`reasoning_content` / `reasoning_details`) - exactly the shape T1
+    verified the gateway forwards verbatim on the request transport.
+
+    The subclass is the ticket-sanctioned role-construction path fix (D4
+    additive: the seam lives in `app/llm`, no agent module touched). It is
+    pinned to langchain-openai 1.3.x's internals (`_create_chat_result`,
+    `_get_request_payload`); the unit tier pins the behavioral contract
+    (wire capture + message-level re-emit) so a future SDK bump that moves
+    these seams turns the tests red on purpose."""
+
+    def _create_chat_result(self, response, generation_info=None):
+        result = super()._create_chat_result(response, generation_info)
+        try:
+            from polymerhus.app.llm.reasoning import (
+                land_wire_reasoning,
+                response_wire_reasoning,
+            )
+
+            wires = response_wire_reasoning(response)
+            if not wires or not result.generations:
+                return result
+            generation = result.generations[0]
+            if not isinstance(generation.message, AIMessage):
+                return result
+            preserved = land_wire_reasoning(generation.message, wires)
+            result.generations[0] = ChatGeneration(
+                message=preserved, generation_info=generation.generation_info)
+        except Exception as exc:  # noqa: BLE001 - fail-open: stock behavior
+            logger.debug("reasoning wire capture failed (%s); continuing with "
+                         "stock conversion", exc)
+        return result
+
+    def _get_request_payload(self, input_, *, stop=None, **kwargs):
+        payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        messages = payload.get("messages")
+        if not isinstance(messages, list):
+            return payload
+        try:
+            from langchain_openai.chat_models.base import (
+                _convert_from_v1_to_chat_completions,
+                _convert_message_to_dict,
+            )
+            from polymerhus.app.llm.reasoning import replayed_request_fields
+
+            source = self._convert_input(input_).to_messages()
+            serialized = []
+            for message in source:
+                message_dict = (
+                    _convert_message_to_dict(
+                        _convert_from_v1_to_chat_completions(message))
+                    if isinstance(message, AIMessage)
+                    else _convert_message_to_dict(message)
+                )
+                for surface, value in replayed_request_fields(message).items():
+                    if value is not None and surface not in message_dict:
+                        message_dict[surface] = value
+                serialized.append(message_dict)
+            payload["messages"] = serialized
+        except Exception as exc:  # noqa: BLE001 - fail-open: request unchanged
+            logger.debug("reasoning re-emit failed (%s); request payload "
+                         "unchanged", exc)
+        return payload
+
+
 def build_chat_model(provider: str, model: str, *, temperature: float = 0,
                      read_timeout: float | None = None,
                      max_retries: int | None = None,
@@ -351,10 +434,10 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     extra: dict = {}
     if thinking != "off":
         extra["reasoning_effort"] = thinking
-    return ChatOpenAI(model=model, api_key=api_key,
-                      base_url=base_url, temperature=temperature,
-                      timeout=timeout, max_retries=retries,
-                      callbacks=get_langfuse_callbacks(), **extra)
+    return ReasoningPreservingChatOpenAI(model=model, api_key=api_key,
+                                         base_url=base_url, temperature=temperature,
+                                         timeout=timeout, max_retries=retries,
+                                         callbacks=get_langfuse_callbacks(), **extra)
 
 def validate_llm_config(roles: Sequence[Role] | None = None) -> None:
     """Fail fast: every configured role must name a known provider with a present key.

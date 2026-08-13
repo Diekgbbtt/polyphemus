@@ -548,14 +548,13 @@ def test_seam_langfuse_metadata_carries_reasoning_readability(monkeypatch):
     _pin_profile(monkeypatch, PROFILE_CONTENT)
     captured: list[dict] = []
 
-    real_observe = S._observe_config
+    real_attach = S._attach_readability_metadata
 
-    def spy(config, role_id, thread_id, **kwargs):
-        updated = real_observe(config, role_id, thread_id, **kwargs)
-        captured.append(dict(updated["metadata"]))
-        return updated
+    def spy(config, values):
+        real_attach(config, values)
+        captured.append(dict(config["metadata"]))
 
-    monkeypatch.setattr(S, "_observe_config", spy)
+    monkeypatch.setattr(S, "_attach_readability_metadata", spy)
     saver = InMemorySaver()
     reply = AIMessage(content="a1", additional_kwargs={"reasoning_content": "r"})
     S.run_session_turn("triager", "run1:triager", [HumanMessage(content="hi")],
@@ -604,3 +603,282 @@ def test_stateful_turn_still_returns_content_with_replay_enabled(monkeypatch):
     assert second == "3"
     persisted = _thread_messages(saver, "run1:triager")
     assert persisted[1].additional_kwargs["reasoning_content"] == "r"
+
+
+# --- FINDINGS 1+2 (verifier REDO): the REAL conversion boundaries -----------
+#
+# The pinned langchain-openai (1.3.2) strips reasoning at BOTH conversion
+# boundaries (inbound `_convert_dict_to_message`, outbound
+# `_convert_message_to_dict`). The reasoning-preserving provider subclass
+# (providers.ReasoningPreservingChatOpenAI - the ticket-sanctioned
+# role-construction seam) fixes both; these tests pin the behavior through
+# the REAL conversions, not the pure helpers.
+
+
+def _preserving_model():
+    from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
+
+    return ReasoningPreservingChatOpenAI(
+        model="deepseek/deepseek-v4-flash-free",
+        api_key="sk-dummy",
+        base_url="http://127.0.0.1:1/v1",
+    )
+
+
+def test_preserving_client_captures_wire_reasoning():
+    """INBOUND (finding 1): `_create_chat_result` - the funnel both sync and
+    async generations end in - captures the RAW response dict's reasoning and
+    lands it on the AIMessage, where the extractor parses both ratified
+    surfaces (reasoning_content at message level, reasoning_details under
+    provider_specific_fields)."""
+    model = _preserving_model()
+    wire = {
+        "id": "cmpl-1",
+        "object": "chat.completion",
+        "created": 1700000000,
+        "model": "deepseek/deepseek-v4-flash-free",
+        "choices": [{
+            "index": 0,
+            "message": {
+                "role": "assistant",
+                "content": "the answer",
+                "reasoning_content": REASONING_CONTENT_SENTINEL,
+                "provider_specific_fields": {"reasoning_details": REASONING_DETAILS_SENTINEL},
+            },
+            "finish_reason": "stop",
+        }],
+        "usage": {"prompt_tokens": 7, "completion_tokens": 9, "total_tokens": 16},
+    }
+    result = model._create_chat_result(wire, None)
+    message = result.generations[0].message
+    parsed_content = R.extract_reasoning(message, PROFILE_CONTENT)
+    assert parsed_content is not None
+    assert parsed_content.reasoning == REASONING_CONTENT_SENTINEL
+    assert parsed_content.surface == "reasoning_content"
+    parsed_details = R.extract_reasoning(message, PROFILE_DETAILS)
+    assert parsed_details is not None
+    assert parsed_details.reasoning == REASONING_DETAILS_SENTINEL
+    assert parsed_details.surface == "reasoning_details"
+    assert message.content == "the answer"
+
+
+def test_preserving_client_captures_encrypted_wire_reasoning():
+    """Encrypted reasoning on the wire is captured byte-identical too (D11
+    item 4: replayed regardless, never skipped)."""
+    model = _preserving_model()
+    wire = {
+        "choices": [{"message": {
+            "role": "assistant", "content": "a",
+            "reasoning_content": ENCRYPTED_PAYLOAD,
+        }}],
+    }
+    result = model._create_chat_result(wire, None)
+    parsed = R.extract_reasoning(result.generations[0].message, PROFILE_CONTENT)
+    assert parsed is not None
+    assert parsed.reasoning == ENCRYPTED_PAYLOAD
+    assert parsed.encrypted is True
+
+
+def test_preserving_client_emits_replayed_reasoning_in_request_payload():
+    """OUTBOUND (finding 2): the request payload the preserving client
+    serializes carries the replayed reasoning at MESSAGE level (`reasoning_content`
+    / `reasoning_details`) - the exact shape T1 verified the gateway forwards
+    verbatim - so the D8.1 byte-identical prefix reaches the provider."""
+    model = _preserving_model()
+    messages = [
+        HumanMessage(content="first"),
+        AIMessage(content="prior answer", additional_kwargs={
+            "reasoning_content": REASONING_CONTENT_SENTINEL,
+            "provider_specific_fields": {"reasoning_details": REASONING_DETAILS_SENTINEL},
+        }),
+    ]
+    payload = model._get_request_payload(messages)
+    serialized = payload["messages"]
+    assert serialized[0] == {"content": "first", "role": "user"}
+    assert serialized[1]["content"] == "prior answer"
+    assert serialized[1]["role"] == "assistant"
+    assert serialized[1]["reasoning_content"] == REASONING_CONTENT_SENTINEL
+    assert serialized[1]["reasoning_details"] == REASONING_DETAILS_SENTINEL
+    assert set(serialized[1]) == {"content", "role", "reasoning_content", "reasoning_details"}
+
+
+def test_preserving_client_serialization_matches_stock_without_reasoning():
+    """A message WITHOUT reasoning serializes byte-identically to what stock
+    langchain-openai would emit - the subclass never perturbs the wire shape
+    of ordinary turns."""
+    model = _preserving_model()
+    plain = [HumanMessage(content="hi"), AIMessage(content="answer")]
+    assert model._get_request_payload(plain)["messages"][1] == (
+        {"content": "answer", "role": "assistant"}
+    )
+
+
+def test_preserving_client_capture_fails_open_to_stock_conversion():
+    """A reasoning-free wire and shapes the capture layer cannot read degrade
+    to the exact stock conversion (no fields, no crash) - the subclass's
+    capture never perturbs ordinary turns and any wire-shape mishap behaves
+    like stock langchain-openai."""
+    model = _preserving_model()
+    result = model._create_chat_result({
+        "choices": [{"message": {"role": "assistant", "content": "plain"}}],
+    }, None)
+    assert result.generations[0].message.additional_kwargs == {}
+    assert result.generations[0].message.content == "plain"
+    assert R.response_wire_reasoning({"weird": "shape"}) == {}
+    assert R.response_wire_reasoning(None) == {}
+    assert R.response_wire_reasoning("not-a-dict") == {}
+
+
+class _StubRawResponse:
+    def __init__(self, payload):
+        self.payload = payload
+
+    def parse(self):
+        return self.payload
+
+
+class _StubCompletions:
+    """Stub for the openai `client.chat.completions` resource: records every
+    request payload, answers with the next queued wire response dict. The
+    replies list is SHARED and popped in place, so models built for successive
+    turns consume the sequence exactly once."""
+
+    def __init__(self, replies):
+        self.replies = replies
+        self.calls = []
+
+    class _WithRaw:
+        def __init__(self, owner):
+            self._owner = owner
+
+        def create(self, **payload):
+            self._owner.calls.append(payload)
+            return _StubRawResponse(self._owner.replies.pop(0))
+
+    @property
+    def with_raw_response(self):
+        return self._WithRaw(self)
+
+
+def test_seam_wire_to_wire_replay_roundtrip(monkeypatch):
+    """FINDINGS 1+2 end-to-end through `run_session_turn`: turn 1's raw wire
+    response carries reasoning_content -> the preserving client lands it on
+    the AIMessage -> the seam parses + re-persists it -> turn 2's REQUEST
+    payload carries the reasoning at message level (byte-identical), i.e. the
+    replayed prefix actually reaches the provider."""
+    _pin_profile(monkeypatch, PROFILE_CONTENT)
+    seen_calls = []
+
+    def _wire_reply(content, reasoning=None):
+        message = {"role": "assistant", "content": content}
+        if reasoning is not None:
+            message["reasoning_content"] = reasoning
+        return {
+            "id": f"cmpl-{content}",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "deepseek/deepseek-v4-flash-free",
+            "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 9, "total_tokens": 16},
+        }
+
+    shared_replies = [_wire_reply("a1", reasoning=REASONING_CONTENT_SENTINEL),
+                      _wire_reply("a2")]
+
+    def _factory(replies):
+        def make(role_id):
+            stub = _StubCompletions(replies)
+            stub.calls = seen_calls
+            model = _preserving_model()
+            model.client = stub
+            return model
+        return make
+
+    def _wire_reply(content, reasoning=None):
+        message = {"role": "assistant", "content": content}
+        if reasoning is not None:
+            message["reasoning_content"] = reasoning
+        return {
+            "id": f"cmpl-{content}",
+            "object": "chat.completion",
+            "created": 1700000000,
+            "model": "deepseek/deepseek-v4-flash-free",
+            "choices": [{"index": 0, "message": message, "finish_reason": "stop"}],
+            "usage": {"prompt_tokens": 7, "completion_tokens": 9, "total_tokens": 16},
+        }
+
+    saver = InMemorySaver()
+    factory = _factory(shared_replies)
+    S.run_session_turn("triager", "run1:triager", [HumanMessage(content="hi")],
+                       checkpointer=saver, model_factory=factory, observe=False)
+    S.run_session_turn("triager", "run1:triager", [HumanMessage(content="again")],
+                       checkpointer=saver, model_factory=factory, observe=False)
+    assert len(seen_calls) == 2
+    assert seen_calls[1]["messages"][1]["content"] == "a1"
+    assert seen_calls[1]["messages"][1]["reasoning_content"] == REASONING_CONTENT_SENTINEL
+
+
+# --- FINDING 3 (verifier REDO): fail-open against checkpointer shapes --------
+
+
+class _AsyncShapedInMemorySaver(InMemorySaver):
+    """An InMemorySaver whose `get_tuple` is async-def SHAPED (returns a
+    coroutine) - the pre-fix crash shape (`AttributeError: 'coroutine' object
+    has no attribute 'checkpoint'` when the seam's thread-state read touched
+    `tup.checkpoint` outside its try). The coroutine performs the REAL base
+    read when awaited (`get_tuple`/`aget_tuple` are re-wired to bypass the
+    base `aget_tuple` -> `get_tuple` delegation, which would recurse)."""
+
+    _sync_get_tuple = InMemorySaver.get_tuple
+
+    def get_tuple(self, config):
+        async def _read():
+            return _AsyncShapedInMemorySaver._sync_get_tuple(self, config)
+        return _read()
+
+    async def aget_tuple(self, config):
+        return _AsyncShapedInMemorySaver._sync_get_tuple(self, config)
+
+
+def test_sync_thread_state_read_tolerates_coroutine_shaped_checkpointer():
+    """A coroutine-shaped `get_tuple` (async-def saver handed to the sync
+    read path) degrades to a None read - no `AttributeError: 'coroutine'
+    object has no attribute 'checkpoint'` from the seam's thread-state read or
+    the memory-read seam (the pre-fix crash), and no exception escapes."""
+    saver = _AsyncShapedInMemorySaver()
+    assert S._read_thread_state(saver, "run1:triager") is None
+    assert S.read_session_memory(saver, "run1:triager") is None
+    turn = S.run_session_turn("triager", "run1:triager", [HumanMessage(content="hi")],
+                              checkpointer=InMemorySaver(),
+                              model_factory=_scripted_factory(AIMessage(content="a1")),
+                              observe=False)
+    assert turn.content == "a1"
+
+
+def test_async_entry_awaits_coroutine_shaped_checkpointer_and_publishes_readability(monkeypatch):
+    """The async entry awaits the coroutine-shaped `get_tuple` via
+    `_aread_thread_state` and PUBLISHES the reasoning_readability field - the
+    pre-fix async omission (the field was silently absent on all async-parent
+    sessions)."""
+    _pin_profile(monkeypatch, PROFILE_CONTENT)
+    captured: list[dict] = []
+
+    real_attach = S._attach_readability_metadata
+
+    def spy(config, values):
+        real_attach(config, values)
+        captured.append(dict(config["metadata"]))
+
+    monkeypatch.setattr(S, "_attach_readability_metadata", spy)
+    saver = _AsyncShapedInMemorySaver()
+
+    async def _run(replies, messages):
+        return await S.arun_session_turn(
+            "triager", "run1:triager", messages,
+            checkpointer=saver, model_factory=_scripted_factory(*replies), observe=True)
+
+    asyncio.run(_run([AIMessage(content="a1", additional_kwargs={
+        "reasoning_content": "r"})], [HumanMessage(content="hi")]))
+    asyncio.run(_run([AIMessage(content="a2")], [HumanMessage(content="again")]))
+    assert "reasoning_readability" not in captured[0]
+    assert captured[1]["reasoning_readability"] == "replayed"

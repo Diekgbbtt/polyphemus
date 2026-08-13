@@ -30,6 +30,7 @@ section 6): the model and the checkpointer resolve on call, never at import.
 """
 from __future__ import annotations
 
+import inspect
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
@@ -73,19 +74,10 @@ def _default_model_factory(role_id: str) -> Any:
     return chat_model_for(role_id)
 
 
-def _observe_config(config: dict, role_id: str, thread_id: str, *,
-                    checkpointer=None) -> dict:
+def _observe_config(config: dict, role_id: str, thread_id: str) -> dict:
     """Attach Langfuse callbacks + honest per-role_id/thread attribution (the #18
     recipe, mirrored from `analysis/supervisor._observability_config`). Empty
-    callbacks (Langfuse unconfigured) are inert; fail-open.
-
-    T6 (D11 item 4): when a checkpointer is in play, the config metadata also
-    carries the dedicated `reasoning_readability` llm-response field, read
-    from the PERSISTED thread's last assistant message - "replayed" when the
-    turn before last had its reasoning re-persisted by the replay pipeline,
-    "absent" otherwise (same session trace: `langfuse_session_id`). The field
-    rides the metadata the Langfuse CallbackHandler records onto the llm
-    response; fail-open - any read failure simply omits the field."""
+    callbacks (Langfuse unconfigured) are inert; fail-open."""
     from polymerhus.app.observability import get_langfuse_callbacks
 
     config = dict(config)
@@ -95,15 +87,26 @@ def _observe_config(config: dict, role_id: str, thread_id: str, *,
         "langfuse_tags": ["session", role_id],
         "role_id": role_id,
     }
-    if checkpointer is not None:
-        from polymerhus.app.llm.reasoning import reasoning_readability_metadata
-
-        values = _read_thread_state(checkpointer, thread_id)
-        if values is not None:
-            messages = values.get("messages")
-            if isinstance(messages, list):
-                config["metadata"].update(reasoning_readability_metadata(messages))
     return config
+
+
+def _attach_readability_metadata(config: dict, values: dict | None) -> None:
+    """T6 (D11 item 4): merge the dedicated `reasoning_readability` llm-response
+    field into the config metadata from a pre-read thread state - "replayed"
+    when the turn BEFORE the current one had its reasoning re-persisted by the
+    replay pipeline, "absent" otherwise (same session trace:
+    `langfuse_session_id`). The field rides the metadata the Langfuse
+    CallbackHandler records onto the llm response of the REQUEST that carries
+    the replayed prefix. Fail-open: no state (or an unreadable state) simply
+    omits the field."""
+    if values is None:
+        return
+    messages = values.get("messages")
+    if not isinstance(messages, list):
+        return
+    from polymerhus.app.llm.reasoning import reasoning_readability_metadata
+
+    config["metadata"].update(reasoning_readability_metadata(messages))
 
 
 def _build_agent(
@@ -138,9 +141,9 @@ def _build_agent(
     return create_agent(model, **kwargs)
 
 
-def _turn_config(role_id: str, thread_id: str, observe: bool, *, checkpointer=None) -> dict:
+def _turn_config(role_id: str, thread_id: str, observe: bool) -> dict:
     config: dict = {"configurable": {"thread_id": thread_id}}
-    return _observe_config(config, role_id, thread_id, checkpointer=checkpointer) if observe else config
+    return _observe_config(config, role_id, thread_id) if observe else config
 
 
 def _to_turn(result: dict, response_format, thread_id: str) -> SessionTurn:
@@ -155,11 +158,17 @@ def _to_turn(result: dict, response_format, thread_id: str) -> SessionTurn:
 def _resolve_reasoning_profile(role_id: str):
     """The T3 capability profile for the replay pipeline, fail-open (D7).
 
-    Resolves the role's (provider, model) and reads the held profile from the
-    process-lifetime capability cache (`capability.py`, resolve-and-hold - the
-    read is a cache hit from the second resolution on, off the #73 retry
-    axis). ANY failure - unset role env vars, a degraded reader, a config lie
-    - degrades to None (profile unknown per D5 Rule 1): the session must
+    Resolved at TURN CONSTRUCTION (the top of `run_session_turn` /
+    `arun_session_turn`, before the agent is built and invoked) and handed to
+    the replay hook - NEVER resolved on the turn-return path and never
+    mid-session (D6/D7: the capability reader is off the #73 retry axis). The
+    reader is process-lifetime resolve-and-hold (`capability.py`): the first
+    construction per process may perform the one bounded `/model/info` read
+    (10s/5s, fail-open) BEFORE the model call - it can never delay the turn's
+    RESULT - and every later construction is a cache hit.
+
+    ANY failure - unset role env vars, a degraded reader, a config lie -
+    degrades to None (profile unknown per D5 Rule 1): the session must
     always start. Unknown means the pipeline no-ops and gaps are logged."""
     try:
         from polymerhus.app.llm.capability import resolve_capability
@@ -185,7 +194,7 @@ def _log_replay_observability(report: dict, role_id: str, thread_id: str) -> Non
 
 
 def _replay_reasoning(agent, config: dict, result: dict, role_id: str,
-                      thread_id: str) -> None:
+                      thread_id: str, profile) -> None:
     """T6 REPLAY at the session seam boundary: parse the turn's assistant
     message(s) per the T3 profile and RE-PERSIST them with the reasoning
     attached, byte-identical, so the next turn restores the replay-ready
@@ -195,12 +204,14 @@ def _replay_reasoning(agent, config: dict, result: dict, role_id: str,
     state-replacement API - so it works on any checkpointer. Encrypted
     reasoning is re-persisted as well (readability tracked, never skipped).
     Failure to re-persist is logged and swallowed: replay is best-effort and
-    must never break the turn."""
+    must never break the turn. The `profile` is resolved at turn CONSTRUCTION
+    (see `_resolve_reasoning_profile`) - never here, never on the return path
+    (D6/D7: the reader is off the turn path; no capability read delays the
+    turn's result)."""
     from polymerhus.app.llm.reasoning import (
         replay_assistant_reasoning,
     )
 
-    profile = _resolve_reasoning_profile(role_id)
     messages = result.get("messages", [])
     if not isinstance(messages, list):
         return
@@ -218,14 +229,13 @@ def _replay_reasoning(agent, config: dict, result: dict, role_id: str,
 
 
 async def _areplay_reasoning(agent, config: dict, result: dict, role_id: str,
-                             thread_id: str) -> None:
+                             thread_id: str, profile) -> None:
     """Async replay re-persist (`aupdate_state`) - identical contract to
     `_replay_reasoning`, for the event-loop parent entry point."""
     from polymerhus.app.llm.reasoning import (
         replay_assistant_reasoning,
     )
 
-    profile = _resolve_reasoning_profile(role_id)
     messages = result.get("messages", [])
     if not isinstance(messages, list):
         return
@@ -263,13 +273,17 @@ def run_session_turn(
     model<->tool loop (`tools` bound via tool_calling) to a final answer, which is
     persisted back so the next turn resumes from here. `response_format` returns a
     parsed structured object as `content`."""
+    profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
         middleware=middleware, store=store, checkpointer=checkpointer, model_factory=model_factory,
     )
-    config = _turn_config(role_id, thread_id, observe, checkpointer=checkpointer)
+    config = _turn_config(role_id, thread_id, observe)
+    if observe and checkpointer is not None:
+        _attach_readability_metadata(
+            config, _read_thread_state(checkpointer, thread_id))
     result = agent.invoke({"messages": list(new_messages)}, config)
-    _replay_reasoning(agent, config, result, role_id, thread_id)
+    _replay_reasoning(agent, config, result, role_id, thread_id, profile)
     return _to_turn(result, response_format, thread_id)
 
 
@@ -292,13 +306,17 @@ async def arun_session_turn(
     and monitor child sessions without blocking its own loop. Identical contract to
     `run_session_turn`; pass an async checkpointer (`AsyncPostgresSaver`, already
     used by the analysis supervisor) in production."""
+    profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
         middleware=middleware, store=store, checkpointer=checkpointer, model_factory=model_factory,
     )
-    config = _turn_config(role_id, thread_id, observe, checkpointer=checkpointer)
+    config = _turn_config(role_id, thread_id, observe)
+    if observe and checkpointer is not None:
+        _attach_readability_metadata(
+            config, await _aread_thread_state(checkpointer, thread_id))
     result = await agent.ainvoke({"messages": list(new_messages)}, config)
-    await _areplay_reasoning(agent, config, result, role_id, thread_id)
+    await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
     return _to_turn(result, response_format, thread_id)
 
 
@@ -345,28 +363,40 @@ def stateful_turn(
 
 
 def _read_thread_state(checkpointer, thread_id: str) -> dict | None:
-    """The latest persisted state dict for a session thread, or None when the thread has
-    no checkpoint yet (or the read fails - fail-open, mirroring the rest of the seam)."""
+    """The latest persisted state dict for a session thread, or None when the
+    thread has no checkpoint yet (or the read fails - fail-open, mirroring the
+    rest of the seam).
+
+    The FULL read (`get_tuple` AND the `tup.checkpoint` access) sits in the try
+    - a checkpointer with a coroutine-shaped `get_tuple` (an async-def saver
+    on the sync path) degrades to None instead of crashing the turn (the
+    crash and the async-path omission are #109 REDO findings; the async entry
+    goes through `_aread_thread_state` instead, where the coroutine is
+    awaited)."""
     try:
         tup = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+        if inspect.isawaitable(tup):
+            return None
+        if tup is None:
+            return None
+        values = tup.checkpoint.get("channel_values") or {}
+        return dict(values)
     except Exception:
         return None
-    if tup is None:
-        return None
-    values = tup.checkpoint.get("channel_values") or {}
-    return dict(values)
 
 
 async def _aread_thread_state(checkpointer, thread_id: str) -> dict | None:
     """Async variant for an event-loop parent: same contract, via `aget_tuple`."""
     try:
-        tup = await checkpointer.aget_tuple({"configurable": {"thread_id": thread_id}})
+        tup = checkpointer.get_tuple({"configurable": {"thread_id": thread_id}})
+        if inspect.isawaitable(tup):
+            tup = await tup
+        if tup is None:
+            return None
+        values = tup.checkpoint.get("channel_values") or {}
+        return dict(values)
     except Exception:
         return None
-    if tup is None:
-        return None
-    values = tup.checkpoint.get("channel_values") or {}
-    return dict(values)
 
 
 def _turn_from_state(values: dict, thread_id: str) -> "SessionTurn | None":

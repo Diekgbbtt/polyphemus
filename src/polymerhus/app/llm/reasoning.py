@@ -164,10 +164,11 @@ def extract_reasoning(
       (the `_client_side_reasoning` fallback order).
 
     Accepts either the wire-shaped message dict (litellm/openai shape) or a
-    langchain `AIMessage` (where the reasoning lands per the harness's SDK
-    version - the current pinned langchain-openai strips the field, so the
-    extractor gaps and the seam logs it; a provider subclass or a future SDK
-    that preserves it parses here)."""
+    langchain `AIMessage`. On the AIMessage the reasoning is carried on
+    `additional_kwargs` (or `response_metadata`) by the reasoning-preserving
+    provider client (`providers.ReasoningPreservingChatOpenAI`, the T6 seam):
+    plain `ChatOpenAI` strips the fields at the conversion boundary, so the
+    seam's client is what makes parse reachable - see `response_wire_reasoning`."""
     if profile is None:
         logger.warning(
             "reasoning gap: capability profile unknown (D5 rule 1) - no "
@@ -301,6 +302,78 @@ def replay_assistant_reasoning(
     if report["cached_tokens"] is not None:
         report["heuristic"] = HEURISTIC_CACHE_EVIDENCE
     return replacement, report
+
+
+def land_wire_reasoning(message: AIMessage, wires: dict[str, Any]) -> AIMessage:
+    """Land wire-captured reasoning onto an AIMessage's `additional_kwargs` -
+    the canonical replay surfaces (`reasoning_content` at top level,
+    `reasoning_details` under `provider_specific_fields`), merged with any
+    existing kwargs. Values are byte-identical to the wire. Nothing else on
+    the message changes (model_copy)."""
+    kwargs = dict(message.additional_kwargs)
+    rc = wires.get(SURFACE_REASONING_CONTENT)
+    if rc is not None:
+        kwargs[SURFACE_REASONING_CONTENT] = rc
+    rd = wires.get(SURFACE_REASONING_DETAILS)
+    if rd is not None:
+        provider_fields = dict(kwargs.get(PROVIDER_SPECIFIC_FIELDS) or {})
+        provider_fields[SURFACE_REASONING_DETAILS] = rd
+        kwargs[PROVIDER_SPECIFIC_FIELDS] = provider_fields
+    return message.model_copy(update={"additional_kwargs": kwargs})
+
+
+def replayed_request_fields(message: BaseMessage) -> dict[str, Any]:
+    """REPLAY, outbound: the D11 message-level request fields a message
+    carrying (replayed) reasoning must re-emit, exactly as T1 verified on the
+    wire - `reasoning_content` and `reasoning_details` at message level.
+    Values are the replayed payloads byte-identical to the response; surfaces
+    absent on the message are omitted. Reads the same tolerant surfaces as
+    `extract_reasoning` (additional_kwargs, response_metadata, content blocks),
+    so anything the checkpoint restores re-emits."""
+    fields: dict[str, Any] = {}
+    if not isinstance(message, AIMessage):
+        return fields
+    parsed = _ai_field(message, SURFACE_REASONING_CONTENT)
+    if parsed is not None:
+        fields[SURFACE_REASONING_CONTENT] = parsed.reasoning
+    parsed = _ai_field(message, SURFACE_REASONING_DETAILS)
+    if parsed is not None:
+        fields[SURFACE_REASONING_DETAILS] = parsed.reasoning
+    return fields
+
+
+def response_wire_reasoning(response: Any) -> dict[str, Any]:
+    """PARSE, inbound: the D11 reasoning surfaces exactly as the wire carried
+    them in a chat-completions response - `reasoning_content` at message level
+    (first-class schema field) and `reasoning_details` under
+    `provider_specific_fields` (the ratified litellm relocation surface, D11
+    item 5 amendment). Accepts the raw response as a dict or an openai
+    BaseModel (the shape `_create_chat_result` receives); values are returned
+    byte-identical; absent surfaces are omitted. Tolerant by construction: any
+    shape mishap returns {} (the caller then behaves exactly like stock
+    langchain-openai - the reasoning is stripped, never a crash)."""
+    try:
+        response_dict = (
+            response if isinstance(response, dict) else response.model_dump(
+                exclude={"choices": {"__all__": {"message": {"parsed"}}}})
+        )
+        choices = response_dict.get("choices") if isinstance(response_dict, dict) else None
+        if not isinstance(choices, list) or not choices:
+            return {}
+        choice = choices[0]
+        message = choice.get("message") if isinstance(choice, dict) else None
+        if not isinstance(message, dict):
+            return {}
+        out: dict[str, Any] = {}
+        if message.get(SURFACE_REASONING_CONTENT) is not None:
+            out[SURFACE_REASONING_CONTENT] = message[SURFACE_REASONING_CONTENT]
+        provider_fields = message.get(PROVIDER_SPECIFIC_FIELDS)
+        if isinstance(provider_fields, dict) and provider_fields.get(
+                SURFACE_REASONING_DETAILS) is not None:
+            out[SURFACE_REASONING_DETAILS] = provider_fields[SURFACE_REASONING_DETAILS]
+        return out
+    except Exception:  # noqa: BLE001 - fail-open: never break the model call
+        return {}
 
 
 def reasoning_readability_metadata(messages: list) -> dict:
