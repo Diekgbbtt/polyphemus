@@ -18,6 +18,7 @@ startup reconcile (`pg.reconcile_orphaned_analysis_runs`), never from here.
 from __future__ import annotations
 
 import asyncio
+import concurrent.futures
 import logging
 import uuid
 
@@ -31,6 +32,30 @@ _SUPERVISORS: dict[str, asyncio.Task] = {}
 _ANALYSIS_RUN_IDS: dict[str, str] = {}
 
 
+def _runtime():
+    """The active module control plane, if any (#121). When active, the analysis
+    lifecycle runs THROUGH the runtime: the supervisor is a registered run of the
+    analysis module, so pause/drain/cancel reach it like any other analysis run."""
+    from polymerhus.app.runtime import get_active_runtime
+
+    return get_active_runtime()
+
+
+def _sync_on_worker(runtime, fn, *args, **kwargs) -> concurrent.futures.Future:
+    """Marshal a sync function onto the runtime's worker loop (it returns a
+    future the API thread can `.result()` on - the ONLY cross-thread await)."""
+
+    async def _run():
+        return fn(*args, **kwargs)
+
+    return runtime.call(_run())
+
+
+async def _marshalled_await(runtime, coro):
+    """Resolve a coroutine marshalled onto the worker loop on the CALLER's loop."""
+    return await asyncio.wrap_future(runtime.call(coro))
+
+
 def _new_analysis_run_id(run_id: str) -> str:
     """A fresh surrogate id per attempt (D5): a relaunch over the same recon
     run_id must never collide, so every start mints a new one."""
@@ -38,6 +63,9 @@ def _new_analysis_run_id(run_id: str) -> str:
 
 
 def is_analysing(run_id: str) -> bool:
+    runtime = _runtime()
+    if runtime is not None:
+        return runtime.has_run("analysis", run_id)
     task = _SUPERVISORS.get(run_id)
     return task is not None and not task.done()
 
@@ -57,6 +85,24 @@ def start_analysis(project_id: str, run_id: str, *, pass_fn=None) -> str | None:
     if is_analysing(run_id):
         return None
 
+    runtime = _runtime()
+    if runtime is not None and not runtime.thread_is_worker():
+        # From the API thread: marshal the bootstrap onto the worker loop. NEVER
+        # block the worker loop itself - `.result()` on the loop thread would
+        # deadlock the marshalled coroutine behind it.
+        try:
+            return _sync_on_worker(
+                runtime, _start_analysis_sync, project_id, run_id, pass_fn
+            ).result(timeout=30)
+        except concurrent.futures.TimeoutError:
+            logger.error("start_analysis timed out marshalling for run %s", run_id)
+            return None
+    return _start_analysis_sync(project_id, run_id, pass_fn)
+
+
+def _start_analysis_sync(project_id: str, run_id: str, pass_fn=None) -> str | None:
+    """The consumer bootstrap, executed on the worker loop when the runtime is
+    active (the supervisor becomes a registered analysis run)."""
     from polymerhus.app.clients import pg
 
     analysis_run_id = _new_analysis_run_id(run_id)
@@ -86,10 +132,18 @@ def start_analysis(project_id: str, run_id: str, *, pass_fn=None) -> str | None:
         if status in ("drained", "withheld"):
             drop_feed(run_id)
 
-    task = asyncio.create_task(_supervise(), name=f"analysis-supervisor-{run_id}")
-    _SUPERVISORS[run_id] = task
+    runtime = _runtime()
+    if runtime is not None:
+        try:
+            runtime.schedule("analysis", _supervise(), name=run_id)
+        except Exception:  # noqa: BLE001
+            logger.warning("analysis module refused run %s (supervisor not started)", run_id, exc_info=True)
+            return None
+    else:
+        task = asyncio.create_task(_supervise(), name=f"analysis-supervisor-{run_id}")
+        _SUPERVISORS[run_id] = task
+        task.add_done_callback(lambda t: _SUPERVISORS.pop(run_id, None) if _SUPERVISORS.get(run_id) is t else None)
     _ANALYSIS_RUN_IDS[run_id] = analysis_run_id
-    task.add_done_callback(lambda t: _SUPERVISORS.pop(run_id, None) if _SUPERVISORS.get(run_id) is t else None)
     return analysis_run_id
 
 
@@ -97,6 +151,14 @@ async def stop_analysis(run_id: str) -> None:
     """Graceful stop (D7): let the in-flight chunk finish, consume no further, and
     preserve the queue for a resume. Awaits the supervisor so the `stopped` status
     is persisted before returning. No-op if nothing is analysing this run."""
+    runtime = _runtime()
+    if runtime is not None and not runtime.thread_is_worker():
+        await _marshalled_await(runtime, _stop_analysis_impl(run_id))
+        return
+    await _stop_analysis_impl(run_id)
+
+
+async def _stop_analysis_impl(run_id: str) -> None:
     feed = get_feed(run_id)
     if feed is not None:
         await feed.stop()  # sets the stop event; the consumer settles to `stopped`
@@ -111,8 +173,23 @@ async def stop_analysis(run_id: str) -> None:
 async def cancel_analysis(run_id: str) -> None:
     """Hard cancel (process shutdown only): drop the in-flight chunk. Prefer
     `stop_analysis` everywhere else."""
+    runtime = _runtime()
+    if runtime is not None and not runtime.thread_is_worker():
+        await _marshalled_await(runtime, _cancel_analysis_impl(run_id))
+        return
+    await _cancel_analysis_impl(run_id)
+
+
+async def _cancel_analysis_impl(run_id: str) -> None:
     feed = get_feed(run_id)
     if feed is not None:
         await feed.cancel()
-    _SUPERVISORS.pop(run_id, None)
+    runtime = _runtime()
+    if runtime is not None:
+        try:
+            runtime.cancel_run("analysis", run_id)
+        except Exception:  # noqa: BLE001 - already gone is fine
+            pass
+    else:
+        _SUPERVISORS.pop(run_id, None)
     drop_feed(run_id)

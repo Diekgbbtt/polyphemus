@@ -19,5 +19,9 @@ class Config:
     # phase fan-out (MAX_PODS=20 x several jobs), which starves the heartbeat/DB
     # calls behind long-held pod threads. Sized generously; work is I/O-bound.
     WORKER_THREADS = int(os.environ.get("WORKER_THREADS", "64"))
+    # The per-analysis-module pass gate width (#121): replaces the legacy
+    # process-wide ANALYSER_PASS_SEMAPHORE with a gate owned by the analysis
+    # module, so analysis can pause/resume while recon and hunting keep running.
+    ANALYSIS_PASS_GATE_WIDTH = int(os.environ.get("ANALYSIS_PASS_GATE_WIDTH", "1"))
 
 config = Config()

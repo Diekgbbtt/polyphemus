@@ -61,6 +61,21 @@ logger = logging.getLogger(__name__)
 ANALYSER_PASS_SEMAPHORE = asyncio.Semaphore(1)
 
 
+def _default_sem():
+    """Resolve the analysis pass gate (#121). When the module runtime is active
+    (and the analysis module is registered), passes acquire the per-analysis-
+    module gate so analysis can pause/resume independently; otherwise the legacy
+    process-wide semaphore (the pre-#121 behavior, byte-for-byte)."""
+    from polymerhus.app.runtime import get_active_runtime
+
+    runtime = get_active_runtime()
+    if runtime is not None:
+        gate = runtime.gate("analysis")
+        if gate is not None:
+            return gate
+    return ANALYSER_PASS_SEMAPHORE
+
+
 class L0Chunk(BaseModel):
     """The queue element: a curated slice of L0 surface a recon job produced.
 
@@ -140,6 +155,7 @@ class InlineAnalysisFeed:
     def __init__(self, project_id: str, run_id: str, *, pass_fn=None):
         self._project_id, self._run_id = project_id, run_id
         self._pass_fn = pass_fn
+        self._sem = _default_sem()
         self._advanced = 0
         self._passes = 0
         self._timings = _Timings()
@@ -161,10 +177,15 @@ class InlineAnalysisFeed:
         return None
 
     async def _run_pass(self, chunk: L0Chunk):
-        if self._pass_fn is not None:
-            return await self._pass_fn(chunk)
-        from polymerhus.analysis.supervisor import analyse_chunked
-        return await analyse_chunked(chunk)
+        from polymerhus.app.llm.checkpoints import module_context
+
+        async with self._sem:
+            with module_context("analysis"):
+                if self._pass_fn is not None:
+                    return await self._pass_fn(chunk)
+                from polymerhus.analysis.supervisor import analyse_chunked
+
+                return await analyse_chunked(chunk)
 
     async def drain(self) -> FeedStats:
         """No-op: every inline `push` already ran to completion. Makes no drained
@@ -190,7 +211,7 @@ class QueuedAnalysisFeed:
     def __init__(self, project_id: str, run_id: str, *, pass_fn=None, semaphore=None):
         self._project_id, self._run_id = project_id, run_id
         self._pass_fn = pass_fn
-        self._sem = semaphore if semaphore is not None else ANALYSER_PASS_SEMAPHORE
+        self._sem = semaphore if semaphore is not None else _default_sem()
         self._queue: asyncio.Queue[L0Chunk] = asyncio.Queue()
         self._advanced = 0
         self._passes = 0
@@ -303,10 +324,14 @@ class QueuedAnalysisFeed:
             self._done.set()
 
     async def _run_pass(self, chunk: L0Chunk):
-        if self._pass_fn is not None:
-            return await self._pass_fn(chunk)
-        from polymerhus.analysis.supervisor import analyse_chunked
-        return await analyse_chunked(chunk)
+        from polymerhus.app.llm.checkpoints import module_context
+
+        with module_context("analysis"):
+            if self._pass_fn is not None:
+                return await self._pass_fn(chunk)
+            from polymerhus.analysis.supervisor import analyse_chunked
+
+            return await analyse_chunked(chunk)
 
     async def wait_until_done(self) -> FeedStats:
         """Await the consumer's natural end (terminal marker) or graceful stop.

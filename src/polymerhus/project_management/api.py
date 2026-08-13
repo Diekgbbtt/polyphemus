@@ -30,6 +30,15 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _runtime():
+    """The active module control plane, if any (#121). When active, recon runs
+    are registered runs of the recon module (schedule/cancel go through the
+    runtime); the fallback path below is the pre-#121 behavior, preserved."""
+    from polymerhus.app.runtime import get_active_runtime
+
+    return get_active_runtime()
+
+
 class ProjectCreate(BaseModel):
     name: str
 
@@ -136,6 +145,13 @@ def _launch_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
         except Exception:  # noqa: BLE001 - best-effort launch, must not crash the loop
             logger.exception("recon pipeline run %s (project %s) failed", run_id, project_id)
 
+    runtime = _runtime()
+    if runtime is not None:
+        # #121: recon is a registered run of the recon module on the runtime's
+        # worker loop; pause/drain/cancel of the recon module reach it here.
+        runtime.schedule("recon", _run(), name=run_id)
+        return
+
     task = asyncio.create_task(_run(), name=f"recon-pipeline-{run_id}")
     # Hold the reference until the task finishes, then drop it so the set cannot
     # grow without bound. `discard` (not `remove`) because the callback may fire
@@ -170,6 +186,16 @@ async def stop_recon(project_id: str, run_id: str) -> dict:
     terminal marker so the independent analysis consumer can still drain what was
     already pushed; analysis is never touched here. (The instant per-job kill +
     output suppression is #76.)"""
+    runtime = _runtime()
+    if runtime is not None:
+        # #121: the recon module's registered run is hard-cancelled via the
+        # runtime (call_soon_threadsafe(task.cancel) - the API thread never calls
+        # task.cancel() directly on the worker loop's tasks).
+        try:
+            runtime.cancel_run("recon", run_id)
+        except Exception as exc:  # noqa: BLE001
+            raise HTTPException(status_code=404, detail="no running recon for that run_id") from exc
+        return {"run_id": run_id, "stopping": True}
     task = _RECON_TASKS.get(run_id)
     if task is None or task.done():
         raise HTTPException(status_code=404, detail="no running recon for that run_id")

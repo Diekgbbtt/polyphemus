@@ -462,6 +462,7 @@ def run_analyser_chunked(
 
     from polymerhus.analysis.feed import L0Chunk
     from polymerhus.analysis.l0_stream import read_l0_assets, read_observations
+    from polymerhus.app.llm import checkpoints
 
     assets_fn = assets_fn or read_l0_assets
     observations_fn = observations_fn or read_observations
@@ -470,12 +471,16 @@ def run_analyser_chunked(
         assets=list(assets_fn(project_id)),
         observations=list(observations_fn(project_id)),
     )
-    return asyncio.run(analyse_chunked(
-        chunk, invoke_fn=invoke_fn, typist_invoke_fn=typist_invoke_fn,
-        data_modeller_invoke_fn=data_modeller_invoke_fn,
-        inventory_fn=inventory_fn, aggregations_fn=aggregations_fn,
-        write_fn=write_fn, checkpointer=checkpointer, store=store, observe=observe,
-    )).export
+    # #121/#120: the batch adapter is analysis work - its whole run, including the
+    # to_thread executor hops, is under the analysis module context so checkpoints
+    # resolve to the analysis index (never the shared fallback).
+    with checkpoints.module_context("analysis"):
+        return asyncio.run(analyse_chunked(
+            chunk, invoke_fn=invoke_fn, typist_invoke_fn=typist_invoke_fn,
+            data_modeller_invoke_fn=data_modeller_invoke_fn,
+            inventory_fn=inventory_fn, aggregations_fn=aggregations_fn,
+            write_fn=write_fn, checkpointer=checkpointer, store=store, observe=observe,
+        )).export
 
 
 async def analyse_chunked(

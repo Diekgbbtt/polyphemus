@@ -63,10 +63,15 @@ async def hunting_module_context():
 
 
 def _app_runtime():
-    """The control plane's runtime manager, or None when it has not landed."""
+    """The ACTIVE control-plane runtime manager, or None when it has not landed
+    (the module import still fails) or is not active (no manager running).
+
+    The module existing is not enough: `schedule`/`cancel_run` raise when no
+    manager is active, so a caller must fall back to the in-process path unless
+    `get_active_runtime()` returns a live manager (#121 regression guard)."""
     try:
-        from polymerhus.app import runtime as app_runtime  # noqa: PLC0415
-        return app_runtime
+        from polymerhus.app.runtime import get_active_runtime
+        return get_active_runtime()
     except ImportError:
         return None
 
