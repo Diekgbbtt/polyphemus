@@ -23,6 +23,20 @@ Append one entry per iteration. Prune entries older than 30 days.
 
 ```json
 {
+  "run_id": "2026-08-12T-T5-T6-solo",
+  "fr_area": "#108 T5 / #109 T6",
+  "attempt": 1,
+  "assertions_green": 288,
+  "assertions_total": 294,
+  "tokens_estimate": 0,
+  "escalations": 0,
+  "outcome": "approved",
+  "notes": "Solo mode (PRs cancelled, fast-forward integration to dev). T5 (#108): provenance-gated supports_tool_calling capability + crawl-flag gate refusing crawl to empty manifest when tool calling unsupported (fail-open, D6/D7) - 90d6a6f, verifier APPROVE (gate 7/7, capability 34/34, recon 753/18-skip, llm 150). T6 (#109): reasoning parse/replay/cache-track pipeline + langfuse reasoning_readability metadata (D4 additive), first round verifier REDO (five findings: inbound parse inert at the AIMessage boundary, outbound attach dropped by _convert_message_to_dict, fail-open false for thread-state read + async dead code, D6 profile resolved on turn-return path, domain-model overstatement); fixed via ReasoningPreservingChatOpenAI (wire capture through _create_chat_result + message-level re-emit through _get_request_payload, both fail-open), full-try awaitable-shaped thread-state reads, construction-time profile resolution, async readability wiring (reasoning.py, providers.py, session.py, 8 new tests) - 2a9d2c8. Re-verifier APPROVE with live evidence (42 reasoning tests, 165 slice, 6 gateway passthrough in pinned venv, repo-wide 1637 with 9 failed + 5 errors identical to base = docker/DB env). Integrated dev @ 2a9d2c8 (T5+T6), pushed. Investigation + grill design deliverables posted on #109. Note: dev also advanced by a concurrent #110 hunting series (942a079) - T6 rebased onto it; broad integrated regression 288 passed."
+}
+```
+
+```json
+{
   "run_id": "2026-08-05T-hunting-83",
   "fr_area": "#83 hunting agent",
   "attempt": 1,
