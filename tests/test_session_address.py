@@ -7,9 +7,12 @@ now expressed on the typed value objects rather than a positional-path builder.
 """
 from __future__ import annotations
 
+import pytest
+
 from polymerhus.app.llm.session_address import (
     AnalysisSession,
     HuntSession,
+    ModuleScopedSession,
     PodSession,
     SessionAddress,
     SessionContext,
@@ -96,3 +99,91 @@ def test_recon_pod_session_keys_by_the_concurrent_pod_instance():
     n1 = pod_session("run1", 2, job, {"batch": ["x"]}, role_id="triager").thread_id
     n2 = pod_session("run1", 2, job, {"batch": ["y"]}, role_id="triager").thread_id
     assert n1 != n2  # url-less assets do not collapse to one key
+
+
+_ESCAPED_SEGMENT = {
+    None: [],
+    2: ["2"],
+    "httpx": ["httpx"],
+    "https://a.example": ["https_//a.example"],
+    "triager": ["triager"],
+}
+
+
+@pytest.mark.parametrize("module", ("recon", "analysis", "hunting"))
+@pytest.mark.parametrize("phase", (None, 2))
+@pytest.mark.parametrize("tool", (None, "httpx"))
+@pytest.mark.parametrize("disc", (None, "https://a.example"))
+@pytest.mark.parametrize("role_id", (None, "triager"))
+def test_module_scoped_session_is_deterministic_across_the_matrix(
+    module, phase, tool, disc, role_id
+):
+    """The determinism audit (module-runtime-architecture.md section 6, G7a): the
+    module-scoped address is a PURE function of (module, run, phase, tool, discriminator)
+    - same inputs, byte-identical output, so a post-crash enumeration re-derives the same
+    key. The module is the LEADING segment so two modules never collide on the same (run,
+    phase, tool, discriminator) in the shared #94 pooled store, and empty (None/"")
+    discriminators are dropped exactly like `_compose`, so a missing instance never shifts
+    the address. The expected segment literals are hard-coded (escaping applied by hand),
+    so this is an exact pin, not a recomputation of the same rule."""
+    expected = [module, "run1"]
+    for value in (phase, tool, disc, role_id):
+        expected += _ESCAPED_SEGMENT[value]
+    a = ModuleScopedSession(module, "run1", phase, tool, disc, role_id=role_id)
+    b = ModuleScopedSession(module, "run1", phase, tool, disc, role_id=role_id)
+    assert a.thread_id == b.thread_id  # pure: same inputs, byte-identical output
+    assert a.thread_id == ":".join(expected)
+
+
+def test_overlong_discriminator_hash_path_is_deterministic_and_bounded():
+    """The hash path is part of the pure composition: an over-long discriminator (> the
+    80-char threshold) is replaced by the SAME short hash every time, so even hashed keys
+    stay stable across runs, and two different long values stay distinct."""
+    long_a = "https://host.example/" + "a" * 200
+    long_b = "https://host.example/" + "b" * 200
+    a1 = ModuleScopedSession("recon", "run1", 2, "httpx", long_a, role_id="triager").thread_id
+    a2 = ModuleScopedSession("recon", "run1", 2, "httpx", long_a, role_id="triager").thread_id
+    b = ModuleScopedSession("recon", "run1", 2, "httpx", long_b, role_id="triager").thread_id
+    assert a1 == a2  # the hash is deterministic, not a random/short-lived value
+    assert a1 != b
+    assert len(a1.split(":")[4]) <= 20  # the discriminator segment was hashed, not verbatim
+
+
+def test_repeated_composition_stays_byte_identical_with_no_uuid_segment():
+    """The no-UUID/no-time proof, exercised: composing the SAME logical instance a hundred
+    times yields byte-identical ids, and no segment is a UUID shape - a single UUID or
+    time source in the path would break the equality or the shape."""
+    import re
+
+    ids = {
+        ModuleScopedSession(
+            "analysis", "run1", 1, "openai", "asset-42", role_id="analyst"
+        ).thread_id
+        for _ in range(100)
+    }
+    assert len(ids) == 1
+    uuid_shape = re.compile(
+        r"[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}"
+    )
+    for segment in ids.pop().split(":"):
+        assert not uuid_shape.fullmatch(segment)
+
+
+def test_module_scoped_composition_imports_nothing_that_could_vary():
+    """The audit's structural half: the composition lives in a module whose imports are
+    limited to pure stdlib (hashlib, dataclasses, typing) - no uuid/time/random, no
+    network or DB client - so no run-to-run variability can enter through an import, and
+    the module performs no I/O at import (CODING_STANDARD 6)."""
+    import ast
+    from pathlib import Path
+
+    import polymerhus.app.llm.session_address as session_address
+
+    tree = ast.parse(Path(session_address.__file__).read_text(encoding="utf-8"))
+    top_level = set()
+    for node in ast.walk(tree):
+        if isinstance(node, ast.Import):
+            top_level.add(node.names[0].name.split(".")[0])
+        elif isinstance(node, ast.ImportFrom) and node.module:
+            top_level.add(node.module.split(".")[0])
+    assert top_level <= {"__future__", "hashlib", "dataclasses", "typing"}

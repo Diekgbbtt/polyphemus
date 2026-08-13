@@ -58,6 +58,23 @@ def _compose(run_id: str, *discriminators: Any, role_id: str) -> str:
     return _SEP.join(segments)
 
 
+def _compose_module_scoped(
+    module: str, run_id: str, *discriminators: Any, role_id: str | None = None
+) -> str:
+    """Compose a module-scoped thread id: module -> run -> each present instance
+    discriminator -> role (when given). The module is the LEADING segment so two modules
+    can never collide on the same (run, phase, tool, discriminator) in the shared #94
+    pooled store; every other rule mirrors `_compose` - empty (None/"") discriminators
+    are dropped so a missing one never shifts the address. The result is a PURE function
+    of its inputs (no UUID/time/random source), so the same logical instance always
+    derives the same id and a post-crash enumeration re-derives the key."""
+    segments = [_seg(module), _seg(run_id)]
+    segments += [_seg(d) for d in discriminators if d not in (None, "")]
+    if role_id not in (None, ""):
+        segments.append(_seg(role_id))
+    return _SEP.join(segments)
+
+
 class SessionAddress(Protocol):
     """The structural contract every module's session address satisfies: a stable
     `role_id` and a `thread_id` unique to the concurrent execution unit. A consumer
@@ -165,3 +182,31 @@ class SessionContext:
 
     address: SessionAddress
     checkpointer: Any
+
+
+@dataclass(frozen=True)
+class ModuleScopedSession:
+    """A module-scoped session address: the deterministic thread_id the per-module
+    checkpointer index, the run-task registry, and the resume enumeration all key on.
+
+    The module types above name exactly what discriminates a module's concurrent
+    instances; THIS is the runtime's general address form - the same pure, boundary-safe
+    composition with the module namespace as the leading segment - so any module's
+    instances resolve through it and two modules can never collide on the same (run,
+    phase, tool, discriminator) in the shared #94 pooled store. The composition is a pure
+    function of (module, run, phase, tool, discriminator): no UUID, no time source, no
+    randomness, so the same logical instance always derives the same id and a post-crash
+    enumeration re-derives the key (module-runtime-architecture.md section 6, G7a)."""
+
+    module: str
+    run_id: str
+    phase: Any = None
+    tool: str | None = None
+    discriminator: str | None = None
+    role_id: str | None = None
+
+    @property
+    def thread_id(self) -> str:
+        return _compose_module_scoped(
+            self.module, self.run_id, self.phase, self.tool, self.discriminator, role_id=self.role_id
+        )
