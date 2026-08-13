@@ -415,3 +415,31 @@ Append one entry per iteration. Prune entries older than 30 days.
   "notes": "Model switch solved WITHOUT restart: task.ts source shows `next.model ?? {modelID: msg.info.modelID, providerID: msg.info.providerID}` - resumed child uses the agent config pin OR the parent message's model (both deepseek-v4-flash-free); stored child model never reused. Canary-resumed T2 (#105) on ses_00f248e3... - debug model column opencode/deepseek-v4-flash-free confirmed. T2 sync CLI + T3 capability reader + T4 gateway seam + T1 reasoning passthrough delta ALL resumed via task_id and completed. T1 delta CRITICAL FINDING: litellm 1.96.0 does NOT forward reasoning_details at message level in responses (relocated to message.provider_specific_fields by convert_dict_to_response.py:666-668; reasoning_content survives as schema field; both fields replay verbatim in requests). Operator RATIFIED provider_specific_fields as the passthrough surface (conditional on client-side parse - proven by test_client_side_parses_both_reasoning_surfaces); also accepted #112 (config-validation control-plane gate, created by T3 subagent under its session rulings). requirements-gateway.txt hardened: litellm[proxy]==1.96.0 (base pkg cannot boot proxy) + fastapi==0.140.6 (0.140.7 removed get_flat_dependant, verified by wheel search 0.140.2..0.141.1). Loop-verifiers dispatched per ticket: #104 (6/6 gateway tests + main-venv gateway suites 27/27; APPROVE; follow-up a61fc99 fixed fastapi-pin rationale + response assertions + STATE.md narrative), #105 (59/59; D11 matrix row-by-row tabulated; APPROVE), #106 (29/29 + 1335 broad; T2/T3 wire alignment name-by-name; APPROVE), #107 (38/38 both env modes; hermeticity guards; APPROVE). Commits on ticket branches, branches pushed, 4 PRs opened against dev (repo has NO main; dev is the integration branch per PR #97/#87 precedent): #114 (T1+delta), #115 (T2), #116 (T3), #117 (T4). Remaining: human merge of PRs #114-#117 (recommended order T1->T2->T3->T4), then T5 (#108) and T6 (#109, blocked by #106+#107), then the settings.recon config-validation components (#112). Operator action still pending: LLM_MODEL_HUNTING in .env before next app restart."
 }
 ```
+
+```json
+{
+  "run_id": "2026-08-13T-module-runtime-119",
+  "fr_area": "module-runtime-independence workstream - #119 session-address helper (deterministic module-scoped thread_id composition)",
+  "attempt": 1,
+  "assertions_green": 59,
+  "assertions_total": 59,
+  "tokens_estimate": 0,
+  "escalations": 0,
+  "outcome": "verified + APPROVED (loop-verifier) + PR #125 opened for human merge",
+  "notes": "Implementer subagent completed #119: `_compose_module_scoped(module, run_id, *discriminators, role_id=None)` + frozen `ModuleScopedSession` in app/llm/session_address.py, module as LEADING segment so modules never collide on the same (run, phase, tool, discriminator) in the #94 pooled store; reuses `_seg` escaping/hashing; empty discriminators dropped like `_compose`. Determinism audit in tests/test_session_address.py: 3x2^4 parametrized matrix with hand-escaped literal pins (no tautology), over-long discriminator hashing deterministic+bounded, 100x byte-identical repetition + UUID-shape scan, AST import-gate proof (only __future__/hashlib/dataclasses/typing can enter). Driver independently verified: targeted 59/59, full unit tier 1564 passed / 42 skipped, 5 infra failures (agent_health, kali_mcp, neo4j_schema, postgres_schema, stack_smoke) identical on base dev (no live Docker/DB on host), no em dashes. Loop-verifier APPROVED with independent evidence (scope check 2 files only, reuse+leading-segment confirmed, empty-drop+ordering confirmed, tautology audit clean, import gate re-parsed independently). Branch pushed, PR #125 opened against dev (repo has NO main; dev is the integration branch per PR #97/#87 precedent) with Closes #119. Remaining for the workstream: human merge of PR #125, then the next module-runtime tickets (per-module gate, mailbox, pause, bounded retention per phase-0-audit-findings re-baselined plan)."
+}
+```
+
+```json
+{
+  "run_id": "2026-08-13T-module-runtime-121",
+  "fr_area": "module-runtime-independence workstream - #121 runtime manager + lifecycle state machine + feed + per-module gate",
+  "attempt": 1,
+  "assertions_green": 0,
+  "assertions_total": 0,
+  "tokens_estimate": 0,
+  "escalations": 0,
+  "outcome": "verified + APPROVED (loop-verifier) + merged into dev + pushed",
+  "notes": "Driver completed #121: app/runtime.py RuntimeManager (one worker asyncio.Runner thread, run_coroutine_threadsafe/call_soon_threadsafe ownership, per-module running/paused/draining/stopped state machine, schedule/cancel_run/pause/resume/drain verbs, gate(), ShutdownFanOut flush-then-close ordering); per-module ModuleGate (asyncio.Semaphore on the worker loop) acquired in BOTH queued consumer and inline pass, feed put_nowait preserved byte-for-byte, _sem injection seam kept; _launch_pipeline/start_analysis/hunting entry points route through runtime.schedule; _IN_FLIGHT/_RECON_TASKS/_SUPERVISORS registries moved into the manager. Driver fixed TWO issues the implementer missed: (1) permit leak on cancel-while-blocked-at-pause-event (gate now releases in __aenter__ exception path); (2) hunting seam regression (#123 boundary - _app_runtime returned the importable module not the ACTIVE manager, so schedule would raise RuntimeError on a non-active control plane; now returns get_active_runtime()). 28 new tests in tests/app/test_runtime_manager.py. Loop-verifier APPROVED with independent evidence: permit-leak probe passed (width=1, final_available=1), ownership + gate-loop-binding audits clean, tautology audit clean, targeted 28/28, seam-regression suites 90/90, full unit tier 1607 passed / 42 skipped with ONLY the 5 pre-existing infra failures (agent_health, kali_mcp, neo4j_schema, postgres_schema, stack_smoke - no live Docker/DB on host), em-dash clean, import gate clean (no threads/loops at import). Merged into dev (3b449e7), pushed. Remaining: #122 app wiring, then #123 hunting control-plane, then #124 resume-seam."
+}
+```
