@@ -1,0 +1,634 @@
+{
+  "name": "LightRAG URL ingestion",
+  "nodes": [
+    {
+      "parameters": {
+        "httpMethod": "POST",
+        "path": "url-ingestions",
+        "responseMode": "responseNode",
+        "authentication": "headerAuth",
+        "options": {}
+      },
+      "id": "url-ingestion-webhook",
+      "name": "URL Ingestion Webhook",
+      "type": "n8n-nodes-base.webhook",
+      "typeVersion": 2,
+      "webhookId": "poly-url-ingestions",
+      "position": [0, 0],
+      "credentials": {
+        "httpHeaderAuth": {
+          "id": "polyphemus-url-ingestion-header-auth",
+          "name": "Polyphemus URL Ingestion Secret"
+        }
+      }
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "validate-url-field-condition-0",
+              "leftValue": "={{ ($json.url != null) && ($json.url === $json.url.toString()) && ($json.url.trim().length > 0) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "validate-url-field",
+      "name": "Validate URL field",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [220, 0]
+    },
+    {
+      "parameters": {
+        "method": "POST",
+        "url": "http://ingestion:8080/v1/ingestions",
+        "sendBody": true,
+        "specifyBody": "json",
+        "jsonBody": "={\"source_kind\":\"url\",\"source_uri\":\"{{ $json.url }}\"}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "post-url-ingestion",
+      "name": "POST URL ingestion job",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [440, -80],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "post-response-status-ok-gte",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "post-response-status-ok-lte",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 299,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "post-response-status-ok",
+      "name": "POST response status OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [660, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "post-job-id-valid-condition-0",
+              "leftValue": "={{ ($json.body.job_id != null) && ($json.body.job_id === $json.body.job_id.toString()) && ($json.body.job_id.trim().length > 0) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "post-job-id-valid",
+      "name": "POST job ID valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [880, -80]
+    },
+    {
+      "parameters": {
+        "amount": 10,
+        "unit": "seconds"
+      },
+      "id": "url-poll-wait",
+      "name": "Polling wait",
+      "type": "n8n-nodes-base.wait",
+      "typeVersion": 1,
+      "position": [1100, -80]
+    },
+    {
+      "parameters": {
+        "method": "GET",
+        "url": "=http://ingestion:8080/v1/ingestions/{{ $json.body.job_id }}",
+        "options": {
+          "response": {
+            "response": {
+              "neverError": true,
+              "fullResponse": true
+            }
+          }
+        }
+      },
+      "id": "get-url-status",
+      "name": "GET URL job status",
+      "type": "n8n-nodes-base.httpRequest",
+      "typeVersion": 4,
+      "position": [1320, -80],
+      "onError": "continueErrorOutput"
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "get-response-status-ok-gte",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 200,
+              "operator": {
+                "type": "number",
+                "operation": "gte"
+              }
+            },
+            {
+              "id": "get-response-status-ok-lte",
+              "leftValue": "={{ $json.statusCode }}",
+              "rightValue": 299,
+              "operator": {
+                "type": "number",
+                "operation": "lte"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "get-response-status-ok",
+      "name": "GET response status OK?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1540, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "get-body-valid-status",
+              "leftValue": "={{ ($json.body.status != null) && ($json.body.status === $json.body.status.toString()) && ($json.body.status.trim().length > 0) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "get-body-valid-job-id",
+              "leftValue": "={{ ($json.body.job_id != null) && ($json.body.job_id === $json.body.job_id.toString()) && ($json.body.job_id.trim().length > 0) }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            },
+            {
+              "id": "get-body-valid-identity",
+              "leftValue": "={{ $json.body.job_id === $('Polling wait').item.json.body.job_id }}",
+              "rightValue": "",
+              "operator": {
+                "type": "boolean",
+                "operation": "true",
+                "singleValue": true
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "get-body-valid",
+      "name": "GET body valid?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1760, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "url-terminal-state-condition-0",
+              "leftValue": "={{ $json.body.status }}",
+              "rightValue": "^(PROCESSED|SKIPPED_DUPLICATE|FAILED|FAILED_AUDIT)$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "url-terminal-state",
+      "name": "Terminal state?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [1980, -80]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "url-success-state-condition-0",
+              "leftValue": "={{ $json.body.status }}",
+              "rightValue": "^(PROCESSED|SKIPPED_DUPLICATE)$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "url-success-state",
+      "name": "Success or duplicate?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2200, -220]
+    },
+    {
+      "parameters": {
+        "conditions": {
+          "options": {
+            "caseSensitive": true,
+            "leftValue": "",
+            "typeValidation": "strict",
+            "version": 2
+          },
+          "conditions": [
+            {
+              "id": "url-non-terminal-state-condition-0",
+              "leftValue": "={{ $json.body.status }}",
+              "rightValue": "^(DISCOVERED|STABILIZING|PROCESSING|NORMALIZED|INGESTING|AUDITING)$",
+              "operator": {
+                "type": "string",
+                "operation": "regex"
+              }
+            }
+          ],
+          "combinator": "and"
+        }
+      },
+      "id": "url-non-terminal-state",
+      "name": "Non-terminal state?",
+      "type": "n8n-nodes-base.if",
+      "typeVersion": 2.2,
+      "position": [2200, -40]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {}
+      },
+      "id": "respond-success",
+      "name": "Respond success",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2420, -300]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "respond-failed",
+      "name": "Respond failed",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [2420, -120]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"error\":\"url must be a non-empty string\"}",
+        "options": {
+          "responseCode": 400
+        }
+      },
+      "id": "respond-invalid-url",
+      "name": "Respond invalid URL",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [440, 140]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ $json.body }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "respond-backend-rejection",
+      "name": "Respond backend rejection",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [880, 60]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={\"status\":\"FAILED\",\"error\":\"Ingestion backend request failed\"}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "respond-failure",
+      "name": "Respond failure",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1760, 120]
+    }
+  ],
+  "connections": {
+    "URL Ingestion Webhook": {
+      "main": [
+        [
+          {
+            "node": "Validate URL field",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Validate URL field": {
+      "main": [
+        [
+          {
+            "node": "POST URL ingestion job",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond invalid URL",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST URL ingestion job": {
+      "main": [
+        [
+          {
+            "node": "POST response status OK?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST response status OK?": {
+      "main": [
+        [
+          {
+            "node": "POST job ID valid?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond backend rejection",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "POST job ID valid?": {
+      "main": [
+        [
+          {
+            "node": "Polling wait",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Polling wait": {
+      "main": [
+        [
+          {
+            "node": "GET URL job status",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET URL job status": {
+      "main": [
+        [
+          {
+            "node": "GET response status OK?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET response status OK?": {
+      "main": [
+        [
+          {
+            "node": "GET body valid?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "GET body valid?": {
+      "main": [
+        [
+          {
+            "node": "Terminal state?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Terminal state?": {
+      "main": [
+        [
+          {
+            "node": "Success or duplicate?",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Non-terminal state?",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Success or duplicate?": {
+      "main": [
+        [
+          {
+            "node": "Respond success",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond failed",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    },
+    "Non-terminal state?": {
+      "main": [
+        [
+          {
+            "node": "Polling wait",
+            "type": "main",
+            "index": 0
+          }
+        ],
+        [
+          {
+            "node": "Respond failure",
+            "type": "main",
+            "index": 0
+          }
+        ]
+      ]
+    }
+  },
+  "settings": {
+    "executionOrder": "v1"
+  },
+  "active": false,
+  "versionId": "lightrag-url-ingestion-v1",
+  "meta": {
+    "templateCredsSetupCompleted": true
+  },
+  "tags": []
+}

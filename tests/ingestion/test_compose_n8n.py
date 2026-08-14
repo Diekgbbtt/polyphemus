@@ -1,6 +1,21 @@
 import yaml
 
 
+def test_no_compose_service_receives_the_url_webhook_secret():
+    secret = "POLYPHEMUS_URL_INGESTION_WEBHOOK_SECRET"
+    compose = yaml.safe_load(open("docker-compose.yml", encoding="utf-8"))
+
+    for service_name, service in compose["services"].items():
+        environment = service.get("environment") or {}
+        if isinstance(environment, list):
+            keys = {entry.split("=", 1)[0] for entry in environment}
+        else:
+            keys = set(environment.keys())
+        assert secret not in keys, f"{service_name} injects {secret}"
+
+    assert secret not in open("docker-compose.yml", encoding="utf-8").read()
+
+
 def test_compose_defines_n8n_and_shared_ingestion_mount():
     compose = yaml.safe_load(open("docker-compose.yml", encoding="utf-8"))
 
