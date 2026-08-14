@@ -30,7 +30,14 @@ async def create_ingestion(request: IngestionRequest, background_tasks: Backgrou
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     if result.get("run_in_background", True):
-        background_tasks.add_task(service.process_job, result["job_id"])
+        if request.source_kind == "url":
+            background_tasks.add_task(
+                service.process_job,
+                job_id=result["job_id"],
+                requested_url=request.source_uri,
+            )
+        else:
+            background_tasks.add_task(service.process_job, result["job_id"])
     return {
         "job_id": result["job_id"],
         "source_key": result["source_key"],

@@ -1,5 +1,6 @@
 from pathlib import Path
 import json
+from typing import Any
 
 from pydantic import BaseModel
 
@@ -18,14 +19,14 @@ class NormalizedDocument(BaseModel):
     warnings: list[str]
 
 
-async def normalize_document(source_path: Path, *, output_root: Path) -> NormalizedDocument:
+def _build_preprocessor(output_root: Path):
     try:
         from lightrag_docprep.config import PreprocessorConfig
         from lightrag_docprep.pipeline import DocumentPreprocessor
     except ModuleNotFoundError as exc:
         raise DocprepError("NORMALIZATION_FAILED", f"lightrag_docprep dependency unavailable: {exc.name}") from exc
 
-    preprocessor = DocumentPreprocessor(
+    return DocumentPreprocessor(
         PreprocessorConfig(
             output_dir=output_root,
             preferred_pdf_parser="mineru",
@@ -33,7 +34,9 @@ async def normalize_document(source_path: Path, *, output_root: Path) -> Normali
             max_concurrency=1,
         )
     )
-    result = await preprocessor.process(Path(source_path))
+
+
+def _to_normalized_document(result) -> NormalizedDocument:
     if not result.success or result.output_dir is None:
         raise DocprepError("PARSE_FAILED", result.error or "Document preprocessing failed")
 
@@ -50,3 +53,33 @@ async def normalize_document(source_path: Path, *, output_root: Path) -> Normali
         parser=document_payload.get("parser_engine") or "unknown",
         warnings=result.warnings,
     )
+
+
+async def normalize_document(source_path: Path, *, output_root: Path) -> NormalizedDocument:
+    preprocessor = _build_preprocessor(output_root)
+    result = await preprocessor.process(Path(source_path))
+    return _to_normalized_document(result)
+
+
+async def normalize_downloaded_artifact(
+    source_path: Path,
+    *,
+    output_root: Path,
+    source_identity: str,
+    source_type: str,
+    native_metadata: dict[str, Any],
+) -> NormalizedDocument:
+    """Normalize an already-downloaded local artifact through docprep.
+
+    The artifact is handed off to the existing parser router with its explicit
+    source identity and download metadata. This adapter performs no network
+    access of its own: all bytes are already on the local filesystem.
+    """
+    preprocessor = _build_preprocessor(output_root)
+    result = await preprocessor.process_local(
+        Path(source_path),
+        source_identity=source_identity,
+        source_type=source_type,
+        extra_native_metadata=native_metadata,
+    )
+    return _to_normalized_document(result)
