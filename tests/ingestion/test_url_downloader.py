@@ -595,7 +595,7 @@ def test_exact_mime_policy_matrix(
         'attachment; x=1; filename="page.md"',
         "attachment; filename*=UTF-8''page.md",
         "attachment; filename*=utf-8''page%2Emd",
-        'attachment; filename*="page.md"',
+        "attachment; filename*=UTF-8'en'page.md",
     ],
 )
 def test_content_disposition_accepts_exact_filename_parameters(
@@ -626,6 +626,16 @@ def test_content_disposition_accepts_exact_filename_parameters(
         'attachment; filename="page.md" extra',
         'attachment; filename=; filename="page.md"',
         'attachment; note="see filename=page.md"',
+        "attachment; filename*=page.md",
+        "attachment; filename*=UTF-8'page.md",
+        "attachment; filename*='page.md",
+        "attachment; filename*=UTF-8''page%ZZ.md",
+        "attachment; filename*=UTF-8''page%2.md",
+        "attachment; filename*=UTF-8''page%",
+        "attachment; filename*=ISO-8859-1''page.md",
+        "attachment; filename*=UTF-8''page%FF.md",
+        'attachment; filename*="UTF-8\'\'page.md"',
+        "attachment; filename*=UTF-8''page\x01.md",
     ],
 )
 def test_content_disposition_rejects_non_exact_or_malformed_parameters(
@@ -638,6 +648,192 @@ def test_content_disposition_rejects_non_exact_or_malformed_parameters(
             content_disposition,
         )
     assert exc.value.code == "URL_CONTENT_TYPE_AMBIGUOUS"
+
+
+@pytest.mark.parametrize(
+    "content_disposition, expected",
+    [
+        # Valid extended values are only evidence when the decoded filename
+        # carries a Markdown suffix.
+        ("attachment; filename*=UTF-8''page.md", None),
+        ("attachment; filename*=utf-8''page%2Emd", None),
+        ("attachment; filename*=UTF-8''%70%61%67%65%2E%6D%64", None),
+        ("attachment; filename*=UTF-8''page.txt", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        # Malformed values never independently justify Markdown.
+        ("attachment; filename*=page.md", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ("attachment; filename*=UTF-8'page.md", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ("attachment; filename*=UTF-8''page%ZZ.md", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ("attachment; filename*=UTF-8''page%2.md", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ("attachment; filename*=UTF-8''page%", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ("attachment; filename*=ISO-8859-1''page.md", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ("attachment; filename*=UTF-8''page%FF.md", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ('attachment; filename*="UTF-8\'\'page.md"', "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ("attachment; filename*=UTF-8''", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ("attachment; xfilename*=UTF-8''page.md", "URL_CONTENT_TYPE_AMBIGUOUS"),
+        ("attachment; filename*0=UTF-8''page.md", "URL_CONTENT_TYPE_AMBIGUOUS"),
+    ],
+)
+def test_extended_filename_is_strict_utf8_evidence_only(
+    content_disposition,
+    expected,
+):
+    if expected is None:
+        validate_content_type(
+            "http://example.com/page",
+            "text/plain",
+            content_disposition,
+        )
+    else:
+        with pytest.raises(URLDownloadError) as exc:
+            validate_content_type(
+                "http://example.com/page",
+                "text/plain",
+                content_disposition,
+            )
+        assert exc.value.code == expected
+
+
+def test_declared_unsupported_mime_rejected_even_with_valid_extended_filename():
+    with pytest.raises(URLDownloadError) as exc:
+        validate_content_type(
+            "http://example.com/page",
+            "image/png",
+            "attachment; filename*=UTF-8''page.md",
+        )
+    assert exc.value.code == "URL_CONTENT_TYPE_UNSUPPORTED"
+
+
+# ---------------------------------------------------------------------------
+# Milestone 4 remediation: strict, order-independent filename evidence (M1)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    "content_disposition",
+    [
+        # A valid plain filename must not mask malformed extended evidence.
+        'attachment; filename="page.md"; filename*=UTF-8\'\'page%ZZ.md',
+        # Malformed extended evidence first, valid plain filename second.
+        "attachment; filename*=UTF-8''page%ZZ.md; filename=\"page.md\"",
+        # Percent-encoded C1 control character (U+0085) in decoded evidence.
+        "attachment; filename*=UTF-8''page%C2%85.md",
+        # Conflicting plain/extended evidence in either parameter order.
+        'attachment; filename="page.md"; filename*=UTF-8\'\'page.txt',
+        "attachment; filename*=UTF-8''page.md; filename=\"page.txt\"",
+    ],
+)
+def test_content_disposition_unreliable_mixed_evidence_is_ambiguous(content_disposition):
+    with pytest.raises(URLDownloadError) as exc:
+        validate_content_type("http://example.com/page", "text/plain", content_disposition)
+    assert exc.value.code == "URL_CONTENT_TYPE_AMBIGUOUS"
+
+
+@pytest.mark.parametrize(
+    "content_disposition",
+    [
+        # Percent-encoded C1 control characters.
+        "attachment; filename*=UTF-8''page%C2%80.md",
+        "attachment; filename*=UTF-8''page%C2%9F.md",
+        # Raw decoded control characters in extended evidence.
+        "attachment; filename*=UTF-8''page\x1b.md",
+        # Raw decoded control characters in plain evidence.
+        'attachment; filename="page\x01.md"',
+        "attachment; filename=page\x85.md",
+    ],
+)
+def test_content_disposition_rejects_decoded_control_characters(content_disposition):
+    with pytest.raises(URLDownloadError) as exc:
+        validate_content_type("http://example.com/page", "text/plain", content_disposition)
+    assert exc.value.code == "URL_CONTENT_TYPE_AMBIGUOUS"
+
+
+@pytest.mark.parametrize(
+    "content_disposition",
+    [
+        'attachment; filename="page.md"; filename*=UTF-8\'\'page.md',
+        "attachment; filename*=UTF-8''page.md; filename=\"page.md\"",
+    ],
+)
+def test_content_disposition_consistent_evidence_accepted_in_either_order(content_disposition):
+    validate_content_type("http://example.com/page", "text/plain", content_disposition)
+
+
+# ---------------------------------------------------------------------------
+# Milestone 4 remediation: deterministic MIME evidence (conflicts and controls)
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("final_url", "content_disposition"),
+    [
+        ("http://example.com/page.md", 'attachment; filename="page.txt"'),
+        ("http://example.com/page.md", "attachment; filename*=UTF-8''page.txt"),
+        ("http://example.com/page.markdown", 'attachment; filename="page.txt"'),
+        ("http://example.com/page.txt", 'attachment; filename="page.md"'),
+        ("http://example.com/page.txt", "attachment; filename*=UTF-8''page.md"),
+        ("http://example.com/page.md", 'attachment; filename="page.md.txt"'),
+        ("http://example.com/page.md.txt", 'attachment; filename="page.md"'),
+    ],
+)
+def test_text_plain_conflicting_url_and_disposition_filenames_are_ambiguous(
+    final_url, content_disposition
+):
+    with pytest.raises(URLDownloadError) as exc:
+        validate_content_type(final_url, "text/plain", content_disposition)
+    assert exc.value.code == "URL_CONTENT_TYPE_AMBIGUOUS"
+
+
+@pytest.mark.parametrize(
+    ("final_url", "content_disposition"),
+    [
+        ("http://example.com/page.md", 'attachment; filename="page.md"'),
+        ("http://example.com/page.md", "attachment; filename*=UTF-8''page.md"),
+        ("http://example.com/page.markdown", 'attachment; filename="page.md"'),
+    ],
+)
+def test_text_plain_consistent_url_and_disposition_filenames_accepted(
+    final_url, content_disposition
+):
+    validate_content_type(final_url, "text/plain", content_disposition)
+
+
+@pytest.mark.parametrize(
+    "final_url",
+    [
+        "http://example.com/page%C2%85.md",
+        "http://example.com/page%00.md",
+        "http://example.com/page%1B.md",
+        "http://example.com/page%C2%9F.md",
+        "http://example.com/page%7F.md",
+    ],
+)
+def test_text_plain_control_containing_decoded_url_filename_is_not_markdown_evidence(
+    final_url,
+):
+    with pytest.raises(URLDownloadError) as exc:
+        validate_content_type(final_url, "text/plain", None)
+    assert exc.value.code == "URL_CONTENT_TYPE_AMBIGUOUS"
+
+
+def test_text_plain_control_containing_url_filename_does_not_conflict_with_disposition():
+    validate_content_type(
+        "http://example.com/page%C2%85.md",
+        "text/plain",
+        'attachment; filename="page.md"',
+    )
+
+
+@pytest.mark.parametrize(
+    "content_type",
+    [
+        "text/plain; charset=utf-8",
+        "text/plain;charset=utf-8",
+        "text/markdown; charset=UTF-8",
+        "text/x-markdown;charset=iso-8859-1",
+    ],
+)
+def test_content_type_standard_charset_parameter_is_parsed_as_media_type(content_type):
+    validate_content_type("http://example.com/page.md", content_type, None)
 
 
 def test_unsupported_content_encoding_uses_specific_code():

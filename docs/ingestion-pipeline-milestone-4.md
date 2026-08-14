@@ -25,7 +25,11 @@ Scope is deliberately narrow and matches the confirmed contract:
   deferred;
 - no proxies, cookies, authenticated target pages, browser rendering,
   crawling, sitemap expansion, durable worker queue, or non-default public
-  ports.
+  ports;
+- agent query integration is explicitly out of scope: Milestone 4 delivers
+  secure URL ingestion only, with no retrieval/query wiring into the agent;
+- PDF and Docling remain out of scope; PDF and every non-HTML/Markdown format
+  are deferred, and Docling is not installed or required.
 
 ## Feature Scope and Architecture
 
@@ -33,8 +37,8 @@ Scope is deliberately narrow and matches the confirmed contract:
 
 ```text
 n8n webhook (Header Auth, X-Polyphemus-Ingestion-Secret)
-  -> Validate URL field (native IF)
-  -> POST /v1/ingestions {"source_kind":"url","source_uri":"<raw url>"}
+  -> Validate body.url field (native IF; item shape {"body":{"url":"<raw url>"}})
+  -> POST /v1/ingestions {"source_kind":"url","source_uri":"<trimmed body.url>"}
        (FastAPI create_ingestion)
   -> service.submit: canonicalize -> build_url_source_key
      -> null-hash stub + DISCOVERED job
@@ -42,30 +46,49 @@ n8n webhook (Header Auth, X-Polyphemus-Ingestion-Secret)
   -> UrlDownloader.download(requested_url)          [sole network authority]
   -> MIME gate (validate_content_type)
   -> normalize_downloaded_artifact                  [local bytes only]
-  -> LightRAG ingest_markdown
-  -> Milestone 3 audit snapshot
+  -> LightRAG ingest_markdown (new URL, or staged candidate for an update)
+  -> Milestone 3 audit snapshot of the exact ingested document
   -> terminal state (PROCESSED | SKIPPED_DUPLICATE | FAILED | FAILED_AUDIT)
 n8n polls GET /v1/ingestions/{job_id} and responds to the caller
 ```
 
-The webhook sends only the raw submitted URL string; it never fetches,
-parses, or audits the target. All URL network activity happens inside
+The webhook reads only `body.url` from the incoming item and sends the
+validated trimmed string value to the backend as a native JSON object; it
+never canonicalizes the URL, never fetches, parses, or audits the target, and
+never relays backend error bodies. All URL network activity happens inside
 `agent/ingestion/url_downloader.py` in the ingestion process.
 
 ### Files introduced or modified by Milestone 4
 
-The verified Milestone 4 commit range is `62e92e7~1..32419cf` (six commits
-across Tasks 1–5 on `lightrag-ingestion-m4`); the list below is generated from
-`git diff 62e92e7~1..HEAD --name-status` and contains every file in that range.
+The fixed Milestone 4 base is `7db35f4` (the commit that fixed the docprep
+executor-shutdown hang). The original seven-commit feature checkpoint spans
+`62e92e7..242622f`; this remediation adds a further corrective pass on top, so
+the final range is not the old checkpoint. Review the complete milestone with:
+
+```sh
+git diff 7db35f4
+```
+
+`git diff 7db35f4` compares the fixed base against the working tree, so it
+includes this uncommitted remediation in addition to the committed checkpoint.
+The original seven-commit checkpoint (`242622f`) and the final remediated
+working tree are deliberately distinguished: `242622f` is the pre-remediation
+state, while the working tree is the reviewed state after this corrective
+pass. The list below is the Milestone 4 file set; no self-referential SHA for
+the commit containing this document is embedded.
 
 - `agent/app/config.py` — `URL_DOWNLOAD_*` limit settings.
 - `agent/app/clients/pg.py` — registry reads/writes for `source_metadata` and
   nullable `content_hash`, plus the idempotent URL schema migration.
+- `agent/ingestion/app.py` — startup hook that runs the idempotent URL schema
+  migration before the ingestion application accepts traffic.
 - `agent/ingestion/contracts.py` — `SourceRecord` gains `source_metadata`
   (JSONB, `default_factory=dict`) and a nullable `content_hash`.
 - `agent/ingestion/docprep_adapter.py` — `normalize_downloaded_artifact`
   hands local artifact bytes to the existing parser router with canonical
   identity and download metadata.
+- `agent/ingestion/lightrag_adapter.py` — strict document-ID extraction for
+  ingested candidates (missing/blank/non-string IDs fail sanitized).
 - `agent/ingestion/migrate_url_schema.py` — executable migration entry point.
 - `agent/ingestion/routes.py` — `POST /v1/ingestions` activates URL
   background processing only now that downloader and service integration both
@@ -93,8 +116,8 @@ across Tasks 1–5 on `lightrag-ingestion-m4`); the list below is generated from
   workflow (shipped inactive).
 - Tests: `tests/ingestion/test_api_routes.py`, `test_compose_n8n.py`,
   `test_contracts.py`, `test_docprep_adapter.py`, `test_n8n_url_workflow.py`,
-  `test_registry_pg.py`, `test_service.py`, `test_url_downloader.py`,
-  `test_url_schema_migration.py`.
+  `test_lightrag_adapter.py`, `test_registry_pg.py`, `test_service.py`,
+  `test_url_downloader.py`, `test_url_schema_migration.py`.
 - Task 6 (this document + static smoke):
   `scripts/smoke_lightrag_url_static.sh`,
   `docs/ingestion-pipeline-milestone-4.md`.
@@ -104,7 +127,9 @@ across Tasks 1–5 on `lightrag-ingestion-m4`); the list below is generated from
 - `workflows/n8n/lightrag-file-ingestion.json` is byte-for-byte pinned by
   `tests/ingestion/test_n8n_url_workflow.py` and unchanged.
 - `data/lightrag/preprocessing_pipeline/src/lightrag_docprep/url_fetcher.py`
-  is neither modified nor called.
+  is not imported or called by the new Milestone 4 ingestion path. Legacy
+  `DocumentPreprocessor.process_url` and its CLI may still use the old
+  fetcher, so no repository-wide "unused" claim is made.
 - `ingestion_jobs.audit` and `ingestion_jobs.error` are not used for
   downloader provenance; provenance lives in `ingestion_sources.source_metadata`.
 
@@ -118,7 +143,8 @@ The downloader accepts only these media types after a `200` response:
 | `text/markdown`, `text/x-markdown` | Accepted, parsed as Markdown |
 | `text/plain` | Accepted **only** when the final URL path or
   `Content-Disposition` filename has a reliable `.md` or `.markdown`
-  suffix; otherwise `URL_CONTENT_TYPE_AMBIGUOUS` |
+  suffix and trustworthy URL/disposition evidence does not conflict;
+  otherwise `URL_CONTENT_TYPE_AMBIGUOUS` |
 | Missing/empty/whitespace-only type, `application/octet-stream`,
   `application/markdown`, `application/x-markdown`, `text/md` | Rejected as
   `URL_CONTENT_TYPE_AMBIGUOUS` |
@@ -128,10 +154,36 @@ The downloader accepts only these media types after a `200` response:
 Policy details enforced by `validate_content_type`:
 
 - The media type is the part before the first `;`, lowercased and trimmed.
-- `Content-Disposition` filename evidence accepts exact `filename=`,
-  `filename*=`, quoted, unquoted, and single-quoted forms; malformed,
-  reordered, or lookalike parameters (`xfilename`, `filename0`, unterminated
-  quotes) do not count as evidence.
+- `Content-Disposition` filename evidence matches exact parameter boundaries
+  only, and every exact `filename` and `filename*` parameter is inspected so
+  the result does not depend on parameter order. An ordinary `filename=`
+  value is accepted only when syntactically valid under the existing
+  conservative parser (quoted, single-quoted, or unquoted). An extended
+  `filename*=` value is evidence only when it is a strict RFC 5987/6266
+  value: unquoted, exactly
+  `charset'language'value`, UTF-8-only charset (case-insensitive), language
+  empty or an alphanumeric/hyphen tag, every `%` followed by exactly two hex
+  digits, the percent-decoded bytes valid UTF-8, and the decoded filename
+  non-empty and free of decoded Unicode control characters (including
+  percent-encoded C1 controls such as U+0085). Malformed values
+  (`filename*=page.md`, `%ZZ`, incomplete escapes, unknown charsets, invalid
+  UTF-8, quoted `filename*`, empty values, near-match parameter names such
+  as `xfilename*`/`filename*0`), conflicting `filename`/`filename*` values,
+  or any control-containing evidence make the text/plain disposition
+  unreliable and yield `URL_CONTENT_TYPE_AMBIGUOUS`; a malformed extended
+  value is never masked by a valid plain `filename`. The filename is suffix
+  evidence only — it never becomes a filesystem path.
+- `text/plain` filename evidence from the final URL path and from
+  `Content-Disposition` is compared as a whole: the URL basename is
+  percent-decoded strictly and a decoded Unicode control character (for
+  example percent-encoded U+0085 as `%C2%85`, or NUL/ESC) makes that URL
+  filename unusable as evidence. When both a trustworthy URL filename
+  (an explicit extension) and a trustworthy `Content-Disposition` filename
+  exist but disagree about the Markdown suffix (for example `.md` URL plus a
+  non-Markdown disposition filename, or the reverse), the response is
+  `URL_CONTENT_TYPE_AMBIGUOUS` regardless of parameter order. Standard
+  `Content-Type` parameters such as `charset` do not change the media-type
+  decision; byte sniffing is never performed.
 - Only HTTP `200` is accepted for the body; redirects use `301/302/303/307/308`
   and other statuses fail with `URL_HTTP_STATUS`.
 - Duplicate singleton headers (`content-type`, `location`,
@@ -157,8 +209,14 @@ Canonicalization rules (`canonicalize_url`):
 - default ports stripped, any other port rejected (`URL_PORT_FORBIDDEN`);
 - host lowercased/IDNA-normalized; alternative IPv4 notations (hex, octal,
   shorthand, dword) rejected (`URL_HOST_INVALID`);
-- dot-segments removed per RFC 3986 5.2.4; percent-encoding normalized
-  (uppercase hex, unreserved bytes decoded);
+- percent-encoding normalized first (uppercase hex, unreserved bytes decoded),
+  then dot-segments removed per RFC 3986 5.2.4, so an encoded `.`/`..`
+  segment (`%2e`, `%2e%2e`, mixed case) behaves exactly like its decoded
+  equivalent on the first pass; encoded reserved separators such as `%2F`
+  are never decoded into path separators;
+- canonicalization is idempotent:
+  `canonicalize_url(canonicalize_url(x)) == canonicalize_url(x)`, and the
+  stored `source_uri` is always the same value used to derive `source_key`;
 - the query component is preserved exactly as submitted (including case,
   percent escapes, order, and repeated keys); an explicit empty query and an
   absent query canonicalize to the same identity;
@@ -212,6 +270,16 @@ Semantics:
 - `latest_attempt` records the most recent fetch attempt with its job and
   terminal outcome, including failures. Failed recrawls write
   `latest_attempt` while preserving the previous `active_download`.
+- A cross-URL duplicate (a distinct URL whose downloaded bytes match an
+  existing processed source) keeps `content_hash = NULL` and
+  `active_download = null`; the candidate SHA-256 and `SKIPPED_DUPLICATE`
+  outcome are recorded only in `latest_attempt`, and no parser,
+  normalized-artifact, or LightRAG activation fields are copied from the
+  owner. When a previously failed record is retried and reclassified as a
+  duplicate, its own stale parser, normalized-artifact, LightRAG, and error
+  fields are cleared so no field implies its candidate was activated. The
+  distinct canonical source key/source URI are preserved and the existing
+  processed owner is never modified.
 - `requested_url` is the raw submitted URL; `canonical_url` is the identity;
   `fetched_at` is an RFC 3339 UTC timestamp captured at fetch completion.
   Tests inject/freeze the clock (`now=` / `fetched_at=`) and never assert
@@ -281,6 +349,43 @@ Stable public error codes (`PUBLIC_CODES` in `test_url_downloader.py`):
 Error messages exposed to callers are generic and sanitized (never contain
 raw filesystem paths, sockets, or target internals).
 
+## URL Schema Migration
+
+The Milestone 4 schema adds `source_metadata JSONB NOT NULL DEFAULT '{}'` and
+drops `NOT NULL` from `content_hash`. Fresh databases already receive both
+changes through `db/postgres/init.sql`; existing `pg-data` volumes are
+migrated automatically.
+
+Automatic startup migration:
+
+- The ingestion application (`agent/ingestion/app.py`) runs the existing
+  idempotent migration in its FastAPI startup hook, following the repository's
+  existing `@app.on_event("startup")` convention. The migration executes
+  before the application becomes ready to accept traffic: if it fails,
+  startup/readiness fails and the Compose healthcheck keeps the service
+  unhealthy.
+- Importing `agent.ingestion.app` never runs the migration; only application
+  startup does.
+- Repeated startup is safe: each statement is a no-op when the schema is
+  already migrated (`ADD COLUMN IF NOT EXISTS` / `DROP NOT NULL`), and the
+  migration contains no destructive operations.
+- The Compose image already starts `uvicorn agent.ingestion.app:app`, so the
+  Compose/startup configuration reaches this path with no Compose change.
+
+Standalone manual recovery/upgrade command (unchanged):
+
+```sh
+python -m agent.ingestion.migrate_url_schema
+```
+
+Existing-volume upgrade behavior: an operator with an old `pg-data` volume
+can either let the startup hook migrate on the next ingestion-service start,
+or run the standalone command explicitly against the same
+`POSTGRES_DSN` before starting the service. Either way the migration is
+idempotent and non-destructive; explicit pre-traffic verification is to run
+the standalone command first and confirm its success message before
+submitting any URL job.
+
 ## n8n Credential Provisioning
 
 The URL webhook uses n8n **Header Auth** with header
@@ -303,13 +408,38 @@ Operator steps (manual, per `.env.example`):
 5. Activate the workflow (manual operator action; automation of credential
    creation or workflow activation is intentionally out of scope).
 
-The workflow contains only native n8n base nodes (17 total): a
-`webhook` (Header Auth), native `if` gates for URL field validation,
+The workflow contains only native n8n base nodes (18 total): a
+`webhook` (Header Auth), native `if` gates for `body.url` validation,
 response status, job-id validity, body validity, terminal-state and
 duplicate/error routing, a `wait` poll timer, `httpRequest` nodes that only
-POST the raw URL and GET the job status, and `respondToWebhook` responders.
+POST the trimmed URL and GET the job status, and `respondToWebhook` responders
+(fixed pre-polling failures and a trusted-ID-only polling failure responder).
 There is no HTTP request node that fetches the target URL, no parser/audit
 node, and no downloader logic.
+
+The webhook item shape is `{"body": {"url": "<url>"}}`. Validation requires
+exactly that `body.url` exists, is a string, and has a non-empty trim; the
+POST body is built as a native object expression
+(`{"source_kind": "url", "source_uri": $json.body.url.trim()}`), never by
+interpolating the URL inside quoted JSON text, so quotes, backslashes,
+braces, commas, newlines, or JSON-like URL text always remain one string
+value and `source_kind` can never be altered. The backend owns URL
+validation and receives exactly the trimmed submitted value. The initial
+successful POST `job_id` is validated as a canonical lowercase UUID
+(8-4-4-4-12 hexadecimal groups) before it is placed into any polling URL,
+retained as trusted state, or reflected; any other value (URL, filesystem
+path, secret-looking string, object, array, whitespace, empty, oversized, or
+non-canonical case) reaches a fixed sanitized error response with no
+`job_id`. Error responses never relay the backend body, error JSON, stack
+traces, or URLs with query strings: pre-polling failures (invalid input,
+POST rejection, POST transport errors, invalid initial job ID) return a
+fully fixed payload with no `job_id`, and post-polling failures (GET
+transport errors, malformed bodies, unrecognized statuses) return only the
+previously validated trusted polling `job_id` with a fixed status/error.
+Terminal success/failure responses return only the validated `job_id` and
+`status` scalars. The poll loop keeps the submitted `job_id` on the polling
+item for identity validation, and a later hostile GET error body can never
+replace that trusted ID.
 
 ## Terminal-State Behavior
 
@@ -321,17 +451,22 @@ node, and no downloader logic.
   `active_download` is populated.
 - `SKIPPED_DUPLICATE`: an active URL recrawled with unchanged content — no
   normalization/ingest/audit runs; fetch/provenance metadata is refreshed
-  while the source record stays active. A brand-new URL whose content hash
-  matches an existing processed source also skips and reuses the owner
-  document.
+  while the source record stays active. A brand-new URL whose downloaded
+  bytes match an existing processed source also skips, but it does not reuse
+  or copy the owner document: its own record keeps `content_hash = NULL`,
+  `active_download = null`, and records the candidate SHA plus the duplicate
+  outcome in `latest_attempt` only.
 - `FAILED`: download, parse, normalization, or LightRAG ingestion failed;
   `content_hash` stays `NULL`, `active_download` is cleared (or preserved for
   a failed recrawl), and the job carries a sanitized `error` with a stable
   code and stage.
 - `FAILED_AUDIT`: the Milestone 3 audit found critical issues; the candidate
   is never activated — `content_hash` stays `NULL` and `active_download` is
-  cleared, and the job carries the full audit report plus an
-  `AUDIT_FAILED` error. Warnings alone never block processing.
+  cleared, every parser/normalized-artifact/LightRAG activation field stays
+  null, the rejected candidate LightRAG document is deleted when its ID is
+  known, and the job carries the full audit report plus an `AUDIT_FAILED`
+  error (or the stable `UPDATE_ROLLBACK_FAILED` cleanup code when candidate
+  deletion fails). Warnings alone never block processing.
 
 ### Sanitized example job responses (generated from the test fixtures)
 
@@ -432,7 +567,7 @@ LightRAG document; the error payload is the exact
     "stage": "AUDITING"
   },
   "job_id": "job-url-1",
-  "lightrag_document_id": "doc-url",
+  "lightrag_document_id": null,
   "source_key": "url:https://example.com/doc",
   "source_uri": "https://example.com/doc",
   "status": "FAILED_AUDIT"
@@ -444,17 +579,65 @@ Produced by
 
 ## Rollback and Audit Guarantees
 
-- An already-active URL (`PROCESSED` with a non-null hash) is recrawled as a
-  candidate: the active record is never overwritten before the candidate
-  passes a clean audit. On update, the old LightRAG document is deleted, the
-  new version is ingested, and the audit must be clean before the candidate is
-  activated.
-- If update ingestion or audit fails, the previous normalized artifacts are
-  restored, the rejected candidate document is deleted, the previous
-  `active_download` metadata is preserved, and the job ends `FAILED` or
-  `FAILED_AUDIT`. If rollback itself fails, the audit error is kept and the
-  job reports `UPDATE_ROLLBACK_FAILED`; the previous active record is still
-  never clobbered by a failed candidate.
+- A brand-new URL is activated atomically through the audit. Before a clean
+  audit the persisted source keeps `content_hash = NULL`,
+  `active_download = null`, and null parser/normalized-artifact/LightRAG
+  fields; the candidate document ID and parser information exist only in
+  job-local memory, and the rejected/attempt provenance is recorded only in
+  `latest_attempt`. On a clean audit the hash, artifact paths, parser
+  information, LightRAG document ID, `active_download`, and `PROCESSED`
+  status are written together in the final activation write. On a critical
+  audit the rejected candidate document is deleted (when its ID is known)
+  and the sanitized `FAILED_AUDIT` source state keeps every
+  activation-derived field null. If candidate deletion itself fails, the job
+  terminalizes `FAILED_AUDIT` conservatively with the stable
+  `UPDATE_ROLLBACK_FAILED` code and the sanitized "Candidate cleanup failed"
+  message; the server-side log carries the detail.
+- A changed same-URL update is staged. The old registry record, normalized
+  artifact, active metadata, hash, and LightRAG document identity are all
+  preserved while the candidate is downloaded and normalized. Candidate
+  normalization writes into a unique per-run staging directory, so it can
+  never overwrite the active normalized artifact even when different raw
+  bytes normalize to the same output identity; incomplete staging output is
+  removed on failure. The candidate is then ingested under a distinct staging
+  identity (a different `source_key`, which changes the adapter's upload
+  filename and therefore the LightRAG document), so it coexists with the old
+  document. Before audit, delete, or activation the candidate LightRAG
+  document ID must be a non-empty string different from the active old ID;
+  a missing or conflicting ID is a stable sanitized `FAILED` that never
+  deletes the old document.
+- The audit always runs on the exact ingested candidate, before the old
+  document is touched. The old LightRAG document is deleted only after the
+  candidate audit is clean, and the registry switches activation to the
+  candidate only then (`PROCESSED`, candidate hash and `active_download`
+  persisted).
+- If the candidate audit is critical, only the candidate is deleted/cleaned;
+  the old LightRAG document stays untouched, the old registry activation is
+  kept, the job terminalizes `FAILED_AUDIT`, and the rejected-candidate
+  provenance is recorded only in `latest_attempt`.
+- A failure before candidate ingestion leaves the old document untouched. A
+  failure after candidate ingestion but before activation attempts candidate
+  cleanup while the old document remains active. Any failure after
+  old-document deletion begins — including a delete call that completes
+  remotely and then raises, leaving the remote outcome ambiguous — or during
+  final persistence triggers update-aware compensation: the preserved old
+  normalized artifact is re-ingested, the old registry state is restored, and
+  the job terminalizes `FAILED`. If compensation itself fails (for example a
+  failed candidate cleanup, a missing previous artifact, or a failed
+  restore), the stable `UPDATE_ROLLBACK_FAILED` code is used.
+- Unexpected `Exception`s (not `BaseException`) inside either URL background
+  worker are caught by a final stage-aware boundary. Expected errors keep
+  their existing stable codes; unexpected errors use the single generic
+  `INTERNAL_PROCESSING_FAILED` code with the fixed public message
+  "Internal processing failed". Raw exception text, paths, URLs, response
+  bodies, SQL, sockets, and audit internals are never stored in the public
+  error payload; the server-side log carries the traceback. New URL jobs make
+  a best-effort transition to `FAILED`, and update jobs run compensation
+  whenever candidate/old side effects have begun. If PostgreSQL itself is
+  unavailable so no terminal state can be persisted, the worker logs the
+  outage clearly and the exception propagates — a job that cannot be
+  persisted is never falsely claimed terminalized. That database-outage
+  residual is the unavoidable boundary documented here.
 - The audit is the same non-destructive Milestone 3 snapshot audit: critical
   issues block activation (`FAILED_AUDIT`), warnings do not block
   (`PROCESSED`).
@@ -479,27 +662,49 @@ stops at the first failing group. Real output from this checkout:
 == Markdown download + exact MIME policy via fakes ==
 ....................                                                     [100%]
 20 passed in 0.07s
+== Strict RFC 5987 filename* evidence via fakes ==
+................                                                         [100%]
+16 passed in 0.06s
+== Deterministic MIME evidence: conflicts and controls ==
+.................                                                        [100%]
+17 passed in 0.06s
+== Idempotent canonical identity incl. encoded dot segments ==
+...........                                                              [100%]
+11 passed in 0.13s
 == New HTML URL job -> audit -> PROCESSED (mocked downstreams) ==
 .                                                                        [100%]
-1 passed in 0.11s
+1 passed in 0.12s
 == Unchanged URL recrawl -> SKIPPED_DUPLICATE (mocked downstreams) ==
 .                                                                        [100%]
 1 passed in 0.12s
-== Changed URL recrawl -> update -> PROCESSED (mocked downstreams) ==
+== Cross-URL duplicate -> null hash/activation (mocked downstreams) ==
+.                                                                        [100%]
+1 passed in 0.11s
+== Changed URL recrawl -> staged audit-before-delete -> PROCESSED (mocked downstreams) ==
 .                                                                        [100%]
 1 passed in 0.12s
 == Download failure -> FAILED with sanitized error (mocked downstreams) ==
 ..                                                                       [100%]
-2 passed in 0.11s
+2 passed in 0.12s
 == Critical audit -> FAILED_AUDIT (mocked downstreams) ==
-.                                                                        [100%]
-1 passed in 0.11s
+.....                                                                    [100%]
+5 passed in 0.12s
+== Unexpected background failure boundary -> FAILED (mocked downstreams) ==
+..                                                                       [100%]
+2 passed in 0.12s
 == n8n URL workflow: native Header Auth + orchestration only ==
-..................                                                       [100%]
-18 passed in 0.69s
+..........................                                               [100%]
+26 passed in 1.29s
+== URL schema migration gate at application startup ==
+...                                                                      [100%]
+3 passed, 2 warnings in 0.22s
 
-Static URL smoke test passed: HTML, Markdown, duplicate, update, FAILED, FAILED_AUDIT, n8n auth
+Static URL smoke test passed: HTML, Markdown, strict filename*, MIME conflicts/controls, idempotent canonical identity, duplicate, staged update, atomic new-URL audit, unexpected-failure boundary, FAILED, FAILED_AUDIT, migration gate, n8n auth
 ```
+
+The migration-gate group prints the repository's existing `on_event`
+deprecation warning (the same startup convention used by the main agent
+application); it is a warning, not a failure.
 
 Shell syntax check:
 
@@ -507,8 +712,8 @@ Shell syntax check:
 sh -n scripts/smoke_lightrag_url_static.sh
 ```
 
-`sh -n` prints nothing on success. Result: exit status 0, stdout: empty,
-stderr: empty.
+`sh -n` prints nothing on success: exit status 0, stdout empty, stderr empty.
+`dash -n scripts/smoke_lightrag_url_static.sh` behaves identically.
 
 ### Focused URL verification
 
@@ -517,8 +722,12 @@ every command below. Set `PY` to a repository interpreter that has pytest and
 the preprocessing package installed (for example `<repo>/.venv/bin/python`):
 
 ```bash
-ABSOLUTE_PY="$(readlink -f "$PY")"
+# Do NOT use `readlink -f "$PY"`: it resolves the venv symlink to the system
+# interpreter. Preserve the venv entry-point path while making it absolute.
+PY_DIR="$(cd "$(dirname "$PY")" && pwd -P)"
+ABSOLUTE_PY="$PY_DIR/$(basename "$PY")"
 
+"$ABSOLUTE_PY" -m pytest --version
 "$ABSOLUTE_PY" -m pytest tests/ingestion/test_url_downloader.py -q
 "$ABSOLUTE_PY" -m pytest tests/ingestion/test_contracts.py -q
 "$ABSOLUTE_PY" -m pytest tests/ingestion/test_n8n_url_workflow.py -q
@@ -528,80 +737,105 @@ ABSOLUTE_PY="$(readlink -f "$PY")"
 
 Recorded evidence below was captured in this verification environment with the
 interpreter `/home/alelxsalc03/Desktop/polyphemus/.venv/bin/python`; reruns
-should use the portable `$ABSOLUTE_PY` above. Real output, each file shown
-separately:
+should use the portable `$ABSOLUTE_PY` above. Real output, each command shown
+with its recorded output:
+
+Command:
+
+```sh
+"$PY" -m pytest tests/ingestion/test_url_downloader.py -q
+```
+
+Recorded output:
 
 ```text
-$ /home/alelxsalc03/Desktop/polyphemus/.venv/bin/python -m pytest tests/ingestion/test_url_downloader.py -q
-........................................................................ [ 52%]
-.................................................................        [100%]
-137 passed in 0.13s
+........................................................................ [ 36%]
+........................................................................ [ 73%]
+...................................................                      [100%]
+195 passed in 0.15s
+```
 
-$ /home/alelxsalc03/Desktop/polyphemus/.venv/bin/python -m pytest tests/ingestion/test_contracts.py -q
-............................................                             [100%]
-44 passed in 0.04s
+Command:
 
-$ /home/alelxsalc03/Desktop/polyphemus/.venv/bin/python -m pytest tests/ingestion/test_n8n_url_workflow.py -q
-..................                                                       [100%]
-18 passed in 0.70s
+```sh
+"$PY" -m pytest tests/ingestion/test_contracts.py -q
+```
 
-$ /home/alelxsalc03/Desktop/polyphemus/.venv/bin/python -m pytest tests/ingestion/test_url_schema_migration.py -q
+Recorded output:
+
+```text
+......................................................                   [100%]
+54 passed in 0.04s
+```
+
+Command:
+
+```sh
+"$PY" -m pytest tests/ingestion/test_n8n_url_workflow.py -q
+```
+
+Recorded output:
+
+```text
+..........................                                               [100%]
+26 passed in 1.27s
+```
+
+Command:
+
+```sh
+"$PY" -m pytest tests/ingestion/test_url_schema_migration.py -q
+```
+
+Recorded output:
+
+```text
 ....                                                                     [100%]
-4 passed in 0.06s
+4 passed in 0.05s
+```
 
-$ /home/alelxsalc03/Desktop/polyphemus/.venv/bin/python -m pytest tests/ingestion/test_service.py -k url -q
-.........................                                                [100%]
-25 passed, 19 deselected in 0.14s
+Command:
+
+```sh
+"$PY" -m pytest tests/ingestion/test_service.py -k url -q
+```
+
+Recorded output:
+
+```text
+.................................................                        [100%]
+49 passed, 20 deselected in 0.21s
 ```
 
 The `-k url` service selection covers new-URL submission, canonicalization,
 HTML/Markdown source-type mapping, download/parse/normalize/ingest/audit
-failures, duplicate skip, update activation, failed-audit rejection, and
+failures, duplicate skip, atomic new-URL audit activation/rejection and
+candidate cleanup, staged update activation, candidate cleanup and
+compensation, unexpected-failure boundaries, failed-audit rejection, and
 recrawl metadata refresh.
 
 ### Full ingestion suite
 
-Inside the restricted review sandbox, `pytest tests/ingestion -q` stalls the
-HTML parser's `ThreadPoolExecutor` worker (a sandbox limitation, not a product
-defect). The parser watchdog then fires and the run ends with:
-
-```text
-1 failed, 327 passed in 121.35s (0:02:01)
-
-FAILED tests/ingestion/test_docprep_adapter.py::test_normalize_downloaded_artifact_reuses_existing_parsers_with_provenance[<html><body><main><h1>Guide</h1><p>Useful body.</p></main></body></html>-html-html]
-result = PreprocessResult(success=False, warnings=['html timed out after 120s',
-'docling unavailable; trying fallback'], error='docling unavailable; trying fallback')
-```
-
-Reading that result correctly:
-
-- the HTML parser is built on BeautifulSoup/Markdown conversion and does not
-  require Docling;
-- `html timed out after 120s` is the first, root observation: the sandbox
-  stalls the parser's `ThreadPoolExecutor` until the watchdog fires;
-- only after the HTML parser times out does the existing parser router try its
-  pre-existing optional Docling fallback, which then reports
-  `docling unavailable; trying fallback`;
-- Docling is unavailable because it is not installed by the repository's
-  normal package installation or ingestion-image configuration
-  (`agent/Dockerfile.ingestion` installs the preprocessing package without the
-  `[docling]` extra); missing Docling is not the root cause and Docling is not
-  a Milestone 4 dependency — PDF and all non-HTML/Markdown formats remain
-  deferred;
-- no dependency was installed to hide the sandbox issue; the identical command
-  was instead rerun once outside the sandbox with the same interpreter and no
-  Docling.
+The restricted review sandbox blocks worker threads (the same
+`ThreadPoolExecutor` restriction that stalls the HTML parser); both the
+docprep HTML-parser test and the new application-startup tests need those
+threads, so the identical `pytest tests/ingestion -q` command is run once
+outside the sandbox with the same interpreter. Docling is not installed and
+is not a Milestone 4 dependency: PDF and all non-HTML/Markdown formats remain
+deferred.
 
 Fresh real output of the full suite outside the sandbox, same interpreter, no
 Docling:
 
 ```text
-........................................................................ [ 21%]
-........................................................................ [ 43%]
+........................................................................ [ 16%]
+........................................................................ [ 32%]
+........................................................................ [ 48%]
 ........................................................................ [ 65%]
-........................................................................ [ 87%]
-........................................                                 [100%]
-328 passed in 1.20s
+........................................................................ [ 81%]
+........................................................................ [ 97%]
+..........                                                              [100%]
+442 passed, 4 warnings in 1.87s
 ```
 
 Fresh real output of the full vendored preprocessing suite outside the
@@ -610,7 +844,7 @@ sandbox, same interpreter, no Docling:
 ```text
 ........................................................................ [ 91%]
 .......                                                                  [100%]
-79 passed in 1.75s
+79 passed in 1.78s
 ```
 
 Compose validation (parses the compose file; starts no containers):
@@ -619,8 +853,8 @@ Compose validation (parses the compose file; starts no containers):
 docker compose --env-file .env.example --profile lightrag config --quiet
 ```
 
-`docker compose config --quiet` prints nothing on success. Result: exit status
-0, stdout: empty, stderr: empty.
+`docker compose config --quiet` prints nothing on success: exit status 0,
+stdout empty, stderr empty. No containers are started.
 
 ## Manual Approval-Gated Live-URL Procedure
 
@@ -630,8 +864,12 @@ the static smoke.
 
 Prerequisites:
 
-1. The compose stack (`docker compose --profile lightrag up -d`) is healthy,
-   including PostgreSQL, ingestion, n8n, and LightRAG.
+1. Only the required services are started explicitly, and they are healthy:
+
+   ```sh
+   docker compose --env-file .env --profile lightrag \
+     up -d postgres lightrag ingestion n8n
+   ```
 2. The n8n Header Auth credential exists and is attached to the
    `URL Ingestion Webhook` node; the workflow is activated.
 3. The target URL is operator-approved and matches scope (http/https, default
@@ -672,10 +910,17 @@ explicitly authorized for this checkpoint. The nullable `content_hash` and
 migration tests (recorded below with the interpreter used in this verification
 environment, `/home/alelxsalc03/Desktop/polyphemus/.venv/bin/python`):
 
+Command:
+
+```sh
+"$PY" -m pytest tests/ingestion/test_url_schema_migration.py -q
+```
+
+Recorded output:
+
 ```text
-$ /home/alelxsalc03/Desktop/polyphemus/.venv/bin/python -m pytest tests/ingestion/test_url_schema_migration.py -q
 ....                                                                     [100%]
-4 passed in 0.06s
+4 passed in 0.05s
 ```
 
 Those tests pin the exact migration SQL:
@@ -687,15 +932,39 @@ ALTER TABLE ingestion_sources ALTER COLUMN content_hash DROP NOT NULL;
 
 and assert the migration contains no destructive statements and is idempotent,
 so an existing `pg-data` volume can be migrated without deletion or recreation.
+The same migration now runs automatically in the ingestion application's
+startup hook before traffic is accepted (see "URL Schema Migration" above);
+no live database was started or mutated for this documentation.
 
-## Residual Risks and Deferred Items
+## Accepted Residual Risks
 
-- background tasks remain inside one FastAPI process; no durable queue/retry;
-- no conditional GET; ETag/Last-Modified are metadata only;
-- no authenticated targets, proxies, cookies, browser rendering, crawling,
-  sitemap expansion or non-default public ports;
+The following risks are accepted for Milestone 4 and are **not**
+implementation blockers. None of them is newly introduced by this
+remediation; each is a deliberate boundary of the bounded scope.
+
+- concurrent same-source jobs are **not** serialized; Milestone 4 adds no
+  locks, queues, or per-source job serialization;
+- FastAPI background work has no durable queue or retry — jobs live inside
+  one process;
+- a PostgreSQL outage may prevent terminal-state persistence: the worker
+  logs the outage and the exception propagates, and a job that cannot be
+  persisted is never falsely claimed terminalized;
+- a remote LightRAG upload that completes and then fails before returning a
+  document ID may leave an unidentifiable orphan document;
+- remote side effects cannot always be made transactional;
 - URL raw artifacts under `<INGESTION_ROOT>/url-artifacts` (successful
   activations and post-download failed attempts alike) are retained with no
   automatic retention period or garbage collection; cleanup is an explicit
   operator responsibility;
-- PDF and non-HTML/Markdown formats remain deferred.
+- no conditional GET; `ETag`/`Last-Modified` are metadata only;
+- no live n8n runtime/import test: the workflow ships inactive and is
+  verified deterministically by static workflow tests.
+
+## Future Milestones (deferred features)
+
+These are future work, not Milestone 4 residuals:
+
+- PDF, Docling, and non-HTML/Markdown content formats;
+- agent query integration;
+- authenticated targets, proxies, cookies, browser rendering, crawling,
+  sitemap expansion, and non-default public ports.

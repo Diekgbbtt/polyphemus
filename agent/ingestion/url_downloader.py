@@ -8,12 +8,13 @@ import socket
 import ssl
 import tempfile
 import time
+import unicodedata
 import zlib
 from dataclasses import dataclass
 from datetime import datetime, timezone
 from pathlib import Path
 from typing import Callable, Iterator, Mapping, Sequence
-from urllib.parse import urljoin, unquote, urlunsplit, urlsplit
+from urllib.parse import unquote, urljoin, urlunsplit, urlsplit
 
 import dns.exception
 import dns.resolver
@@ -191,85 +192,167 @@ def _is_token_char(ch: str) -> bool:
     return ch.isascii() and (ch.isalnum() or ch in "!#$%&'*+-.^_`|~")
 
 
-def _read_disposition_value(value: str, start: int) -> str | None:
+def _read_disposition_value(value: str, start: int) -> tuple[str | None, bool, int]:
     """Read one Content-Disposition parameter value starting after ``=``.
 
     Quoted values may contain semicolons; anything other than optional
     whitespace between a closing quote and the next semicolon is malformed.
-    An empty or unterminated value is returned as ``None``.
+    An empty or unterminated value is returned as ``(None, False)``. The
+    second element reports whether the value was a quoted-string and the third
+    element is the index just past the parsed value, ready to scan the next
+    parameter.
     """
     while start < len(value) and value[start] in " \t":
         start += 1
     if start >= len(value):
-        return None
+        return None, False, len(value)
 
     if value[start] in ("'", '"'):
         quote = value[start]
         end = value.find(quote, start + 1)
         if end == -1:
-            return None
+            return None, False, len(value)
         tail = value[end + 1 :]
         semicolon = tail.find(";")
         if semicolon == -1:
             if tail.strip():
-                return None
+                return None, False, len(value)
+            return value[start + 1 : end], True, len(value)
         elif tail[:semicolon].strip():
-            return None
-        return value[start + 1 : end]
+            return None, False, len(value)
+        return value[start + 1 : end], True, end + 1 + semicolon + 1
 
     semicolon = value.find(";", start)
     if semicolon == -1:
-        return value[start:].strip()
-    return value[start:semicolon].strip()
+        return value[start:].strip(), False, len(value)
+    return value[start:semicolon].strip(), False, semicolon + 1
 
 
-def _decode_plain_filename(raw: str) -> str:
+def _contains_control(text: str) -> bool:
+    """True when the text contains any decoded Unicode control character."""
+    return any(unicodedata.category(ch) == "Cc" for ch in text)
+
+
+def _decode_plain_filename(raw: str) -> str | None:
     raw = raw.strip()
     if len(raw) >= 2 and raw[0] == raw[-1] and raw[0] in ("'", '"'):
         raw = raw[1:-1]
+    if not raw or _contains_control(raw):
+        return None
     return raw
 
 
-def _decode_ext_filename(raw: str) -> str:
-    raw = raw.strip()
-    if len(raw) >= 8 and raw[:8].lower() == "utf-8''":
-        raw = raw[8:]
-    if len(raw) >= 2 and raw[0] == raw[-1] == '"':
-        raw = raw[1:-1]
-    return unquote(raw)
+_EXT_FILENAME_CHARSET = "utf-8"
+_ATTR_CHARS = set("!#$&+-.^_`|~")
 
 
-def _filename_from_content_disposition(value: str | None) -> str | None:
-    """Extract a filename from Content-Disposition, exact parameter names only.
+def _decode_ext_filename(raw: str) -> str | None:
+    """Decode one strict RFC 5987/6266 ``filename*`` value, or return None.
 
-    Only ``filename`` and ``filename*`` count as Markdown evidence, and only
-    when the parameter name starts at the header beginning or immediately
-    after a semicolon. Longer names such as ``xfilename``, ``notfilename`` or
-    ``filename0`` never match, and malformed parameters are ignored.
+    The extended value must be an unquoted ``charset'language'value`` triple
+    using the only supported charset (UTF-8). Language may be empty or an
+    RFC 5646-style alphanumeric/hyphen tag. Every raw character in the value
+    part must be an ``attr-char``; anything else must be percent-encoded, and
+    every ``%`` must start exactly two hexadecimal digits. The percent-decoded
+    byte string must decode as the declared charset and the decoded filename
+    must be non-empty and control-free.
     """
+    raw = raw.strip()
+    if not raw:
+        return None
+    if _contains_control(raw):
+        return None
+
+    first_quote = raw.find("'")
+    second_quote = raw.find("'", first_quote + 1)
+    if first_quote == -1 or second_quote == -1:
+        return None
+    if raw.find("'", second_quote + 1) != -1:
+        return None
+
+    charset = raw[:first_quote]
+    language = raw[first_quote + 1 : second_quote]
+    value = raw[second_quote + 1 :]
+
+    if charset.lower() != _EXT_FILENAME_CHARSET:
+        return None
+    if not re.fullmatch(r"[A-Za-z0-9-]*", language):
+        return None
     if not value:
         return None
 
+    decoded = _decode_ext_filename_value(value)
+    if decoded is None or decoded == "":
+        return None
+    if _contains_control(decoded):
+        return None
+    return decoded
+
+
+def _decode_ext_filename_value(value: str) -> str | None:
+    """Percent-decode a strict ``filename*`` value part as the declared charset."""
+    out = bytearray()
+    index = 0
+    while index < len(value):
+        ch = value[index]
+        if ch == "%":
+            if index + 2 >= len(value):
+                return None
+            high, low = value[index + 1], value[index + 2]
+            if high not in "0123456789abcdefABCDEF" or low not in "0123456789abcdefABCDEF":
+                return None
+            out.append(int(high + low, 16))
+            index += 3
+            continue
+        if not (ch.isascii() and (ch.isalnum() or ch in _ATTR_CHARS)):
+            return None
+        out.extend(ch.encode("ascii"))
+        index += 1
+    try:
+        return out.decode("utf-8")
+    except UnicodeDecodeError:
+        return None
+
+
+def _filename_from_content_disposition(value: str | None) -> tuple[str | None, bool]:
+    """Extract filename evidence from Content-Disposition, order-independent.
+
+    Every exact ``filename`` and ``filename*`` parameter is inspected. The
+    returned tuple is ``(filename, unreliable)``: ``filename`` is the single
+    decoded value when all evidence is well-formed, non-empty, control-free,
+    and mutually consistent; ``unreliable`` is True when any exact parameter
+    is malformed, conflicting, or control-containing. Longer names such as
+    ``xfilename``, ``notfilename`` or ``filename0`` never match.
+    """
+    if not value:
+        return None, False
+
     pos = 0
     length = len(value)
+    candidates: list[str] = []
     while pos < length:
         # Skip optional whitespace following the start of the value or a ';'.
         while pos < length and value[pos] in " \t":
             pos += 1
 
-        name: str | None = None
-        is_ext = False
         if value[pos : pos + len("filename*")].lower() == "filename*":
             name = "filename*"
             is_ext = True
         elif value[pos : pos + len("filename")].lower() == "filename":
             name = "filename"
-
-        if name is None:
-            pos = value.find(";", pos)
-            if pos == -1:
-                return None
-            pos += 1
+            is_ext = False
+        else:
+            # Unknown parameter: consume its value so a quoted semicolon or a
+            # look-alike name inside the value is never misread as evidence.
+            equals = value.find("=", pos)
+            next_semicolon = value.find(";", pos)
+            if equals != -1 and (next_semicolon == -1 or equals < next_semicolon):
+                _, _, end = _read_disposition_value(value, equals + 1)
+                pos = end
+            elif next_semicolon != -1:
+                pos = next_semicolon + 1
+            else:
+                break
             continue
 
         after_name = pos + len(name)
@@ -278,7 +361,7 @@ def _filename_from_content_disposition(value: str | None) -> str | None:
         if after_name < length and _is_token_char(value[after_name]):
             pos = value.find(";", after_name)
             if pos == -1:
-                return None
+                break
             pos += 1
             continue
 
@@ -287,26 +370,75 @@ def _filename_from_content_disposition(value: str | None) -> str | None:
             pos += 1
         if pos >= length or value[pos] != "=":
             # An exact filename parameter without a value is malformed.
-            return None
+            return None, True
 
-        raw = _read_disposition_value(value, pos + 1)
+        raw, quoted, end = _read_disposition_value(value, pos + 1)
         if raw is None:
-            return None
-        return _decode_ext_filename(raw) if is_ext else _decode_plain_filename(raw)
+            return None, True
+        if is_ext:
+            if quoted:
+                return None, True
+            decoded = _decode_ext_filename(raw)
+            if decoded is None:
+                return None, True
+        else:
+            decoded = _decode_plain_filename(raw)
+            if decoded is None:
+                return None, True
+        candidates.append(decoded)
+        pos = end
 
+    if not candidates:
+        return None, False
+    if len(set(candidates)) != 1:
+        return None, True
+    return candidates[0], False
+
+
+def _url_filename_markdown_evidence(url: str) -> bool | None:
+    """Return trustworthy Markdown-suffix evidence from the final URL path.
+
+    ``True`` when the percent-decoded basename carries a ``.md`` or
+    ``.markdown`` suffix, ``False`` when it carries a different extension, and
+    ``None`` when the URL has no filename, the basename has no extension, the
+    percent-decoding is invalid UTF-8, or the decoded filename contains
+    control characters (which makes it unusable as evidence). Encoded reserved
+    separators are decoded here for evidence inspection only; they never
+    become filesystem separators.
+    """
+    path = urlsplit(url).path.rstrip("/")
+    if not path:
+        return None
+    base = path.rsplit("/", 1)[-1]
+    try:
+        decoded = unquote(base, encoding="utf-8", errors="strict")
+    except UnicodeDecodeError:
+        return None
+    if _contains_control(decoded):
+        return None
+    if decoded.lower().endswith((".md", ".markdown")):
+        return True
+    if "." in decoded:
+        return False
     return None
 
 
-def _has_markdown_filename_evidence(url: str, disposition: str | None) -> bool:
-    path = urlsplit(url).path.rstrip("/")
-    if path:
-        base = path.rsplit("/", 1)[-1]
-        if base.lower().endswith((".md", ".markdown")):
-            return True
-    filename = _filename_from_content_disposition(disposition)
-    if filename and filename.lower().endswith((".md", ".markdown")):
-        return True
-    return False
+def _disposition_filename_markdown_evidence(
+    disposition: str | None,
+) -> tuple[bool | None, bool]:
+    """Return Markdown-suffix evidence from Content-Disposition filenames.
+
+    The tuple is ``(evidence, unreliable)``. ``evidence`` is ``True`` or
+    ``False`` for one well-formed decoded filename, or ``None`` when no exact
+    filename parameter exists. ``unreliable`` is ``True`` when any exact
+    filename parameter is malformed, conflicting, or control-containing.
+    """
+    filename, unreliable = _filename_from_content_disposition(disposition)
+    if unreliable:
+        return None, True
+    if not filename:
+        return None, False
+    return filename.lower().endswith((".md", ".markdown")), False
 
 
 def _media_type(value: str | None) -> str | None:
@@ -330,7 +462,19 @@ def validate_content_type(
     if media in MARKDOWN_MEDIA_TYPES:
         return
     if media == "text/plain":
-        if _has_markdown_filename_evidence(final_url, content_disposition):
+        url_evidence = _url_filename_markdown_evidence(final_url)
+        disposition_evidence, unreliable = _disposition_filename_markdown_evidence(
+            content_disposition
+        )
+        if unreliable:
+            raise URLDownloadError("URL_CONTENT_TYPE_AMBIGUOUS")
+        if (
+            url_evidence is not None
+            and disposition_evidence is not None
+            and url_evidence != disposition_evidence
+        ):
+            raise URLDownloadError("URL_CONTENT_TYPE_AMBIGUOUS")
+        if url_evidence is True or disposition_evidence is True:
             return
         raise URLDownloadError("URL_CONTENT_TYPE_AMBIGUOUS")
     if media in _AMBIGUOUS_MEDIA_TYPES:

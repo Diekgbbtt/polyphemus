@@ -173,6 +173,36 @@ def test_ingest_markdown_maps_track_status_documents_to_terminal_state(tmp_path)
     assert result.status == "processed"
 
 
+@pytest.mark.parametrize(
+    "processed_payload",
+    [
+        {"status": "processed"},
+        {"status": "processed", "document_id": ""},
+        {"status": "processed", "document_id": "   "},
+        {"status": "processed", "document_id": None},
+        {"status": "processed", "document_id": {"secret": "backend-detail"}},
+        {"status": "processed", "document_id": ["doc-1"]},
+        {"status": "processed", "document_id": 42},
+        {"status": "processed", "documents": []},
+    ],
+)
+def test_ingest_markdown_rejects_missing_or_blank_document_id(tmp_path, processed_payload):
+    document = tmp_path / "document.md"
+    document.write_text("# Methodology\n", encoding="utf-8")
+    client = FakeLightRAGClient(
+        upload_responses=[{"track_id": "track-1"}],
+        status_responses=[processed_payload],
+    )
+    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0, max_poll_attempts=1)
+
+    with pytest.raises(LightRAGAdapterError) as exc:
+        adapter.ingest_markdown(document, source_key="file:inbox/example.md")
+
+    assert exc.value.code == "LIGHTRAG_DOCUMENT_ID_MISSING"
+    assert exc.value.retryable is False
+    assert "document ID" in str(exc.value)
+
+
 def test_ingest_markdown_maps_track_status_document_failure_to_error(tmp_path):
     document = tmp_path / "document.md"
     document.write_text("# Methodology\n", encoding="utf-8")

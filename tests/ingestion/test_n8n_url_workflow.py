@@ -1,5 +1,6 @@
 import hashlib
 import json
+import re
 import shutil
 import subprocess
 from pathlib import Path
@@ -8,6 +9,7 @@ from pathlib import Path
 URL_WORKFLOW = Path("workflows/n8n/lightrag-url-ingestion.json")
 FILE_WORKFLOW = Path("workflows/n8n/lightrag-file-ingestion.json")
 ENV_EXAMPLE = Path(".env.example")
+MILESTONE_4_DOCS = Path("docs/ingestion-pipeline-milestone-4.md")
 
 # Byte-for-byte pin of the committed Milestone 1-3 file workflow. Task 5 must
 # not touch it; the pin is computed over the raw bytes so any whitespace or
@@ -119,16 +121,96 @@ def assert_expression_semantics(expression, token, cases):
         )
 
 
+def eval_webhook_item_validation(expression, item):
+    """Evaluate a stored validation expression against a complete webhook item."""
+    node = shutil.which("node")
+    assert node, "node is required to evaluate the stored workflow expressions"
+    completed = subprocess.run(
+        [
+            node,
+            "-e",
+            "const $json = JSON.parse(process.argv[1]); "
+            "process.stdout.write(JSON.stringify(Boolean("
+            + expression
+            + ")))",
+            json.dumps(item),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    result = json.loads(completed.stdout.strip())
+    assert isinstance(result, bool), completed.stdout
+    return result
+
+
+def eval_polling_failure_response(expression, current_body, trusted_job_id):
+    """Evaluate the polling failure responder with a hostile current body.
+
+    ``$json`` is bound to the hostile error body and ``$('Polling wait')`` is
+    bound to the trusted prior polling item. The stored expression must only
+    ever read the trusted prior ID.
+    """
+    node = shutil.which("node")
+    assert node, "node is required to evaluate the stored workflow expressions"
+    completed = subprocess.run(
+        [
+            node,
+            "-e",
+            "const $json = JSON.parse(process.argv[1]); "
+            "const $ = (name) => ({ item: { json: { body: { job_id: process.argv[2] } } } }); "
+            "process.stdout.write(JSON.stringify(("
+            + expression
+            + ")));",
+            json.dumps(current_body),
+            trusted_job_id,
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(completed.stdout.strip())
+
+
+def eval_json_body_expression(expression, item):
+    """Evaluate a stored n8n JSON-body expression against a complete webhook item.
+
+    ``$json`` is bound to the parsed item and the expression result is
+    serialized the same way n8n serializes a native object JSON body, so
+    adversarial URL strings round-trip through real JSON escaping.
+    """
+    node = shutil.which("node")
+    assert node, "node is required to evaluate the stored workflow expressions"
+    completed = subprocess.run(
+        [
+            node,
+            "-e",
+            "const $json = JSON.parse(process.argv[1]); "
+            "process.stdout.write(JSON.stringify(("
+            + expression
+            + ")))",
+            json.dumps(item),
+        ],
+        capture_output=True,
+        text=True,
+        check=True,
+    )
+    return json.loads(completed.stdout.strip())
+
+
 URL_VALIDATION_CASES = [
-    ("missing url", "undefined", False),
-    ("null url", "null", False),
-    ("numeric url", "42", False),
-    ("boolean url", "true", False),
-    ("object url", json.dumps({"a": 1}), False),
-    ("list url", json.dumps([1, 2]), False),
-    ("empty string url", json.dumps(""), False),
-    ("whitespace-only url", json.dumps("   \t "), False),
-    ("non-empty trimmed url", json.dumps("  https://example.com/a?b=1  "), True),
+    ("representative webhook item", {"body": {"url": "https://example.com/document"}}, True),
+    ("missing body", {}, False),
+    ("null body", {"body": None}, False),
+    ("missing url", {"body": {}}, False),
+    ("null url", {"body": {"url": None}}, False),
+    ("numeric url", {"body": {"url": 42}}, False),
+    ("boolean url", {"body": {"url": True}}, False),
+    ("object url", {"body": {"url": {"a": 1}}}, False),
+    ("list url", {"body": {"url": [1, 2]}}, False),
+    ("empty string url", {"body": {"url": ""}}, False),
+    ("whitespace-only url", {"body": {"url": "   \t "}}, False),
+    ("non-empty trimmed url", {"body": {"url": "  https://example.com/a?b=1  "}}, True),
 ]
 
 JOB_ID_CASES = [
@@ -140,7 +222,39 @@ JOB_ID_CASES = [
     ("list job_id", json.dumps(["x"]), False),
     ("empty job_id", json.dumps(""), False),
     ("whitespace job_id", json.dumps("   "), False),
-    ("non-empty string job_id", json.dumps("job-abc-123"), True),
+    ("non-empty string job_id", json.dumps("7c9e6679-7425-40de-944b-e07fc1f90ae7"), True),
+]
+
+POST_JOB_ID_UUID_CASES = [
+    ("canonical backend UUID", {"body": {"job_id": "7c9e6679-7425-40de-944b-e07fc1f90ae7"}}, True),
+    ("digits-only canonical UUID", {"body": {"job_id": "12345678-1234-1234-1234-123456789012"}}, True),
+    ("uppercase UUID rejected", {"body": {"job_id": "7C9E6679-7425-40DE-944B-E07FC1F90AE7"}}, False),
+    ("URL job_id", {"body": {"job_id": "https://evil.example/leak"}}, False),
+    ("filesystem path job_id", {"body": {"job_id": "/data/ingestion/secret.md"}}, False),
+    ("secret-looking job_id", {"body": {"job_id": "POLYPHEMUS_SECRET_VALUE"}}, False),
+    ("object job_id", {"body": {"job_id": {"id": "7c9e6679-7425-40de-944b-e07fc1f90ae7"}}}, False),
+    ("array job_id", {"body": {"job_id": ["7c9e6679-7425-40de-944b-e07fc1f90ae7"]}}, False),
+    ("numeric job_id", {"body": {"job_id": 42}}, False),
+    ("empty job_id", {"body": {"job_id": ""}}, False),
+    ("whitespace job_id", {"body": {"job_id": "   "}}, False),
+    ("null body", {"body": None}, False),
+    ("missing body", {}, False),
+    ("missing job_id", {"body": {}}, False),
+    ("oversized job_id", {"body": {"job_id": "a" * 10000}}, False),
+    ("braced UUID", {"body": {"job_id": "{7c9e6679-7425-40de-944b-e07fc1f90ae7}"}}, False),
+    ("short UUID", {"body": {"job_id": "7c9e6679-7425-40de-944b"}}, False),
+]
+
+ADVERSARIAL_URLS = [
+    'x","source_kind":"file","source_uri":"/data/ingestion/secret.md',
+    'https://example.com/a"b',
+    "https://example.com/a\\b",
+    "https://example.com/{a,b}",
+    "https://example.com/a,b",
+    "https://example.com/a\nb",
+    "https://example.com/a\tb",
+    "https://example.com/umlaut-\u00fc-\u03a9-\u6771\u4eac.md",
+    "  https://example.com/padded?x=1  ",
 ]
 
 STATUS_CASES = [
@@ -186,7 +300,12 @@ def test_validate_gate_is_one_native_boolean_expression_with_exact_semantics():
     assert validate["type"] == "n8n-nodes-base.if"
     condition = single_boolean_condition(validate)
     expression = expression_body(condition["leftValue"])
-    assert_expression_semantics(expression, "$json.url", URL_VALIDATION_CASES)
+    assert "$json.body.url" in expression
+    for label, item, expected in URL_VALIDATION_CASES:
+        actual = eval_webhook_item_validation(expression, item)
+        assert actual is expected, (
+            f"{label}: expected {expected}, got {actual} for webhook item {item!r}"
+        )
 
     # Only the validated true branch may submit to the backend.
     assert targets_of(workflow, "Validate URL field", 0) == [
@@ -198,6 +317,26 @@ def test_validate_gate_is_one_native_boolean_expression_with_exact_semantics():
     assert [source for source, _ in edges_into(workflow, "POST URL ingestion job")] == [
         "Validate URL field"
     ]
+    assert [source for source, _ in edges_into(workflow, "Respond invalid URL")] == [
+        "Validate URL field"
+    ]
+
+
+def test_every_url_expression_uses_body_url_and_never_top_level_url():
+    workflow = load_url_workflow()
+    serialized = json.dumps(workflow)
+
+    # The webhook delivers the request at $json.body.url. No functional
+    # expression may read a top-level $json.url; every URL reference must be
+    # the nested body field.
+    assert "$json.url" not in serialized
+    assert "$json.body.url" in serialized
+
+    validate = node_by_name(workflow, "Validate URL field")
+    assert "$json.body.url" in single_boolean_condition(validate)["leftValue"]
+
+    post = node_by_name(workflow, "POST URL ingestion job")
+    assert "$json.body.url" in post["parameters"]["jsonBody"]
 
 
 def test_post_payload_and_routes_are_exact_and_preserved():
@@ -210,7 +349,41 @@ def test_post_payload_and_routes_are_exact_and_preserved():
     assert params["url"] == "http://ingestion:8080/v1/ingestions"
     assert params["sendBody"] is True
     assert params["specifyBody"] == "json"
-    assert params["jsonBody"] == '={"source_kind":"url","source_uri":"{{ $json.url }}"}'
+    assert params["jsonBody"] == (
+        '={{ {"source_kind": "url", "source_uri": $json.body.url.trim()} }}'
+    )
+    # The body is a native object expression, never JSON text built by
+    # interpolating the URL inside quoted JSON. The backend owns URL
+    # validation; n8n sends the validated trimmed string value.
+    assert "$json.body.url.trim()" in params["jsonBody"]
+
+
+def test_post_body_is_native_object_for_adversarial_urls():
+    workflow = load_url_workflow()
+
+    post = node_by_name(workflow, "POST URL ingestion job")
+    expression = expression_body(post["parameters"]["jsonBody"])
+    # No legacy interpolation marker may appear inside the native object.
+    assert "{{" not in expression
+    assert '"source_kind"' in expression
+    assert '"source_uri"' in expression
+
+    for url in ADVERSARIAL_URLS:
+        produced = eval_json_body_expression(expression, {"body": {"url": url}})
+        assert set(produced) == {"source_kind", "source_uri"}
+        assert produced["source_kind"] == "url"
+        assert produced["source_uri"] == url.strip()
+
+
+def test_post_body_never_changes_source_kind_for_json_like_url():
+    workflow = load_url_workflow()
+
+    post = node_by_name(workflow, "POST URL ingestion job")
+    expression = expression_body(post["parameters"]["jsonBody"])
+    url = 'x","source_kind":"file","source_uri":"/data/ingestion/secret.md'
+    produced = eval_json_body_expression(expression, {"body": {"url": url}})
+    assert produced == {"source_kind": "url", "source_uri": url}
+    assert produced["source_kind"] == "url"
 
 
 def test_post_node_exposes_status_and_body_and_declares_native_error_output():
@@ -228,11 +401,11 @@ def test_post_node_exposes_status_and_body_and_declares_native_error_output():
         {"node": "POST response status OK?", "type": "main", "index": 0}
     ]
     assert targets_of(workflow, "POST URL ingestion job", 1) == [
-        {"node": "Respond failure", "type": "main", "index": 0}
+        {"node": "Respond request failure", "type": "main", "index": 0}
     ]
 
 
-def test_post_accepts_only_2xx_with_non_empty_string_job_id():
+def test_post_accepts_only_2xx_with_canonical_uuid_job_id():
     workflow = load_url_workflow()
 
     status_ok = node_by_name(workflow, "POST response status OK?")
@@ -249,7 +422,11 @@ def test_post_accepts_only_2xx_with_non_empty_string_job_id():
     job_id_ok = node_by_name(workflow, "POST job ID valid?")
     assert job_id_ok["type"] == "n8n-nodes-base.if"
     expression = expression_body(single_boolean_condition(job_id_ok)["leftValue"])
-    assert_expression_semantics(expression, "$json.body.job_id", JOB_ID_CASES)
+    for label, item, expected in POST_JOB_ID_UUID_CASES:
+        actual = eval_webhook_item_validation(expression, item)
+        assert actual is expected, (
+            f"{label}: expected {expected}, got {actual} for item {item!r}"
+        )
 
     assert targets_of(workflow, "POST response status OK?", 0) == [
         {"node": "POST job ID valid?", "type": "main", "index": 0}
@@ -261,18 +438,21 @@ def test_post_accepts_only_2xx_with_non_empty_string_job_id():
         {"node": "Polling wait", "type": "main", "index": 0}
     ]
     assert targets_of(workflow, "POST job ID valid?", 1) == [
-        {"node": "Respond failure", "type": "main", "index": 0}
+        {"node": "Respond request failure", "type": "main", "index": 0}
     ]
 
 
-def test_post_http_rejection_returns_only_backend_body_and_never_polls():
+def test_post_http_rejection_uses_fixed_sanitized_response_and_never_polls():
     workflow = load_url_workflow()
 
     rejection = node_by_name(workflow, "Respond backend rejection")
     assert rejection["type"] == "n8n-nodes-base.respondToWebhook"
     assert rejection["parameters"]["respondWith"] == "json"
-    assert rejection["parameters"]["responseBody"] == "={{ $json.body }}"
+    assert rejection["parameters"]["responseBody"] == (
+        '={"status":"FAILED","error":"Ingestion backend rejected the request"}'
+    )
     assert rejection["parameters"]["options"]["responseCode"] == 502
+    assert "$json" not in rejection["parameters"]["responseBody"]
 
     # Polling may only ever be entered through the two validated true
     # branches; backend rejection and errors never reach the wait node.
@@ -282,20 +462,91 @@ def test_post_http_rejection_returns_only_backend_body_and_never_polls():
     ]
 
 
-def test_post_transport_error_output_reaches_sanitized_respond():
+def test_post_transport_error_output_reaches_fixed_sanitized_respond():
     workflow = load_url_workflow()
 
-    failure = node_by_name(workflow, "Respond failure")
+    failure = node_by_name(workflow, "Respond request failure")
     assert failure["type"] == "n8n-nodes-base.respondToWebhook"
     assert failure["parameters"]["respondWith"] == "json"
     assert failure["parameters"]["responseBody"] == (
         '={"status":"FAILED","error":"Ingestion backend request failed"}'
     )
+    assert "$json" not in failure["parameters"]["responseBody"]
     assert failure["parameters"]["options"]["responseCode"] == 502
 
     assert targets_of(workflow, "POST URL ingestion job", 1) == [
-        {"node": "Respond failure", "type": "main", "index": 0}
+        {"node": "Respond request failure", "type": "main", "index": 0}
     ]
+
+
+def test_post_and_get_error_branches_route_to_sanitized_responders():
+    workflow = load_url_workflow()
+
+    # Every POST rejection/error and every GET/poll error terminates at a
+    # sanitized responder; none relays the backend body. Pre-polling branches
+    # are fully fixed (no job_id); post-polling branches may use only the
+    # trusted prior polling ID.
+    assert targets_of(workflow, "POST response status OK?", 1) == [
+        {"node": "Respond backend rejection", "type": "main", "index": 0}
+    ]
+    for source in ("POST job ID valid?",):
+        assert targets_of(workflow, source, 1) == [
+            {"node": "Respond request failure", "type": "main", "index": 0}
+        ]
+    for source in (
+        "GET URL job status",
+        "GET response status OK?",
+        "GET body valid?",
+        "Non-terminal state?",
+    ):
+        assert targets_of(workflow, source, 1) == [
+            {"node": "Respond polling failure", "type": "main", "index": 0}
+        ]
+
+    for name in ("Respond backend rejection", "Respond request failure"):
+        body = node_by_name(workflow, name)["parameters"]["responseBody"]
+        assert "$json" not in body
+        assert "={{ $json.body }}" not in body
+
+
+def test_pre_polling_error_responder_is_fixed_without_job_id():
+    workflow = load_url_workflow()
+
+    failure = node_by_name(workflow, "Respond request failure")
+    body = failure["parameters"]["responseBody"]
+    assert "$json" not in body
+    assert body.startswith("=")
+    payload = json.loads(body[1:])
+    assert payload == {"status": "FAILED", "error": "Ingestion backend request failed"}
+    assert "job_id" not in payload
+
+
+def test_polling_error_responder_reflects_only_trusted_prior_job_id():
+    workflow = load_url_workflow()
+
+    polling = node_by_name(workflow, "Respond polling failure")
+    expression = expression_body(polling["parameters"]["responseBody"])
+    # The current error body is never read: no $json reference may exist.
+    assert "$json" not in expression
+    assert "$('Polling wait').item.json.body.job_id" in expression
+
+    trusted = "7c9e6679-7425-40de-944b-e07fc1f90ae7"
+    hostile_bodies = [
+        {"body": {"job_id": {"id": "x"}}},  # object job_id
+        {"body": {"job_id": ["x"]}},  # array job_id
+        {"body": {"job_id": "/data/ingestion/secret.md"}},  # filesystem path
+        {"body": {"job_id": "https://evil.example/leak"}},  # URL
+        {"body": {"job_id": "POLYPHEMUS_SECRET_VALUE"}},  # secret-looking string
+        {"body": {"job_id": ""}},  # empty job_id
+        {"body": {}},  # missing job_id
+    ]
+    for current_body in hostile_bodies:
+        response = eval_polling_failure_response(expression, current_body, trusted)
+        assert response == {
+            "job_id": trusted,
+            "status": "FAILED",
+            "error": "Ingestion backend request failed",
+        }
 
 
 def test_job_id_is_carried_through_wait_into_every_get_poll():
@@ -339,7 +590,7 @@ def test_get_node_exposes_status_and_body_and_declares_native_error_output():
         {"node": "GET response status OK?", "type": "main", "index": 0}
     ]
     assert targets_of(workflow, "GET URL job status", 1) == [
-        {"node": "Respond failure", "type": "main", "index": 0}
+        {"node": "Respond polling failure", "type": "main", "index": 0}
     ]
 
 
@@ -358,7 +609,7 @@ def test_get_non_2xx_and_malformed_bodies_terminate_and_never_loop():
         {"node": "GET body valid?", "type": "main", "index": 0}
     ]
     assert targets_of(workflow, "GET response status OK?", 1) == [
-        {"node": "Respond failure", "type": "main", "index": 0}
+        {"node": "Respond polling failure", "type": "main", "index": 0}
     ]
 
     # Neither gate may feed the wait loop: every non-2xx or malformed 2xx
@@ -402,7 +653,7 @@ def test_get_success_requires_valid_status_and_expected_job_identity():
         {"node": "Terminal state?", "type": "main", "index": 0}
     ]
     assert targets_of(workflow, "GET body valid?", 1) == [
-        {"node": "Respond failure", "type": "main", "index": 0}
+        {"node": "Respond polling failure", "type": "main", "index": 0}
     ]
 
 
@@ -433,12 +684,16 @@ def test_all_four_terminal_states_route_to_the_correct_responders():
 
     respond_success = node_by_name(workflow, "Respond success")
     assert respond_success["parameters"]["respondWith"] == "json"
-    assert respond_success["parameters"]["responseBody"] == "={{ $json.body }}"
+    assert respond_success["parameters"]["responseBody"] == (
+        '={{ {"job_id": $json.body.job_id, "status": $json.body.status} }}'
+    )
     assert "responseCode" not in respond_success["parameters"]["options"]
 
     respond_failed = node_by_name(workflow, "Respond failed")
     assert respond_failed["parameters"]["respondWith"] == "json"
-    assert respond_failed["parameters"]["responseBody"] == "={{ $json.body }}"
+    assert respond_failed["parameters"]["responseBody"] == (
+        '={{ {"job_id": $json.body.job_id, "status": $json.body.status} }}'
+    )
     assert respond_failed["parameters"]["options"]["responseCode"] == 502
 
 
@@ -460,7 +715,7 @@ def test_only_recognized_non_terminal_states_loop_through_the_ten_second_wait():
     ]
     # An unrecognized/malformed status terminates instead of looping.
     assert targets_of(workflow, "Non-terminal state?", 1) == [
-        {"node": "Respond failure", "type": "main", "index": 0}
+        {"node": "Respond polling failure", "type": "main", "index": 0}
     ]
 
     assert sorted(source for source, _ in edges_into(workflow, "Polling wait")) == [
@@ -479,14 +734,27 @@ def test_responders_never_return_wrappers_headers_or_n8n_error_internals():
     for responder in responders:
         body = responder["parameters"]["responseBody"]
         if body.startswith("={{ "):
-            # Expression-backed responses may only relay the parsed backend
-            # JSON body; never the full response wrapper, headers, status
-            # metadata, or any error object.
-            assert body == "={{ $json.body }}", responder["name"]
+            # Expression-backed responses may only interpolate the validated
+            # scalar job_id/status fields; never relay the full backend body,
+            # headers, response wrapper, or any error object.
+            assert "={{ $json.body }}" not in body, responder["name"]
+            assert "$json.headers" not in body
+            assert "$json.statusCode" not in body
+            assert "$json.statusMessage" not in body
+            assert "$json.error" not in body
+            assert "$response" not in body
+            referenced_paths = re.findall(r"\$json\.body\.([A-Za-z0-9_]+)", body)
+            assert set(referenced_paths) <= {"job_id", "status"}, responder["name"]
+            polling_references = re.findall(
+                r"\$\('Polling wait'\)\.item\.json\.body\.([A-Za-z0-9_]+)",
+                body,
+            )
+            assert set(polling_references) <= {"job_id"}, responder["name"]
         else:
             # Literal responses are fixed sanitized payloads.
             assert body in {
                 '={"error":"url must be a non-empty string"}',
+                '={"status":"FAILED","error":"Ingestion backend rejected the request"}',
                 '={"status":"FAILED","error":"Ingestion backend request failed"}',
             }, responder["name"]
         assert "$json.headers" not in body
@@ -494,6 +762,38 @@ def test_responders_never_return_wrappers_headers_or_n8n_error_internals():
         assert "$json.statusMessage" not in body
         assert "$json.error" not in body
         assert "$response" not in body
+
+
+def test_backend_error_body_cannot_leak_into_public_webhook_response():
+    workflow = load_url_workflow()
+    serialized = json.dumps(workflow)
+
+    hostile_fields = (
+        "/data/ingestion/",
+        "stack_trace",
+        "secret_value",
+        "query_secret",
+        "10.0.0.1",
+    )
+
+    # No responder may relay the whole backend body; a hostile backend error
+    # body therefore can never reach the webhook caller.
+    responders = [
+        node for node in workflow["nodes"] if node["type"] == "n8n-nodes-base.respondToWebhook"
+    ]
+    assert responders
+    for responder in responders:
+        body = responder["parameters"]["responseBody"]
+        assert "={{ $json.body }}" not in body, responder["name"]
+        assert "$json.body.error" not in body
+        assert "$json.body.audit" not in body
+        assert "$json.body.source_uri" not in body
+        assert "$json.body.source_key" not in body
+
+    # The URL-carrying field is only ever read from the incoming webhook item,
+    # never echoed back with its query string in a response.
+    for field in hostile_fields:
+        assert field not in serialized
 
 
 def test_url_workflow_is_inactive_and_uses_native_orchestration_nodes_only():
@@ -568,6 +868,16 @@ def test_env_example_documents_manual_secret_procedure_without_active_assignment
     assert "Do not store" in text
     assert "password manager" in text
     assert "manually" in text
+
+
+def test_milestone4_live_webhook_example_body_matches_workflow_shape():
+    docs = MILESTONE_4_DOCS.read_text(encoding="utf-8")
+
+    # The documented HTTP body must be the raw webhook payload. n8n exposes
+    # the request body as $json.body, so the JSON body is {"url": ...} and
+    # must not be wrapped in a nested "body" object.
+    assert '-d \'{"url":"https://example.com/document"}\'' in docs
+    assert '{"body":{"url":"https://example.com/document"}}' not in docs
 
 
 def test_existing_file_workflow_is_byte_for_byte_unchanged():

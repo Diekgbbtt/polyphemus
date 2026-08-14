@@ -34,7 +34,7 @@
           "conditions": [
             {
               "id": "validate-url-field-condition-0",
-              "leftValue": "={{ ($json.url != null) && ($json.url === $json.url.toString()) && ($json.url.trim().length > 0) }}",
+              "leftValue": "={{ ($json.body != null && $json.body.url != null) && ($json.body.url === $json.body.url.toString()) && ($json.body.url.trim().length > 0) }}",
               "rightValue": "",
               "operator": {
                 "type": "boolean",
@@ -58,7 +58,7 @@
         "url": "http://ingestion:8080/v1/ingestions",
         "sendBody": true,
         "specifyBody": "json",
-        "jsonBody": "={\"source_kind\":\"url\",\"source_uri\":\"{{ $json.url }}\"}",
+        "jsonBody": "={{ {\"source_kind\": \"url\", \"source_uri\": $json.body.url.trim()} }}",
         "options": {
           "response": {
             "response": {
@@ -125,7 +125,7 @@
           "conditions": [
             {
               "id": "post-job-id-valid-condition-0",
-              "leftValue": "={{ ($json.body.job_id != null) && ($json.body.job_id === $json.body.job_id.toString()) && ($json.body.job_id.trim().length > 0) }}",
+          "leftValue": "={{ ($json.body != null && $json.body.job_id != null) && ($json.body.job_id === $json.body.job_id.toString()) && ($json.body.job_id.match(\"^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$\") !== null) }}",
               "rightValue": "",
               "operator": {
                 "type": "boolean",
@@ -352,7 +352,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json.body }}",
+        "responseBody": "={{ {\"job_id\": $json.body.job_id, \"status\": $json.body.status} }}",
         "options": {}
       },
       "id": "respond-success",
@@ -364,7 +364,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json.body }}",
+        "responseBody": "={{ {\"job_id\": $json.body.job_id, \"status\": $json.body.status} }}",
         "options": {
           "responseCode": 502
         }
@@ -392,7 +392,7 @@
     {
       "parameters": {
         "respondWith": "json",
-        "responseBody": "={{ $json.body }}",
+        "responseBody": "={\"status\":\"FAILED\",\"error\":\"Ingestion backend rejected the request\"}",
         "options": {
           "responseCode": 502
         }
@@ -411,11 +411,25 @@
           "responseCode": 502
         }
       },
-      "id": "respond-failure",
-      "name": "Respond failure",
+      "id": "respond-request-failure",
+      "name": "Respond request failure",
       "type": "n8n-nodes-base.respondToWebhook",
       "typeVersion": 1.1,
       "position": [1760, 120]
+    },
+    {
+      "parameters": {
+        "respondWith": "json",
+        "responseBody": "={{ {\"job_id\": $('Polling wait').item.json.body.job_id, \"status\": \"FAILED\", \"error\": \"Ingestion backend request failed\"} }}",
+        "options": {
+          "responseCode": 502
+        }
+      },
+      "id": "respond-polling-failure",
+      "name": "Respond polling failure",
+      "type": "n8n-nodes-base.respondToWebhook",
+      "typeVersion": 1.1,
+      "position": [1980, 140]
     }
   ],
   "connections": {
@@ -459,7 +473,7 @@
         ],
         [
           {
-            "node": "Respond failure",
+            "node": "Respond request failure",
             "type": "main",
             "index": 0
           }
@@ -495,7 +509,7 @@
         ],
         [
           {
-            "node": "Respond failure",
+            "node": "Respond request failure",
             "type": "main",
             "index": 0
           }
@@ -524,7 +538,7 @@
         ],
         [
           {
-            "node": "Respond failure",
+            "node": "Respond polling failure",
             "type": "main",
             "index": 0
           }
@@ -542,7 +556,7 @@
         ],
         [
           {
-            "node": "Respond failure",
+            "node": "Respond polling failure",
             "type": "main",
             "index": 0
           }
@@ -560,7 +574,7 @@
         ],
         [
           {
-            "node": "Respond failure",
+            "node": "Respond polling failure",
             "type": "main",
             "index": 0
           }
@@ -614,7 +628,7 @@
         ],
         [
           {
-            "node": "Respond failure",
+            "node": "Respond polling failure",
             "type": "main",
             "index": 0
           }

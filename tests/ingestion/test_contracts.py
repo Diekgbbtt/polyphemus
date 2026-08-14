@@ -171,6 +171,40 @@ def test_canonicalize_url_percent_encoding_normalized_uppercase_and_decodes_unre
     assert canonicalize_url("http://example.com/%7euser/%2f") == "http://example.com/~user/%2F"
 
 
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("https://Example.com/a/%2e%2e/document", "https://example.com/document"),
+        ("https://example.com/a/%2E%2E/b", "https://example.com/b"),
+        ("http://example.com/a/%2e/b/%2E/../c", "http://example.com/a/c"),
+        ("http://example.com/a/%2e%2e/c/%2E/../d", "http://example.com/d"),
+        ("http://example.com/a%2Fb/%2e%2e/c", "http://example.com/c"),
+    ],
+)
+def test_canonicalize_url_decodes_encoded_dot_segments_before_removal(raw, expected):
+    assert canonicalize_url(raw) == expected
+
+
+@pytest.mark.parametrize(
+    "raw",
+    [
+        "https://Example.com/a/%2e%2e/document",
+        "https://example.com/a/%2E%2E/b",
+        "http://example.com/a%2Fb/%2e%2e/c",
+        "http://example.com/%2e%2E/a/%2e",
+    ],
+)
+def test_canonicalize_url_is_idempotent_for_encoded_dot_segments(raw):
+    once = canonicalize_url(raw)
+    assert canonicalize_url(once) == once
+
+
+def test_canonicalize_url_does_not_decode_encoded_reserved_separators():
+    assert canonicalize_url("http://example.com/a%2Fb") == "http://example.com/a%2Fb"
+    assert canonicalize_url("http://example.com/%2f%2e%2e") == "http://example.com/%2F.."
+    assert canonicalize_url("http://example.com/a%2Fb/%2e%2e/c") == "http://example.com/c"
+
+
 def test_canonicalize_url_rejects_leading_trailing_whitespace():
     with pytest.raises(SourceValidationError) as exc:
         canonicalize_url("  http://example.com  ")

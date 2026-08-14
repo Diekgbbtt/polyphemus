@@ -46,9 +46,18 @@ class LightRAGIngestionAdapter:
             status_response = self.client.track_status(track_id)
             status = _normalize_status(status_response)
             if status == "processed":
+                document_id = _extract_document_id(status_response)
+                if isinstance(document_id, str):
+                    document_id = document_id.strip()
+                if not document_id:
+                    raise LightRAGAdapterError(
+                        "LIGHTRAG_DOCUMENT_ID_MISSING",
+                        "LightRAG did not return a valid document ID",
+                        retryable=False,
+                    )
                 return LightRAGIngestionResult(
                     track_id=track_id,
-                    document_id=_extract_document_id(status_response),
+                    document_id=document_id,
                     status=status,
                 )
             if status == "failed":
@@ -134,7 +143,7 @@ def _extract_document_id(payload: dict[str, Any]) -> str | None:
             first_document = documents[0]
             if isinstance(first_document, dict):
                 document_id = first_document.get("id") or first_document.get("document_id") or first_document.get("doc_id")
-    return str(document_id) if document_id else None
+    return document_id if isinstance(document_id, str) else None
 
 
 def _normalize_status(payload: dict[str, Any]) -> str:

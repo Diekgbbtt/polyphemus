@@ -299,8 +299,12 @@ def canonicalize_url(raw: str) -> str:
     path = parsed.path or ""
     if path == "":
         path = "/"
-    path = _remove_dot_segments(path)
+    # RFC-consistent order: percent-encoded unreserved characters must be
+    # decoded before dot-segment removal so an encoded "." or ".." segment is
+    # treated exactly like its decoded equivalent on the first pass. Reserved
+    # bytes such as "%2F" are never decoded into path separators.
     path = _normalize_percent_encoding(path)
+    path = _remove_dot_segments(path)
 
     query = parsed.query
     # Preserve the query component exactly as submitted, including byte case,

@@ -1,8 +1,12 @@
 import asyncio
+import importlib
+from pathlib import Path
 
 import pytest
 from fastapi import BackgroundTasks, HTTPException
+from fastapi.testclient import TestClient
 
+from agent.ingestion import app as ingestion_app
 from agent.ingestion.contracts import SourceStatus
 from agent.ingestion import routes as ingestion_routes
 
@@ -154,3 +158,66 @@ def test_post_url_ingestion_rejects_malformed_url_with_400(monkeypatch):
 
     assert exc.value.status_code == 400
     assert "URL_PORT_FORBIDDEN" in exc.value.detail
+
+
+def test_app_startup_invokes_url_migration_before_first_request(monkeypatch):
+    events = []
+
+    def fake_migration():
+        events.append("migration")
+
+    monkeypatch.setattr(ingestion_app.pg, "apply_url_ingestion_migrations", fake_migration)
+
+    with TestClient(ingestion_app.app) as client:
+        assert events == ["migration"]
+        response = client.get("/health")
+        assert response.status_code == 200
+
+    assert events == ["migration"]
+
+
+def test_app_startup_migration_failure_prevents_readiness(monkeypatch):
+    def failing_migration():
+        raise RuntimeError("migration failed")
+
+    monkeypatch.setattr(ingestion_app.pg, "apply_url_ingestion_migrations", failing_migration)
+
+    with pytest.raises(RuntimeError):
+        with TestClient(ingestion_app.app):
+            pass
+
+
+def test_app_repeated_startup_keeps_migration_idempotent(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        ingestion_app.pg,
+        "apply_url_ingestion_migrations",
+        lambda: calls.append(1),
+    )
+
+    with TestClient(ingestion_app.app):
+        pass
+    with TestClient(ingestion_app.app):
+        pass
+
+    assert calls == [1, 1]
+
+
+def test_importing_app_module_never_runs_migration(monkeypatch):
+    calls = []
+    monkeypatch.setattr(
+        ingestion_app.pg,
+        "apply_url_ingestion_migrations",
+        lambda: calls.append(1),
+    )
+
+    importlib.reload(ingestion_app)
+
+    assert calls == []
+
+
+def test_ingestion_image_entrypoint_reaches_migration_gated_app():
+    dockerfile = Path("agent/Dockerfile.ingestion").read_text(encoding="utf-8")
+
+    assert 'CMD ["uvicorn", "agent.ingestion.app:app"' in dockerfile
+    assert '"--port", "8080"' in dockerfile

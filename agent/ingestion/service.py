@@ -2,6 +2,8 @@ from datetime import datetime, timezone
 from pathlib import Path
 from uuid import uuid4
 import asyncio
+import logging
+import shutil
 from typing import Any, Callable
 
 from agent.app.clients import pg
@@ -38,6 +40,18 @@ from agent.ingestion.url_downloader import URLDownloadError, UrlDownloadResult, 
 from agent.lightrag.client import LightRAGHttpClient
 from agent.lightrag.ontology import ENTITY_TYPES
 
+
+logger = logging.getLogger(__name__)
+
+_GENERIC_INTERNAL_ERROR_CODE = "INTERNAL_PROCESSING_FAILED"
+_GENERIC_INTERNAL_ERROR_MESSAGE = "Internal processing failed"
+_CANDIDATE_CLEANUP_FAILED_MESSAGE = "Candidate cleanup failed; previous version preserved"
+_NEW_URL_CANDIDATE_CLEANUP_FAILED_MESSAGE = "Candidate cleanup failed"
+_PREVIOUS_VERSION_RESTORE_FAILED_MESSAGE = "Previous version restore failed"
+_CANDIDATE_DOCUMENT_ID_MISSING_CODE = "LIGHTRAG_DOCUMENT_ID_MISSING"
+_CANDIDATE_DOCUMENT_ID_MISSING_MESSAGE = "LightRAG did not return a valid document ID"
+_CANDIDATE_DOCUMENT_ID_CONFLICT_CODE = "LIGHTRAG_DOCUMENT_ID_CONFLICT"
+_CANDIDATE_DOCUMENT_ID_CONFLICT_MESSAGE = "LightRAG returned a document ID that is already active"
 
 _URL_MEDIA_TYPE_TO_SOURCE_TYPE = {
     "text/html": "html",
@@ -306,8 +320,11 @@ class IngestionService:
             return
 
         download_result: UrlDownloadResult | None = None
+        candidate_document_id: str | None = None
+        normalized: NormalizedDocument | None = None
+        stage = SourceStatus.PROCESSING
         try:
-            self._set_status(record, job_id, SourceStatus.PROCESSING)
+            self._set_job_status(job_id, SourceStatus.PROCESSING)
             download_result = self.downloader.download(
                 requested_url,
                 artifact_dir=self.url_artifact_dir,
@@ -317,14 +334,21 @@ class IngestionService:
 
             duplicate_owner = pg.get_processed_ingestion_source_by_hash(download_result.sha256)
             if duplicate_owner is not None:
-                record.content_hash = download_result.sha256
                 record.status = SourceStatus.SKIPPED_DUPLICATE
-                record.parser = duplicate_owner.parser
-                record.parser_version = duplicate_owner.parser_version
-                record.normalization_version = duplicate_owner.normalization_version
-                record.lightrag_document_id = duplicate_owner.lightrag_document_id
-                record.normalized_markdown_path = duplicate_owner.normalized_markdown_path
-                record.normalized_json_path = duplicate_owner.normalized_json_path
+                # A cross-URL duplicate keeps its own canonical identity with a
+                # NULL content_hash and no copied activation fields: the
+                # candidate SHA is recorded only in latest_attempt. Copying the
+                # owner's parser/artifact/LightRAG fields would imply that this
+                # source is active, which it is not.
+                record.content_hash = None
+                record.parser = None
+                record.parser_version = None
+                record.normalization_version = None
+                record.lightrag_document_id = None
+                record.normalized_markdown_path = None
+                record.normalized_json_path = None
+                record.last_error_code = None
+                record.last_error_message = None
                 record.source_metadata = self._url_metadata_payload(
                     requested_url=requested_url,
                     canonical_url=download_result.canonical_url,
@@ -348,66 +372,65 @@ class IngestionService:
                     native_metadata=_docprep_native_metadata(download_result),
                 )
             )
-            record.parser = normalized.parser
-            record.normalization_version = "lightrag_docprep"
-            record.normalized_markdown_path = str(normalized.markdown_path)
-            record.normalized_json_path = str(normalized.json_path)
-            self._set_status(record, job_id, SourceStatus.NORMALIZED)
-            self._set_status(record, job_id, SourceStatus.INGESTING)
+            candidate_markdown_path = normalized.markdown_path
+            candidate_json_path = normalized.json_path
+            candidate_parser = normalized.parser
+            self._set_job_status(job_id, SourceStatus.NORMALIZED)
+            stage = SourceStatus.NORMALIZED
+            self._set_job_status(job_id, SourceStatus.INGESTING)
+            stage = SourceStatus.INGESTING
             ingest_result = self.lightrag_adapter.ingest_markdown(
-                normalized.markdown_path,
+                candidate_markdown_path,
                 source_key=record.source_key,
             )
-            record.lightrag_document_id = ingest_result.document_id
-            self._set_status(record, job_id, SourceStatus.AUDITING)
+            candidate_document_id = ingest_result.document_id
+            self._set_job_status(job_id, SourceStatus.AUDITING)
+            stage = SourceStatus.AUDITING
 
             storage_snapshot = self.storage_reader.snapshot()
             report = self.audit_runner(
                 job_id=job_id,
                 source_key=record.source_key,
-                lightrag_document_id=record.lightrag_document_id,
+                lightrag_document_id=candidate_document_id,
                 storage_snapshot=storage_snapshot,
                 allowed_entity_types=set(ENTITY_TYPES),
             )
             audit_payload = report.model_dump(mode="json")
             if report.critical_issues:
-                record.source_metadata = self._url_metadata_payload(
-                    requested_url=requested_url,
-                    canonical_url=download_result.canonical_url,
-                    result=download_result,
+                self._reject_new_url_candidate(
                     job_id=job_id,
+                    record=record,
+                    requested_url=requested_url,
+                    download_result=download_result,
+                    candidate_document_id=candidate_document_id,
+                    audit=audit_payload,
+                    public_code="AUDIT_FAILED",
+                    public_message="Post-ingestion audit found critical issues",
                     terminal_outcome=SourceStatus.FAILED_AUDIT.value,
-                    error_code="AUDIT_FAILED",
-                    activated=False,
                 )
-                self._set_status(
-                    record,
-                    job_id,
-                    SourceStatus.FAILED_AUDIT,
-                    audit=audit_payload,
-                    error=IngestionError(
-                        code="AUDIT_FAILED",
-                        message="Post-ingestion audit found critical issues",
-                        stage=SourceStatus.AUDITING.value,
-                    ).model_dump(),
-                )
-            else:
-                record.content_hash = download_result.sha256
-                record.source_metadata = self._url_metadata_payload(
-                    requested_url=requested_url,
-                    canonical_url=download_result.canonical_url,
-                    result=download_result,
-                    job_id=job_id,
-                    terminal_outcome=SourceStatus.PROCESSED.value,
-                    error_code=None,
-                    activated=True,
-                )
-                self._set_status(
-                    record,
-                    job_id,
-                    SourceStatus.PROCESSED,
-                    audit=audit_payload,
-                )
+                return
+
+            record.content_hash = download_result.sha256
+            record.parser = candidate_parser
+            record.normalization_version = "lightrag_docprep"
+            record.normalized_markdown_path = str(candidate_markdown_path)
+            record.normalized_json_path = str(candidate_json_path)
+            record.lightrag_document_id = candidate_document_id
+            record.source_metadata = self._url_metadata_payload(
+                requested_url=requested_url,
+                canonical_url=download_result.canonical_url,
+                result=download_result,
+                job_id=job_id,
+                terminal_outcome=SourceStatus.PROCESSED.value,
+                error_code=None,
+                activated=True,
+            )
+            self._set_status(
+                record,
+                job_id,
+                SourceStatus.PROCESSED,
+                audit=audit_payload,
+            )
         except URLDownloadError as exc:
             self._fail_url_job(
                 job_id,
@@ -448,6 +471,98 @@ class IngestionService:
                 "Post-ingestion audit storage parse failed",
                 SourceStatus.AUDITING,
             )
+        except Exception:
+            logger.exception("Unexpected error processing URL job %s", job_id)
+            try:
+                self._fail_url_job(
+                    job_id,
+                    record,
+                    requested_url,
+                    download_result,
+                    _GENERIC_INTERNAL_ERROR_CODE,
+                    _GENERIC_INTERNAL_ERROR_MESSAGE,
+                    stage,
+                )
+            except Exception:
+                logger.exception("Could not persist terminal state for URL job %s", job_id)
+                raise
+
+    def _reject_new_url_candidate(
+        self,
+        *,
+        job_id: str,
+        record: SourceRecord,
+        requested_url: str,
+        download_result: UrlDownloadResult | None,
+        candidate_document_id: str | None,
+        audit: dict,
+        public_code: str,
+        public_message: str,
+        terminal_outcome: str,
+    ) -> None:
+        """Reject a brand-new URL candidate after a critical audit.
+
+        The rejected candidate LightRAG document is deleted when its ID is
+        known, every activation-derived source field is left null, and the
+        sanitized ``FAILED_AUDIT`` terminal state carries only the allowed
+        attempt/audit provenance. A cleanup failure reuses the existing stable
+        cleanup error code and sanitized messaging.
+        """
+        cleanup_failed = False
+        if candidate_document_id is not None:
+            try:
+                self.lightrag_adapter.delete_document(candidate_document_id)
+            except Exception:
+                logger.exception(
+                    "Rejected candidate cleanup failed for URL job %s",
+                    job_id,
+                )
+                cleanup_failed = True
+
+        attempt_error_code = "UPDATE_ROLLBACK_FAILED" if cleanup_failed else public_code
+        sanitized = record.model_copy(
+            update={
+                "status": SourceStatus.FAILED_AUDIT,
+                "content_hash": None,
+                "parser": None,
+                "parser_version": None,
+                "normalization_version": None,
+                "lightrag_document_id": None,
+                "normalized_markdown_path": None,
+                "normalized_json_path": None,
+                "last_error_code": None,
+                "last_error_message": None,
+                "source_metadata": self._url_metadata_payload(
+                    requested_url=requested_url,
+                    canonical_url=(
+                        download_result.canonical_url
+                        if download_result is not None
+                        else record.source_uri
+                    ),
+                    result=download_result,
+                    job_id=job_id,
+                    terminal_outcome=terminal_outcome,
+                    error_code=attempt_error_code,
+                    activated=False,
+                ),
+            }
+        )
+        pg.upsert_ingestion_source(sanitized)
+
+        error_code = "UPDATE_ROLLBACK_FAILED" if cleanup_failed else public_code
+        error_message = (
+            _NEW_URL_CANDIDATE_CLEANUP_FAILED_MESSAGE if cleanup_failed else public_message
+        )
+        self._set_job_status(
+            job_id,
+            SourceStatus.FAILED_AUDIT,
+            audit=audit,
+            error=IngestionError(
+                code=error_code,
+                message=error_message,
+                stage=SourceStatus.AUDITING.value,
+            ).model_dump(),
+        )
 
     def _process_url_recrawl(
         self,
@@ -458,12 +573,19 @@ class IngestionService:
         """Reclassify an already-active URL source after a fresh download.
 
         Unchanged content refreshes fetch/provenance metadata and skips as a
-        duplicate. Changed content becomes a prepared update candidate that
-        reuses the existing delete/re-ingest/audit/rollback flow, so the
-        candidate is activated only after a clean audit.
+        duplicate. Changed content becomes a staged update candidate: the
+        candidate is ingested under a distinct staging identity while the old
+        LightRAG document still exists, audited, and the old document is
+        deleted only after a clean audit.
         """
         previous_record = record.model_copy(deep=True)
         download_result: UrlDownloadResult | None = None
+        candidate_document_id: str | None = None
+        candidate_output_root: Path | None = None
+        candidate_ingested = False
+        old_deletion_attempted = False
+        old_deleted = False
+        stage = SourceStatus.PROCESSING
         try:
             self._set_job_status(job_id, SourceStatus.PROCESSING)
             download_result = self.downloader.download(
@@ -492,15 +614,118 @@ class IngestionService:
                 return
 
             source_type = _url_source_type(download_result)
+            candidate_output_root = self._candidate_normalized_root()
             normalized = asyncio.run(
                 normalize_downloaded_artifact(
                     Path(download_result.raw_artifact_path),
-                    output_root=self.normalized_root,
+                    output_root=candidate_output_root,
                     source_identity=download_result.canonical_url,
                     source_type=source_type,
                     native_metadata=_docprep_native_metadata(download_result),
                 )
             )
+            stage = SourceStatus.NORMALIZED
+            self._set_job_status(job_id, SourceStatus.NORMALIZED)
+            stage = SourceStatus.INGESTING
+            self._set_job_status(job_id, SourceStatus.INGESTING)
+            staging_source_key = self._staging_source_key(previous_record.source_key)
+            ingest_result = self.lightrag_adapter.ingest_markdown(
+                normalized.markdown_path,
+                source_key=staging_source_key,
+            )
+            candidate_document_id = ingest_result.document_id
+            if not isinstance(candidate_document_id, str) or not candidate_document_id.strip():
+                self._record_url_attempt_failure(
+                    job_id,
+                    previous_record,
+                    requested_url,
+                    download_result,
+                    _CANDIDATE_DOCUMENT_ID_MISSING_CODE,
+                    _CANDIDATE_DOCUMENT_ID_MISSING_MESSAGE,
+                    SourceStatus.INGESTING,
+                    candidate_output_root=candidate_output_root,
+                )
+                return
+            candidate_document_id = candidate_document_id.strip()
+            if (
+                previous_record.lightrag_document_id
+                and candidate_document_id == previous_record.lightrag_document_id
+            ):
+                # Never delete the shared ID: it is the active document. The
+                # candidate may nevertheless have replaced its remote content,
+                # so restore from the preserved old artifact using the existing
+                # update rollback path.
+                self._compensate_url_update(
+                    job_id=job_id,
+                    previous_record=previous_record,
+                    requested_url=requested_url,
+                    download_result=download_result,
+                    candidate_document_id=None,
+                    code=_CANDIDATE_DOCUMENT_ID_CONFLICT_CODE,
+                    message=_CANDIDATE_DOCUMENT_ID_CONFLICT_MESSAGE,
+                    stage=SourceStatus.INGESTING,
+                    candidate_output_root=candidate_output_root,
+                )
+                return
+            candidate_ingested = True
+            stage = SourceStatus.AUDITING
+            self._set_job_status(job_id, SourceStatus.AUDITING)
+
+            storage_snapshot = self.storage_reader.snapshot()
+            report = self.audit_runner(
+                job_id=job_id,
+                source_key=previous_record.source_key,
+                lightrag_document_id=candidate_document_id,
+                storage_snapshot=storage_snapshot,
+                allowed_entity_types=set(ENTITY_TYPES),
+            )
+            audit_payload = report.model_dump(mode="json")
+
+            if report.critical_issues:
+                self._reject_url_candidate(
+                    job_id=job_id,
+                    previous_record=previous_record,
+                    requested_url=requested_url,
+                    download_result=download_result,
+                    candidate_document_id=candidate_document_id,
+                    job_status=SourceStatus.FAILED_AUDIT,
+                    audit=audit_payload,
+                    public_code="AUDIT_FAILED",
+                    public_message="Post-ingestion audit found critical issues",
+                    terminal_outcome=SourceStatus.FAILED_AUDIT.value,
+                    candidate_output_root=candidate_output_root,
+                )
+                return
+
+            if previous_record.lightrag_document_id:
+                old_deletion_attempted = True
+                self.lightrag_adapter.delete_document(previous_record.lightrag_document_id)
+            old_deleted = True
+
+            candidate_record = previous_record.model_copy(
+                update={
+                    "content_hash": download_result.sha256,
+                    "status": SourceStatus.PROCESSED,
+                    "parser": normalized.parser,
+                    "normalization_version": "lightrag_docprep",
+                    "normalized_markdown_path": str(normalized.markdown_path),
+                    "normalized_json_path": str(normalized.json_path),
+                    "lightrag_document_id": candidate_document_id,
+                    "last_error_code": None,
+                    "last_error_message": None,
+                    "source_metadata": self._url_metadata_payload(
+                        requested_url=requested_url,
+                        canonical_url=download_result.canonical_url,
+                        result=download_result,
+                        job_id=job_id,
+                        terminal_outcome=SourceStatus.PROCESSED.value,
+                        error_code=None,
+                        activated=True,
+                    ),
+                }
+            )
+            pg.upsert_ingestion_source(candidate_record)
+            self._set_job_status(job_id, SourceStatus.PROCESSED, audit=audit_payload)
         except URLDownloadError as exc:
             self._record_url_attempt_failure(
                 job_id,
@@ -510,6 +735,7 @@ class IngestionService:
                 exc.code,
                 "URL download failed",
                 SourceStatus.PROCESSING,
+                candidate_output_root=candidate_output_root,
             )
             return
         except DocprepError as exc:
@@ -521,43 +747,285 @@ class IngestionService:
                 exc.code,
                 "Document preprocessing failed",
                 SourceStatus.PROCESSING,
+                candidate_output_root=candidate_output_root,
             )
             return
+        except LightRAGAdapterError as exc:
+            self._handle_url_update_expected_failure(
+                job_id=job_id,
+                previous_record=previous_record,
+                requested_url=requested_url,
+                download_result=download_result,
+                candidate_document_id=candidate_document_id,
+                candidate_ingested=candidate_ingested,
+                old_deletion_attempted=old_deletion_attempted,
+                old_deleted=old_deleted,
+                error=exc,
+                stage=stage,
+                candidate_output_root=candidate_output_root,
+            )
+        except StorageParseError as exc:
+            report = build_storage_parse_error_report(
+                job_id=job_id,
+                source_key=previous_record.source_key,
+                error=exc,
+            )
+            self._reject_url_candidate(
+                job_id=job_id,
+                previous_record=previous_record,
+                requested_url=requested_url,
+                download_result=download_result,
+                candidate_document_id=candidate_document_id,
+                job_status=SourceStatus.FAILED_AUDIT,
+                audit=report.model_dump(mode="json"),
+                public_code="AUDIT_FAILED",
+                public_message="Post-ingestion audit encountered a storage parse error",
+                terminal_outcome=SourceStatus.FAILED_AUDIT.value,
+                candidate_output_root=candidate_output_root,
+            )
+        except Exception:
+            logger.exception("Unexpected error processing URL update job %s", job_id)
+            try:
+                self._handle_url_update_unexpected(
+                    job_id=job_id,
+                    previous_record=previous_record,
+                    requested_url=requested_url,
+                    download_result=download_result,
+                    candidate_document_id=candidate_document_id,
+                    candidate_ingested=candidate_ingested,
+                    old_deletion_attempted=old_deletion_attempted,
+                    old_deleted=old_deleted,
+                    stage=stage,
+                    candidate_output_root=candidate_output_root,
+                )
+            except Exception:
+                logger.exception("URL update compensation failed for job %s", job_id)
+                raise
 
-        previous_active_download = (previous_record.source_metadata or {}).get(
-            "active_download"
-        )
-        active_metadata = self._url_metadata_payload(
-            requested_url=requested_url,
-            canonical_url=download_result.canonical_url,
-            result=download_result,
-            job_id=job_id,
-            terminal_outcome=SourceStatus.PROCESSED.value,
-            error_code=None,
-            activated=True,
-        )
+    @staticmethod
+    def _staging_source_key(source_key: str) -> str:
+        """Build a distinct staging identity so the candidate can coexist with
+        the old document in LightRAG. The adapter derives its upload filename
+        from this key, so the candidate always gets a different document."""
+        return f"{source_key}#candidate-{uuid4().hex}"
 
-        def restored_metadata_for(terminal_outcome: str, error_code: str | None) -> dict[str, Any]:
-            return {
+    def _reject_url_candidate(
+        self,
+        *,
+        job_id: str,
+        previous_record: SourceRecord,
+        requested_url: str,
+        download_result: UrlDownloadResult | None,
+        candidate_document_id: str | None,
+        job_status: SourceStatus,
+        audit: dict | None,
+        public_code: str,
+        public_message: str,
+        terminal_outcome: str,
+        candidate_output_root: Path | None = None,
+    ) -> None:
+        """Reject a staged candidate while the old activation stays intact."""
+        previous_active_download = (previous_record.source_metadata or {}).get("active_download")
+        cleanup_failed = False
+        if candidate_document_id is not None:
+            try:
+                self.lightrag_adapter.delete_document(candidate_document_id)
+            except Exception:
+                logger.exception("Candidate cleanup failed for URL job %s", job_id)
+                cleanup_failed = True
+        self._cleanup_candidate_normalized_artifacts(candidate_output_root)
+
+        attempt_error_code = "UPDATE_ROLLBACK_FAILED" if cleanup_failed else public_code
+        kept = previous_record.model_copy(
+            update={
                 "source_metadata": self._url_metadata_payload(
                     requested_url=requested_url,
-                    canonical_url=download_result.canonical_url,
+                    canonical_url=(
+                        download_result.canonical_url
+                        if download_result is not None
+                        else previous_record.source_uri
+                    ),
                     result=download_result,
                     job_id=job_id,
                     terminal_outcome=terminal_outcome,
-                    error_code=error_code,
+                    error_code=attempt_error_code,
                     activated=False,
                     preserve_active_download=previous_active_download,
                 ),
             }
+        )
+        pg.upsert_ingestion_source(kept)
+        error_code = "UPDATE_ROLLBACK_FAILED" if cleanup_failed else public_code
+        error_message = (
+            _CANDIDATE_CLEANUP_FAILED_MESSAGE if cleanup_failed else public_message
+        )
+        self._set_job_status(
+            job_id,
+            job_status,
+            audit=audit,
+            error=IngestionError(
+                code=error_code,
+                message=error_message,
+                stage=SourceStatus.AUDITING.value,
+            ).model_dump(),
+        )
 
-        self._process_update(
+    def _handle_url_update_expected_failure(
+        self,
+        *,
+        job_id: str,
+        previous_record: SourceRecord,
+        requested_url: str,
+        download_result: UrlDownloadResult | None,
+        candidate_document_id: str | None,
+        candidate_ingested: bool,
+        old_deletion_attempted: bool,
+        old_deleted: bool,
+        error: LightRAGAdapterError,
+        stage: SourceStatus,
+        candidate_output_root: Path | None = None,
+    ) -> None:
+        """Map an expected LightRAG failure with stage-aware compensation."""
+        if not candidate_ingested:
+            self._record_url_attempt_failure(
+                job_id,
+                previous_record,
+                requested_url,
+                download_result,
+                error.code,
+                "LightRAG ingestion failed",
+                stage,
+                candidate_output_root=candidate_output_root,
+            )
+            return
+
+        if old_deleted or old_deletion_attempted:
+            self._compensate_url_update(
+                job_id=job_id,
+                previous_record=previous_record,
+                requested_url=requested_url,
+                download_result=download_result,
+                candidate_document_id=candidate_document_id,
+                code=error.code,
+                message="LightRAG update failed; previous version restored",
+                stage=stage,
+                candidate_output_root=candidate_output_root,
+            )
+            return
+
+        self._reject_url_candidate(
+            job_id=job_id,
+            previous_record=previous_record,
+            requested_url=requested_url,
+            download_result=download_result,
+            candidate_document_id=candidate_document_id,
+            job_status=SourceStatus.FAILED,
+            audit=None,
+            public_code=error.code,
+            public_message="LightRAG update failed; previous version preserved",
+            terminal_outcome=SourceStatus.FAILED.value,
+            candidate_output_root=candidate_output_root,
+        )
+
+    def _handle_url_update_unexpected(
+        self,
+        *,
+        job_id: str,
+        previous_record: SourceRecord,
+        requested_url: str,
+        download_result: UrlDownloadResult | None,
+        candidate_document_id: str | None,
+        candidate_ingested: bool,
+        old_deletion_attempted: bool,
+        old_deleted: bool,
+        stage: SourceStatus,
+        candidate_output_root: Path | None = None,
+    ) -> None:
+        """Handle an unexpected exception with stage-aware compensation."""
+        if not candidate_ingested:
+            self._record_url_attempt_failure(
+                job_id,
+                previous_record,
+                requested_url,
+                download_result,
+                _GENERIC_INTERNAL_ERROR_CODE,
+                _GENERIC_INTERNAL_ERROR_MESSAGE,
+                stage,
+                candidate_output_root=candidate_output_root,
+            )
+            return
+
+        if old_deleted or old_deletion_attempted:
+            self._compensate_url_update(
+                job_id=job_id,
+                previous_record=previous_record,
+                requested_url=requested_url,
+                download_result=download_result,
+                candidate_document_id=candidate_document_id,
+                code=_GENERIC_INTERNAL_ERROR_CODE,
+                message=_GENERIC_INTERNAL_ERROR_MESSAGE,
+                stage=stage,
+                candidate_output_root=candidate_output_root,
+            )
+            return
+
+        self._reject_url_candidate(
+            job_id=job_id,
+            previous_record=previous_record,
+            requested_url=requested_url,
+            download_result=download_result,
+            candidate_document_id=candidate_document_id,
+            job_status=SourceStatus.FAILED,
+            audit=None,
+            public_code=_GENERIC_INTERNAL_ERROR_CODE,
+            public_message=_GENERIC_INTERNAL_ERROR_MESSAGE,
+            terminal_outcome=SourceStatus.FAILED.value,
+            candidate_output_root=candidate_output_root,
+        )
+
+    def _compensate_url_update(
+        self,
+        *,
+        job_id: str,
+        previous_record: SourceRecord,
+        requested_url: str,
+        download_result: UrlDownloadResult | None,
+        candidate_document_id: str | None,
+        code: str,
+        message: str,
+        stage: SourceStatus,
+        candidate_output_root: Path | None = None,
+    ) -> None:
+        """Restore the old document and registry state after old-document side
+        effects have begun. Reuses the existing update rollback flow."""
+        previous_active_download = (previous_record.source_metadata or {}).get("active_download")
+        canonical_url = (
+            download_result.canonical_url
+            if download_result is not None
+            else previous_record.source_uri
+        )
+        self._cleanup_candidate_normalized_artifacts(candidate_output_root)
+        self._restore_previous_after_update_failure(
             job_id,
             previous_record,
-            prepared=normalized,
-            current_hash=download_result.sha256,
-            candidate_updates={"source_metadata": active_metadata},
-            restored_metadata_builder=restored_metadata_for,
+            None,
+            rejected_document_id=candidate_document_id,
+            job_status=SourceStatus.FAILED,
+            error_stage=stage,
+            restored_updates={
+                "source_metadata": self._url_metadata_payload(
+                    requested_url=requested_url,
+                    canonical_url=canonical_url,
+                    result=download_result,
+                    job_id=job_id,
+                    terminal_outcome=SourceStatus.FAILED.value,
+                    error_code=code,
+                    activated=False,
+                    preserve_active_download=previous_active_download,
+                ),
+            },
+            failure_code=code,
+            failure_message=message,
         )
 
     def _record_url_attempt_failure(
@@ -569,6 +1037,7 @@ class IngestionService:
         code: str,
         message: str,
         stage: SourceStatus,
+        candidate_output_root: Path | None = None,
     ) -> None:
         """Record a failed recrawl attempt without disturbing the active state.
 
@@ -593,6 +1062,7 @@ class IngestionService:
             preserve_active_download=preserved_active_download,
         )
         pg.upsert_ingestion_source(record)
+        self._cleanup_candidate_normalized_artifacts(candidate_output_root)
         self._fail_job(job_id, code, message, stage)
 
     def _fail_url_job(
@@ -684,6 +1154,31 @@ class IngestionService:
             .replace("+00:00", "Z")
         )
 
+    def _candidate_normalized_root(self) -> Path:
+        """Return a unique staging directory for one update candidate.
+
+        The directory is distinct on every call, so candidate normalization
+        can never collide with the active normalized artifact even when a
+        different raw document normalizes to the same output identity.
+        """
+        return self.normalized_root / f"candidate-{uuid4().hex}"
+
+    def _cleanup_candidate_normalized_artifacts(self, output_root: Path | None) -> None:
+        """Remove incomplete candidate staging data after a failed update.
+
+        Only the unique staging directory generated for one candidate is
+        removed; the active artifact lives elsewhere and is never touched.
+        """
+        if output_root is None:
+            return
+        try:
+            shutil.rmtree(output_root, ignore_errors=True)
+        except Exception:
+            logger.exception(
+                "Candidate normalized artifact cleanup failed for %s",
+                output_root,
+            )
+
     def _process_update(
         self,
         job_id: str,
@@ -702,13 +1197,15 @@ class IngestionService:
                 return None
             return restored_metadata_builder(terminal_outcome, error_code)
 
+        candidate_output_root: Path | None = None
         try:
             self._set_job_status(job_id, SourceStatus.PROCESSING)
             if prepared is None:
                 if source_path is None or current_hash is None:
                     raise ValueError("file update requires source_path and current_hash")
+                candidate_output_root = self._candidate_normalized_root()
                 normalized = asyncio.run(
-                    normalize_document(source_path, output_root=self.normalized_root)
+                    normalize_document(source_path, output_root=candidate_output_root)
                 )
             else:
                 if current_hash is None:
@@ -750,6 +1247,7 @@ class IngestionService:
                 self._set_status(candidate_record, job_id, SourceStatus.PROCESSED, audit=audit_payload)
             else:
                 # Do not upsert candidate_record for a failed audit.
+                self._cleanup_candidate_normalized_artifacts(candidate_output_root)
                 self._restore_previous_after_update_failure(
                     job_id,
                     previous_record,
@@ -764,8 +1262,10 @@ class IngestionService:
                     ),
                 )
         except DocprepError as exc:
+            self._cleanup_candidate_normalized_artifacts(candidate_output_root)
             self._fail_job(job_id, exc.code, str(exc), SourceStatus.PROCESSING)
         except LightRAGAdapterError as exc:
+            self._cleanup_candidate_normalized_artifacts(candidate_output_root)
             if exc.code == "LIGHTRAG_INGESTION_FAILED":
                 self._restore_previous_after_update_failure(
                     job_id,
@@ -776,6 +1276,7 @@ class IngestionService:
                 return
             self._fail_job(job_id, exc.code, str(exc), SourceStatus.INGESTING)
         except StorageParseError as exc:
+            self._cleanup_candidate_normalized_artifacts(candidate_output_root)
             report = build_storage_parse_error_report(
                 job_id=job_id,
                 source_key=previous_record.source_key,
@@ -806,16 +1307,19 @@ class IngestionService:
         audit: dict | None = None,
         error_stage: SourceStatus = SourceStatus.INGESTING,
         restored_updates: dict[str, Any] | None = None,
+        failure_code: str | None = None,
+        failure_message: str | None = None,
     ) -> None:
         if rejected_document_id is not None:
             try:
                 self.lightrag_adapter.delete_document(rejected_document_id)
-            except LightRAGAdapterError as delete_error:
+            except Exception:
+                logger.exception("Rejected document cleanup failed for job %s", job_id)
                 failed_record = previous_record.model_copy(
                     update={
                         "status": SourceStatus.FAILED,
                         "last_error_code": "UPDATE_ROLLBACK_FAILED",
-                        "last_error_message": str(delete_error),
+                        "last_error_message": _CANDIDATE_CLEANUP_FAILED_MESSAGE,
                         **(restored_updates or {}),
                     }
                 )
@@ -826,7 +1330,7 @@ class IngestionService:
                     audit=audit,
                     error=IngestionError(
                         code="UPDATE_ROLLBACK_FAILED",
-                        message=f"Failed to delete rejected LightRAG document {rejected_document_id}: {delete_error}",
+                        message=_CANDIDATE_CLEANUP_FAILED_MESSAGE,
                         stage=SourceStatus.AUDITING.value,
                     ).model_dump(),
                 )
@@ -868,12 +1372,13 @@ class IngestionService:
                 previous_markdown_path,
                 source_key=previous_record.source_key,
             )
-        except LightRAGAdapterError as rollback_error:
+        except Exception:
+            logger.exception("Previous version restore failed for job %s", job_id)
             failed_record = previous_record.model_copy(
                 update={
                     "status": SourceStatus.FAILED,
                     "last_error_code": "UPDATE_ROLLBACK_FAILED",
-                    "last_error_message": str(rollback_error),
+                    "last_error_message": _PREVIOUS_VERSION_RESTORE_FAILED_MESSAGE,
                     **(restored_updates or {}),
                 }
             )
@@ -885,12 +1390,17 @@ class IngestionService:
                     audit=audit,
                     error=IngestionError(
                         code="UPDATE_ROLLBACK_FAILED",
-                        message=str(rollback_error),
+                        message=_PREVIOUS_VERSION_RESTORE_FAILED_MESSAGE,
                         stage=error_stage.value,
                     ).model_dump(),
                 )
             else:
-                self._fail_job(job_id, "UPDATE_ROLLBACK_FAILED", str(rollback_error), error_stage)
+                self._fail_job(
+                    job_id,
+                    "UPDATE_ROLLBACK_FAILED",
+                    _PREVIOUS_VERSION_RESTORE_FAILED_MESSAGE,
+                    error_stage,
+                )
             return
 
         restored_record = previous_record.model_copy(
@@ -918,8 +1428,8 @@ class IngestionService:
         else:
             self._fail_job(
                 job_id,
-                original_error.code if original_error else "UPDATE_ROLLBACK_FAILED",
-                f"{original_error}; previous version restored" if original_error else "Previous version restored",
+                failure_code or (original_error.code if original_error else "UPDATE_ROLLBACK_FAILED"),
+                failure_message or "Previous version restored",
                 error_stage,
             )
 
