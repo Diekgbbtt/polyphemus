@@ -21,6 +21,7 @@ from agent.ingestion.contracts import (
 )
 from agent.ingestion.docprep_adapter import (
     DocprepError,
+    NormalizedDocument,
     normalize_document,
     normalize_downloaded_artifact,
 )
@@ -300,18 +301,8 @@ class IngestionService:
         record: SourceRecord,
         requested_url: str,
     ) -> None:
-        # Same-URL and cross-URL duplicate/update classification is Task 4.
-        # Until then this is only a defensive invariant: a source that already
-        # carries active content must not strand its scheduled job in a
-        # non-terminal state, so it is failed with a stable code instead of
-        # silently returning.
-        if record.content_hash is not None:
-            self._fail_job(
-                job_id,
-                "URL_SOURCE_ALREADY_ACTIVE",
-                "URL source already has active content",
-                SourceStatus.PROCESSING,
-            )
+        if record.status == SourceStatus.PROCESSED and record.content_hash is not None:
+            self._process_url_recrawl(job_id, record, requested_url)
             return
 
         download_result: UrlDownloadResult | None = None
@@ -323,6 +314,29 @@ class IngestionService:
             )
             if download_result.raw_artifact_path is None:
                 raise URLDownloadError("URL_INVALID")
+
+            duplicate_owner = pg.get_processed_ingestion_source_by_hash(download_result.sha256)
+            if duplicate_owner is not None:
+                record.content_hash = download_result.sha256
+                record.status = SourceStatus.SKIPPED_DUPLICATE
+                record.parser = duplicate_owner.parser
+                record.parser_version = duplicate_owner.parser_version
+                record.normalization_version = duplicate_owner.normalization_version
+                record.lightrag_document_id = duplicate_owner.lightrag_document_id
+                record.normalized_markdown_path = duplicate_owner.normalized_markdown_path
+                record.normalized_json_path = duplicate_owner.normalized_json_path
+                record.source_metadata = self._url_metadata_payload(
+                    requested_url=requested_url,
+                    canonical_url=download_result.canonical_url,
+                    result=download_result,
+                    job_id=job_id,
+                    terminal_outcome=SourceStatus.SKIPPED_DUPLICATE.value,
+                    error_code=None,
+                    activated=False,
+                )
+                pg.upsert_ingestion_source(record)
+                self._set_job_status(job_id, SourceStatus.SKIPPED_DUPLICATE)
+                return
 
             source_type = _url_source_type(download_result)
             normalized = asyncio.run(
@@ -435,6 +449,152 @@ class IngestionService:
                 SourceStatus.AUDITING,
             )
 
+    def _process_url_recrawl(
+        self,
+        job_id: str,
+        record: SourceRecord,
+        requested_url: str,
+    ) -> None:
+        """Reclassify an already-active URL source after a fresh download.
+
+        Unchanged content refreshes fetch/provenance metadata and skips as a
+        duplicate. Changed content becomes a prepared update candidate that
+        reuses the existing delete/re-ingest/audit/rollback flow, so the
+        candidate is activated only after a clean audit.
+        """
+        previous_record = record.model_copy(deep=True)
+        download_result: UrlDownloadResult | None = None
+        try:
+            self._set_job_status(job_id, SourceStatus.PROCESSING)
+            download_result = self.downloader.download(
+                requested_url,
+                artifact_dir=self.url_artifact_dir,
+            )
+            if download_result.raw_artifact_path is None:
+                raise URLDownloadError("URL_INVALID")
+
+            if download_result.sha256 == previous_record.content_hash:
+                refreshed = previous_record.model_copy(
+                    update={
+                        "source_metadata": self._url_metadata_payload(
+                            requested_url=requested_url,
+                            canonical_url=download_result.canonical_url,
+                            result=download_result,
+                            job_id=job_id,
+                            terminal_outcome=SourceStatus.SKIPPED_DUPLICATE.value,
+                            error_code=None,
+                            activated=True,
+                        ),
+                    }
+                )
+                pg.upsert_ingestion_source(refreshed)
+                self._set_job_status(job_id, SourceStatus.SKIPPED_DUPLICATE)
+                return
+
+            source_type = _url_source_type(download_result)
+            normalized = asyncio.run(
+                normalize_downloaded_artifact(
+                    Path(download_result.raw_artifact_path),
+                    output_root=self.normalized_root,
+                    source_identity=download_result.canonical_url,
+                    source_type=source_type,
+                    native_metadata=_docprep_native_metadata(download_result),
+                )
+            )
+        except URLDownloadError as exc:
+            self._record_url_attempt_failure(
+                job_id,
+                previous_record,
+                requested_url,
+                download_result,
+                exc.code,
+                "URL download failed",
+                SourceStatus.PROCESSING,
+            )
+            return
+        except DocprepError as exc:
+            self._record_url_attempt_failure(
+                job_id,
+                previous_record,
+                requested_url,
+                download_result,
+                exc.code,
+                "Document preprocessing failed",
+                SourceStatus.PROCESSING,
+            )
+            return
+
+        previous_active_download = (previous_record.source_metadata or {}).get(
+            "active_download"
+        )
+        active_metadata = self._url_metadata_payload(
+            requested_url=requested_url,
+            canonical_url=download_result.canonical_url,
+            result=download_result,
+            job_id=job_id,
+            terminal_outcome=SourceStatus.PROCESSED.value,
+            error_code=None,
+            activated=True,
+        )
+
+        def restored_metadata_for(terminal_outcome: str, error_code: str | None) -> dict[str, Any]:
+            return {
+                "source_metadata": self._url_metadata_payload(
+                    requested_url=requested_url,
+                    canonical_url=download_result.canonical_url,
+                    result=download_result,
+                    job_id=job_id,
+                    terminal_outcome=terminal_outcome,
+                    error_code=error_code,
+                    activated=False,
+                    preserve_active_download=previous_active_download,
+                ),
+            }
+
+        self._process_update(
+            job_id,
+            previous_record,
+            prepared=normalized,
+            current_hash=download_result.sha256,
+            candidate_updates={"source_metadata": active_metadata},
+            restored_metadata_builder=restored_metadata_for,
+        )
+
+    def _record_url_attempt_failure(
+        self,
+        job_id: str,
+        record: SourceRecord,
+        requested_url: str,
+        download_result: UrlDownloadResult | None,
+        code: str,
+        message: str,
+        stage: SourceStatus,
+    ) -> None:
+        """Record a failed recrawl attempt without disturbing the active state.
+
+        The active download, content hash, status, and LightRAG references are
+        kept exactly as they were; only latest_attempt records the rejected
+        fetch so failed attempt metadata can never overwrite active_download.
+        """
+        canonical_url = (
+            download_result.canonical_url
+            if download_result is not None
+            else record.source_uri
+        )
+        preserved_active_download = (record.source_metadata or {}).get("active_download")
+        record.source_metadata = self._url_metadata_payload(
+            requested_url=requested_url,
+            canonical_url=canonical_url,
+            result=download_result,
+            job_id=job_id,
+            terminal_outcome=SourceStatus.FAILED.value,
+            error_code=code,
+            activated=False,
+            preserve_active_download=preserved_active_download,
+        )
+        pg.upsert_ingestion_source(record)
+        self._fail_job(job_id, code, message, stage)
+
     def _fail_url_job(
         self,
         job_id: str,
@@ -471,9 +631,10 @@ class IngestionService:
         terminal_outcome: str | None,
         error_code: str | None,
         activated: bool,
+        preserve_active_download: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         if result is None:
-            active_download = None
+            active_download = preserve_active_download
             attempt = {
                 "requested_url": requested_url,
                 "canonical_url": canonical_url,
@@ -506,7 +667,7 @@ class IngestionService:
                 "raw_artifact_path": result.raw_artifact_path,
                 "fetched_at": result.fetched_at,
             }
-            active_download = download if activated else None
+            active_download = download if activated else preserve_active_download
             attempt = {
                 **download,
                 "job_id": job_id,
@@ -527,13 +688,32 @@ class IngestionService:
         self,
         job_id: str,
         active_record: SourceRecord,
-        source_path: Path,
-        current_hash: str,
+        source_path: Path | None = None,
+        current_hash: str | None = None,
+        *,
+        prepared: NormalizedDocument | None = None,
+        candidate_updates: dict[str, Any] | None = None,
+        restored_metadata_builder: Callable[[str, str | None], dict[str, Any] | None] | None = None,
     ) -> None:
         previous_record = active_record.model_copy(deep=True)
+
+        def _restored_updates(terminal_outcome: str, error_code: str | None) -> dict[str, Any] | None:
+            if restored_metadata_builder is None:
+                return None
+            return restored_metadata_builder(terminal_outcome, error_code)
+
         try:
             self._set_job_status(job_id, SourceStatus.PROCESSING)
-            normalized = asyncio.run(normalize_document(source_path, output_root=self.normalized_root))
+            if prepared is None:
+                if source_path is None or current_hash is None:
+                    raise ValueError("file update requires source_path and current_hash")
+                normalized = asyncio.run(
+                    normalize_document(source_path, output_root=self.normalized_root)
+                )
+            else:
+                if current_hash is None:
+                    raise ValueError("prepared update requires current_hash")
+                normalized = prepared
             self._set_job_status(job_id, SourceStatus.NORMALIZED)
             self._set_job_status(job_id, SourceStatus.INGESTING)
             if previous_record.lightrag_document_id:
@@ -551,6 +731,7 @@ class IngestionService:
                     "lightrag_document_id": result.document_id,
                     "last_error_code": None,
                     "last_error_message": None,
+                    **(candidate_updates or {}),
                 }
             )
             self._set_job_status(job_id, SourceStatus.AUDITING)
@@ -577,12 +758,21 @@ class IngestionService:
                     job_status=SourceStatus.FAILED_AUDIT,
                     audit=audit_payload,
                     error_stage=SourceStatus.AUDITING,
+                    restored_updates=_restored_updates(
+                        SourceStatus.FAILED_AUDIT.value,
+                        "AUDIT_FAILED",
+                    ),
                 )
         except DocprepError as exc:
             self._fail_job(job_id, exc.code, str(exc), SourceStatus.PROCESSING)
         except LightRAGAdapterError as exc:
             if exc.code == "LIGHTRAG_INGESTION_FAILED":
-                self._restore_previous_after_update_failure(job_id, previous_record, exc)
+                self._restore_previous_after_update_failure(
+                    job_id,
+                    previous_record,
+                    exc,
+                    restored_updates=_restored_updates(SourceStatus.FAILED.value, exc.code),
+                )
                 return
             self._fail_job(job_id, exc.code, str(exc), SourceStatus.INGESTING)
         except StorageParseError as exc:
@@ -599,6 +789,10 @@ class IngestionService:
                 job_status=SourceStatus.FAILED_AUDIT,
                 audit=report.model_dump(mode="json"),
                 error_stage=SourceStatus.AUDITING,
+                restored_updates=_restored_updates(
+                    SourceStatus.FAILED_AUDIT.value,
+                    "AUDIT_FAILED",
+                ),
             )
 
     def _restore_previous_after_update_failure(
@@ -611,6 +805,7 @@ class IngestionService:
         job_status: SourceStatus = SourceStatus.FAILED,
         audit: dict | None = None,
         error_stage: SourceStatus = SourceStatus.INGESTING,
+        restored_updates: dict[str, Any] | None = None,
     ) -> None:
         if rejected_document_id is not None:
             try:
@@ -621,6 +816,7 @@ class IngestionService:
                         "status": SourceStatus.FAILED,
                         "last_error_code": "UPDATE_ROLLBACK_FAILED",
                         "last_error_message": str(delete_error),
+                        **(restored_updates or {}),
                     }
                 )
                 pg.upsert_ingestion_source(failed_record)
@@ -643,6 +839,7 @@ class IngestionService:
                     "status": SourceStatus.FAILED,
                     "last_error_code": "UPDATE_ROLLBACK_FAILED",
                     "last_error_message": "Previous normalized markdown artifact is unavailable",
+                    **(restored_updates or {}),
                 }
             )
             pg.upsert_ingestion_source(failed_record)
@@ -677,6 +874,7 @@ class IngestionService:
                     "status": SourceStatus.FAILED,
                     "last_error_code": "UPDATE_ROLLBACK_FAILED",
                     "last_error_message": str(rollback_error),
+                    **(restored_updates or {}),
                 }
             )
             pg.upsert_ingestion_source(failed_record)
@@ -701,6 +899,7 @@ class IngestionService:
                 "lightrag_document_id": restored.document_id,
                 "last_error_code": None,
                 "last_error_message": None,
+                **(restored_updates or {}),
             }
         )
         pg.upsert_ingestion_source(restored_record)

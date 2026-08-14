@@ -303,3 +303,144 @@ def test_url_migration_executes_same_idempotent_statements_on_repeated_calls(mon
     pg.apply_url_ingestion_migrations()
     repeated_queries = [q for q, _ in cur.executed]
     assert repeated_queries == queries
+
+
+def _record_row(record, source_metadata):
+    return (
+        record.source_key,
+        record.source_kind,
+        record.source_uri,
+        record.content_hash,
+        record.status.value,
+        source_metadata,
+        record.parser,
+        record.parser_version,
+        record.normalization_version,
+        record.lightrag_document_id,
+        record.normalized_markdown_path,
+        record.normalized_json_path,
+        record.last_error_code,
+        record.last_error_message,
+    )
+
+
+def test_url_successful_metadata_round_trips_through_registry(monkeypatch):
+    download = {
+        "requested_url": "https://Example.COM/Doc?x=1",
+        "canonical_url": "https://example.com/doc",
+        "final_url": "https://example.com/doc",
+        "redirect_chain": ["https://example.com/start"],
+        "content_type": "text/html",
+        "content_disposition": None,
+        "etag": '"abc"',
+        "last_modified": "Wed, 21 Oct 2026 07:28:00 GMT",
+        "downloaded_bytes": 16,
+        "sha256": "sha-abc",
+        "raw_artifact_path": "/tmp/raw-artifact",
+        "fetched_at": "2024-01-01T00:00:00Z",
+    }
+    record = SourceRecord(
+        source_key="url:https://example.com/doc",
+        source_kind="url",
+        source_uri="https://example.com/doc",
+        content_hash="sha-abc",
+        status=SourceStatus.PROCESSED,
+        source_metadata={
+            "active_download": download,
+            "latest_attempt": {
+                **download,
+                "job_id": "job-url-1",
+                "terminal_outcome": SourceStatus.PROCESSED.value,
+                "error_code": None,
+            },
+        },
+    )
+
+    write_cursor = patch_connect(monkeypatch, FakeCursor())
+    pg.upsert_ingestion_source(record)
+
+    query, params = write_cursor.executed[0]
+    assert "ON CONFLICT (source_key) DO UPDATE" in query
+    persisted = json.loads(params[5])
+    assert persisted == record.source_metadata
+
+    read_cursor = patch_connect(
+        monkeypatch,
+        FakeCursor(fetch_result=_record_row(record, persisted)),
+    )
+    read_back = pg.get_ingestion_source(record.source_key)
+
+    assert read_back.source_metadata == record.source_metadata
+    assert read_back.content_hash == "sha-abc"
+    assert read_back.status == SourceStatus.PROCESSED
+    assert read_back.source_metadata["active_download"]["sha256"] == "sha-abc"
+    assert read_back.source_metadata["latest_attempt"]["terminal_outcome"] == SourceStatus.PROCESSED.value
+    assert read_back.source_metadata["latest_attempt"]["error_code"] is None
+
+
+def test_url_rejected_metadata_round_trips_through_registry(monkeypatch):
+    active_download = {
+        "requested_url": "https://Example.COM/Doc?x=1",
+        "canonical_url": "https://example.com/doc",
+        "final_url": "https://example.com/doc",
+        "redirect_chain": ["https://example.com/start"],
+        "content_type": "text/html",
+        "content_disposition": None,
+        "etag": '"old-etag"',
+        "last_modified": "Wed, 21 Oct 2026 07:28:00 GMT",
+        "downloaded_bytes": 12,
+        "sha256": "old-hash",
+        "raw_artifact_path": "/tmp/old-artifact",
+        "fetched_at": "2024-01-01T00:00:00Z",
+    }
+    rejected_download = {
+        "requested_url": "https://Example.COM/Doc?x=1",
+        "canonical_url": "https://example.com/doc",
+        "final_url": "https://example.com/redirected",
+        "redirect_chain": ["https://example.com/start"],
+        "content_type": "text/html",
+        "content_disposition": None,
+        "etag": '"new-etag"',
+        "last_modified": "Wed, 21 Oct 2026 07:28:00 GMT",
+        "downloaded_bytes": 20,
+        "sha256": "sha-new",
+        "raw_artifact_path": "/tmp/new-artifact",
+        "fetched_at": "2024-02-02T00:00:00Z",
+    }
+    record = SourceRecord(
+        source_key="url:https://example.com/doc",
+        source_kind="url",
+        source_uri="https://example.com/doc",
+        content_hash="old-hash",
+        status=SourceStatus.PROCESSED,
+        source_metadata={
+            "active_download": active_download,
+            "latest_attempt": {
+                **rejected_download,
+                "job_id": "job-url-2",
+                "terminal_outcome": SourceStatus.FAILED_AUDIT.value,
+                "error_code": "AUDIT_FAILED",
+            },
+        },
+    )
+
+    write_cursor = patch_connect(monkeypatch, FakeCursor())
+    pg.upsert_ingestion_source(record)
+
+    _, params = write_cursor.executed[0]
+    persisted = json.loads(params[5])
+    assert persisted == record.source_metadata
+
+    read_cursor = patch_connect(
+        monkeypatch,
+        FakeCursor(fetch_result=_record_row(record, persisted)),
+    )
+    read_back = pg.get_ingestion_source(record.source_key)
+
+    assert read_back.source_metadata == record.source_metadata
+    assert read_back.status == SourceStatus.PROCESSED
+    assert read_back.content_hash == "old-hash"
+    assert read_back.source_metadata["active_download"]["sha256"] == "old-hash"
+    assert read_back.source_metadata["latest_attempt"]["sha256"] == "sha-new"
+    assert read_back.source_metadata["latest_attempt"]["terminal_outcome"] == SourceStatus.FAILED_AUDIT.value
+    assert read_back.source_metadata["latest_attempt"]["error_code"] == "AUDIT_FAILED"

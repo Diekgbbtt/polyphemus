@@ -1397,18 +1397,73 @@ def _make_url_fixture(tmp_path):
     return root, record, job
 
 
+def _make_active_url_fixture(tmp_path):
+    root, record, job = _make_url_fixture(tmp_path)
+    old_md = root / "normalized" / "old" / "document.md"
+    old_json = root / "normalized" / "old" / "document.json"
+    old_md.parent.mkdir(parents=True)
+    old_md.write_text("# Old content\n", encoding="utf-8")
+    old_json.write_text("{}", encoding="utf-8")
+    old_raw = root / "url-artifacts" / "old-artifact"
+    old_raw.parent.mkdir(parents=True)
+    old_raw.write_bytes(b"# Old content\n")
+    active_download = {
+        "requested_url": "https://Example.COM/Doc?x=1",
+        "canonical_url": "https://example.com/doc",
+        "final_url": "https://example.com/doc",
+        "redirect_chain": ["https://example.com/start"],
+        "content_type": "text/html",
+        "content_disposition": None,
+        "etag": '"old-etag"',
+        "last_modified": "Wed, 21 Oct 2026 07:28:00 GMT",
+        "downloaded_bytes": 12,
+        "sha256": "old-hash",
+        "raw_artifact_path": str(old_raw),
+        "fetched_at": "2024-01-01T00:00:00Z",
+    }
+    active = record.model_copy(
+        update={
+            "content_hash": "old-hash",
+            "status": SourceStatus.PROCESSED,
+            "parser": "html",
+            "normalization_version": "lightrag_docprep",
+            "lightrag_document_id": "doc-old",
+            "normalized_markdown_path": str(old_md),
+            "normalized_json_path": str(old_json),
+            "source_metadata": {
+                "active_download": active_download,
+                "latest_attempt": {
+                    **active_download,
+                    "job_id": "job-url-0",
+                    "terminal_outcome": SourceStatus.PROCESSED.value,
+                    "error_code": None,
+                },
+            },
+        }
+    )
+    active_job = dict(
+        job,
+        content_hash="old-hash",
+        lightrag_document_id="doc-old",
+    )
+    return root, active, active_job, old_md, old_json
+
+
 def _make_download_result(
     tmp_path,
     *,
     content_type="text/html",
     final_url="https://example.com/doc",
     requested_url="https://Example.COM/Doc?x=1",
+    canonical_url="https://example.com/doc",
+    sha256="sha-abc",
+    fetched_at="2024-01-01T00:00:00Z",
 ):
     artifact = tmp_path / "raw-artifact"
     artifact.write_bytes(b"# Title\n\nsome body\n")
     return UrlDownloadResult(
         requested_url=requested_url,
-        canonical_url="https://example.com/doc",
+        canonical_url=canonical_url,
         final_url=final_url,
         redirect_chain=["https://example.com/start"],
         content_type=content_type,
@@ -1416,9 +1471,9 @@ def _make_download_result(
         etag='"abc"',
         last_modified="Wed, 21 Oct 2026 07:28:00 GMT",
         downloaded_bytes=16,
-        sha256="sha-abc",
+        sha256=sha256,
         raw_artifact_path=str(artifact),
-        fetched_at="2024-01-01T00:00:00Z",
+        fetched_at=fetched_at,
     )
 
 
@@ -1504,6 +1559,11 @@ def test_url_job_success_reaches_audit_and_processed(tmp_path, monkeypatch):
     upserts: list[SourceRecord] = []
     job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
     handoff_calls: list[dict] = []
+    monkeypatch.setattr(
+        service_module.pg,
+        "get_processed_ingestion_source_by_hash",
+        lambda content_hash: None,
+    )
 
     normalized_md = root / "normalized" / "out" / "document.md"
     normalized_json = root / "normalized" / "out" / "document.json"
@@ -1620,6 +1680,11 @@ def test_url_job_critical_audit_reaches_failed_audit(tmp_path, monkeypatch):
     downloader = _FakeDownloader(result=download_result)
     upserts: list[SourceRecord] = []
     job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    monkeypatch.setattr(
+        service_module.pg,
+        "get_processed_ingestion_source_by_hash",
+        lambda content_hash: None,
+    )
 
     normalized_md = root / "normalized" / "out" / "document.md"
     normalized_json = root / "normalized" / "out" / "document.json"
@@ -1771,6 +1836,11 @@ def test_url_parser_failure_reaches_failed_with_sanitized_error(tmp_path, monkey
     downloader = _FakeDownloader(result=download_result)
     upserts: list[SourceRecord] = []
     job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    monkeypatch.setattr(
+        service_module.pg,
+        "get_processed_ingestion_source_by_hash",
+        lambda content_hash: None,
+    )
 
     async def normalize(source_path, *, output_root, source_identity, source_type, native_metadata):
         raise DocprepError("PARSE_FAILED", f"parser exploded at /secret/{source_path}")
@@ -1824,6 +1894,11 @@ def test_url_normalization_failure_reaches_failed_with_sanitized_error(tmp_path,
     downloader = _FakeDownloader(result=download_result)
     upserts: list[SourceRecord] = []
     job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    monkeypatch.setattr(
+        service_module.pg,
+        "get_processed_ingestion_source_by_hash",
+        lambda content_hash: None,
+    )
 
     async def normalize(source_path, *, output_root, source_identity, source_type, native_metadata):
         raise DocprepError("NORMALIZATION_FAILED", "normalizer exploded at /secret/output")
@@ -1871,6 +1946,11 @@ def test_url_lightrag_failure_reaches_failed_with_sanitized_error(tmp_path, monk
     downloader = _FakeDownloader(result=download_result)
     upserts: list[SourceRecord] = []
     job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    monkeypatch.setattr(
+        service_module.pg,
+        "get_processed_ingestion_source_by_hash",
+        lambda content_hash: None,
+    )
 
     normalized_md = root / "normalized" / "out" / "document.md"
     normalized_json = root / "normalized" / "out" / "document.json"
@@ -1939,6 +2019,11 @@ def test_url_storage_parse_failure_reaches_failed_with_sanitized_error(tmp_path,
     downloader = _FakeDownloader(result=download_result)
     upserts: list[SourceRecord] = []
     job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    monkeypatch.setattr(
+        service_module.pg,
+        "get_processed_ingestion_source_by_hash",
+        lambda content_hash: None,
+    )
 
     normalized_md = root / "normalized" / "out" / "document.md"
     normalized_json = root / "normalized" / "out" / "document.json"
@@ -2025,6 +2110,11 @@ def test_url_retry_after_parser_failure_downloads_and_completes(tmp_path, monkey
     downloader = _FakeDownloader(result=download_result)
     upserts: list[SourceRecord] = []
     job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    monkeypatch.setattr(
+        service_module.pg,
+        "get_processed_ingestion_source_by_hash",
+        lambda content_hash: None,
+    )
 
     normalized_md = root / "normalized" / "out" / "document.md"
     normalized_json = root / "normalized" / "out" / "document.json"
@@ -2115,17 +2205,651 @@ def test_url_retry_after_parser_failure_downloads_and_completes(tmp_path, monkey
     assert not any(status == SourceStatus.DISCOVERED for status in job2_statuses)
 
 
-def test_url_guard_terminalizes_job_when_source_already_has_content(tmp_path, monkeypatch):
-    root, record, job = _make_url_fixture(tmp_path)
-    record = record.model_copy(
-        update={"content_hash": "existing-hash", "status": SourceStatus.PROCESSED}
+def test_url_same_url_unchanged_content_skips_and_refreshes_metadata(tmp_path, monkeypatch):
+    root, active, job, old_md, old_json = _make_active_url_fixture(tmp_path)
+    download_result = _make_download_result(
+        tmp_path,
+        sha256="old-hash",
+        fetched_at="2024-02-02T00:00:00Z",
     )
-    downloader = _FakeDownloader()
+    downloader = _FakeDownloader(result=download_result)
     upserts: list[SourceRecord] = []
     job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
 
+    class NoWorkAdapter:
+        def delete_document(self, document_id):
+            raise AssertionError("delete must not run for unchanged content")
+
+        def ingest_markdown(self, markdown_path, *, source_key):
+            raise AssertionError("ingest must not run for unchanged content")
+
+    class NoSnapshotReader:
+        def snapshot(self):
+            raise AssertionError("storage snapshot must not run for unchanged content")
+
+    def exploding_audit_runner(**kwargs):
+        raise AssertionError("audit must not run for unchanged content")
+
+    async def normalize(source_path, *, output_root, source_identity, source_type, native_metadata):
+        raise AssertionError("normalization must not run for unchanged content")
+
+    def no_cross_url_lookup(content_hash):
+        raise AssertionError("active URL recrawl must not consult the cross-URL duplicate registry")
+
+    monkeypatch.setattr(service_module, "normalize_downloaded_artifact", normalize)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: job)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: active)
+    monkeypatch.setattr(service_module.pg, "get_processed_ingestion_source_by_hash", no_cross_url_lookup)
+    monkeypatch.setattr(
+        service_module.pg,
+        "upsert_ingestion_source",
+        lambda rec: upserts.append(rec.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(
+        service_module.pg,
+        "set_ingestion_job_status",
+        lambda job_id, status, **kwargs: job_statuses.append(
+            (job_id, status, kwargs.get("audit"), kwargs.get("error"))
+        ),
+    )
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=NoWorkAdapter(),
+        audit_runner=exploding_audit_runner,
+        storage_reader=NoSnapshotReader(),
+        downloader=downloader,
+    )
+
+    service.process_job("job-url-1", requested_url="https://Example.COM/Doc?x=1")
+
+    assert downloader.calls == [
+        ("https://Example.COM/Doc?x=1", root / "url-artifacts")
+    ]
+    assert len(upserts) == 1
+    refreshed = upserts[0]
+    assert refreshed.status == SourceStatus.PROCESSED
+    assert refreshed.content_hash == "old-hash"
+    assert refreshed.lightrag_document_id == "doc-old"
+    assert refreshed.normalized_markdown_path == str(old_md)
+    assert refreshed.normalized_json_path == str(old_json)
+    metadata = refreshed.source_metadata
+    assert metadata["active_download"]["sha256"] == "old-hash"
+    assert metadata["active_download"]["etag"] == '"abc"'
+    assert metadata["active_download"]["fetched_at"] == "2024-02-02T00:00:00Z"
+    attempt = metadata["latest_attempt"]
+    assert attempt["job_id"] == "job-url-1"
+    assert attempt["terminal_outcome"] == SourceStatus.SKIPPED_DUPLICATE.value
+    assert attempt["error_code"] is None
+    assert [status for _, status, _, _ in job_statuses] == [
+        SourceStatus.PROCESSING,
+        SourceStatus.SKIPPED_DUPLICATE,
+    ]
+
+
+def test_url_same_url_changed_content_clean_audit_activates_candidate(tmp_path, monkeypatch):
+    root, active, job, old_md, old_json = _make_active_url_fixture(tmp_path)
+    download_result = _make_download_result(
+        tmp_path,
+        final_url="https://example.com/redirected",
+        sha256="sha-new",
+        fetched_at="2024-02-02T00:00:00Z",
+    )
+    downloader = _FakeDownloader(result=download_result)
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    handoff_calls: list[dict] = []
+
+    new_md = root / "normalized" / "new" / "document.md"
+    new_json = root / "normalized" / "new" / "document.json"
+    new_md.parent.mkdir(parents=True)
+    new_md.write_text("# New content\n", encoding="utf-8")
+    new_json.write_text("{}", encoding="utf-8")
+
+    async def normalize(source_path, *, output_root, source_identity, source_type, native_metadata):
+        handoff_calls.append(
+            {
+                "source_path": Path(source_path),
+                "source_identity": source_identity,
+                "source_type": source_type,
+                "native_metadata": native_metadata,
+            }
+        )
+        return NormalizedDocument(
+            output_dir=new_md.parent,
+            markdown_path=new_md,
+            json_path=new_json,
+            parser="html",
+            warnings=[],
+        )
+
+    class FakeAdapter:
+        def __init__(self):
+            self.deleted: list[str] = []
+            self.ingested: list[Path] = []
+
+        def delete_document(self, document_id):
+            self.deleted.append(document_id)
+
+        def ingest_markdown(self, markdown_path, *, source_key):
+            self.ingested.append(Path(markdown_path))
+            return LightRAGIngestionResult(
+                track_id="track-new",
+                document_id="doc-new",
+                status="processed",
+            )
+
+    adapter = FakeAdapter()
+    storage_reader = _FakeStorageReader()
+    audit_calls = []
+    report = AuditReport(
+        job_id="job-url-1",
+        source_key=active.source_key,
+        critical_issues=[],
+        warnings=[],
+        merge_candidates=[],
+        checked_at="2024-01-01T00:00:00Z",
+    )
+    audit_runner = _make_fake_audit_runner(audit_calls, report)
+
+    def no_cross_url_lookup(content_hash):
+        raise AssertionError("active URL recrawl must not consult the cross-URL duplicate registry")
+
+    monkeypatch.setattr(service_module, "normalize_downloaded_artifact", normalize)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: job)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: active)
+    monkeypatch.setattr(service_module.pg, "get_processed_ingestion_source_by_hash", no_cross_url_lookup)
+    monkeypatch.setattr(
+        service_module.pg,
+        "upsert_ingestion_source",
+        lambda rec: upserts.append(rec.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(
+        service_module.pg,
+        "set_ingestion_job_status",
+        lambda job_id, status, **kwargs: job_statuses.append(
+            (job_id, status, kwargs.get("audit"), kwargs.get("error"))
+        ),
+    )
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=adapter,
+        audit_runner=audit_runner,
+        storage_reader=storage_reader,
+        downloader=downloader,
+    )
+
+    service.process_job("job-url-1", requested_url="https://Example.COM/Doc?x=1")
+
+    assert downloader.calls == [
+        ("https://Example.COM/Doc?x=1", root / "url-artifacts")
+    ]
+    assert adapter.deleted == ["doc-old"]
+    assert adapter.ingested == [new_md]
+    assert len(upserts) == 1
+    candidate = upserts[0]
+    assert candidate.status == SourceStatus.PROCESSED
+    assert candidate.content_hash == "sha-new"
+    assert candidate.source_uri == "https://example.com/doc"
+    assert candidate.lightrag_document_id == "doc-new"
+    assert candidate.normalized_markdown_path == str(new_md)
+    metadata = candidate.source_metadata
+    assert metadata["active_download"]["sha256"] == "sha-new"
+    assert metadata["active_download"]["canonical_url"] == "https://example.com/doc"
+    assert metadata["active_download"]["final_url"] == "https://example.com/redirected"
+    assert metadata["active_download"]["fetched_at"] == "2024-02-02T00:00:00Z"
+    assert metadata["latest_attempt"]["job_id"] == "job-url-1"
+    assert metadata["latest_attempt"]["terminal_outcome"] == SourceStatus.PROCESSED.value
+    assert metadata["latest_attempt"]["error_code"] is None
+    assert job_statuses[-1][1] == SourceStatus.PROCESSED
+    assert job_statuses[-1][2] == report.model_dump(mode="json")
+    assert audit_calls[0]["lightrag_document_id"] == "doc-new"
+    assert audit_calls[0]["source_key"] == active.source_key
+    assert audit_calls[0]["job_id"] == "job-url-1"
+    assert storage_reader.calls == 1
+    assert handoff_calls[0]["source_identity"] == "https://example.com/doc"
+    assert handoff_calls[0]["source_type"] == "html"
+
+
+def test_url_same_url_changed_content_ingest_failure_restores_prior_active(tmp_path, monkeypatch):
+    root, active, job, old_md, old_json = _make_active_url_fixture(tmp_path)
+    download_result = _make_download_result(
+        tmp_path,
+        sha256="sha-new",
+        fetched_at="2024-02-02T00:00:00Z",
+    )
+    downloader = _FakeDownloader(result=download_result)
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+
+    new_md = root / "normalized" / "new" / "document.md"
+    new_json = root / "normalized" / "new" / "document.json"
+    new_md.parent.mkdir(parents=True)
+    new_md.write_text("# New content\n", encoding="utf-8")
+    new_json.write_text("{}", encoding="utf-8")
+
+    async def normalize(source_path, *, output_root, source_identity, source_type, native_metadata):
+        return NormalizedDocument(
+            output_dir=new_md.parent,
+            markdown_path=new_md,
+            json_path=new_json,
+            parser="html",
+            warnings=[],
+        )
+
+    class RestoringAdapter:
+        def __init__(self):
+            self.deleted: list[str] = []
+            self.ingested: list[Path] = []
+
+        def delete_document(self, document_id):
+            self.deleted.append(document_id)
+
+        def ingest_markdown(self, markdown_path, *, source_key):
+            path = Path(markdown_path)
+            self.ingested.append(path)
+            if path == new_md:
+                raise LightRAGAdapterError(
+                    "LIGHTRAG_INGESTION_FAILED",
+                    "new ingestion failed",
+                    retryable=True,
+                )
+            return LightRAGIngestionResult(
+                track_id="track-restore",
+                document_id="doc-restored",
+                status="processed",
+            )
+
+    adapter = RestoringAdapter()
+
+    class NoSnapshotReader:
+        def snapshot(self):
+            raise AssertionError("storage snapshot must not run when ingestion fails")
+
+    def exploding_audit_runner(**kwargs):
+        raise AssertionError("audit must not run when ingestion fails")
+
+    def no_cross_url_lookup(content_hash):
+        raise AssertionError("active URL recrawl must not consult the cross-URL duplicate registry")
+
+    monkeypatch.setattr(service_module, "normalize_downloaded_artifact", normalize)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: job)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: active)
+    monkeypatch.setattr(service_module.pg, "get_processed_ingestion_source_by_hash", no_cross_url_lookup)
+    monkeypatch.setattr(
+        service_module.pg,
+        "upsert_ingestion_source",
+        lambda rec: upserts.append(rec.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(
+        service_module.pg,
+        "set_ingestion_job_status",
+        lambda job_id, status, **kwargs: job_statuses.append(
+            (job_id, status, kwargs.get("audit"), kwargs.get("error"))
+        ),
+    )
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=adapter,
+        audit_runner=exploding_audit_runner,
+        storage_reader=NoSnapshotReader(),
+        downloader=downloader,
+    )
+
+    service.process_job("job-url-1", requested_url="https://Example.COM/Doc?x=1")
+
+    assert adapter.deleted == ["doc-old"]
+    assert adapter.ingested == [new_md, old_md]
+    assert len(upserts) == 1
+    restored = upserts[0]
+    assert restored.status == SourceStatus.PROCESSED
+    assert restored.content_hash == "old-hash"
+    assert restored.lightrag_document_id == "doc-restored"
+    assert restored.normalized_markdown_path == str(old_md)
+    assert restored.source_metadata["active_download"] == active.source_metadata["active_download"]
+    attempt = restored.source_metadata["latest_attempt"]
+    assert attempt["job_id"] == "job-url-1"
+    assert attempt["sha256"] == "sha-new"
+    assert attempt["fetched_at"] == "2024-02-02T00:00:00Z"
+    assert attempt["terminal_outcome"] == SourceStatus.FAILED.value
+    assert attempt["error_code"] == "LIGHTRAG_INGESTION_FAILED"
+    assert job_statuses[-1][1] == SourceStatus.FAILED
+    assert job_statuses[-1][3]["code"] == "LIGHTRAG_INGESTION_FAILED"
+    assert not any(status == SourceStatus.PROCESSED for _, status, _, _ in job_statuses)
+    assert not any(rec.content_hash == "sha-new" for rec in upserts)
+
+
+def test_url_same_url_changed_content_failed_audit_restores_prior_active(tmp_path, monkeypatch):
+    root, active, job, old_md, old_json = _make_active_url_fixture(tmp_path)
+    download_result = _make_download_result(
+        tmp_path,
+        sha256="sha-new",
+        fetched_at="2024-02-02T00:00:00Z",
+    )
+    downloader = _FakeDownloader(result=download_result)
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+
+    new_md = root / "normalized" / "new" / "document.md"
+    new_json = root / "normalized" / "new" / "document.json"
+    new_md.parent.mkdir(parents=True)
+    new_md.write_text("# New content\n", encoding="utf-8")
+    new_json.write_text("{}", encoding="utf-8")
+
+    async def normalize(source_path, *, output_root, source_identity, source_type, native_metadata):
+        return NormalizedDocument(
+            output_dir=new_md.parent,
+            markdown_path=new_md,
+            json_path=new_json,
+            parser="html",
+            warnings=[],
+        )
+
+    class FakeAdapter:
+        def __init__(self):
+            self.deleted: list[str] = []
+            self.ingested: list[Path] = []
+
+        def delete_document(self, document_id):
+            self.deleted.append(document_id)
+
+        def ingest_markdown(self, markdown_path, *, source_key):
+            path = Path(markdown_path)
+            self.ingested.append(path)
+            if path == new_md:
+                return LightRAGIngestionResult(
+                    track_id="track-new",
+                    document_id="doc-new",
+                    status="processed",
+                )
+            return LightRAGIngestionResult(
+                track_id="track-restore",
+                document_id="doc-restored",
+                status="processed",
+            )
+
+    adapter = FakeAdapter()
+    storage_reader = _FakeStorageReader()
+    audit_calls = []
+    report = AuditReport(
+        job_id="job-url-1",
+        source_key=active.source_key,
+        critical_issues=[
+            AuditIssue(code="CRIT", message="critical problem", severity="critical", evidence={})
+        ],
+        warnings=[],
+        merge_candidates=[],
+        checked_at="2024-01-01T00:00:00Z",
+    )
+    audit_runner = _make_fake_audit_runner(audit_calls, report)
+
+    def no_cross_url_lookup(content_hash):
+        raise AssertionError("active URL recrawl must not consult the cross-URL duplicate registry")
+
+    monkeypatch.setattr(service_module, "normalize_downloaded_artifact", normalize)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: job)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: active)
+    monkeypatch.setattr(service_module.pg, "get_processed_ingestion_source_by_hash", no_cross_url_lookup)
+    monkeypatch.setattr(
+        service_module.pg,
+        "upsert_ingestion_source",
+        lambda rec: upserts.append(rec.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(
+        service_module.pg,
+        "set_ingestion_job_status",
+        lambda job_id, status, **kwargs: job_statuses.append(
+            (job_id, status, kwargs.get("audit"), kwargs.get("error"))
+        ),
+    )
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=adapter,
+        audit_runner=audit_runner,
+        storage_reader=storage_reader,
+        downloader=downloader,
+    )
+
+    service.process_job("job-url-1", requested_url="https://Example.COM/Doc?x=1")
+
+    assert adapter.deleted == ["doc-old", "doc-new"]
+    assert adapter.ingested == [new_md, old_md]
+    assert len(upserts) == 1
+    restored = upserts[0]
+    assert restored.status == SourceStatus.PROCESSED
+    assert restored.content_hash == "old-hash"
+    assert restored.lightrag_document_id == "doc-restored"
+    assert restored.normalized_markdown_path == str(old_md)
+    assert restored.source_metadata["active_download"] == active.source_metadata["active_download"]
+    attempt = restored.source_metadata["latest_attempt"]
+    assert attempt["job_id"] == "job-url-1"
+    assert attempt["sha256"] == "sha-new"
+    assert attempt["terminal_outcome"] == SourceStatus.FAILED_AUDIT.value
+    assert attempt["error_code"] == "AUDIT_FAILED"
+    assert job_statuses[-1][1] == SourceStatus.FAILED_AUDIT
+    assert job_statuses[-1][2] == report.model_dump(mode="json")
+    assert job_statuses[-1][3]["code"] == "AUDIT_FAILED"
+    assert not any(status == SourceStatus.PROCESSED for _, status, _, _ in job_statuses)
+    assert not any(rec.content_hash == "sha-new" for rec in upserts)
+    assert audit_calls[0]["lightrag_document_id"] == "doc-new"
+
+
+def test_url_different_url_same_hash_reuses_owner_document_without_upload(tmp_path, monkeypatch):
+    root, _, _ = _make_url_fixture(tmp_path)
+    new_record = SourceRecord(
+        source_key="url:https://example.org/mirror",
+        source_kind="url",
+        source_uri="https://example.org/mirror",
+        content_hash=None,
+        status=SourceStatus.DISCOVERED,
+        source_metadata={"active_download": None, "latest_attempt": None},
+    )
+    new_job = {
+        "job_id": "job-url-mirror",
+        "source_key": new_record.source_key,
+        "source_uri": new_record.source_uri,
+        "status": SourceStatus.DISCOVERED.value,
+        "content_hash": None,
+        "lightrag_document_id": None,
+        "audit": None,
+        "error": None,
+    }
+    owner = SourceRecord(
+        source_key="url:https://example.com/doc",
+        source_kind="url",
+        source_uri="https://example.com/doc",
+        content_hash="sha-abc",
+        status=SourceStatus.PROCESSED,
+        parser="html",
+        parser_version="docprep-0.3.4",
+        normalization_version="lightrag_docprep",
+        lightrag_document_id="doc-owner",
+        normalized_markdown_path="normalized/owner/document.md",
+        normalized_json_path="normalized/owner/document.json",
+    )
+    download_result = _make_download_result(
+        tmp_path,
+        requested_url="https://Example.ORG/Mirror?x=1",
+        canonical_url="https://example.org/mirror",
+        final_url="https://example.org/mirror",
+    )
+    downloader = _FakeDownloader(result=download_result)
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    lookup_calls: list[str] = []
+
+    def lookup(content_hash):
+        lookup_calls.append(content_hash)
+        return owner if content_hash == "sha-abc" else None
+
+    class NoWorkAdapter:
+        def delete_document(self, document_id):
+            raise AssertionError("delete must not run for a content duplicate")
+
+        def ingest_markdown(self, markdown_path, *, source_key):
+            raise AssertionError("upload must not run for a content duplicate")
+
+    class NoSnapshotReader:
+        def snapshot(self):
+            raise AssertionError("storage snapshot must not run for a content duplicate")
+
+    def exploding_audit_runner(**kwargs):
+        raise AssertionError("audit must not run for a content duplicate")
+
+    async def normalize(source_path, *, output_root, source_identity, source_type, native_metadata):
+        raise AssertionError("normalization must not run for a content duplicate")
+
+    monkeypatch.setattr(service_module, "normalize_downloaded_artifact", normalize)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: new_job)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: new_record)
+    monkeypatch.setattr(service_module.pg, "get_processed_ingestion_source_by_hash", lookup)
+    monkeypatch.setattr(
+        service_module.pg,
+        "upsert_ingestion_source",
+        lambda rec: upserts.append(rec.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(
+        service_module.pg,
+        "set_ingestion_job_status",
+        lambda job_id, status, **kwargs: job_statuses.append(
+            (job_id, status, kwargs.get("audit"), kwargs.get("error"))
+        ),
+    )
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=NoWorkAdapter(),
+        audit_runner=exploding_audit_runner,
+        storage_reader=NoSnapshotReader(),
+        downloader=downloader,
+    )
+
+    service.process_job("job-url-mirror", requested_url="https://Example.ORG/Mirror?x=1")
+
+    assert downloader.calls == [
+        ("https://Example.ORG/Mirror?x=1", root / "url-artifacts")
+    ]
+    assert lookup_calls == ["sha-abc"]
+    duplicate = upserts[-1]
+    assert duplicate.source_key == "url:https://example.org/mirror"
+    assert duplicate.source_uri == "https://example.org/mirror"
+    assert duplicate.content_hash == "sha-abc"
+    assert duplicate.status == SourceStatus.SKIPPED_DUPLICATE
+    assert duplicate.parser == "html"
+    assert duplicate.parser_version == "docprep-0.3.4"
+    assert duplicate.normalization_version == "lightrag_docprep"
+    assert duplicate.lightrag_document_id == "doc-owner"
+    assert duplicate.normalized_markdown_path == "normalized/owner/document.md"
+    assert duplicate.normalized_json_path == "normalized/owner/document.json"
+    metadata = duplicate.source_metadata
+    assert metadata["active_download"] is None
+    attempt = metadata["latest_attempt"]
+    assert attempt["requested_url"] == "https://Example.ORG/Mirror?x=1"
+    assert attempt["canonical_url"] == "https://example.org/mirror"
+    assert attempt["final_url"] == "https://example.org/mirror"
+    assert attempt["sha256"] == "sha-abc"
+    assert attempt["raw_artifact_path"] == download_result.raw_artifact_path
+    assert attempt["terminal_outcome"] == SourceStatus.SKIPPED_DUPLICATE.value
+    assert attempt["error_code"] is None
+    assert attempt["job_id"] == "job-url-mirror"
+    assert job_statuses[-1][1] == SourceStatus.SKIPPED_DUPLICATE
+
+
+def test_url_null_hash_stub_never_collides_as_duplicate(tmp_path, monkeypatch):
+    root, record, job = _make_url_fixture(tmp_path)
+    download_result = _make_download_result(tmp_path)
+    downloader = _FakeDownloader(result=download_result)
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+    lookup_calls: list[str] = []
+
+    normalized_md = root / "normalized" / "out" / "document.md"
+    normalized_json = root / "normalized" / "out" / "document.json"
+    normalized_md.parent.mkdir(parents=True)
+    normalized_md.write_text("# Title\n", encoding="utf-8")
+    normalized_json.write_text("{}", encoding="utf-8")
+
+    async def normalize(source_path, *, output_root, source_identity, source_type, native_metadata):
+        return NormalizedDocument(
+            output_dir=normalized_md.parent,
+            markdown_path=normalized_md,
+            json_path=normalized_json,
+            parser="html",
+            warnings=[],
+        )
+
+    class FakeAdapter:
+        def ingest_markdown(self, markdown_path, *, source_key):
+            return LightRAGIngestionResult(
+                track_id="track-url",
+                document_id="doc-url",
+                status="processed",
+            )
+
+    storage_reader = _FakeStorageReader()
+    audit_calls = []
+    report = AuditReport(
+        job_id="job-url-1",
+        source_key=record.source_key,
+        critical_issues=[],
+        warnings=[],
+        merge_candidates=[],
+        checked_at="2024-01-01T00:00:00Z",
+    )
+    audit_runner = _make_fake_audit_runner(audit_calls, report)
+
+    def lookup(content_hash):
+        lookup_calls.append(content_hash)
+        return None  # a NULL-hash stub can never be a duplicate owner
+
+    monkeypatch.setattr(service_module, "normalize_downloaded_artifact", normalize)
     monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: job)
     monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: record)
+    monkeypatch.setattr(service_module.pg, "get_processed_ingestion_source_by_hash", lookup)
+    monkeypatch.setattr(
+        service_module.pg,
+        "upsert_ingestion_source",
+        lambda rec: upserts.append(rec.model_copy(deep=True)),
+    )
+    monkeypatch.setattr(
+        service_module.pg,
+        "set_ingestion_job_status",
+        lambda job_id, status, **kwargs: job_statuses.append(
+            (job_id, status, kwargs.get("audit"), kwargs.get("error"))
+        ),
+    )
+    service = IngestionService(
+        ingestion_root=root,
+        normalized_root=root / "normalized",
+        lightrag_adapter=FakeAdapter(),
+        audit_runner=audit_runner,
+        storage_reader=storage_reader,
+        downloader=downloader,
+    )
+
+    service.process_job("job-url-1", requested_url="https://Example.COM/Doc?x=1")
+
+    assert lookup_calls == ["sha-abc"]
+    assert all(hash_value is not None for hash_value in lookup_calls)
+    assert upserts[-1].status == SourceStatus.PROCESSED
+    assert upserts[-1].content_hash == "sha-abc"
+
+
+def test_url_recrawl_download_failure_keeps_active_and_records_attempt(tmp_path, monkeypatch):
+    root, active, job, old_md, old_json = _make_active_url_fixture(tmp_path)
+    downloader = _FakeDownloader(error=URLDownloadError("URL_TIMEOUT"))
+    upserts: list[SourceRecord] = []
+    job_statuses: list[tuple[str, SourceStatus, dict | None, dict | None]] = []
+
+    async def normalize(source_path, *, output_root, source_identity, source_type, native_metadata):
+        raise AssertionError("normalization must not run when the download fails")
+
+    monkeypatch.setattr(service_module, "normalize_downloaded_artifact", normalize)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_job", lambda job_id: job)
+    monkeypatch.setattr(service_module.pg, "get_ingestion_source", lambda source_key: active)
     monkeypatch.setattr(
         service_module.pg,
         "upsert_ingestion_source",
@@ -2143,17 +2867,31 @@ def test_url_guard_terminalizes_job_when_source_already_has_content(tmp_path, mo
         normalized_root=root / "normalized",
         lightrag_adapter=None,
         downloader=downloader,
+        now=lambda: datetime(2024, 2, 2, tzinfo=timezone.utc),
     )
 
     service.process_job("job-url-1", requested_url="https://Example.COM/Doc?x=1")
 
-    assert downloader.calls == []
-    assert upserts == []
-    assert len(job_statuses) == 1
-    assert job_statuses[0][1] == SourceStatus.FAILED
-    assert job_statuses[0][3]["code"] == "URL_SOURCE_ALREADY_ACTIVE"
-    assert job_statuses[0][3]["message"] == "URL source already has active content"
-    assert job_statuses[0][3]["stage"] == SourceStatus.PROCESSING.value
+    assert downloader.calls == [
+        ("https://Example.COM/Doc?x=1", root / "url-artifacts")
+    ]
+    assert len(upserts) == 1
+    kept = upserts[0]
+    assert kept.status == SourceStatus.PROCESSED
+    assert kept.content_hash == "old-hash"
+    assert kept.lightrag_document_id == "doc-old"
+    assert kept.source_metadata["active_download"] == active.source_metadata["active_download"]
+    attempt = kept.source_metadata["latest_attempt"]
+    assert attempt["job_id"] == "job-url-1"
+    assert attempt["requested_url"] == "https://Example.COM/Doc?x=1"
+    assert attempt["canonical_url"] == "https://example.com/doc"
+    assert attempt["final_url"] is None
+    assert attempt["sha256"] is None
+    assert attempt["terminal_outcome"] == SourceStatus.FAILED.value
+    assert attempt["error_code"] == "URL_TIMEOUT"
+    assert attempt["fetched_at"] == "2024-02-02T00:00:00Z"
+    assert job_statuses[-1][1] == SourceStatus.FAILED
+    assert job_statuses[-1][3]["code"] == "URL_TIMEOUT"
 
 
 @pytest.mark.parametrize(
