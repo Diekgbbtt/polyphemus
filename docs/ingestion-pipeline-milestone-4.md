@@ -824,8 +824,9 @@ outside the sandbox with the same interpreter. Docling is not installed and
 is not a Milestone 4 dependency: PDF and all non-HTML/Markdown formats remain
 deferred.
 
-Fresh real output of the full suite outside the sandbox, same interpreter, no
-Docling:
+Historical pre-remediation evidence (captured before the wait-budget
+remediation commit; not re-executed for that change). Fresh real output of the
+full suite outside the sandbox, same interpreter, no Docling:
 
 ```text
 ........................................................................ [ 16%]
@@ -935,6 +936,78 @@ so an existing `pg-data` volume can be migrated without deletion or recreation.
 The same migration now runs automatically in the ingestion application's
 startup hook before traffic is accepted (see "URL Schema Migration" above);
 no live database was started or mutated for this documentation.
+
+## Ingestion Wait-Budget Configuration
+
+The ingestion service talks to LightRAG with three separate timeout layers, and
+operators should not conflate them:
+
+- `LIGHTRAG_TIMEOUT_SECONDS` (default `30`): the per-HTTP-request timeout the
+  ingestion service applies to its LightRAG API calls (document upload and each
+  status poll). It is unrelated to how long document processing may take.
+- `LIGHTRAG_INGESTION_TIMEOUT_SECONDS` (default `1800`): the whole-document
+  polling deadline. After a successful upload, the ingestion service polls the
+  document status until LightRAG reaches a recognized terminal state or this
+  monotonic deadline expires. Deadline expiry is reported with the stable
+  sanitized `LIGHTRAG_TIMEOUT` result; each poll sleep is capped at the
+  remaining deadline.
+- LightRAG's own worker ceiling, configured inside the LightRAG image rather
+  than this repository: it is derived as `2 x` the role LLM timeout. With the
+  current `EXTRACT_LLM_TIMEOUT` this is observed as `360` seconds. A longer
+  ingestion deadline does not repair a stalled provider request: if a LightRAG
+  worker times out, LightRAG itself fails the document and the ingestion
+  service reports the terminal failure as the stable sanitized
+  `LIGHTRAG_INGESTION_FAILED` result (`message: "LightRAG ingestion failed"`),
+  never the raw LightRAG/provider/worker error text.
+
+`LIGHTRAG_POLL_INTERVAL_SECONDS` (default `2`) controls the interval between
+status polls inside the deadline window. Both new settings are finite,
+strictly positive floats, and docker-compose propagates them to the ingestion
+service with the defaults above.
+
+The legacy fixed-attempt polling constructor mode (`max_poll_attempts`) is
+retained only for explicit dependency-injected test usage; the production
+adapter always uses the configured monotonic deadline, and providing both
+limits at once is rejected.
+
+The whole-document deadline is a soft wall-clock deadline: a status request
+that has already started may finish after the deadline, and a terminal
+success/failure returned by that in-flight request is accepted. No new status
+request is started at or after the deadline, and a nonterminal result received
+after the deadline raises `LIGHTRAG_TIMEOUT` immediately. Each poll sleep is
+capped at the remaining time to the deadline.
+
+### Wait-budget remediation verification
+
+Executed in the isolated `fix/lightrag-ingestion-wait-budget` worktree at base
+`ab925958ba0282cdf938b6f5512a5078a0c7cf69`, repository interpreter
+`/home/alelxsalc03/Desktop/polyphemus/.venv/bin/python`. The focused
+wait-budget and adapter suites:
+
+```text
+tests/ingestion/test_lightrag_wait_budget.py tests/ingestion/test_lightrag_adapter.py
+35 passed in 0.18s
+```
+
+Fresh full ingestion suite outside the sandbox, same interpreter, after the
+remediation:
+
+```text
+........................................................................ [ 15%]
+........................................................................ [ 31%]
+........................................................................ [ 47%]
+........................................................................ [ 63%]
+........................................................................ [ 78%]
+........................................................................ [ 94%]
+........................                                                 [100%]
+460 passed, 4 warnings in 2.34s
+```
+
+The four warnings are the pre-existing FastAPI `on_event` deprecation warnings,
+not new failures.
+
+Model/provider tuning (including `EXTRACT_LLM_*`) and progress-aware polling
+remain separate future work; neither is changed by this configuration.
 
 ## Accepted Residual Risks
 

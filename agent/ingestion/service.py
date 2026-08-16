@@ -108,7 +108,11 @@ class IngestionService:
     ):
         self.ingestion_root = ingestion_root
         self.normalized_root = normalized_root
-        self.lightrag_adapter = lightrag_adapter or LightRAGIngestionAdapter(client=LightRAGHttpClient())
+        self.lightrag_adapter = lightrag_adapter or LightRAGIngestionAdapter(
+            client=LightRAGHttpClient(),
+            poll_interval_seconds=config.LIGHTRAG_POLL_INTERVAL_SECONDS,
+            timeout_seconds=config.LIGHTRAG_INGESTION_TIMEOUT_SECONDS,
+        )
         self.audit_runner = audit_runner or run_post_ingestion_audit
         self.storage_reader = storage_reader or LightRAGStorageReader(Path(config.LIGHTRAG_STORAGE_DIR))
         self._now = now or (lambda: datetime.now(timezone.utc))

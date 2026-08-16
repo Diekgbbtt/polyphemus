@@ -60,6 +60,11 @@ class Config:
     )
     LIGHTRAG_API_KEY = os.environ.get("LIGHTRAG_API_KEY", "")
     LIGHTRAG_TIMEOUT_SECONDS = float(os.environ.get("LIGHTRAG_TIMEOUT_SECONDS", "30"))
+    LIGHTRAG_INGESTION_TIMEOUT_SECONDS = _float_env(
+        "LIGHTRAG_INGESTION_TIMEOUT_SECONDS",
+        1800.0,
+    )
+    LIGHTRAG_POLL_INTERVAL_SECONDS = _float_env("LIGHTRAG_POLL_INTERVAL_SECONDS", 2.0)
     INGESTION_ROOT = os.environ.get("INGESTION_ROOT", "/data/ingestion")
     INGESTION_NORMALIZED_DIR = os.environ.get("INGESTION_NORMALIZED_DIR", "/data/ingestion/normalized")
     URL_DOWNLOAD_CONNECT_TIMEOUT = _float_env("URL_DOWNLOAD_CONNECT_TIMEOUT", 10.0)

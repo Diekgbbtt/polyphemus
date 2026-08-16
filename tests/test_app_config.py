@@ -1,5 +1,7 @@
 import importlib
 
+import pytest
+
 
 def test_lightrag_config_defaults(monkeypatch):
     import agent.app.config as config_module
@@ -50,5 +52,49 @@ def test_lightrag_config_env_overrides(monkeypatch):
         assert module.config.LIGHTRAG_WRITEUP_API_URL == "http://writeups.local:9621"
         assert module.config.LIGHTRAG_API_KEY == "secret"
         assert module.config.LIGHTRAG_TIMEOUT_SECONDS == 12.5
+
+    importlib.reload(config_module)
+
+
+def test_wait_budget_config_defaults(monkeypatch):
+    import agent.app.config as config_module
+
+    with monkeypatch.context() as m:
+        m.delenv("LIGHTRAG_INGESTION_TIMEOUT_SECONDS", raising=False)
+        m.delenv("LIGHTRAG_POLL_INTERVAL_SECONDS", raising=False)
+        module = importlib.reload(config_module)
+
+        assert getattr(module.config, "LIGHTRAG_INGESTION_TIMEOUT_SECONDS", None) == 1800.0
+        assert getattr(module.config, "LIGHTRAG_POLL_INTERVAL_SECONDS", None) == 2.0
+
+    importlib.reload(config_module)
+
+
+def test_wait_budget_config_env_overrides(monkeypatch):
+    import agent.app.config as config_module
+
+    with monkeypatch.context() as m:
+        m.setenv("LIGHTRAG_INGESTION_TIMEOUT_SECONDS", "3600.5")
+        m.setenv("LIGHTRAG_POLL_INTERVAL_SECONDS", "0.5")
+        module = importlib.reload(config_module)
+
+        assert module.config.LIGHTRAG_INGESTION_TIMEOUT_SECONDS == 3600.5
+        assert module.config.LIGHTRAG_POLL_INTERVAL_SECONDS == 0.5
+
+    importlib.reload(config_module)
+
+
+@pytest.mark.parametrize(
+    "variable",
+    ["LIGHTRAG_INGESTION_TIMEOUT_SECONDS", "LIGHTRAG_POLL_INTERVAL_SECONDS"],
+)
+@pytest.mark.parametrize("raw", ["0", "-1", "nan", "inf"])
+def test_wait_budget_config_rejects_zero_negative_nan_inf(monkeypatch, variable, raw):
+    import agent.app.config as config_module
+
+    with monkeypatch.context() as m:
+        m.setenv(variable, raw)
+        with pytest.raises(ValueError):
+            importlib.reload(config_module)
 
     importlib.reload(config_module)

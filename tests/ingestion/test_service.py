@@ -2340,7 +2340,8 @@ def test_url_lightrag_failure_reaches_failed_with_sanitized_error(tmp_path, monk
         def ingest_markdown(self, markdown_path, *, source_key):
             raise LightRAGAdapterError(
                 "LIGHTRAG_INGESTION_FAILED",
-                "lightrag exploded at /secret/socket",
+                "C[3/3]: doc-1-chunk-001: extract LLM func: "
+                "Worker execution timeout after 360s /secret/socket",
                 retryable=True,
             )
 
@@ -2370,6 +2371,7 @@ def test_url_lightrag_failure_reaches_failed_with_sanitized_error(tmp_path, monk
 
     assert upserts[-1].status == SourceStatus.FAILED
     assert upserts[-1].last_error_code == "LIGHTRAG_INGESTION_FAILED"
+    assert upserts[-1].last_error_message == "LightRAG ingestion failed"
     assert upserts[-1].content_hash is None
     metadata = upserts[-1].source_metadata
     assert metadata["active_download"] is None
@@ -2377,9 +2379,11 @@ def test_url_lightrag_failure_reaches_failed_with_sanitized_error(tmp_path, monk
     assert metadata["latest_attempt"]["terminal_outcome"] == SourceStatus.FAILED.value
     assert metadata["latest_attempt"]["error_code"] == "LIGHTRAG_INGESTION_FAILED"
     assert job_statuses[-1][1] == SourceStatus.FAILED
-    assert job_statuses[-1][3]["code"] == "LIGHTRAG_INGESTION_FAILED"
-    assert job_statuses[-1][3]["message"] == "LightRAG ingestion failed"
-    assert "/secret" not in job_statuses[-1][3]["message"]
+    assert job_statuses[-1][3] == {
+        "code": "LIGHTRAG_INGESTION_FAILED",
+        "message": "LightRAG ingestion failed",
+        "stage": "INGESTING",
+    }
 
 
 def test_url_storage_parse_failure_reaches_failed_with_sanitized_error(tmp_path, monkeypatch):

@@ -104,7 +104,11 @@ def test_ingest_markdown_does_not_retry_4xx_upload(tmp_path):
     document = tmp_path / "document.md"
     document.write_text("# Methodology\n", encoding="utf-8")
     client = FakeLightRAGClient(upload_responses=[status_error(400)])
-    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0, max_upload_attempts=3)
+    adapter = LightRAGIngestionAdapter(
+        client=client,
+        poll_interval_seconds=0,
+        max_upload_attempts=3,
+    )
 
     with pytest.raises(LightRAGAdapterError) as exc:
         adapter.ingest_markdown(document, source_key="file:inbox/example.md")
@@ -137,7 +141,7 @@ def test_ingest_markdown_maps_failed_status_to_error(tmp_path):
         upload_responses=[{"track_id": "track-1"}],
         status_responses=[{"status": "failed", "error": "parse failed"}],
     )
-    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0, max_poll_attempts=1)
+    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0)
 
     with pytest.raises(LightRAGAdapterError) as exc:
         adapter.ingest_markdown(document, source_key="file:inbox/example.md")
@@ -165,7 +169,7 @@ def test_ingest_markdown_maps_track_status_documents_to_terminal_state(tmp_path)
             }
         ],
     )
-    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0, max_poll_attempts=1)
+    adapter = LightRAGIngestionAdapter(client=client, poll_interval_seconds=0)
 
     result = adapter.ingest_markdown(document, source_key="file:inbox/example.md")
 
@@ -228,7 +232,8 @@ def test_ingest_markdown_maps_track_status_document_failure_to_error(tmp_path):
         adapter.ingest_markdown(document, source_key="file:inbox/example.md")
 
     assert exc.value.code == "LIGHTRAG_INGESTION_FAILED"
-    assert "embedding failed" in str(exc.value)
+    assert str(exc.value) == "LightRAG ingestion failed"
+    assert "embedding failed" not in str(exc.value)
 
 
 def test_delete_document_uses_selective_delete_with_llm_cache_cleanup():

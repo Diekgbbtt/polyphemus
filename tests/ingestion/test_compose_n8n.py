@@ -62,3 +62,11 @@ def test_ingestion_pipeline_uses_single_lightrag_service():
     assert ingestion_env["LIGHTRAG_API_URL"] == "http://lightrag:9621"
     assert ingestion_env["LIGHTRAG_BASE_API_URL"] == "http://lightrag:9621"
     assert "LIGHTRAG_WRITEUP_API_URL" not in ingestion_env
+
+
+def test_ingestion_compose_propagates_wait_budget_defaults():
+    compose = yaml.safe_load(open("docker-compose.yml", encoding="utf-8"))
+
+    env = compose["services"]["ingestion"]["environment"]
+    assert env.get("LIGHTRAG_INGESTION_TIMEOUT_SECONDS") == "${LIGHTRAG_INGESTION_TIMEOUT_SECONDS:-1800}"
+    assert env.get("LIGHTRAG_POLL_INTERVAL_SECONDS") == "${LIGHTRAG_POLL_INTERVAL_SECONDS:-2}"

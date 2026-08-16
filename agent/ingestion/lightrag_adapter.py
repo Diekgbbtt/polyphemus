@@ -1,6 +1,7 @@
+import math
+import time
 from pathlib import Path
-from time import sleep
-from typing import Any
+from typing import Any, Callable
 import hashlib
 import shutil
 
@@ -28,12 +29,29 @@ class LightRAGIngestionAdapter:
         client,
         poll_interval_seconds: float = 2.0,
         max_upload_attempts: int = 3,
-        max_poll_attempts: int = 60,
+        max_poll_attempts: int | None = None,
+        timeout_seconds: float | None = None,
+        monotonic: Callable[[], float] | None = None,
+        sleep_fn: Callable[[float], None] | None = None,
     ):
+        if max_poll_attempts is not None and timeout_seconds is not None:
+            raise ValueError(
+                "max_poll_attempts and timeout_seconds are mutually exclusive; "
+                "provide exactly one"
+            )
+        if max_poll_attempts is None and timeout_seconds is None:
+            timeout_seconds = 1800.0
+        if timeout_seconds is not None and (
+            not math.isfinite(timeout_seconds) or timeout_seconds <= 0
+        ):
+            raise ValueError("timeout_seconds must be a finite positive number of seconds")
         self.client = client
         self.poll_interval_seconds = poll_interval_seconds
         self.max_upload_attempts = max_upload_attempts
         self.max_poll_attempts = max_poll_attempts
+        self.timeout_seconds = timeout_seconds
+        self._monotonic = monotonic or time.monotonic
+        self._sleep = sleep_fn or time.sleep
 
     def ingest_markdown(self, markdown_path: Path, *, source_key: str) -> LightRAGIngestionResult:
         upload_path = _upload_named_copy(Path(markdown_path), source_key)
@@ -42,36 +60,71 @@ class LightRAGIngestionAdapter:
         finally:
             upload_path.unlink(missing_ok=True)
         track_id = _extract_track_id(upload_response)
+        if self.timeout_seconds is not None:
+            return self._poll_until_deadline(track_id)
         for _ in range(self.max_poll_attempts):
             status_response = self.client.track_status(track_id)
             status = _normalize_status(status_response)
             if status == "processed":
-                document_id = _extract_document_id(status_response)
-                if isinstance(document_id, str):
-                    document_id = document_id.strip()
-                if not document_id:
-                    raise LightRAGAdapterError(
-                        "LIGHTRAG_DOCUMENT_ID_MISSING",
-                        "LightRAG did not return a valid document ID",
-                        retryable=False,
-                    )
-                return LightRAGIngestionResult(
-                    track_id=track_id,
-                    document_id=document_id,
-                    status=status,
-                )
+                return self._processed_result(track_id, status_response)
             if status == "failed":
                 raise LightRAGAdapterError(
                     "LIGHTRAG_INGESTION_FAILED",
-                    _extract_error_message(status_response),
+                    "LightRAG ingestion failed",
                     retryable=False,
                 )
             if self.poll_interval_seconds > 0:
-                sleep(self.poll_interval_seconds)
+                self._sleep(self.poll_interval_seconds)
         raise LightRAGAdapterError(
             "LIGHTRAG_TIMEOUT",
             "LightRAG did not reach a terminal status before timeout",
             retryable=True,
+        )
+
+    def _poll_until_deadline(self, track_id: str) -> LightRAGIngestionResult:
+        deadline = self._monotonic() + self.timeout_seconds
+        while True:
+            if self._monotonic() >= deadline:
+                break
+            status_response = self.client.track_status(track_id)
+            status = _normalize_status(status_response)
+            if status == "processed":
+                return self._processed_result(track_id, status_response)
+            if status == "failed":
+                raise LightRAGAdapterError(
+                    "LIGHTRAG_INGESTION_FAILED",
+                    "LightRAG ingestion failed",
+                    retryable=False,
+                )
+            remaining = deadline - self._monotonic()
+            if remaining <= 0:
+                break
+            if self.poll_interval_seconds > 0:
+                self._sleep(min(self.poll_interval_seconds, remaining))
+        raise LightRAGAdapterError(
+            "LIGHTRAG_TIMEOUT",
+            "LightRAG did not reach a terminal status before timeout",
+            retryable=True,
+        )
+
+    def _processed_result(
+        self,
+        track_id: str,
+        status_response: dict[str, Any],
+    ) -> LightRAGIngestionResult:
+        document_id = _extract_document_id(status_response)
+        if isinstance(document_id, str):
+            document_id = document_id.strip()
+        if not document_id:
+            raise LightRAGAdapterError(
+                "LIGHTRAG_DOCUMENT_ID_MISSING",
+                "LightRAG did not return a valid document ID",
+                retryable=False,
+            )
+        return LightRAGIngestionResult(
+            track_id=track_id,
+            document_id=document_id,
+            status="processed",
         )
 
     def delete_document(self, document_id: str, *, delete_llm_cache: bool = True) -> dict[str, Any]:
@@ -111,7 +164,7 @@ class LightRAGIngestionAdapter:
                     retryable=True,
                 )
             if self.poll_interval_seconds > 0:
-                sleep(self.poll_interval_seconds)
+                self._sleep(self.poll_interval_seconds)
         if last_error is not None:
             raise last_error
         raise LightRAGAdapterError("LIGHTRAG_UNAVAILABLE", "LightRAG upload did not run", retryable=True)
@@ -173,18 +226,3 @@ def _documents_status(payload: dict[str, Any]) -> str | None:
     if statuses and all(status in {"processed", "completed", "complete", "done"} for status in statuses):
         return "processed"
     return "processing"
-
-
-def _extract_error_message(payload: dict[str, Any]) -> str:
-    error = payload.get("error") or payload.get("error_msg")
-    if error:
-        return str(error)
-    documents = payload.get("documents")
-    if isinstance(documents, list):
-        for document in documents:
-            if not isinstance(document, dict):
-                continue
-            document_error = document.get("error") or document.get("error_msg")
-            if document_error:
-                return str(document_error)
-    return "LightRAG ingestion failed"
