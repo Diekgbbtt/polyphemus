@@ -181,8 +181,9 @@ A module's `ThreadPoolExecutor` is created lazily on the first offload, sized by
 
 ## 6. Determinism and the resume seam
 
-- Every `SessionAddress` `thread_id` is a pure function of `(module, run, phase, tool, discriminator)`; no UUID or time source enters the composition. The address audit (part of the workstream) proves this by test so post-crash enumeration keys are stable.
-- `agent_contexts(run_id, phase, tool)` reads the module indexes (lock-guarded, read-only) and enumerates the committed pod contexts of a run. It contains NO resumption logic; it is the documented contract a future resume agent implements against (G7a).
+- Every `SessionAddress` `thread_id` is a pure function of `(module, run, phase, tool, discriminator)`; no UUID or time source enters the composition. The address audit proves this by test so post-crash enumeration keys are stable. The audit is a LIVE test the suite keeps running: the composition half in `tests/test_session_address.py` (#119, pinned hand-escaped literals across the full discriminating matrix) and the resume-seam half in `tests/app/test_resume_seam_audit.py` (#124: the same matrix committed through real module contexts and enumerated byte-identically across repeated calls, with the same pinned literals, an over-long discriminator, a no-UUID/no-epoch shape check, and a structural import audit that forbids uuid/time/random/datetime/secrets/os at module scope in both `session_address.py` and `checkpoints.py`).
+- `agent_contexts(run_id, phase, tool)` reads the module indexes (lock-guarded, read-only) and enumerates the committed pod contexts of a run. It contains NO resumption logic; it is the documented contract a future resume agent implements against (G7a). Absence of a run/phase/tool is an EMPTY enumeration, never an error.
+- **Upstream compatibility (#124)**: `agent_contexts` reads the same name-keyed `ModuleIndex` registry the manager's module flush hooks iterate - a run scheduled through `RuntimeManager.schedule` whose stateful turns commit under its `module_context` IS what the enumeration returns from the API thread. No new cross-thread surface exists beyond the documented read-only function; the manager adds no enumeration verb of its own.
 
 ## 7. What the tests exercise
 
