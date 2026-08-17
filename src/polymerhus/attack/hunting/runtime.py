@@ -12,11 +12,18 @@ plane drives and the tear-down hooks it calls:
                              when the pass degraded), and reaps the run's actor
                              via the module's stop path. Fail-open: a
                              collaborator failure never raises through the
-                             control plane - it lands a terminal status.
+                             control plane - it lands a terminal status. The
+                             blocking-sync-pg calls (`create_hunting_run`,
+                             `set_hunting_run_status`) offload via
+                             `asyncio.to_thread` onto the shared executor, never
+                             the worker loop.
   stop_hunting             - the phase-1 hard stop: cancels the run's task, reaps
                              the run's actor, persists `stopped` (the append-only
                              store already preserves the partial trail).
-  flush_hunting_checkpointer - the tear-down flush hook, fail-open.
+  flush_hunting_checkpointer - the tear-down flush hook (#123): archive the
+                             hunting module in-memory checkpointer index into the
+                             still-open pooled saver via the shared
+                             `flush_module_index("hunting")` seam, fail-open.
   schedule_hunting / cancel_hunting - the marshalling harness: drive the
                              control plane's `runtime.schedule` /
                              `runtime.cancel_run`. Since #122 there is no
@@ -31,7 +38,6 @@ imported lazily inside the functions that need them.
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import logging
 import uuid
 from contextlib import asynccontextmanager
@@ -42,23 +48,20 @@ if TYPE_CHECKING:
 
 logger = logging.getLogger(__name__)
 
-# The hunting module-context ContextVar (the seam's `module_context("hunting")`).
-# `asyncio.to_thread` and concurrent.futures copy the context, so work offloaded
-# from hunting code resolves the hunting pool and the hunting checkpointer
-# automatically once the runtime-independence control-plane machinery lands.
-_MODULE_CTX: contextvars.ContextVar[str | None] = (
-    contextvars.ContextVar("hunting-module-context", default=None)
-)
-
 
 @asynccontextmanager
 async def hunting_module_context():
-    """Set the hunting module context for the entry point's full duration."""
-    token = _MODULE_CTX.set("hunting")
-    try:
+    """Set the hunting module context for the entry point's full duration.
+
+    Delegates to the SHARED `module_context("hunting")` seam
+    (`polymerhus.app.llm.checkpoints`), never a private hunting-only var: while
+    it is set, `get_session_checkpointer()` resolves the hunting module's
+    in-memory index, and `copy_context` carries the var into `asyncio.to_thread`
+    and executor work, so offloaded hunting turns resolve the same index."""
+    from polymerhus.app.llm.checkpoints import module_context  # noqa: PLC0415
+
+    with module_context("hunting"):
         yield
-    finally:
-        _MODULE_CTX.reset(token)
 
 
 def _app_runtime():
@@ -161,7 +164,12 @@ async def start_hunting(
         hunting_run_id = run_id
         if hunting_run_id is None:
             try:
-                hunting_run_id = pg.create_hunting_run(project_id)
+                # Blocking-sync-PG offloads onto the shared executor (#123): the
+                # accessor opens/connects a psycopg connection, so it must never
+                # block the worker loop.
+                hunting_run_id = await asyncio.to_thread(
+                    pg.create_hunting_run, project_id
+                )
             except Exception:  # noqa: BLE001 - fail-open when PG is down
                 logger.warning(
                     "start_hunting: could not open the hunting_runs row; "
@@ -206,7 +214,9 @@ async def start_hunting(
                 )
             if status is not None:
                 try:
-                    pg.set_hunting_run_status(hunting_run_id, status)
+                    await asyncio.to_thread(
+                        pg.set_hunting_run_status, hunting_run_id, status
+                    )
                 except Exception:  # noqa: BLE001 - fail-open
                     logger.warning(
                         "start_hunting: could not persist %r for %s (fail-open)",
@@ -234,7 +244,7 @@ async def stop_hunting(hunting_run_id: str) -> None:
                 "stop_hunting: actor reap failed for %s (fail-open)", hunting_run_id
             )
         try:
-            pg.set_hunting_run_status(hunting_run_id, "stopped")
+            await asyncio.to_thread(pg.set_hunting_run_status, hunting_run_id, "stopped")
         except Exception:  # noqa: BLE001 - fail-open
             logger.warning(
                 "stop_hunting: could not persist 'stopped' for %s (fail-open)",
@@ -243,21 +253,14 @@ async def stop_hunting(hunting_run_id: str) -> None:
 
 
 def flush_hunting_checkpointer() -> None:
-    """The tear-down flush hook (seam 3.1): flush the in-memory checkpointer index
-    into the pooled PG saver. The per-module in-memory index + flush lands with
-    the runtime-independence control-plane workstream; until then this build's
-    pooled `PostgresSaver` writes live, so the hook is a safe no-op - fail-open,
-    never raises."""
+    """The tear-down flush hook (seam 3.1, #123): archive the hunting module's
+    in-memory checkpointer index into the still-open #94 pooled saver via the
+    SHARED `flush_module_index("hunting")` seam (`polymerhus.app.llm.checkpoints`),
+    never a private hunting-only path. Fail-open: never raises."""
     try:
-        from polymerhus.app.llm import checkpoints as cp  # noqa: PLC0415
-        saver = cp.get_session_checkpointer()
-        flusher = getattr(saver, "flusher", None)
-        if flusher is not None:
-            flusher()
-            return
-        logger.debug(
-            "flush_hunting_checkpointer: no in-memory index to flush in this "
-            "build; the pooled saver writes live (no-op)"
+        from polymerhus.app.llm.checkpoints import (  # noqa: PLC0415
+            flush_module_index,
         )
+        flush_module_index("hunting")
     except Exception as exc:  # noqa: BLE001 - fail-open hook, never raises
         logger.warning("flush_hunting_checkpointer: flush failed (fail-open): %s", exc)

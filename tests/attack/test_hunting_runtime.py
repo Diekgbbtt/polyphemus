@@ -187,6 +187,80 @@ def test_stop_hunting_cancels_a_running_run(monkeypatch):
         rm.shutdown()
 
 
+# --- #123: the shared module-context seam + the to-thread pg offloads ----------
+
+def test_hunting_module_context_sets_the_shared_module_seam():
+    """#123 AC: hunting_module_context delegates to the SHARED
+    module_context("hunting") seam (`app/llm/checkpoints`), never a private
+    hunting-only var - while it is set the shared context var reads "hunting",
+    get_session_checkpointer resolves the hunting module's index (also inside
+    to_thread executor work, via copy_context), and the context resets on exit
+    so the shared fallback resolves again."""
+    from polymerhus.app.llm import checkpoints as C
+
+    async def probe():
+        async with hunting_runtime.hunting_module_context():
+            on_loop = C._MODULE_CTX.get()
+            cp = C.get_session_checkpointer()
+            offloaded = await asyncio.to_thread(C.get_session_checkpointer)
+            return on_loop, cp, offloaded
+
+    on_loop, cp, offloaded = asyncio.run(probe())
+    fallback = C.get_session_checkpointer()
+    assert on_loop == "hunting"
+    assert cp is not fallback
+    assert cp._index.module == "hunting"
+    assert offloaded is cp
+    assert C.get_session_checkpointer() is fallback  # context reset on exit
+
+
+def test_hunting_pg_calls_offload_via_asyncio_to_thread(tmp_path, monkeypatch):
+    """#123 AC: the three blocking-sync-pg calls (create_hunting_run in
+    start_hunting; set_hunting_run_status in start_hunting's finally and in
+    stop_hunting) route through `asyncio.to_thread` onto the shared executor -
+    a spied to_thread proves the pg accessors are ONLY reached from the worker
+    loop through the offload, never as direct sync calls."""
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+
+    offloaded: list[tuple[object, tuple]] = []
+    orig_to_thread = hunting_runtime.asyncio.to_thread
+
+    def spied_to_thread(fn, /, *args, **kwargs):
+        offloaded.append((fn, args))
+        return orig_to_thread(fn, *args, **kwargs)
+
+    monkeypatch.setattr(hunting_runtime.asyncio, "to_thread", spied_to_thread)
+
+    def dispatch(config, routed=()):
+        return DispatchResult(
+            spec_ref="spec-1", pod_result_ref="pod-1",
+            hypothesis_verdict="successful", feedback="ok",
+        )
+
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
+        dispatch_fn=dispatch,
+    ))
+    asyncio.run(hunting_runtime.stop_hunting(hid))
+
+    pg_offloads = [
+        fn for fn, _ in offloaded
+        if fn in (fake.create_hunting_run, fake.set_hunting_run_status)
+    ]
+    assert pg_offloads == [
+        fake.create_hunting_run,
+        fake.set_hunting_run_status,
+        fake.set_hunting_run_status,
+    ]
+    assert fake.statuses == [
+        ("running", "rt-hunt-0001"),
+        ("rt-hunt-0001", "complete"),
+        ("rt-hunt-0001", "stopped"),
+    ]
+
+
 # --- the tear-down flush hook (seam 3.1) ---------------------------------------
 
 def test_flush_hunting_checkpointer_is_a_safe_noop():
@@ -194,19 +268,19 @@ def test_flush_hunting_checkpointer_is_a_safe_noop():
     hunting_runtime.flush_hunting_checkpointer()
 
 
-def test_flush_hunting_checkpointer_calls_a_flusher_when_present(monkeypatch):
+def test_flush_hunting_checkpointer_uses_the_shared_module_index_seam(monkeypatch):
+    """#123: the tear-down flush hook archives the hunting module's in-memory
+    checkpointer index through the SHARED `flush_module_index("hunting")` seam
+    (never a private hunting-only path), so the fan-out reaches the index the
+    control-plane checkpointer resolved."""
     calls: list[str] = []
 
-    class _Saver:
-        def __init__(self):
-            self.flusher = lambda: calls.append("flushed")  # noqa: E731
-
     monkeypatch.setattr(
-        "polymerhus.app.llm.checkpoints.get_session_checkpointer",
-        lambda: _Saver(),
+        "polymerhus.app.llm.checkpoints.flush_module_index",
+        lambda module: calls.append(module),
     )
     hunting_runtime.flush_hunting_checkpointer()
-    assert calls == ["flushed"]
+    assert calls == ["hunting"]
 
 
 # --- the scheduling marshalling harness (seam 2.2) ------------------------------
