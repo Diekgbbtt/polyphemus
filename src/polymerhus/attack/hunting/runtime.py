@@ -17,12 +17,12 @@ plane drives and the tear-down hooks it calls:
                              the run's actor, persists `stopped` (the append-only
                              store already preserves the partial trail).
   flush_hunting_checkpointer - the tear-down flush hook, fail-open.
-  schedule_hunting / cancel_hunting - the marshalling harness: use the control
-                             plane's `runtime.schedule` / `runtime.cancel_run`
-                             when `polymerhus.app.runtime` has landed; otherwise
-                             a local in-process fallback (an asyncio task
-                             registry) with a warning - so the module keeps
-                             working before the control plane lands.
+  schedule_hunting / cancel_hunting - the marshalling harness: drive the
+                             control plane's `runtime.schedule` /
+                             `runtime.cancel_run`. Since #122 there is no
+                             in-process fallback - `hunting_control_plane_available()`
+                             is the fail-closed gate the launch endpoint checks
+                             before any real run may boot.
 
 Per CODING_STANDARD section 6 this module performs no I/O and opens no
 connection at import: the orchestration symbols and the runtime manager are
@@ -33,7 +33,6 @@ from __future__ import annotations
 import asyncio
 import contextvars
 import logging
-import threading
 import uuid
 from contextlib import asynccontextmanager
 from typing import TYPE_CHECKING
@@ -67,8 +66,8 @@ def _app_runtime():
     (the module import still fails) or is not active (no manager running).
 
     The module existing is not enough: `schedule`/`cancel_run` raise when no
-    manager is active, so a caller must fall back to the in-process path unless
-    `get_active_runtime()` returns a live manager (#121 regression guard)."""
+    manager is active, so a caller must fail closed unless `get_active_runtime()`
+    returns a live manager (#121 regression guard)."""
     try:
         from polymerhus.app.runtime import get_active_runtime
         return get_active_runtime()
@@ -76,61 +75,53 @@ def _app_runtime():
         return None
 
 
+def _require_runtime():
+    runtime = _app_runtime()
+    if runtime is None:
+        raise RuntimeError(
+            "hunting control-plane runtime is not active; "
+            "hunting_control_plane_available() must gate the launch"
+        )
+    return runtime
+
+
 def hunting_control_plane_available() -> bool:
     """True once the control plane's `polymerhus.app.runtime` has landed (the
     hunting LOOP exists to schedule real runs). The API's fail-closed gate: a
     real orchestration pass (LLM turns) must never be smuggled onto the uvicorn
-    request loop by the in-process fallback, so the launch surface 503s until
+    request loop by an in-process fallback, so the launch surface 503s until
     the control plane is present."""
     return _app_runtime() is not None
 
 
 def schedule_hunting(coro: Coroutine[Any, Any, Any], *, name: str) -> Any:
-    """Schedule a hunting-run coroutine onto the hunting loop (seam 2.2).
-
-    Uses the control plane's `runtime.schedule("hunting", coro, name=name)` when
-    it has landed. Until then, the in-process fallback runs the coroutine as a
-    task on the caller's event loop; `start_hunting` registers it against its
-    `hunting_run_id` so `cancel_hunting` can cancel it."""
-    runtime = _app_runtime()
-    if runtime is None:
-        logger.warning(
-            "schedule_hunting: polymerhus.app.runtime has not landed; "
-            "running the hunting run in-process (fallback)"
-        )
-        return asyncio.create_task(coro)
-    return runtime.schedule("hunting", coro, name=name)
+    """Schedule a hunting-run coroutine onto the worker loop (seam 2.2):
+    `runtime.schedule("hunting", coro, name=name)`. No in-process fallback
+    since #122 - the launch endpoint's `hunting_control_plane_available()`
+    gate already failed closed when no manager is active."""
+    return _require_runtime().schedule("hunting", coro, name=name)
 
 
 def cancel_hunting(hunting_run_id: str) -> None:
-    """The phase-1 cancellation seam (seam 2.2): `runtime.cancel_run("hunting",
-    hunting_run_id)` once the control plane has landed; else cancel the
-    registered in-process task (a no-op when none is running)."""
+    """The phase-1 cancellation seam (seam 2.2):
+    `runtime.cancel_run("hunting", hunting_run_id)`. Fail-open: with no active
+    runtime, or a run that has already left the registry (completed, or never
+    scheduled), cancellation is a safe no-op - so `stop_hunting`'s teardown
+    never raises through the control plane."""
     runtime = _app_runtime()
-    if runtime is not None:
-        runtime.cancel_run("hunting", hunting_run_id)
+    if runtime is None:
+        logger.warning(
+            "cancel_hunting: no active runtime; run %s left as-is (fail-open)",
+            hunting_run_id,
+        )
         return
-    with _ACTIVE_LOCK:
-        task = _ACTIVE_TASKS.pop(hunting_run_id, None)
-    if task is not None and not task.done():
-        task.cancel()
-
-
-# The in-process fallback registry: `hunting_run_id` -> the running asyncio task.
-_ACTIVE_TASKS: dict[str, asyncio.Task] = {}
-_ACTIVE_LOCK = threading.Lock()
-
-
-def _register_active(run_id: str) -> None:
-    task = asyncio.current_task()
-    if task is not None:
-        with _ACTIVE_LOCK:
-            _ACTIVE_TASKS[run_id] = task
-
-
-def _unregister_active(run_id: str) -> None:
-    with _ACTIVE_LOCK:
-        _ACTIVE_TASKS.pop(run_id, None)
+    try:
+        runtime.cancel_run("hunting", hunting_run_id)
+    except Exception:  # noqa: BLE001 - already gone is fine
+        logger.warning(
+            "cancel_hunting: no registered hunting run %s to cancel (no-op)",
+            hunting_run_id,
+        )
 
 
 async def start_hunting(
@@ -177,7 +168,6 @@ async def start_hunting(
                     "running unlogged (fail-open)"
                 )
                 hunting_run_id = str(uuid.uuid4())
-        _register_active(hunting_run_id)
 
         if tools is None:
             try:
@@ -223,7 +213,6 @@ async def start_hunting(
                         status,
                         hunting_run_id,
                     )
-            _unregister_active(hunting_run_id)
         return hunting_run_id
 
 

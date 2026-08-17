@@ -8,7 +8,7 @@ Vocabulary derived from `docs/design/domain-model.md` and the REST surface in `d
 ## Position in the map
 
 Project-management sits *above* recon: it LAUNCHES a recon run and then treats the run as something to observe.
-The dependency is deliberately one-directional and lazy - the launch endpoint imports the pipeline only at call time (`_launch_pipeline`), so recon never depends on this context and the two never cycle.
+The dependency is deliberately one-directional and lazy - the launch endpoint imports the pipeline only at call time (`_schedule_pipeline`), so recon never depends on this context and the two never cycle.
 Project and settings state is read and written through the shared Postgres gateway (`app.clients.pg`), which stays a thin generic persistence layer; the operator use-cases that give that state meaning live here.
 
 ## The atoms
@@ -35,6 +35,6 @@ The Run *entity* itself (its phases, jobs, heartbeat, terminal status) is Recon 
 
 ## The layering
 
-- `api.py` - the thin HTTP adapter. Every handler delegates to `repository` and maps its domain errors onto status codes (`ProjectNotFound`/`RunNotFound` -> 404, `ValueError` -> 400). It owns the one bit of orchestration that is HTTP-adjacent: the `_launch_pipeline` fire-and-forget seam.
+- `api.py` - the thin HTTP adapter. Every handler delegates to `repository` and maps its domain errors onto status codes (`ProjectNotFound`/`RunNotFound` -> 404, `ValueError` -> 400). It owns the one bit of orchestration that is HTTP-adjacent: the `_schedule_pipeline` fire-and-forget seam.
 - `repository.py` - the operator use-case layer (the application layer). Each project/settings/run operation is a plain function over the Postgres gateway that raises domain errors, never HTTP. A deep module over a thin gateway (CODING_STANDARD §0).
 - `auth_context.py` - the AuthContext value-object contract and its validation invariant.

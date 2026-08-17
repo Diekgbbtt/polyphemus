@@ -9,7 +9,7 @@ that maps those onto status codes.
 This is a deep module over a thin gateway (CODING_STANDARD §0): the raw SQL
 stays generic in `pg`, the operator's use-cases (launch guards, liveness
 annotation, settings validation) are modelled here. The context LAUNCHES recon
-via the `_launch_pipeline` seam owned by `api` - it never imports the pipeline
+via the `_schedule_pipeline` seam owned by `api` - it never imports the pipeline
 eagerly, keeping the dependency `project_management -> recon` lazy.
 """
 from __future__ import annotations

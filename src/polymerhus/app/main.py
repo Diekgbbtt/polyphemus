@@ -58,6 +58,17 @@ async def _startup():
     # its own SessionAddress thread. Fail-open (in-process fallback when Postgres is absent).
     from polymerhus.app.llm import setup_session_checkpointer
     setup_session_checkpointer()
+    # Construct the module control plane (#118/#121): ONE shared worker loop
+    # (the asyncio.Runner thread) owns every module task; the manager itself is
+    # a plain coordinator on the API thread. Modules register RUNNING and the
+    # API routes schedule/cancel through the runtime from here on (§5.1).
+    from polymerhus.app.runtime import RuntimeManager
+    runtime = RuntimeManager()
+    runtime.start()
+    runtime.register_module("recon")
+    runtime.register_module("analysis")
+    runtime.register_module("hunting")
+    app.state.runtime = runtime
     log_tracing_status()
     pg.reap_stale_runs(config.REAP_TTL_SECONDS)  # sweep zombies left by a prior crash
     # #75 D10: the in-memory chunk queue dies with the process, so any analysis run
@@ -84,6 +95,13 @@ async def _shutdown():
     task = getattr(app.state, "reaper_task", None)
     if task:
         task.cancel()
+    # The ratified shutdown walk (§5.12, G7c): stop accepting, hard-cancel
+    # in-flight runs, flush each module's checkpointer index into the STILL-OPEN
+    # #94 pool, close the shared executor, stop the worker loop. THEN close the
+    # pool - so the fan-out's flush target is alive for the tail.
+    runtime = getattr(app.state, "runtime", None)
+    if runtime is not None:
+        runtime.shutdown()
     from polymerhus.app.llm import close_session_checkpointer
     close_session_checkpointer()  # close the pooled stateful-session checkpointer
 

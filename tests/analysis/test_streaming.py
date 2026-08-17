@@ -123,9 +123,14 @@ def _run_queued(settings, pass_fn, registry=None, monkeypatch=None):
     Under #75 the queued pipeline no longer writes analysis stats onto the recon
     run: analysis is its own run, started by the pipeline via lifecycle.start_analysis
     and recorded through pg.set_analysis_run_status. We patch those pg calls with a
-    recorder (unit tier: no DB) and read back the terminal analysis stats."""
+    recorder (unit tier: no DB) and read back the terminal analysis stats.
+
+    Since #122 `start_analysis` needs the module runtime: the helper boots one,
+    registers recon + analysis, drives the pipeline, and awaits the analysis
+    supervisor to drain by watching the run leave the runtime's registry."""
+    import time
+
     import polymerhus.app.clients.pg as pg
-    from polymerhus.analysis import lifecycle
 
     captured: dict = {}
     if monkeypatch is not None:
@@ -148,13 +153,29 @@ def _run_queued(settings, pass_fn, registry=None, monkeypatch=None):
             read_assets=lambda node_type, project_id, where=None: [{"name": "seed"}],
             feed_mode="queued", pass_fn=pass_fn,
         )
-        # recon has enqueued the terminal marker; await the analysis supervisor to
-        # drain the FIFO and persist its terminal status (the decoupled join point).
-        task = lifecycle._SUPERVISORS.get("run1")
-        if task is not None:
-            await task
 
-    asyncio.run(_drive())
+    from polymerhus.app.runtime import RuntimeManager
+
+    rm = RuntimeManager()
+    rm.start()
+    rm.register_module("recon")
+    rm.register_module("analysis")
+    try:
+        # Production schedules run_pipeline through the recon module, so the feed
+        # and the analysis supervisor share the worker loop (the supervisor waits
+        # on the feed on the SAME loop that built it). Drive it the same way here.
+        recon = rm.schedule("recon", _drive(), name="run1")
+        recon.result(timeout=10)
+        # recon has enqueued the terminal marker; the analysis supervisor drains
+        # the FIFO on the worker loop and unregisters the run once done (the
+        # decoupled join point, surfaced through the runtime's registry).
+        deadline = time.monotonic() + 10
+        while rm.has_run("analysis", "run1") and time.monotonic() < deadline:
+            time.sleep(0.01)
+        assert not rm.has_run("analysis", "run1"), "analysis run never settled"
+    finally:
+        rm.shutdown()
+
     return reg, captured
 
 

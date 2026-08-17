@@ -646,7 +646,7 @@ def test_start_analysis_schedules_through_the_runtime_when_active(runtime, monke
     assert runtime.run_ids("analysis") == ["run-seam"]
 
 
-def test_api_launch_pipeline_routes_through_the_runtime_when_active(runtime, monkeypatch):
+def test_api_schedule_pipeline_routes_through_the_runtime_when_active(runtime, monkeypatch):
     runtime.register_module("recon")
 
     async def fake_run_pipeline(project_id, *, run_id, job_subset=None, **kw):
@@ -655,37 +655,26 @@ def test_api_launch_pipeline_routes_through_the_runtime_when_active(runtime, mon
 
     monkeypatch.setattr(api_mod, "run_pipeline", fake_run_pipeline)
 
-    api_mod._launch_pipeline("p1", "run-lp", None)
+    api_mod._schedule_pipeline("p1", "run-lp", None)
     _wait_until(lambda: runtime.has_run("recon", "run-lp"), timeout=5)
     runtime.cancel_run("recon", "run-lp")
 
 
-# --- standalone fallback (no runtime): legacy path still works --------------
+# --- full cut (#122): no-runtime paths fail closed ---------------------------
 
-def test_lifecycle_works_without_an_active_runtime(monkeypatch):
+def test_lifecycle_fails_closed_without_an_active_runtime(monkeypatch):
     _stub_pg(monkeypatch)
 
-    async def scenario():
-        arid = lifecycle.start_analysis("p1", "run-standalone")
-        assert arid is not None
-        assert lifecycle.is_analysing("run-standalone") is True
-        await lifecycle.stop_analysis("run-standalone")
-
-    asyncio.run(scenario())
-    assert lifecycle.is_analysing("run-standalone") is False
+    with pytest.raises(RuntimeError):
+        lifecycle.start_analysis("p1", "run-standalone")
 
 
-def test_api_launch_fallback_needs_a_loop_and_registers_the_task(monkeypatch):
+def test_api_launch_fails_closed_without_an_active_runtime(monkeypatch):
     async def fake_run_pipeline(project_id, *, run_id, job_subset=None, **kw):
         await asyncio.sleep(0.05)
         return "ran"
 
     monkeypatch.setattr(api_mod, "run_pipeline", fake_run_pipeline)
 
-    async def launch_scenario():
-        api_mod._launch_pipeline("p1", "run-fallback", None)
-        task = api_mod._RECON_TASKS.get("run-fallback")
-        assert task is not None
-        task.cancel()
-
-    asyncio.run(launch_scenario())
+    with pytest.raises(RuntimeError, match="requires the module runtime"):
+        api_mod._schedule_pipeline("p1", "run-fallback", None)
