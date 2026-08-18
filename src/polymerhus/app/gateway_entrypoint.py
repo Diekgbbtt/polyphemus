@@ -68,8 +68,17 @@ PROXY_HEALTH_URL = f"http://127.0.0.1:{PROXY_PORT}{PROXY_HEALTH_PATH}"
 # --- Bounded poll defaults ---------------------------------------------------
 # Tuned for a proxy that must open a postgres connection at boot. The bound is
 # finite so a dead proxy never hangs the container; the interval is short so a
-# healthy proxy is up within seconds.
-DEFAULT_HEALTH_MAX_ATTEMPTS = 60
+# healthy proxy is up within seconds. The 600-attempt (10 min) budget is
+# MEASURED, not generous: the prisma client that litellm 1.96.0's proxy
+# imports at boot ships a 24 MB generated `prisma/types.py` whose import alone
+# costs 40-120 s of pure CPU (measured 2026-08-17 in the built image, with no
+# network and a warm pyc cache), litellm's startup diff check spawns the prisma
+# CLI again (~110-165 s even as a no-op), and the entrypoint's own migration
+# step runs BEFORE the poll starts - a cold proxy realistically needs 4-8
+# minutes to bind (the compose layer also sets
+# LITELLM_LOCAL_MODEL_COST_MAP=True to remove the remote cost-map fetch,
+# which added up to 150 s of network variance).
+DEFAULT_HEALTH_MAX_ATTEMPTS = 600
 DEFAULT_HEALTH_INTERVAL_S = 1.0
 DEFAULT_HEALTH_TIMEOUT_S = 2.0
 
@@ -105,7 +114,16 @@ def _proxy_command(config_path: str | None = None) -> list[str]:
     0.0.0.0:8080 (published). The two processes keep INDEPENDENT reload
     policies (ADR D1): the proxy NEVER reloads (its command is fixed here,
     with no `--reload`); the agent keeps `--reload` in the dev overlay via
-    `AGENT_UVICORN_ARGS` (see `_agent_command`)."""
+    `AGENT_UVICORN_ARGS` (see `_agent_command`).
+
+    No migration-resolver flags: `DATABASE_URL` points at the gateway's OWN
+    database (`polymerhus_gateway`, same postgres instance - ADR D1), so the
+    proxy's default boot path (`prisma migrate deploy` against an empty,
+    dedicated database) just works. Every alternative fights litellm's schema
+    ownership: pointed at a SHARED database the v1 resolver refuses (P3005,
+    non-empty schema), the v2 resolver baselines foreign tables into litellm's
+    migration ledger, and `prisma db push` DROPS every foreign table (all
+    verified live 2026-08-17)."""
     cmd: list[str] = ["litellm", "--config", config_path or "",
                       "--host", "127.0.0.1", "--port", str(PROXY_PORT)]
     if not config_path:
@@ -143,6 +161,91 @@ def _start_proxy() -> subprocess.Popen:
     surface."""
     config_path = os.environ.get("CONFIG_FILE_PATH")
     return subprocess.Popen(_proxy_command(config_path))
+
+
+# Where the litellm proxy's prisma schema + migration ledger live (the
+# `litellm-proxy-extras` package ships them). `prisma migrate deploy` must run
+# with this as the working directory so the CLI finds `schema.prisma` and
+# `prisma/migrations` - litellm's own boot code os.chdir()s here for the same
+# reason.
+def _prisma_migrations_dir() -> str:
+    import litellm_proxy_extras
+    pkg_dir = os.path.dirname(litellm_proxy_extras.__file__ or "")
+    if not pkg_dir:
+        raise ImportError("litellm_proxy_extras.__file__ unresolved")
+    return pkg_dir
+
+
+# The prisma CLI is SLOW on this hardware (110-165s per invocation even as a
+# no-op - the generated client module alone is 24 MB; measured 2026-08-17),
+# and litellm wraps its internal migrate in a hard-coded 60s subprocess
+# timeout, so litellm's own boot-time migrate times out non-deterministically.
+# We therefore own migrations as a DEPLOYMENT step (D10 ordering: migrate ->
+# proxy -> sync -> agent) with a timeout sized for the measured cost, and the
+# gateway config sets `disable_prisma_schema_update: true` so litellm skips
+# its internal migrate entirely.
+MIGRATE_TIMEOUT_S = 420
+
+# Explicit opt-out for the migration step (ADR D10/D1; the E3 e2e fix).
+# A persistent gateway database with an already-intact schema boots WITHOUT
+# re-running `prisma migrate deploy`, whose prisma CLI cold-start costs
+# 110-165 s even as a no-op (measured 2026-08-17 - the generated client alone
+# is 24 MB). The E3/E2 walkthrough runs a throwaway `docker compose run
+# --rm agent` that re-runs the entrypoint against the SHARED persistent
+# gateway database, where the schema is already applied between tests. The
+# step stays ON by default for normal boots (D10: migrate -> proxy -> sync
+# -> agent); this flag is the explicit, documented opt-out that skips it only
+# when the operator/test knows the schema is already intact. ADR D1: the
+# gateway owns its own dedicated postgres database (polymerhus_gateway).
+LITELLM_SKIP_MIGRATIONS = "LITELLM_SKIP_MIGRATIONS"
+
+
+def _run_migrations() -> None:
+    """Apply the gateway's prisma migrations BEFORE the proxy starts.
+
+    Runs `prisma migrate deploy` against `DATABASE_URL` (the gateway's
+    dedicated database - see the compose agent env). Fail-closed: a failed or
+    timed-out migration raises `GatewayStartupError` - the proxy must not
+    serve on a half-migrated schema, and the sync must not write model
+    records into missing tables (D9 cold-stop spirit).
+
+    The step is SKIPPED when `LITELLM_SKIP_MIGRATIONS` is set (non-empty) - an
+    explicit opt-out for an already-persistent, intact schema (ADR D10/D1; see
+    the constant). By default it ALWAYS runs as a real deployment step."""
+    if os.environ.get(LITELLM_SKIP_MIGRATIONS):
+        logger.info(
+            "%s set: skipping gateway schema migrations (the database schema "
+            "is already intact)", LITELLM_SKIP_MIGRATIONS)
+        return
+    if not os.environ.get("DATABASE_URL"):
+        logger.warning(
+            "DATABASE_URL not set: skipping gateway schema migrations "
+            "(store_model_in_db deployments require it)")
+        return
+    try:
+        migrations_dir = _prisma_migrations_dir()
+    except ImportError:  # pragma: no cover - the image bakes the package
+        logger.error(
+            "litellm_proxy_extras not importable: cannot run gateway schema "
+            "migrations")
+        raise GatewayStartupError("gateway migrations unavailable") from None
+    cmd = ["prisma", "migrate", "deploy"]
+    logger.info("gateway schema migrations: %s (timeout %ds)",
+                " ".join(cmd), MIGRATE_TIMEOUT_S)
+    try:
+        result = subprocess.run(cmd, cwd=migrations_dir,
+                                capture_output=True, text=True,
+                                timeout=MIGRATE_TIMEOUT_S)
+    except subprocess.TimeoutExpired as exc:
+        raise GatewayStartupError(
+            f"gateway schema migrations timed out after {MIGRATE_TIMEOUT_S}s"
+        ) from exc
+    if result.returncode != 0:
+        logger.error("gateway migrations failed:\nstdout:\n%s\nstderr:\n%s",
+                     result.stdout, result.stderr)
+        raise GatewayStartupError(
+            f"gateway schema migrations failed (exit {result.returncode})")
+    logger.info("gateway schema migrations applied (prisma migrate deploy ok)")
 
 
 def _start_agent() -> subprocess.Popen:
@@ -245,6 +348,7 @@ def run_gateway(*,
     if run_sync is None: run_sync = _run_sync
     if start_agent is None: start_agent = _start_agent
     if propagate_signal is None: propagate_signal = _propagate_signal
+    _run_migrations()  # deployment step: migrate BEFORE the proxy serves (D10)
     proxy = start_proxy()
     children: list[subprocess.Popen] = [proxy]
 

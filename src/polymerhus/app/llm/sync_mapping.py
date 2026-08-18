@@ -14,7 +14,7 @@ I/O, reads no env var, and no function here touches a driver. The impure
 fetch/push orchestration lives in `sync.py`; the pipeline's only seams are the
 callables injected there.
 
-## Rule 1 (conservative-unknown, load-bearing)
+## Rule 1 (conservative-unknown, load-bearing; amended 2026-08-18)
 
 LiteLLM merges its own bundled cost-map defaults into `model_info` for models
 it recognises. Trusting those would re-introduce the "silent optimistic
@@ -23,6 +23,14 @@ carries the `capability_source` / `capability_synced_at` / `capability_staleness
 provenance keys, and a capability field that is unknown is NEVER encoded as a
 value - the key is simply ABSENT from the pushed `model_info`. The client-side
 reader (T3, #106) gates trust on the provenance tag.
+
+Amendment (2026-08-18, operator): an unknown model (on `/v1/models`, no
+models.dev entry) is by definition low-tier and never used, so filling
+capabilities for it is NOT required and we DO NOT attempt to suppress litellm's
+serve-time cost-map enrichment of unknown records. That enrichment is external,
+bears no `capability_source` tag, and the reader never trusts it. The sync
+still pushes only the three provenance keys for such records; litellm may add
+untrusted defaults at `/model/info` (observed on `opencode-go/hy3-preview`).
 
 ## Rule 2 (per-provider override, resolved before push)
 
@@ -59,7 +67,7 @@ as capability evidence.
 from dataclasses import dataclass, field
 from typing import Any
 
-from polymerhus.app.llm.providers import _ZEN_FAMILY
+from polymerhus.app.llm.providers import ID_KIND_ZEN, id_kind
 
 # --- Provenance keys (D5 Rule 1; the exact names are load-bearing - T3 #106
 # gates trust on them). -------------------------------------------------------
@@ -109,9 +117,9 @@ def per_million_to_per_token(usd_per_million: float) -> float:
 # against bare ids), the model id verbatim for every other provider.
 
 def strip_zen_id(model_id: str) -> str:
-    """The zen-family strip (providers.py `_ZEN_FAMILY`): the zen catalog ids
-    contain no `/`, so the last segment is always the bare id. Idempotent on a
-    bare input."""
+    """The zen-family strip (providers.py `id_kind` == `ID_KIND_ZEN`): the zen
+    catalog ids contain no `/`, so the last segment is always the bare id.
+    Idempotent on a bare input."""
     return model_id.rsplit("/", 1)[-1]
 
 
@@ -119,17 +127,39 @@ def registered_model_name(provider: str, model_id: str) -> str:
     """The litellm `model_name` registered in the gateway: the string the
     client sends in gateway mode. `<provider>/<id>`; the zen family registers
     the STRIPPED (bare) zen id so the zen gateway accepts routing."""
-    if provider in _ZEN_FAMILY:
+    if id_kind(provider) == ID_KIND_ZEN:
         return f"{provider}/{strip_zen_id(model_id)}"
     return f"{provider}/{model_id}"
 
 
 def native_litellm_model(provider: str, model_id: str) -> str:
-    """The `litellm_params.model` value: the provider-native id the upstream
-    expects. Bare zen id for the zen family; the id verbatim otherwise."""
-    if provider in _ZEN_FAMILY:
+    """The provider-NATIVE wire id the upstream expects: bare zen id for the
+    zen family (the zen gateway validates against bare ids); the id verbatim
+    otherwise."""
+    if id_kind(provider) == ID_KIND_ZEN:
         return strip_zen_id(model_id)
     return model_id
+
+
+# Every polymerhus provider is an OpenAI-compatible HTTP endpoint (the client
+# seam talks the OpenAI SDK against `base_url` for all of them), so the router
+# value is uniformly the `openai/` deployment convention: litellm strips the
+# prefix and forwards the REMAINDER verbatim as the wire model id (so a bare
+# zen id or a slashed openrouter id both survive unchanged on the wire), while
+# `api_base` + `api_key` in the same `litellm_params` carry the endpoint. A
+# BARE id (the pre-fix shape) is unroutable: litellm cannot infer a provider
+# from a bare id + custom api_base and the router rejects the deployment at
+# /model/new time ("LLM Provider NOT provided ... You passed model=<bare id>",
+# verified live 2026-08-17: the record was saved to the DB but never served).
+ROUTING_PROVIDER_PREFIX = "openai/"
+
+
+def routing_model(provider: str, model_id: str) -> str:
+    """The `litellm_params.model` ROUTING value: the OpenAI-compatible
+    deployment string litellm's router accepts (`openai/<native id>`). The
+    client-facing registered `model_name` is a SEPARATE decision
+    (`registered_model_name`) - this value never leaves the gateway."""
+    return f"{ROUTING_PROVIDER_PREFIX}{native_litellm_model(provider, model_id)}"
 
 
 # ---------------------------------------------------------------------------

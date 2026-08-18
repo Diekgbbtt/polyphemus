@@ -32,6 +32,15 @@
 #   transitively (it is the langchain/openai SDK HTTP transport); pinning it
 #   here keeps the gateway's own fetch surface auditable and decoupled from the
 #   agent's SDK pin.
+# - `prisma`: the proxy's DB layer. With `DATABASE_URL` set (ADR D1: the
+#   shared postgres, STORE_MODEL_IN_DB=True), the proxy inits its
+#   PrismaClient at boot and CRASHES without it ("No module named 'prisma'",
+#   verified 2026-08-17 against the installed 1.96.0 proxy: `prisma` lives
+#   ONLY under the `extra-proxy` extra - `litellm[proxy]` does NOT carry it -
+#   and pulling `extra-proxy` drags in azure-keyvault/google-kms/redisvl
+#   etc., none of which this deployment uses). Pinned to the extra's own
+#   range so the one-file review discipline holds.
 litellm[proxy]==1.96.0
+prisma>=0.11.0,<1.0
 fastapi==0.140.6
 httpx==0.28.1

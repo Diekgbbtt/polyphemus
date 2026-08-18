@@ -27,7 +27,7 @@ from typing import Optional
 from pydantic import BaseModel
 
 from polymerhus.app.llm.capability import resolve_capability
-from polymerhus.app.llm.providers import _ZEN_FAMILY, resolve_role
+from polymerhus.app.llm.providers import resolve_role
 
 CRAWL_TOOL_NAMES = {
     "steel_crawl_start",
@@ -146,13 +146,13 @@ def _payload_from_tool_result(out) -> dict:
 
 
 def _registered_lookup_key(provider: str, model: str) -> str:
-    """Mirror of `capability.py:_registered_name` (the T2 registered-name
-    convention, ADR D5): `<provider>/<model>` with the zen-family id stripped.
-    The reader resolves a (provider, model) pair against exactly this key;
-    the seam mirrors it only for the warn log's transparency."""
-    if provider in _ZEN_FAMILY:
-        model = model.rsplit("/", 1)[-1]
-    return f"{provider}/{model}"
+    """Mirror of `sync_mapping.registered_model_name` (the T2 registered-name
+    convention, ADR D5): `<provider>/<id>` with the zen-family (bare-catalog
+    aggregator) id stripped. The reader resolves a (provider, model) pair
+    against exactly this key; the seam mirrors it only for the warn log's
+    transparency."""
+    from polymerhus.app.llm.sync_mapping import registered_model_name
+    return registered_model_name(provider, model)
 
 
 def _refuse_crawl_without_tool_calling(body: AgenticCrawlRequest) -> str | None:

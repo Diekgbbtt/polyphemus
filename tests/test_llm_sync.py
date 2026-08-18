@@ -85,7 +85,8 @@ def _default_run_args(**kw):
         gateway=FakeGateway(),
         providers={"opencode": "https://opencode.ai/zen/v1",
                    "openai": "https://api.openai.com/v1"},
-        read_api_key=lambda provider: "dummy-key",
+        read_api_key=lambda provider: {"opencode": "sk-opencode-key",
+                                       "openai": "sk-openai-key"}[provider],
         synced_at=SYNCED_AT,
     )
     args.update(kw)
@@ -95,9 +96,10 @@ def _default_run_args(**kw):
 class FakeGateway:
     """A recording stand-in for the gateway management API client."""
 
-    def __init__(self, registered=None):
+    def __init__(self, registered=None, keys=None):
         self.registered = [dict(r) for r in (registered or [])]
         self.calls: list[tuple] = []
+        self._keys: dict[str, list[str]] = {k: list(v) for k, v in (keys or {}).items()}
 
     def list_models(self):
         return [dict(r) for r in self.registered]
@@ -131,6 +133,13 @@ class FakeGateway:
                                 "id": 999})
         return True
 
+    def ensure_virtual_key(self, key, models):
+        models = sorted(models)
+        if self._keys.get(key) == models:
+            return
+        self._keys[key] = models
+        self.calls.append(("key", key, models))
+
 
 # ---------------------------------------------------------------------------
 # Exit-code contract (D9, the T1 handoff) ------------------------------------
@@ -151,7 +160,7 @@ def test_happy_path_pushes_adds_and_snapshot():
     rc = S.run_sync(**_default_run_args(gateway=gw))
     assert rc == S.SYNC_OK
     kinds = [c[0] for c in gw.calls]
-    assert kinds == ["add", "add", "add", "add", "snapshot"]
+    assert kinds == ["add", "add", "add", "add", "key", "key", "snapshot"]
     added = {c[1] for c in gw.calls if c[0] == "add"}
     assert added == {"opencode/deepseek-v4-flash-free",
                      "opencode/deepseek-v4-pro",
@@ -164,9 +173,12 @@ def test_happy_path_known_record_has_full_provenance_and_mapping():
     S.run_sync(**_default_run_args(gateway=gw))
     _, name, params, info = next(c for c in gw.calls
                                  if c[0] == "add" and c[1] == "opencode/deepseek-v4-flash-free")
-    # Zen strip in gateway mode: bare litellm model, zen api_base (D5).
-    assert params == {"model": "deepseek-v4-flash-free",
-                      "api_base": "https://opencode.ai/zen/v1"}
+    # Zen strip in gateway mode: the openai/ ROUTING prefix + bare zen wire id
+    # (litellm strips the prefix, the zen gateway sees the bare id), zen
+    # api_base, and the upstream api_key (masked by litellm in /model/info).
+    assert params == {"model": "openai/deepseek-v4-flash-free",
+                      "api_base": "https://opencode.ai/zen/v1",
+                      "api_key": "sk-opencode-key"}
     assert info["max_input_tokens"] == 128000
     assert info["max_output_tokens"] == 32768
     assert info["input_cost_per_token"] == 0.00000014
@@ -202,8 +214,9 @@ def test_happy_path_unknown_model_registered_with_provenance_only(caplog):
         S.run_sync(**_default_run_args(gateway=gw))
     _, name, params, info = next(c for c in gw.calls
                                  if c[0] == "add" and c[1] == "opencode/deepseek-v4-pro")
-    assert params == {"model": "deepseek-v4-pro",
-                      "api_base": "https://opencode.ai/zen/v1"}
+    assert params == {"model": "openai/deepseek-v4-pro",
+                      "api_base": "https://opencode.ai/zen/v1",
+                      "api_key": "sk-opencode-key"}
     assert info == {"capability_source": "unknown",
                     "capability_synced_at": SYNCED_AT,
                     "capability_staleness": "unknown"}
@@ -233,14 +246,14 @@ def test_desired_hash_is_stable_and_order_independent():
 # Idempotent re-run: no source changes -> pushes nothing ---------------------
 # ---------------------------------------------------------------------------
 
-def _registered_after_first_run():
+def _gateway_after_first_run():
     gw = FakeGateway()
     S.run_sync(**_default_run_args(gateway=gw))
-    return gw.registered
+    return FakeGateway(registered=gw.registered, keys=dict(gw._keys))
 
 
 def test_second_run_with_no_changes_pushes_nothing():
-    gw = FakeGateway(registered=_registered_after_first_run())
+    gw = _gateway_after_first_run()
     rc = S.run_sync(**_default_run_args(gateway=gw))
     assert rc == S.SYNC_OK
     assert gw.calls == [], f"a no-change re-run must push nothing, got {gw.calls}"
@@ -249,7 +262,7 @@ def test_second_run_with_no_changes_pushes_nothing():
 def test_second_run_with_changed_catalog_pushes_full_update_only():
     # One model's price changes: the re-run updates THAT record with the FULL
     # model_info (D9: never a partial merge), nothing else.
-    gw = FakeGateway(registered=_registered_after_first_run())
+    gw = _gateway_after_first_run()
     catalog = dict(CATALOG)
     catalog["providers"]["opencode"]["models"]["deepseek-v4-flash-free"] = dict(
         CATALOG["providers"]["opencode"]["models"]["deepseek-v4-flash-free"],
@@ -268,7 +281,7 @@ def test_second_run_with_changed_catalog_pushes_full_update_only():
 
 
 def test_second_run_model_disappeared_from_existence_is_deleted():
-    gw = FakeGateway(registered=_registered_after_first_run())
+    gw = _gateway_after_first_run()
     # openai/gpt-4o-2024-08-06 drops off /v1/models.
     ids = {"opencode": {"deepseek-v4-flash-free", "deepseek-v4-pro"},
            "openai": {"gpt-4o"}}
@@ -440,10 +453,34 @@ def test_diff_ignores_litellm_added_defaults_and_volatile_synced_at():
     # keys (excluding the volatile timestamp), so a no-change re-run stays
     # idempotent (Rule 1: litellm's bundled defaults are never trusted, and
     # they never trigger a spurious update).
-    gw = FakeGateway(registered=_registered_after_first_run())
+    gw = _gateway_after_first_run()
     for r in gw.registered:
         r["model_info"]["some_litellm_default"] = "bundled"
         r["model_info"]["capability_synced_at"] = "2026-08-11T11:59:00+00:00"
+    rc = S.run_sync(**_default_run_args(gateway=gw))
+    assert rc == S.SYNC_OK
+    assert gw.calls == []
+
+
+def test_diff_ignores_unauthored_params_and_normalizes_sequences():
+    # Two churn sources found against the live proxy (2026-08-17): (1) the
+    # PATCH endpoint re-embodies updateLiteLLMParams pydantic DEFAULTS
+    # (merge_reasoning_content_in_choices, use_in_pass_through, ...) into the
+    # stored litellm_params, so a full-dict comparison never converges; (2)
+    # authored tuples (modalities) come back as JSON lists. The authored
+    # surface comparison must ignore un-authored params and normalize
+    # sequences on both sides - otherwise every run diffs 62 updates forever.
+    gw = _gateway_after_first_run()
+    for r in gw.registered:
+        params = r.setdefault("litellm_params", {})
+        params["merge_reasoning_content_in_choices"] = False
+        params["use_in_pass_through"] = False
+        params["use_litellm_proxy"] = False
+        params["use_xai_oauth"] = False
+        for key in ("modalities_in", "modalities_out"):
+            value = r["model_info"].get(key)
+            if isinstance(value, tuple):
+                r["model_info"][key] = list(value)
     rc = S.run_sync(**_default_run_args(gateway=gw))
     assert rc == S.SYNC_OK
     assert gw.calls == []
@@ -478,6 +515,10 @@ class StubHTTP:
         if method == "GET":
             return self.get_result
         return self.post_results.pop(0)
+
+    def get(self, url, *, headers=None, timeout=None):
+        self.requests.append(("GET", url, headers, None))
+        return self.get_result
 
 
 def _response(payload, status=200):
@@ -525,15 +566,20 @@ def test_gateway_client_add_model_wire_shape():
 
 
 def test_gateway_client_update_model_wire_shape():
+    # The DB-backed PATCH endpoint (/model/{model_id}/update) persists BOTH
+    # litellm_params and model_info (the old POST /model/update rewrites only
+    # litellm_params), and model_info must echo the row's model_id: pydantic
+    # fabricates a random uuid when it is absent and the handler merges it in,
+    # corrupting the row identity (verified against litellm 1.96.0 2026-08-17).
     client = StubHTTP(post_results=[_response({})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=client)
     gw.update_model(42, "openai/gpt-4o", {"model": "gpt-4o"}, {"max_input_tokens": 128000})
     method, url, headers, body = client.requests[0]
-    assert method == "POST"
-    assert url == "http://127.0.0.1:4000/model/update"
-    assert body == {"id": 42, "model_name": "openai/gpt-4o",
+    assert method == "PATCH"
+    assert url == "http://127.0.0.1:4000/model/42/update"
+    assert body == {"model_name": "openai/gpt-4o",
                     "litellm_params": {"model": "gpt-4o"},
-                    "model_info": {"max_input_tokens": 128000}}
+                    "model_info": {"max_input_tokens": 128000, "id": 42}}
 
 
 def test_gateway_client_delete_model_wire_shape():
@@ -547,17 +593,19 @@ def test_gateway_client_delete_model_wire_shape():
 
 
 def test_gateway_client_upsert_snapshot_updates_existing_else_adds():
-    # Existing snapshot -> /model/update; absent -> /model/new. The snapshot
-    # record is a pseudo-model; litellm_params carries the marker model.
+    # Existing snapshot -> PATCH /model/{model_id}/update; absent -> /model/new.
+    # The snapshot record is a pseudo-model; litellm_params carries the marker.
     http = StubHTTP(
-        get_result=_response({"data": [{"model_name": S.SNAPSHOT_MODEL_NAME, "id": 7}]}),
+        get_result=_response({"data": [{"model_name": S.SNAPSHOT_MODEL_NAME,
+                                        "model_info": {"id": 7}}]}),
         post_results=[_response({})])
     gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
     gw.upsert_snapshot({"desired_count": 4})
     method, url, headers, body = http.requests[1]
-    assert method == "POST" and url == "http://127.0.0.1:4000/model/update"
-    assert body["id"] == 7
-    assert body["litellm_params"] == {"model": S.SNAPSHOT_MODEL_NAME}
+    assert method == "PATCH" and url == "http://127.0.0.1:4000/model/7/update"
+    assert body["model_info"]["id"] == 7
+    assert body["model_info"]["desired_count"] == 4
+    assert body["litellm_params"] == {"model": f"openai/{S.SNAPSHOT_MODEL_NAME}"}
 
     http = StubHTTP(
         get_result=_response({"data": []}),
@@ -566,6 +614,57 @@ def test_gateway_client_upsert_snapshot_updates_existing_else_adds():
     gw.upsert_snapshot({"desired_count": 4})
     method, url, headers, body = http.requests[1]
     assert method == "POST" and url == "http://127.0.0.1:4000/model/new"
+
+
+def test_gateway_client_ensure_virtual_key_generates_when_absent():
+    # Absent -> POST /key/generate with the per-provider key VALUE as the key
+    # and the provider-scoped registered model names (D3 client identity).
+    http = StubHTTP(get_result=_response({}, status=404),
+                    post_results=[_response({})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    gw.ensure_virtual_key("sk-provider-key", ["opencode/a", "opencode/b"])
+    method, url, headers, body = http.requests[1]
+    assert method == "POST" and url == "http://127.0.0.1:4000/key/generate"
+    assert body == {"key": "sk-provider-key", "models": ["opencode/a", "opencode/b"]}
+
+
+def test_gateway_client_ensure_virtual_key_updates_only_on_scope_change():
+    # Present with the SAME scope -> no-op (C9 convergence); different scope
+    # -> POST /key/update with the full desired scope.
+    http = StubHTTP(get_result=_response({"info": {"models": ["opencode/a"]}}),
+                    post_results=[_response({})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    gw.ensure_virtual_key("sk-provider-key", ["opencode/a"])
+    assert len(http.requests) == 1  # info only - converged
+
+    http = StubHTTP(get_result=_response({"info": {"models": ["opencode/a"]}}),
+                    post_results=[_response({})])
+    gw = S.GatewayClient("http://127.0.0.1:4000", "sk-master", client=http)
+    gw.ensure_virtual_key("sk-provider-key", ["opencode/a", "opencode/b"])
+    method, url, headers, body = http.requests[1]
+    assert method == "POST" and url == "http://127.0.0.1:4000/key/update"
+    assert body == {"key": "sk-provider-key",
+                    "models": ["opencode/a", "opencode/b"]}
+
+
+def test_sync_provisions_virtual_keys_per_provider():
+    # Every configured provider's key becomes a virtual key scoped to ITS
+    # registered records (D3): the client's gateway-mode bearer is the
+    # per-provider key, and the proxy's auth accepts only master + virtual.
+    gw = FakeGateway()
+    rc = S.run_sync(**_default_run_args(
+        gateway=gw,
+        read_api_key=lambda provider: ("sk-openai-proxy-key"
+                                       if provider == "openai" else "dummy-key")))
+    assert rc == S.SYNC_OK
+    key_calls = [c for c in gw.calls if c[0] == "key"]
+    assert len(key_calls) == 2  # openai + opencode keys from the fixtures
+    by_key = {c[1]: c[2] for c in key_calls}
+    assert by_key["dummy-key"] == ["opencode/deepseek-v4-flash-free",
+                                   "opencode/deepseek-v4-pro"]
+    assert by_key["sk-openai-proxy-key"] == ["openai/gpt-4o",
+                                             "openai/gpt-4o-2024-08-06"]
+    assert rc == S.SYNC_OK
 
 
 def test_gateway_client_http_failure_raises_sync_push_error():

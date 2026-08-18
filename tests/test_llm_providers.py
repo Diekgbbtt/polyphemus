@@ -351,15 +351,32 @@ def test_chat_model_for_carries_the_roles_thinking_baseline(monkeypatch):
 # Two LLM-facing paths live, selected by a single env var (ADR D3 + D5):
 #   LLM_GATEWAY_URL UNSET -> direct per-provider mode (today's behaviour, unchanged)
 #   LLM_GATEWAY_URL SET   -> route the client at the gateway (internal port 4000);
-#                            the zen-family id strip does NOT run client-side (the
-#                            gateway's mapping layer owns id translation).
-# In BOTH modes the client sends today's `provider:model` string verbatim, keeps
-# `max_retries=0` under the escalating wrapper (#73 - the client owns the SINGLE
-# retry layer; the gateway is a hop with `num_retries=0`, never nested), and
-# attaches Langfuse callbacks at construction (D8 passthrough).
+#                            the client sends the canonical REGISTERED name
+#                            (`registered_model_name`, the name the sync pushed and
+#                            the reader/keys resolve) - the mapping layer is the
+#                            sole id translator (D5), never the client.
+# In BOTH modes the client keeps `max_retries=0` under the escalating wrapper
+# (#73 - the client owns the SINGLE retry layer; the gateway is a hop with
+# `num_retries=0`, never nested), and attaches Langfuse callbacks at
+# construction (D8 passthrough).
 # `validate_llm_config` keeps requiring `API_KEY_<PROVIDER>` in both modes
 # (operator decision: the per-provider key stays the auth surface; the gateway
 # trusts the authenticated caller and routes upstream with its own key custody).
+
+def test_id_kind_classifies_aggregators_and_native_providers():
+    """The id-kind policy table (D5): the bare-catalog zen aggregators are
+    `ID_KIND_ZEN`; openrouter and native openai-compatible providers default to
+    verbatim - so opencode zen's ids are stripped while openrouter's slashed ids
+    (which the upstream accepts as-is) pass through untouched."""
+    assert P.id_kind("opencode") == P.ID_KIND_ZEN
+    assert P.id_kind("opencode-go") == P.ID_KIND_ZEN
+    assert P.id_kind("zen") == P.ID_KIND_ZEN
+    assert P.id_kind("openrouter") == P.ID_KIND_VERBATIM
+    assert P.id_kind("openai") == P.ID_KIND_VERBATIM
+    assert P.id_kind("swissai") == P.ID_KIND_VERBATIM
+    # unlisted providers default to verbatim - the transparent, safe default
+    assert P.id_kind("some-future-aggregator") == P.ID_KIND_VERBATIM
+
 
 def test_gateway_unset_direct_mode_uses_provider_base_url_and_strips_zen_id(monkeypatch):
     """UNSET = today's direct mode: base_url is PROVIDERS[provider], and the zen
@@ -392,31 +409,47 @@ def test_gateway_set_routes_at_the_gateway_url(monkeypatch):
     assert str(m.openai_api_base) != P.PROVIDERS["openai"]
 
 
+def test_key_env_normalizes_hyphens_to_underscores():
+    """A provider id with a dash (e.g. `opencode-go`) must resolve its API key
+    env var with the underscore form (`API_KEY_OPENCODE_GO`), never a dash -
+    env var names cannot hold a dash. `_key_env` is the single source of this
+    convention, used by build_chat_model, validate_llm_config, and the sync's
+    provider_api_key alike."""
+    assert P._key_env("opencode-go") == "API_KEY_OPENCODE_GO"
+    assert P._key_env("opencode") == "API_KEY_OPENCODE"
+    assert P._key_env("openai") == "API_KEY_OPENAI"
+
+
 def test_gateway_set_does_not_strip_zen_id_client_side(monkeypatch):
-    """SET + a zen-family provider: the id strip is owned by the gateway's mapping
-    layer in gateway mode (ADR D5), NOT run client-side. The client sends today's
-    `provider:model` string VERBATIM - so the gateway receives the prefixed form and
-    performs the translation itself."""
+    """SET + a zen-family provider: the client sends the REGISTERED name the
+    sync pushed (`registered_model_name`): `<provider>/<bare-zen-id>`. The
+    mapping layer owns id translation (ADR D5) - the operator's prefixed
+    `provider:model` string is translated here, NOT sent verbatim (a verbatim
+    `deepseek/deepseek-v4-flash-free` matches no registered route and is
+    400/403'd by the gateway, C13/E4/E7)."""
     monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
     monkeypatch.setenv("API_KEY_OPENCODE", "tok")
     m = P.build_chat_model("opencode", "deepseek/deepseek-v4-flash-free")
-    assert m.model_name == "deepseek/deepseek-v4-flash-free"  # VERBATIM, unstripped
+    assert m.model_name == "opencode/deepseek-v4-flash-free"
     assert str(m.openai_api_base) == "http://gateway:4000"
 
 
-def test_gateway_set_sends_provider_model_verbatim_across_providers(monkeypatch):
-    """SET mode contract: the client sends the operator-configured
-    `provider:model` string verbatim to the gateway in EVERY case (openai,
-    openrouter, swissai) - the gateway's mapping layer is the sole id translator."""
+def test_gateway_set_sends_registered_name_across_providers(monkeypatch):
+    """SET mode contract: the client sends the canonical REGISTERED name
+    (`<provider>/<native-id>`) in EVERY case - openai, openrouter, swissai -
+    the name the sync registered and the reader/keys resolve (D5, C13/E4/E7).
+    For a verbatim aggregator/protocol provider the registered name is the id
+    verbatim; for the bare-catalog zen family the strip already ran in the
+    mapping layer."""
     monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
     monkeypatch.setenv("API_KEY_OPENAI", "tok")
     monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
-    assert P.build_chat_model("openai", "gpt-4o").model_name == "gpt-4o"
+    assert P.build_chat_model("openai", "gpt-4o").model_name == "openai/gpt-4o"
     assert (P.build_chat_model("openrouter", "anthropic/claude-3.5-sonnet").model_name
-            == "anthropic/claude-3.5-sonnet")
+            == "openrouter/anthropic/claude-3.5-sonnet")
     assert (P.build_chat_model("swissai", "Qwen/Qwen3.5-397B-A17B-ETar").model_name
-            == "Qwen/Qwen3.5-397B-A17B-ETar")
+            == "swissai/Qwen/Qwen3.5-397B-A17B-ETar")
 
 
 def test_gateway_set_sends_per_provider_api_key_to_the_gateway(monkeypatch):

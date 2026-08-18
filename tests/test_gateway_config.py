@@ -72,6 +72,17 @@ def test_d8_auto_inject_is_enabled(config):
         "enable_anthropic_prompt_caching") is True
 
 
+def test_unsupported_client_params_are_dropped(config):
+    """The role thinking baseline (`providers.py` `thinking`) sends the OpenAI
+    `reasoning_effort` param in gateway mode. The openai-compatible upstream
+    wire has NO such param, and litellm's openai provider rejects it with
+    `UnsupportedParamsError` (400) unless the proxy drops it - verified live
+    2026-08-18 via the E7 reasoning-replay walkthrough. `drop_params: true`
+    strips unsupported params before routing (litellm's own error directive)
+    so a client tuning hint never 400s the whole turn."""
+    assert config.get("litellm_settings", {}).get("drop_params") is True
+
+
 def test_d8_response_cache_is_absent(config):
     """ADR D8: the `LITELLM_CACHE_TYPE` response cache is EXPLICITLY OUT.
 
