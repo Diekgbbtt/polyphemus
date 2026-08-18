@@ -241,3 +241,33 @@ def test_registry_routes_per_hunt_and_reaps_every_actor():
 
     outcome = asyncio.run(_drive())
     assert outcome == {"hunt": "x"}
+
+
+def test_author_tools_reach_run_session_agent(monkeypatch):
+    """author_tools on the registry land on the actor and are forwarded to
+    run_session_agent's kwargs when non-empty."""
+    import polymerhus.app.llm.actor as llm_actor
+
+    captured = {}
+
+    async def fake_run_session_agent(
+        role_id, thread_id, initial_messages, **kwargs
+    ):
+        captured.update(kwargs)
+
+    monkeypatch.setattr(llm_actor, "run_session_agent", fake_run_session_agent)
+
+    async def _drive():
+        registry = HuntingActorRegistry(
+            "run-1", author_tools=["fake-tool"],
+            checkpointer=InMemorySaver(), observe=False,
+        )
+        actor = registry.actor_for("hunt-1")
+        assert "fake-tool" in actor._tools
+        await actor._ensure_started()
+        await actor._task
+        return actor
+
+    actor = asyncio.run(_drive())
+    assert actor._tools == ["fake-tool"]
+    assert captured["tools"] == ["fake-tool"]
