@@ -1,6 +1,9 @@
 import json
+import ssl
+import subprocess
+import urllib.request
 
-from agent.recon.scripts import jsluice_scan as js
+from polymerhus.recon.scripts import jsluice_scan as js
 
 
 # --------------------------- identification ------------------------------- #
@@ -163,3 +166,66 @@ def test_scan_bundles_survives_unfetchable_and_bad_json():
     )
     # No crash; malformed jsluice lines are dropped, unreachable bundle skipped.
     assert emitted == []
+
+
+# ------------- real collaborators (the untested pod-side boundary) -------- #
+# scan_bundles is injected with fakes above, so _real_fetch / _real_run_jsluice
+# had zero coverage - both shipped broken from the D17 rewrite. These lock the
+# contract with their external dependency (subprocess / urllib) without needing
+# the network or the jsluice binary.
+def test_real_run_jsluice_reads_raw_js_from_stdin(monkeypatch):
+    """jsluice treats every stdin token as a FILENAME unless --raw-input/-j is
+    given, so piping JS source without it makes jsluice try to `open` the source
+    text as files and emit nothing (the live "jsluice consumed N bundles,
+    produced 0 assets" symptom). _real_run_jsluice pipes the bundle text on
+    stdin, so it MUST pass -j/--raw-input - exactly what the pre-D17 template
+    (`jsluice urls -j -R <base>`) did before the rewrite dropped it."""
+    captured = {}
+
+    def fake_run(args, **kwargs):
+        captured["args"] = list(args)
+        captured["input"] = kwargs.get("input")
+
+        class _Proc:
+            stdout = ""
+
+        return _Proc()
+
+    monkeypatch.setattr(subprocess, "run", fake_run)
+    js._real_run_jsluice("urls", "var x = 1;", "https://h.example.com")
+
+    assert captured["input"] == "var x = 1;"  # the JS body goes in on stdin
+    assert "-j" in captured["args"] or "--raw-input" in captured["args"]
+
+
+def test_real_fetch_tolerates_untrusted_tls(monkeypatch):
+    """Recon egress fetches bundles from arbitrary/misconfigured targets, so a
+    self-signed or otherwise untrusted HTTPS cert (a local vuln-by-design target,
+    a mis-issued prod cert) must NOT abort the fetch - just as the Go crawlers
+    (katana/httpx) ignore TLS errors. _real_fetch must therefore pass an SSL
+    context that does not verify certs; the default verifying context silently
+    turns every https bundle into a None fetch."""
+    captured = {}
+
+    class _Resp:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *exc):
+            return False
+
+        def read(self):
+            return b"bundle-bytes"
+
+    def fake_urlopen(req, **kwargs):
+        captured["context"] = kwargs.get("context")
+        return _Resp()
+
+    monkeypatch.setattr(urllib.request, "urlopen", fake_urlopen)
+    out = js._real_fetch("https://self-signed.example.com/main.js")
+
+    assert out == "bundle-bytes"
+    ctx = captured["context"]
+    assert isinstance(ctx, ssl.SSLContext)
+    assert ctx.verify_mode == ssl.CERT_NONE
+    assert ctx.check_hostname is False

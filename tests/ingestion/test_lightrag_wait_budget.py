@@ -2,11 +2,11 @@ import math
 
 import pytest
 
-from agent.ingestion.lightrag_adapter import (
+from polymerhus.ingestion.lightrag_adapter import (
     LightRAGAdapterError,
     LightRAGIngestionAdapter,
 )
-from agent.ingestion.service import IngestionService, SourceStatus
+from polymerhus.ingestion.service import IngestionService, SourceStatus
 
 
 class FakeClock:
@@ -315,7 +315,7 @@ def test_in_flight_terminal_failure_finishing_past_deadline_is_sanitized(tmp_pat
 
 
 def test_from_config_wires_configured_deadline(monkeypatch):
-    import agent.app.config as config_module
+    import polymerhus.app.config as config_module
 
     monkeypatch.setattr(config_module.config, "LIGHTRAG_INGESTION_TIMEOUT_SECONDS", 3600.5)
     monkeypatch.setattr(config_module.config, "LIGHTRAG_POLL_INTERVAL_SECONDS", 0.5)
@@ -329,7 +329,7 @@ def test_from_config_wires_configured_deadline(monkeypatch):
 
 
 def test_public_job_error_payload_never_exposes_raw_lightrag_text(monkeypatch, tmp_path):
-    import agent.ingestion.service as service_module
+    import polymerhus.ingestion.service as service_module
 
     calls: list[tuple] = []
     monkeypatch.setattr(

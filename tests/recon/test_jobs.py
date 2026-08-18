@@ -1,7 +1,7 @@
 import pytest
 
-from agent.recon.parsers import PARSERS
-from agent.recon.jobs import JOBS, PHASES, build_phase_plan, validate_job_subset
+from polymerhus.recon.domain.parsers import PARSERS
+from polymerhus.recon.control.jobs import JOBS, PHASES, build_phase_plan, validate_job_subset
 
 
 def test_every_job_tool_has_a_parser():
@@ -16,6 +16,24 @@ def test_amass_template_has_enum_json():
 
 def test_dnsx_template_has_json():
     assert "-json" in JOBS["dnsx"].command_template
+
+
+def test_katana_template_excludes_static_assets_but_keeps_js():
+    """AMV-8 ticket 6: katana filters presentational static extensions and
+    excludes dependency/backup trees from the crawl at the source, but never
+    filters `.js`/`.mjs` (jsluice's D17 input) and still emits JSONL."""
+    template = JOBS["katana"].command_template
+    # static assets filtered from crawl output via -ef ...
+    for ext in ("css", "woff2", "map", "png", "svg", "mp4", "pdf", "zip"):
+        assert f",{ext}" in template or f"-ef {ext}" in template or f" {ext}," in template
+    # ... but JS is NEVER in the extension filter (it is jsluice's input).
+    ef_segment = template.split("-ef ", 1)[1].split(" ", 1)[0]
+    assert "js" not in ef_segment.split(",")
+    assert "mjs" not in ef_segment.split(",")
+    # dependency / backup trees excluded from crawl scope.
+    assert "-cos" in template and "node_modules/" in template
+    # output contract preserved.
+    assert "-jsonl" in template
 
 
 def test_ffuf_template_writes_json_to_file_and_cats_it_with_autocalibration():
@@ -54,6 +72,37 @@ def test_arjun_template_seeds_default_suppresses_stdout_and_reads_file():
     assert "{auth_header}" in template
 
 
+def test_arjun_template_caps_request_rate_for_deterministic_yield():
+    # FR-CURE2E trace forensics: arjun's parameter detection is non-deterministic
+    # run-to-run on the IDENTICAL surface (one e2e drew 58 Parameters, another only
+    # 5), rooted in the target throttling the request burst - arjun reads a
+    # throttled response as an anomaly, so it invents or misses parameters.
+    # Capping the request rate removes the burst that provokes it.
+    # Guard the cap so it cannot be silently dropped.
+    template = JOBS["arjun"].command_template
+    assert "--rate-limit" in template
+
+    # And guard the VALUE stays in the band the measurement justified (operator
+    # decision 2026-07-22). arjun issues ~260 requests per URL and its wall-clock
+    # is exactly linear in the cap, so the rung is bounded on both sides:
+    #   * too high and the burst that caused the defect returns;
+    #   * too low and a single URL exceeds EXEC_TIMEOUT_S=300 (at 1 rps a pod is
+    #     already at ~260s, with no headroom for a slower remote target), which
+    #     turns the fix into a total yield loss.
+    rate = int(template.split("--rate-limit", 1)[1].split()[0])
+    assert 2 <= rate <= 10, f"arjun --rate-limit {rate} is outside the justified band"
+
+
+def test_arjun_template_does_not_use_stable_mode():
+    # `--stable` was REJECTED as the fix (operator, 2026-07-22). It forces
+    # threads=1 AND injects a random 3-10s delay before EVERY request
+    # (arjun/core/requester.py), i.e. 13-43 min for the ~260 requests one URL
+    # takes - roughly 10x over EXEC_TIMEOUT_S=300. Every arjun pod would time out
+    # and the job would yield nothing, so this "reliability" flag is a silent
+    # total-loss switch here. Guard it against being reintroduced.
+    assert "--stable" not in JOBS["arjun"].command_template
+
+
 def test_subdomain_takeover_template_has_target_placeholder():
     # A placeholder-less template gives the pod nothing to scan (silent
     # zero deltas). Guard against that regression.
@@ -62,7 +111,17 @@ def test_subdomain_takeover_template_has_target_placeholder():
 
 def test_phase_zero_is_subdomain_discovery():
     assert "subfinder" in PHASES[0]
-    assert "amass" in PHASES[0]
+
+
+def test_amass_and_paramspider_are_out_of_production():
+    # Withdrawn from PHASES (operator 2026-07-28), like gau: JobSpec kept, only
+    # scheduling removed. amass is broken vs v4.2.0 (degraded every run);
+    # paramspider withdrawn to cut phase-4 crawl load on the constrained host.
+    scheduled = {j for phase in PHASES for j in phase}
+    assert "amass" not in scheduled
+    assert "paramspider" not in scheduled
+    # JobSpecs (and parsers) remain for easy re-introduction.
+    assert "amass" in JOBS and "paramspider" in JOBS
 
 
 def test_consumes_deps_respected_across_full_plan():
@@ -190,10 +249,12 @@ def test_graphql_cop_is_an_authenticated_job():
 
 
 def test_kiterunner_is_gated_to_the_restapi_profile():
-    # D16: kiterunner (API-route scanner) only consumes BaseURLs httpx profiled
-    # as `restapi`, via the D17 consumes_where selector.
+    # D16 per-endpoint split: kiterunner consumes the `restapi` ENDPOINTS a host
+    # exposes (not just its root BaseURL profile) and flags api_scope, so its
+    # input is collapsed into evidence-derived API-root scan prefixes.
     job = JOBS["kiterunner"]
-    assert job.consumes == "BaseURL"
+    assert job.consumes == "Endpoint"
+    assert job.api_scope is True
     assert job.consumes_where is not None
     assert job.consumes_where.field == "profile"
     assert job.consumes_where.op == "equals"
@@ -214,7 +275,9 @@ def test_graphql_cop_is_gated_to_the_graphql_api_profile():
     # so it is gated to the dedicated `graphql_api` profile httpx derives from
     # the endpoint path (a miss = no run, the accepted tradeoff).
     job = JOBS["graphql-cop"]
-    assert job.consumes == "BaseURL"
+    # D16 per-endpoint split: it audits the EXACT graphql_api Endpoint, so it
+    # consumes Endpoint (target = the endpoint's own url), not the BaseURL root.
+    assert job.consumes == "Endpoint"
     assert job.consumes_where is not None
     assert job.consumes_where.field == "profile"
     assert job.consumes_where.op == "equals"
@@ -241,14 +304,15 @@ def test_httpx_reprofile_reuses_the_httpx_parser():
     assert PARSERS["httpx_reprofile"] is PARSERS["httpx"]
 
 
-def test_httpx_reprofile_consumes_all_baseurls_idempotently():
-    # It consumes BaseURL with NO consumes_where: AssetSelector cannot express
-    # "profile is unset", so it re-probes every BaseURL (idempotent - a re-probe
-    # just rewrites the same profile). It is also an authenticated probe, so
-    # behind-auth API hosts classify correctly.
+def test_httpx_reprofile_consumes_endpoints_for_per_endpoint_profiling():
+    # D16 per-endpoint split: it consumes the ENDPOINT population (each endpoint's
+    # own URL becomes {target}), not just BaseURL roots, and flags
+    # endpoint_profiling so its input set gets dedup + root-`/`-materialisation
+    # prep. It is an authenticated probe so behind-auth endpoints classify right.
     job = JOBS["httpx_reprofile"]
-    assert job.consumes == "BaseURL"
+    assert job.consumes == "Endpoint"
     assert job.consumes_where is None
+    assert job.endpoint_profiling is True
     assert job.use_auth is True
     assert "{target}" in job.command_template
     assert "{auth_header}" in job.command_template

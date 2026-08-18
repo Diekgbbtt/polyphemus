@@ -1,8 +1,8 @@
 # tests/recon/test_active_param_parser.py
 from pathlib import Path
 
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.active_param_parser import (
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.active_param_parser import (
     parse_arjun,
     parse_ffuf,
     parse_kiterunner,
@@ -199,3 +199,15 @@ def test_kiterunner_info_and_garbage_lines_skipped():
 def test_kiterunner_malformed_input_tolerated():
     assert parse_kiterunner("") == []
     assert parse_kiterunner("\n\n") == []
+
+
+def test_kiterunner_endpoints_carry_restapi_provenance_profile():
+    # D16 split: kiterunner only runs on an API surface, so its discovered routes
+    # are restapi by provenance - Endpoint.profile is stamped without re-probing.
+    from polymerhus.recon.domain.parsers.active_param_parser import parse_kiterunner
+    out = parse_kiterunner(
+        '{"method":"GET","target":"https://h","path":"/api/v1/users",'
+        '"responses":[{"sc":200}]}\n'
+    )
+    eps = [d for d in out if d.type == "Endpoint"]
+    assert eps and all(d.props.get("profile") == "restapi" for d in eps)

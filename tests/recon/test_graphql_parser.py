@@ -1,8 +1,8 @@
 # tests/recon/test_graphql_parser.py
 from pathlib import Path
 
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.graphql_parser import parse, parse_findings
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.graphql_parser import parse, parse_findings
 
 FIX = Path(__file__).parent / "fixtures" / "graphql_cop.json"
 
@@ -124,8 +124,8 @@ def test_parse_findings_anchor_survives_curate_path():
     `ValueError` and `curate` skipped+logged every graphql-cop finding. The
     finding anchor must be BaseURL (a broad, allow-listed anchor) so the
     Observation reaches Neo4j instead of being silently dropped."""
-    from agent.recon.curator import build_observation_cypher
-    from agent.recon.findings import finding_to_observation
+    from polymerhus.recon.domain.curator import build_observation_cypher
+    from polymerhus.recon.domain.findings import finding_to_observation
 
     findings = parse_findings(
         FIX.read_text(), target_url="https://api.example.com/graphql"
@@ -149,3 +149,11 @@ def test_parse_findings_without_target_url_has_no_anchor_key_when_undeterminable
     findings = parse_findings(stdout)
     assert len(findings) == 1
     assert "anchor" not in findings[0]
+
+
+def test_graphql_cop_endpoint_carries_graphql_api_provenance_profile():
+    # D16 split: graphql-cop only audits a GraphQL surface, so the Endpoint it
+    # emits is graphql_api by provenance - Endpoint.profile stamped at parse.
+    deltas = parse(FIX.read_text())
+    eps = [d for d in deltas if d.type == "Endpoint"]
+    assert eps and all(d.props.get("profile") == "graphql_api" for d in eps)

@@ -225,7 +225,17 @@ The D14/Q2 fix (seed `Domain = seed_host` in exact mode) exposes a second-order 
 
 **Architectural consequence:** this likely **decomposes the current single discovery phase into two** - *discover* then *profile* - with the profile becoming a first-class asset attribute that the phase-5 (and api-specific phase-4) tools consume. This touches the phase DAG (`jobs.py` PHASES + JobSpec.consumes), so it is a structural change, not a tweak; sequence it after D14 (scope) since scope determines the endpoint population being profiled.
 
-**BUILT (minimal, operator-directed 2026-07-11, commit `7c9b995`).** Chose the reuse-first path over a phase split: httpx already runs at phase 3 (before the phase-4 crawlers) and already carries `content_type`, so NO new job/phase was added. `noise_filter.classify_profile(content_type, url) -> "webapp"|"restapi"` (JSON-family content-type, or an api-indicating hostname label -> restapi) is set as a `profile` prop on every httpx BaseURL and its root Endpoint. `kiterunner` is gated to `consumes_where=AssetSelector(field="profile", op="equals", values=["restapi"])` (reusing the D17 selector), so it fires only at the API surface. **Deferred (not built):** the discover->profile split for crawler-minted Endpoints (katana/ffuf endpoints carry no profile yet - only httpx-probed BaseURLs do); an api-mode ffuf variant; the gau-liveness prune (gau withdrawn, D19). Revisit if API-surface coverage needs the crawled-endpoint population profiled too.
+**BUILT (minimal, operator-directed 2026-07-11, commit `7c9b995`).** Chose the reuse-first path over a phase split: httpx already runs at phase 3 (before the phase-4 crawlers) and already carries `content_type`, so NO new job/phase was added. `noise_filter.classify_profile(content_type, url) -> "webapp"|"restapi"` (JSON-family content-type, or an api-indicating hostname label -> restapi) is set as a `profile` prop on every httpx BaseURL and its root Endpoint. `kiterunner` is gated to `consumes_where=AssetSelector(field="profile", op="equals", values=["restapi"])` (reusing the D17 selector), so it fires only at the API surface. **Deferred (not built):** an api-mode ffuf variant; the gau-liveness prune (gau withdrawn, D19).
+
+**BUILT (per-endpoint split, workflow #28, branch `fix/per-endpoint-profiling`).** The formerly-deferred discover->profile split is now built: EVERY produced Endpoint is profiled, not just BaseURL roots.
+`httpx_reprofile` was refactored from `consumes=BaseURL` to `consumes=Endpoint` (flag `endpoint_profiling`): it actively re-probes each Endpoint's own URL (so a `/api/v1/x` under a `webapp` root is classified `restapi`), and `parse_httpx` stamps that Endpoint's own `profile`.
+The root `/` probe additionally mirrors onto `BaseURL.profile` (kept backward-compatible for the analyser delivery-gate); a deep-endpoint probe never writes `BaseURL.profile`.
+The probe set is prepared by `batching.prepare_endpoint_profile_assets`: dedup to one probe per `(baseurl, method, path-template)` and materialise a root `/` Endpoint per BaseURL, keeping the active re-probe bounded on the constrained host.
+`kiterunner` now consumes `restapi` Endpoints (flag `api_scope`) and is scoped to evidence-derived API-root prefixes by `api_scope.derive_scan_targets` (cut at the LAST api-noun segment, versions excluded so kiterunner's own `v1`/`v2` wordlist entries discover zombie versions, parent-dir fallback, <=3 targets/host); `graphql-cop` consumes the exact `graphql_api` Endpoint.
+Endpoints produced by kiterunner/graphql-cop are profile-tagged by provenance (`restapi`/`graphql_api`) at parse, so `Endpoint.profile` is complete without a second probe pass.
+The residual heuristic is confined to the `api_scope.API_NOUNS` constant + the `^v\d+$` version pattern; the gate itself is content-type driven.
+
+**Downstream consumer added (analyser redesign; wayfinder map #1, ticket #14 - SPEC'd, NOT yet built, 2026-07-23).** The redesigned Phase-A analyser's streamed A.1 pass now GATES its delivery on this `profile` signal: an Endpoint reaches A.1 only when its BaseURL carries a `profile`, else it is withheld until `httpx_reprofile` sets it (with a fail-open phase-barrier backstop that delivers a still-unprofiled endpoint flagged, so nothing is silently dropped). The gate keys on the BaseURL `profile` (joining `endpoint.baseurl -> BaseURL.profile`) and REUSES `httpx_reprofile` (`jobs.py:85`) + `selectors.apply_selector` unchanged - so it works WITH this minimal build and does NOT require the deferred per-endpoint profiling split (that stays deferred). It lives in the analysis read / chunk-assembly seam (composing with the optimal-chunk feeding component, map #1 / #13), not in recon. See wayfinder map #1 / #14 for the delivery-gate spec; production wiring is a bounded loop task.
 
 ### D16.1 - dedicated `graphql_api` profile + graphql-cop gating (BUILT minimal 2026-07-14; enhancement deferred)
 
@@ -480,3 +490,52 @@ Model it as a **bounded work-queue / fixpoint** rather than literal DAG recursio
 Relates to D14 (scope semantics decide in-scope vs external), D16/D16.1 (re-profiling discovered BaseURLs already generalises "assets minted downstream get processed like first-class ones"), and the paramspider exact-mode gap that surfaced this (a Domain-consumer starved because the seed materialised only as a Subdomain).
 
 **Status:** DRAFT, deferred, documentation only. First actionable sub-task before any build: the audit of what currently happens to crawl/JS-discovered hosts (discarded vs recorded vs scoped), since that determines how much of the loop is greenfield.
+
+## D-HS - host (bare-IP) seeding: seed-type-agnostic recon (implemented on branch `host-seeding`, 2026-07-24)
+
+**The gap.**
+The pipeline could only be seeded with a domain: `parse_scope` computed a registrable apex (garbage for an IP), the engagement root was hard-typed `Domain`, and no path existed for a bare-IP target to unfold web recon.
+
+**Decision.**
+A Project can be seeded with a bare IPv4 and unfolds the same webapp recon as a domain, seed-type-agnostic.
+The agnosticism is fenced to one narrow layer - `parse_scope` (new `host` mode), the root-node materialization (an `IP{address}` root), the discovery/harvester gate, and one `resolve_seed` resolver - while every web-discovery tool downstream (httpx and the whole `BaseURL` crawl chain) is reused unchanged.
+No new asset type: only the existing L0 labels, a new scope *mode* value, and one new *job*.
+
+**Ratified sub-decisions.**
+- D-HS1: the project key is generalised to `target_seed`, with `target_domain` kept as a deprecated read-time alias (regression safety for persisted projects).
+- D-HS2: Part A (IP -> httpx on 80/443 -> existing chain) plus Part B (the `httpx_services` Service -> BaseURL bridge), the latter fenced to `host` mode and non-standard ports only.
+- D-HS3: IPv6 is designed-not-built - rejected at the launch guard, never silently mis-parsed.
+
+**Alias safety (the core correctness argument).**
+Two traps, both fenced: the default-port alias (`http://<ip>:80` vs the canonical portless `http://<ip>`) is avoided by skipping ports 80/443 in the Service transform; the host-vs-IP / vhost alias is avoided by running `httpx_services` only in `host` mode (an IP-addressed BaseURL would alias a host-addressed one in a domain run).
+naabu names services by port number, so an HTTP service on a non-standard port can be labelled `unknown`; the bridge therefore feeds httpx a scheme-less `<ip>:<port>` and lets httpx be the protocol detector rather than trusting naabu's name.
+
+**Status:** built + unit-green on `host-seeding`; the full grounding is `docs/design/host-seeding-spec.md` and `docs/design/host-seeding-assertions.md`. Integration (I) and e2e (E) tiers pend a real target.
+
+## D-SVCLINK - the web-origin subgraph is disconnected from the network-service subgraph (NEW work item, DEFERRED, 2026-07-26)
+
+**The gap (e2e-surfaced).**
+On the FireFlow e2e a `BaseURL` (`https://fireflow.htb`) had no relationship to the `https` `Service` on port 443 it plainly runs over.
+It is not a stray edge but a structural split: `exists((BaseURL)-[*1..4]-(Service))` is FALSE, so the observed store holds two disjoint components.
+- naabu (network view): `IP -HAS_PORT-> Port -RUNS_SERVICE-> Service`, keyed on `ip_address`.
+- httpx (web view): `Domain <-BELONGS_TO- BaseURL -HAS_ENDPOINT/HAS_HEADER/USES_TECHNOLOGY-> ...`, keyed on `url`.
+
+**Root cause.**
+No producer emits a `BaseURL` <-> `Service` (or `BaseURL` <-> `Port`) edge.
+`httpx_parser` back-links a BaseURL only to its host (`BELONGS_TO` -> Subdomain, promoted to Domain, D28); `naabu_parser` links a Service only to its Port/IP; and the L0 model defines no `BaseURL`-`Service` relationship.
+The curator writes only the edges parsers hand it, so the web-origin branch and the network-service branch are never joined.
+This is the same "two disconnected subgraphs" gap noted for the terminal naabu Port/Service branch (D27 territory), seen from the web side: the store never expresses that a web origin *runs over* a specific network service.
+
+**Not a timing or data-availability problem.**
+The join information is already present in httpx's own JSON - `scheme` (`https`), `port` (`443`), and `host_ip` (`10.129.244.214`) are exactly the `Service` identity `{name, port_number, ip_address}` - httpx_parser simply does not use those fields to emit the edge.
+Ordering is not the blocker either: naabu (phase 0) mints the `Service` before httpx (phase 1) mints the `BaseURL`, so a `MERGE` edge would match the existing node.
+
+**Why a fix is non-trivial (why it is deferred, not done inline).**
+- Join-key namespace mismatch: the BaseURL's host is the hostname (`fireflow.htb`) while the `Service` is keyed on the IP (`10.129.244.214`); the edge can only be built from httpx's `host_ip`, not from the BaseURL's own host - name-space vs IP-space.
+- The host-level bridge is also absent: `Domain(fireflow.htb)` and `IP(10.129.244.214)` are unlinked because `dnsx` (the `Domain->IP` resolution producer) was excluded as passive, so the two components share no node at all in an IP/vhost run.
+- A correct link therefore touches identity/edge modeling across two parsers (or a new curator-side join), and the ontology question of *which* edge (`SERVED_BY`? `RUNS_ON`? direction? whether it is a first-class L0 edge or a derived one) is unratified.
+
+**Decision.**
+DEFERRED, documentation only.
+The provisional shape of a future fix: have `httpx_parser` emit an edge from the `BaseURL` to the `Service` identity it reconstructs from `host_ip` + `port` + scheme-derived name (idempotent `MERGE`, matching naabu's already-present node), or perform the join once at the curator chokepoint; ratify the edge type and direction against `domain-model.md` first, and pair it with the `Domain <-> IP` resolution edge so the two components fuse rather than gaining a single hop.
+The edge type name and direction stay provisional until the operator ratifies them.

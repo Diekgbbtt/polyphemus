@@ -8,9 +8,9 @@ Foundation `pod_graph` and `chat_model_for("job_orchestrator")`.
 """
 import asyncio
 
-from agent.recon import job_agent as ja
-from agent.recon.jobs import JOBS
-from agent.recon.types import PodExport
+from polymerhus.recon.control import job_agent as ja
+from polymerhus.recon.control.jobs import JOBS
+from polymerhus.recon.domain.types import PodExport
 
 
 def make_recording_pod_invoke(fail_on_index: int | None = None):
@@ -215,8 +215,8 @@ def test_run_job_offloads_blocking_invoke_so_gather_is_concurrent():
 
 
 def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(monkeypatch):
-    from agent.recon.crawl import crawl_pod as crawl_pod_module
-    from agent.recon.types import JobSpec, PodExport
+    from polymerhus.recon.crawl import crawl_pod as crawl_pod_module
+    from polymerhus.recon.domain.types import JobSpec, PodExport
 
     calls = []
 
@@ -238,8 +238,8 @@ def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(mon
 
 
 def test_default_pod_invoke_uses_template_pod_for_deterministic_jobs(monkeypatch):
-    from agent.recon import pod as pod_module
-    from agent.recon.types import PodExport
+    from polymerhus.recon.domain import pod as pod_module
+    from polymerhus.recon.domain.types import PodExport
 
     class FakePodGraph:
         def invoke(self, state, config=None):
@@ -266,119 +266,40 @@ def test_default_job_agent_is_import_safe_module_level_instance():
     assert callable(ja.default_preprocess_fn)
 
 
-def test_steering_preprocess_applies_throttle(monkeypatch):
-    from agent.recon import job_agent
-    from agent.recon.types import JobSpec
+def test_preprocess_threads_steering_signals_into_pod_extras():
+    # #94: per-asset throttling moved from the job agent (decide_pod_selection,
+    # #81) into the POD CONFIGURATOR. The recon-job agent is purely
+    # deterministic again: the steering signals are threaded through to every
+    # pod_input verbatim, and the pod itself decides how to run.
+    from polymerhus.recon.control import job_agent
+    from polymerhus.recon.domain.types import JobSpec
 
-    # The job agent decides ONLY throttling now; it returns a set of throttle urls
-    # and NEVER drops an asset.
-    monkeypatch.setattr(
-        "agent.recon.job_agent.decide_pod_selection",
-        lambda signals, job_name, assets, llm=None: {"https://a"},
-    )
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
                   produces=["Endpoint"], consumes="BaseURL")
-    pod_inputs = job_agent.steering_preprocess_fn(
-        [{"url": "https://a"}, {"url": "https://b"}], job,
-        {"project_id": "p1", "steering": [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}]},
-        "",
-    )
-    # ALL assets become pods (none dropped); only the throttled one carries rate_profile.
-    assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a", "https://b"]
-    assert pod_inputs[0]["extra"]["rate_profile"] == "throttle"
-    assert "rate_profile" not in pod_inputs[1]["extra"]
-    assert "steering" not in pod_inputs[0]["extra"]  # steering is orchestration-only
-    assert "steering" not in pod_inputs[1]["extra"]
-
-
-def test_steering_preprocess_never_drops_assets(monkeypatch):
-    # Responsibility-model regression (the katana-zeroing bug): with signals
-    # present, the recon-job agent must build a pod for EVERY budget-capped asset
-    # - asset selection belongs to the orchestrator (decide_routing), not here.
-    # Even a flagged host still runs; only its rate_profile differs.
-    from agent.recon import job_agent
-    from agent.recon.types import JobSpec
-
-    monkeypatch.setattr(
-        "agent.recon.job_agent.decide_pod_selection",
-        lambda signals, job_name, assets, llm=None: {"https://a"},
-    )
-    job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
-                  produces=["Endpoint"], consumes="BaseURL")
-    assets = [{"url": f"https://h{i}"} for i in range(7)] + [{"url": "https://a"}]
     signals = [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}]
-    pod_inputs = job_agent.steering_preprocess_fn(
-        assets, job, {"project_id": "p1", "steering": signals}, "")
-    # All 8 covered (the bug zeroed this to 0 pods).
-    assert len(pod_inputs) == len(assets)
-    assert [pi["input_asset"]["url"] for pi in pod_inputs] == [a["url"] for a in assets]
-    throttled = [pi["input_asset"]["url"] for pi in pod_inputs
-                 if pi["extra"].get("rate_profile") == "throttle"]
-    assert throttled == ["https://a"]
+    pod_inputs = job_agent.default_preprocess_fn(
+        [{"url": "https://a"}, {"url": "https://b"}], job,
+        {"project_id": "p1", "steering": signals}, "",
+    )
+    # Every budget-capped asset still becomes a pod - asset selection remains
+    # the orchestrator's decide_routing concern, never this agent's.
+    assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a", "https://b"]
+    assert pod_inputs[0]["extra"]["steering"] == signals
+    assert pod_inputs[1]["extra"]["steering"] == signals  # each pod decides for itself
+    assert "rate_profile" not in pod_inputs[0]["extra"]  # no job-level throttling anymore
 
 
-def test_steering_preprocess_no_signal_falls_back_to_default():
-    from agent.recon import job_agent
-    from agent.recon.types import JobSpec
+def test_preprocess_without_signals_stays_deterministic():
+    from polymerhus.recon.control import job_agent
+    from polymerhus.recon.domain.types import JobSpec
+
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
                   produces=["Endpoint"], consumes="BaseURL")
-    pod_inputs = job_agent.steering_preprocess_fn(
+    pod_inputs = job_agent.default_preprocess_fn(
         [{"url": "https://a"}], job, {"project_id": "p1"}, "")
     assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a"]
     assert "rate_profile" not in pod_inputs[0]["extra"]
-
-
-# --- recon-job agent per-asset throttle decision (decide_pod_selection) ---
-# A fake LLM is injected so no provider/network is touched. The job agent decides
-# ONLY throttling now - it returns a set of throttle urls and never drops an asset.
-
-
-class _FakeStructured:
-    def __init__(self, result): self._result = result
-    def invoke(self, messages): return self._result
-
-
-class _FakeLLM:
-    def __init__(self, result): self._result = result
-    def with_structured_output(self, schema, **kw): return _FakeStructured(self._result)
-
-
-def test_decide_pod_selection_returns_throttle_set():
-    from agent.recon.job_agent import decide_pod_selection, PodThrottlePlan, _AssetPlan
-    result = PodThrottlePlan(plan=[
-        _AssetPlan(url="https://a", throttle=True),
-        _AssetPlan(url="https://b", throttle=False),
-    ])
-    throttle = decide_pod_selection(
-        [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
-        "katana", [{"url": "https://a"}, {"url": "https://b"}], llm=_FakeLLM(result),
-    )
-    assert throttle == {"https://a"}
-
-
-def test_decide_pod_selection_never_drops_asset_omitted_from_plan():
-    # Contract regression: the job agent decides ONLY throttling. An asset the LLM
-    # does not mention is simply not throttled; it is NEVER dropped (selection is
-    # the orchestrator's decide_routing concern). Only 'a' is in the plan.
-    from agent.recon.job_agent import decide_pod_selection, PodThrottlePlan, _AssetPlan
-    result = PodThrottlePlan(plan=[_AssetPlan(url="https://a", throttle=True)])
-    throttle = decide_pod_selection(
-        [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
-        "katana", [{"url": "https://a"}, {"url": "https://b"}], llm=_FakeLLM(result),
-    )
-    assert throttle == {"https://a"}  # b omitted -> just not throttled, still a candidate
-
-
-def test_decide_pod_selection_fail_open_throttles_nothing():
-    from agent.recon.job_agent import decide_pod_selection
-
-    class Boom:
-        def with_structured_output(self, *a, **k): raise RuntimeError("llm down")
-
-    throttle = decide_pod_selection(
-        [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}],
-        "katana", [{"url": "https://a"}], llm=Boom())
-    assert throttle == set()
+    assert "steering" not in pod_inputs[0]["extra"]
 
 
 def test_batched_job_preprocess_reduces_and_packs_into_max_pods(monkeypatch):
@@ -396,3 +317,82 @@ def test_batched_job_preprocess_reduces_and_packs_into_max_pods(monkeypatch):
     all_urls = [u for pi in pod_inputs for u in pi["input_asset"]["batch"]]
     assert len(all_urls) == 60  # all bundles covered, none dropped
     assert "apex_registrable" not in pod_inputs[0]["extra"]  # orchestration-only, not leaked
+
+
+# --- #94 delivery: pod-completion notifications into a parent's inbox ----------
+# The recon-job agent posts each finished pod's SESSION thread id into the parent's
+# inbox (via `pod_completion_notify` -> `subagent_completion_hook`), so the parent can
+# go READ that pod's memory (`read_session_memory`, app/llm/session.py).
+
+
+def test_pod_completion_notify_posts_pod_session_address_into_parent_inbox():
+    from polymerhus.app.llm.actor import AgentInbox
+    from polymerhus.recon.control.job_agent import pod_completion_notify
+    from polymerhus.recon.domain.types import PodExport
+
+    inbox = AgentInbox()
+    notify = pod_completion_notify(inbox, source="job-1")
+    notify(
+        {"input_asset": {"url": "https://a.com"}}, JOBS["subfinder"],
+        "run-1", 2, PodExport(input_asset={"url": "https://a.com"}, verdict="success"),
+    )
+    assert inbox.qsize() == 1
+    msg = asyncio.run(inbox.get())
+    assert msg.kind == "pod_complete" and msg.source == "job-1"
+    # the parent can address the pod's OWN session memory with this thread id
+    # (the address composer escapes ':' -> '_', see app/llm/session_address.py)
+    assert msg.payload["thread_id"] == "run-1:2:subfinder:https_//a.com:triager"
+    assert msg.payload["detail"].verdict == "success"
+
+
+def test_pod_completion_notify_no_run_id_is_inert():
+    from polymerhus.app.llm.actor import AgentInbox
+    from polymerhus.recon.control.job_agent import pod_completion_notify
+    from polymerhus.recon.domain.types import PodExport
+
+    inbox = AgentInbox()
+    notify = pod_completion_notify(inbox)
+    notify({"input_asset": {"url": "https://a.com"}}, JOBS["subfinder"],
+           None, 0, PodExport(input_asset={}, verdict="success"))
+    assert inbox.empty()  # no run context: nothing addressable
+
+
+def test_build_job_agent_notify_fn_fires_after_each_pod():
+    from polymerhus.recon.control import job_agent
+
+    called: list[tuple] = []
+
+    def notify_fn(pod_input, job, run_id, phase, export):
+        called.append((pod_input, job, run_id, phase, export))
+
+    pod_invoke = make_recording_pod_invoke()
+    agent = job_agent.build_job_agent(
+        pod_invoke=pod_invoke, preprocess_fn=job_agent.default_preprocess_fn,
+        notify_fn=notify_fn,
+    )
+    job = JOBS["subfinder"]
+    input_assets = [{"url": "https://a.com"}, {"url": "https://b.com"}]
+    agent.invoke(base_state(job, input_assets, run_id="run-1", phase=2))
+
+    assert len(called) == 2  # one notification per completed pod
+    assert called[0][3] == 2  # phase rides through
+    assert called[0][4].verdict == "success"
+
+
+def test_build_job_agent_notify_fires_also_for_failed_pods():
+    from polymerhus.recon.control import job_agent
+
+    called: list[tuple] = []
+
+    def notify_fn(pod_input, job, run_id, phase, export):
+        called.append(export)
+
+    pod_invoke = make_recording_pod_invoke(fail_on_index=0)
+    agent = job_agent.build_job_agent(
+        pod_invoke=pod_invoke, preprocess_fn=job_agent.default_preprocess_fn,
+        notify_fn=notify_fn,
+    )
+    agent.invoke(base_state(JOBS["subfinder"], [{"url": "https://a.com"}], run_id="r", phase=0))
+
+    assert len(called) == 1  # a failure is still a completion the parent must hear about
+    assert called[0].verdict == "failed"

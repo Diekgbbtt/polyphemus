@@ -1,0 +1,167 @@
+# Authoring sidecar: matching facet for CWE-600..CWE-799 (#66, spec 5.6).
+entries:
+  CWE-600:
+    nl: "The unit's servlet does not catch all exceptions, revealing debug information."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-601:
+    nl: "The unit redirects users to an external site based on user-controlled input."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation]}
+    enum_kinds: [WebPresentation]
+  CWE-606:
+    nl: "The unit uses unchecked external input in a loop condition."
+  CWE-608:
+    nl: "The unit's Struts ActionForm contains a non-private field."
+    enum_kinds: [WebPresentation]
+  CWE-611:
+    nl: "The unit processes an XML document with external entity references."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation, RESTApi, GraphQLApi]}
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-612:
+    nl: "The unit's search index of sensitive documents is not access-restricted."
+    enum_kinds: [AuthorizationSystem, WebPresentation]
+  CWE-613:
+    nl: "The unit allows sessions to persist beyond their intended lifetime."
+    enum_kinds: [IdentificationSystem]
+  CWE-614:
+    nl: "The unit sets sensitive cookies over HTTPS without the Secure attribute."
+    enum_kinds: [IdentificationSystem, WebPresentation]
+  CWE-615:
+    nl: "The unit ships source-code comments containing sensitive information."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-616:
+    nl: "The unit reads uploaded files via legacy PHP globals."
+    enum_kinds: [WebPresentation]
+  CWE-619:
+    nl: "The unit leaves a database cursor dangling and accessible to other users."
+  CWE-620:
+    nl: "The unit allows password changes without verifying the original password."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-621:
+    nl: "The unit uses external input to determine the names of variables to extract into."
+  CWE-622:
+    nl: "The unit validates hook arguments incorrectly on user-accessible API functions."
+  CWE-624:
+    nl: "The unit uses a regular expression containing an executable component with user input."
+  CWE-626:
+    nl: "The unit mishandles null bytes when passing data between components."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-627:
+    nl: "The unit evaluates variable names influenced by the user at runtime."
+  CWE-628:
+    nl: "The unit calls a function with incorrectly specified arguments."
+  CWE-637:
+    nl: "The unit's protection mechanism is unnecessarily complex."
+  CWE-638:
+    nl: "The unit does not perform access checks on every resource access."
+    enum_kinds: [AuthorizationSystem]
+  CWE-639:
+    nl: "The unit's authorization does not prevent access to another user's resource via a guessable key."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation, RESTApi, GraphQLApi]}
+        - {form: reachable-via, key: AUTHORIZED_BY, values: [AuthorizationSystem]}
+    enum_kinds: [AuthorizationSystem, RESTApi, GraphQLApi]
+  CWE-640:
+    nl: "The unit's password recovery mechanism can be abused to change passwords without knowing the original."
+    enum_kinds: [AuthenticationMechanism, WebPresentation]
+  CWE-641:
+    nl: "The unit constructs resource names from upstream input without restricting them."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-643:
+    nl: "The unit builds an XPath expression from external input."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-644:
+    nl: "The unit fails to neutralize scripting syntax in HTTP headers."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-645:
+    nl: "The unit's account-lockout mechanism is too restrictive."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-646:
+    nl: "The unit relies on the file name or extension of an uploaded file to determine its type."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-647:
+    nl: "The unit makes authorization decisions based on non-canonical URL paths."
+    enum_kinds: [AuthorizationSystem, WebPresentation]
+  CWE-648:
+    nl: "The unit uses privileged APIs incorrectly."
+  CWE-649:
+    enum_kinds: [WebPresentation, RESTApi]
+    nl: "The unit relies on obfuscation or encryption of mutable inputs as a security mechanism."
+  CWE-650:
+    nl: "The unit trusts the HTTP method as a permission mechanism."
+    enum_kinds: [AuthorizationSystem, WebPresentation]
+  CWE-651:
+    nl: "The unit exposes a WSDL file containing sensitive information."
+    enum_kinds: [RESTApi]
+  CWE-652:
+    nl: "The unit builds an XQuery expression from external input."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-654:
+    nl: "The unit bases a security decision on a single factor."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-655:
+    nl: "The unit's protection mechanism is too inconvenient to use."
+  CWE-656:
+    nl: "The unit relies on security through obscurity."
+  CWE-676:
+    nl: "The unit invokes a potentially dangerous function."
+  CWE-683:
+    nl: "The unit calls a function with arguments in the wrong order."
+  CWE-685:
+    nl: "The unit calls a function with too many or too few arguments."
+  CWE-686:
+    nl: "The unit calls a function with an argument of the wrong type."
+  CWE-687:
+    nl: "The unit calls a function with an argument value outside its valid range."
+  CWE-688:
+    nl: "The unit calls a function with the wrong variable or reference as an argument."
+  CWE-689:
+    nl: "The unit races on resource permissions during a copy."
+  CWE-690:
+    nl: "The unit does not check a function's return value for NULL before dereferencing."
+  CWE-692:
+    nl: "The unit's denylist-based XSS protection is incomplete."
+    enum_kinds: [WebPresentation]
+  CWE-694:
+    nl: "The unit uses multiple resources with the same identifier where uniqueness is required."
+  CWE-708:
+    nl: "The unit assigns an owner to a resource outside the intended control sphere."
+  CWE-749:
+    nl: "The unit exposes a dangerous method or function through an interface."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-756:
+    nl: "The unit does not return custom error pages, exposing sensitive information."
+    enum_kinds: [WebPresentation]
+  CWE-757:
+    nl: "The unit negotiates a less-secure algorithm than the strongest available."
+    enum_kinds: [AuthenticationMechanism, RESTApi, WebPresentation]
+  CWE-759:
+    nl: "The unit hashes a reversible input with a one-way hash without a salt."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-760:
+    nl: "The unit hashes with a predictable salt."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-766:
+    nl: "The unit declares a critical data element public."
+  CWE-767:
+    nl: "The unit exposes a private variable through a public method."
+  CWE-776:
+    nl: "The unit allows recursive entity references in DTDs."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-778:
+    nl: "The unit does not record security-critical events in its logs."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-780:
+    nl: "The unit uses RSA without OAEP padding."
+  CWE-784:
+    nl: "The unit relies on cookie values for protection without validating them."
+    enum_kinds: [IdentificationSystem]
+  CWE-785:
+    nl: "The unit calls a path-normalization function with a buffer too small for the path."

@@ -1,0 +1,396 @@
+"""The hunting actors: hunt-orchestrator and hunting-hunter as MAILBOX actors
+(feat/async-actor-agents).
+
+The hunting effort is now driven by the same actor-with-inbox architecture the
+recon-orchestrator uses (`recon/control/orchestrator_agent.ReconOrchestratorActor`):
+
+- `HuntOrchestratorActor` - ONE persistent `run_session_agent` per hunting run on
+  the `hunting_orchestrator` session role (`HuntingOrchestratorSession(run_id)`
+  thread). Its client (`hunt_orchestrator.arun_orchestration`) posts one message
+  per LLM turn of the pass - the Q8 gate reasoning and the D2 re-match judge -
+  and awaits the structured reply, all on the SAME thread, so the checkpointer
+  carries the pass's reasoning. This makes the hunting_orchestrator PURELY
+  stateful, exactly like the recon-orchestrator.
+- `HuntingHunterActor` - one per hunt on the `hunting_hunter` session role
+  (`HuntSession(run_id, hunt_id)` thread), fed the spec-authoring (D4) and
+  continuation-judgment (D5) prompts via its inbox. `HuntingActorRegistry`
+  hands the async hunting-agent harness (`hunting_agent.build_hunting_agent`)
+  per-hunt author/judge closures bound to these actors.
+
+Both use the same mechanics as `ReconOrchestratorActor`: an inbox that routes
+message kinds to the next on-thread turn, a post-call middleware that delivers
+the turn's content into a reply inbox, a client await that races the reply
+against the actor task (fail-open on a dead actor), and an idempotent `stop`.
+
+This module imports no driver and performs no I/O at import (CODING_STANDARD
+section 6): `__init__` performs NO imports at all - the heavy `polymerhus.app.llm`
+import chain is deferred to `_ensure_started`, exactly as the recon actor does.
+"""
+from __future__ import annotations
+
+import asyncio
+import logging
+
+logger = logging.getLogger(__name__)
+
+# Message kinds the orchestrator/inbox handler routes on.
+_GATE_KIND = "gate"
+_REMATCH_KIND = "rematch"
+_AUTHOR_KIND = "author"
+_JUDGE_KIND = "judge"
+
+_REPLY_KIND = "hunting_turn"
+_REPLY_SOURCE = "hunting-actor"
+
+
+class _TurnActor:
+    """Shared mailbox-actor machinery for the hunting actors.
+
+    Subclasses declare the on-thread message handling (`_on_message`) and the
+    lazily-resolved session address. Construction performs NO imports; every
+    heavy touch is deferred to `_ensure_started`."""
+
+    _base_kind = ""
+    _role_id = ""
+
+    def __init__(self, checkpointer=None, model_factory=None, observe: bool = True):
+        self._checkpointer = checkpointer
+        self._model_factory = model_factory
+        self._observe = observe
+        self._address = None
+        self._inbox = None
+        self._replies = None
+        self._task = None
+
+    @property
+    def role_id(self) -> str:
+        return self._role_id
+
+    @property
+    def thread_id(self) -> str:
+        if self._address is None:
+            self._address = self._make_address()
+        return self._address.thread_id
+
+    def _make_address(self):
+        raise NotImplementedError
+
+    async def _ensure_started(self, response_format=None, system_prompt=None,
+                              middleware_extra: list = None) -> None:
+        """Spawn the actor task on first use (lazy: a pass with no turns never
+        pays for an actor), wiring the reply middleware into its turns."""
+        if self._task is not None:
+            return
+        from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
+        from polymerhus.app.llm.actor import (  # noqa: PLC0415
+            AgentInbox,
+            build_inbox_middleware,
+            run_session_agent,
+        )
+        if self._checkpointer is None:
+            from polymerhus.app.llm.checkpoints import get_session_checkpointer  # noqa: PLC0415
+            self._checkpointer = get_session_checkpointer()
+
+        if self._inbox is None:
+            self._inbox = AgentInbox()
+        self._address = self._address or self._make_address()
+        replies = AgentInbox()
+        self._replies = replies
+        middleware = [build_inbox_middleware(
+            replies, kind=_REPLY_KIND, source=_REPLY_SOURCE
+        )]
+        if middleware_extra:
+            middleware = middleware + list(middleware_extra)
+        kwargs = {
+            "checkpointer": self._checkpointer,
+            "inbox": self._inbox,
+            "on_message": self._on_message,
+            "middleware": middleware,
+            "model_factory": self._model_factory,
+            "observe": self._observe,
+        }
+        if response_format is not None:
+            kwargs["response_format"] = response_format
+        if system_prompt is not None:
+            kwargs["system_prompt"] = system_prompt
+        self._task = asyncio.ensure_future(
+            run_session_agent(
+                self._address.role_id,
+                self._address.thread_id,
+                None,  # pure listener: turns arrive as inbox messages
+                **kwargs,
+            )
+        )
+
+    def _on_message(self, message, last_turn):  # pragma: no cover - subclass
+        raise NotImplementedError
+
+    async def _post_and_await(self, message) -> "object | None":
+        """Post one request message into the actor's inbox and await the reply.
+        Races the reply against the actor task: a dead actor returns None
+        (fail-open) instead of hanging."""
+        await self._ensure_started()
+        from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
+        await self._inbox.post(message)
+        return await self._await_reply()
+
+    async def _await_reply(self) -> "object | None":
+        from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
+        reply_task = asyncio.ensure_future(self._replies.get())
+        try:
+            done, _pending = await asyncio.wait(
+                {reply_task, self._task}, return_when=asyncio.FIRST_COMPLETED
+            )
+            if reply_task not in done:
+                return None  # the actor task finished first: dead actor, fail-open
+            message = reply_task.result()
+            if not isinstance(message, AgentMessage):
+                return None
+            payload = message.payload if isinstance(message.payload, dict) else {}
+            return payload.get("content")
+        finally:
+            if not reply_task.done():
+                reply_task.cancel()
+
+    async def _stop(self) -> None:
+        """Post the terminal message and reap the actor task (idempotent; safe
+        when the actor never spawned or already died)."""
+        if self._task is None:
+            return
+        try:
+            from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
+            await self._inbox.post(AgentMessage(kind="stop"))
+        except Exception:  # noqa: BLE001 - teardown must never raise
+            pass
+        if not self._task.done():
+            try:
+                await self._task
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+        else:
+            try:
+                self._task.exception()
+            except (asyncio.CancelledError, Exception):  # noqa: BLE001
+                pass
+
+
+class HuntOrchestratorActor(_TurnActor):
+    """The hunt-orchestrator as a persistent MAILBOX actor (feat/async-actor-agents).
+
+    ONE actor per hunting run: `arun_orchestration` (or an injected
+    `orchestrator_factory`) constructs it, and it spawns a `run_session_agent`
+    on the `hunting_orchestrator` session role under the run's
+    `HuntingOrchestratorSession` thread the first time a turn is needed. `reason`
+    posts a Q8 gate-reasoning request and awaits the structured `GateDecision`;
+    `rematch` posts a D2 re-match request and awaits the structured `MatchVerdict`
+    - both on the SAME thread, so the checkpointed memory carries the pass's
+    reasoning (purely stateful, exactly like the recon-orchestrator).
+
+    The agent's structured-output surface is the UNION
+    `GateDecision | MatchVerdict` (a `ToolStrategy` accepts a union schema): the
+    model emits whichever schema the turn's prompt asks for, and the client
+    classifies the reply by the requested kind.
+
+    Fail-open: a dead/crashed actor maps to `None` for both calls - the caller's
+    fail-open canon degrades (carry every candidate / insufficient-evidence).
+    `stop` posts the terminal message and reaps the task; safe when never spawned."""
+
+    _role_id = "hunting_orchestrator"
+
+    def __init__(self, run_id: str, *, checkpointer=None, model_factory=None,
+                 observe: bool = True):
+        super().__init__(checkpointer=checkpointer, model_factory=model_factory,
+                         observe=observe)
+        self._run_id = run_id
+
+    def _make_address(self):
+        from polymerhus.app.llm.session_address import HuntingOrchestratorSession  # noqa: PLC0415
+        return HuntingOrchestratorSession(run_id=self._run_id)
+
+    async def _ensure_started(self) -> None:
+        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+            GateDecision,
+            MatchVerdict,
+        )
+        from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
+        await super()._ensure_started(
+            response_format=ToolStrategy(GateDecision | MatchVerdict),
+        )
+
+    def _on_message(self, message, last_turn):
+        if message.kind == _GATE_KIND:
+            payload = message.payload if isinstance(message.payload, dict) else {}
+            from polymerhus.attack.hunting.llm import _compose_gate_prompt, _gate_skill  # noqa: PLC0415
+            from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415
+            return [
+                SystemMessage(content=_gate_skill()),
+                HumanMessage(content=_compose_gate_prompt(payload.get("input"))),
+            ]
+        if message.kind == _REMATCH_KIND:
+            payload = message.payload if isinstance(message.payload, dict) else {}
+            from polymerhus.attack.hunting.llm import _compose_rematch_prompt, _rematch_skill  # noqa: PLC0415
+            from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415
+            return [
+                SystemMessage(content=_rematch_skill()),
+                HumanMessage(content=_compose_rematch_prompt(
+                    payload.get("unit_id"), payload.get("fault_class"),
+                    payload.get("result"))),
+            ]
+        if message.kind == "stop":
+            from polymerhus.app.llm.actor import STOP  # noqa: PLC0415
+            return STOP
+        return None
+
+    async def reason(self, gate_input) -> "GateDecision | None":
+        """Feed the Q8 gate input to the actor and await its `GateDecision`.
+        Fail-open to None (the pass then carries every candidate)."""
+        if gate_input is None or not getattr(gate_input, "candidates", None):
+            return None
+        try:
+            from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
+            content = await self._post_and_await(
+                AgentMessage(kind=_GATE_KIND, payload={"input": gate_input})
+            )
+            from polymerhus.attack.hunting.hunt_orchestrator import GateDecision  # noqa: PLC0415
+            return content if isinstance(content, GateDecision) else None
+        except Exception:  # noqa: BLE001
+            logger.warning("hunt-orchestrator actor gate turn failed; carrying all candidates",
+                           exc_info=True)
+            return None
+
+    async def rematch(
+        self, unit_id: str, fault_class: str, result
+    ) -> "MatchVerdict | None":
+        """Feed the D2 re-match request to the actor and await its `MatchVerdict`
+        on the SAME thread. Fail-open to None (the caller lands unresolved)."""
+        try:
+            from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
+            content = await self._post_and_await(
+                AgentMessage(kind=_REMATCH_KIND, payload={
+                    "unit_id": unit_id, "fault_class": fault_class, "result": result,
+                })
+            )
+            from polymerhus.attack.hunting.hunt_orchestrator import MatchVerdict  # noqa: PLC0415
+            return content if isinstance(content, MatchVerdict) else None
+        except Exception:  # noqa: BLE001
+            logger.warning("hunt-orchestrator actor rematch turn failed",
+                           exc_info=True)
+            return None
+
+    async def stop(self) -> None:
+        await self._stop()
+
+
+class HuntingHunterActor(_TurnActor):
+    """The hunting-hunter as a per-hunt MAILBOX actor (feat/async-actor-agents).
+
+    ONE actor per hunt on the `hunting_hunter` session role (`HuntSession(run_id,
+    hunt_id)` thread), spawned lazily by the first author/judge turn. The harness
+    (`hunting_agent`) is the client: it posts the composed D4 authoring prompt
+    (stable skill already embedded) and awaits the parsed spec, and posts the D5
+    judgment prompt and awaits the parsed judgment; re-entries after a routed
+    back-edge resume the SAME thread, so the judge sees the author's reasoning
+    (replacing the `hunt_session` ContextVar + `stateful_turn` seam, which
+    remains the sync rollback lane).
+
+    Turns are free-text-then-parse (the D4 typed base is #83/#84's to ratify), so
+    no `response_format` is bound; a None reply is the degraded signal the
+    harness already handles. Fail-open: a dead actor yields None."""
+
+    _role_id = "hunting_hunter"
+
+    def __init__(self, run_id: str, hunt_id: str, *, checkpointer=None,
+                 model_factory=None, observe: bool = True):
+        super().__init__(checkpointer=checkpointer, model_factory=model_factory,
+                         observe=observe)
+        self._run_id = run_id
+        self._hunt_id = hunt_id
+
+    def _make_address(self):
+        from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415
+        return HuntSession(run_id=self._run_id, hunt_id=self._hunt_id)
+
+    def _on_message(self, message, last_turn):
+        if message.kind in (_AUTHOR_KIND, _JUDGE_KIND):
+            payload = message.payload if isinstance(message.payload, dict) else {}
+            from langchain_core.messages import HumanMessage  # noqa: PLC0415
+            return [HumanMessage(content=payload.get("text") or "")]
+        if message.kind == "stop":
+            from polymerhus.app.llm.actor import STOP  # noqa: PLC0415
+            return STOP
+        return None
+
+    async def _turn(self, kind: str, text: str) -> "dict | None":
+        from polymerhus.attack.hunting.llm import _parse_json_object  # noqa: PLC0415
+        try:
+            from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
+            content = await self._post_and_await(
+                AgentMessage(kind=kind, payload={"text": text})
+            )
+            return _parse_json_object(content)
+        except Exception:  # noqa: BLE001
+            logger.warning("hunting-hunter actor %s turn failed", kind, exc_info=True)
+            return None
+
+    async def author(self, text: str) -> "dict | None":
+        """One D4 spec-authoring turn on the per-hunt thread; None = degraded."""
+        return await self._turn(_AUTHOR_KIND, text)
+
+    async def judge(self, text: str) -> "dict | None":
+        """One D5 continuation-judgment turn on the per-hunt thread; None = degraded."""
+        return await self._turn(_JUDGE_KIND, text)
+
+    async def stop(self) -> None:
+        await self._stop()
+
+
+class HuntingActorRegistry:
+    """Per-run registry of `HuntingHunterActor`s, keyed by hunt_id.
+
+    The production composition point hands the harness per-hunt author/judge
+    closures bound to these actors: `asyncio.run(arun_orchestration(...))`
+    (or a future live entry point) owns ONE registry for the run; the harness's
+    `dispatch_fn` looks its actor up (or lazily spawns it) by `config.hunt_id`,
+    so concurrent hunts never collide and back-edge re-entries resume the same
+    per-hunt thread. `stop_all` reaps every spawned actor (idempotent)."""
+
+    def __init__(self, run_id: str, *, checkpointer=None, model_factory=None,
+                 observe: bool = True):
+        self._run_id = run_id
+        self._checkpointer = checkpointer
+        self._model_factory = model_factory
+        self._observe = observe
+        self._actors: dict[str, HuntingHunterActor] = {}
+
+    def actor_for(self, hunt_id: str) -> HuntingHunterActor:
+        actor = self._actors.get(hunt_id)
+        if actor is None:
+            actor = HuntingHunterActor(
+                self._run_id, hunt_id,
+                checkpointer=self._checkpointer,
+                model_factory=self._model_factory,
+                observe=self._observe,
+            )
+            self._actors[hunt_id] = actor
+        return actor
+
+    def author_fn(self, hunt_id: str):
+        """The async `author(text)` seam for `hunt_id`, bound to its actor."""
+
+        async def author(text: str) -> "dict | None":
+            return await self.actor_for(hunt_id).author(text)
+
+        return author
+
+    def judge_fn(self, hunt_id: str):
+        """The async `judge(text)` seam for `hunt_id`, bound to its actor."""
+
+        async def judge(text: str) -> "dict | None":
+            return await self.actor_for(hunt_id).judge(text)
+
+        return judge
+
+    async def stop_all(self) -> None:
+        for actor in self._actors.values():
+            await actor.stop()
+        self._actors.clear()

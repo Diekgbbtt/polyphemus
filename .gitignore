@@ -36,3 +36,12 @@ data/ingestion/failed/*
 data/ingestion/normalized/*
 !data/ingestion/normalized/.gitkeep
 docs/.DS_Store
+
+# Agent-harness working state, not source. `.claude/worktrees/` holds live git
+# worktrees (never nest those in a commit); the lock is per-machine runtime.
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+
+# Recon run artifacts (multi-MB per-target graph dumps), reproducible by re-running.
+.recon-exports/
+tests/e2e/fixtures/eval-targets.yaml

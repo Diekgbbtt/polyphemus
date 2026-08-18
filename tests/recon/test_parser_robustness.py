@@ -12,11 +12,11 @@ Two crash classes, found during per-tool reviews, generalised fleet-wide:
    (`urlparse`, `.encode()`, `.lower()`, `.strip()`, `.split()`, ...) on
    that `.get()`-sourced value.
 
-Every tool registered in `agent.recon.parsers.PARSERS` is exercised.
+Every tool registered in `polymerhus.recon.domain.parsers.PARSERS` is exercised.
 """
 import pytest
 
-from agent.recon.parsers import PARSERS, get_parser
+from polymerhus.recon.domain.parsers import PARSERS, get_parser
 
 # Non-dict-but-valid JSON lines, one per JSON value kind, plus a blank line
 # and an invalid-JSON line for good measure.

@@ -3,7 +3,7 @@ from pathlib import Path
 import httpx
 import pytest
 
-from agent.ingestion.lightrag_adapter import (
+from polymerhus.ingestion.lightrag_adapter import (
     LightRAGAdapterError,
     LightRAGIngestionAdapter,
 )

@@ -1,7 +1,11 @@
 import asyncio, subprocess, httpx, psycopg
 from neo4j import GraphDatabase
 from fastmcp import Client
-from tests.conftest import wait_for
+import pytest
+from tests.conftest import neo4j_target, wait_for
+
+# Talks to the real stack it just brought up.
+pytestmark = pytest.mark.live_neo4j
 
 def test_full_stack_comes_up_and_connects():
     subprocess.run(["docker", "compose", "up", "-d", "--build"], check=True)
@@ -17,7 +21,8 @@ def test_full_stack_comes_up_and_connects():
             return r.data
     assert asyncio.run(_roundtrip())["stdout"].strip() == "persisted"
 
-    d = GraphDatabase.driver("bolt://localhost:7687", auth=("neo4j", "polymerhus"))
+    uri, auth = neo4j_target()
+    d = GraphDatabase.driver(uri, auth=auth)
     with d.session() as s:
         names = {r["name"] for r in s.run("SHOW CONSTRAINTS YIELD name")}
     assert "endpoint_unique" in names

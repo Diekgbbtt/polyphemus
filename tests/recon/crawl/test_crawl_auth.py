@@ -18,9 +18,9 @@ Fully mocked - no live Steel/LLM. Covers three seams:
 """
 import asyncio
 
-from agent.recon import pipeline
-from agent.recon.crawl import crawl_agent, crawl_pod
-from agent.recon.types import JobSpec, PodExport
+from polymerhus.recon.control import pipeline
+from polymerhus.recon.crawl import crawl_agent, crawl_pod
+from polymerhus.recon.domain.types import JobSpec, PodExport
 
 AUTH_JOB = JobSpec(
     tool="steel_crawl",
@@ -148,8 +148,8 @@ def test_run_crawl_authenticated_best_effort_on_precreate_failure():
 
 
 def make_capturing_curate_fn():
-    def curate_fn(assets, observations, project_id):
-        return len(assets), len(observations)
+    def curate_fn(assets, observations, project_id, scope_domain=None):
+        return len(assets), len(observations), assets, observations
 
     return curate_fn
 
@@ -187,7 +187,8 @@ def test_auth_job_with_auth_context_calls_precreate_and_records_viewer_url():
     export = result["export"]
 
     assert len(precreate_calls) == 1
-    assert precreate_calls[0] == ("https://app.example.com", ["https://app.example.com"])
+    # scope folds to the registrable domain at the crawl-node resolution point (Change A)
+    assert precreate_calls[0] == ("https://app.example.com", ["example.com"])
     assert export.verdict == "success"
     assert export.stats == {"viewer_url": "https://steel.example/v/abc"}
 
@@ -372,7 +373,8 @@ def test_auth_job_with_cookies_injects_and_skips_precreate():
     result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": cookies}}))
 
     assert precreate_calls == []  # non-interactive path, no human viewer
-    assert run_calls == [("https://app.example.com", ["https://app.example.com"], cookies)]
+    # scope folds to the registrable domain at the crawl-node resolution point (Change A)
+    assert run_calls == [("https://app.example.com", ["example.com"], cookies)]
     assert result["export"].verdict == "success"
 
 

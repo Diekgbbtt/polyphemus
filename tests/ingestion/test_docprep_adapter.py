@@ -4,7 +4,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.ingestion.docprep_adapter import (
+from polymerhus.ingestion.docprep_adapter import (
     DocprepError,
     normalize_document,
     normalize_downloaded_artifact,
@@ -113,7 +113,7 @@ def test_normalize_downloaded_artifact_failure_uses_stable_code(tmp_path):
 
 
 def test_ingestion_modules_never_import_url_fetcher():
-    ingestion_dir = Path("agent/ingestion")
+    ingestion_dir = Path("src/polymerhus/ingestion")
     for module in sorted(ingestion_dir.glob("*.py")):
         source = module.read_text(encoding="utf-8")
         assert "url_fetcher" not in source, (

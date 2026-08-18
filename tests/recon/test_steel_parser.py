@@ -1,8 +1,8 @@
 # tests/recon/test_steel_parser.py
 from pathlib import Path
 
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.steel_parser import parse
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.steel_parser import parse
 
 FIX = Path(__file__).parent / "fixtures" / "steel_manifest.json"
 

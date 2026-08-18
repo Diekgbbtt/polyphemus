@@ -1,8 +1,8 @@
 # tests/recon/test_takeover_parser.py
 from pathlib import Path
 
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.takeover_parser import parse, parse_findings
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.takeover_parser import parse, parse_findings
 
 FIX = Path(__file__).parent / "fixtures" / "subdomain_takeover.json"
 

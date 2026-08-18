@@ -1,6 +1,8 @@
+import { useMemo } from "react"
 import ForceGraph2D from "react-force-graph-2d"
 import type { GraphNode, GraphLink } from "../api/types"
 import { nodeColor } from "./colors"
+import { projectGraph, layerKey, type LayerVisibility } from "./projection"
 
 // Bookkeeping keys that carry no attack-surface meaning for a viewer.
 const HIDDEN_KEYS = new Set(["project_id", "id", "element_id"])
@@ -47,10 +49,37 @@ function nodeTooltip(n: object): string {
   )
 }
 
-export function GraphCanvas({ nodes, links }: { nodes: GraphNode[]; links: GraphLink[] }) {
+export function GraphCanvas({
+  nodes,
+  links,
+  layers = { l0: true, l1: true },
+}: {
+  nodes: GraphNode[]
+  links: GraphLink[]
+  layers?: LayerVisibility
+}) {
+  const key = layerKey(layers)
+  // Project to the enabled layers and hand ForceGraph FRESH object copies:
+  // react-force-graph rewrites each link's source/target from an id string to a
+  // node reference in place, so reusing the pristine arrays would corrupt them
+  // for the next projection. Copying per projection keeps the source data intact.
+  const graphData = useMemo(() => {
+    const projected = projectGraph({ project_id: "", nodes, links }, layers)
+    return {
+      nodes: projected.nodes.map((n) => ({ ...n })),
+      links: projected.links.map((l) => ({ ...l })),
+    }
+    // `key` stands in for `layers`: it is the value-identity of the flags, so a
+    // caller passing a fresh object each render does not re-project needlessly.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [nodes, links, key])
+
   return (
     <ForceGraph2D
-      graphData={{ nodes: nodes as object[], links: links as object[] }}
+      // Remount on a layer change so the simulation restarts from the fresh
+      // copies rather than the previous projection's already-mutated ones.
+      key={key}
+      graphData={graphData as { nodes: object[]; links: object[] }}
       nodeId="id"
       nodeLabel={nodeTooltip}
       nodeColor={(n: object) => nodeColor((n as GraphNode).type)}

@@ -1,5 +1,5 @@
 def test_waf_vocabulary_and_job_kind():
-    from agent.recon.steering import (
+    from polymerhus.recon.control.steering import (
         is_waf_signal, WAF_MACRO_KINDS, REQUEST_CRAWLER_JOBS,
         AGENTIC_CRAWLER_JOBS, describe_job_kind,
     )
@@ -24,7 +24,7 @@ class _FakeDriver:
 
 
 def test_read_steering_signals_returns_signal_dicts():
-    from agent.recon.pipeline import read_steering_signals
+    from polymerhus.recon.control.pipeline import read_steering_signals
     driver = _FakeDriver([
         {"url": "https://ib.example.com", "macro_kind": "waf_protected", "evidence": "Incapsula"},
         {"url": None, "macro_kind": "waf_detection", "evidence": "x"},
@@ -35,7 +35,7 @@ def test_read_steering_signals_returns_signal_dicts():
 
 
 def test_read_steering_signals_fail_open_on_error():
-    from agent.recon.pipeline import read_steering_signals
+    from polymerhus.recon.control.pipeline import read_steering_signals
 
     class Boom:
         def session(self): raise RuntimeError("neo4j down")
@@ -44,7 +44,7 @@ def test_read_steering_signals_fail_open_on_error():
 
 
 def test_format_signals_renders_one_line_per_host():
-    from agent.recon.steering import format_signals
+    from polymerhus.recon.control.steering import format_signals
     out = format_signals([
         {"url": "https://a", "macro_kind": "waf_protected", "evidence": "Incapsula"},
         {"url": "https://b", "macro_kind": "waf_detection", "evidence": ""},
@@ -57,6 +57,6 @@ def test_format_signals_renders_one_line_per_host():
 def test_resolve_model_returns_injected_llm():
     # The injected-llm path is the only one exercised offline; the role-resolution
     # branch is lazy and provider-gated, so it is not called here.
-    from agent.recon.steering import resolve_model
+    from polymerhus.recon.control.steering import resolve_model
     sentinel = object()
     assert resolve_model("job_orchestrator", sentinel) is sentinel

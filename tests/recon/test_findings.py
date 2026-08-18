@@ -1,5 +1,5 @@
-from agent.recon.findings import normalize_severity, finding_to_observation
-from agent.recon.types import Observation
+from polymerhus.recon.domain.findings import normalize_severity, finding_to_observation
+from polymerhus.recon.domain.types import Observation
 
 
 def test_normalize_severity_uppercase():

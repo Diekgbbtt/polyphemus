@@ -1,0 +1,177 @@
+# Authoring sidecar: matching facet for CWE-201..CWE-299 (#66, spec 5.6).
+entries:
+  CWE-201:
+    nl: "The unit transmits data that includes sensitive information beyond what the recipient should see."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-202:
+    nl: "The unit's data queries let an attacker infer confidential information."
+  CWE-203:
+    nl: "The unit's behavior or responses differ observably based on secret-dependent conditions."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-204:
+    nl: "The unit returns observably different responses that reveal internal state."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-205:
+    nl: "The unit's observable behaviors differ in ways that reveal secret-relevant state."
+  CWE-206:
+    nl: "The unit's combined behaviors reveal internal state differences."
+  CWE-207:
+    nl: "The unit's behavior lets an observer distinguish it from an equivalent product."
+  CWE-208:
+    nl: "The unit's operations take observably different times depending on secret-dependent conditions."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-209:
+    nl: "The unit emits an error message containing sensitive environment or user information."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-210:
+    nl: "The unit's own error message contains sensitive information."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-211:
+    nl: "The unit triggers an externally generated error message containing sensitive information."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-213:
+    nl: "The unit exposes sensitive information to actors the intended policy excludes."
+  CWE-214:
+    nl: "The unit invokes a process with sensitive data visible in arguments or environment."
+  CWE-215:
+    nl: "The unit's debugging code emits sensitive information."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-219:
+    nl: "The unit stores a sensitive file under the web document root without access control."
+    enum_kinds: [WebPresentation]
+  CWE-220:
+    nl: "The unit stores a sensitive file under an FTP root without access control."
+  CWE-222:
+    nl: "The unit truncates security-relevant information in display, recording, or processing."
+  CWE-223:
+    nl: "The unit omits security-relevant information from logs or displays."
+  CWE-224:
+    nl: "The unit records security-relevant information under an alternate name that obscures it."
+  CWE-229:
+    nl: "The unit mishandles unexpected numbers of parameter values."
+  CWE-230:
+    nl: "The unit mishandles a missing value for a parameter, field, or argument."
+  CWE-231:
+    enum_kinds: [RESTApi, WebPresentation]
+    nl: "The unit mishandles extra values supplied for a parameter, field, or argument."
+  CWE-232:
+    nl: "The unit mishandles an undefined or unsupported value."
+  CWE-233:
+    nl: "The unit mishandles unexpected numbers of parameters, fields, or arguments."
+  CWE-234:
+    nl: "The unit does not handle a missing function parameter."
+  CWE-235:
+    nl: "The unit mishandles extra parameters, fields, or arguments."
+  CWE-236:
+    nl: "The unit mishandles a parameter, field, or argument with an unexpected name."
+  CWE-237:
+    nl: "The unit mishandles complex structural input."
+  CWE-238:
+    nl: "The unit mishandles an incompletely specified structural element."
+  CWE-239:
+    nl: "The unit does not handle an incompletely specified element."
+  CWE-240:
+    nl: "The unit mishandles inconsistent structural elements."
+  CWE-241:
+    nl: "The unit mishandles an unexpected data type."
+  CWE-248:
+    nl: "The unit throws an exception that is never caught."
+  CWE-250:
+    nl: "The unit executes operations with higher privileges than required."
+  CWE-252:
+    nl: "The unit does not check a method's or function's return value."
+  CWE-253:
+    nl: "The unit checks a return value incorrectly."
+  CWE-257:
+    nl: "The unit stores passwords in a recoverable format."
+    enum_kinds: [AuthenticationMechanism, RESTApi]
+  CWE-258:
+    nl: "The unit accepts an empty string as a password."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-260:
+    nl: "The unit stores a password in a readable configuration file."
+    enum_kinds: [AuthenticationMechanism, WebPresentation, RESTApi]
+  CWE-261:
+    nl: "The unit obscures a password with a trivial encoding."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-262:
+    nl: "The unit lacks a mechanism for managing password aging."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-263:
+    nl: "The unit allows password expiration periods that are too long."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-266:
+    nl: "The unit assigns a privilege to an actor creating an unintended privilege sphere."
+    predicate:
+      target: System
+      clauses:
+        - {form: reachable-via, key: AUTHORIZED_BY, values: [AuthorizationSystem]}
+    enum_kinds: [AuthorizationSystem]
+  CWE-267:
+    nl: "The unit grants a privilege that permits unsafe actions."
+    enum_kinds: [AuthorizationSystem]
+  CWE-268:
+    nl: "The unit lets two privileges combine into an unintended capability."
+    enum_kinds: [AuthorizationSystem]
+  CWE-270:
+    nl: "The unit mishandles privilege state while switching security contexts."
+  CWE-272:
+    nl: "The unit fails to drop elevated privileges when they are no longer needed."
+  CWE-273:
+    nl: "The unit does not verify that privileges were actually dropped."
+  CWE-274:
+    nl: "The unit mishandles an insufficient-privilege condition."
+    enum_kinds: [AuthorizationSystem]
+  CWE-276:
+    nl: "The unit's installation sets file permissions that allow unintended modification."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-277:
+    nl: "The unit's insecure permissions are inherited by created objects."
+  CWE-278:
+    nl: "The unit preserves insecure permissions on an object."
+  CWE-279:
+    nl: "The unit assigns execution permissions in a way that violates the intended policy."
+  CWE-280:
+    nl: "The unit mishandles insufficient permissions or privileges on a resource."
+  CWE-281:
+    nl: "The unit fails to preserve permissions when copying or restoring a resource."
+  CWE-283:
+    nl: "The unit does not verify that a critical resource is owned by the proper entity."
+    enum_kinds: [AuthorizationSystem]
+  CWE-288:
+    nl: "The unit requires authentication but leaves an alternate path that does not."
+    predicate:
+      target: System
+      clauses:
+        - {form: spine-present, key: auth_methods}
+    enum_kinds: [AuthenticationMechanism]
+  CWE-289:
+    nl: "The unit authenticates based on a resource name rather than the resource itself."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-290:
+    nl: "The unit authenticates based on spoofable identity claims."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-291:
+    nl: "The unit relies on an IP address for authentication."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-293:
+    nl: "The unit relies on the HTTP Referer field for authentication."
+    enum_kinds: [AuthenticationMechanism, WebPresentation]
+  CWE-294:
+    nl: "The unit's authentication is vulnerable to capture-replay."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-295:
+    nl: "The unit does not validate, or mis-validates, a certificate."
+    enum_kinds: [AuthenticationMechanism, RESTApi, WebPresentation]
+  CWE-296:
+    nl: "The unit does not follow a certificate's chain of trust correctly."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-297:
+    nl: "The unit does not validate a certificate against the expected host."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-298:
+    nl: "The unit does not validate a certificate's expiration."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-299:
+    nl: "The unit does not check a certificate's revocation status."
+    enum_kinds: [AuthenticationMechanism]

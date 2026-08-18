@@ -1,0 +1,172 @@
+# Authoring sidecar: matching facet for CWE-300..CWE-399 (#66, spec 5.6).
+entries:
+  CWE-300:
+    nl: "The unit's communication channel does not verify the identity of actors at both ends."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-301:
+    nl: "The unit's authentication protocol is vulnerable to reflection attacks."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-302:
+    nl: "The unit authenticates using key data elements assumed immutable but attacker-modifiable."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-303:
+    nl: "The unit implements an authentication algorithm incorrectly."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-304:
+    nl: "The unit skips a step in its authentication technique."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-305:
+    nl: "The unit's authentication mechanism can be bypassed via a primary weakness in the algorithm."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-306:
+    nl: "The unit performs a critical function without any authentication."
+    enum_kinds: [AuthenticationMechanism, RESTApi]
+  CWE-307:
+    nl: "The unit does not limit repeated failed authentication attempts."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-308:
+    nl: "The unit authenticates with a single factor only."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-309:
+    nl: "The unit uses a password system as the primary authentication means."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-312:
+    nl: "The unit stores sensitive information in cleartext in an accessible resource."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-313:
+    nl: "The unit stores sensitive information in cleartext in a file or on disk."
+    enum_kinds: [RESTApi]
+  CWE-314:
+    nl: "The unit stores sensitive information in cleartext in a registry."
+  CWE-315:
+    nl: "The unit stores sensitive information in cleartext in a cookie."
+    enum_kinds: [IdentificationSystem, WebPresentation]
+  CWE-316:
+    nl: "The unit stores sensitive information in cleartext in memory."
+  CWE-317:
+    nl: "The unit stores sensitive information in cleartext in a GUI."
+  CWE-318:
+    nl: "The unit stores sensitive information in cleartext in an executable."
+  CWE-319:
+    nl: "The unit transmits sensitive data in cleartext over a communication channel."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-322:
+    nl: "The unit performs a key exchange without verifying the peer's identity."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-323:
+    nl: "The unit reuses a nonce or key pair across uses."
+  CWE-324:
+    nl: "The unit uses a cryptographic key past its expiration date."
+  CWE-325:
+    nl: "The unit omits a required step in a cryptographic algorithm."
+  CWE-331:
+    nl: "The unit's randomness source produces insufficient entropy."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-332:
+    nl: "The unit's PRNG has insufficient entropy."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-333:
+    nl: "The unit's TRNG has insufficient entropy."
+  CWE-334:
+    nl: "The unit's random value space is smaller than needed."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-335:
+    nl: "The unit seeds its PRNG incorrectly."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-336:
+    nl: "The unit's PRNG uses the same seed on every initialization."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-337:
+    nl: "The unit initializes its PRNG from a predictable seed."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-338:
+    nl: "The unit uses a cryptographically weak PRNG in a security context."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-339:
+    nl: "The unit's PRNG seed space is too small."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-341:
+    nl: "The unit generates numbers or objects predictable from observable state."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-342:
+    nl: "The unit generates random values predictable from previous values."
+    enum_kinds: [IdentificationSystem, AuthenticationMechanism]
+  CWE-343:
+    nl: "The unit generates random values whose range is predictable from previous values."
+  CWE-344:
+    nl: "The unit uses a constant value where a dynamic one is required."
+  CWE-347:
+    nl: "The unit does not verify a cryptographic signature correctly."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-348:
+    nl: "The unit uses a less-trusted source when a trusted source of the same data exists."
+  CWE-349:
+    nl: "The unit accepts untrusted data mixed with trusted data when processing."
+  CWE-350:
+    nl: "The unit performs reverse DNS resolution for a security-critical decision."
+    enum_kinds: [RESTApi]
+  CWE-351:
+    nl: "The unit fails to distinguish between different types of elements."
+  CWE-352:
+    nl: "The unit cannot verify whether a request was intentionally submitted by an authenticated user."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation]}
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-353:
+    nl: "The unit's transmission protocol lacks an integrity-check mechanism."
+  CWE-354:
+    nl: "The unit does not validate an integrity check value."
+  CWE-356:
+    nl: "The unit's UI does not warn the user before an unsafe action."
+    enum_kinds: [WebPresentation]
+  CWE-357:
+    nl: "The unit's UI gives insufficient warning of dangerous operations."
+  CWE-358:
+    nl: "The unit misimplements a security-relevant standard check."
+  CWE-360:
+    nl: "The unit trusts event-source information that can be spoofed."
+  CWE-363:
+    nl: "The unit checks a file's status before access in a way that races with link changes."
+  CWE-366:
+    nl: "The unit races threads over a shared resource."
+  CWE-367:
+    nl: "The unit checks a resource's state before using it in a TOCTOU race."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-368:
+    nl: "The unit performs non-atomic actions across a context switch crossing privilege boundaries."
+  CWE-369:
+    nl: "The unit divides a value by zero."
+  CWE-370:
+    nl: "The unit does not re-check certificate revocation after the initial check."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-374:
+    nl: "The unit passes mutable data to an untrusted method."
+  CWE-375:
+    nl: "The unit returns a mutable object to an untrusted caller."
+  CWE-378:
+    nl: "The unit creates a temporary file with insecure permissions."
+  CWE-379:
+    nl: "The unit creates a temporary file in a directory with insecure permissions."
+  CWE-382:
+    nl: "A J2EE-style unit calls System.exit() during a request."
+  CWE-384:
+    nl: "The unit establishes a new user session without invalidating the existing one."
+    enum_kinds: [IdentificationSystem]
+  CWE-390:
+    nl: "The unit detects an error condition but takes no action."
+  CWE-391:
+    nl: "The unit leaves an error condition unchecked."
+  CWE-392:
+    nl: "The unit does not report an error condition it encountered."
+  CWE-393:
+    nl: "The unit returns a wrong status code or return value."
+  CWE-394:
+    nl: "The unit does not check a status code or return value properly."
+  CWE-395:
+    nl: "The unit catches NullPointerException instead of checking for NULL programmatically."
+  CWE-396:
+    nl: "The unit declares a catch for an overly generic exception."
+  CWE-397:
+    nl: "The unit declares throws for an overly generic exception."

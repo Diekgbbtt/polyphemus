@@ -5,3 +5,9 @@ langgraph-checkpoint-postgres==3.1.0
 neo4j==5.27.0
 fastmcp>=2.14,<3
 httpx==0.28.1
+# #94 session agents: the session path (app/llm/session.py) runs long-horizon
+# tool-calling agents via langchain.agents.create_agent (the langchain 1.x agent
+# API). The base image ships the langchain family, but create_agent needs >=1.0 -
+# pin it so host/CI test runs resolve it; the PROD base image must carry a
+# compatible version (operator action - see the branch's STATE note).
+langchain>=1.3,<2

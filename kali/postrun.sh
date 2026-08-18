@@ -52,5 +52,23 @@ fi
 
 [ -f /resolvers/resolvers.txt ] || curl -sL https://raw.githubusercontent.com/trickest/resolvers/main/resolvers.txt -o /resolvers/resolvers.txt
 
+# OpenVPN + iproute2, for targets reachable only over a VPN (e.g. a lab/CTF host
+# on a tun route). iproute2 is REQUIRED, not optional: OpenVPN configures the
+# tun interface via `ip`, and this Kali base ships without it, so a bare
+# `openvpn` install (esp. with --no-install-recommends) connects then dies at
+# "Linux ip addr add failed". The guard therefore requires BOTH binaries.
+# Install only - the connection is a separate, credentialed step (feed a .ovpn
+# profile and start `openvpn --daemon --config ...` in the BACKGROUND; a
+# foreground openvpn here would block mcp_server.py, since the entrypoint is
+# `postrun.sh && mcp_server.py`). Idempotent + root-native, matching whois above.
+command -v openvpn >/dev/null 2>&1 && command -v ip >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq --no-install-recommends openvpn iproute2; }
+
+# Self-heal the TUN device node in case the host device is not mapped in: the
+# container keeps the default CAP_MKNOD, and NET_ADMIN (granted in compose) lets
+# OpenVPN configure the interface. No-op when compose already mapped /dev/net/tun.
+if [ ! -c /dev/net/tun ]; then
+  mkdir -p /dev/net && mknod /dev/net/tun c 10 200 && chmod 600 /dev/net/tun
+fi
+
 echo "[postrun] gap-fill complete"
 exit 0

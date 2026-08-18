@@ -1,0 +1,63 @@
+# Authoring sidecar: matching facet for CWE-804..CWE-999 (#66, spec 5.6).
+entries:
+  CWE-804:
+    nl: "The unit uses a CAPTCHA challenge that can be guessed or recognized automatically."
+    enum_kinds: [WebPresentation]
+  CWE-807:
+    nl: "The unit bases a security decision on untrusted input values."
+    enum_kinds: [AuthorizationSystem]
+  CWE-827:
+    nl: "The unit does not restrict DTD references to the intended control sphere."
+    enum_kinds: [RESTApi, GraphQLApi]
+  CWE-829:
+    nl: "The unit includes executable functionality from an untrusted control sphere."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-830:
+    nl: "The unit includes web functionality from an untrusted domain."
+    enum_kinds: [IntegrationSystem, WebPresentation]
+  CWE-836:
+    nl: "The unit uses password hashes instead of passwords for authentication."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-837:
+    nl: "The unit fails to enforce that an action happens only once per actor."
+    enum_kinds: [AuthorizationSystem, WebPresentation]
+  CWE-838:
+    nl: "The unit uses an encoding inappropriate for the output context."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-841:
+    nl: "The unit fails to enforce the correct order of behaviors in a workflow."
+  CWE-842:
+    nl: "The unit places a user into an incorrect group."
+  CWE-862:
+    nl: "The unit performs an action without an authorization check."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: AUTHORIZED_BY, values: [AuthorizationSystem]}
+    enum_kinds: [AuthorizationSystem]
+  CWE-914:
+    nl: "The unit fails to restrict reads or writes to dynamically identified variables."
+  CWE-915:
+    nl: "The unit improperly controls modification of dynamically determined object attributes."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-916:
+    nl: "The unit hashes passwords with insufficient computational effort."
+    enum_kinds: [AuthenticationMechanism]
+  CWE-917:
+    nl: "The unit builds an expression-language statement from external input."
+    enum_kinds: [RESTApi, GraphQLApi, WebPresentation]
+  CWE-918:
+    nl: "The unit fetches a remote resource from a URL supplied by the requester."
+    predicate:
+      target: Both
+      clauses:
+        - {form: reachable-via, key: EXPOSED_VIA, values: [WebPresentation, RESTApi, GraphQLApi]}
+    enum_kinds: [WebPresentation, RESTApi, GraphQLApi]
+  CWE-924:
+    nl: "The unit does not enforce message integrity over a communication channel."
+  CWE-942:
+    nl: "The unit permits a cross-domain policy that allows untrusted domains."
+    enum_kinds: [IntegrationSystem, WebPresentation]
+  CWE-1004:
+    nl: "The unit sets sensitive cookies without the HttpOnly flag."
+    enum_kinds: [IdentificationSystem, WebPresentation]

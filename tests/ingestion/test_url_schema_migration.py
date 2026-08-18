@@ -1,5 +1,5 @@
-from agent.app.clients import pg
-from agent.ingestion import migrate_url_schema
+from polymerhus.app.clients import pg
+from polymerhus.ingestion import migrate_url_schema
 
 
 def test_main_calls_apply_url_ingestion_migrations_exactly_once(monkeypatch):

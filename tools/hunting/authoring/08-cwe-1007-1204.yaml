@@ -1,0 +1,30 @@
+# Authoring sidecar: matching facet for CWE-1007..CWE-1204 (#66, spec 5.6).
+entries:
+  CWE-1007:
+    nl: "The unit displays identifiers that are visually indistinguishable homoglyphs."
+  CWE-1021:
+    nl: "The unit does not restrict rendered UI layers or frames from other origins."
+    enum_kinds: [WebPresentation]
+  CWE-1022:
+    nl: "The unit renders links to untrusted sites without restricting window.opener access."
+    enum_kinds: [WebPresentation]
+  CWE-1039:
+    nl: "The unit's automated input recognition fails to handle adversarial perturbations."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1104:
+    nl: "The unit relies on third-party components that are no longer maintained."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1125:
+    nl: "The unit exposes an excessively large attack surface."
+  CWE-1173:
+    nl: "The unit does not use its provided input validation framework."
+    enum_kinds: [WebPresentation, RESTApi]
+  CWE-1174:
+    nl: "The unit's ASP.NET model validation is improperly configured."
+    enum_kinds: [WebPresentation]
+  CWE-1188:
+    nl: "The unit initializes a resource with an insecure default."
+    enum_kinds: [RESTApi, WebPresentation]
+  CWE-1204:
+    nl: "The unit generates a weak initialization vector."
+    enum_kinds: [AuthenticationMechanism, RESTApi]

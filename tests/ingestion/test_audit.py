@@ -3,7 +3,7 @@ from datetime import datetime
 
 import pytest
 
-from agent.ingestion.audit import (
+from polymerhus.ingestion.audit import (
     AuditIssue,
     AuditReport,
     GraphEdge,

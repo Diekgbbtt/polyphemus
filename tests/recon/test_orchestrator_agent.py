@@ -15,7 +15,7 @@ class _FakeLLM:
 
 
 def test_decide_routing_maps_exclusions():
-    from agent.recon.orchestrator_agent import decide_routing, RoutingDecision, _JobExclusion
+    from polymerhus.recon.control.orchestrator_agent import decide_routing, RoutingDecision, _JobExclusion
     result = RoutingDecision(exclusions=[_JobExclusion(job="katana", exclude_urls=["https://ib.x"])])
     out = decide_routing(
         [{"url": "https://ib.x", "macro_kind": "waf_protected", "evidence": "Incapsula"}],
@@ -25,7 +25,7 @@ def test_decide_routing_maps_exclusions():
 
 
 def test_decide_routing_ignores_hallucinated_job():
-    from agent.recon.orchestrator_agent import decide_routing, RoutingDecision, _JobExclusion
+    from polymerhus.recon.control.orchestrator_agent import decide_routing, RoutingDecision, _JobExclusion
     result = RoutingDecision(exclusions=[_JobExclusion(job="not_in_phase", exclude_urls=["https://x"])])
     out = decide_routing(
         [{"url": "https://x", "macro_kind": "waf_protected", "evidence": "e"}],
@@ -35,12 +35,12 @@ def test_decide_routing_ignores_hallucinated_job():
 
 
 def test_decide_routing_empty_signals_is_noop():
-    from agent.recon.orchestrator_agent import decide_routing
+    from polymerhus.recon.control.orchestrator_agent import decide_routing
     assert decide_routing([], ["katana"], llm=None) == {}
 
 
 def test_decide_routing_fail_open():
-    from agent.recon.orchestrator_agent import decide_routing
+    from polymerhus.recon.control.orchestrator_agent import decide_routing
 
     class Boom:
         def with_structured_output(self, *a, **k): raise RuntimeError("llm down")

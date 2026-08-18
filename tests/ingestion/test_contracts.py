@@ -1,13 +1,13 @@
 import pytest
 
-from agent.ingestion.contracts import (
+from polymerhus.ingestion.contracts import (
     IngestionError,
     SourceChange,
     SourceRecord,
     SourceStatus,
     classify_source,
 )
-from agent.ingestion.source_identity import (
+from polymerhus.ingestion.source_identity import (
     SourceValidationError,
     build_source_key,
     build_url_source_key,

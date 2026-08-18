@@ -5,20 +5,20 @@ from pathlib import Path
 
 import pytest
 
-from agent.ingestion.audit import (
+from polymerhus.ingestion.audit import (
     AuditIssue,
     AuditReport,
     LightRAGStorageReader,
     LightRAGStorageSnapshot,
     StorageParseError,
 )
-from agent.ingestion.contracts import SourceRecord, SourceStatus
-from agent.ingestion.docprep_adapter import DocprepError, NormalizedDocument
-from agent.ingestion.lightrag_adapter import LightRAGAdapterError, LightRAGIngestionResult
-from agent.ingestion.service import IngestionService
-from agent.ingestion import service as service_module
-from agent.ingestion.source_identity import build_url_source_key, canonicalize_url
-from agent.ingestion.url_downloader import URLDownloadError, UrlDownloadResult
+from polymerhus.ingestion.contracts import SourceRecord, SourceStatus
+from polymerhus.ingestion.docprep_adapter import DocprepError, NormalizedDocument
+from polymerhus.ingestion.lightrag_adapter import LightRAGAdapterError, LightRAGIngestionResult
+from polymerhus.ingestion.service import IngestionService
+from polymerhus.ingestion import service as service_module
+from polymerhus.ingestion.source_identity import build_url_source_key, canonicalize_url
+from polymerhus.ingestion.url_downloader import URLDownloadError, UrlDownloadResult
 
 
 def test_submit_duplicate_does_not_overwrite_processed_source_record(tmp_path, monkeypatch):
@@ -4775,7 +4775,7 @@ def test_url_persistence_outage_is_logged_and_never_falsely_terminalized(tmp_pat
         downloader=downloader,
     )
 
-    with caplog.at_level(logging.ERROR, logger="agent.ingestion.service"):
+    with caplog.at_level(logging.ERROR, logger="polymerhus.ingestion.service"):
         with pytest.raises(RuntimeError):
             service.process_job("job-url-1", requested_url="https://Example.COM/Doc?x=1")
 

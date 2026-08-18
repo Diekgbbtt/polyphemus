@@ -7,8 +7,8 @@ all injected fakes. No live Neo4j/Postgres/pod graph involved.
 """
 import asyncio
 
-from agent.recon import pipeline
-from agent.recon.types import PodExport
+from polymerhus.recon.control import pipeline
+from polymerhus.recon.domain.types import PodExport
 
 
 class FakeRegistry:
@@ -101,10 +101,9 @@ def test_same_phase_jobs_run_sequentially_not_concurrently():
     """Within a phase, one job's run_job must fully return before the next
     job's run_job is even called - peak concurrency inside a phase is one
     job's own pod fan-out (MAX_PODS), never (jobs in phase) x MAX_PODS. Phase
-    0 has three jobs (subfinder/amass/whois); use two of them and have
-    run_job track a running-count via an asyncio.Event handoff so any
-    overlap (a second job starting before the first's run_job returns)
-    would be caught."""
+    0 has two scheduled jobs (subfinder/whois; amass is out of production);
+    use both and have run_job track a running-count so any overlap (a second
+    job starting before the first's run_job returns) would be caught."""
     running = 0
     max_running = 0
     order = []
@@ -127,7 +126,7 @@ def test_same_phase_jobs_run_sequentially_not_concurrently():
         pipeline.run_pipeline(
             "proj1",
             run_id="run1",
-            job_subset=["subfinder", "amass"],
+            job_subset=["subfinder", "whois"],
             run_job=run_job,
             load_settings=make_load_settings(settings),
             registry=registry,
@@ -137,7 +136,7 @@ def test_same_phase_jobs_run_sequentially_not_concurrently():
 
     assert max_running == 1
     # Sequential = job_configs insertion order = PHASES order.
-    assert order == ["subfinder", "amass"]
+    assert order == ["subfinder", "whois"]
 
 
 def test_job_with_all_pods_failed_is_degraded_and_run_completes():
@@ -412,7 +411,7 @@ def test_batched_jsluice_job_gets_filtered_read_and_apex_for_downstream_batching
         assets = [{"path": "/app.css", "url": "https://a.houseofhr.com/app.css"}]
         for i in range(60):
             assets.append({"path": f"/b{i}.js", "url": f"https://a.houseofhr.com/b{i}.js"})
-        from agent.recon.selectors import apply_selector
+        from polymerhus.recon.domain.selectors import apply_selector
         return apply_selector(assets, where)
 
     registry = FakeRegistry()
@@ -508,25 +507,24 @@ def test_exact_mode_seeds_single_host_into_httpx_and_naabu():
     assert seen_inputs["whois"] == [{"name": "app.t.com"}]
 
 
-def test_exact_mode_paramspider_gets_single_seed_host_not_per_subdomain():
-    """D14/D19: paramspider (`consumes="Domain"`, later phase) must run EXACTLY
-    ONE pod against the in-scope exact host - non-empty input, one host, never
-    fanned out per discovered subdomain (the wildcard rate-ban risk). The mocked
-    read_assets returns a stray Domain node; the injection replaces it with the
-    single seed host."""
-    _, seen_inputs = _run_and_capture({"target_domain": "app.t.com"})
+def test_seed_domain_host_exact_mode_is_single_in_scope_host():
+    """D14/D19: a later-phase Domain-consuming harvester must run EXACTLY ONE pod
+    against the in-scope exact host - one host, never fanned out per discovered
+    subdomain (the wildcard rate-ban risk). Tested directly on `_seed_domain_host`
+    because its former exemplar (paramspider) is temporarily out of production
+    (withdrawn from PHASES); the seeding logic it guards is unchanged."""
+    from polymerhus.recon.control.scope import parse_scope
 
-    assert "paramspider" in seen_inputs
-    assert seen_inputs["paramspider"] == [{"name": "app.t.com"}]
+    assert pipeline._seed_domain_host(parse_scope("app.t.com")) == [{"name": "app.t.com"}]
 
 
-def test_wildcard_mode_paramspider_gets_single_apex_host():
-    """D14/D19: in wildcard mode paramspider harvests the zone ONCE against the
-    registrable apex - still exactly one pod, never one per discovered
-    subdomain."""
-    _, seen_inputs = _run_and_capture({"target_domain": "*.t.com"})
+def test_seed_domain_host_wildcard_mode_is_single_apex_host():
+    """D14/D19: in wildcard mode the harvest runs ONCE against the registrable
+    apex - still exactly one pod, never one per discovered subdomain. Direct test
+    (see the exact-mode case re: paramspider being out of production)."""
+    from polymerhus.recon.control.scope import parse_scope
 
-    assert seen_inputs["paramspider"] == [{"name": "t.com"}]
+    assert pipeline._seed_domain_host(parse_scope("*.t.com")) == [{"name": "t.com"}]
 
 
 def test_wildcard_mode_runs_discovery_and_probes_apex():
@@ -562,7 +560,7 @@ def test_exact_mode_logs_discovery_suppression(caplog):
     """D14 Q1: an exact-scope run records why it is small at run start."""
     import logging
 
-    with caplog.at_level(logging.INFO, logger="agent.recon.pipeline"):
+    with caplog.at_level(logging.INFO, logger="polymerhus.recon.control.pipeline"):
         _run_and_capture({"target_domain": "app.t.com"})
 
     suppression_logs = [
@@ -570,7 +568,7 @@ def test_exact_mode_logs_discovery_suppression(caplog):
     ]
     assert suppression_logs, "expected an exact-scope suppression log line"
     msg = suppression_logs[0]
-    assert "subdomain discovery suppressed" in msg
+    assert "discovery suppressed" in msg
     assert "app.t.com" in msg
     for job in ("subfinder", "amass", "puredns", "dnsx"):
         assert job in msg
@@ -578,8 +576,8 @@ def test_exact_mode_logs_discovery_suppression(caplog):
 
 def test_job_stats_include_per_pod_commands(monkeypatch):
     import asyncio
-    from agent.recon import pipeline
-    from agent.recon.types import PodExport
+    from polymerhus.recon.control import pipeline
+    from polymerhus.recon.domain.types import PodExport
 
     captured = {}
 
@@ -611,7 +609,7 @@ def test_job_stats_include_per_pod_commands(monkeypatch):
 
 def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch):
     import asyncio
-    from agent.recon import pipeline
+    from polymerhus.recon.control import pipeline
 
     X = "https://ib.example.com"
     Y = "https://app.example.com"
@@ -654,3 +652,96 @@ def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch)
     assert captured_inputs["katana"] == [Y]                 # routed away by the orchestrator agent
     assert set(captured_inputs["steel_crawl"]) == {X, Y}    # steel keeps the flagged host
     assert captured_steering["katana"] == signals           # signals threaded to the job agent
+
+
+def test_pipeline_default_seam_is_the_mailbox_actor_and_reaps_it(monkeypatch):
+    """feat/async-actor-agents: with NO `decide_routing` injected, the pipeline's
+    steering seam is the recon-orchestrator MAILBOX ACTOR - one actor constructed
+    for the run, fed each signal-carrying phase, STOPPED on the run's exit path -
+    and its per-phase exclusions drive the same input filtering."""
+    import asyncio
+    from langgraph.checkpoint.memory import InMemorySaver
+
+    from polymerhus.recon.control import pipeline
+    from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor
+
+    X = "https://ib.example.com"
+    Y = "https://app.example.com"
+
+    def fake_read_assets(node_type, project_id, where=None, *, driver=None):
+        if node_type == "Subdomain":
+            return [{"name": "app.example.com"}]
+        if node_type == "BaseURL":
+            return [{"url": X}, {"url": Y}]
+        return []
+
+    captured_inputs = {}
+
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+        captured_inputs[job.tool] = [a.get("url") or a.get("name") for a in input_assets]
+        return []
+
+    class FakeRegistry:
+        def create_run(self, *a, **k): pass
+        def set_run_status(self, *a, **k): pass
+        def upsert_job(self, *a, **k): pass
+
+    from langchain_core.language_models import BaseChatModel
+    from langchain_core.messages import AIMessage
+    from langchain_core.outputs import ChatGeneration, ChatResult
+
+    class _ToolFake(BaseChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(
+                content="",
+                tool_calls=[{"name": "RoutingDecision",
+                             "args": {"exclusions": [{"job": "katana", "exclude_urls": [X]}],
+                                      "rationale": "waf"},
+                             "id": "c1", "type": "tool_call"}],
+            ))])
+
+        @property
+        def _llm_type(self) -> str:
+            return "fake"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    spawned = []
+    stopped = []
+
+    class _SpyActor(ReconOrchestratorActor):
+        def __init__(self, run_id, **kw):
+            super().__init__(run_id, **kw)
+            spawned.append(run_id)
+
+        async def stop(self):
+            stopped.append(self.thread_id)
+            await super().stop()
+
+    def _factory(run_id):
+        return _SpyActor(
+            run_id,
+            checkpointer=InMemorySaver(),
+            model_factory=lambda role_id: _ToolFake(),
+            observe=False,
+        )
+
+    signals = [{"url": X, "macro_kind": "waf_protected", "evidence": "Incapsula"}]
+
+    monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
+
+    asyncio.run(pipeline.run_pipeline(
+        "p1", run_id="r1",
+        job_subset=["subfinder", "httpx", "katana", "steel_crawl"],
+        run_job=fake_run_job,
+        load_settings=lambda pid: {"target_domain": "*.example.com"},
+        registry=FakeRegistry(),
+        read_assets=fake_read_assets,
+        read_steering_signals=lambda project_id, driver=None: signals,
+        orchestrator_factory=_factory,
+    ))
+
+    assert spawned == ["r1"]                    # ONE actor per run (production default)
+    assert stopped == ["r1:job_orchestrator"]   # actor reaped on the run's exit path
+    assert captured_inputs["katana"] == [Y]     # the actor's RoutingDecision excluded X

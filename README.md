@@ -16,8 +16,26 @@ Two base images must exist locally (reused, not rebuilt):
 Services: agent `:8080/health` · kali fastmcp `:8000/mcp` · neo4j `:7474`/`:7687` (neo4j/polymerhus) · postgres `:5432`.
 
 ## Verify
-    python -m pytest tests/ -v          # integration + e2e
-    python -m pytest tests/e2e/ -v      # deep e2e + observability only
+
+Tests are tiered. Full reference: `docs/design/testing-strategy.md`.
+
+    # UNIT tier - needs nothing running. Must never touch a real database
+    # (enforced: tests/conftest.py raises on any live Neo4j access).
+    .venv/bin/python -m pytest tests/ -q
+
+    # INTEGRATION / E2E tier - run INSIDE the compose network, so it resolves
+    # `neo4j` by service DNS exactly as the agent does.
+    docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+      run --rm tests tests/integration -q
+
+    .venv/bin/python -m pytest tests/e2e/ -q   # deep e2e + observability
+
+Expected (2026-07-22): unit tier 892 passed / 37 skipped / 0 failed; in-network
+integration 41 passed / 0 skipped.
+
+Note `tests/e2e/test_stack_smoke.py` runs `docker compose up -d --build`, so a
+plain suite run rebuilds your stack - do not run it concurrently with an
+in-network run.
 
 `tests/e2e/` covers real work + failure paths: a live jsluice URL-extraction run,
 idempotent neo4j MERGE, pgvector cosine search, checkpoint persistence, and the
@@ -145,7 +163,7 @@ Example with credentials:
 
 ### Exact vs wildcard seed hosts
 
-`target_domain` is parsed into a scope (`agent/recon/scope.py`, decision D14) that decides
+`target_domain` is parsed into a scope (`src/polymerhus/recon/control/scope.py`, decision D14) that decides
 whether subdomain discovery runs at all:
 
 | `target_domain` value        | mode       | seeded host          | subdomain discovery |
@@ -166,7 +184,7 @@ you already know the target and want a fast, narrow run.
 
 ### Phases
 
-Jobs run in ordered, gated phases (`agent/recon/jobs.py`). A phase is a **hard barrier**: the next
+Jobs run in ordered, gated phases (`src/polymerhus/recon/control/jobs.py`). A phase is a **hard barrier**: the next
 phase does not start until every job in the current phase has finished. **Within a phase, jobs run
 sequentially** (one at a time) - each job still fans its assets out across up to `MAX_PODS`
 concurrent pods, but only one job's fan-out runs at once, so peak concurrency is bounded to a
@@ -206,7 +224,7 @@ the pipeline is unaffected.
 
 ### Tool status
 
-The pipeline schedules 17 tools (`agent/recon/jobs.py::JOBS`). `auth` tools receive the
+The pipeline schedules 17 tools (`src/polymerhus/recon/control/jobs.py::JOBS`). `auth` tools receive the
 `auth_context` cookies/headers; gated tools consume only a matching upstream asset.
 
 | Tool | Phase | Status | Gating / notes |

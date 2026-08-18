@@ -2,8 +2,8 @@ import json
 import re
 from pathlib import Path
 
-from agent.app.clients import pg
-from agent.ingestion.contracts import SourceRecord, SourceStatus
+from polymerhus.app.clients import pg
+from polymerhus.ingestion.contracts import SourceRecord, SourceStatus
 
 
 class FakeCursor:

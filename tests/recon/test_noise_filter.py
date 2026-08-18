@@ -6,8 +6,13 @@ PRESERVE seed sets, the fingerprint rules, and the delta-level filter behavior
 """
 import pytest
 
-from agent.recon.noise_filter import classify_endpoint, filter_deltas, host_in_scope
-from agent.recon.types import AssetDelta, Edge
+from polymerhus.recon.domain.noise_filter import (
+    classify_endpoint,
+    filter_deltas,
+    filter_observations,
+    host_in_scope,
+)
+from polymerhus.recon.domain.types import AssetDelta, Edge, Observation
 
 
 # --- static-render path segments all drop ---------------------------------
@@ -94,6 +99,59 @@ def test_user_controllable_images_kept(path):
     assert classify_endpoint(path) != "static"
 
 
+# --- media / archive recall bias (AMV-8 category 1) ------------------------
+
+@pytest.mark.parametrize("ext", [
+    "mp3", "wav", "mp4", "webm", "mov", "avi", "mkv", "flac", "ogg",
+    "pdf", "zip", "tar", "gz", "tgz", "rar", "7z", "bz2",
+])
+def test_media_archive_under_drop_path_drops(ext):
+    assert classify_endpoint(f"/assets/file.{ext}") == "static"
+
+
+@pytest.mark.parametrize("path", [
+    "/report.pdf",             # root, ambiguous -> kept
+    "/clip.webm",              # ambiguous -> kept
+    "/downloads/report.pdf",   # user-content -> kept (surface)
+    "/upload/promo.mp4",       # user-content -> kept (surface)
+])
+def test_user_controllable_media_kept(path):
+    assert classify_endpoint(path) != "static"
+
+
+# --- AMV-8 categories 4 + 6: browser well-known + analytics drop -----------
+
+@pytest.mark.parametrize("path", [
+    "/favicon.ico",
+    "/robots.txt",
+    "/manifest.json",
+    "/site.webmanifest",
+    "/browserconfig.xml",
+    "/apple-touch-icon.png",
+    "/static/favicon.ico",     # basename match regardless of directory
+])
+def test_browser_wellknown_basenames_drop(path):
+    assert classify_endpoint(path) == "static"
+
+
+@pytest.mark.parametrize("path", [
+    "/collect",
+    "/g/collect",
+    "/gtag/js",                # analytics segment beats the JS exemption
+    "/beacon",
+    "/pixel",
+    "/analytics/track",
+])
+def test_analytics_segments_drop(path):
+    assert classify_endpoint(path) == "static"
+
+
+def test_generic_events_and_log_are_not_analytics():
+    """`/events`, `/log` are too likely to be real API surface - not dropped."""
+    assert classify_endpoint("/events") == "ambiguous"
+    assert classify_endpoint("/api/log") == "ambiguous"
+
+
 # --- ambiguous / real endpoints kept --------------------------------------
 
 @pytest.mark.parametrize("path", [
@@ -110,17 +168,37 @@ def test_ambiguous_paths_kept(path):
 
 @pytest.mark.parametrize("path", [
     "/js/app.js",
-    "/static/bundle.js",                 # under a drop-path but still JS
-    "/static/js/main.8f3a2b1c.js",       # fingerprinted AND under /static
-    "/bundle.abc123ef.js",               # fingerprinted at root
-    "/assets/index-a1b2c3d4.js",         # fingerprinted under /assets
-    "/vendor.js",                        # bundler marker
+    "/main.js",                          # primary application bundle
+    "/static/bundle.js",                 # under a drop-path but still primary JS
+    "/static/js/main.8f3a2b1c.js",       # fingerprinted AND under /static -> kept
+    "/bundle.abc123ef.js",               # fingerprinted at root -> kept
+    "/assets/index-a1b2c3d4.js",         # fingerprinted under /assets -> kept
     "/app.mjs",
 ])
-def test_javascript_always_surface_for_jsluice(path):
-    # D15/D17 reconciliation: JS bundles are jsluice's input, never dropped as
-    # presentational noise - the exemption wins over static-path + fingerprint.
+def test_primary_javascript_is_surface_for_jsluice(path):
+    # D15/D17 reconciliation: a PRIMARY JS bundle is jsluice's input, never
+    # dropped as presentational noise - kept even fingerprinted / under /static.
+    # A content hash ALONE is not a "generated" signal (the primary bundle is
+    # fingerprinted too), so these all survive.
     assert classify_endpoint(path) == "surface"
+
+
+# --- AMV-8 category 2: GENERATED JS drops (D17 exemption refined) -----------
+
+@pytest.mark.parametrize("path", [
+    "/chunks/3458.js",                   # code-split chunk under /chunks
+    "/_next/static/chunks/abc.js",       # framework-generated segment
+    "/runtime.js",                       # framework-runtime marker
+    "/polyfills.js",                     # bundler marker (plural)
+    "/chunk-3458.js",                    # chunk marker at root
+    "/vendor.js",                        # vendor marker (was surface pre-AMV-8)
+    "/main-es2015.chunk.js",             # embedded chunk marker
+    "/node_modules/express/lib/router/index.js",  # installed dependency source
+    "/ethers.js",                        # vendored library bundle
+    "/soljson-v0.8.21+commit.a1b2c3d4.js",        # versioned vendor blob
+])
+def test_generated_javascript_drops(path):
+    assert classify_endpoint(path) == "static"
 
 
 def test_empty_path_kept():
@@ -261,24 +339,98 @@ def test_www_baseurl_and_children_dropped():
     assert www_base not in kept and www_ep not in kept
 
 
+# --- filter_observations: symmetric scope filter for observation anchors -----
+
+def _observation(anchor, evidence="ev"):
+    return Observation(
+        macro_kind="auth",
+        severity="info",
+        evidence=evidence,
+        rationale="r",
+        anchor=anchor,
+        source_job="job",
+        source_tool="tool",
+    )
+
+
+def _baseurl_anchor(url):
+    return {"type": "BaseURL", "identity": {"url": url}}
+
+
+def test_filter_observations_drops_out_of_scope_baseurl_anchor():
+    obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
+    assert filter_observations([obs], scope_domain="daytona.io") == []
+
+
+@pytest.mark.parametrize("url", [
+    "https://app.daytona.io",
+    "https://docs.daytona.io",
+    "https://daytona.io/callback",
+])
+def test_filter_observations_keeps_in_scope_baseurl_anchor(url):
+    obs = _observation(_baseurl_anchor(url))
+    assert filter_observations([obs], scope_domain="daytona.io") == [obs]
+
+
+@pytest.mark.parametrize("anchor", [
+    {"type": "Subdomain", "identity": {"name": "daytonaio.us.auth0.com"}},
+    {"type": "Domain", "identity": {"name": "auth0.com"}},
+    {"type": "IP", "identity": {"address": "203.0.113.7"}},
+    {"type": "Service", "identity": {"name": "svix"}},
+])
+def test_filter_observations_keeps_non_baseurl_anchors(anchor):
+    """Non-URL anchors are untouched - their scope is the D14 discovery gate."""
+    obs = _observation(anchor)
+    assert filter_observations([obs], scope_domain="daytona.io") == [obs]
+
+
+def test_filter_observations_noop_without_scope_domain():
+    obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
+    assert filter_observations([obs], scope_domain=None) == [obs]
+
+
+def test_filter_observations_fails_open_on_unresolvable_host():
+    """A BaseURL anchor with no resolvable host is kept (fail-open)."""
+    obs = _observation({"type": "BaseURL", "identity": {}})
+    assert filter_observations([obs], scope_domain="daytona.io") == [obs]
+
+
+# --- curate-level integration: observation scope drop ----------------------
+
+def test_curate_drops_out_of_scope_observation_anchor():
+    from polymerhus.recon.domain.curator import curate
+    obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
+    merged = curate([], [obs], "p", merge_fn=lambda cypher, params: None,
+                    scope_domain="daytona.io")
+    assert merged == (0, 0, [], [])
+
+
+def test_curate_keeps_observation_when_no_scope_domain():
+    from polymerhus.recon.domain.curator import curate
+    obs = _observation(_baseurl_anchor("https://daytonaio.us.auth0.com"))
+    merged = curate([], [obs], "p", merge_fn=lambda cypher, params: None,
+                    scope_domain=None)
+    assert merged == (0, 1, [], [obs])
+
+
 # --- D16 webapp/restapi profiling ---
 
 
 def test_classify_profile_json_content_type_is_restapi():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     assert classify_profile("application/json") == "restapi"
     assert classify_profile("application/hal+json; charset=utf-8") == "restapi"
 
 
 def test_classify_profile_html_or_missing_is_webapp():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     assert classify_profile("text/html; charset=utf-8") == "webapp"
     assert classify_profile(None) == "webapp"
     assert classify_profile("", "https://www.example.com") == "webapp"
 
 
 def test_classify_profile_api_hostname_label_is_restapi():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     # host label match, even with a non-JSON content-type
     assert classify_profile("text/html", "https://api.example.com") == "restapi"
     assert classify_profile("text/html", "https://graphql.example.com/") == "restapi"
@@ -302,13 +454,13 @@ def test_classify_profile_api_hostname_label_is_restapi():
     "https://example.com/graphql?query=x",     # query string ignored
 ])
 def test_classify_profile_graphql_path_is_graphql_api(url):
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     # A JSON content-type would otherwise say restapi - the graphql path wins.
     assert classify_profile("application/json", url) == "graphql_api"
 
 
 def test_graphql_api_takes_precedence_over_restapi_and_webapp():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     # graphql path beats a plain HTML app (would be webapp) ...
     assert classify_profile("text/html", "https://example.com/graphql") == "graphql_api"
     # ... and beats an api hostname label (would be restapi).
@@ -319,7 +471,7 @@ def test_graphql_api_takes_precedence_over_restapi_and_webapp():
 
 
 def test_non_graphql_paths_do_not_false_match():
-    from agent.recon.noise_filter import classify_profile
+    from polymerhus.recon.domain.noise_filter import classify_profile
     # substrings / near-misses must not match (path-exact, not substring)
     assert classify_profile("text/html", "https://example.com/graphql-docs") == "webapp"
     assert classify_profile("text/html", "https://example.com/mygraphql") == "webapp"

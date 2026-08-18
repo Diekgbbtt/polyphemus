@@ -29,11 +29,11 @@ def test_compose_defines_n8n_and_shared_ingestion_mount():
     assert "./data/ingestion:/data/ingestion" in ingestion["volumes"]
     assert ingestion["environment"]["INGESTION_ROOT"] == "/data/ingestion"
     assert ingestion["environment"]["INGESTION_NORMALIZED_DIR"] == "/data/ingestion/normalized"
-    assert ingestion["build"]["dockerfile"] == "agent/Dockerfile.ingestion"
+    assert ingestion["build"]["dockerfile"] == "src/polymerhus/Dockerfile.ingestion"
 
 
 def test_agent_dockerfile_installs_docprep_package():
-    dockerfile = open("agent/Dockerfile.ingestion", encoding="utf-8").read()
+    dockerfile = open("src/polymerhus/Dockerfile.ingestion", encoding="utf-8").read()
 
     assert "COPY data/lightrag/preprocessing_pipeline/ /srv/lightrag_docprep/" in dockerfile
     assert "pip install --no-cache-dir /srv/lightrag_docprep" in dockerfile

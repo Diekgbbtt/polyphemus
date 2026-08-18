@@ -73,7 +73,7 @@ class _FakePage:
 
 
 def _make_crawl(scope=None, page=None):
-    from agent.recon.crawl.steel_provider import _Crawl
+    from polymerhus.recon.crawl.steel_provider import _Crawl
 
     crawl = _Crawl(
         "cid", scope or ["app.example.com"], 3, 50,
@@ -84,7 +84,7 @@ def _make_crawl(scope=None, page=None):
 
 
 def _provider_with(crawl):
-    from agent.recon.crawl.steel_provider import SteelCrawlProvider
+    from polymerhus.recon.crawl.steel_provider import SteelCrawlProvider
 
     p = SteelCrawlProvider(api_key="k")
     p._crawls[crawl.id] = crawl
@@ -157,18 +157,18 @@ def test_out_of_scope_discovered_links_are_not_enqueued():
 
 
 def _build_pod(run_crawl_fn):
-    from agent.recon.crawl import crawl_pod
+    from polymerhus.recon.crawl import crawl_pod
 
     return crawl_pod.build_crawl_pod(
         run_crawl_fn=run_crawl_fn,
         parse_fn=lambda stdout: [],
         triage_fn=lambda exec_result, assets, job: [],
-        curate_fn=lambda a, o, p: (len(a), len(o)),
+        curate_fn=lambda a, o, p, **k: (len(a), len(o), a, o),
     )
 
 
 def _pod_state(url, extra=None):
-    from agent.recon.types import JobSpec
+    from polymerhus.recon.domain.types import JobSpec
 
     job = JobSpec(
         tool="steel_crawl", skill="agentic_crawl", command_template="",
@@ -183,7 +183,7 @@ def _pod_state(url, extra=None):
     }
 
 
-def test_scheme_prefixed_target_yields_bare_host_scope():
+def test_scheme_prefixed_target_folds_to_registrable_domain_scope():
     seen = {}
 
     def run_crawl_fn(target, *, scope, auth_cookies=None):
@@ -192,11 +192,12 @@ def test_scheme_prefixed_target_yields_bare_host_scope():
 
     pod = _build_pod(run_crawl_fn)
     pod.invoke(_pod_state("https://stage-ifr.peoplecert.org"))
-    # bare host, no scheme - so _registrable_in_scope keeps the target in frontier
-    assert seen["scope"] == ["stage-ifr.peoplecert.org"]
+    # Change A: scope folds to the registrable domain, so _registrable_in_scope
+    # admits the target host and any sibling subdomain.
+    assert seen["scope"] == ["peoplecert.org"]
 
 
-def test_scheme_prefixed_extra_scope_entries_normalized():
+def test_scheme_prefixed_extra_scope_entries_fold_and_dedup():
     seen = {}
 
     def run_crawl_fn(target, *, scope, auth_cookies=None):
@@ -208,4 +209,5 @@ def test_scheme_prefixed_extra_scope_entries_normalized():
         "https://ebook.peoplecert.org",
         extra={"scope": ["https://ebook.peoplecert.org", "www.peoplecert.org", "peoplecert.org"]},
     ))
-    assert seen["scope"] == ["ebook.peoplecert.org", "www.peoplecert.org", "peoplecert.org"]
+    # Change A: every entry folds to the same registrable domain (dedup).
+    assert seen["scope"] == ["peoplecert.org"]

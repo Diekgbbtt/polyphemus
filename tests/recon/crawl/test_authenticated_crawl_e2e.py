@@ -70,7 +70,7 @@ async def _crawl_navigate_result(auth_cookies, scope):
     """Drive the real steel_* tools (production factory, with auth_cookies
     injected into the browser context) and return the navigate result dict for
     the target - it carries {status, blocked, block_type}."""
-    from agent.recon.crawl import steel_client
+    from polymerhus.recon.crawl import steel_client
 
     tools = {t.name: t for t in await steel_client.get_crawl_tools(auth_cookies=auth_cookies)}
     start = await tools["steel_crawl_start"].ainvoke(
@@ -88,7 +88,7 @@ async def _crawl_navigate_result(auth_cookies, scope):
 def test_injected_cookies_reach_authenticated_surface():
     import asyncio
 
-    from agent.recon import config
+    from polymerhus.recon import config
 
     if not _port_open(TARGET_HOST, 443):
         pytest.skip(f"{TARGET_HOST}:443 not reachable")

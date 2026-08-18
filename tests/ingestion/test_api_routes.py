@@ -6,9 +6,9 @@ import pytest
 from fastapi import BackgroundTasks, HTTPException
 from fastapi.testclient import TestClient
 
-from agent.ingestion import app as ingestion_app
-from agent.ingestion.contracts import SourceStatus
-from agent.ingestion import routes as ingestion_routes
+from polymerhus.ingestion import app as ingestion_app
+from polymerhus.ingestion.contracts import SourceStatus
+from polymerhus.ingestion import routes as ingestion_routes
 
 
 class FakeService:
@@ -217,7 +217,7 @@ def test_importing_app_module_never_runs_migration(monkeypatch):
 
 
 def test_ingestion_image_entrypoint_reaches_migration_gated_app():
-    dockerfile = Path("agent/Dockerfile.ingestion").read_text(encoding="utf-8")
+    dockerfile = Path("src/polymerhus/Dockerfile.ingestion").read_text(encoding="utf-8")
 
-    assert 'CMD ["uvicorn", "agent.ingestion.app:app"' in dockerfile
+    assert 'CMD ["uvicorn", "polymerhus.ingestion.app:app"' in dockerfile
     assert '"--port", "8080"' in dockerfile

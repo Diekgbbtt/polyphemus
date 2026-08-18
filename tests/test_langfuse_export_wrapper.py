@@ -16,7 +16,7 @@ from __future__ import annotations
 
 from opentelemetry.sdk.trace.export import SpanExportResult
 
-from agent.app.observability.langfuse_tracing import (
+from polymerhus.app.observability.langfuse_tracing import (
     RetryingSpanExporter,
     _build_wrapped_span_exporter,
 )

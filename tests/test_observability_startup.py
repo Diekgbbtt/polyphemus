@@ -2,7 +2,7 @@ import logging
 
 
 def test_log_tracing_status_warns_when_disabled(monkeypatch, caplog):
-    from agent.app import main
+    from polymerhus.app import main
     monkeypatch.setattr(main, "get_langfuse_callbacks", lambda: [])
     with caplog.at_level(logging.WARNING):
         main.log_tracing_status()
@@ -10,7 +10,7 @@ def test_log_tracing_status_warns_when_disabled(monkeypatch, caplog):
 
 
 def test_log_tracing_status_info_when_enabled(monkeypatch, caplog):
-    from agent.app import main
+    from polymerhus.app import main
     monkeypatch.setattr(main, "get_langfuse_callbacks", lambda: [object()])
     with caplog.at_level(logging.INFO):
         main.log_tracing_status()
@@ -20,7 +20,7 @@ def test_log_tracing_status_info_when_enabled(monkeypatch, caplog):
 def test_disabled_reason_names_only_the_missing_env_var(monkeypatch):
     # Reproduces the operator incident: PUBLIC_KEY + SECRET_KEY set, HOST missing.
     # The reason must name LANGFUSE_HOST specifically, not blame all three.
-    from agent.app.observability import langfuse_tracing as lt
+    from polymerhus.app.observability import langfuse_tracing as lt
     monkeypatch.setenv("LANGFUSE_PUBLIC_KEY", "pk-test")
     monkeypatch.setenv("LANGFUSE_SECRET_KEY", "sk-test")
     monkeypatch.delenv("LANGFUSE_HOST", raising=False)

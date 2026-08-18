@@ -1,7 +1,7 @@
 # tests/recon/test_subdomain_parser.py
 from pathlib import Path
-from agent.recon.parsers import get_parser
-from agent.recon.parsers.subdomain_parser import parse_subfinder, parse_amass
+from polymerhus.recon.domain.parsers import get_parser
+from polymerhus.recon.domain.parsers.subdomain_parser import parse_subfinder, parse_amass
 
 SUBFINDER_FIX = Path(__file__).parent / "fixtures" / "subfinder.jsonl"
 AMASS_FIX = Path(__file__).parent / "fixtures" / "amass.jsonl"

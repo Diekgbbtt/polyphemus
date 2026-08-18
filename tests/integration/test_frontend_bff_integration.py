@@ -13,7 +13,7 @@ pytestmark = pytest.mark.skipif(not (DSN and neo4j_live()), reason="live PG+Neo4
 
 @pytest.fixture(scope="module")
 def client():
-    from agent.app.main import app
+    from polymerhus.app.main import app
     return TestClient(app)
 
 
@@ -34,7 +34,7 @@ def test_projects_contract(client):
 # --- GET /projects/{id}/graph ---
 def test_graph_contract_and_isolated_node(client):
     pid = _seed_project(client)
-    from agent.app.clients import neo4j_client
+    from polymerhus.app.clients import neo4j_client
     neo4j_client.merge("MERGE (n:Domain {name:$n, project_id:$p})", {"n": "seed.example", "p": pid})
     body = client.get(f"/projects/{pid}/graph").json()
     assert body["project_id"] == pid
@@ -58,7 +58,7 @@ def test_runs_only_running(client):
 
 
 def test_runs_live_then_stalled_then_reaped(client):
-    from agent.app.clients import pg
+    from polymerhus.app.clients import pg
     pid = _seed_project(client)
     rid = str(uuid.uuid4())
     pg.create_run(rid, pid)

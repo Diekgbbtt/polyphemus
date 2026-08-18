@@ -9,8 +9,8 @@ from pathlib import Path
 
 import pytest
 
-from agent.ingestion import url_downloader
-from agent.ingestion.url_downloader import (
+from polymerhus.ingestion import url_downloader
+from polymerhus.ingestion.url_downloader import (
     URLDownloadError,
     DownloadLimits,
     DnsPythonResolver,
@@ -1388,7 +1388,7 @@ def test_default_download_limits_use_config_values(monkeypatch):
     monkeypatch.setenv("POSTGRES_DSN", "postgresql://user:pass@localhost/test")
     monkeypatch.setenv("KALI_MCP_URL", "http://kali:8000")
 
-    from agent.app.config import config as app_config
+    from polymerhus.app.config import config as app_config
 
     monkeypatch.setattr(app_config, "URL_DOWNLOAD_CONNECT_TIMEOUT", 1.5)
     monkeypatch.setattr(app_config, "URL_DOWNLOAD_READ_TIMEOUT", 2.5)
@@ -1430,7 +1430,7 @@ def test_default_downloader_builds_configured_h11_pinned_transport():
 
 
 def test_float_env_rejects_nan_and_infinity(monkeypatch):
-    from agent.app import config as config_module
+    from polymerhus.app import config as config_module
 
     for bad in ("nan", "inf", "-inf"):
         monkeypatch.setenv("TEST_FLOAT_ENV", bad)
