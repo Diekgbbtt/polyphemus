@@ -15,7 +15,7 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from polymerhus.lightrag.context import ReferenceRegistryV1, normalize_citations
-from polymerhus.lightrag.query_spec import QuerySpecV1
+from polymerhus.lightrag.query_spec import QuerySpecV1, build_q3
 
 ANSWER_SCHEMA_VERSION = "lightrag-answer/v1"
 
@@ -106,6 +106,7 @@ def build_generation_prompt(
         "",
         "SCENARIO:",
         f"id: {spec.scenario_id}",
+        f"query sent to LightRAG: {build_q3(spec)}",
         f"concern: {spec.concern}",
         f"attack goal: {spec.attack_goal}",
         f"technology: {'; '.join(spec.technology_stack)}",
