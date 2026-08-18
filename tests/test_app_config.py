@@ -4,7 +4,7 @@ import pytest
 
 
 def test_lightrag_config_defaults(monkeypatch):
-    import agent.app.config as config_module
+    import polymerhus.app.config as config_module
 
     with monkeypatch.context() as m:
         m.delenv("LIGHTRAG_APPROVED_SOURCES", raising=False)
@@ -31,7 +31,7 @@ def test_lightrag_config_defaults(monkeypatch):
 
 
 def test_lightrag_config_env_overrides(monkeypatch):
-    import agent.app.config as config_module
+    import polymerhus.app.config as config_module
 
     with monkeypatch.context() as m:
         m.setenv("LIGHTRAG_APPROVED_SOURCES", "docs/a, /opt/methodology ,,docs/b")
@@ -57,7 +57,7 @@ def test_lightrag_config_env_overrides(monkeypatch):
 
 
 def test_wait_budget_config_defaults(monkeypatch):
-    import agent.app.config as config_module
+    import polymerhus.app.config as config_module
 
     with monkeypatch.context() as m:
         m.delenv("LIGHTRAG_INGESTION_TIMEOUT_SECONDS", raising=False)
@@ -71,7 +71,7 @@ def test_wait_budget_config_defaults(monkeypatch):
 
 
 def test_wait_budget_config_env_overrides(monkeypatch):
-    import agent.app.config as config_module
+    import polymerhus.app.config as config_module
 
     with monkeypatch.context() as m:
         m.setenv("LIGHTRAG_INGESTION_TIMEOUT_SECONDS", "3600.5")
@@ -90,7 +90,7 @@ def test_wait_budget_config_env_overrides(monkeypatch):
 )
 @pytest.mark.parametrize("raw", ["0", "-1", "nan", "inf"])
 def test_wait_budget_config_rejects_zero_negative_nan_inf(monkeypatch, variable, raw):
-    import agent.app.config as config_module
+    import polymerhus.app.config as config_module
 
     with monkeypatch.context() as m:
         m.setenv(variable, raw)

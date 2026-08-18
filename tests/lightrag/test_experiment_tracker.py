@@ -1,4 +1,4 @@
-from agent.lightrag.experiment_tracker import ExperimentTracker
+from polymerhus.lightrag.experiment_tracker import ExperimentTracker
 
 
 def test_experiment_tracker_persists_and_reads_runs(tmp_path):

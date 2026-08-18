@@ -1,4 +1,4 @@
-from agent.lightrag.smoke import (
+from polymerhus.lightrag.smoke import (
     QueryCase,
     SmokeRunResult,
     evaluate_graph_gate,
@@ -18,7 +18,7 @@ from agent.lightrag.smoke import (
 )
 
 import json
-from agent.lightrag.experiment_tracker import ExperimentTracker
+from polymerhus.lightrag.experiment_tracker import ExperimentTracker
 
 
 def test_status_counts_handles_lightrag_nested_payload():

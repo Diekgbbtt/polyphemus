@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from agent.lightrag.writeup_fetch import (
+from polymerhus.lightrag.writeup_fetch import (
     collect_0xdf_writeup_urls,
     fetch_and_preprocess_writeups,
     normalize_0xdf_url,

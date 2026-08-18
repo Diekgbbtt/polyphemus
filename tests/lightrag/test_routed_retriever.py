@@ -1,7 +1,7 @@
-import agent.lightrag as lightrag
+import polymerhus.lightrag as lightrag
 
-from agent.lightrag.packager import package_methodology
-from agent.lightrag.types import KnowledgeQuery
+from polymerhus.lightrag.packager import package_methodology
+from polymerhus.lightrag.types import KnowledgeQuery
 
 
 EVIDENCE = {

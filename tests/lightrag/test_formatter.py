@@ -1,5 +1,5 @@
-from agent.lightrag.formatter import format_methodology_context
-from agent.lightrag.types import CompactMethodologyBundle, KnowledgeQuery
+from polymerhus.lightrag.formatter import format_methodology_context
+from polymerhus.lightrag.types import CompactMethodologyBundle, KnowledgeQuery
 
 
 SOURCE_CHUNK = {

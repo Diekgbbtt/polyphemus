@@ -1,6 +1,6 @@
 import pytest
 
-from agent.lightrag.types import MethodologyBundle
+from polymerhus.lightrag.types import MethodologyBundle
 
 
 class FakeRoutedRetriever:
@@ -48,9 +48,9 @@ def test_http_methodology_query_returns_methodology_bundle_not_raw_lightrag(monk
     fastapi_testclient = pytest.importorskip("fastapi.testclient")
     TestClient = fastapi_testclient.TestClient
 
-    from agent.app.clients import pg
-    from agent.app.main import app
-    import agent.lightrag.retriever as retriever_module
+    from polymerhus.app.clients import pg
+    from polymerhus.app.main import app
+    import polymerhus.lightrag.retriever as retriever_module
 
     monkeypatch.setattr(
         retriever_module.RoutedMethodologyRetriever,

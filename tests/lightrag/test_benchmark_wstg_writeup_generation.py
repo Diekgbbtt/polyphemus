@@ -1,6 +1,6 @@
 import json
 
-from agent.lightrag.benchmark_wstg_writeup_generation import (
+from polymerhus.lightrag.benchmark_wstg_writeup_generation import (
     DEFAULT_LIGHTRAG_PARAMETERS,
     REQUIRED_OUTPUT_SECTIONS,
     build_final_llm_payload,
@@ -8,7 +8,7 @@ from agent.lightrag.benchmark_wstg_writeup_generation import (
     default_use_cases,
     run_evaluation,
 )
-from agent.lightrag.types import CompactMethodologyBundle, MethodologyBundle
+from polymerhus.lightrag.types import CompactMethodologyBundle, MethodologyBundle
 
 
 class FakeSourceClient:

@@ -1,4 +1,4 @@
-from agent.lightrag.benchmark_wstg import (
+from polymerhus.lightrag.benchmark_wstg import (
     LightRAGBenchmarkConfig,
     build_query_prompt,
     compute_context_anchor_score,
@@ -14,7 +14,7 @@ from agent.lightrag.benchmark_wstg import (
     run_benchmark,
     summarize_results,
 )
-from agent.lightrag.experiment_tracker import ExperimentTracker
+from polymerhus.lightrag.experiment_tracker import ExperimentTracker
 
 
 class FakeLightRAGClient:

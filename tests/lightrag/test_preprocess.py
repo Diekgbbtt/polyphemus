@@ -1,7 +1,7 @@
 import json
 from pathlib import Path
 
-from agent.lightrag.preprocess import (
+from polymerhus.lightrag.preprocess import (
     build_preprocessed_documents,
     classify_fragment,
     is_relation_fragment,

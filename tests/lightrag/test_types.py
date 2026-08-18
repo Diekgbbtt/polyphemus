@@ -1,6 +1,6 @@
 import pytest
 
-from agent.lightrag.types import CompactMethodologyBundle, KnowledgeQuery, MethodologyBundle
+from polymerhus.lightrag.types import CompactMethodologyBundle, KnowledgeQuery, MethodologyBundle
 
 
 EVIDENCE = {

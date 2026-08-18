@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from agent.lightrag.wstg_fetch import (
+from polymerhus.lightrag.wstg_fetch import (
     build_raw_url,
     fetch_and_preprocess_wstg,
     resolve_wstg_paths,

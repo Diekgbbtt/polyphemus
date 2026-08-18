@@ -1,6 +1,6 @@
 import pytest
 
-from agent.lightrag.ingest import ingest_approved_sources, is_approved_source_path
+from polymerhus.lightrag.ingest import ingest_approved_sources, is_approved_source_path
 
 
 class FakeLightRAGClient:

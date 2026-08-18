@@ -1,5 +1,5 @@
-from agent.lightrag.service import retrieve_methodology
-from agent.lightrag.types import KnowledgeQuery, MethodologyBundle
+from polymerhus.lightrag.service import retrieve_methodology
+from polymerhus.lightrag.types import KnowledgeQuery, MethodologyBundle
 
 
 EVIDENCE = {"source_id": "guide", "locator": "section 1"}
@@ -106,7 +106,7 @@ def test_service_accepts_mapping_query_and_persists_packaged_bundle():
 
 
 def test_service_defaults_to_routed_methodology_retriever(monkeypatch):
-    import agent.lightrag.retriever as retriever_module
+    import polymerhus.lightrag.retriever as retriever_module
 
     class DefaultRetriever:
         def __init__(self):
