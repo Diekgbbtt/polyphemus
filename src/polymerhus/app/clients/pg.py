@@ -214,11 +214,13 @@ def create_hunting_run(project_id: str) -> str:
 
 def set_hunting_run_status(hunting_run_id: str, status: str) -> None:
     """Set a hunting run's status, stamping finished_at on a terminal status."""
-    finished = "finished_at = now(), " if status in _TERMINAL_HUNTING_STATUSES else ""
+    set_finished = "finished_at = now()" if status in _TERMINAL_HUNTING_STATUSES else ""
+    sets = "status = %s"
+    if set_finished:
+        sets = f"{sets}, {set_finished}"
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
-            f"UPDATE hunting_runs SET status = %s, {finished}"
-            " WHERE hunting_run_id = %s",
+            f"UPDATE hunting_runs SET {sets} WHERE hunting_run_id = %s",
             (status, hunting_run_id),
         )
 

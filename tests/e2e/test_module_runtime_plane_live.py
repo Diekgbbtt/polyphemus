@@ -103,6 +103,26 @@ def _run_status(project_id: str, run_id: str) -> dict:
     return r.json()
 
 
+def _analysis_status(project_id: str, run_id: str) -> dict | None:
+    """The analysis run's own status row (#75). 404 until the consumer has
+    created its row - treated as 'not yet'."""
+    r = httpx.get(f"{AGENT}/projects/{project_id}/analysis/{run_id}", timeout=10)
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+
+def _hunting_status(project_id: str, hunting_run_id: str) -> dict | None:
+    r = httpx.get(
+        f"{AGENT}/projects/{project_id}/hunting/{hunting_run_id}", timeout=10
+    )
+    if r.status_code == 404:
+        return None
+    r.raise_for_status()
+    return r.json()
+
+
 class _BoundedProject:
     """One light project (juice-shop-remote, [httpx] only) reused across the
     three module walks - real launches without a domain-quality run."""
@@ -133,11 +153,12 @@ def _prepare_project() -> _BoundedProject:
     return p
 
 
-def _launch(module: str, project_id: str, run_id: str | None = None) -> tuple[dict, int]:
+def _launch(module: str, project_id: str, run_id: str | None = None,
+            *, with_analysis: bool = True) -> tuple[dict, int]:
     """Launch a run on `module`; assert it routes through runtime.schedule."""
     if module == "recon":
         r = httpx.post(f"{AGENT}/projects/{project_id}/recon",
-                       json={"jobs": _JOBS}, timeout=10)
+                       json={"jobs": _JOBS, "with_analysis": with_analysis}, timeout=10)
     elif module == "analysis":
         r = httpx.post(f"{AGENT}/projects/{project_id}/analysis",
                        json={"run_id": run_id}, timeout=10)
@@ -227,12 +248,136 @@ def _walk_module_fsm(module: str, project_id: str, run_id: str):
     )
 
 
+def _create_configured_project() -> tuple[str, str]:
+    """Create a project, apply the juice-shop-remote target settings verbatim
+    (including operator_kb), and return (project_id, operator_kb)."""
+    target = _load_target(_TARGET)
+    kb = target["operator_kb"]
+    project_id = httpx.post(
+        f"{AGENT}/projects", json={"name": f"datapath-{uuid.uuid4().hex[:8]}",
+                                   }, timeout=10,
+    ).json()["project_id"]
+    payload = _apply_target_settings(target["settings"])
+    payload["operator_kb"] = kb
+    r = httpx.put(
+        f"{AGENT}/projects/{project_id}/settings", json={"recon": payload}, timeout=10
+    )
+    assert r.status_code == 200, f"settings PUT failed: {r.text}"
+    return project_id, kb
+
+
+def test_streamed_analysis_data_path_after_bootstrap():
+    """The streamed-analysis data path (#75, ported from payload_fifo) over the
+    live sibling: bootstrap -> bounded recon launch (streaming_analysis on) ->
+    recon completes WITHOUT waiting on analysis (D3) -> the analysis run drains
+    to `drained` with the exact queue contract read from its OWN stats row:
+    mode queued, analysis_drained True, dispatches_entered > 0 (non-vacuity),
+    passes == advanced + 1 (exactly-once, marker last), l0_assets_read equals
+    recon's produced_assets (exactness). This is the runtime plane carrying a
+    REAL streamed analysis - not a lifecycle-state-only walk."""
+    _gate_reachable()
+    project_id, kb = _create_configured_project()
+
+    r = httpx.post(
+        f"{AGENT}/projects/{project_id}/bootstrap",
+        json={"operator_kb": kb}, timeout=600,
+    )
+    assert r.status_code == 200, f"bootstrap failed: {r.text}"
+
+    r = httpx.post(
+        f"{AGENT}/projects/{project_id}/recon", json={"jobs": _JOBS}, timeout=10
+    )
+    assert r.status_code == 200, f"recon launch failed: {r.text}"
+    run_id = r.json()["run_id"]
+
+    # --- recon completes INDEPENDENTLY of analysis (#75 D3)
+    def _recon_terminal_or_none():
+        s = _run_status(project_id, run_id)
+        return s if s["status"] in ("complete", "failed") else None
+
+    status = wait_for(_recon_terminal_or_none, timeout=_POLL_TIMEOUT_S,
+                      interval=_POLL_INTERVAL_S)
+    assert status["status"] == "complete", f"recon did not complete: {status}"
+    per_job = {j["job"]: j for j in status["per_job"]}
+
+    # #75: the recon run no longer carries the analysis queue contract
+    assert "analysis_drained" not in (status.get("stats") or {}), (
+        f"recon run still carries analysis stats (coupling not removed): {status['stats']}"
+    )
+
+    # --- analysis is its OWN run: poll to its own terminal status
+    def _analysis_terminal_or_none():
+        a = _analysis_status(project_id, run_id)
+        if a is None:
+            return None
+        return a if a["status"] in ("drained", "withheld", "stopped", "interrupted") else None
+
+    analysis = wait_for(_analysis_terminal_or_none, timeout=_POLL_TIMEOUT_S,
+                        interval=_POLL_INTERVAL_S)
+    stats = analysis["stats"]
+
+    # --- the queue contract, read from the ANALYSIS run's stats
+    assert analysis["status"] == "drained", f"analysis not drained: {analysis}"
+    assert stats.get("mode") == "queued", f"feed not in queued mode: {stats}"
+    assert stats.get("analysis_drained") is True, f"analysis_drained False: {stats}"
+    assert stats.get("dispatches_entered", 0) > 0, (
+        f"no pass entered dispatches (vacuity): {stats}"
+    )
+    advanced = stats.get("advanced", 0)
+    passes = stats.get("passes", 0)
+    assert advanced >= 1, f"no chunk was pushed (no surface?): {stats} {per_job}"
+    assert passes == advanced + 1, (
+        f"exactly-once violated: passes {passes} != advanced + 1 = {advanced + 1}: {stats}"
+    )
+    produced_assets = sum(
+        (j["stats"] or {}).get("produced_assets", 0) for j in status["per_job"]
+    )
+    assert produced_assets >= 1, f"recon produced no assets at all: {per_job}"
+    assert stats.get("l0_assets_read", 0) == produced_assets, (
+        f"exactness violated: feed read {stats.get('l0_assets_read')} assets, "
+        f"recon curated {produced_assets}: {stats} {per_job}"
+    )
+
+
+def test_hunt_launch_boots_and_lands_terminal_hunting_runs_status():
+    """A hunting launch boots the graph-engine orchestration pass on the worker
+    loop and lands a terminal `hunting_runs` status (#123, seam contract 3):
+    the launch 201s (control plane live), the run row opens `running`, and the
+    pass settles to a terminal status (`complete` - the graph engine alone,
+    without the #83/#84 agents - or `failed` if the pass degraded; never a
+    crash through the control plane). Empty candidate batch = an empty pass
+    (O1), which the graph engine completes deterministically."""
+    _gate_reachable()
+    project_id, _ = _create_configured_project()
+
+    r = httpx.post(f"{AGENT}/projects/{project_id}/hunting", json={}, timeout=10)
+    assert r.status_code == 201, f"hunting launch: {r.status_code} {r.text}"
+    hunting_run_id = r.json()["hunting_run_id"]
+
+    def _terminal_or_none():
+        row = _hunting_status(project_id, hunting_run_id)
+        if row is None:
+            return None
+        return row if row["status"] in ("complete", "failed", "stopped", "interrupted") else None
+
+    row = wait_for(_terminal_or_none, timeout=300, interval=10)
+    assert row["status"] in ("complete", "failed"), (
+        f"hunting run did not settle to a terminal status: {row}"
+    )
+    assert row["finished_at"], f"terminal hunting run has no finished_at: {row}"
+
+
 def test_fsm_full_coverage_analysis():
+    # Runs AFTER the data-path tests (which need analysis RUNNING to drain a
+    # real stream) and BEFORE the hunting/recon walks. Drains analysis to
+    # `stopped` (terminal).
     _gate_reachable()
     p = _prepare_project()
-    # analysis launch needs an existing recon run's feed correlation; recon is
-    # still RUNNING here (this walk runs before the recon walk drains it)
-    body, code = _launch("recon", p.project_id, None)
+    # analysis launch needs an existing recon run's feed correlation; the setup
+    # recon launch is recon-ONLY (with_analysis=false) so the walk's own
+    # analysis launch is the FIRST consumer - a combined setup would 409
+    # ('analysis already running') when the walk tries to launch analysis.
+    body, code = _launch("recon", p.project_id, None, with_analysis=False)
     assert code == 200, f"recon setup launch for analysis: {code} {body}"
     run_id = body["run_id"]
     _walk_module_fsm("analysis", p.project_id, run_id)
