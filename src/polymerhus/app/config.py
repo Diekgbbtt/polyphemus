@@ -65,6 +65,16 @@ class Config:
         1800.0,
     )
     LIGHTRAG_POLL_INTERVAL_SECONDS = _float_env("LIGHTRAG_POLL_INTERVAL_SECONDS", 2.0)
+    QUERY_LLM_BASE_URL = os.environ.get(
+        "QUERY_LLM_BASE_URL", "https://api.swissai.svc.cscs.ch/v1"
+    )
+    QUERY_LLM_API_KEY = os.environ.get("QUERY_LLM_API_KEY", "")
+    QUERY_LLM_MODEL = os.environ.get(
+        "QUERY_LLM_MODEL", "RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731"
+    )
+    QUERY_LLM_MAX_TOKENS = _int_env("QUERY_LLM_MAX_TOKENS", 4096)
+    QUERY_LLM_TIMEOUT_SECONDS = _float_env("QUERY_LLM_TIMEOUT_SECONDS", 120.0)
+    QUERY_PIPELINE_MOCK = os.environ.get("QUERY_PIPELINE_MOCK", "") == "1"
     INGESTION_ROOT = os.environ.get("INGESTION_ROOT", "/data/ingestion")
     INGESTION_NORMALIZED_DIR = os.environ.get("INGESTION_NORMALIZED_DIR", "/data/ingestion/normalized")
     URL_DOWNLOAD_CONNECT_TIMEOUT = _float_env("URL_DOWNLOAD_CONNECT_TIMEOUT", 10.0)

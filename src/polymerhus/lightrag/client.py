@@ -217,6 +217,16 @@ class LightRAGHttpClient:
         )
         return self._raise_for_status(response)
 
+    def query_data(self, payload: dict) -> dict:
+        """Context-only retrieval. No generation, inspectable evidence only."""
+        response = httpx.post(
+            f"{self.base_url}/query/data",
+            headers=self._headers(),
+            json=payload,
+            timeout=self.timeout,
+        )
+        return self._raise_for_status(response)
+
 
 def _iter_ingestable_files(root: Path) -> Iterable[Path]:
     for path in sorted(root.rglob("*")):

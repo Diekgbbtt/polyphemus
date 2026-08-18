@@ -1,0 +1,35 @@
+{
+  "schema_version": "lightrag-query-spec/v1",
+  "scenario_id": "SIM-01",
+  "attack_goal": "Identify a bounded authorization-boundary comparison hypothesis",
+  "concern": "GraphQL and REST object-level authorization",
+  "technology_stack": ["HTTP JSON API", "GraphQL"],
+  "target_refs": ["component:account-api", "surface:graphql"],
+  "input_vectors": ["GraphQL object identifier", "REST path object identifier"],
+  "known_facts": [
+    "GraphQL introspection is visible",
+    "Object identifiers are client supplied"
+  ],
+  "expected_source_families": ["WSTG-APIT", "WSTG-ATHZ"],
+  "acceptable_technique_families": [
+    "Object-level authorization comparison",
+    "GraphQL authorization review"
+  ],
+  "unsupported_claims": [
+    "Confirmed BOLA",
+    "Confirmed cross-tenant data disclosure"
+  ],
+  "evidence": [
+    {
+      "ref": "l0:SIM-01:1",
+      "summary": "An API surface exposes a GraphQL endpoint and numeric object references."
+    }
+  ],
+  "expected_no_hypothesis": false,
+  "retrieval": {
+    "mode": "naive",
+    "chunk_top_k": 20,
+    "top_k": 20,
+    "max_total_tokens": 8000
+  }
+}
