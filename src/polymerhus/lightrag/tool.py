@@ -98,3 +98,27 @@ def json_dump(value: Any) -> str:
     import json
 
     return json.dumps(value, ensure_ascii=False)
+
+
+def build_lightrag_tool(
+    *, retrieval_config: RetrievalConfigV1 = R_A
+) -> LightRagQueryTool:
+    """Construct the production tool from app config (lazy, no I/O here)."""
+    from polymerhus.app.config import config
+    from polymerhus.lightrag.client import LightRAGHttpClient
+    from polymerhus.lightrag.generation import DeepSeekClient
+
+    client = LightRAGHttpClient(
+        base_url=config.LIGHTRAG_BASE_API_URL,
+        api_key=config.LIGHTRAG_API_KEY,
+    )
+    llm = DeepSeekClient(
+        base_url=config.QUERY_LLM_BASE_URL,
+        api_key=config.QUERY_LLM_API_KEY,
+        model=config.QUERY_LLM_MODEL,
+        max_tokens=config.QUERY_LLM_MAX_TOKENS,
+        timeout=config.QUERY_LLM_TIMEOUT_SECONDS,
+    )
+    return LightRagQueryTool(
+        client=client, llm=llm, retrieval_config=retrieval_config
+    )
