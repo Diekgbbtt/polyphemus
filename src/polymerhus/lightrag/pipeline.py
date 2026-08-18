@@ -71,6 +71,7 @@ class QueryPipelineResultV1(BaseModel):
     retrieval: RetrievalRecordV1 | None = None
     generation: GenerationRecordV1 | None = None
     allowed_reference_ids: list[str] = Field(default_factory=list)
+    audit: dict[str, Any] = Field(default_factory=dict)
 
 
 def _deterministic_fallback(
@@ -165,6 +166,7 @@ def run_query_pipeline(
     client: LightRAGHttpClient | None = None,
     llm: DeepSeekClient | None = None,
     mock: MockMode | None = None,
+    audit: bool = False,
 ) -> QueryPipelineResultV1:
     """Run retrieval -> normalization -> generation -> strict admission."""
     retrieval_config = retrieval_config or spec.retrieval
@@ -210,6 +212,10 @@ def run_query_pipeline(
         bundle = _deterministic_fallback(
             spec, ["empty_retrieval_result"]
         )
+        audit_data = {
+            "retrieval_payload": payload,
+            "reference_registry": registry.allowed_ids,
+        } if audit else {}
         return QueryPipelineResultV1(
             scenario_id=spec.scenario_id,
             accepted=False,
@@ -217,10 +223,22 @@ def run_query_pipeline(
             validation_errors=["empty_retrieval_result"],
             retrieval=retrieval_record,
             allowed_reference_ids=registry.allowed_ids,
+            audit=audit_data,
         )
 
     context_text = serialize_context(context)
     prompt = build_generation_prompt(spec, context_text, registry)
+    audit_data: dict[str, Any] = {}
+    if audit:
+        audit_data = {
+            "retrieval_payload": payload,
+            "retrieved_context_text": context_text,
+            "reference_registry": [
+                f"{index}. {reference.reference_id} ({reference.file_path})"
+                for index, reference in enumerate(registry.references, start=1)
+            ],
+            "generation_prompt": prompt,
+        }
 
     started = time.perf_counter()
     if mock_ctx is not None:
@@ -234,6 +252,15 @@ def run_query_pipeline(
     latency_ms = round((time.perf_counter() - started) * 1000, 1)
 
     payload_obj = extract_json_object(outcome.get("content") or "")
+    if audit:
+        audit_data["raw_model_response"] = {
+            "content": outcome.get("content"),
+            "finish_reason": outcome.get("finish_reason"),
+            "model": outcome.get("model"),
+            "prompt_tokens": outcome.get("prompt_tokens"),
+            "completion_tokens": outcome.get("completion_tokens"),
+            "reasoning_present": outcome.get("reasoning_present"),
+        }
     validation: BundleValidationResult = validate_bundle(
         payload_obj, spec=spec, registry=registry
     )
@@ -258,6 +285,7 @@ def run_query_pipeline(
             retrieval=retrieval_record,
             generation=generation_record,
             allowed_reference_ids=registry.allowed_ids,
+            audit=audit_data,
         )
 
     return QueryPipelineResultV1(
@@ -269,4 +297,5 @@ def run_query_pipeline(
         retrieval=retrieval_record,
         generation=generation_record,
         allowed_reference_ids=registry.allowed_ids,
+        audit=audit_data,
     )

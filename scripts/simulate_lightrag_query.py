@@ -43,6 +43,9 @@ def main() -> int:
     parser.add_argument("--mock", action="store_true", help="deterministic offline stand-ins")
     parser.add_argument("--direct", action="store_true", help="run in-process")
     parser.add_argument(
+        "--verbose", action="store_true", help="print every stage: query, retrieval, prompt, raw answer"
+    )
+    parser.add_argument(
         "--endpoint", default=None, help="POST to a running app, e.g. http://127.0.0.1:8080"
     )
     parser.add_argument("--out", default=None, help="write result JSON here")
@@ -62,7 +65,10 @@ def main() -> int:
     else:
         if args.mock:
             result = run_query_pipeline(
-                spec, retrieval_config=retrieval_config, mock=MockMode()
+                spec,
+                retrieval_config=retrieval_config,
+                mock=MockMode(),
+                audit=args.verbose,
             )
         else:
             client = LightRAGHttpClient()
@@ -78,8 +84,25 @@ def main() -> int:
                 retrieval_config=retrieval_config,
                 client=client,
                 llm=llm,
+                audit=args.verbose,
             )
         result = result.model_dump()
+
+    if args.verbose and result.get("audit"):
+        audit = result["audit"]
+        print("=== 1. QUERY RECEIVED (mock agent -> /lightrag/query) ===")
+        print(json.dumps(spec.model_dump(), indent=2, ensure_ascii=False))
+        print("\n=== 2. PAYLOAD SENT TO LIGHTRAG /query/data ===")
+        print(json.dumps(audit["retrieval_payload"], indent=2, ensure_ascii=False))
+        print("\n=== 3. CONTEXT RETRIEVED FROM LIGHTRAG ===")
+        print(audit.get("retrieved_context_text") or "(empty)")
+        print("\nREFERENCE REGISTRY:")
+        print("\n".join(audit.get("reference_registry") or []) or "(none)")
+        print("\n=== 4. PROMPT SENT TO DEEPSEEK ===")
+        print(audit.get("generation_prompt") or "(no generation)")
+        print("\n=== 5. RAW DEEPSEEK RESPONSE ===")
+        print(json.dumps(audit.get("raw_model_response", {}), indent=2, ensure_ascii=False))
+        print()
 
     print_result(result)
     if args.out:
