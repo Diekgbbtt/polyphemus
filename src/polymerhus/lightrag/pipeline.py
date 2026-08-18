@@ -80,8 +80,8 @@ def _deterministic_fallback(
     """Deterministic checklist fallback - never raw model output."""
     explanations = [
         {
-            "keyword": family,
-            "category": "AcceptableTechnique",
+            "entity_type": "AttackTechnique",
+            "entity_name": family,
             "explanation": (
                 f"Deterministic fallback: '{family}' was supplied as an "
                 "acceptable technique family but no validated model answer "
@@ -95,7 +95,7 @@ def _deterministic_fallback(
     return AnswerBundleV1(
         scenario_id=spec.scenario_id,
         summary="Deterministic checklist fallback; model answer unavailable.",
-        keyword_explanations=explanations,
+        ontology_explanations=explanations,
         provenance_references=[],
         knowledge_gaps=list(errors),
         notes="Fallback: no fabricated provenance is allowed.",
@@ -136,13 +136,14 @@ class MockMode:
     raw_generation: dict[str, Any] = field(
         default_factory=lambda: {
             "content": (
-                '{"schema_version":"lightrag-answer/v1",'
+                '{"schema_version":"lightrag-answer/v2",'
                 '"scenario_id":"SIM-01",'
                 '"summary":"Mock answer",'
-                '"keyword_explanations":[{"keyword":"Object-level authorization '
-                'comparison","category":"AttackTechnique","explanation":"Compare '
-                'authorization behaviour for adjacent object ids using '
-                'boundary-controlled requests.","evidence_references":["[1]"],'
+                '"ontology_explanations":[{"entity_type":"AttackTechnique",'
+                '"entity_name":"Object-level authorization comparison",'
+                '"explanation":"Compare authorization behaviour for adjacent '
+                'object ids using boundary-controlled requests.",'
+                '"evidence_references":["[1]"],'
                 '"confidence":"medium"}],'
                 '"provenance_references":["[1]"],'
                 '"knowledge_gaps":[],"notes":"mock"}'

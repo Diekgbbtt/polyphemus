@@ -15,9 +15,10 @@ import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
 from polymerhus.lightrag.context import ReferenceRegistryV1, normalize_citations
+from polymerhus.lightrag.ontology import ENTITY_TYPES, validate_entity_type
 from polymerhus.lightrag.query_spec import QuerySpecV1, build_q3
 
-ANSWER_SCHEMA_VERSION = "lightrag-answer/v1"
+ANSWER_SCHEMA_VERSION = "lightrag-answer/v2"
 
 _EXECUTABLE_MARKERS = (
     re.compile(r"\b(?:curl|wget|nc|ncat|netcat)\b", re.IGNORECASE),
@@ -36,18 +37,23 @@ _TOOL_REQUEST_MARKERS = (
 )
 
 
-class KeywordExplanationV1(BaseModel):
-    """One ontology keyword with a detailed prose explanation."""
+class OntologyExplanationV1(BaseModel):
+    """One ontology entity with a detailed prose answer to the scenario question."""
 
     model_config = ConfigDict(extra="forbid")
 
-    keyword: str
-    category: str | None = None
+    entity_type: str
+    entity_name: str
     explanation: str
     evidence_references: list[str] = Field(default_factory=list)
     confidence: Literal["high", "medium", "low"] = "medium"
 
-    @field_validator("keyword", "explanation")
+    @field_validator("entity_type")
+    @classmethod
+    def _known_entity_type(cls, value: str) -> str:
+        return validate_entity_type(value)
+
+    @field_validator("entity_name", "explanation")
     @classmethod
     def _non_blank(cls, value: str) -> str:
         value = (value or "").strip()
@@ -57,14 +63,14 @@ class KeywordExplanationV1(BaseModel):
 
 
 class AnswerBundleV1(BaseModel):
-    """Semi-structured answer: detailed prose per ontology keyword."""
+    """Structured answer: ontology entity name + detailed prose explanation."""
 
     model_config = ConfigDict(extra="forbid")
 
-    schema_version: Literal["lightrag-answer/v1"] = ANSWER_SCHEMA_VERSION
+    schema_version: Literal["lightrag-answer/v2"] = ANSWER_SCHEMA_VERSION
     scenario_id: str
     summary: str
-    keyword_explanations: list[KeywordExplanationV1] = Field(default_factory=list)
+    ontology_explanations: list[OntologyExplanationV1] = Field(default_factory=list)
     provenance_references: list[str] = Field(default_factory=list)
     knowledge_gaps: list[str] = Field(default_factory=list)
     notes: str = ""
@@ -94,6 +100,7 @@ def build_generation_prompt(
     evidence = "; ".join(item.summary for item in spec.evidence)
     keywords = "; ".join(spec.acceptable_technique_families) or "(none)"
     forbidden = "; ".join(spec.unsupported_claims) or "(none)"
+    entity_types = "; ".join(ENTITY_TYPES)
 
     lines = [
         "You are a methodology-only knowledge analyst in a controlled simulation.",
@@ -101,7 +108,7 @@ def build_generation_prompt(
         "tools, propose Stage 4 actions, or interact with live targets.",
         "Respond ONLY with one JSON object matching the schema below. No prose outside JSON.",
         "",
-        "SCHEMA (lightrag-answer/v1):",
+        "SCHEMA (lightrag-answer/v2):",
         schema_json,
         "",
         "SCENARIO:",
@@ -113,11 +120,14 @@ def build_generation_prompt(
         f"input vectors: {'; '.join(spec.input_vectors)}",
         f"known facts: {'; '.join(spec.known_facts)}",
         f"observed evidence: {evidence}",
-        f"ontology keywords to explain: {keywords}",
+        f"ontology entity types available: {entity_types}",
+        f"candidate technique names to map onto entities: {keywords}",
         f"forbidden/unsupported claims: {forbidden}",
         f"expected_no_hypothesis: {spec.expected_no_hypothesis}",
-        "For each ontology keyword produce one keyword_explanations entry with a",
-        "detailed prose explanation and only resolvable evidence_references.",
+        "For each relevant ontology entity produce one ontology_explanations entry:",
+        "the entity_type from the available list, the canonical entity_name, and a",
+        "detailed prose explanation that ANSWERS the scenario question. Use only",
+        "resolvable evidence_references.",
         "Cite only reference ids listed below or L0/L1 evidence ids from the",
         "scenario. Never fabricate references.",
         "",
@@ -162,7 +172,7 @@ def validate_bundle(
     errors: list[str] = []
     if bundle.scenario_id != spec.scenario_id:
         errors.append("scenario_id_mismatch")
-    if not spec.expected_no_hypothesis and not bundle.keyword_explanations:
+    if not spec.expected_no_hypothesis and not bundle.ontology_explanations:
         errors.append("empty_explanations_without_no_hypothesis_flag")
 
     dumped = bundle.model_dump()
@@ -172,7 +182,7 @@ def validate_bundle(
         errors.append("tool_or_stage4_request_present")
 
     citations: list[str] = []
-    for explanation in bundle.keyword_explanations:
+    for explanation in bundle.ontology_explanations:
         citations.extend(explanation.evidence_references)
     resolved, rejected = normalize_citations(citations, registry)
     bundle.provenance_references = resolved
