@@ -3,14 +3,14 @@
 WHY THIS MODULE EXISTS. Uvicorn configures only its own `uvicorn*` loggers, so
 every `logging.getLogger("polymerhus...")` call in this codebase went nowhere.
 The analyser's per-pass census, the feed's degradation warnings, the pipeline's
-per-job "degraded" lines and `_launch_pipeline`'s traceback were all invisible in
+per-job "degraded" lines and `_schedule_pipeline`'s traceback were all invisible in
 production. `logging.lastResort` is not a safety net either: it emits WARNING and
 above with no timestamp, no logger name, and no way to configure it.
 
 That blindness is not cosmetic. Diagnosing a stopped run on 2026-07-28 meant
 reconstructing the failure from Postgres timestamps and a Neo4j node count,
 because the process itself said nothing at all - and the one line that would have
-named the cause immediately (`logger.exception` in `_launch_pipeline`) was being
+named the cause immediately (`logger.exception` in `_schedule_pipeline`) was being
 written to a logger with no handler.
 
 Kept in its OWN module, deliberately: `app.main` cannot be imported without the

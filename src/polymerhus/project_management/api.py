@@ -4,8 +4,8 @@ CRUD, non-blocking recon-run launch, and run-status polling.
 This module is a thin HTTP adapter: every handler delegates to the
 `repository` use-case layer and maps its domain errors onto status codes
 (ProjectNotFound/RunNotFound -> 404, ValueError -> 400). The one piece of
-orchestration that stays here is `_launch_pipeline` - the fire-and-forget
-`asyncio.create_task` seam that schedules `run_pipeline` and returns
+orchestration that stays here is `_schedule_pipeline` - the fire-and-forget
+seam that schedules `run_pipeline` through the module runtime and returns
 immediately. It is a module-level seam so tests can monkeypatch it with a
 recorder instead of exercising the real pipeline/DB/Kali/Neo4j stack.
 """
@@ -108,35 +108,28 @@ def update_settings(project_id: str, body: SettingsUpdate) -> dict:
     return {"ok": True}
 
 
-# Strong references to in-flight pipeline tasks.
-#
-# The event loop keeps only a WEAK reference to a task, so the Python docs are
-# explicit that a caller must retain one for the task's lifetime or it may be
-# garbage-collected mid-flight. Every other `create_task` in this codebase already
-# does (`app.state.reaper_task`, `QueuedAnalysisFeed._task`, the pipeline's local
-# `hb`); this was the one that did not, and it is the OUTERMOST task, so losing it
-# would take a whole run with it.
-#
-# HONEST SCOPE. This is defensive correctness, NOT the diagnosis of any observed
-# failure. It was written while investigating run 6b9358a0, and it does not explain
-# that run: the assertion that reproduced the theory passed without this fix,
-# because a task suspended on an await is still referenced by the handle that will
-# resume it, so the collectable window is far narrower than it first appears. That
-# run died because its container was recreated underneath it. The reference is kept
-# anyway because "narrow" is not "closed" and the cost is one set.
-_IN_FLIGHT: set[asyncio.Task] = set()
-# #75: recon tasks keyed by run_id so a recon-stop dispatch can cancel exactly one.
-_RECON_TASKS: dict[str, asyncio.Task] = {}
+# Strong references to in-flight pipeline tasks: the module runtime manager's
+# per-module run registry (ModuleHandle._runs) holds them for the run's lifetime
+# and unregisters at the terminal (`runtime.schedule` -> `_tracked` -> `finally`),
+# so the API layer needs no task registry of its own (#122 full cut).
 
 
-def _launch_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
+def _schedule_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
                      *, with_analysis: bool = True) -> None:
-    """Schedule `run_pipeline` as a fire-and-forget background task.
+    """Schedule `run_pipeline` as a fire-and-forget run of the recon module.
 
     The pipeline itself is best-effort for job/pod failures (design §10.6),
     but a launch/setup error (e.g. the task raising before it even reaches
     the first `await`) must still be logged rather than vanish silently.
+
+    Since #122 every launch routes through the module runtime: the manager's
+    per-module registry holds the strong task reference and gives the stop
+    handler per-run_id cancellation. There is no create_task fallback.
     """
+    if (runtime := _runtime()) is None:
+        raise RuntimeError(
+            "recon launch requires the module runtime; no manager is active"
+        )
 
     async def _run() -> None:
         try:
@@ -145,22 +138,9 @@ def _launch_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
         except Exception:  # noqa: BLE001 - best-effort launch, must not crash the loop
             logger.exception("recon pipeline run %s (project %s) failed", run_id, project_id)
 
-    runtime = _runtime()
-    if runtime is not None:
-        # #121: recon is a registered run of the recon module on the runtime's
-        # worker loop; pause/drain/cancel of the recon module reach it here.
-        runtime.schedule("recon", _run(), name=run_id)
-        return
-
-    task = asyncio.create_task(_run(), name=f"recon-pipeline-{run_id}")
-    # Hold the reference until the task finishes, then drop it so the set cannot
-    # grow without bound. `discard` (not `remove`) because the callback may fire
-    # after a shutdown that already cleared the set.
-    _IN_FLIGHT.add(task)
-    _RECON_TASKS[run_id] = task
-    task.add_done_callback(_IN_FLIGHT.discard)
-    task.add_done_callback(
-        lambda t: _RECON_TASKS.pop(run_id, None) if _RECON_TASKS.get(run_id) is t else None)
+    # #121: recon is a registered run of the recon module on the runtime's
+    # worker loop; pause/drain/cancel of the recon module reach it here.
+    runtime.schedule("recon", _run(), name=run_id)
 
 
 @router.post("/projects/{project_id}/recon")
@@ -176,7 +156,7 @@ async def launch_recon(project_id: str, body: ReconLaunch) -> dict:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
     run_id = repository.open_run(project_id)
-    _launch_pipeline(project_id, run_id, body.jobs, with_analysis=body.with_analysis)
+    _schedule_pipeline(project_id, run_id, body.jobs, with_analysis=body.with_analysis)
     return {"run_id": run_id}
 
 
@@ -187,19 +167,17 @@ async def stop_recon(project_id: str, run_id: str) -> dict:
     already pushed; analysis is never touched here. (The instant per-job kill +
     output suppression is #76.)"""
     runtime = _runtime()
-    if runtime is not None:
-        # #121: the recon module's registered run is hard-cancelled via the
-        # runtime (call_soon_threadsafe(task.cancel) - the API thread never calls
-        # task.cancel() directly on the worker loop's tasks).
-        try:
-            runtime.cancel_run("recon", run_id)
-        except Exception as exc:  # noqa: BLE001
-            raise HTTPException(status_code=404, detail="no running recon for that run_id") from exc
-        return {"run_id": run_id, "stopping": True}
-    task = _RECON_TASKS.get(run_id)
-    if task is None or task.done():
-        raise HTTPException(status_code=404, detail="no running recon for that run_id")
-    task.cancel()
+    if runtime is None:
+        raise HTTPException(
+            status_code=503, detail="module runtime is not active"
+        )
+    # #121: the recon module's registered run is hard-cancelled via the
+    # runtime (call_soon_threadsafe(task.cancel) - the API thread never calls
+    # task.cancel() directly on the worker loop's tasks).
+    try:
+        runtime.cancel_run("recon", run_id)
+    except Exception as exc:  # noqa: BLE001
+        raise HTTPException(status_code=404, detail="no running recon for that run_id") from exc
     return {"run_id": run_id, "stopping": True}
 
 

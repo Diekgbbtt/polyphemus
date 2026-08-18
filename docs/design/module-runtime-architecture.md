@@ -74,7 +74,7 @@ The complete cross-thread contact surface - there is nothing else:
 | `agent_contexts(run_id, phase, tool)` | lock-guarded index read | Read-only enumeration of committed pod contexts (G7a). |
 | `register_module(name, hooks)` / `runtime.shutdown()` | fan-out | Registration and the ordered shutdown walk (G7c). |
 
-Everything else stays inside the worker loop. Lifecycle functions (`start_analysis`, `stop_analysis`, `_launch_pipeline`, `run_pipeline`, `start_hunting`) are plain coroutines that run as tasks on the worker loop; the unit tier calls them directly with `asyncio.run`, unchanged (G4). The feed push/consume and the gate acquire are plain in-loop asyncio operations - today's proven code.
+Everything else stays inside the worker loop. Lifecycle functions (`start_analysis`, `stop_analysis`, `_schedule_pipeline`, `run_pipeline`, `start_hunting`) are plain coroutines that run as tasks on the worker loop; the unit tier calls them directly with `asyncio.run`, unchanged (G4). The feed push/consume and the gate acquire are plain in-loop asyncio operations - today's proven code.
 
 ## 4. The abstractions catalogue
 

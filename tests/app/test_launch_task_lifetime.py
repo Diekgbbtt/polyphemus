@@ -6,7 +6,7 @@ heartbeat that the reaper flipped to `failed` six minutes later.
 
 WHAT THE INVESTIGATION ACTUALLY FOUND, recorded because the wrong answer is
 instructive: the first hypothesis was a garbage-collected task, since
-`_launch_pipeline` kept no reference to it. That hypothesis is WRONG, and the
+`_schedule_pipeline` kept no reference to it. That hypothesis is WRONG, and the
 assertion written to prove it passed without the fix - a task suspended on an await
 is still referenced by the handle that will resume it, so it is not collectable
 there. The real cause was outside the process: the container was recreated
@@ -20,62 +20,89 @@ reconstructed from Postgres timestamps instead of read off a traceback.
 """
 import asyncio
 import logging
+import time
+
+import pytest
 
 from polymerhus.app.logging_config import configure_logging
 
 
+def _wait_until(pred, timeout):
+    deadline = time.monotonic() + timeout
+    while time.monotonic() < deadline:
+        if pred():
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"condition not met within {timeout}s")
+
+
+@pytest.fixture
+def runtime():
+    from polymerhus.app.runtime import RuntimeManager
+
+    rm = RuntimeManager()
+    rm.start()
+    rm.register_module("recon")
+    try:
+        yield rm
+    finally:
+        rm.shutdown()
+
+
 # --- 1. the launched task's lifetime ------------------------------------------
 
-def test_the_launched_task_is_referenced_while_it_runs():
-    """The asyncio docs require the caller to retain a reference for the task's
-    lifetime; the event loop keeps only a weak one."""
+def test_the_launched_task_is_referenced_while_it_runs(runtime):
+    """Since #122 the strong reference lives in the module runtime's per-module
+    registry (ModuleHandle._runs) for the run's lifetime, not in an API-layer
+    task set. The run must be registered while it runs and identifiable by name."""
     from polymerhus.project_management import api
 
-    async def quick(project_id, *, run_id, job_subset=None):
+    async def quick(project_id, *, run_id, job_subset=None, with_analysis=True):
         await asyncio.sleep(0.02)
 
     async def scenario():
         original = api.run_pipeline
         api.run_pipeline = quick
         try:
-            api._launch_pipeline("proj1", "run1", None)
-            held = {t.get_name() for t in api._IN_FLIGHT}
-            assert held == {"recon-pipeline-run1"}   # named, so it is identifiable
+            api._schedule_pipeline("proj1", "run1", None)
+            _wait_until(lambda: runtime.has_run("recon", "run1"), 5)
             await asyncio.sleep(0.1)
+            _wait_until(lambda: not runtime.has_run("recon", "run1"), 5)
         finally:
             api.run_pipeline = original
 
     asyncio.run(scenario())
 
 
-def test_the_in_flight_set_does_not_leak_after_completion():
-    """Holding the reference must not turn into an unbounded set: a long-lived
-    process launching runs all day would otherwise retain every task it ever ran."""
+def test_the_runtime_registry_does_not_leak_after_completion(runtime):
+    """The strong reference must not turn into an unbounded registry: the
+    runtime's run registry unregisters at the terminal (`_tracked`'s `finally`),
+    so a long-lived process launching runs all day retains nothing it finished."""
     from polymerhus.project_management import api
 
-    async def quick(project_id, *, run_id, job_subset=None):
+    async def quick(project_id, *, run_id, job_subset=None, with_analysis=True):
+        await asyncio.sleep(0.02)
         return None
 
     async def scenario():
         original = api.run_pipeline
         api.run_pipeline = quick
         try:
-            api._launch_pipeline("proj1", "run1", None)
-            assert len(api._IN_FLIGHT) == 1      # held WHILE running
-            await asyncio.sleep(0.05)
+            api._schedule_pipeline("proj1", "run1", None)
+            _wait_until(lambda: runtime.has_run("recon", "run1"), 5)
         finally:
             api.run_pipeline = original
 
     asyncio.run(scenario())
-    assert api._IN_FLIGHT == set()               # released once done
+    _wait_until(lambda: not runtime.has_run("recon", "run1"), 5)
 
 
-def test_a_raising_pipeline_is_logged_not_swallowed(caplog):
+def test_a_raising_pipeline_is_logged_not_swallowed(caplog, runtime):
     """The other half of why the failure was silent: if the task DOES raise, the
     traceback must reach a handler."""
     from polymerhus.project_management import api
 
-    async def boom(project_id, *, run_id, job_subset=None):
+    async def boom(project_id, *, run_id, job_subset=None, with_analysis=True):
         raise RuntimeError("pipeline exploded")
 
     async def scenario():
@@ -83,7 +110,7 @@ def test_a_raising_pipeline_is_logged_not_swallowed(caplog):
         api.run_pipeline = boom
         try:
             with caplog.at_level(logging.ERROR):
-                api._launch_pipeline("proj1", "run-boom", None)
+                api._schedule_pipeline("proj1", "run-boom", None)
                 await asyncio.sleep(0.05)
         finally:
             api.run_pipeline = original

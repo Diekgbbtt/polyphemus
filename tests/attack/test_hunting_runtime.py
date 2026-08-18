@@ -7,6 +7,8 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
+
 from polymerhus.attack.hunting import runtime as hunting_runtime
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
@@ -154,8 +156,8 @@ def test_stop_hunting_persists_stopped(monkeypatch):
 
 
 def test_stop_hunting_cancels_a_running_run(monkeypatch):
-    """The phase-1 hard stop: stop_hunting cancels the running task (the
-    fallback registry), and the run lands `stopped` - the task's own
+    """The phase-1 hard stop: stop_hunting cancels the running task (registered
+    on the module runtime), and the run lands `stopped` - the task's own
     cancellation never re-stamps a status over the stop."""
     fake = _FakePg()
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
@@ -166,17 +168,23 @@ def test_stop_hunting_cancels_a_running_run(monkeypatch):
 
     monkeypatch.setattr("polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration", slow)
 
-    async def scenario():
-        task = asyncio.create_task(hunting_runtime.start_hunting("rt-project"))
-        await asyncio.sleep(0.05)
-        await hunting_runtime.stop_hunting("rt-hunt-0001")
-        try:
-            await task
-        except asyncio.CancelledError:
-            pass
+    from polymerhus.app.runtime import RuntimeManager
 
-    asyncio.run(scenario())
-    assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "stopped")]
+    rm = RuntimeManager()
+    rm.start()
+    rm.register_module("hunting")
+    try:
+        # mirror launch_hunting: the row opens (running) BEFORE the schedule
+        hunting_run_id = fake.create_hunting_run("rt-project")
+        rm.schedule(
+            "hunting",
+            hunting_runtime.start_hunting("rt-project", run_id=hunting_run_id),
+            name=hunting_run_id,
+        )
+        asyncio.run(hunting_runtime.stop_hunting(hunting_run_id))
+        assert fake.statuses == [("running", hunting_run_id), (hunting_run_id, "stopped")]
+    finally:
+        rm.shutdown()
 
 
 # --- the tear-down flush hook (seam 3.1) ---------------------------------------
@@ -203,26 +211,41 @@ def test_flush_hunting_checkpointer_calls_a_flusher_when_present(monkeypatch):
 
 # --- the scheduling marshalling harness (seam 2.2) ------------------------------
 
-def test_schedule_hunting_fallback_runs_in_process():
-    """Without `polymerhus.app.runtime` the harness degrades to the in-process
-    fallback: the scheduled coroutine still runs (the control plane's landing
-    replaces this path)."""
-    ran: list[str] = []
-
+def test_schedule_hunting_requires_an_active_runtime():
+    """Since #122 there is no in-process fallback: the harness must fail closed
+    (the launch endpoint's `hunting_control_plane_available()` 503s first)."""
     async def job():
-        ran.append("ran")
         return "done"
 
-    async def scenario():
-        task = hunting_runtime.schedule_hunting(job(), name="hunting:test")
-        assert await task == "done"
-
-    asyncio.run(scenario())
-    assert ran == ["ran"]
+    with pytest.raises(RuntimeError, match="control-plane runtime is not active"):
+        hunting_runtime.schedule_hunting(job(), name="hunting:test")
 
 
-def test_cancel_hunting_fallback_is_safe_with_no_active_run():
-    """Cancelling an unknown/absent run in the fallback is a safe no-op."""
+def test_schedule_hunting_routes_through_the_runtime_when_active():
+    """With `polymerhus.app.runtime` active the harness schedules the coroutine
+    onto the hunting module's registry and its result comes back."""
+    from polymerhus.app.runtime import RuntimeManager
+
+    rm = RuntimeManager()
+    rm.start()
+    rm.register_module("hunting")
+    ran: list[str] = []
+    try:
+        async def job():
+            ran.append("ran")
+            return "done"
+
+        fut = hunting_runtime.schedule_hunting(job(), name="rt-hunt-0002")
+        assert fut.result(timeout=5) == "done"
+        assert ran == ["ran"]
+    finally:
+        rm.shutdown()
+
+
+def test_cancel_hunting_is_a_safe_no_op_with_no_active_run():
+    """Cancelling with no active runtime is fail-open: a warning, no raise
+    (stop_hunting's teardown must never blow up before the control plane
+    lands)."""
     hunting_runtime.cancel_hunting("rt-hunt-none")
 
 
