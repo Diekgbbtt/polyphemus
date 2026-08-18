@@ -119,3 +119,14 @@ CREATE TABLE IF NOT EXISTS doc_chunks (
 CREATE INDEX IF NOT EXISTS doc_chunks_hnsw    ON doc_chunks USING hnsw (embedding vector_cosine_ops);
 CREATE INDEX IF NOT EXISTS doc_chunks_doc_ref ON doc_chunks (doc_ref);
 CREATE INDEX IF NOT EXISTS doc_chunks_anchor  ON doc_chunks USING gin (anchor);
+
+-- The LLM gateway's (#100) dedicated database. litellm's schema machinery
+-- (prisma migrate deploy at proxy boot) assumes it OWNS its target database:
+-- pointed at a shared database it either refuses to run (P3005, non-empty
+-- schema) or - via `prisma db push` - DROPS every foreign table (verified live
+-- 2026-08-17: it dropped this schema's tables). So the gateway gets its OWN
+-- database on the SAME postgres instance (ADR D1: "the same instance the agent
+-- uses for its checkpoints" - the instance is shared, the database is not).
+-- \gexec + the NOT EXISTS guard keep this idempotent for re-runs.
+SELECT 'CREATE DATABASE polymerhus_gateway'
+ WHERE NOT EXISTS (SELECT FROM pg_database WHERE datname = 'polymerhus_gateway')\gexec
