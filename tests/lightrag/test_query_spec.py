@@ -21,7 +21,6 @@ def _spec() -> QuerySpecV1:
             "GraphQL introspection is visible",
             "Object identifiers are client supplied",
         ],
-        expected_source_families=["WSTG-APIT", "WSTG-ATHZ"],
         acceptable_technique_families=[
             "Object-level authorization comparison",
             "GraphQL authorization review",
@@ -35,8 +34,7 @@ def test_build_q3_matches_phase6b_evidence_template():
         "Fields: target=component:account-api,surface:graphql | "
         "technology=HTTP JSON API,GraphQL | "
         "concern=GraphQL and REST object-level authorization | "
-        "vectors=GraphQL object identifier,REST path object identifier | "
-        "sources=WSTG-APIT,WSTG-ATHZ"
+        "vectors=GraphQL object identifier,REST path object identifier"
     )
 
 

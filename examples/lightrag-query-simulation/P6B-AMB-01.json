@@ -1,0 +1,36 @@
+{
+  "schema_version": "lightrag-query-spec/v1",
+  "scenario_id": "SIM-02",
+  "attack_goal": "Form a grounded client-side token exposure hypothesis",
+  "concern": "Browser token storage and script-mediated token exposure",
+  "technology_stack": ["React", "OAuth2", "JWT"],
+  "target_refs": ["component:spa-client", "storage:browser-local"],
+  "input_vectors": ["Reflected search value", "Client-rendered profile field"],
+  "known_facts": [
+    "Bearer token is stored in local storage",
+    "Content-Security-Policy header was not observed"
+  ],
+  "acceptable_technique_families": [
+    "Browser storage review",
+    "Client-side data-flow validation"
+  ],
+  "unsupported_claims": ["Confirmed cross-site scripting", "Token theft occurred"],
+  "evidence": [
+    {
+      "ref": "l0:SIM-02:1",
+      "summary": "A single-page application stores bearer tokens in browser local storage."
+    },
+    {
+      "ref": "l1:SIM-02:1",
+      "summary": "A reflected client-rendered value reaches a rendering sink; exploitability untested.",
+      "synthetic": true
+    }
+  ],
+  "expected_no_hypothesis": false,
+  "retrieval": {
+    "mode": "naive",
+    "chunk_top_k": 20,
+    "top_k": 20,
+    "max_total_tokens": 8000
+  }
+}

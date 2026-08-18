@@ -10,7 +10,6 @@
     "GraphQL introspection is visible",
     "Object identifiers are client supplied"
   ],
-  "expected_source_families": ["WSTG-APIT", "WSTG-ATHZ"],
   "acceptable_technique_families": [
     "Object-level authorization comparison",
     "GraphQL authorization review"

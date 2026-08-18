@@ -1,0 +1,31 @@
+{
+  "schema_version": "lightrag-query-spec/v1",
+  "scenario_id": "SIM-03",
+  "attack_goal": "Identify a non-executing SQL injection validation technique family",
+  "concern": "Server-side SQL query construction from user input",
+  "technology_stack": ["HTTP API", "Relational database"],
+  "target_refs": ["component:catalog-search"],
+  "input_vectors": ["Search query parameter"],
+  "known_facts": ["The endpoint performs database-backed search"],
+  "acceptable_technique_families": [
+    "Differential input handling",
+    "Parameterized-query evidence review"
+  ],
+  "unsupported_claims": [
+    "Confirmed SQL injection",
+    "Database contents are accessible"
+  ],
+  "evidence": [
+    {
+      "ref": "l0:SIM-03:1",
+      "summary": "A search parameter is reflected in a database error category."
+    }
+  ],
+  "expected_no_hypothesis": false,
+  "retrieval": {
+    "mode": "mix",
+    "chunk_top_k": 10,
+    "top_k": 20,
+    "max_total_tokens": 16000
+  }
+}

@@ -82,7 +82,6 @@ class QuerySpecV1(BaseModel):
     target_refs: list[str] = Field(default_factory=list)
     input_vectors: list[str] = Field(default_factory=list)
     known_facts: list[str] = Field(default_factory=list)
-    expected_source_families: list[str] = Field(default_factory=list)
     acceptable_technique_families: list[str] = Field(default_factory=list)
     unsupported_claims: list[str] = Field(default_factory=list)
     evidence: list[EvidenceRefV1] = Field(default_factory=list)
@@ -99,7 +98,6 @@ class QuerySpecV1(BaseModel):
         "target_refs",
         "input_vectors",
         "known_facts",
-        "expected_source_families",
         "acceptable_technique_families",
         "unsupported_claims",
     )
@@ -136,7 +134,6 @@ def build_q3(spec: QuerySpecV1) -> str:
     fields.append("concern=" + spec.concern.strip())
     if spec.input_vectors:
         fields.append("vectors=" + _joined(spec.input_vectors))
-    fields.append("sources=" + _joined(spec.expected_source_families))
     return goal + " Fields: " + " | ".join(fields)
 
 
@@ -152,9 +149,7 @@ def _key_tokens(texts: list[str]) -> list[str]:
 
 def derive_keywords(spec: QuerySpecV1) -> dict[str, list[str]]:
     """Deterministic high/low-level keywords. No keyword LLM, no injection data."""
-    high = _key_tokens(
-        [*spec.technology_stack, spec.concern, *spec.expected_source_families]
-    )
+    high = _key_tokens([*spec.technology_stack, spec.concern])
     low = _key_tokens(
         [
             *spec.input_vectors,

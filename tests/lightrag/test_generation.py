@@ -16,7 +16,6 @@ def _spec() -> QuerySpecV1:
         attack_goal="Identify a bounded authorization comparison hypothesis",
         concern="object-level authorization",
         acceptable_technique_families=["Object-level authorization comparison"],
-        expected_source_families=["WSTG-ATHZ"],
     )
 
 

@@ -9,7 +9,6 @@ def _spec() -> QuerySpecV1:
         concern="GraphQL and REST object-level authorization",
         technology_stack=["HTTP JSON API", "GraphQL"],
         acceptable_technique_families=["Object-level authorization comparison"],
-        expected_source_families=["WSTG-ATHZ"],
     )
 
 

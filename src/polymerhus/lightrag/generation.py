@@ -92,7 +92,6 @@ def build_generation_prompt(
         for index, reference in enumerate(registry.references, start=1)
     ) or "(none)"
     evidence = "; ".join(item.summary for item in spec.evidence)
-    families = "; ".join(spec.expected_source_families) or "(none)"
     keywords = "; ".join(spec.acceptable_technique_families) or "(none)"
     forbidden = "; ".join(spec.unsupported_claims) or "(none)"
 
@@ -115,7 +114,6 @@ def build_generation_prompt(
         f"observed evidence: {evidence}",
         f"ontology keywords to explain: {keywords}",
         f"forbidden/unsupported claims: {forbidden}",
-        f"expected source families: {families}",
         f"expected_no_hypothesis: {spec.expected_no_hypothesis}",
         "For each ontology keyword produce one keyword_explanations entry with a",
         "detailed prose explanation and only resolvable evidence_references.",
