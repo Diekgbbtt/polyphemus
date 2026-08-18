@@ -67,7 +67,11 @@ async def _startup():
     runtime.start()
     runtime.register_module("recon")
     runtime.register_module("analysis")
-    runtime.register_module("hunting")
+    # #123: the hunting module registers with a flush hook on the shutdown
+    # fan-out (flush the hunting in-memory checkpointer index into the still-open
+    # pooled saver, fail-open).
+    from polymerhus.attack.hunting.runtime import flush_hunting_checkpointer
+    runtime.register_module("hunting", hooks={"flush": flush_hunting_checkpointer})
     app.state.runtime = runtime
     log_tracing_status()
     pg.reap_stale_runs(config.REAP_TTL_SECONDS)  # sweep zombies left by a prior crash
@@ -78,6 +82,15 @@ async def _startup():
     if n_interrupted:
         logger.warning("startup: reconciled %d orphaned draining analysis run(s) -> interrupted",
                        n_interrupted)
+    # #123: the per-run orchestration actor is in-memory and dies with the
+    # process, so any hunting run left `running` at boot has no live engine
+    # behind it - flip it to `interrupted` alongside the analysis reconcile.
+    n_hunting_interrupted = pg.reconcile_orphaned_hunting_runs()
+    if n_hunting_interrupted:
+        logger.warning(
+            "startup: reconciled %d orphaned running hunting run(s) -> interrupted",
+            n_hunting_interrupted,
+        )
     app.state.reaper_task = asyncio.create_task(_reaper_loop())
 
 

@@ -7,9 +7,10 @@ FastAPI startup/shutdown events fire; a bare module-level `TestClient(app)`
 does not run them):
 
 - startup constructs the RuntimeManager, starts the ONE worker runner thread,
-  registers recon/analysis/hunting RUNNING, keeps the existing reconcilers and
-  reaper, and leaves a manager active that `hunting_control_plane_available()`
-  sees - the 503 -> live flip.
+  registers recon/analysis/hunting RUNNING (hunting WITH its tear-down flush
+  hook), keeps the existing reconcilers (including the #123 hunting orphan
+  reconcile) and reaper, and leaves a manager active that
+  `hunting_control_plane_available()` sees - the 503 -> live flip.
 - shutdown cancels the reaper, then `runtime.shutdown()` runs the fan-out
   (module flushes BEFORE `close_session_checkpointer` closes the pool), and
   the pool closes last.
@@ -75,6 +76,7 @@ def _stub_startup(monkeypatch, events=None):
 
     monkeypatch.setattr(pg, "reap_stale_runs", rec("reap-stale-runs"))
     monkeypatch.setattr(pg, "reconcile_orphaned_analysis_runs", rec("reconcile-analysis-runs"))
+    monkeypatch.setattr(pg, "reconcile_orphaned_hunting_runs", rec("reconcile-hunting-runs"))
 
 
 # --- startup: constructs the manager, registers modules, keeps the reaper -----
@@ -104,6 +106,7 @@ def test_startup_constructs_manager_registers_modules_and_starts_reaper(monkeypa
             "setup-checkpointer",
             "reap-stale-runs",
             "reconcile-analysis-runs",
+            "reconcile-hunting-runs",
         ):
             assert expected in events, f"{expected!r} missing from {events}"
         assert "setup-checkpointer" in events  # pre-warmed pooled saver
@@ -124,6 +127,43 @@ def test_hunting_control_plane_flips_to_live_when_the_app_is_up(monkeypatch):
 
     with TestClient(app) as client:
         assert hunting_runtime.hunting_control_plane_available() is True
+
+
+def test_hunting_module_registers_its_flush_hook_on_the_manager(monkeypatch):
+    """#123 AC: the hunting module registers its tear-down flush hook with the
+    runtime manager (ModuleHandle.hooks['flush']), so the shutdown fan-out
+    archives the hunting in-memory checkpointer index through it."""
+    _stub_startup(monkeypatch)
+    from polymerhus.app.runtime import RuntimeManager
+
+    def spied_register(self, name, **kw):
+        handle = orig_register(self, name, **kw)
+        if name == "hunting":
+            assert callable(handle.hooks.get("flush")), "hunting must register a flush hook"
+        return handle
+
+    orig_register = RuntimeManager.register_module
+    monkeypatch.setattr(RuntimeManager, "register_module", spied_register)
+
+    with TestClient(app):
+        runtime = get_active_runtime()
+        assert runtime is not None
+        handle = runtime.handle("hunting")
+        assert callable(handle.hooks.get("flush"))
+
+        # the flush hook archives the hunting index through the shared seam
+        from polymerhus.app.llm import checkpoints as checkpoints
+        flushed = []
+
+        def spy_flush(module, **kw):
+            flushed.append(module)
+            return flush_module_index_orig(module, **kw)
+
+        flush_module_index_orig = checkpoints.flush_module_index
+        monkeypatch.setattr(checkpoints, "flush_module_index", spy_flush)
+
+        handle.hooks["flush"]()
+        assert flushed == ["hunting"]
 
 
 # --- shutdown: fan-out runs before the pooled saver closes --------------------
