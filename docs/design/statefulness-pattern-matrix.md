@@ -49,6 +49,9 @@ and the thread identity (how concurrent instances avoid collision).
 | `_hunter_turn` (legacy sync) | sync leaf | ContextVar + stateful_turn | `_hunt_ctx().get()` -> `stateful_turn` or `invoke_role` | `HuntSession(run_id, hunt_id)` via ContextVar | `llm.py:104-112` |
 | `build_gate_reason_fn` (legacy) | sync leaf | invoke_role | `invoke_role(GATE_ROLE, ...)` | N/A (one-shot) | `llm.py:237` |
 | `build_rematch_fn` (legacy) | sync leaf | invoke_role | `invoke_role(REMATCH_ROLE, ...)` | N/A (one-shot) | `llm.py:259` |
+| `build_actor_hunting_agent` -> `build_hunting_agent` dispatch seam | async harness (dispatch_fn) | working set in closure + per-hunt `HuntingHunterActor` author/judge | `dispatch_fn(config, routed)` passed to `arun_orchestration` as the graph's `dispatch_fn` | `HuntSession(run_id, hunt_id)` via `HuntingActorRegistry` | `llm.py:332-355` (builder); `hunting_agent.py:373` (harness) |
+
+**Hunting-agent wiring status (as of this matrix):** the harness and its production seam are BUILT but NOT wired into the runtime path. `start_hunting` (attack/hunting/runtime.py) calls `arun_orchestration` without injecting `dispatch_fn`, so the orchestration graph's dispatch node (hunt_orchestrator.py:701 `if dispatch_fn is None`) degrades to the "hunting agent unavailable" outcome and the agent is never invoked in production. The wiring is scoped by #110's "Dispatch placement" decision.
 
 ## Outliers and deviations
 
