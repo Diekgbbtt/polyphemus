@@ -75,8 +75,9 @@ from polymerhus.app.llm.sync_mapping import (
     UNKNOWN_SOURCE,
     capability_record_from_resolved,
     capability_to_model_info,
-    native_litellm_model,
+    ROUTING_PROVIDER_PREFIX,
     registered_model_name,
+    routing_model,
     resolve_model_record,
     unknown_model_info,
 )
@@ -120,8 +121,10 @@ class SyncPushError(RuntimeError):
 
 def provider_api_key(provider: str) -> str | None:
     """The provider's API key for the existence fetch, from the app's
-    `API_KEY_{PROVIDER}` convention (providers.py `_key_env`)."""
-    return os.environ.get(f"API_KEY_{provider.upper()}")
+    `API_KEY_{PROVIDER}` convention (providers.py `_key_env` - hyphens in the
+    provider id normalize to underscores, so `opencode-go` -> `API_KEY_OPENCODE_GO`)."""
+    from polymerhus.app.llm.providers import _key_env
+    return os.environ.get(_key_env(provider))
 
 
 def gateway_url() -> str:
@@ -196,13 +199,19 @@ class DesiredModel:
 
 
 def build_desired(provider_ids: dict[str, set[str]], catalog: dict, *,
-                  base_urls: dict[str, str], synced_at: str) -> list[DesiredModel]:
+                  base_urls: dict[str, str], api_keys: dict[str, str],
+                  synced_at: str) -> list[DesiredModel]:
     """Join existence (`/v1/models` ids) with the registry per provider
     namespace, resolve inheritance (Rule 2) and map to the desired set.
 
     A model on `/v1/models` with no registry entry becomes an UNKNOWN record:
     still registered for routing (existence is real) with NO capability fields
-    and a provenance tag marking it unknown (D9); the gap is logged."""
+    and a provenance tag marking it unknown (D9); the gap is logged.
+
+    `litellm_params` carries the ROUTING trio (`routing_model` + `api_base` +
+    `api_key`): litellm's router needs all three to serve a custom
+    OpenAI-compatible endpoint (the api_key is masked by litellm in
+    `/model/info` and excluded from diff matching - see `_registered_matches`)."""
     global_models = catalog.get("models") if isinstance(catalog, dict) else None
     providers = catalog.get("providers") if isinstance(catalog, dict) else None
     if not isinstance(global_models, dict):
@@ -230,8 +239,9 @@ def build_desired(provider_ids: dict[str, set[str]], catalog: dict, *,
                 info = capability_to_model_info(capability)
             desired.append(DesiredModel(
                 model_name=registered_model_name(provider, model_id),
-                litellm_params={"model": native_litellm_model(provider, model_id),
-                                "api_base": base_urls[provider]},
+                litellm_params={"model": routing_model(provider, model_id),
+                                "api_base": base_urls[provider],
+                                "api_key": api_keys[provider]},
                 model_info=info,
                 known=resolved is not None,
             ))
@@ -325,28 +335,66 @@ def diff_desired(desired: list[DesiredModel], registered: list[dict]) -> Diff:
         if entry is None:
             diff.adds.append(model)
         elif not _registered_matches(entry, model):
-            diff.updates.append((entry.get("id"), model))
-    diff.deletes = [entry.get("id") for entry in registered_by_name.values()]
+            diff.updates.append((_registered_model_id(entry), model))
+    diff.deletes = [_registered_model_id(entry) for entry in registered_by_name.values()]
     return diff
+
+
+def _norm_value(value: Any) -> Any:
+    """Recursively normalize a JSON value for comparison: tuples -> lists
+    (JSON stores tuples as arrays, and litellm's prisma layer returns them as
+    lists - the same authored value must compare equal on both sides)."""
+    if isinstance(value, tuple):
+        value = list(value)
+    if isinstance(value, list):
+        return [_norm_value(v) for v in value]
+    if isinstance(value, dict):
+        return {k: _norm_value(v) for k, v in value.items()}
+    return value
 
 
 def _registered_matches(entry: dict, desired: DesiredModel) -> bool:
     """True when the registered record equals the desired record over the
     authored surface: desired model_info keys (minus the volatile synced-at
-    timestamp) and the routing params (minus any masked api_key)."""
+    timestamp) and the routing params the desired record authors (minus the
+    masked api_key).
+
+    Rule 1 holds on BOTH surfaces: keys litellm adds on its own - cost-map
+    defaults, pydantic-defaulted params like `use_in_pass_through` that
+    `updateLiteLLMParams` re-embodies on every PATCH - are never compared,
+    so they can never churn the diff."""
     reg_info = entry.get("model_info")
     if not isinstance(reg_info, dict):
         reg_info = {}
     authored = {k: v for k, v in desired.model_info.items()
                 if k != PROVENANCE_SYNCED_AT_KEY}
-    subset = {k: reg_info[k] for k in authored if k in reg_info}
-    if subset != authored:
+    subset = {k: _norm_value(reg_info[k]) for k in authored if k in reg_info}
+    if subset != _norm_value(authored):
         return False
     reg_params = entry.get("litellm_params")
     if not isinstance(reg_params, dict):
         reg_params = {}
-    params = {k: v for k, v in reg_params.items() if k != "api_key"}
-    return params == desired.litellm_params
+    desired_params = {k: v for k, v in desired.litellm_params.items()
+                      if k != "api_key"}
+    params = {k: _norm_value(reg_params[k]) for k in desired_params
+              if k in reg_params}
+    return params == _norm_value(desired_params)
+
+
+def _registered_model_id(entry: dict) -> Any:
+    """The litellm row identity (`model_id`) of a registered record.
+
+    `/model/new` stores the generated uuid inside `model_info.id` (verified
+    against the proxy DB 2026-08-17), and `/model/info` returns it there. The
+    top-level `id` key of an info entry is a config-level presentation id and
+    is IGNORED by the management API (the update/delete handlers look the row
+    up by `model_info.id` only), so the info entry's nested id is the only
+    reliable handle for update/delete. Falls back to the top-level key so
+    non-DB deployments still resolve."""
+    info = entry.get("model_info")
+    if isinstance(info, dict) and info.get("id") is not None:
+        return info["id"]
+    return entry.get("id")
 
 
 # --- The gateway management client ---------------------------------------------
@@ -401,24 +449,90 @@ class GatewayClient:
 
     def update_model(self, row_id: Any, model_name: str,
                      litellm_params: dict, model_info: dict) -> None:
-        self._request("POST", "/model/update",
-                      json={"id": row_id, "model_name": model_name,
+        """Refresh a registered record via the DB-backed PATCH endpoint.
+
+        The old `POST /model/update` only rewrites `litellm_params` and
+        ignores `model_info`, so capability/provenance changes could never
+        converge (and it looks the row up by `model_info.id`, which its
+        pydantic schema fabricates as a random uuid when absent - always
+        "model not found"). The PATCH endpoint (`/model/{model_id}/update`)
+        persists both surfaces. `model_info.id` MUST echo the row's
+        `model_id`: pydantic generates a NEW random uuid when the field is
+        absent and the handler merges it in, corrupting the row identity
+        (verified against litellm 1.96.0 2026-08-17)."""
+        self._request("PATCH", f"/model/{row_id}/update",
+                      json={"model_name": model_name,
                             "litellm_params": litellm_params,
-                            "model_info": model_info})
+                            "model_info": {**model_info, "id": row_id}})
 
     def delete_model(self, row_id: Any) -> None:
         self._request("POST", "/model/delete", json={"id": row_id})
 
     def upsert_snapshot(self, model_info: dict) -> None:
         """Persist the last-known-good snapshot under the pseudo-model record.
-        `litellm_params` carries the marker model so `/model/new` passes
-        litellm's registration validation; the record is never routed to."""
-        params = {"model": SNAPSHOT_MODEL_NAME}
+        `litellm_params` carries the `openai/`-prefixed marker model so
+        `/model/new` accepts the deployment into the router (a bare marker
+        string is unroutable and the proxy 500s - same failure mode as a real
+        model, verified 2026-08-17); the record is never routed to."""
+        params = {"model": f"{ROUTING_PROVIDER_PREFIX}{SNAPSHOT_MODEL_NAME}"}
         for entry in self.list_models():
             if entry.get("model_name") == SNAPSHOT_MODEL_NAME:
-                self.update_model(entry.get("id"), SNAPSHOT_MODEL_NAME, params, model_info)
+                self.update_model(_registered_model_id(entry), SNAPSHOT_MODEL_NAME,
+                                  params, model_info)
                 return
         self.add_model(SNAPSHOT_MODEL_NAME, params, model_info)
+
+    def key_info(self, key: str) -> dict | None:
+        """The stored virtual-key record for `key`, or None when absent.
+
+        The proxy's inbound auth (user_api_key_auth) accepts only master_key
+        and virtual keys from `LiteLLM_VerificationTokenTable`; the per-provider
+        client keys (operator decision, ADR D3 note in test_llm_providers.py)
+        must therefore be provisioned there or the client's bearer is a 401."""
+        url = f"{self._base_url}/key/info?key={key}"
+        try:
+            if self._client is None:
+                with httpx.Client(timeout=DEFAULT_FETCH_TIMEOUT_S) as owned:
+                    response = owned.get(url, headers=self._headers())
+            else:
+                response = self._client.get(url, headers=self._headers())
+        except Exception as exc:
+            raise SyncPushError(f"GET /key/info failed: {exc}") from exc
+        if response.status_code == 404:
+            return None
+        if response.status_code != 200:
+            raise SyncPushError(
+                f"GET /key/info failed: HTTP {response.status_code}: "
+                f"{response.text}")
+        try:
+            data = response.json()
+        except Exception as exc:
+            raise SyncPushError(f"GET /key/info failed: {exc}") from exc
+        info = data.get("info") if isinstance(data, dict) else None
+        if not isinstance(info, dict):
+            raise SyncPushError("GET /key/info returned an unparseable body")
+        return info
+
+    def ensure_virtual_key(self, key: str, models: list[str]) -> None:
+        """Make `key` a virtual key scoped to `models`, idempotently.
+
+        Absent -> `POST /key/generate {key, models}`; present -> `POST
+        /key/update {key, models}` ONLY when the stored scope differs (a
+        converged run is a no-op, C9). The key VALUE is the provider's own
+        API key, so the client's existing bearer just works (D3: the gateway
+        holds upstream keys itself; the client key is an identity, not a
+        credential here)."""
+        desired = sorted(set(models))
+        info = self.key_info(key)
+        stored = set(info.get("models") or []) if info else None
+        if stored is not None:
+            if set(stored) == set(desired):
+                return
+            self._request("POST", "/key/update",
+                          json={"key": key, "models": desired})
+            return
+        self._request("POST", "/key/generate",
+                      json={"key": key, "models": desired})
 
 
 # --- The pipeline (impure orchestrator) -----------------------------------------
@@ -459,6 +573,7 @@ def run_sync(*,
     try:
         catalog = fetch_catalog()
         provider_ids: dict[str, set[str]] = {}
+        api_keys: dict[str, str] = {}
         for provider, base_url in providers.items():
             api_key = read_api_key(provider)
             if not api_key:
@@ -468,8 +583,9 @@ def run_sync(*,
                     provider.upper())
                 continue
             provider_ids[provider] = fetch_provider_models(provider, api_key)
+            api_keys[provider] = api_key
         desired = build_desired(provider_ids, catalog, base_urls=providers,
-                                synced_at=synced_at)
+                                api_keys=api_keys, synced_at=synced_at)
         registered = gateway.list_models()
         snapshot = read_snapshot(registered)
         validate_desired(desired, snapshot)  # raises SyncCollapseError (hard)
@@ -488,6 +604,17 @@ def run_sync(*,
                                  model.litellm_params, model.model_info)
         for row_id in diff.deletes:
             gateway.delete_model(row_id)
+
+        # Provision the inbound client identity (D3): the proxy's auth accepts
+        # only master_key + virtual keys, and the operator decision is that in
+        # gateway mode the client presents the per-provider API key (pinned in
+        # test_llm_providers.py). Make each provider key a virtual key scoped
+        # to that provider's registered records - idempotent, converges to a
+        # no-op (C9), and the client's existing bearer just works.
+        for provider, api_key in api_keys.items():
+            scoped = [m.model_name for m in desired
+                      if m.model_name.startswith(f"{provider}/")]
+            gateway.ensure_virtual_key(api_key, scoped)
 
         new_snapshot = Snapshot(
             desired_count=len(desired),

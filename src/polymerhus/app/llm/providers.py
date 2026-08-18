@@ -154,12 +154,47 @@ PROVIDERS: dict[str, str] = {
     "openai":     "https://api.openai.com/v1",
     "openrouter": "https://openrouter.ai/api/v1",
     "swissai":    "https://api.swissai.svc.cscs.ch/v1",
-    "opencode":   "https://opencode.ai/zen/v1"
+    "opencode":   "https://opencode.ai/zen/v1",
+    "opencode-go": "https://opencode.ai/zen/go/v1",
 }
 
-# Providers that are the opencode zen gateway: they validate model ids against
-# the zen catalog (bare ids), not the provider-prefixed app-style ids.
-_ZEN_FAMILY = frozenset({"opencode", "zen"})
+# --- Provider id-kind policy (D5, #100): how ids reach the upstream ----------
+#
+# Each provider's upstream validates model ids in ITS OWN namespace, which is
+# NOT the operator's `<provider>:<model>` config string. Classifying by *how the
+# upstream validates* - not by membership in a provider set - is what makes the
+# seam generic over aggregators (opencode zen today, openrouter next):
+#   zen aggregators (`opencode`, `zen`): validate BARE catalog ids. The operator
+#     configures the backend-prefixed app-style id (`deepseek/deepseek-v4-flash-free`);
+#     the prefix is stripped to the bare id (`deepseek-v4-flash-free`) before the
+#     upstream (and in the registered gateway name). opencode zen reverse-proxies
+#     to the real backend but admits only its own bare catalog ids.
+#   verbatim providers (openai, swissai, openrouter, and anything unlisted):
+#     the id is forwarded UNCHANGED - openrouter's catalog ids ARE the slashed
+#     backend form (`deepseek/deepseek-v3.1-terminus`) and its upstream accepts
+#     them as-is; native providers (openai/swissai) do too.
+# Adding a provider with a different id namespace is a one-line table entry; a
+# wrong classification surfaces at the sync (C8) and the live routing tiers
+# (C13/E4) rather than silently mangling ids.
+
+ID_KIND_ZEN = "zen"
+ID_KIND_VERBATIM = "verbatim"
+
+_ID_KIND_BY_PROVIDER: dict[str, str] = {
+    "opencode": ID_KIND_ZEN,
+    "opencode-go": ID_KIND_ZEN,
+    "zen": ID_KIND_ZEN,
+}
+
+def id_kind(provider: str) -> str:
+    """The id-kind policy for a provider: `ID_KIND_ZEN` (bare-catalog
+    aggregator) or `ID_KIND_VERBATIM` (ids forwarded unchanged). Unlisted
+    providers default to verbatim - the safe, transparent default."""
+    return _ID_KIND_BY_PROVIDER.get(provider, ID_KIND_VERBATIM)
+
+# Back-compat alias: the zen providers are exactly the ID_KIND_ZEN entries.
+_ZEN_FAMILY = frozenset(
+    p for p, k in _ID_KIND_BY_PROVIDER.items() if k == ID_KIND_ZEN)
 
 # --- #107 (D4 item 1): the LLM_GATEWAY_URL base_url resolution seam ------------
 #
@@ -287,7 +322,15 @@ def thinking_for(role_id: str) -> ThinkingLevel:
 
 
 def _key_env(provider: str) -> str:
-    return f"API_KEY_{provider.upper()}"
+    """The provider's API-key env var name, `API_KEY_<PROVIDER>`.
+
+    The provider id is uppercased and hyphen->underscore normalized: a
+    multi-word provider id like `opencode-go` (a dash) must resolve
+    `API_KEY_OPENCODE_GO` (an underscore), because env var names cannot hold
+    a dash. Every provider key lookup goes through this single function, so
+    the build_chat_model key read, `validate_llm_config`, and the sync's
+    `provider_api_key` all agree on the same convention."""
+    return f"API_KEY_{provider.upper().replace('-', '_')}"
 
 def resolve_role(role: str) -> tuple[str, str]:
     """Resolve a role_id to (provider, model) via its record's `model_key`.
@@ -399,6 +442,7 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     # gateway; the id strip is NOT run client-side (the gateway's mapping layer
     # owns id translation, D5) and the `provider:model` string goes verbatim.
     base_url = gateway_base_url()
+    routing_prefix = None
     if base_url is None:
         base_url = PROVIDERS[provider]
         if provider in _ZEN_FAMILY:
@@ -408,6 +452,17 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
             # rejects the prefixed form, so strip the prefix here. The zen catalog
             # contains no `/`, so the last segment is always the id.
             model = model.rsplit("/", 1)[-1]
+    else:
+        # Gateway mode (#107, D5): the client sends the REGISTERED name the sync
+        # pushed - `registered_model_name(provider, model)` - NOT the operator's
+        # `provider:model` string verbatim. That single canonical key is what the
+        # reader looks up, what the sync registers, and what the D3 virtual-key
+        # scopes name (C13/E4/E7: a verbatim `deepseek/deepseek-v4-flash-free`
+        # matched no registered route and was either passed upstream unstripped
+        # (400) or denied by the key scope (403)). The mapping layer is the sole
+        # id translator for every provider kind (zen strip, openrouter verbatim).
+        from polymerhus.app.llm.sync_mapping import registered_model_name
+        model = registered_model_name(provider, model)
     api_key = os.environ.get(_key_env(provider))
     if not api_key:
         raise LLMConfigError(f"missing {_key_env(provider)} for provider {provider!r}")

@@ -85,12 +85,17 @@ services:
       # the agent uvicorn and is polled on /health/liveliness before the agent
       # starts (ADR D10 ordering, see `gateway_entrypoint.py`).
       #
-      # `DATABASE_URL` is litellm's own DB pointer. The gateway persists its
-      # model records in the SHARED postgres (STAR_MODEL_IN_DB=True), under
-      # litellm's own tables - the same instance the agent uses for its
-      # checkpoints (POSTGRES_DSN above); the env var names differ between
-      # litellm and the agent's own stack, hence the two keys.
-      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      # `DATABASE_URL` is litellm's own DB pointer. litellm's prisma schema
+      # machinery assumes it OWNS its target database: pointed at the agent's
+      # database it refuses to migrate (P3005, non-empty schema) or drops the
+      # agent's tables (the db push path, verified live 2026-08-17). So the
+      # gateway gets its OWN database on the SAME shared postgres instance
+      # (STAR_MODEL_IN_DB=True under litellm's own tables) - the instance is
+      # shared with the agent's checkpoints (POSTGRES_DSN above), the database
+      # is not; the env var names differ between litellm and the agent's own
+      # stack, hence the two keys. `polymerhus_gateway` is created by
+      # db/postgres/init.sql on first volume init.
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus_gateway
       # `LITELLM_MASTER_KEY` is the service token authing the management API
       # the T2 sync uses to register models. A dev default ships here so a
       # clean clone runs; the operator's .env overrides it for any non-dev
@@ -99,6 +104,14 @@ services:
       # The proxy listens on the internal port 4000 (D1); the client seam (T4,
       # #107) will set `LLM_GATEWAY_URL=http://127.0.0.1:4000` to route through
       # it. The port is NOT published to the host - it is intra-container only.
+      #
+      # Boot determinism: the proxy otherwise fetches the remote model cost map
+      # from raw.githubusercontent.com at boot, which added up to 150 s of
+      # network variance (and a silent hang on throttled networks) before the
+      # proxy even bound its port (verified 2026-08-17). The gateway does NOT
+      # use litellm's cost map - models.dev is the capability source (ADR D11)
+      # - so we pin litellm to its bundled local copy.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
     env_file:
       - path: .env
         required: false

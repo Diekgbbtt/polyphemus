@@ -86,7 +86,7 @@ from typing import Any
 
 import httpx
 
-from polymerhus.app.llm.providers import LLMConfigError, _ZEN_FAMILY
+from polymerhus.app.llm.providers import LLMConfigError
 
 logger = logging.getLogger(__name__)
 
@@ -162,11 +162,12 @@ _PROFILE_CACHE: dict[tuple[str, str], CapabilityProfile] = {}
 
 def _registered_name(provider: str, model: str) -> str:
     """The gateway lookup key - the T2 registered-name convention (D5 model_id
-    row): `<provider>/<id>` with the zen-family id stripped (the strip moves
-    from `build_chat_model` into the mapping layer in gateway mode)."""
-    if provider in _ZEN_FAMILY:
-        model = model.rsplit(SLASH_SEP, 1)[-1]
-    return f"{provider}{SLASH_SEP}{model}"
+    row, `sync_mapping.registered_model_name`): `<provider>/<id>` with the
+    zen-family (bare-catalog aggregator) id stripped. The mapping layer is the
+    sole id translator for every provider kind; the reader must look up exactly
+    the key the sync registered and the client seam sends (C13/E4/E7)."""
+    from polymerhus.app.llm.sync_mapping import registered_model_name
+    return registered_model_name(provider, model)
 
 
 def _gateway_url() -> str | None:

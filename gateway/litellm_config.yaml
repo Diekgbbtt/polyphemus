@@ -27,19 +27,44 @@
 #   whole request - caching the whole request would risk stale tool results
 #   and corrupted observability.
 #
-# D1: STORE_MODEL_IN_DB=True against the SHARED postgres (under litellm's own
-#   tables). The mgmt API writes to `LiteLLM_ProxyModelTable`; the YAML
-#   `model_list` is bootstrap-only and OVERLAYED by the DB on subsequent boots
-#   (litellm's documented semantics).
+# D1: STORE_MODEL_IN_DB=True against the SHARED postgres INSTANCE, in the
+#   gateway's DEDICATED database (`polymerhus_gateway`, created by
+#   db/postgres/init.sql - litellm's prisma machinery owns its target database
+#   and destroys or refuses shared ones). The mgmt API writes to
+#   `LiteLLM_ProxyModelTable`; the YAML `model_list` is bootstrap-only and
+#   OVERLAYED by the DB on subsequent boots (litellm's documented semantics).
+#
+# SCHEMA MIGRATIONS ARE A DEPLOYMENT STEP, NOT A BOOT STEP: the entrypoint
+#   (`gateway_entrypoint.py::_run_migrations`) runs `prisma migrate deploy`
+#   itself BEFORE spawning the proxy. This flag makes litellm SKIP its own
+#   internal migrate - litellm wraps it in a hard-coded 60s subprocess timeout
+#   while the prisma CLI alone costs 110-165s on this hardware (measured
+#   2026-08-17), so litellm's internal step times out non-deterministically
+#   and kills the boot. With the flag litellm instead runs a WARN-ONLY, no-
+#   timeout `prisma migrate diff` check at startup - the schema itself is
+#   guaranteed current because the entrypoint migrated it moments earlier.
 
 model_list: []  # empty - T2 (#105) fills via management API
 
 general_settings:
   store_model_in_db: true  # liteLLM persists model records in the shared postgres (ADR D1)
+  disable_prisma_schema_update: true  # the entrypoint owns migrations (see above)
   # master_key + database_url come from env: LITELLM_MASTER_KEY, DATABASE_URL
   # (litellm reads these env vars natively; no YAML key needed, no secret in repo).
 
 litellm_settings:
+  # The role thinking baseline (providers.py `thinking`) sends the OpenAI
+  # `reasoning_effort` param in gateway mode. The openai-compatible upstream
+  # wire has NO such param, and litellm's openai provider class rejects it
+  # with `UnsupportedParamsError` at the proxy (400, verified live 2026-08-18
+  # via the E7 reasoning-replay walkthrough) unless the proxy drops it.
+  # `drop_params: true` makes litellm strip unsupported params before routing,
+  # exactly as litellm's own error text directs, so the reasoning NODE still
+  # arrives (deepseek returns reasoning_content natively) while the effort
+  # tuning hint is dropped instead of 400ing the whole turn. A D5 D10 concern:
+  # the proxy is the transport; client tuning params it does not understand
+  # must not become a hard failure.
+  drop_params: true
   # D8 auto-inject: gateway-wide prompt-caching breakpoints for Claude-family
   # models. No-op on the current openai-compatible provider set (DeepSeek +
   # OpenAI cache automatically server-side). Forwards client `cache_control`

@@ -59,13 +59,15 @@ def test_health_endpoint_is_liveliness_not_liveness():
 # ---------------------------------------------------------------------------
 
 def _stub_children(monkeypatch, agent_started=True):
-    """Replace the proxy/sync/agent subprocess seams with recording stubs.
+    """Replace the migrate/proxy/sync/agent subprocess seams with recording
+    stubs.
 
     Returns a SimpleNamespace the assertion reads back. The proxy and agent
     are recorded as started so we can assert branch effects directly without
     coupling to the actual Popen mechanics."""
     rec = SimpleNamespace(started_proxy=False, ran_sync=False,
                           started_agent=False, propagated_to=[])
+    monkeypatch.setattr(E, "_run_migrations", lambda: None)
     monkeypatch.setattr(E, "_start_proxy", lambda: rec.__setattr__("started_proxy", True) or _FakeProc("proxy"))
     monkeypatch.setattr(E, "_wait_for_proxy", lambda: rec.__setattr__("_waited", True))
     monkeypatch.setattr(E, "_start_agent", lambda: rec.__setattr__("started_agent", True) or _FakeProc("agent"))
@@ -328,6 +330,102 @@ def test_run_sync_t2_state_runs_subprocess_and_returns_exitcode(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# Schema migrations as a deployment step (D10: migrate -> proxy -> sync) -----
+# ---------------------------------------------------------------------------
+
+def test_run_migrations_runs_prisma_deploy_before_proxy(monkeypatch):
+    """With DATABASE_URL set, `_run_migrations` runs `prisma migrate deploy`
+    in the litellm_proxy_extras package dir (where schema.prisma + the
+    migrations ledger live - litellm's own boot code os.chdir()s there for
+    the same reason) under the measured 420s timeout. It runs as part of
+    `run_gateway` BEFORE `start_proxy` - the proxy must not serve (and the
+    sync must not write) on a half-migrated schema."""
+    calls = []
+    def _fake_run(cmd, cwd=None, capture_output=False, text=False, timeout=None):
+        calls.append((tuple(cmd), cwd, timeout))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+    monkeypatch.setattr(E, "_prisma_migrations_dir", lambda: "/pkg/dir")
+    monkeypatch.setattr(E.subprocess, "run", _fake_run)
+    E._run_migrations()
+    assert calls == [(("prisma", "migrate", "deploy"), "/pkg/dir",
+                      E.MIGRATE_TIMEOUT_S)]
+    # And run_gateway invokes it BEFORE the proxy: the stubbed ordering test
+    # pins start order via _stub_children's migrate stub being required.
+    order = []
+    monkeypatch.setattr(E, "_run_migrations", lambda: order.append("migrate"))
+    monkeypatch.setattr(E, "_start_proxy", lambda: order.append("proxy") or _FakeProc("proxy"))
+    monkeypatch.setattr(E, "_wait_for_proxy", lambda: None)
+    monkeypatch.setattr(E, "_run_sync", lambda: E.SYNC_OK)
+    monkeypatch.setattr(E, "_start_agent", lambda: order.append("agent") or _FakeProc("agent"))
+    monkeypatch.setattr(E, "_propagate_signal", lambda s, p: None)
+    E.run_gateway()
+    assert order == ["migrate", "proxy", "agent"]
+
+
+def test_run_migrations_failure_is_fail_closed(monkeypatch):
+    """A failed or timed-out migration raises GatewayStartupError - the proxy
+    must not boot on a half-migrated schema (D9 cold-stop spirit)."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+    monkeypatch.setattr(E, "_prisma_migrations_dir", lambda: "/pkg/dir")
+    failed = SimpleNamespace(returncode=1, stdout="", stderr="boom")
+    monkeypatch.setattr(E.subprocess, "run",
+                        lambda *a, **kw: failed)
+    with pytest.raises(E.GatewayStartupError):
+        E._run_migrations()
+    def _timeout(*a, **kw):
+        raise E.subprocess.TimeoutExpired(cmd="prisma", timeout=1)
+    monkeypatch.setattr(E.subprocess, "run", _timeout)
+    with pytest.raises(E.GatewayStartupError):
+        E._run_migrations()
+
+
+def test_run_migrations_skips_without_database_url(monkeypatch, caplog):
+    """Without DATABASE_URL (no store_model_in_db deployment) the step skips
+    with a warning - the proxy boots without a DB as before."""
+    monkeypatch.delenv("DATABASE_URL", raising=False)
+    def _must_not_run(*a, **kw):
+        raise AssertionError("prisma must not run without DATABASE_URL")
+    monkeypatch.setattr(E.subprocess, "run", _must_not_run)
+    with caplog.at_level("WARNING"):
+        E._run_migrations()
+    assert any("DATABASE_URL" in r.message for r in caplog.records)
+
+
+def test_run_migrations_skips_when_explicitly_opted_out(monkeypatch, caplog):
+    """With `LITELLM_SKIP_MIGRATIONS` set (the persistent-DB opt-out, ADR
+    D10/D1), `_run_migrations` skips `prisma migrate deploy` even when
+    `DATABASE_URL` is present - an intact persistent schema must not re-run
+    a migration (whose prisma CLI cold-starts 110-165 s even as a no-op)."""
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+    monkeypatch.setenv(E.LITELLM_SKIP_MIGRATIONS, "1")
+    def _must_not_run(*a, **kw):
+        raise AssertionError("prisma must not run when LITELLM_SKIP_MIGRATIONS is set")
+    monkeypatch.setattr(E.subprocess, "run", _must_not_run)
+    with caplog.at_level("INFO"):
+        E._run_migrations()
+    assert any("skipping gateway schema migrations" in r.message
+               for r in caplog.records)
+
+
+def test_run_migrations_still_runs_by_default(monkeypatch):
+    """The opt-out is OFF by default: with `DATABASE_URL` set and NO
+    `LITELLM_SKIP_MIGRATIONS`, `prisma migrate deploy` still runs (the
+    migration is a real deployment step, ADR D10 - never silently dropped)."""
+    calls = []
+    def _fake_run(cmd, cwd=None, capture_output=False, text=False, timeout=None):
+        calls.append((tuple(cmd), cwd, timeout))
+        return SimpleNamespace(returncode=0, stdout="", stderr="")
+    monkeypatch.setenv("DATABASE_URL", "postgresql://x/y")
+    monkeypatch.delenv(E.LITELLM_SKIP_MIGRATIONS, raising=False)
+    monkeypatch.setattr(E, "_prisma_migrations_dir", lambda: "/pkg/dir")
+    monkeypatch.setattr(E.subprocess, "run", _fake_run)
+    E._run_migrations()
+    assert calls == [(("prisma", "migrate", "deploy"), "/pkg/dir",
+                      E.MIGRATE_TIMEOUT_S)]
+
+
+# ---------------------------------------------------------------------------
 # Proxy command shape (D1) --------------------------------------------------
 # ---------------------------------------------------------------------------
 
@@ -346,6 +444,12 @@ def test_proxy_command_listens_on_internal_port():
     assert "--config" in cmd and "/etc/litellm.yaml" in cmd
     assert "127.0.0.1" in cmd
     assert "4000" in cmd
+    # NO migration-resolver flags: DATABASE_URL points at the gateway's OWN
+    # database (polymerhus_gateway), so litellm's default boot path works.
+    # Every resolver variant fights litellm's schema ownership on a shared
+    # database (P3005 / baseline / destructive db push - verified 2026-08-17).
+    assert "--use_v2_migration_resolver" not in cmd
+    assert "--use_prisma_db_push" not in cmd
     # No host-facing bind - 127.0.0.1, never 0.0.0.0
     assert "0.0.0.0" not in cmd
     # No reload on the proxy (ADR D1: independent reload policies)
@@ -361,3 +465,5 @@ def test_proxy_command_without_config_path_falls_back_to_env():
     assert cmd[0] == "litellm"
     assert "--config" not in cmd
     assert "127.0.0.1" in cmd and "4000" in cmd
+    assert "--use_v2_migration_resolver" not in cmd
+    assert "--use_prisma_db_push" not in cmd
