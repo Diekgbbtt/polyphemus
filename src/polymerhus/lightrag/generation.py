@@ -211,12 +211,13 @@ def build_external_payload(
     prompt: str,
     *,
     max_tokens: int,
+    stream: bool = False,
 ) -> dict[str, Any]:
     """DeepSeek-style external payload: thinking enabled, high effort, no sampling."""
     return {
         "model": model,
         "messages": [{"role": "user", "content": prompt}],
-        "stream": False,
+        "stream": stream,
         "thinking": {"type": "enabled"},
         "reasoning_effort": "high",
         "max_tokens": max_tokens,
@@ -272,7 +273,7 @@ class DeepSeekClient:
     def stream(self, prompt: str):
         """Yield SSE content deltas, then a finish marker. Never yields reasoning."""
         payload = build_external_payload(
-            self.model, prompt, max_tokens=self.max_tokens
+            self.model, prompt, max_tokens=self.max_tokens, stream=True
         )
         headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
         with httpx.stream(
