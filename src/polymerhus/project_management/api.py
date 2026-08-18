@@ -347,3 +347,69 @@ async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
     if row is None:
         raise HTTPException(status_code=404, detail="no hunting run for that hunting_run_id")
     return row
+
+
+# --- module-lifecycle surface (#118/#121): drive the runtime plane ------------
+
+_MODULES = ("recon", "analysis", "hunting")
+
+
+def _module_handle(runtime, module: str):
+    """The runtime's `ModuleHandle` for `module`, or None (the module registry
+    only ever holds the three ratified modules)."""
+    if module not in _MODULES:
+        return None
+    try:
+        return runtime.handle(module)
+    except KeyError:
+        return None
+
+
+def _runtime_or_503():
+    runtime = _runtime()
+    if runtime is None:
+        raise HTTPException(
+            status_code=503, detail="module runtime is not active"
+        )
+    return runtime
+
+
+@router.post("/projects/{project_id}/modules/{module}/pause")
+def pause_module(project_id: str, module: str) -> dict:
+    """Pause a module (#118): stop admission and the dispatch of the NEXT unit
+    after the in-flight one; run tasks, heartbeats, persistence stay alive. A
+    pause of an already-stopped module is a safe no-op (the runtime verb's own
+    semantics); the response always reports the current state."""
+    runtime = _runtime_or_503()
+    handle = _module_handle(runtime, module)
+    if handle is None:
+        raise HTTPException(status_code=404, detail="unknown module")
+    runtime.pause(module)
+    return {"module": module, "state": handle.state.value}
+
+
+@router.post("/projects/{project_id}/modules/{module}/resume")
+def resume_module(project_id: str, module: str) -> dict:
+    """Resume a paused module (#118): return to `running`, dispatch continues
+    from the next unit. Resuming a non-paused module is a safe no-op (the
+    runtime verb's own semantics); the response reports the current state."""
+    runtime = _runtime_or_503()
+    handle = _module_handle(runtime, module)
+    if handle is None:
+        raise HTTPException(status_code=404, detail="unknown module")
+    runtime.resume(module)
+    return {"module": module, "state": handle.state.value}
+
+
+@router.post("/projects/{project_id}/modules/{module}/drain")
+def drain_module(project_id: str, module: str) -> dict:
+    """Drain a module (#118): pause plus a graceful settle to `stopped` - finish
+    the in-flight unit, dispatch no further, archive via the module's flush hook
+    into the still-open pooled saver. The only lifecycle verb that changes run
+    state durably."""
+    runtime = _runtime_or_503()
+    handle = _module_handle(runtime, module)
+    if handle is None:
+        raise HTTPException(status_code=404, detail="unknown module")
+    runtime.drain(module)
+    return {"module": module, "state": handle.state.value}

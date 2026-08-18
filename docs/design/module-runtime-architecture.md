@@ -1,6 +1,6 @@
 # Module runtime architecture: the interaction pattern and lifecycle
 
-*Status: reference architecture for the module-runtime-independence workstream. Amended 2026-08-12 by operator ruling: ONE shared worker loop (the per-module-loop design is REVERSED), per-module lifecycle state machines, per-module gate, run-terminal flush. Rulings Q1-Q6, G1-G7c remain binding except where this amendment supersedes them (per-module loops, the threading pass gate, and the pure-queue Event feed subscription are retired). The hunting module's obligations are the same as in `hunting-module-runtime-seam.md`.*
+*Status: reference architecture for the module-runtime-independence workstream. Amended 2026-08-12 by operator ruling: ONE shared worker loop (the per-module-loop design is REVERSED), per-module lifecycle state machines, per-module gate, run-terminal flush. Amended 2026-08-12/13 by the ratified spec (#118) and #121 ACs: ONE shared 64-thread default executor (the existing `main.py` process-wide pool) - per-module pools, `runtime.get_pool`, and `HUNTING_POOL_SIZE` are RETIRED (the earlier per-module-pool text in this document is superseded). Rulings Q1-Q6, G1-G7c remain binding except where this amendment supersedes them (per-module loops, per-module pools, the threading pass gate, and the pure-queue Event feed subscription are retired). The hunting module's obligations are the same as in `hunting-module-runtime-seam.md`.*
 
 This document answers one question precisely - which interaction pattern the reframed runtime implements - and walks through every lifecycle path the process can traverse, naming the abstractions that implement each behaviour.
 
@@ -12,7 +12,7 @@ The pattern is NEITHER pure RPC NOR partial RPC. It is:
 - **Data path**: an in-loop FIFO (`asyncio.Queue`). Recon pushes curated `L0Chunk` payloads with `put_nowait`, the analysis consumer drains them on the SAME loop, exactly as the proven pre-reframe code does. There is no cross-loop feed machinery at all.
 - **Width control**: a per-module `asyncio.Semaphore` guarding analyser passes (the measured memory guard), per module, width configurable. Same-loop, cancellation-safe, no executor, no leak.
 
-The topology: TWO owner threads. The uvicorn API thread runs the HTTP adapter, the manager, the reaper, startup and shutdown. ONE worker loop (an `asyncio.Runner` thread) runs every module's tasks - recon runs, analysis consumers, hunting runs. Module-tagged blocking work routes through per-module `ThreadPoolExecutor`s (multiple sub-threads per module pool, launched freely); the module context (`ContextVar`) routes pool and checkpointer resolution.
+The topology: TWO owner threads. The uvicorn API thread runs the HTTP adapter, the manager, the reaper, startup and shutdown. ONE worker loop (an `asyncio.Runner` thread) runs every module's tasks - recon runs, analysis consumers, hunting runs. Module-tagged blocking work offloads via `asyncio.to_thread` onto the ONE shared 64-thread default executor (the existing `main.py` process-wide pool, `thread_name_prefix="runtime-executor"`); the module context (`ContextVar`) routes checkpointer resolution and carries the module attribution onto the shared executor (G3, entry-point residency).
 
 ## 1. Why this pattern - and the topology record
 
@@ -36,11 +36,11 @@ Everything in this document that mentions a cross-loop mechanism is gone: the th
                        |  run_coroutine_threadsafe / call_soon_threadsafe
                        v
                +----------------------+
-               |  WORKER LOOP         |         recon        analysis     hunting
-               |  (asyncio.Runner)    |         pools         pools        pools
-               |  recon pipeline task | <---->  (ThreadPoolExecutor, per-module,
-               |  analysis consumers  |         lazily created, sized by env;
-               |  hunting runs        |         multi sub-threads each)
+               |  WORKER LOOP         |         ONE SHARED EXECUTOR
+               |  (asyncio.Runner)    |         (64-thread default pool,
+               |  recon pipeline task | <---->  thread_name_prefix=runtime-executor;
+               |  analysis consumers  |         asyncio.to_thread offloads,
+               |  hunting runs        |         context-routed per module)
                |  per-module FIFOs    |
                |  per-module gates    |
                +----------------------+
@@ -58,7 +58,7 @@ Ownership rules - the shrunken rulebook:
 1. **The worker loop's asyncio objects are touched only from the worker loop thread**, or through the two sanctioned verbs (`run_coroutine_threadsafe` to start work, `call_soon_threadsafe` for plain callbacks like a cancellation). The API thread never touches a module task, feed, or gate directly.
 2. **The manager is touched only from the API thread** (like an asyncio object). Its only callers are the HTTP handlers and `main.py` startup/shutdown.
 3. **Threading primitives guard only cross-thread structures**: the per-module index lock (the resume scaffold reads indexes cross-thread) and the executor internals. Nothing else is shared across threads.
-4. **The `ContextVar` module context is copied, never mutated, across threads**: `copy_context` carries it into executor work, so offloaded work resolves the right module pool and checkpointer (G3, entry-point residency).
+4. **The `ContextVar` module context is copied, never mutated, across threads**: `copy_context` carries it into executor work, so offloaded work resolves the right module checkpointer and carries module attribution (G3, entry-point residency).
 5. **The #94 pooled PG saver is thread-safe by construction** (a psycopg connection pool): opened at startup, closed at shutdown after the last flush (G1).
 
 ## 3. The sanctioned interaction verbs
@@ -70,19 +70,19 @@ The complete cross-thread contact surface - there is nothing else:
 | `runtime.schedule(module, coro, *, name)` | `run_coroutine_threadsafe` onto the worker loop | Boots a run. Returns a `concurrent.futures.Future` as an outcome handle (finished or raised). Refused while the module is `paused` / `draining` / `stopped`. |
 | `runtime.cancel_run(module, run_id)` | `call_soon_threadsafe(task.cancel)` | Hard-cancels the run's task from the module's registry. The phase-1 STOP verb. |
 | `runtime.pause(module)` / `runtime.resume(module)` / `runtime.drain(module)` | manager state machine | Lifecycle verbs; see 5.10-5.11. |
-| `runtime.get_pool(module)` + the context-routed offload helper | explicit `run_in_executor(module_pool, ...)` | Module-tagged blocking work on the module's own pool; `asyncio.to_thread` keeps landing on the worker loop's general default executor (routed by the context-aware helper). |
+| Blocking work (`asyncio.to_thread`) | the ONE shared 64-thread default executor (the existing `main.py` process-wide pool) | Module-tagged blocking work offloads onto the shared executor, context-routed; never a per-module pool, never the worker loop. |
 | `agent_contexts(run_id, phase, tool)` | lock-guarded index read | Read-only enumeration of committed pod contexts (G7a). |
 | `register_module(name, hooks)` / `runtime.shutdown()` | fan-out | Registration and the ordered shutdown walk (G7c). |
 
-Everything else stays inside the worker loop. Lifecycle functions (`start_analysis`, `stop_analysis`, `_schedule_pipeline`, `run_pipeline`, `start_hunting`) are plain coroutines that run as tasks on the worker loop; the unit tier calls them directly with `asyncio.run`, unchanged (G4). The feed push/consume and the gate acquire are plain in-loop asyncio operations - today's proven code.
+Everything else stays inside the worker loop. Lifecycle functions (`start_analysis`, `stop_analysis`, `_launch_pipeline`, `run_pipeline`, `start_hunting`) are plain coroutines that run as tasks on the worker loop; the unit tier calls them directly with `asyncio.run`, unchanged (G4). The feed push/consume and the gate acquire are plain in-loop asyncio operations - today's proven code.
 
 ## 4. The abstractions catalogue
 
 | Abstraction | Thread affinity | Role | Test seam |
 |---|---|---|---|
 | `RuntimeManager` (`app/runtime.py`) | API thread only | Plain registry/coordinator: module handles, run-task registries, the per-module lifecycle state machines, the shutdown fan-out. | Instantiated as a plain object; one real `asyncio.Runner` thread in fixtures (G7b). |
-| `ModuleHandle` | Handle on the API thread; pointed-to state on the worker loop | `{name, pool (executor), index, tasks: dict[run_id -> Task], state: created/running/paused/draining/stopped, hooks}` | Per-module fixture. |
-| `module_context(name)` | ContextVar | Async context manager; entry-point residency (G3). Set at: `run_pipeline` (recon), the supervise/consume task and `run_analyser_chunked` (analysis), `start_hunting` (hunting, #110). Propagates via `copy_context`; routes pool + checkpointer resolution. | Direct `asyncio.run` tests. |
+| `ModuleHandle` | Handle on the API thread; pointed-to state on the worker loop | `{name, index, tasks: dict[run_id -> Task], state: created/running/paused/draining/stopped, hooks}` | Per-module fixture. |
+| `module_context(name)` | ContextVar | Async context manager; entry-point residency (G3). Set at: `run_pipeline` (recon), the supervise/consume task and `run_analyser_chunked` (analysis), `start_hunting` (hunting, #110). Propagates via `copy_context`; routes checkpointer resolution and carries module attribution onto the shared executor. | Direct `asyncio.run` tests. |
 | `ModuleIndex` | Worker loop, lock-guarded for reads | Per-module in-memory checkpointer index, lazily built on first resolution; flush hooks iterate it (run-terminal + shutdown); read-only enumeration for `agent_contexts`. | Unit tests with a fake saver. |
 | `get_session_checkpointer()` | worker loop (fallback anywhere) | Resolves: context set -> module index -> per-thread in-memory saver + in-memory store; unset -> shared `InMemorySaver` fallback. | Existing checkpointer tests keep passing against the fallback. |
 | #94 pooled PG saver (`setup_session_checkpointer`) | none (pool is thread-safe) | Pre-warmed at startup, the flush target of every module, closed at shutdown after flushes (G1). | No-DSN tests hit the `InMemorySaver` fallback. |
@@ -152,7 +152,7 @@ Identical launcher mechanics; the analysis-only handler validates the run exists
 
 1. `[API]` cancel the reaper task; call `runtime.shutdown()`.
 2. `[API -> work]` for each module, in the ratified ordering: stop accepting new work; HARD-cancel in-flight runs by default (drain each run's FIFO, cancel the tasks) - or, when the app requests graceful mode and the module registered one, invoke the module's **termination feature** (finish the in-flight turn, dispatch no further work) instead (G7c).
-3. `[API -> work]` run each module's flush hook (the run-terminal flush already archived most state; the shutdown flush covers the tail), writing into the STILL-OPEN #94 pool (fail-open); close each module pool.
+3. `[API -> work]` run each module's flush hook (the run-terminal flush already archived most state; the shutdown flush covers the tail), writing into the STILL-OPEN #94 pool (fail-open); the ONE shared executor is closed by the manager after the flush (never before).
 4. `[API]` stop the worker loop; `close_session_checkpointer()` closes the #94 pool. The process exits.
 
 ### 5.13 Crash (no shutdown ran)
@@ -169,9 +169,9 @@ first touch creates and registers the feed -> recon pushes chunks -> terminal ma
 
 first stateful turn under a module context -> index lazy-build (in-memory saver + in-memory store per thread) -> subsequent turns in that module resolve the same pair -> the supervisor graph compiles against the in-memory pair (Q2/Q3b) -> run-terminal flush archives the committed threads -> the shutdown flush covers the tail -> the #94 pool closes. An un-contexted call (bootstrap, admin reads) resolves the shared `InMemorySaver` fallback.
 
-### 5.16 Pool lifecycle
+### 5.16 Executor lifecycle (ONE shared)
 
-A module's `ThreadPoolExecutor` is created lazily on the first offload, sized by env (`HUNTING_POOL_SIZE` default 20; the recon and analysis pools sized by their own env keys), and closed at module stop or shutdown after the flush. Multiple sub-threads of a module pool run concurrently - the pod fan-out, analyser passes, and hunting turns all dispatch freely; nothing serialises them except the analysis module's own pass gate.
+The ONE shared 64-thread default executor (the existing `main.py` process-wide pool) is opened at startup and closed by the manager at shutdown AFTER every module's flush hook has archived into the still-open #94 pool (G7c) - never before, so a flush target is always alive. Blocking work offloads onto it via `asyncio.to_thread`; the module context (`ContextVar`) carries attribution so offloaded work resolves the right module checkpointer. Multiple sub-threads run concurrently - the pod fan-out, analyser passes, and hunting turns all dispatch freely; nothing serialises them except the analysis module's own pass gate.
 
 ### 5.17 The pass-gate path (per analysis pass)
 
@@ -181,9 +181,8 @@ A module's `ThreadPoolExecutor` is created lazily on the first offload, sized by
 
 ## 6. Determinism and the resume seam
 
-- Every `SessionAddress` `thread_id` is a pure function of `(module, run, phase, tool, discriminator)`; no UUID or time source enters the composition. The address audit proves this by test so post-crash enumeration keys are stable. The audit is a LIVE test the suite keeps running: the composition half in `tests/test_session_address.py` (#119, pinned hand-escaped literals across the full discriminating matrix) and the resume-seam half in `tests/app/test_resume_seam_audit.py` (#124: the same matrix committed through real module contexts and enumerated byte-identically across repeated calls, with the same pinned literals, an over-long discriminator, a no-UUID/no-epoch shape check, and a structural import audit that forbids uuid/time/random/datetime/secrets/os at module scope in both `session_address.py` and `checkpoints.py`).
-- `agent_contexts(run_id, phase, tool)` reads the module indexes (lock-guarded, read-only) and enumerates the committed pod contexts of a run. It contains NO resumption logic; it is the documented contract a future resume agent implements against (G7a). Absence of a run/phase/tool is an EMPTY enumeration, never an error.
-- **Upstream compatibility (#124)**: `agent_contexts` reads the same name-keyed `ModuleIndex` registry the manager's module flush hooks iterate - a run scheduled through `RuntimeManager.schedule` whose stateful turns commit under its `module_context` IS what the enumeration returns from the API thread. No new cross-thread surface exists beyond the documented read-only function; the manager adds no enumeration verb of its own.
+- Every `SessionAddress` `thread_id` is a pure function of `(module, run, phase, tool, discriminator)`; no UUID or time source enters the composition. The address audit (part of the workstream) proves this by test so post-crash enumeration keys are stable.
+- `agent_contexts(run_id, phase, tool)` reads the module indexes (lock-guarded, read-only) and enumerates the committed pod contexts of a run. It contains NO resumption logic; it is the documented contract a future resume agent implements against (G7a).
 
 ## 7. What the tests exercise
 
@@ -194,7 +193,7 @@ A module's `ThreadPoolExecutor` is created lazily on the first offload, sized by
 
 ## 8. Evolution notes
 
-- **Process split**: if a future iteration moves a module into its own process, RPC enters at exactly the two seams that are today in-process: the feed (an `asyncio.Queue` becomes a wire protocol with its own delivery semantics) and the checkpointer store (the shared Postgres it already is). Nothing else in this document changes; the module's pool/index/state-machine pattern survives inside the process.
+- **Process split**: if a future iteration moves a module into its own process, RPC enters at exactly the two seams that are today in-process: the feed (an `asyncio.Queue` becomes a wire protocol with its own delivery semantics) and the checkpointer store (the shared Postgres it already is). Nothing else in this document changes; the module's index/state-machine pattern and the shared-executor routing survive inside the process.
 - **Inline mode** (`async_analysis_consumer=False`) remains a first-class configuration: analysis runs on the recon pipeline task, the feed takes the direct path, the pod seam (`run_analyser_chunked`) sets the analysis context for its duration, and the analysis gate still applies. The pattern does not fork for the rollback path.
 - **Retired by this amendment**: the threading pass gate and gate executor, the `threading.Event` feed subscription (pure-queue G5 shape), per-module event loops, the `runtime.get_loop` verb, and the multi-loop ownership rulebook.
 

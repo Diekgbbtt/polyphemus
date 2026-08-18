@@ -8,7 +8,7 @@ Vocabulary derived from `docs/design/domain-model.md` and the REST surface in `d
 ## Position in the map
 
 Project-management sits *above* recon: it LAUNCHES a recon run and then treats the run as something to observe.
-The dependency is deliberately one-directional and lazy - the launch endpoint imports the pipeline only at call time (`_schedule_pipeline`), so recon never depends on this context and the two never cycle.
+The dependency is deliberately one-directional and lazy - the launch endpoint imports the pipeline only at call time (`_launch_pipeline`), so recon never depends on this context and the two never cycle.
 Project and settings state is read and written through the shared Postgres gateway (`app.clients.pg`), which stays a thin generic persistence layer; the operator use-cases that give that state meaning live here.
 
 ## The atoms
@@ -33,8 +33,12 @@ An operator's request to recon a project - `POST /projects/{id}/recon`.
 It is guarded before launch (the project must exist, any job subset must be valid, and a `target_domain` must be configured - a targetless run is refused so the pipeline never silently scans the example.com placeholder) and then scheduled non-blocking, returning a `run_id` immediately.
 The Run *entity* itself (its phases, jobs, heartbeat, terminal status) is Recon vocabulary; project-management owns only the request for one and the polling of its status.
 
+**Module-lifecycle request** (#118/#121):
+An operator's drive of the runtime plane over the wire - `POST /projects/{id}/modules/{module}/pause|resume|drain` (`module` in `recon|analysis|hunting`).
+The verbs route to the module runtime's `RuntimeManager.pause/resume/drain` (the in-process lifecycle state machine), fail closed with 503 when no runtime is active, and 404 on an unknown module; pause of a stopped module and resume of a non-paused module are the runtime verb's own safe no-ops, and the response always reports the current state.
+
 ## The layering
 
-- `api.py` - the thin HTTP adapter. Every handler delegates to `repository` and maps its domain errors onto status codes (`ProjectNotFound`/`RunNotFound` -> 404, `ValueError` -> 400). It owns the one bit of orchestration that is HTTP-adjacent: the `_schedule_pipeline` fire-and-forget seam.
+- `api.py` - the thin HTTP adapter. Every handler delegates to `repository` and maps its domain errors onto status codes (`ProjectNotFound`/`RunNotFound` -> 404, `ValueError` -> 400). It owns the one bit of orchestration that is HTTP-adjacent: the `_launch_pipeline` fire-and-forget seam, plus the module-lifecycle handlers that route `pause`/`resume`/`drain` through the runtime manager.
 - `repository.py` - the operator use-case layer (the application layer). Each project/settings/run operation is a plain function over the Postgres gateway that raises domain errors, never HTTP. A deep module over a thin gateway (CODING_STANDARD §0).
 - `auth_context.py` - the AuthContext value-object contract and its validation invariant.
