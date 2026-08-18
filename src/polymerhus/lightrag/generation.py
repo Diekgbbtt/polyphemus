@@ -268,3 +268,37 @@ class DeepSeekClient:
             "reasoning_present": bool(reasoning),
             "truncated": choice.get("finish_reason") == "length",
         }
+
+    def stream(self, prompt: str):
+        """Yield SSE content deltas, then a finish marker. Never yields reasoning."""
+        payload = build_external_payload(
+            self.model, prompt, max_tokens=self.max_tokens
+        )
+        headers = {"Authorization": f"Bearer {self.api_key}"} if self.api_key else {}
+        with httpx.stream(
+            "POST",
+            f"{self.base_url}/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=self.timeout,
+        ) as response:
+            response.raise_for_status()
+            for line in response.iter_lines():
+                if not line.startswith("data:"):
+                    continue
+                data = line[len("data:"):].strip()
+                if data == "[DONE]":
+                    break
+                try:
+                    event = json.loads(data)
+                except json.JSONDecodeError:
+                    continue
+                choices = event.get("choices") or []
+                choice = choices[0] if choices else {}
+                delta = choice.get("delta") or {}
+                content = delta.get("content")
+                if content:
+                    yield {"type": "delta", "text": content}
+                finish_reason = choice.get("finish_reason")
+                if finish_reason:
+                    yield {"type": "finish", "finish_reason": finish_reason}
