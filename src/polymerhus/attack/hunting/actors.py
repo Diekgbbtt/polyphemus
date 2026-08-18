@@ -350,6 +350,16 @@ class HuntingHunterActor(_TurnActor):
         await self._stop()
 
 
+def _lightrag_author_tools() -> list:
+    """Build the optional LightRAG query tool list for the author lane (lazy)."""
+    from polymerhus.app.config import config
+    from polymerhus.lightrag.tool import build_lightrag_tool
+
+    if not config.HUNTING_LIGHTRAG_TOOL:
+        return []
+    return [build_lightrag_tool()]
+
+
 class HuntingActorRegistry:
     """Per-run registry of `HuntingHunterActor`s, keyed by hunt_id.
 
@@ -366,7 +376,9 @@ class HuntingActorRegistry:
         self._checkpointer = checkpointer
         self._model_factory = model_factory
         self._observe = observe
-        self._author_tools = list(author_tools)
+        self._author_tools = (
+            list(author_tools) if author_tools else _lightrag_author_tools()
+        )
         self._actors: dict[str, HuntingHunterActor] = {}
 
     def actor_for(self, hunt_id: str) -> HuntingHunterActor:

@@ -271,3 +271,17 @@ def test_author_tools_reach_run_session_agent(monkeypatch):
     actor = asyncio.run(_drive())
     assert actor._tools == ["fake-tool"]
     assert captured["tools"] == ["fake-tool"]
+
+
+def test_lightrag_tool_enabled_by_flag(monkeypatch):
+    import polymerhus.app.config as config_module
+    import polymerhus.attack.hunting.actors as actors
+
+    monkeypatch.setattr(config_module.config, "HUNTING_LIGHTRAG_TOOL", True)
+    monkeypatch.setattr(
+        actors,
+        "_lightrag_author_tools",
+        lambda: ["lightrag-tool"],
+    )
+    registry = actors.HuntingActorRegistry("run-1")
+    assert "lightrag-tool" in registry.actor_for("hunt-1")._tools

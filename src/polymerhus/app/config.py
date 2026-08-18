@@ -88,5 +88,6 @@ class Config:
     # process-wide ANALYSER_PASS_SEMAPHORE with a gate owned by the analysis
     # module, so analysis can pause/resume while recon and hunting keep running.
     ANALYSIS_PASS_GATE_WIDTH = int(os.environ.get("ANALYSIS_PASS_GATE_WIDTH", "1"))
+    HUNTING_LIGHTRAG_TOOL = os.environ.get("HUNTING_LIGHTRAG_TOOL", "") == "1"
 
 config = Config()
