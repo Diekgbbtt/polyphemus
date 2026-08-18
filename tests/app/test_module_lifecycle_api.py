@@ -92,3 +92,17 @@ def test_lifecycle_verbs_fail_closed_without_active_runtime():
             assert r.status_code == 503
     finally:
         runtime_mod._ACTIVE_RUNTIME = saved
+
+
+def test_launch_into_paused_module_is_a_503_not_a_500(runtime, monkeypatch):
+    """The #118 contract: `schedule` is refused while a module is paused. The
+    operator-intent surface must say *why* with a clean 503 - an unhandled
+    ModuleAdmissionRefused (500) would be a leak."""
+    from polymerhus.app.clients import pg
+
+    monkeypatch.setattr(pg, "get_run", lambda run_id: {"run_id": run_id})
+    with TestClient(app) as client:
+        _post(client, "analysis", "pause")
+        r = client.post("/projects/p1/analysis", json={"run_id": "any-run"})
+        assert r.status_code == 503
+        assert "not accepting new work" in r.json()["detail"]

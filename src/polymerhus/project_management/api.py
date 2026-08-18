@@ -140,7 +140,12 @@ def _schedule_pipeline(project_id: str, run_id: str, jobs: list[str] | None,
 
     # #121: recon is a registered run of the recon module on the runtime's
     # worker loop; pause/drain/cancel of the recon module reach it here.
-    runtime.schedule("recon", _run(), name=run_id)
+    # A paused/draining/stopped recon module refuses admission (#118) - map
+    # that to a clean 503 so the caller reads *why* the launch was refused.
+    try:
+        runtime.schedule("recon", _run(), name=run_id)
+    except Exception as exc:  # noqa: BLE001 - re-raise non-admission via the helper
+        _admission_refused_503(exc)
 
 
 @router.post("/projects/{project_id}/recon")
@@ -195,7 +200,10 @@ async def launch_analysis(project_id: str, body: AnalysisLaunch) -> dict:
     if run is None:
         raise HTTPException(status_code=404, detail="unknown run_id")
 
-    analysis_run_id = start_analysis(project_id, body.run_id)
+    try:
+        analysis_run_id = start_analysis(project_id, body.run_id)
+    except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
+        _admission_refused_503(exc)
     if analysis_run_id is None:
         raise HTTPException(status_code=409, detail="analysis already running for that run_id")
     return {"run_id": body.run_id, "analysis_run_id": analysis_run_id}
@@ -313,12 +321,15 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
     ) for c in body.candidates]
 
     hunting_run_id = await asyncio.to_thread(pg.create_hunting_run, project_id)
-    hunting_runtime.schedule_hunting(
-        hunting_runtime.start_hunting(
-            project_id, run_id=hunting_run_id, candidates=candidates,
-        ),
-        name=f"hunting:{hunting_run_id}",
-    )
+    try:
+        hunting_runtime.schedule_hunting(
+            hunting_runtime.start_hunting(
+                project_id, run_id=hunting_run_id, candidates=candidates,
+            ),
+            name=f"hunting:{hunting_run_id}",
+        )
+    except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
+        _admission_refused_503(exc)
     return {"hunting_run_id": hunting_run_id}
 
 
@@ -372,6 +383,21 @@ def _runtime_or_503():
             status_code=503, detail="module runtime is not active"
         )
     return runtime
+
+
+def _admission_refused_503(exc: Exception):
+    """Map the runtime's admission refusal (#118 contract: `schedule` is refused
+    while a module is paused/draining/stopped) onto a clean HTTP status instead
+    of an unhandled 500 - the operator-intent surface must say *why* the launch
+    was not admitted."""
+    from polymerhus.app.runtime import ModuleAdmissionRefused
+
+    if isinstance(exc, ModuleAdmissionRefused):
+        raise HTTPException(
+            status_code=503,
+            detail=f"module not accepting new work: {exc}",
+        ) from exc
+    raise exc
 
 
 @router.post("/projects/{project_id}/modules/{module}/pause")

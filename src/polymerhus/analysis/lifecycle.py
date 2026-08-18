@@ -26,6 +26,7 @@ import time
 import uuid
 
 from polymerhus.analysis.feed import drop_feed, get_feed, get_or_create_feed
+from polymerhus.app.runtime import ModuleAdmissionRefused
 
 logger = logging.getLogger(__name__)
 
@@ -145,6 +146,13 @@ def _start_analysis_sync(project_id: str, run_id: str, pass_fn=None) -> str | No
     runtime = _require_runtime()
     try:
         runtime.schedule("analysis", _supervise(), name=run_id)
+    except ModuleAdmissionRefused:
+        # #118 contract: a paused/draining/stopped analysis module refuses new
+        # runs. Propagate so the operator-intent surface maps it to a clean 503
+        # instead of degrading it to a "already running" 409 (that masks the
+        # real cause - the module is not accepting work, not that a consumer
+        # is live).
+        raise
     except Exception:  # noqa: BLE001
         logger.warning("analysis module refused run %s (supervisor not started)", run_id, exc_info=True)
         return None
