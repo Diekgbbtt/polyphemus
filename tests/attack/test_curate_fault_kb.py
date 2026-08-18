@@ -390,6 +390,154 @@ def test_load_authoring_split_on_omit_rejected(tmp_path):
         load_authoring(d)
 
 
+def test_load_authoring_generalise_merges_into_prior_entry(tmp_path):
+    """The squeeze-generalise layer: a later `generalise` spec merges into the
+    prior entry, keeping its authored matching facet (nl/enum_kinds) and adding
+    the materialisation name/description overrides."""
+    d = tmp_path / "authoring"
+    d.mkdir()
+    (d / "01-range.yaml").write_text(
+        "entries:\n  CWE-3:\n    nl: 'Rendered output.'\n"
+        "    enum_kinds: [WebPresentation]\n")
+    (d / "81-squeeze.yaml").write_text(
+        "entries:\n  CWE-3:\n    generalise: true\n"
+        "    name: 'Rewritten Name'\n"
+        "    description: 'Rewritten description.'\n")
+    authoring = load_authoring(d)
+    assert authoring["CWE-3"] == {"nl": "Rendered output.",
+                                  "enum_kinds": ["WebPresentation"],
+                                  "generalise": True,
+                                  "name": "Rewritten Name",
+                                  "description": "Rewritten description."}
+
+
+def test_load_authoring_generalise_on_omit_rejected(tmp_path):
+    d = tmp_path / "authoring"
+    d.mkdir()
+    (d / "10-relevance.yaml").write_text(
+        "entries:\n  CWE-3:\n    omit: true\n    omit_reason: 'fixture'\n")
+    (d / "81-squeeze.yaml").write_text(
+        "entries:\n  CWE-3:\n    generalise: true\n"
+        "    name: 'Rewritten Name'\n")
+    with pytest.raises(ValueError, match="contradictory"):
+        load_authoring(d)
+
+
+def test_fold_authoring_generalise_rewrites_materialisation(tmp_path):
+    """The de-frameworking application: a generalised entry keeps its matching
+    facet and gets its materialisation name/description (and optionally a
+    nulled extended_description) rewritten."""
+    entries = curate(_fixture_xml(tmp_path), _fixture_seed(tmp_path))
+    authoring = {
+        "CWE-3": {
+            "nl": "Rendered output.",
+            "enum_kinds": ["WebPresentation"],
+            "generalise": True,
+            "name": "Neutral Name",
+            "description": "Neutral description.",
+            "extended_description": None,
+        },
+    }
+    folded = fold_authoring(entries, authoring)
+    entry = next(e for e in folded if e["fault_id"] == "CWE-3")
+    assert entry["name"] == "Neutral Name"
+    assert entry["materialisation"]["description"] == "Neutral description."
+    assert entry["materialisation"]["extended_description"] is None
+    assert entry["applies_if"]["nl"] == "Rendered output."
+    assert entry["enum_kinds"] == ["WebPresentation"]
+
+
+# --- fold_to (the operator's taxonomy corrections) ----------------------------
+
+def test_load_authoring_fold_to_merges_into_prior_entry(tmp_path):
+    """The 82-operator-relevance layer: a later pure `fold_to` marker merges
+    into the prior entry, keeping its matching facet and naming the forced
+    capture."""
+    d = tmp_path / "authoring"
+    d.mkdir()
+    (d / "01-range.yaml").write_text(
+        "entries:\n  CWE-3:\n    nl: 'Rendered output.'\n"
+        "    enum_kinds: [WebPresentation]\n")
+    (d / "82-relevance.yaml").write_text(
+        "entries:\n  CWE-3:\n    fold_to: 'CWE-7'\n")
+    authoring = load_authoring(d)
+    assert authoring["CWE-3"] == {"nl": "Rendered output.",
+                                  "enum_kinds": ["WebPresentation"],
+                                  "fold_to": "CWE-7"}
+
+
+def test_load_authoring_fold_to_on_omit_rejected(tmp_path):
+    """A fold_to for an OMITTED fault is contradictory: unlike promote, fold_to
+    is a taxonomy correction on a kept entry, it never reverses an omission."""
+    d = tmp_path / "authoring"
+    d.mkdir()
+    (d / "10-relevance.yaml").write_text(
+        "entries:\n  CWE-3:\n    omit: true\n    omit_reason: 'fixture'\n")
+    (d / "82-relevance.yaml").write_text(
+        "entries:\n  CWE-3:\n    fold_to: 'CWE-7'\n")
+    with pytest.raises(ValueError, match="contradictory"):
+        load_authoring(d)
+
+
+def test_fold_variants_force_fold_collapses_a_base(tmp_path):
+    """A Base/Class captured by `fold_to` folds into the named target
+    REGARDLESS of its CWE abstraction: CWE-23 (Base, child of 22) and CWE-41
+    (Base, NOT a child of 22 in View-1000 - it hangs under the unretained
+    Pillar/Class ref) both land on CWE-22."""
+    xml = _mini_catalogue(tmp_path, [
+        _weakness(1, "Pillar Root", "Pillar", parents=[]),
+        _weakness(22, "Base Parent", "Base", parents=[],
+                  tech_classes=["Web Based"]),
+        _weakness(23, "Base Relative", "Base", parents=[22],
+                  tech_classes=["Web Based"]),
+        _weakness(41, "Base Equiv", "Base", parents=[1],  # sibling under a
+                  tech_classes=["Web Based"]),             # non-retained root
+    ])
+    index = parse_catalogue(xml)
+    entries = curate(xml, _mini_seed(tmp_path, [1, 22]))
+    entries = fold_variants(entries, index, force_fold={23: 22, 41: 22})
+    by_id = {e["fault_id"]: e for e in entries}
+    assert by_id["CWE-22"]["fold_parent"] is None      # the capture stays
+    assert by_id["CWE-23"]["fold_parent"] == "CWE-22"  # Base collapsed
+    assert by_id["CWE-41"]["fold_parent"] == "CWE-22"  # taxonomy correction
+
+
+def test_fold_to_jumps_descendants_to_the_forced_target(tmp_path):
+    """A folded child of a force-folded Base re-folds to the FORCED target,
+    not to the (now-waypoint) parent: CWE-24 (Variant of 23) lands on CWE-22
+    even though its View-1000 chain stops at 23."""
+    xml = _mini_catalogue(tmp_path, [
+        _weakness(22, "Base Parent", "Base", parents=[],
+                  tech_classes=["Web Based"]),
+        _weakness(23, "Base Relative", "Base", parents=[22],
+                  tech_classes=["Web Based"]),
+        _weakness(24, "Variant Child", "Variant", parents=[23],
+                  tech_classes=["Web Based"]),
+    ])
+    index = parse_catalogue(xml)
+    entries = curate(xml, _mini_seed(tmp_path, [22]))
+    entries = fold_variants(entries, index, force_fold={23: 22})
+    by_id = {e["fault_id"]: e for e in entries}
+    assert by_id["CWE-23"]["fold_parent"] == "CWE-22"
+    assert by_id["CWE-24"]["fold_parent"] == "CWE-22"
+
+
+def test_fold_to_target_absent_from_catalogue_rejected(tmp_path):
+    """A fold_to naming a capture absent from the curated catalogue is a hard
+    curation error, never a silently-dangling fold_parent."""
+    xml = _mini_catalogue(tmp_path, [
+        _weakness(22, "Base Parent", "Base", parents=[],
+                  tech_classes=["Web Based"]),
+        _weakness(23, "Base Relative", "Base", parents=[22],
+                  tech_classes=["Web Based"]),
+    ])
+    index = parse_catalogue(xml)
+    entries = curate(xml, _mini_seed(tmp_path, [22]))
+    entries = [e for e in entries if e["fault_id"] != "CWE-22"]  # drop target
+    with pytest.raises(ValueError, match="absent from the curated catalogue"):
+        fold_variants(entries, index, force_fold={23: 22})
+
+
 # --- determinism (spec 5.7) ------------------------------------------------------
 
 def test_emit_catalogue_is_deterministic(tmp_path):

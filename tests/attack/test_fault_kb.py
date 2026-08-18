@@ -10,6 +10,9 @@ contracts under assertion:
     VALIDATED (a malformed predicate is a hard error surfaced by the loader's
     own read-time validation, never silently dropped);
   * the MATERIALISATION facet: rich NL content by `fault_id`;
+  * the FOLD-FAMILY relation: for each selection-tier fault_id, the folded
+    fault_ids captured under it (the parent -> reflection-material map the
+    hunt-orchestrator's graph logic consumes);
   * fail-open: a missing or malformed catalogue yields an EMPTY KB (never an
     exception to the caller), and a malformed entry is skipped with a logged
     diagnostic while the rest stay usable (per-entry fail-open).
@@ -22,6 +25,7 @@ import pytest
 from polymerhus.attack.hunting.fault_kb import (
     FaultMaterialisation,
     load_fault_entries,
+    load_fold_families,
     load_materialisation,
 )
 from polymerhus.attack.hunting.predicate import ClauseForm
@@ -181,6 +185,59 @@ def test_load_materialisation_returns_content_by_fault_id(tmp_path):
     assert materialisation.alternate_terms == ("SQLi",)
     assert materialisation.related_attack_patterns == ("CAPEC-66",)
     assert materialisation.likelihood == "High"
+
+
+# --- the fold-family relation -------------------------------------------------
+
+def test_load_fold_families_maps_capture_to_its_folded_faults(tmp_path):
+    # a folded entry's fold_parent is the selection-tier capture; the map
+    # attaches the folded recipes to it, sorted, never by write order
+    path = _write_catalogue(tmp_path, [
+        _entry_yaml(),
+        _entry_yaml(fault_id="CWE-42", name="Path Equivalent",
+                    fold_parent="CWE-89",
+                    applies_if={"nl": "Equivalent path.", "predicate": None},
+                    enum_kinds=[]),
+        _entry_yaml(fault_id="CWE-564", name="ORM Query Injection",
+                    fold_parent="CWE-89",
+                    applies_if={"nl": "ORM query.", "predicate": None},
+                    enum_kinds=[]),
+    ])
+    families = load_fold_families(path)
+    assert families["CWE-89"] == ("CWE-42", "CWE-564")
+
+
+def test_load_fold_families_includes_leaf_parents_with_empty_tuple(tmp_path):
+    # every selection-tier fault is a key - a leaf parent carries an empty
+    # tuple, so the orchestrator's graph logic iterates the tier uniformly
+    path = _write_catalogue(tmp_path, [
+        _entry_yaml(),
+        _entry_yaml(fault_id="CWE-79", name="XSS",
+                     applies_if={"nl": "Rendered output.", "predicate": None},
+                     enum_kinds=["WebPresentation"]),
+    ])
+    families = load_fold_families(path)
+    assert set(families) == {"CWE-79", "CWE-89"}
+    assert families["CWE-79"] == ()
+    assert families["CWE-89"] == ()
+
+
+def test_load_fold_families_skips_dangling_fold_parent(tmp_path):
+    # a recipe whose fold_parent is not a selection-tier entry is skipped
+    # (per-entry fail-open), never surfaced as a bogus family key
+    path = _write_catalogue(tmp_path, [
+        _entry_yaml(),
+        _entry_yaml(fault_id="CWE-42", name="Path Equivalent",
+                    fold_parent="CWE-99",
+                    applies_if={"nl": "Equivalent path.", "predicate": None},
+                    enum_kinds=[]),
+    ])
+    families = load_fold_families(path)
+    assert families == {"CWE-89": ()}
+
+
+def test_load_fold_families_fails_open_to_empty_on_missing_file():
+    assert load_fold_families("/nonexistent/fault-kb.yaml") == {}
 
 
 # --- fail-open -----------------------------------------------------------------

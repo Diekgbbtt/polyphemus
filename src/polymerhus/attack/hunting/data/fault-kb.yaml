@@ -14,29 +14,6 @@
 #
 # Spec: docs/design/hunting-66-fault-kb-spec.md. Loader:
 # src/polymerhus/attack/hunting/fault_kb.py.
-- abstraction: Variant
-  applies_if:
-    nl: The unit sets sensitive cookies without the HttpOnly flag.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - WebPresentation
-  fault_id: CWE-1004
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity - impact: Read Application Data; Gain Privileges or Assume Identity'
-    description: The product uses a cookie to store sensitive information, but the cookie is not marked with the HttpOnly flag.
-    extended_description: null
-    functional_areas: []
-    likelihood: Medium
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns: []
-  name: Sensitive Cookie Without 'HttpOnly' Flag
-  owasp_2025:
-  - A02
 - abstraction: Base
   applies_if:
     nl: The unit does not restrict rendered UI layers or frames from other origins.
@@ -92,29 +69,6 @@
   name: Use of Web Link to Untrusted Target with window.opener Access
   owasp_2025:
   - A06
-- abstraction: Variant
-  applies_if:
-    nl: The unit ships a debug build of a web application to a production-facing deployment.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-11
-  fold_parent: CWE-489
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: Debugging messages help attackers learn about the system and plan a form of attack.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: System Configuration'
-    related_attack_patterns: []
-  name: 'ASP.NET Misconfiguration: Creating Debug Binary'
-  owasp_2025:
-  - A02
 - abstraction: Base
   applies_if:
     nl: The unit relies on third-party components that are no longer maintained.
@@ -202,36 +156,6 @@
   name: Improper Neutralization of CRLF Sequences in HTTP Headers ('HTTP Request/Response Splitting')
   owasp_2025:
   - A05
-- abstraction: Class
-  applies_if:
-    nl: The unit executes commands or loads libraries from an untrusted source.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - GraphQLApi
-  - WebPresentation
-  fault_id: CWE-114
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity, Availability - impact: Execute Unauthorized Code or Commands'
-    description: Executing commands or loading libraries from an untrusted source or in an untrusted environment can cause an application to execute malicious commands (and payloads) on behalf of an attacker.
-    extended_description: |-
-      An attacker can change the command that the program executes: the attacker explicitly controls what the command is. An attacker can change the environment in which the command executes: the attacker implicitly controls what the command means.
-
-      Process control vulnerabilities of the first type occur when either data enters the application from an untrusted source and the data is used as part of a string representing a command that is executed by the application. By executing the command, the application gives an attacker a privilege or capability that the attacker would not otherwise have.
-    functional_areas:
-    - Program Invocation
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design - strategy: Libraries or Frameworks'
-    related_attack_patterns:
-    - CAPEC-108
-    - CAPEC-640
-  name: Process Control
-  owasp_2025:
-  - A05
 - abstraction: Base
   applies_if:
     nl: The unit writes external input into a log message without neutralizing it.
@@ -282,70 +206,6 @@
     related_attack_patterns: []
   name: Improper Use of Validation Framework
   owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's ASP.NET model validation is improperly configured.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-1174
-  fold_parent: CWE-1173
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Integrity - impact: Unexpected State'
-    description: The ASP.NET application does not use, or incorrectly uses, the model validation framework.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns: []
-  name: 'ASP.NET Misconfiguration: Improper Model Validation'
-  owasp_2025:
-  - A02
-- abstraction: Base
-  applies_if:
-    nl: The unit initializes a resource with an insecure default.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-1188
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Other - impact: Varies by Context'
-    description: The product initializes or sets a resource with a default that is intended to be changed by the product's installer, administrator, or maintainer, but the default is not secure.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns:
-    - CAPEC-665
-  name: Initialization of a Resource with an Insecure Default
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit serves default ASP.NET error pages that leak stack or version information.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-12
-  fold_parent: CWE-756
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: An ASP .NET application must enable custom error pages in order to prevent attackers from mining information from the framework's built-in responses.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: System Configuration, Architecture and Design, Implementation'
-    related_attack_patterns: []
-  name: 'ASP.NET Misconfiguration: Missing Custom Error Page'
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit's access control is too coarse-grained to enforce the policy.
@@ -358,11 +218,8 @@
     alternate_terms: []
     common_consequences:
     - 'scope: Confidentiality, Integrity, Availability, Access Control - impact: Modify Memory; Read Memory; Execute Unauthorized Code or Commands; Gain Privileges or Assume Identity; Bypass Protection Mechanism; Other'
-    description: The product implements access controls via a policy or other feature with the intention to disable or restrict accesses (reads and/or writes) to assets in a system from untrusted agents. However, implemented access controls lack required granularity, which renders the control policy too broad because it allows accesses from unauthorized agents to the security-sensitive assets.
-    extended_description: |-
-      Integrated circuits and hardware engines can expose accesses to assets (device configuration, keys, etc.) to trusted firmware or a software module (commonly set by BIOS/bootloader). This access is typically access-controlled. Upon a power reset, the hardware or system usually starts with default values in registers, and the trusted firmware (Boot firmware) configures the necessary access-control protection.
-
-      A common weakness that can exist in such protection schemes is that access controls or policies are not granular enough. This condition allows agents beyond trusted agents to access assets and could lead to a loss of functionality or the ability to set up the device securely. This further results in security risks from leaked, sensitive, key material to modification of device configuration.
+    description: 'The application''s access-control enforcement is too coarse-grained to express the intended policy: a single privilege, role, or route guard admits actors who should be denied access to specific resources, because the policy cannot distinguish them at the required granularity.'
+    extended_description: null
     functional_areas: []
     likelihood: null
     potential_mitigations:
@@ -420,83 +277,6 @@
   owasp_2025: []
 - abstraction: Base
   applies_if:
-    nl: The unit's comparison logic compares a value in steps rather than as a whole.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  - RESTApi
-  fault_id: CWE-1254
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Authorization - impact: Bypass Protection Mechanism'
-    description: The product's comparison logic is performed over a series of steps rather than across the entire string in one operation. If there is a comparison logic failure on one of these steps, the operation may be vulnerable to a timing attack that can result in the interception of the process for nefarious purposes.
-    extended_description: Comparison logic is used to compare a variety of objects including passwords, Message Authentication Codes (MACs), and responses to verification challenges. When comparison logic is implemented at a finer granularity (e.g., byte-by-byte comparison) and breaks in the case of a comparison failure, an attacker can exploit this implementation to identify when exactly the failure occurred. With multiple attempts, the attacker may be able to guesses the correct password/response to challenge and elevate their privileges.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns:
-    - CAPEC-26
-  name: Incorrect Comparison Logic Granularity
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit is released in a pre-production or manufacturing configuration.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-1269
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity, Availability, Access Control, Accountability, Authentication, Authorization, Non-Repudiation - impact: Other'
-    description: The product released to market is released in pre-production or manufacturing configuration.
-    extended_description: |-
-      Products in the pre-production or manufacturing stages are configured to have many debug hooks and debug capabilities, including but not limited to:
-
-      Ability to override/bypass various cryptographic checks (including authentication, authorization, and integrity) Ability to read/write/modify/dump internal state (including registers and memory) Ability to change system configurations Ability to run hidden or private commands that are not allowed during production (as they expose IP).
-
-      The above is by no means an exhaustive list, but it alludes to the greater capability and the greater state of vulnerability of a product during it's preproduction or manufacturing state.
-
-      Complexity increases when multiple parties are involved in executing the tests before the final production version. For example, a chipmaker might fabricate a chip and run its own preproduction tests, following which the chip would be delivered to the Original Equipment Manufacturer (OEM), who would now run a second set of different preproduction tests on the same chip. Only after both of these sets of activities are complete, can the overall manufacturing phase be called "complete" and have the "Manufacturing Complete" fuse blown. However, if the OEM forgets to blow the Manufacturing Complete fuse, then the system remains in the manufacturing stage, rendering the system both exposed and vulnerable.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation, Integration, Manufacturing'
-    related_attack_patterns:
-    - CAPEC-439
-  name: Product Released in Non-Release Configuration
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit sets sensitive cookies without a proper SameSite attribute.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - WebPresentation
-  fault_id: CWE-1275
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity, Non-Repudiation, Access Control - impact: Modify Application Data'
-    description: The SameSite attribute for sensitive cookies is not set, or an insecure value is used.
-    extended_description: null
-    functional_areas: []
-    likelihood: Medium
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns:
-    - CAPEC-62
-  name: Sensitive Cookie with Improper SameSite Attribute
-  owasp_2025:
-  - A01
-- abstraction: Base
-  applies_if:
     nl: The unit does not validate that an input used as a resource identifier is safe.
     predicate: null
   enum_kinds:
@@ -517,29 +297,6 @@
     related_attack_patterns: []
   name: Improper Validation of Unsafe Equivalence in Input
   owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit stores a plaintext password in a readable configuration file.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-13
-  fold_parent: CWE-260
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Gain Privileges or Assume Identity'
-    description: Storing a plaintext password in a configuration file allows anyone who can read the file access to the password-protected resource making them an easy target for attackers.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns: []
-  name: 'ASP.NET Misconfiguration: Password in Configuration File'
-  owasp_2025:
-  - A02
 - abstraction: Variant
   applies_if:
     nl: The unit modifies an object's prototype attributes from externally influenced input.
@@ -566,57 +323,6 @@
     - CAPEC-77
   name: Improperly Controlled Modification of Object Prototype Attributes ('Prototype Pollution')
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit binds a service to an unrestricted IP address.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-1327
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Availability - impact: DoS: Amplification'
-    description: The product assigns the address 0.0.0.0 for a database server, a cloud service/instance, or any computing resource that communicates remotely.
-    extended_description: When a server binds to the address 0.0.0.0, it allows connections from every IP address on the local machine, effectively exposing the server to every possible network. This might be much broader access than intended by the developer or administrator, who might only be expecting the server to be reachable from a single interface/network.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: System Configuration, System Configuration - strategy: Firewall'
-    related_attack_patterns:
-    - CAPEC-1
-  name: Binding to an Unrestricted IP Address
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit relies on a component that cannot be updated or patched.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-1329
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity, Access Control, Authentication, Authorization, Other - impact: Gain Privileges or Assume Identity; Bypass Protection Mechanism; Execute Unauthorized Code or Commands; DoS: Crash, Exit, or Restart; Quality Degradation; Reduce Maintainability'
-    description: The product contains a component that cannot be updated or patched in order to remove vulnerabilities or significant bugs.
-    extended_description: |-
-      If the component is discovered to contain a vulnerability or critical bug, but the issue cannot be fixed using an update or patch, then the product's owner will not be able to protect against the issue. The only option might be replacement of the product, which could be too financially or operationally expensive for the product owner. As a result, the inability to patch or update can leave the product open to attacker exploitation or critical operation failures. This weakness can be especially difficult to manage when using ROM, firmware, or similar components that traditionally have had limited or no update capabilities.
-
-      In industries such as healthcare, "legacy" devices can be operated for decades. As a US task force report [REF-1197] notes, "the inability to update or replace equipment has both large and small health care delivery organizations struggle with numerous unsupported legacy systems that cannot easily be replaced (hardware, software, and operating systems) with large numbers of vulnerabilities and few modern countermeasures."
-
-      While hardware can be prone to this weakness, software systems can also be affected, such as when a third-party driver or library is no longer actively maintained or supported but is still critical for the required functionality.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Requirements, Architecture and Design, Architecture and Design, Implementation, Implementation'
-    related_attack_patterns: []
-  name: Reliance on Component That is Not Updateable
-  owasp_2025:
-  - A03
 - abstraction: Base
   applies_if:
     nl: The unit inserts externally influenced input into a template without neutralizing it.
@@ -676,28 +382,6 @@
   owasp_2025: []
 - abstraction: Base
   applies_if:
-    nl: The unit uses default credentials for critical functionality.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-1392
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Authentication - impact: Gain Privileges or Assume Identity'
-    description: The product uses default credentials (such as passwords or cryptographic keys) for potentially critical functionality.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Requirements, Architecture and Design, Installation, Operation'
-    related_attack_patterns: []
-  name: Use of Default Credentials
-  owasp_2025:
-  - A07
-- abstraction: Base
-  applies_if:
     nl: The unit uses a default password for critical functionality.
     predicate: null
   enum_kinds:
@@ -718,27 +402,6 @@
   name: Use of Default Password
   owasp_2025:
   - A07
-- abstraction: Base
-  applies_if:
-    nl: The unit uses a default cryptographic key for critical functionality.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-1394
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Authentication - impact: Gain Privileges or Assume Identity'
-    description: The product uses a default cryptographic key for potentially critical functionality.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Requirements, Architecture and Design, Installation, Operation'
-    related_attack_patterns: []
-  name: Use of Default Cryptographic Key
-  owasp_2025: []
 - abstraction: Class
   applies_if:
     nl: The unit depends on a third-party component with a known vulnerability.
@@ -762,51 +425,6 @@
   name: Dependency on Vulnerable Third-Party Component
   owasp_2025:
   - A03
-- abstraction: Base
-  applies_if:
-    nl: The unit builds LLM prompts from externally provided input without neutralization.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-1427
-  fold_parent: null
-  materialisation:
-    alternate_terms:
-    - prompt injection attack-oriented term for modifying prompts, whether due to this weakness or other weaknesses
-    common_consequences:
-    - 'scope: Confidentiality, Integrity, Availability, Confidentiality, Integrity, Access Control - impact: Execute Unauthorized Code or Commands; Varies by Context; Read Application Data; Modify Application Data; Execute Unauthorized Code or Commands; Read Application Data; Modify Application Data; Gain Privileges or Assume Identity'
-    description: The product uses externally-provided data to build prompts provided to large language models (LLMs), but the way these prompts are constructed causes the LLM to fail to distinguish between user-supplied inputs and developer provided system directives.
-    extended_description: When prompts are constructed using externally controllable data, it is often possible to cause an LLM to ignore the original guidance provided by its creators (known as the "system prompt") by inserting malicious instructions in plain human language or using bypasses such as special characters or tags. Because LLMs are designed to treat all instructions as legitimate, there is often no way for the model to differentiate between what prompt language is malicious when it performs inference and returns data. Many LLM systems incorporate data from other adjacent products or external data sources like Wikipedia using API calls and retrieval augmented generation (RAG). Any external sources in use that may contain untrusted data should also be considered potentially malicious.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation, Architecture and Design, Implementation, Installation, Operation, System Configuration'
-    related_attack_patterns: []
-  name: Improper Neutralization of Input Used for LLM Prompting
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit relies on HTTP where HTTPS is available.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-1428
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity - impact: Read Application Data; Modify Application Data'
-    description: The product provides or relies on use of HTTP communications when HTTPS is available.
-    extended_description: Because HTTP communications are not encrypted, HTTP is subject to various attacks against confidentiality, integrity, and authenticity. However, unlike many other protocols, HTTPS is widely available as a more secure alternative, because it uses encryption.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation, Implementation, Operation, Operation'
-    related_attack_patterns: []
-  name: Reliance on HTTP instead of HTTPS
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit allows an external actor to control a system or configuration setting.
@@ -866,34 +484,6 @@
     - CAPEC-43
     - CAPEC-71
   name: 'Incorrect Behavior Order: Early Validation'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit validates input before canonicalizing it.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-180
-  fold_parent: CWE-179
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism'
-    description: The product validates input before it is canonicalized, which prevents the product from detecting data that becomes invalid after the canonicalization step.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation - strategy: Input Validation'
-    related_attack_patterns:
-    - CAPEC-267
-    - CAPEC-3
-    - CAPEC-71
-    - CAPEC-78
-    - CAPEC-79
-    - CAPEC-80
-  name: 'Incorrect Behavior Order: Validate Before Canonicalize'
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -963,177 +553,6 @@
   name: Insertion of Sensitive Information Into Sent Data
   owasp_2025:
   - A01
-- abstraction: Base
-  applies_if:
-    nl: The unit's behavior or responses differ observably based on secret-dependent conditions.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-203
-  fold_parent: null
-  materialisation:
-    alternate_terms:
-    - Side Channel Attack Observable Discrepancies are at the root of side channel attacks.
-    common_consequences:
-    - 'scope: Confidentiality, Access Control, Confidentiality - impact: Read Application Data; Bypass Protection Mechanism; Read Application Data'
-    description: The product behaves differently or sends different responses under different circumstances in a way that is observable to an unauthorized actor.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation - strategy: Separation of Privilege'
-    related_attack_patterns:
-    - CAPEC-189
-  name: Observable Discrepancy
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit returns observably different responses that reveal internal state.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-204
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Access Control - impact: Read Application Data; Bypass Protection Mechanism'
-    description: The product provides different responses to incoming requests in a way that reveals internal state information to an unauthorized actor outside of the intended control sphere.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation - strategy: Separation of Privilege'
-    related_attack_patterns:
-    - CAPEC-331
-    - CAPEC-332
-    - CAPEC-541
-    - CAPEC-580
-  name: Observable Response Discrepancy
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit's operations take observably different times depending on secret-dependent conditions.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-208
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Access Control - impact: Read Application Data; Bypass Protection Mechanism'
-    description: Two separate operations in a product require different amounts of time to complete, in a way that is observable to an actor and reveals security-relevant information about the state of the product, such as whether a particular operation was successful or not.
-    extended_description: null
-    functional_areas:
-    - Authentication
-    - Cryptography
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns:
-    - CAPEC-462
-    - CAPEC-541
-    - CAPEC-580
-  name: Observable Timing Discrepancy
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit emits an error message containing sensitive environment or user information.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-209
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The product generates an error message that includes sensitive information about its environment, users, or associated data.
-    extended_description: null
-    functional_areas: []
-    likelihood: High
-    potential_mitigations:
-    - 'phase: Implementation, Implementation, Implementation, Implementation, Build and Compilation, Implementation, Build and Compilation, System Configuration, System Configuration - strategy: Attack Surface Reduction; Compilation or Build Hardening; Environment Hardening'
-    related_attack_patterns:
-    - CAPEC-215
-    - CAPEC-463
-    - CAPEC-54
-    - CAPEC-7
-  name: Generation of Error Message Containing Sensitive Information
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit's own error message contains sensitive information.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-210
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The product identifies an error condition and creates its own diagnostic or error messages that contain sensitive information.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation, Build and Compilation, Implementation, Build and Compilation - strategy: Compilation or Build Hardening; Environment Hardening'
-    related_attack_patterns: []
-  name: Self-generated Error Message Containing Sensitive Information
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit triggers an externally generated error message containing sensitive information.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-211
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The product performs an operation that triggers an external diagnostic or error message that is not directly generated or controlled by the product, such as an error generated by the programming language interpreter that a software application uses. The error can contain sensitive system information.
-    extended_description: null
-    functional_areas:
-    - Error Handling
-    likelihood: null
-    potential_mitigations:
-    - 'phase: System Configuration, Implementation, Build and Compilation, Implementation, Build and Compilation, Implementation, Implementation - strategy: Compilation or Build Hardening; Environment Hardening'
-    related_attack_patterns: []
-  name: Externally-Generated Error Message Containing Sensitive Information
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit's debugging code emits sensitive information.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-215
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The product inserts sensitive information into debugging code, which could expose this information if the debugging code is not disabled in production.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation, Architecture and Design - strategy: Separation of Privilege'
-    related_attack_patterns: []
-  name: Insertion of Sensitive Information Into Debugging Code
-  owasp_2025:
-  - A10
 - abstraction: Variant
   applies_if:
     nl: The unit stores a sensitive file under the web document root without access control.
@@ -1228,7 +647,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-23
-  fold_parent: null
+  fold_parent: CWE-22
   materialisation:
     alternate_terms:
     - Zip Slip "Zip slip" is an attack that uses file archives (e.g., ZIP, tar, rar, etc.) that contain filenames with path traversal sequences that cause the files to be written outside of the directory under which the archive is expected to be extracted [REF-1282]. It is most commonly used for relative path traversal (CWE-23) and link following (CWE-59).
@@ -1249,34 +668,13 @@
   - A01
 - abstraction: Variant
   applies_if:
-    nl: The unit mishandles extra values supplied for a parameter, field, or argument.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-231
-  fold_parent: CWE-229
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Integrity - impact: Unexpected State'
-    description: The product does not handle or incorrectly handles when more values are provided than expected.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns: []
-  name: Improper Handling of Extra Values
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
     nl: The unit accepts a '../'-style path segment in externally supplied input.
     predicate: null
   enum_kinds:
   - RESTApi
   - WebPresentation
   fault_id: CWE-24
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -1308,7 +706,7 @@
     alternate_terms: []
     common_consequences:
     - 'scope: Availability, Confidentiality - impact: DoS: Crash, Exit, or Restart; Read Application Data'
-    description: An exception is thrown from a function, but it is not caught.
+    description: An exception is thrown from a function or request handler and is not caught, surfacing a runtime error page, stack trace, or debug details to the requester, or degrading availability.
     extended_description: null
     functional_areas: []
     likelihood: null
@@ -1325,7 +723,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-25
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -1396,7 +794,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-26
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -1544,7 +942,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-27
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -1583,32 +981,6 @@
   name: Improper Handling of Insufficient Privileges
   owasp_2025:
   - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit's installation sets file permissions that allow unintended modification.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-276
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity - impact: Read Application Data; Modify Application Data'
-    description: During installation, installed file permissions are set to allow anyone to modify those files.
-    extended_description: null
-    functional_areas: []
-    likelihood: Medium
-    potential_mitigations:
-    - 'phase: Architecture and Design, Operation, Architecture and Design - strategy: Separation of Privilege'
-    related_attack_patterns:
-    - CAPEC-1
-    - CAPEC-127
-    - CAPEC-81
-  name: Incorrect Default Permissions
-  owasp_2025:
-  - A01
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '..\'-style path segment in externally supplied input.
@@ -1617,7 +989,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-28
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -1717,7 +1089,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-29
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -1845,126 +1217,6 @@
   name: Authentication Bypass by Capture-replay
   owasp_2025:
   - A07
-- abstraction: Base
-  applies_if:
-    nl: The unit does not validate, or mis-validates, a certificate.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-295
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Integrity, Authentication - impact: Bypass Protection Mechanism; Gain Privileges or Assume Identity'
-    description: The product does not validate, or incorrectly validates, a certificate.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation, Implementation'
-    related_attack_patterns:
-    - CAPEC-459
-    - CAPEC-475
-  name: Improper Certificate Validation
-  owasp_2025:
-  - A07
-- abstraction: Base
-  applies_if:
-    nl: The unit does not follow a certificate's chain of trust correctly.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-296
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Non-Repudiation, Integrity, Confidentiality, Availability, Access Control - impact: Hide Activities; Gain Privileges or Assume Identity; Execute Unauthorized Code or Commands'
-    description: The product does not follow, or incorrectly follows, the chain of trust for a certificate back to a trusted root certificate.
-    extended_description: |-
-      There are several ways in which the chain of trust might be broken, including but not limited to:
-
-      Any certificate in the chain is self-signed, unless it is the root. Not every intermediate certificate is checked, starting from the original certificate all the way up to the root certificate. An intermediate, CA-signed certificate does not have the expected Basic Constraints or other important extensions. The root certificate has been compromised or authorized to the wrong party.
-    functional_areas: []
-    likelihood: Low
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation, Implementation'
-    related_attack_patterns: []
-  name: Improper Following of a Certificate's Chain of Trust
-  owasp_2025:
-  - A04
-- abstraction: Variant
-  applies_if:
-    nl: The unit does not validate a certificate against the expected host.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-297
-  fold_parent: CWE-295
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control, Authentication, Other, Access Control, Other - impact: Gain Privileges or Assume Identity; Other; Gain Privileges or Assume Identity; Other'
-    description: The product communicates with a host that provides a certificate, but the product does not properly ensure that the certificate is actually associated with that host.
-    extended_description: |-
-      Even if a certificate is well-formed, signed, and follows the chain of trust, it may simply be a valid certificate for a different site than the site that the product is interacting with. In order to ensure data integrity, the certificate must be valid, and it must pertain to the site that is being accessed.
-
-      Even if the product attempts to check the hostname, it is still possible to incorrectly check the hostname. For example, attackers could create a certificate with a name that begins with a trusted name followed by a NUL byte, which could cause some string-based comparisons to only examine the portion that contains the trusted name.
-    functional_areas: []
-    likelihood: High
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation'
-    related_attack_patterns: []
-  name: Improper Validation of Certificate with Host Mismatch
-  owasp_2025:
-  - A07
-- abstraction: Variant
-  applies_if:
-    nl: The unit does not validate a certificate's expiration.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-298
-  fold_parent: CWE-295
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Integrity, Other, Authentication, Other - impact: Other; Other'
-    description: A certificate expiration is not validated or is incorrectly validated.
-    extended_description: null
-    functional_areas: []
-    likelihood: Low
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation'
-    related_attack_patterns: []
-  name: Improper Validation of Certificate Expiration
-  owasp_2025:
-  - A07
-- abstraction: Base
-  applies_if:
-    nl: The unit does not check a certificate's revocation status.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-299
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control, Integrity, Other, Confidentiality - impact: Gain Privileges or Assume Identity; Other; Read Application Data'
-    description: The product does not check or incorrectly checks the revocation status of a certificate, which may cause it to use a certificate that has been compromised.
-    extended_description: null
-    functional_areas: []
-    likelihood: Medium
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation'
-    related_attack_patterns: []
-  name: Improper Check for Certificate Revocation
-  owasp_2025:
-  - A07
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '\dir\..\filename'-style path segment in externally supplied input.
@@ -1973,7 +1225,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-30
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -1991,46 +1243,6 @@
     related_attack_patterns: []
   name: 'Path Traversal: ''\dir\..\filename'''
   owasp_2025: []
-- abstraction: Class
-  applies_if:
-    nl: The unit's communication channel does not verify the identity of actors at both ends.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-300
-  fold_parent: null
-  materialisation:
-    alternate_terms:
-    - Adversary-in-the-Middle / AITM
-    - Attacker-in-the-Middle / AITM
-    - Interception attack
-    - Man-in-the-Middle / MITM
-    - Manipulator-in-the-Middle
-    - Monkey-in-the-Middle
-    - Monster-in-the-Middle
-    - On-path attack
-    - Person-in-the-Middle / PITM
-    common_consequences:
-    - 'scope: Confidentiality, Integrity, Access Control - impact: Read Application Data; Modify Application Data; Gain Privileges or Assume Identity'
-    description: The product does not adequately verify the identity of actors at both ends of a communication channel, or does not adequately ensure the integrity of the channel, in a way that allows the channel to be accessed or influenced by an actor that is not an endpoint.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation, Architecture and Design, Implementation'
-    related_attack_patterns:
-    - CAPEC-466
-    - CAPEC-57
-    - CAPEC-589
-    - CAPEC-590
-    - CAPEC-612
-    - CAPEC-613
-    - CAPEC-615
-    - CAPEC-662
-    - CAPEC-94
-  name: Channel Accessible by Non-Endpoint
-  owasp_2025:
-  - A07
 - abstraction: Base
   applies_if:
     nl: The unit authenticates using key data elements assumed immutable but attacker-modifiable.
@@ -2063,28 +1275,6 @@
   - A07
 - abstraction: Base
   applies_if:
-    nl: The unit implements an authentication algorithm incorrectly.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-303
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism'
-    description: The requirements for the product dictate the use of an established authentication algorithm, but the implementation of the algorithm is incorrect.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns:
-    - CAPEC-90
-  name: Incorrect Implementation of Authentication Algorithm
-  owasp_2025:
-  - A07
-- abstraction: Base
-  applies_if:
     nl: The unit skips a step in its authentication technique.
     predicate: null
   enum_kinds:
@@ -2102,27 +1292,6 @@
     potential_mitigations: []
     related_attack_patterns: []
   name: Missing Critical Step in Authentication
-  owasp_2025:
-  - A07
-- abstraction: Base
-  applies_if:
-    nl: The unit's authentication mechanism can be bypassed via a primary weakness in the algorithm.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-305
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism'
-    description: The authentication algorithm is sound, but the implemented mechanism can be bypassed as the result of a separate weakness that is primary to the authentication error.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns: []
-  name: Authentication Bypass by Primary Weakness
   owasp_2025:
   - A07
 - abstraction: Base
@@ -2218,40 +1387,6 @@
   name: Use of Single-factor Authentication
   owasp_2025:
   - A07
-- abstraction: Base
-  applies_if:
-    nl: The unit uses a password system as the primary authentication means.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-309
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism; Gain Privileges or Assume Identity'
-    description: The use of password systems as the primary means of authentication may be subject to several flaws or shortcomings, each reducing the effectiveness of the mechanism.
-    extended_description: null
-    functional_areas: []
-    likelihood: High
-    potential_mitigations:
-    - 'phase: Architecture and Design, Architecture and Design, Architecture and Design, Architecture and Design, Architecture and Design, Architecture and Design'
-    related_attack_patterns:
-    - CAPEC-16
-    - CAPEC-49
-    - CAPEC-509
-    - CAPEC-55
-    - CAPEC-555
-    - CAPEC-560
-    - CAPEC-561
-    - CAPEC-565
-    - CAPEC-600
-    - CAPEC-652
-    - CAPEC-653
-    - CAPEC-70
-  name: Use of Password System for Primary Authentication
-  owasp_2025:
-  - A07
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a 'dir\..\..\filename'-style path segment in externally supplied input.
@@ -2260,7 +1395,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-31
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -2304,89 +1439,13 @@
   - A06
 - abstraction: Variant
   applies_if:
-    nl: The unit stores sensitive information in cleartext in a file or on disk.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  fault_id: CWE-313
-  fold_parent: CWE-312
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The product stores sensitive information in cleartext in a file, or on disk.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns: []
-  name: Cleartext Storage in a File or on Disk
-  owasp_2025:
-  - A06
-- abstraction: Variant
-  applies_if:
-    nl: The unit stores sensitive information in cleartext in a cookie.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - WebPresentation
-  fault_id: CWE-315
-  fold_parent: CWE-312
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The product stores sensitive information in cleartext in a cookie.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns:
-    - CAPEC-31
-    - CAPEC-37
-    - CAPEC-39
-    - CAPEC-74
-  name: Cleartext Storage of Sensitive Information in a Cookie
-  owasp_2025:
-  - A02
-- abstraction: Base
-  applies_if:
-    nl: The unit transmits sensitive data in cleartext over a communication channel.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - GraphQLApi
-  - WebPresentation
-  fault_id: CWE-319
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Integrity, Confidentiality, Integrity, Confidentiality - impact: Read Application Data; Modify Files or Directories; Read Application Data; Modify Files or Directories; Other'
-    description: The product transmits sensitive or security-critical data in cleartext in a communication channel that can be sniffed by unauthorized actors.
-    extended_description: null
-    functional_areas: []
-    likelihood: High
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation, Implementation, Testing, Operation'
-    related_attack_patterns:
-    - CAPEC-102
-    - CAPEC-117
-    - CAPEC-383
-    - CAPEC-477
-    - CAPEC-65
-  name: Cleartext Transmission of Sensitive Information
-  owasp_2025:
-  - A04
-- abstraction: Variant
-  applies_if:
     nl: The unit accepts a triple-dot '...' path segment in externally supplied input.
     predicate: null
   enum_kinds:
   - RESTApi
   - WebPresentation
   fault_id: CWE-32
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -2404,28 +1463,6 @@
     related_attack_patterns: []
   name: 'Path Traversal: ''...'' (Triple Dot)'
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit performs a key exchange without verifying the peer's identity.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-322
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control, Confidentiality - impact: Bypass Protection Mechanism; Read Application Data'
-    description: The product performs a key exchange with an actor without verifying the identity of that actor.
-    extended_description: null
-    functional_areas: []
-    likelihood: High
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation'
-    related_attack_patterns: []
-  name: Key Exchange without Entity Authentication
-  owasp_2025:
-  - A04
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a multiple-dot '....' path segment in externally supplied input.
@@ -2434,7 +1471,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-33
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -2452,201 +1489,6 @@
     related_attack_patterns: []
   name: 'Path Traversal: ''....'' (Multiple Dot)'
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit's randomness source produces insufficient entropy.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-331
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control, Other - impact: Bypass Protection Mechanism; Other'
-    description: The product uses an algorithm or scheme that produces insufficient entropy, leaving patterns or clusters of values that are more likely to occur than others.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns:
-    - CAPEC-59
-  name: Insufficient Entropy
-  owasp_2025:
-  - A04
-- abstraction: Variant
-  applies_if:
-    nl: The unit's PRNG has insufficient entropy.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-332
-  fold_parent: CWE-331
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Availability, Access Control, Other - impact: DoS: Crash, Exit, or Restart; Bypass Protection Mechanism; Other'
-    description: The lack of entropy available for, or used by, a Pseudo-Random Number Generator (PRNG) can be a stability and security threat.
-    extended_description: null
-    functional_areas: []
-    likelihood: Medium
-    potential_mitigations:
-    - 'phase: Architecture and Design, Requirements, Implementation, Architecture and Design - strategy: Libraries or Frameworks'
-    related_attack_patterns: []
-  name: Insufficient Entropy in PRNG
-  owasp_2025:
-  - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit's random value space is smaller than needed.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-334
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control, Other - impact: Bypass Protection Mechanism; Other'
-    description: The number of possible random values is smaller than needed by the product, making it more susceptible to brute force attacks.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Requirements - strategy: Libraries or Frameworks'
-    related_attack_patterns: []
-  name: Small Space of Random Values
-  owasp_2025:
-  - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit seeds its PRNG incorrectly.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-335
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control, Other - impact: Bypass Protection Mechanism; Other'
-    description: The product uses a Pseudo-Random Number Generator (PRNG) but does not correctly manage seeds.
-    extended_description: |-
-      PRNGs are deterministic and, while their output appears random, they cannot actually create entropy. They rely on cryptographically secure and unique seeds for entropy so proper seeding is critical to the secure operation of the PRNG.
-
-      Management of seeds could be broken down into two main areas:
-
-      (1) protecting seeds as cryptographic material (such as a cryptographic key); (2) whenever possible, using a uniquely generated seed from a cryptographically secure source
-
-      PRNGs require a seed as input to generate a stream of numbers that are functionally indistinguishable from random numbers. While the output is, in many cases, sufficient for cryptographic uses, the output of any PRNG is directly determined by the seed provided as input. If the seed can be ascertained by a third party, the entire output of the PRNG can be made known to them. As such, the seed should be kept secret and should ideally not be able to be guessed. For example, the current time may be a poor seed. Knowing the approximate time the PRNG was seeded greatly reduces the possible key space.
-
-      Seeds do not necessarily need to be unique, but reusing seeds may open up attacks if the seed is discovered.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns: []
-  name: Incorrect Usage of Seeds in Pseudo-Random Number Generator (PRNG)
-  owasp_2025:
-  - A04
-- abstraction: Variant
-  applies_if:
-    nl: The unit's PRNG uses the same seed on every initialization.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-336
-  fold_parent: CWE-335
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Other, Access Control - impact: Other; Bypass Protection Mechanism'
-    description: A Pseudo-Random Number Generator (PRNG) uses the same seed each time the product is initialized.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Architecture and Design, Requirements - strategy: Libraries or Frameworks'
-    related_attack_patterns: []
-  name: Same Seed in Pseudo-Random Number Generator (PRNG)
-  owasp_2025:
-  - A04
-- abstraction: Variant
-  applies_if:
-    nl: The unit initializes its PRNG from a predictable seed.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-337
-  fold_parent: CWE-335
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Other - impact: Varies by Context'
-    description: A Pseudo-Random Number Generator (PRNG) is initialized from a predictable seed, such as the process ID or system time.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Requirements, Implementation - strategy: Libraries or Frameworks'
-    related_attack_patterns: []
-  name: Predictable Seed in Pseudo-Random Number Generator (PRNG)
-  owasp_2025:
-  - A04
-- abstraction: Base
-  applies_if:
-    nl: The unit uses a cryptographically weak PRNG in a security context.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-338
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism'
-    description: The product uses a Pseudo-Random Number Generator (PRNG) in a security context, but the PRNG's algorithm is not cryptographically strong.
-    extended_description: |-
-      When a non-cryptographic PRNG is used in a cryptographic context, it can expose the cryptography to certain types of attacks.
-
-      Often a pseudo-random number generator (PRNG) is not designed for cryptography. Sometimes a mediocre source of randomness is sufficient or preferable for algorithms that use random numbers. Weak generators generally take less processing power and/or do not use the precious, finite, entropy sources on a system. While such PRNGs might have very useful features, these same features could be used to break the cryptography.
-    functional_areas: []
-    likelihood: Medium
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns: []
-  name: Use of Cryptographically Weak Pseudo-Random Number Generator (PRNG)
-  owasp_2025:
-  - A04
-- abstraction: Variant
-  applies_if:
-    nl: The unit's PRNG seed space is too small.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-339
-  fold_parent: CWE-335
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Other - impact: Varies by Context'
-    description: A Pseudo-Random Number Generator (PRNG) uses a relatively small seed space, which makes it more susceptible to brute force attacks.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Architecture and Design, Requirements - strategy: Libraries or Frameworks'
-    related_attack_patterns: []
-  name: Small Seed Space in PRNG
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '....//'-style path segment in externally supplied input.
@@ -2655,7 +1497,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-34
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -2673,51 +1515,6 @@
     related_attack_patterns: []
   name: 'Path Traversal: ''....//'''
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit generates numbers or objects predictable from observable state.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-341
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Other - impact: Varies by Context'
-    description: A number or object is predictable based on observations that the attacker can make about the state of the system or network, such as time, process ID, etc.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation, Architecture and Design, Requirements, Implementation - strategy: Libraries or Frameworks'
-    related_attack_patterns: []
-  name: Predictable from Observable State
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit generates random values predictable from previous values.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - AuthenticationMechanism
-  fault_id: CWE-342
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Other - impact: Varies by Context'
-    description: An exact value or random number can be precisely predicted by observing previous values.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Requirements, Implementation - strategy: Libraries or Frameworks'
-    related_attack_patterns: []
-  name: Predictable Exact Value from Previous Values
-  owasp_2025:
-  - A04
 - abstraction: Class
   applies_if:
     nl: The unit accepts data or a connection whose origin it never verifies.
@@ -2756,29 +1553,6 @@
     - CAPEC-89
   name: Origin Validation Error
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit does not verify a cryptographic signature correctly.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-347
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control, Integrity, Confidentiality - impact: Gain Privileges or Assume Identity; Modify Application Data; Execute Unauthorized Code or Commands'
-    description: The product does not verify, or incorrectly verifies, the cryptographic signature for data.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns:
-    - CAPEC-463
-    - CAPEC-475
-  name: Improper Verification of Cryptographic Signature
-  owasp_2025:
-  - A04
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a '.../...//'-style path segment in externally supplied input.
@@ -2787,7 +1561,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-35
-  fold_parent: CWE-23
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -2880,7 +1654,7 @@
   - GraphQLApi
   - WebPresentation
   fault_id: CWE-36
-  fold_parent: null
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -2931,7 +1705,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-37
-  fold_parent: CWE-36
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -2948,36 +1722,13 @@
   owasp_2025: []
 - abstraction: Variant
   applies_if:
-    nl: The unit does not re-check certificate revocation after the initial check.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-370
-  fold_parent: CWE-299
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control, Integrity, Confidentiality - impact: Gain Privileges or Assume Identity; Modify Application Data; Read Application Data'
-    description: The product does not check the revocation status of a certificate after its initial revocation check, which can cause the product to perform privileged actions even after the certificate is revoked at a later time.
-    extended_description: null
-    functional_areas: []
-    likelihood: Medium
-    potential_mitigations:
-    - 'phase: Architecture and Design'
-    related_attack_patterns:
-    - CAPEC-26
-    - CAPEC-29
-  name: Missing Check for Certificate Revocation after Initial Check
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
     nl: The unit accepts a '\absolute\pathname' form in externally supplied input.
     predicate: null
   enum_kinds:
   - RESTApi
   - WebPresentation
   fault_id: CWE-38
-  fold_parent: CWE-36
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3034,7 +1785,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-39
-  fold_parent: CWE-36
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3057,7 +1808,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-40
-  fold_parent: CWE-36
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3080,7 +1831,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-41
-  fold_parent: null
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3128,7 +1879,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-42
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3186,7 +1937,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-43
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3255,7 +2006,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-44
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3312,7 +2063,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-45
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3334,7 +2085,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-46
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3445,7 +2196,7 @@
     - Leftover debug code This term originates from Seven Pernicious Kingdoms
     common_consequences:
     - 'scope: Confidentiality, Integrity, Availability, Access Control, Other - impact: Bypass Protection Mechanism; Read Application Data; Gain Privileges or Assume Identity; Varies by Context'
-    description: The product is released with debugging code still enabled or active.
+    description: 'The product is released or served with debugging functionality still active: debug code paths or handlers, debug endpoints or pages, debug binaries or debug builds, or verbose debug output (stack traces, debug headers, debug payloads) that should have been stripped for a production deployment.'
     extended_description: null
     functional_areas: []
     likelihood: null
@@ -3465,7 +2216,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-49
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3514,58 +2265,6 @@
   name: Download of Code Without Integrity Check
   owasp_2025:
   - A08
-- abstraction: Base
-  applies_if:
-    nl: The unit exposes sensitive system information to unauthorized actors.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-497
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The product does not properly prevent sensitive system-level information from being accessed by unauthorized actors who do not have the same level of access to the underlying system as the product does.
-    extended_description: |-
-      Network-based products, such as web applications, often run on top of an operating system or similar environment. When the product communicates with outside parties, details about the underlying system are expected to remain hidden, such as path names for data files, other OS users, installed packages, the application environment, etc. This system information may be provided by the product itself, or buried within diagnostic or debugging messages. Debugging information helps an adversary learn about the system and form an attack plan.
-
-      An information exposure occurs when system data or debugging information leaves the program through an output stream or logging function that makes it accessible to unauthorized parties. Using other weaknesses, an attacker could cause errors to occur; the response to these errors can reveal detailed system information, along with other impacts. An attacker can use messages that reveal technologies, operating systems, and product versions to tune the attack against known vulnerabilities in these technologies. A product may use diagnostic methods that provide significant implementation details such as stack traces as part of its error handling mechanism.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation'
-    related_attack_patterns:
-    - CAPEC-170
-    - CAPEC-694
-  name: Exposure of Sensitive System Information to an Unauthorized Control Sphere
-  owasp_2025:
-  - A01
-- abstraction: Variant
-  applies_if:
-    nl: A J2EE-style unit transmits sensitive data over a channel that does not encrypt it.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - GraphQLApi
-  - WebPresentation
-  fault_id: CWE-5
-  fold_parent: CWE-319
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity - impact: Read Application Data; Modify Application Data'
-    description: Information sent over a network can be compromised while in transit. An attacker may be able to read or modify the contents if the data are sent in plaintext or are weakly encrypted.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: System Configuration'
-    related_attack_patterns: []
-  name: 'J2EE Misconfiguration: Data Transmission Without Encryption'
-  owasp_2025:
-  - A02
 - abstraction: Variant
   applies_if:
     nl: The unit accepts a multiple-leading-slash path form in externally supplied input.
@@ -3574,7 +2273,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-50
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3633,7 +2332,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-51
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3656,7 +2355,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-52
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3684,14 +2383,14 @@
     alternate_terms: []
     common_consequences:
     - 'scope: Access Control - impact: Gain Privileges or Assume Identity'
-    description: Allowing a .NET application to run at potentially escalated levels of access to the underlying operating and file systems can be dangerous and result in various forms of attacks.
+    description: Allowing an application to run at potentially escalated levels of access to the underlying operating and file systems can be dangerous and result in various forms of attacks.
     extended_description: null
     functional_areas: []
     likelihood: null
     potential_mitigations:
     - 'phase: Operation'
     related_attack_patterns: []
-  name: '.NET Misconfiguration: Use of Impersonation'
+  name: 'Misconfiguration: Use of Impersonation'
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -3733,31 +2432,6 @@
   - A07
 - abstraction: Base
   applies_if:
-    nl: The unit transmits credentials without adequate transport protection.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-523
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Gain Privileges or Assume Identity'
-    description: Login pages do not use adequate measures to protect the user name and password while they are in transit from the client to the server.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Operation, System Configuration'
-    related_attack_patterns:
-    - CAPEC-102
-  name: Unprotected Transport of Credentials
-  owasp_2025:
-  - A04
-- abstraction: Base
-  applies_if:
     nl: The unit serves sensitive data from a cache that actors outside the intended control sphere can read.
     predicate: null
   enum_kinds:
@@ -3780,29 +2454,6 @@
     - CAPEC-204
   name: Use of Cache Containing Sensitive Information
   owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's web browser caching policy retains sensitive information.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-525
-  fold_parent: CWE-524
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The web application does not use an appropriate caching policy that specifies the extent to which each web page and associated form fields should be cached.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation, Architecture and Design, Architecture and Design'
-    related_attack_patterns:
-    - CAPEC-37
-  name: Use of Web Browser Cache Containing Sensitive Information
-  owasp_2025:
-  - A06
 - abstraction: Variant
   applies_if:
     nl: The unit exposes a version-control repository to unauthorized actors.
@@ -3854,7 +2505,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-53
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -3936,70 +2587,6 @@
   name: Insertion of Sensitive Information into Log File
   owasp_2025:
   - A09
-- abstraction: Variant
-  applies_if:
-    nl: The unit's command-shell error message reveals unhandled exception details.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-535
-  fold_parent: CWE-211
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: A command shell error message indicates that there exists an unhandled exception in the web application code. In many cases, an attacker can leverage the conditions that cause these errors in order to gain unauthorized access to the system.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns: []
-  name: Exposure of Information Through Shell Error Message
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's servlet runtime error message reveals sensitive details.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-536
-  fold_parent: CWE-211
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: A servlet error message indicates that there exists an unhandled exception in the web application code and may provide useful information to an attacker.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns: []
-  name: Servlet Runtime Error Message Containing Sensitive Information
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's Java runtime error message reveals unhandled-exception details.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-537
-  fold_parent: CWE-211
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: In many cases, an attacker can leverage the conditions that cause unhandled exception errors in order to gain unauthorized access to the system.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns: []
-  name: Java Runtime Error Message Containing Sensitive Information
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit places sensitive information into externally accessible files or directories.
@@ -4025,41 +2612,13 @@
   - A01
 - abstraction: Variant
   applies_if:
-    nl: The unit uses persistent cookies containing sensitive information.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - WebPresentation
-  fault_id: CWE-539
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The web application uses persistent cookies, but the cookies contain sensitive information.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design'
-    related_attack_patterns:
-    - CAPEC-21
-    - CAPEC-31
-    - CAPEC-39
-    - CAPEC-59
-    - CAPEC-60
-  name: Use of Persistent Cookies Containing Sensitive Information
-  owasp_2025:
-  - A06
-- abstraction: Variant
-  applies_if:
     nl: The unit accepts a trailing-backslash path form in externally supplied input.
     predicate: null
   enum_kinds:
   - RESTApi
   - WebPresentation
   fault_id: CWE-54
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -4121,35 +2680,13 @@
   owasp_2025: []
 - abstraction: Variant
   applies_if:
-    nl: The unit exposes a directory listing.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-548
-  fold_parent: CWE-497
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Files or Directories'
-    description: The product inappropriately exposes a directory listing with an index of all the resources located inside of the directory.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, System Configuration'
-    related_attack_patterns: []
-  name: Exposure of Information Through Directory Listing
-  owasp_2025:
-  - A01
-- abstraction: Variant
-  applies_if:
     nl: The unit accepts a '/./' single-dot-directory path form in externally supplied input.
     predicate: null
   enum_kinds:
   - RESTApi
   - WebPresentation
   fault_id: CWE-55
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -4164,29 +2701,6 @@
     related_attack_patterns: []
   name: 'Path Equivalence: ''/./'' (Single Dot Directory)'
   owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's server-generated error message reveals sensitive information.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-550
-  fold_parent: CWE-209
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: Certain conditions, such as network failure, will cause a server error message to be displayed.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, System Configuration'
-    related_attack_patterns: []
-  name: Server-generated Error Message Containing Sensitive Information
-  owasp_2025:
-  - A10
 - abstraction: Base
   applies_if:
     nl: The unit authorizes before fully parsing the requested URL.
@@ -4262,76 +2776,13 @@
   owasp_2025: []
 - abstraction: Variant
   applies_if:
-    nl: The unit's ASP.NET application does not use an input validation framework.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-554
-  fold_parent: CWE-1173
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Integrity - impact: Unexpected State'
-    description: The ASP.NET application does not use an input validation framework.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design'
-    related_attack_patterns: []
-  name: 'ASP.NET Misconfiguration: Not Using Input Validation Framework'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's J2EE application stores a plaintext password in a configuration file.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-555
-  fold_parent: CWE-260
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism'
-    description: The J2EE application stores a plaintext password in a configuration file.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Architecture and Design'
-    related_attack_patterns: []
-  name: 'J2EE Misconfiguration: Plaintext Password in Configuration File'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit misconfigures ASP.NET identity impersonation.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-556
-  fold_parent: CWE-266
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Gain Privileges or Assume Identity'
-    description: Configuring an ASP.NET application to run with impersonated credentials may give the application unnecessary privileges.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design'
-    related_attack_patterns: []
-  name: 'ASP.NET Misconfiguration: Use of Identity Impersonation'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
     nl: The unit accepts a wildcard path form such as 'filedir*' in externally supplied input.
     predicate: null
   enum_kinds:
   - RESTApi
   - WebPresentation
   fault_id: CWE-56
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -4359,7 +2810,7 @@
     alternate_terms: []
     common_consequences:
     - 'scope: Confidentiality, Integrity - impact: Read Application Data; Modify Application Data'
-    description: Using Hibernate to execute a dynamic SQL statement built with user-controlled input can allow an attacker to modify the statement's meaning or to execute arbitrary SQL commands.
+    description: Using an object-relational mapping layer to execute a dynamic query built with user-controlled input can allow an attacker to modify the query's meaning or to execute arbitrary SQL commands.
     extended_description: null
     functional_areas: []
     likelihood: null
@@ -4367,7 +2818,7 @@
     - 'phase: Requirements, Architecture and Design, Architecture and Design, Implementation, Implementation'
     related_attack_patterns:
     - CAPEC-109
-  name: 'SQL Injection: Hibernate'
+  name: 'SQL Injection: Object-Relational Mapping Query'
   owasp_2025:
   - A05
 - abstraction: Base
@@ -4431,7 +2882,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-57
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -4454,7 +2905,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-58
-  fold_parent: CWE-41
+  fold_parent: CWE-22
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -4478,7 +2929,7 @@
   - GraphQLApi
   - WebPresentation
   fault_id: CWE-59
-  fold_parent: null
+  fold_parent: CWE-22
   materialisation:
     alternate_terms:
     - Zip Slip "Zip slip" is an attack that uses file archives (e.g., ZIP, tar, rar, etc.) that contain filenames with path traversal sequences that cause the files to be written outside of the directory under which the archive is expected to be extracted [REF-1282]. It is most commonly used for relative path traversal (CWE-23) and link following (CWE-59).
@@ -4523,76 +2974,6 @@
   name: Use of HTTP Request With Sensitive Query String
   owasp_2025:
   - A06
-- abstraction: Variant
-  applies_if:
-    nl: The unit trusts an OpenSSL certificate without verifying the verification result.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-599
-  fold_parent: CWE-295
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Access Control, Access Control - impact: Read Application Data; Bypass Protection Mechanism; Gain Privileges or Assume Identity; Gain Privileges or Assume Identity'
-    description: The product uses OpenSSL and trusts or uses a certificate without using the SSL_get_verify_result() function to ensure that the certificate satisfies all necessary security requirements.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation'
-    related_attack_patterns: []
-  name: Missing Validation of OpenSSL Certificate
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's session identifiers are configured to be too short to resist guessing.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-6
-  fold_parent: CWE-334
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Gain Privileges or Assume Identity'
-    description: The J2EE application is configured to use an insufficient session ID length.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation, Implementation'
-    related_attack_patterns:
-    - CAPEC-21
-    - CAPEC-59
-  name: 'J2EE Misconfiguration: Insufficient Session-ID Length'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit's servlet does not catch all exceptions, revealing debug information.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-600
-  fold_parent: CWE-248
-  materialisation:
-    alternate_terms:
-    - Missing Catch Block
-    common_consequences:
-    - 'scope: Confidentiality, Availability - impact: Read Application Data; DoS: Crash, Exit, or Restart'
-    description: The Servlet does not catch all exceptions, which may reveal sensitive debugging information.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns: []
-  name: Uncaught Exception in Servlet
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit redirects users to an external site based on user-controlled input.
@@ -4628,27 +3009,6 @@
   name: URL Redirection to Untrusted Site ('Open Redirect')
   owasp_2025:
   - A01
-- abstraction: Variant
-  applies_if:
-    nl: The unit's Struts ActionForm contains a non-private field.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-608
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Integrity, Confidentiality - impact: Modify Application Data; Read Application Data'
-    description: An ActionForm class contains a field that has not been declared private, which can be accessed without using a setter or getter.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns: []
-  name: 'Struts: Non-private Field in ActionForm Class'
-  owasp_2025: []
 - abstraction: Compound
   applies_if:
     nl: The unit follows a UNIX symbolic link when opening a file or directory.
@@ -4657,7 +3017,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-61
-  fold_parent: CWE-59
+  fold_parent: CWE-22
   materialisation:
     alternate_terms:
     - Symlink following
@@ -4673,7 +3033,7 @@
     - 'phase: Implementation, Architecture and Design - strategy: Separation of Privilege'
     related_attack_patterns:
     - CAPEC-27
-  name: UNIX Symbolic Link (Symlink) Following
+  name: Symbolic Link (Symlink) Following
   owasp_2025:
   - A01
 - abstraction: Base
@@ -4754,30 +3114,6 @@
   name: Insufficient Session Expiration
   owasp_2025:
   - A07
-- abstraction: Variant
-  applies_if:
-    nl: The unit sets sensitive cookies over HTTPS without the Secure attribute.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  - WebPresentation
-  fault_id: CWE-614
-  fold_parent: CWE-319
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The Secure attribute for sensitive cookies in HTTPS sessions is not set.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns:
-    - CAPEC-102
-  name: Sensitive Cookie in HTTPS Session Without 'Secure' Attribute
-  owasp_2025:
-  - A02
 - abstraction: Variant
   applies_if:
     nl: The unit ships source-code comments containing sensitive information.
@@ -4951,7 +3287,7 @@
   - RESTApi
   - WebPresentation
   fault_id: CWE-641
-  fold_parent: null
+  fold_parent: CWE-73
   materialisation:
     alternate_terms: []
     common_consequences:
@@ -5001,7 +3337,7 @@
     alternate_terms: []
     common_consequences:
     - 'scope: Integrity, Confidentiality, Availability, Confidentiality - impact: Execute Unauthorized Code or Commands; Read Application Data'
-    description: The product does not neutralize or incorrectly neutralizes web scripting syntax in HTTP headers that can be used by web browser components that can process raw headers, such as Flash.
+    description: The product does not neutralize or incorrectly neutralizes web scripting syntax in HTTP headers that can be used by web browser components that can process raw headers.
     extended_description: |-
       An attacker may be able to conduct cross-site scripting and other attacks against users who have these components enabled.
 
@@ -5087,29 +3423,6 @@
     related_attack_patterns: []
   name: Use of Non-Canonical URL Paths for Authorization Decisions
   owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit relies on obfuscation or encryption of mutable inputs as a security mechanism.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-649
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Integrity - impact: Unexpected State'
-    description: The product uses obfuscation or encryption of inputs that should not be mutable by an external actor, but the product does not use integrity checks to detect if those inputs have been modified.
-    extended_description: null
-    functional_areas: []
-    likelihood: High
-    potential_mitigations:
-    - 'phase: Architecture and Design, Architecture and Design, Architecture and Design, Architecture and Design'
-    related_attack_patterns:
-    - CAPEC-463
-  name: Reliance on Obfuscation or Encryption of Security-Relevant Inputs without Integrity Checking
-  owasp_2025: []
 - abstraction: Variant
   applies_if:
     nl: The unit trusts the HTTP method as a permission mechanism.
@@ -5144,71 +3457,14 @@
     alternate_terms: []
     common_consequences:
     - 'scope: Confidentiality - impact: Read Application Data'
-    description: The Web services architecture may require exposing a Web Service Definition Language (WSDL) file that contains information on the publicly accessible services and how callers of these services should interact with them (e.g. what parameters they expect and what types they return).
-    extended_description: |-
-      An information exposure may occur if any of the following apply:
-
-      The WSDL file is accessible to a wider audience than intended. The WSDL file contains information on the methods/services that should not be publicly accessible or information about deprecated methods. This problem is made more likely due to the WSDL often being automatically generated from the code. Information in the WSDL file helps guess names/locations of methods/resources that should not be publicly accessible.
+    description: The web-services architecture may require exposing a service-description file that contains information on the publicly accessible services and how callers of these services should interact with them (e.g. what parameters they expect and what types they return).
+    extended_description: null
     functional_areas: []
     likelihood: null
     potential_mitigations:
     - 'phase: Architecture and Design, Architecture and Design, Architecture and Design - strategy: Separation of Privilege'
     related_attack_patterns: []
-  name: Exposure of WSDL File Containing Sensitive Information
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit builds an XQuery expression from external input.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  - GraphQLApi
-  fault_id: CWE-652
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The product uses external input to dynamically construct an XQuery expression used to retrieve data from an XML database, but it does not neutralize or incorrectly neutralizes that input. This allows an attacker to control the structure of the query.
-    extended_description: null
-    functional_areas: []
-    likelihood: High
-    potential_mitigations:
-    - 'phase: Implementation, Implementation'
-    related_attack_patterns: []
-  name: Improper Neutralization of Data within XQuery Expressions ('XQuery Injection')
-  owasp_2025: []
-- abstraction: Base
-  applies_if:
-    nl: The unit bases a security decision on a single factor.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-654
-  fold_parent: null
-  materialisation:
-    alternate_terms:
-    - Separation of Privilege Some people and publications use the term "Separation of Privilege" to describe this weakness, but this term has dual meanings in current usage. While this entry is closely associated with the original definition of "Separation of Privilege" by Saltzer and Schroeder, others use the same term to describe poor compartmentalization (CWE-653). Because there are multiple interpretations, use of the "Separation of Privilege" term is discouraged.
-    common_consequences:
-    - 'scope: Access Control, Non-Repudiation - impact: Gain Privileges or Assume Identity; Hide Activities'
-    description: A protection mechanism relies exclusively, or to a large extent, on the evaluation of a single condition or the integrity of a single object or entity in order to make a decision about granting access to restricted resources or functionality.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Architecture and Design'
-    related_attack_patterns:
-    - CAPEC-16
-    - CAPEC-274
-    - CAPEC-49
-    - CAPEC-55
-    - CAPEC-560
-    - CAPEC-565
-    - CAPEC-600
-    - CAPEC-652
-    - CAPEC-653
-    - CAPEC-70
-  name: Reliance on a Single Factor in a Security Decision
+  name: Exposure of Service-Description File Containing Sensitive Information
   owasp_2025: []
 - abstraction: Compound
   applies_if:
@@ -5234,30 +3490,6 @@
     - CAPEC-80
     - CAPEC-85
   name: Incomplete Denylist to Cross-Site Scripting
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
-    nl: The unit serves a default error page that reveals internal product or environment details.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-7
-  fold_parent: CWE-756
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The default error page of a web application should not display sensitive information about the product.
-    extended_description: |-
-      A Web application must define a default error page for 4xx errors (e.g. 404), 5xx (e.g. 500) errors and catch java.lang.Throwable exceptions to prevent attackers from mining information from the application container's built-in error response.
-
-      When an attacker explores a web site looking for vulnerabilities, the amount of information that the site provides is crucial to the eventual success or failure of any attempted attacks.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation, Implementation, System Configuration, Implementation, Implementation'
-    related_attack_patterns: []
-  name: 'J2EE Misconfiguration: Missing Custom Error Page'
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -5330,78 +3562,6 @@
   - A01
 - abstraction: Base
   applies_if:
-    nl: The unit does not return custom error pages, exposing sensitive information.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-756
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality - impact: Read Application Data'
-    description: The product does not return custom error pages to the user, possibly exposing sensitive information.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns: []
-  name: Missing Custom Error Page
-  owasp_2025:
-  - A10
-- abstraction: Base
-  applies_if:
-    nl: The unit negotiates a less-secure algorithm than the strongest available.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  - RESTApi
-  - WebPresentation
-  fault_id: CWE-757
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism'
-    description: A protocol or its implementation supports interaction between multiple actors and allows those actors to negotiate which algorithm should be used as a protection mechanism such as encryption or authentication, but it does not select the strongest algorithm that is available to both parties.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns:
-    - CAPEC-220
-    - CAPEC-606
-    - CAPEC-620
-  name: Selection of Less-Secure Algorithm During Negotiation ('Algorithm Downgrade')
-  owasp_2025:
-  - A04
-- abstraction: Variant
-  applies_if:
-    nl: The unit hashes a reversible input with a one-way hash without a salt.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-759
-  fold_parent: CWE-916
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism; Gain Privileges or Assume Identity'
-    description: The product uses a one-way cryptographic hash against an input that should not be reversible, such as a password, but the product does not also use a salt as part of the input.
-    extended_description: |-
-      This makes it easier for attackers to pre-compute the hash value using dictionary attack techniques such as rainbow tables.
-
-      It should be noted that, despite common perceptions, the use of a good salt with a hash does not sufficiently increase the effort for an attacker who is targeting an individual password, or who has a large amount of computing resources available, such as with cloud-based services or specialized, inexpensive hardware. Offline password cracking can still be effective if the hash function is not expensive to compute; many cryptographic functions are designed to be efficient and can be vulnerable to attacks using massive computing resources, even if the hash is cryptographically strong. The use of a salt only slightly increases the computing requirements for an attacker compared to other strategies such as adaptive hash functions. See CWE-916 for more details.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Architecture and Design, Implementation, Architecture and Design'
-    related_attack_patterns: []
-  name: Use of a One-Way Hash without a Salt
-  owasp_2025:
-  - A04
-- abstraction: Base
-  applies_if:
     nl: The unit neutralizes one set of special elements but misses equivalent alternate spellings.
     predicate: null
   enum_kinds:
@@ -5422,31 +3582,6 @@
   name: Improper Neutralization of Equivalent Special Elements
   owasp_2025:
   - A05
-- abstraction: Variant
-  applies_if:
-    nl: The unit hashes with a predictable salt.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-760
-  fold_parent: CWE-916
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism'
-    description: The product uses a one-way cryptographic hash against an input that should not be reversible, such as a password, but the product uses a predictable salt as part of the input.
-    extended_description: |-
-      This makes it easier for attackers to pre-compute the hash value using dictionary attack techniques such as rainbow tables, effectively disabling the protection that an unpredictable salt would provide.
-
-      It should be noted that, despite common perceptions, the use of a good salt with a hash does not sufficiently increase the effort for an attacker who is targeting an individual password, or who has a large amount of computing resources available, such as with cloud-based services or specialized, inexpensive hardware. Offline password cracking can still be effective if the hash function is not expensive to compute; many cryptographic functions are designed to be efficient and can be vulnerable to attacks using massive computing resources, even if the hash is cryptographically strong. The use of a salt only slightly increases the computing requirements for an attacker compared to other strategies such as adaptive hash functions. See CWE-916 for more details.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation'
-    related_attack_patterns: []
-  name: Use of a One-Way Hash with a Predictable Salt
-  owasp_2025:
-  - A04
 - abstraction: Base
   applies_if:
     nl: The unit allows recursive entity references in DTDs.
@@ -5474,32 +3609,6 @@
   name: Improper Restriction of Recursive Entity References in DTDs ('XML Entity Expansion')
   owasp_2025:
   - A02
-- abstraction: Base
-  applies_if:
-    nl: The unit does not record security-critical events in its logs.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  - RESTApi
-  fault_id: CWE-778
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Non-Repudiation - impact: Hide Activities'
-    description: When a security-critical event occurs, the product either does not record the event or omits important details about the event when logging it.
-    extended_description: |-
-      When security-critical events are not logged properly, such as a failed login attempt, this can make malicious behavior more difficult to detect and may hinder forensic analysis after an attack succeeds.
-
-      As organizations adopt cloud storage resources, these technologies often require configuration changes to enable detailed logging information, since detailed logging can incur additional costs. This could lead to telemetry gaps in critical audit logs. For example, in Azure, the default value for logging is disabled.
-    functional_areas: []
-    likelihood: Medium
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation, Operation, Operation'
-    related_attack_patterns: []
-  name: Insufficient Logging
-  owasp_2025:
-  - A09
 - abstraction: Base
   applies_if:
     nl: The unit builds an OS command from externally influenced input.
@@ -5549,28 +3658,6 @@
   name: Improper Neutralization of Special Elements used in an OS Command ('OS Command Injection')
   owasp_2025:
   - A05
-- abstraction: Variant
-  applies_if:
-    nl: The unit relies on cookie values for protection without validating them.
-    predicate: null
-  enum_kinds:
-  - IdentificationSystem
-  fault_id: CWE-784
-  fold_parent: CWE-565
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism; Gain Privileges or Assume Identity'
-    description: The product uses a protection mechanism that relies on the existence or values of a cookie, but it does not properly ensure that the cookie is valid for the associated user.
-    extended_description: null
-    functional_areas: []
-    likelihood: High
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation, Architecture and Design, Architecture and Design'
-    related_attack_patterns: []
-  name: Reliance on Cookies without Validation and Integrity Checking in a Security Decision
-  owasp_2025:
-  - A08
 - abstraction: Base
   applies_if:
     nl: The unit places user-controllable input into rendered output without neutralizing it.
@@ -5614,27 +3701,6 @@
   - A05
 - abstraction: Variant
   applies_if:
-    nl: The unit exposes a remote interface whose methods reach an EJB entity bean.
-    predicate: null
-  enum_kinds:
-  - RESTApi
-  fault_id: CWE-8
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity - impact: Read Application Data; Modify Application Data'
-    description: When an application exposes a remote interface for an entity bean, it might also expose methods that get or set the bean's data. These methods could be leveraged to read sensitive information, or to change data in ways that violate the application's expectations, potentially leading to other vulnerabilities.
-    extended_description: null
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Implementation'
-    related_attack_patterns: []
-  name: 'J2EE Misconfiguration: Entity Bean Declared Remote'
-  owasp_2025: []
-- abstraction: Variant
-  applies_if:
     nl: The unit renders script-related HTML tags from input it received from an upstream component.
     predicate: null
   enum_kinds:
@@ -5659,31 +3725,6 @@
   name: Improper Neutralization of Script-Related HTML Tags in a Web Page (Basic XSS)
   owasp_2025:
   - A05
-- abstraction: Base
-  applies_if:
-    nl: The unit uses a CAPTCHA challenge that can be guessed or recognized automatically.
-    predicate: null
-  enum_kinds:
-  - WebPresentation
-  fault_id: CWE-804
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control, Other - impact: Bypass Protection Mechanism; Other'
-    description: The product uses a CAPTCHA challenge, but the challenge can be guessed or automatically recognized by a non-human actor.
-    extended_description: |-
-      An automated attacker could bypass the intended protection of the CAPTCHA challenge and perform actions at a higher frequency than humanly possible, such as launching spam attacks.
-
-      There can be several different causes of a guessable CAPTCHA:
-
-      An audio or visual image that does not have sufficient distortion from the unobfuscated source image. A question is generated with a format that can be automatically recognized, such as a math question. A question for which the number of possible answers is limited, such as birth years or favorite sports teams. A general-knowledge or trivia question for which the answer can be accessed using a data base, such as country capitals or popular entertainers. Other data associated with the CAPTCHA may provide hints about its contents, such as an image whose filename contains the word that is used in the CAPTCHA.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns: []
-  name: Guessable CAPTCHA
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit bases a security decision on untrusted input values.
@@ -5869,31 +3910,6 @@
   name: Inclusion of Web Functionality from an Untrusted Source
   owasp_2025:
   - A08
-- abstraction: Base
-  applies_if:
-    nl: The unit uses password hashes instead of passwords for authentication.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-836
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism; Gain Privileges or Assume Identity'
-    description: The product records password hashes in a data store, receives a hash of a password from a client, and compares the supplied hash to the hash obtained from the data store.
-    extended_description: |-
-      Some authentication mechanisms rely on the client to generate the hash for a password, possibly to reduce load on the server or avoid sending the password across the network. However, when the client is used to generate the hash, an attacker can bypass the authentication by obtaining a copy of the hash, e.g. by using SQL injection to compromise a database of authentication credentials, or by exploiting an information exposure. The attacker could then use a modified client to replay the stolen hash without having knowledge of the original password.
-
-      As a result, the server-side comparison against a client-side hash does not provide any more security than the use of passwords without hashing.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations: []
-    related_attack_patterns:
-    - CAPEC-644
-    - CAPEC-652
-  name: Use of Password Hash Instead of Password for Authentication
-  owasp_2025: []
 - abstraction: Base
   applies_if:
     nl: The unit fails to enforce that an action happens only once per actor.
@@ -6180,14 +4196,14 @@
     alternate_terms: []
     common_consequences:
     - 'scope: Other - impact: Other'
-    description: If elevated access rights are assigned to EJB methods, then an attacker can take advantage of the permissions to exploit the product.
+    description: If elevated access rights are assigned to security-relevant methods, then an attacker can take advantage of the permissions to exploit the product.
     extended_description: null
     functional_areas: []
     likelihood: null
     potential_mitigations:
     - 'phase: Architecture and Design, System Configuration'
     related_attack_patterns: []
-  name: 'J2EE Misconfiguration: Weak Access Permissions for EJB Methods'
+  name: 'Misconfiguration: Weak Access Permissions for Methods'
   owasp_2025: []
 - abstraction: Base
   applies_if:
@@ -6270,38 +4286,6 @@
   - A08
 - abstraction: Base
   applies_if:
-    nl: The unit hashes passwords with insufficient computational effort.
-    predicate: null
-  enum_kinds:
-  - AuthenticationMechanism
-  fault_id: CWE-916
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Access Control - impact: Bypass Protection Mechanism; Gain Privileges or Assume Identity'
-    description: The product generates a hash for a password, but it uses a scheme that does not provide a sufficient level of computational effort that would make password cracking attacks infeasible or expensive.
-    extended_description: |-
-      Many password storage mechanisms compute a hash and store the hash, instead of storing the original password in plaintext. In this design, authentication involves accepting an incoming password, computing its hash, and comparing it to the stored hash.
-
-      Many hash algorithms are designed to execute quickly with minimal overhead, even cryptographic hashes. However, this efficiency is a problem for password storage, because it can reduce an attacker's workload for brute-force password cracking. If an attacker can obtain the hashes through some other method (such as SQL injection on a database that stores hashes), then the attacker can store the hashes offline and use various techniques to crack the passwords by computing hashes efficiently. Without a built-in workload, modern attacks can compute large numbers of hashes, or even exhaust the entire space of all possible passwords, within a very short amount of time, using massively-parallel computing (such as cloud computing) and GPU, ASIC, or FPGA hardware. In such a scenario, an efficient hash algorithm helps the attacker.
-
-      There are several properties of a hash scheme that are relevant to its strength against an offline, massively-parallel attack:
-
-      The amount of CPU time required to compute the hash ("stretching") The amount of memory required to compute the hash ("memory-hard" operations) Including a random value, along with the password, as input to the hash computation ("salting") Given a hash, there is no known way of determining an input (e.g., a password) that produces this hash value, other than by guessing possible inputs ("one-way" hashing) Relative to the number of all possible hashes that can be generated by the scheme, there is a low likelihood of producing the same hash for multiple different inputs ("collision resistance")
-
-      Note that the security requirements for the product may vary depending on the environment and the value of the passwords. Different schemes might not provide all of these properties, yet may still provide sufficient security for the environment. Conversely, a solution might be very strong in preserving one property, which still being very weak for an attack against another property, or it might not be able to significantly reduce the efficiency of a massively-parallel attack.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Implementation, Architecture and Design'
-    related_attack_patterns:
-    - CAPEC-55
-  name: Use of Password Hash With Insufficient Computational Effort
-  owasp_2025:
-  - A04
-- abstraction: Base
-  applies_if:
     nl: The unit builds an expression-language statement from external input.
     predicate: null
   enum_kinds:
@@ -6315,7 +4299,7 @@
     - EL Injection
     common_consequences:
     - 'scope: Confidentiality, Integrity - impact: Read Application Data; Execute Unauthorized Code or Commands'
-    description: The product constructs all or part of an expression language (EL) statement in a framework such as a Java Server Page (JSP) using externally-influenced input from an upstream component, but it does not neutralize or incorrectly neutralizes special elements that could modify the intended EL statement before it is executed.
+    description: The product constructs all or part of an expression language (EL) statement using externally-influenced input from an upstream component, but it does not neutralize or incorrectly neutralizes special elements that could modify the intended EL statement before it is executed.
     extended_description: null
     functional_areas: []
     likelihood: null
@@ -6414,29 +4398,6 @@
   - A05
 - abstraction: Variant
   applies_if:
-    nl: The unit permits a cross-domain policy that allows untrusted domains.
-    predicate: null
-  enum_kinds:
-  - IntegrationSystem
-  - WebPresentation
-  fault_id: CWE-942
-  fold_parent: null
-  materialisation:
-    alternate_terms: []
-    common_consequences:
-    - 'scope: Confidentiality, Integrity, Availability, Access Control - impact: Execute Unauthorized Code or Commands; Bypass Protection Mechanism; Read Application Data; Varies by Context'
-    description: The product uses a web-client protection mechanism such as a Content Security Policy (CSP) or cross-domain policy file, but the policy includes untrusted domains with which the web client is allowed to communicate.
-    extended_description: If a cross-domain policy file includes domains that should not be trusted, such as when using wildcards under a high-level domain, then the application could be attacked by these untrusted domains. In many cases, the attack can be launched without the victim even being aware of it.
-    functional_areas: []
-    likelihood: null
-    potential_mitigations:
-    - 'phase: Architecture and Design, Operation, Architecture and Design, Operation, Architecture and Design, Operation - strategy: Attack Surface Reduction; Attack Surface Reduction; Environment Hardening'
-    related_attack_patterns: []
-  name: Permissive Cross-domain Security Policy with Untrusted Domains
-  owasp_2025:
-  - A02
-- abstraction: Variant
-  applies_if:
     nl: The unit evaluates dynamically generated directives from unsanitized input.
     predicate: null
   enum_kinds:
@@ -6524,7 +4485,7 @@
     - Remote file include
     common_consequences:
     - 'scope: Integrity, Confidentiality, Availability - impact: Execute Unauthorized Code or Commands'
-    description: The PHP application receives input from an upstream component, but it does not restrict or incorrectly restricts the input before its usage in "require," "include," or similar functions.
+    description: The application receives input from an upstream component, but it does not restrict or incorrectly restricts the input before its usage in "require," "include," or similar functions.
     extended_description: null
     functional_areas: []
     likelihood: High
@@ -6532,6 +4493,6 @@
     - 'phase: Architecture and Design, Architecture and Design, Architecture and Design, Architecture and Design, Operation, Architecture and Design, Operation, Implementation, Architecture and Design, Operation, Architecture and Design, Implementation, Operation, Operation, Implementation, Operation, Implementation, Operation - strategy: Libraries or Frameworks; Enforcement by Conversion; Sandbox or Jail; Environment Hardening; Input Validation; Attack Surface Reduction; Attack Surface Reduction; Firewall; Environment Hardening; Environment Hardening; Environment Hardening'
     related_attack_patterns:
     - CAPEC-193
-  name: Improper Control of Filename for Include/Require Statement in PHP Program ('PHP Remote File Inclusion')
+  name: Improper Control of Filename for Include/Require Statement ('Remote File Inclusion')
   owasp_2025:
   - A05

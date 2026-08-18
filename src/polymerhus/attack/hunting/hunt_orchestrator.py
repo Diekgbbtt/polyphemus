@@ -143,11 +143,16 @@ class HuntPromptTemplate(BaseModel):
 class HuntConfig(BaseModel):
     """The declarative config the hunting agent consumes (D3): the five-part
     parameter set - prompt template, wide surface context (adapted index-card),
-    target caveats, prior-hunt insights (by revival key), tool registry."""
+    target caveats, prior-hunt insights (by revival key), tool registry.
+    `sub_fault_ids` carries the folded fault_ids (the sub-faults / reflection
+    material) captured under the parent `fault_class` from the fold-family
+    relation (`fault_kb.load_fold_families`): the hunting agent bounds the
+    parent fault, the sub-faults are consideration material."""
 
     hunt_id: str
     unit_id: str
     fault_class: str
+    sub_fault_ids: list[str] = Field(default_factory=list)
     prompt_template: HuntPromptTemplate
     surface_context: dict = Field(default_factory=dict)
     target_caveats: list[str] = Field(default_factory=list)

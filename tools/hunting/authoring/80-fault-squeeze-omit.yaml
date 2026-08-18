@@ -1,0 +1,183 @@
+# Authoring sidecar: the fault-squeeze omits (#66, the 2026-08-17 squeeze pass).
+#
+# The second screening over the folded catalogue (254 -> 203 entries), six
+# lenses in parallel (squeeze-mode-1..6 verdict reports under
+# /var/folders/gs/p9fl4f1s1yqfl8801x50nhjc0000gn/T/opencode/squeeze-mode-*.md):
+#   * mode-1  recon-observable / low-impact: a single atomic legitimate
+#             interaction fully establishes the fault (headers, Set-Cookie,
+#             default error pages, TLS presentation) - underutilised as hunt;
+#   * mode-2  naive / very-unlikely / recon-reducible: plain-HTTP transport
+#             posture and served-certificate presentation, effectively-never
+#             conditions, and umbrellas whose concrete members are separately
+#             catalogued;
+#   * mode-3  very-narrow variants: the "huntable fault" is the fold parent's
+#             broader fault, label-only recipes (framework tags never change
+#             the probe sequence);
+#   * mode-4  framework/technology-named entries: J2EE/Struts-only mechanisms
+#             whose hunt shape a selection-tier generic capture already holds;
+#   * mode-5  blatant redundants: verbatim re-spells of a capture's content;
+#   * mode-6  not test-actionable under the L1 abstraction model, plus the
+#             AI/GenAI surface declared OUT OF SCOPE.
+#
+# Conflict resolution (across lenses): REMOVE wins over GENERALISE/KEEP when
+# multiple lenses agree or the removal lens is the operator-named authority
+# (CWE-296/297/298 TLS presentation, CWE-5/1428 plain HTTP, CWE-756/1269
+# recon-observable); KEEP wins on content-grounds (CWE-1393 default password,
+# the 1104/1329/1395 supply-chain family, the 22/23/24/28 traversal family).
+# Each omission is a later-file override of the range sidecar's authored
+# matching facet (the documented OMIT layer); fold_variants re-folds any
+# surviving child automatically.
+entries:
+  CWE-5:
+    omit: true
+    omit_reason: 'squeeze-mode-2: plain-HTTP transport posture is recon-trivial; J2EE-named duplicate of kept CWE-319.'
+  CWE-7:
+    omit: true
+    omit_reason: 'squeeze-mode-1: J2EE default error page revealed by the same trivial 404 as CWE-756; label-only recipe.'
+  CWE-8:
+    omit: true
+    omit_reason: 'squeeze-mode-4: J2EE entity-bean-only mechanism; hunt shape held by selection-tier CWE-749.'
+  CWE-11:
+    omit: true
+    omit_reason: 'squeeze-mode-3: label-only ASP.NET debug-binary recipe; hunt is generalised CWE-489''s.'
+  CWE-12:
+    omit: true
+    omit_reason: 'squeeze-mode-1: ASP.NET default error page revealed by the same trivial 404 as CWE-756; label-only recipe.'
+  CWE-13:
+    omit: true
+    omit_reason: 'squeeze-mode-3: plaintext-password-in-config hunt is kept CWE-260''s; framework label only.'
+  CWE-180:
+    omit: true
+    omit_reason: 'squeeze-mode-5: literal instance of kept CWE-179''s own content (canonicalisation); no distinct probe.'
+  CWE-210:
+    omit: true
+    omit_reason: 'squeeze-mode-3: near-verbatim of generalised CWE-209; self-vs-any generator split is not observable.'
+  CWE-211:
+    omit: true
+    omit_reason: 'squeeze-mode-3: trigger-error-and-inspect hunt is generalised CWE-209''s; "external" is provenance, not a probe step.'
+  CWE-231:
+    omit: true
+    omit_reason: 'squeeze-mode-5: restates one of the three cases in promoted CWE-229''s capture text; redundant recipe.'
+  CWE-276:
+    omit: true
+    omit_reason: 'squeeze-mode-6: install-time OS file-permission bits are not observable in any HTTP interaction; no L1 capability.'
+  CWE-296:
+    omit: true
+    omit_reason: 'squeeze-mode-2: served chain-of-trust is TLS presentation recon; operator-named CWE (TLS certificates).'
+  CWE-297:
+    omit: true
+    omit_reason: 'squeeze-mode-2: host/SAN mismatch is a property of the presented certificate (TLS presentation recon).'
+  CWE-298:
+    omit: true
+    omit_reason: 'squeeze-mode-2: certificate expiration is served-chain presentation recon.'
+  CWE-299:
+    omit: true
+    omit_reason: 'squeeze-mode-2: a serving web unit never checks peer-certificate revocation in normal operation; effectively-never.'
+  CWE-303:
+    omit: true
+    omit_reason: 'squeeze-mode-2: umbrella with no independent probe; its member findings are the separately-catalogued authn faults.'
+  CWE-305:
+    omit: true
+    omit_reason: 'squeeze-mode-2: resultant meta-fault; the triggering primary weakness is separately catalogued and probeable.'
+  CWE-309:
+    omit: true
+    omit_reason: 'squeeze-mode-2: password-system-as-primary-auth is effectively always true of deployed units; a risk statement, not a fault.'
+  CWE-313:
+    omit: true
+    omit_reason: 'squeeze-mode-3: pure subset of kept CWE-312''s cleartext-at-rest hunt; no new artefact enum.'
+  CWE-315:
+    omit: true
+    omit_reason: 'squeeze-mode-1: cleartext cookie value fully visible in the Set-Cookie header of a legitimate response.'
+  CWE-332:
+    omit: true
+    omit_reason: 'squeeze-mode-3: a PRNG is exactly the randomness source kept CWE-331 targets; label only.'
+  CWE-370:
+    omit: true
+    omit_reason: 'squeeze-mode-2: mid-session revocation re-check effectively never occurs in a deployed unit.'
+  CWE-497:
+    omit: true
+    omit_reason: 'squeeze-mode-1: banner/header/error-page system-info disclosure is the canonical passive recon finding.'
+  CWE-525:
+    omit: true
+    omit_reason: 'squeeze-mode-1: missing cache directives fully stated by the response headers of a legitimate fetch.'
+  CWE-535:
+    omit: true
+    omit_reason: 'squeeze-mode-3: no shell-specific probe; hunt is generalised CWE-209''s.'
+  CWE-536:
+    omit: true
+    omit_reason: 'squeeze-mode-3: no servlet-specific probe; hunt is generalised CWE-209''s.'
+  CWE-537:
+    omit: true
+    omit_reason: 'squeeze-mode-3: no Java-runtime-specific probe; hunt is generalised CWE-209''s.'
+  CWE-539:
+    omit: true
+    omit_reason: 'squeeze-mode-1: persistent-cookie attributes and value fully visible in the Set-Cookie header; overrides the 70 split verdict.'
+  CWE-548:
+    omit: true
+    omit_reason: 'squeeze-mode-1: directory listing established by one atomic enumerated recon fetch.'
+  CWE-550:
+    omit: true
+    omit_reason: 'squeeze-mode-3: same trigger-and-inspect hunt as generalised CWE-209; server-error label only.'
+  CWE-554:
+    omit: true
+    omit_reason: 'squeeze-mode-3: same input-validation-framework probe as promoted CWE-1173; ASP.NET label only.'
+  CWE-555:
+    omit: true
+    omit_reason: 'squeeze-mode-3: J2EE label only; plaintext-password-in-config hunt is kept CWE-260''s.'
+  CWE-556:
+    omit: true
+    omit_reason: 'squeeze-mode-3: duplicate of generalised CWE-520''s impersonation probe; ASP.NET label swapped.'
+  CWE-600:
+    omit: true
+    omit_reason: 'squeeze-mode-3: verbatim re-run of promoted CWE-248''s uncaught-exception hunt; servlet label only.'
+  CWE-608:
+    omit: true
+    omit_reason: 'squeeze-mode-4: Struts ActionForm-only mechanism; hunt shape held by selection-tier CWE-915.'
+  CWE-614:
+    omit: true
+    omit_reason: 'squeeze-mode-1: missing Secure attribute fully stated by the Set-Cookie header of a plain authenticated request.'
+  CWE-652:
+    omit: true
+    omit_reason: 'squeeze-mode-2: XQuery-against-XML-database practically never exhibited by modern deployed units; kept CWE-643 covers the surviving surface.'
+  CWE-654:
+    omit: true
+    omit_reason: 'squeeze-mode-2: single-factor security decisions are the norm; would fire on near-all targets and discriminate nothing.'
+  CWE-756:
+    omit: true
+    omit_reason: 'squeeze-mode-1: framework default error page established by one atomic 404 request; REMOVE wins over mode-3 generalise.'
+  CWE-757:
+    omit: true
+    omit_reason: 'squeeze-mode-1: TLS handshake scan enumerates negotiated algorithms; no discriminating probe available.'
+  CWE-784:
+    omit: true
+    omit_reason: 'squeeze-mode-5: near-verbatim re-spell of kept CWE-565''s cookie-validation content; no probe delta.'
+  CWE-942:
+    omit: true
+    omit_reason: 'squeeze-mode-1: permissive cross-domain policy fully stated by the CSP header / policy-file fetch.'
+  CWE-1004:
+    omit: true
+    omit_reason: 'squeeze-mode-1: absent HttpOnly flag fully stated by the Set-Cookie header of a legitimate response; operator-named CWE.'
+  CWE-1174:
+    omit: true
+    omit_reason: 'squeeze-mode-3: "submit invalid input, observe framework acceptance" is promoted CWE-1173''s probe; ASP.NET label only.'
+  CWE-1188:
+    omit: true
+    omit_reason: 'squeeze-mode-2: insecure-default intent umbrella; concrete instances separately catalogued (1392/489/276).'
+  CWE-1269:
+    omit: true
+    omit_reason: 'squeeze-mode-1: non-release config (APP_DEBUG, verbose errors, dev routes) is a standing error-page recon finding; REMOVE wins over mode-2 generalise.'
+  CWE-1275:
+    omit: true
+    omit_reason: 'squeeze-mode-1: absent/permissive SameSite attribute fully stated by the Set-Cookie header of a normal response.'
+  CWE-1327:
+    omit: true
+    omit_reason: 'squeeze-mode-2/6: binding 0.0.0.0 is the universal serving default; fault-ness is deployment intent the probe cannot observe; no L1 capability.'
+  CWE-1392:
+    omit: true
+    omit_reason: 'squeeze-mode-5: fully partitioned by children 1393 (default password) and 1394 (default key), both retained.'
+  CWE-1427:
+    omit: true
+    omit_reason: 'squeeze-mode-6: LLM-prompting fault on the AI/GenAI surface, declared OUT OF SCOPE (return when that surface is in scope).'
+  CWE-1428:
+    omit: true
+    omit_reason: 'squeeze-mode-2: reliance on HTTP over HTTPS is a global, passively-observable transport posture; no in-app discriminator.'

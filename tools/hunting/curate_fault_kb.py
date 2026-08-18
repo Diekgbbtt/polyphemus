@@ -346,14 +346,22 @@ def promote_captures(entries: list[dict], index: Mapping[int, Weakness],
 
 
 def _fold_target(cwe_id: int, *, in_catalogue: frozenset[int],
-                 index: Mapping[int, Weakness]) -> int | None:
+                 index: Mapping[int, Weakness],
+                 force_fold: Mapping[int, int] | None = None) -> int | None:
     """The deterministic fold target of one entry: the NEAREST in-catalogue
     Base/Class ancestor along the View-1000 ChildOf chains (BFS, multi-parent
     aware, cycle-guarded). Variant/Compound waypoints are skipped so a chain
     lands on the narrowest retained capture ("taxed as base, not class"): a
     Variant whose parent is a folded Variant folds to the same Base. `None`
     for an orphan (no retained Base/Class ancestor) - the entry STAYS in the
-    selection tier (fail-open recall)."""
+    selection tier (fail-open recall).
+
+    A `force_fold` id (the `fold_to` authoring override) is a taxonomy waypoint
+    too: it is never a capture candidate, and the walk jumps through its forced
+    target, so a descendant of a forced-fold entry lands on the forced target
+    even when the View-1000 chain does not reach it (e.g. CWE-41 folds to
+    CWE-22 even though 41 is 22's sibling, not child, under CWE-706)."""
+    force_fold = force_fold or {}
     seen: set[int] = set()
     frontier = list(index[cwe_id].parents_view1000)
     while frontier:
@@ -361,6 +369,9 @@ def _fold_target(cwe_id: int, *, in_catalogue: frozenset[int],
         if current in seen:
             continue
         seen.add(current)
+        if current in force_fold:
+            frontier.append(force_fold[current])
+            continue
         if current in in_catalogue \
                 and index[current].abstraction in ("Base", "Class"):
             return current
@@ -370,25 +381,40 @@ def _fold_target(cwe_id: int, *, in_catalogue: frozenset[int],
 
 def fold_variants(entries: list[dict],
                   index: Mapping[int, Weakness],
-                  keep_separate: frozenset[int] = frozenset()) -> list[dict]:
+                  keep_separate: frozenset[int] = frozenset(),
+                  force_fold: Mapping[int, int] | None = None) -> list[dict]:
     """The fold stage: compute each entry's `fold_parent` (the deterministic
     nearest retained Base/Class ancestor, `null` for selection-tier entries).
     Variants/Compounds fold into their capture; Bases/Classes are captures;
     orphans keep `null` and stay selectable; `keep_separate` ids (the
     overlap-critic's SPLIT verdicts) are forced to `null` - they are
     genuinely distinct fault classes even though a View-1000 capture exists.
+    `force_fold` ids (the `fold_to` authoring override) are the operator's
+    taxonomy corrections: the entry folds into the named target REGARDLESS of
+    its CWE abstraction (a Base/Class can fold too), and its own folded
+    descendants re-fold to that target (the jump-through in `_fold_target`).
     Pure + deterministic (sorted iteration, BFS order)."""
+    force_fold = force_fold or {}
     in_catalogue = frozenset(
         int(e["fault_id"].split("-")[1]) for e in entries)
+    for target in force_fold.values():
+        if target not in in_catalogue:
+            raise ValueError(
+                f"fold_to names CWE-{target}, absent from the curated "
+                f"catalogue (id absent or filtered)")
     for entry in sorted(entries, key=lambda e: e["fault_id"]):
         cwe_id = int(entry["fault_id"].split("-")[1])
+        if cwe_id in force_fold:
+            entry["fold_parent"] = f"CWE-{force_fold[cwe_id]}"
+            continue
         if entry["abstraction"] not in ("Variant", "Compound"):
             entry["fold_parent"] = None
             continue
         if cwe_id in keep_separate:
             entry["fold_parent"] = None
             continue
-        target = _fold_target(cwe_id, in_catalogue=in_catalogue, index=index)
+        target = _fold_target(cwe_id, in_catalogue=in_catalogue, index=index,
+                              force_fold=force_fold)
         entry["fold_parent"] = f"CWE-{target}" if target is not None else None
     return entries
 
@@ -516,8 +542,8 @@ def _ensure_runtime_constants() -> None:
 def load_authoring(dir_path: Path) -> dict[str, dict]:
     """Load + validate the authoring sidecar files (sorted by name, one file
     per range). Returns fault_id -> authoring dict. Duplicate authoring of the
-    same fault across files is a hard error, EXCEPT for three documented
-    override layers (files apply in sorted-name order, later wins):
+    same fault across files is a hard error, EXCEPT for the documented override
+    layers (files apply in sorted-name order, later wins):
       * an OMIT marker (10-web-relevance-omit.yaml) overrides a prior entry:
         the fault is dropped from the catalogue, keeping its prior nl in the
         source only;
@@ -527,7 +553,17 @@ def load_authoring(dir_path: Path) -> dict[str, dict]:
       * a PROMOTE spec (70-fold-amendments.yaml) REVERSES an omit (the
         overlap-critic's PROMOTE-AND-FOLD verdict supersedes a web-relevance
         omission) or MERGES into a prior entry: later keys win per-key, the
-        promoted capture keeps the amendment's nl/enum_kinds/predicate.
+        promoted capture keeps the amendment's nl/enum_kinds/predicate;
+      * a GENERALISE spec (12-fault-squeeze-generalise.yaml) MERGES into the
+        prior entry: the fault keeps its authored matching facet
+        (nl/enum_kinds/predicate) while its materialisation
+        name/description/extended_description are rewritten to de-framework
+        the fault (the squeeze pass; `generalise: true` marks the override,
+        `name`/`description`/`extended_description` keys win per-key).
+      * a FOLD-TO spec (82-fault-squeeze-relevance.yaml) MERGES into the
+        prior entry: the fault is folded into a named capture regardless of
+        its CWE abstraction (`fold_to: "CWE-22"` - the operator's taxonomy
+        correction), keeping its authored matching facet in the source only.
     Deterministic: sorted-name file order."""
     authoring: dict[str, dict] = {}
     for path in sorted(dir_path.glob("*.yaml")):
@@ -541,7 +577,8 @@ def load_authoring(dir_path: Path) -> dict[str, dict]:
                 raise ValueError(f"authoring file {path}: entry {fault_id} is "
                                  f"{type(spec).__name__}, expected a mapping")
             prior = authoring.get(fault_id)
-            if "promote" in spec or "split" in spec:
+            if "promote" in spec or "split" in spec or "generalise" in spec \
+                    or "fold_to" in spec:
                 if prior is None:
                     authoring[fault_id] = spec
                     continue
@@ -550,8 +587,8 @@ def load_authoring(dir_path: Path) -> dict[str, dict]:
                         authoring[fault_id] = spec
                         continue
                     raise ValueError(
-                        f"authoring file {path}: split marker for OMITTED "
-                        f"{fault_id} is contradictory")
+                        f"authoring file {path}: split/generalise/fold_to "
+                        f"marker for OMITTED {fault_id} is contradictory")
                 authoring[fault_id] = {**prior, **spec}
                 continue
             if prior is not None:
@@ -603,7 +640,9 @@ def _parse_predicate(raw: Any, fault_id: str) -> Any:
 def fold_authoring(entries: list[dict], authoring: dict[str, dict]) -> list[dict]:
     """Merge the authoring sidecar into the emitted entries: omit markers
     remove entries, nl/enum_kinds/predicate overrides land in the matching
-    facet (validated). Returns the final catalogue, sorted by fault_id."""
+    facet (validated), and generalise markers rewrite the materialisation
+    name/description (de-frameworking). Returns the final catalogue, sorted by
+    fault_id."""
     _ensure_runtime_constants()
     by_id = {e["fault_id"]: e for e in entries}
     for fault_id, spec in authoring.items():
@@ -630,6 +669,16 @@ def fold_authoring(entries: list[dict], authoring: dict[str, dict]) -> list[dict
         if "predicate" in spec:
             entry["applies_if"]["predicate"] = _parse_predicate(
                 predicate, fault_id)
+        if spec.get("generalise"):
+            if spec.get("name"):
+                entry["name"] = str(spec["name"]).strip()
+            if spec.get("description"):
+                entry["materialisation"]["description"] = \
+                    str(spec["description"]).strip()
+            if "extended_description" in spec:
+                ext = spec["extended_description"]
+                entry["materialisation"]["extended_description"] = (
+                    str(ext).strip() if ext else None)
     return sorted(by_id.values(), key=lambda e: e["fault_id"])
 
 _HEADER = """\
@@ -714,7 +763,15 @@ def main(argv: list[str] | None = None) -> int:
     keep_separate = frozenset(
         int(fid.split("-")[1]) for fid, spec in authoring.items()
         if spec.get("split"))
-    entries = fold_variants(entries, index, keep_separate)
+    force_fold = {}
+    for fid, spec in authoring.items():
+        target = spec.get("fold_to")
+        if target:
+            if not isinstance(target, str) or not target.startswith("CWE-"):
+                raise ValueError(f"{fid}: fold_to must name a CWE id "
+                                 f"(e.g. 'CWE-22'), got {target!r}")
+            force_fold[int(fid.split("-")[1])] = int(target.split("-")[1])
+    entries = fold_variants(entries, index, keep_separate, force_fold)
     out = Path(args.out)
     out.parent.mkdir(parents=True, exist_ok=True)
     out.write_text(emit_catalogue(entries), encoding="utf-8")

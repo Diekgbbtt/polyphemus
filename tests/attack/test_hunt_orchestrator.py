@@ -183,6 +183,22 @@ def test_mint_hunt_config_carries_the_five_part_parameter_set():
     assert config.target_caveats == []
     assert config.prior_hunt_insights == [{"insight": "form Z carries no CSRF token"}]
     assert config.tool_registry == [{"tool": "csrf-probe"}]
+    assert config.sub_fault_ids == []  # folded recipes, filled by the graph logic
+
+
+def test_hunt_config_carries_the_sub_fault_ids_slot():
+    # the folded fault_ids (reflection material) captured under the parent
+    # fault-class: a typed slot the graph logic fills from the fold-family map
+    config = mint_hunt_config(
+        direction=_carry(_candidate(deterministic_witness=None)),
+        candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={},
+        prior_hunt_insights=[],
+        tool_registry=[],
+    )
+    config.sub_fault_ids = ["CWE-24", "CWE-35"]
+    assert config.sub_fault_ids == ["CWE-24", "CWE-35"]
 
 
 # --- Seam behaviours: park/resume (H3) ----------------------------------------

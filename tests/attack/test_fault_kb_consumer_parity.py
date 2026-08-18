@@ -115,19 +115,18 @@ def test_hardened_entry_passes_on_matching_exposure(catalogue):
 # --- an unhardened entry degrades to the enum gate ------------------------------
 
 def test_tag_entry_prunes_by_tag_when_kind_absent(catalogue):
-    # CWE-1004 (HttpOnly) is unhardened: predicate null, enum_kinds
-    # [IdentificationSystem, WebPresentation]. The unit exposes only a WAF
-    # system -> no presupposed kind linked -> pruned-by-tag, no predicate
-    # evaluation.
-    report = _run(catalogue, ["CWE-1004"],
-                  {"Service:session": [("EXPOSED_VIA", "WAF")]})["CWE-1004"]
+    # CWE-1021 (clickjacking) is unhardened: predicate null, enum_kinds
+    # [WebPresentation]. The unit exposes only a WAF system -> no presupposed
+    # kind linked -> pruned-by-tag, no predicate evaluation.
+    report = _run(catalogue, ["CWE-1021"],
+                  {"Service:session": [("EXPOSED_VIA", "WAF")]})["CWE-1021"]
     assert report.outcomes[0].verdict == "pruned-by-tag"
     assert report.predicates_evaluated == 0
 
 
 def test_tag_entry_passes_when_kind_linked(catalogue):
-    report = _run(catalogue, ["CWE-1004"],
-                  {"Service:session": [("EXPOSED_VIA", "WebPresentation")]})["CWE-1004"]
+    report = _run(catalogue, ["CWE-1021"],
+                  {"Service:session": [("EXPOSED_VIA", "WebPresentation")]})["CWE-1021"]
     assert report.outcomes[0].verdict == "passed"
     assert report.predicates_evaluated == 0
 

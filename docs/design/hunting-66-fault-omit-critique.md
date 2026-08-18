@@ -181,3 +181,97 @@ CWE-646 vs CWE-434; CWE-692 vs CWE-79) - accepted as fail-open
 multi-fire, deduped by the LLM match stage; dual-parentage notes
 (CWE-647/350/784) rechecked if the second parent ever enters the
 catalogue.
+
+## 7. The fault-squeeze pass (2026-08-17)
+
+Second screening over the 254-entry catalogue, six parallel critic
+subagents (one per failure mode, `critical-thinking-logical-reasoning`
+method), each arguing per entry on content - name, `applies_if.nl`,
+materialisation description and extended description - never on the CWE
+name alone, fail-open (uncertainty -> KEEP) throughout. The six lenses:
+
+- **mode-1 recon-observable / low-impact**: a single atomic legitimate
+  interaction (response headers, Set-Cookie, default error pages, TLS
+  presentation, directory index) fully establishes the fault, so a
+  dedicated hunt adds no signal.
+- **mode-2 naive / very-unlikely / recon-reducible**: plain-HTTP
+  transport posture, served-certificate presentation, effectively-never
+  conditions, and umbrellas whose concrete members are separately
+  catalogued.
+- **mode-3 very-narrow variants**: the "huntable fault" is the fold
+  parent's broader fault; framework/label-only recipes.
+- **mode-4 framework/technology-named**: J2EE/ASP.NET/.NET/Servlet/
+  Struts/Hibernate/OpenSSL-named entries generalised (kept, name and
+  description de-framed) or removed where the mechanism exists only in
+  that stack and a selection-tier generic capture already holds the
+  hunt shape.
+- **mode-5 blatant redundants**: capture + near-verbatim recipe pairs.
+- **mode-6 L1-untestable / AI-surface**: faults with no observable HTTP
+  interaction under the L1 abstraction model (host bind address, OS
+  file-permission bits); the LLM-prompting surface (CWE-1427) is
+  declared OUT OF SCOPE and returns when that surface is in scope.
+
+Verdict totals: 51 REMOVE, 14 GENERALISE, 189 KEEP (254 entries).
+
+### 7.1 Conflict resolution
+
+A target appearing under several lenses resolved as:
+
+- REMOVE when the removal lens is the operator-named authority for its
+  mode: CWE-296/297/298 (TLS presentation, mode-2), CWE-5/1428
+  (plain-HTTP, mode-2), CWE-756/1269 (recon-observable, mode-1);
+- REMOVE when a removal lens overruled a generalise: CWE-11/13/555/5/
+  12/7/536/537/600/1174/554/556 (mode-3 removes what mode-4 would
+  generalise - the recipe's hunt is the fold parent's);
+- KEEP when a content-grounds lens overruled a removal: CWE-1393
+  (default password, mode-5 keeps the partition child of removed
+  CWE-1392), the supply-chain family CWE-1104/1329/1395, the traversal
+  family CWE-22/23/24/28 (mode-5 kept for enum coverage / distinct
+  payloads).
+
+### 7.2 The removals (51, via `80-fault-squeeze-omit.yaml`)
+
+Selection tier 153 -> 128 (25 selection removals); recipes 101 -> 75
+(26 recipe removals). Every removed capture's folded children went with
+it (verified: no removed selection capture leaves a surviving folded
+child, so no orphan re-folds - and `fold_variants` re-folds any
+survivor automatically regardless). Full per-fault rationales live in
+the sidecar's `omit_reason` fields and the six verdict reports
+(`squeeze-mode-1..6.md`).
+
+Notable families removed wholesale: the cookie-attribute cluster
+(CWE-1004/1275/315/614/525 - Set-Cookie recon), the default-error-page
+family (CWE-756/12/7), the TLS certificate family (CWE-296/297/298/299/
+370), the error-disclosure label cluster (CWE-210/211/550/535/536/537),
+the transport-posture pair (CWE-5/1428), and the authn umbrellas
+(CWE-303/305/309/654).
+
+### 7.3 The generalises (14, via `81-fault-squeeze-generalise.yaml`)
+
+Kept faults whose name/description carried a framework or manufacturing
+label get the materialisation name/description rewritten (matching facet
+untouched; `generalise: true` marker, `name`/`description`/
+`extended_description` merge per-key in `fold_authoring`):
+
+- capture-widening to absorb removed children: CWE-489 (debug
+  artefacts; standalone selection entry, keeps the debug-surface hunt
+  that the removed CWE-756/12/7 and the debug-build labels covered),
+  CWE-209 (error disclosure, absorbs its folded CWE-550 with the removed
+  CWE-210/211/535/536/537 probes), CWE-248 (uncaught exception, absorbs
+  its folded CWE-600);
+- hardware/domain-framing de-framed: CWE-1220 (silicon/BIOS framing
+  nulled); CWE-651 (WSDL framing generalised to service-description
+  file);
+- framework-named de-framed: CWE-6/9/98/520/564/599/61 (J2EE/ASP.NET/
+  PHP/Hibernate/OpenSSL/UNIX tokens removed from name and/or
+  description, fault content intact); CWE-917/644 (selection-tier
+  descriptions de-framed).
+
+Net effect: catalogue 254 -> 203; selection tier 153 -> 128; fold
+families 41 -> 26. The matching loop shrinks 16%, the recipe corpus
+keeps its probe content (recipes are materialised by own id regardless
+of fold). Carried forward, not blocking: recipe `nl` still carries
+framework tokens for a few folded entries (inert under the current
+loader, flagged in the mode-4 report); the CWE-7/12 -> CWE-756
+post-generalise near-duplicates merged by the removals; a future pass
+may widen CWE-266's capture kinds (carried from section 6).

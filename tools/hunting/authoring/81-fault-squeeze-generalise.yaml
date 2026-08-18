@@ -1,0 +1,84 @@
+# Authoring sidecar: the fault-squeeze GENERALISES (#66, the 2026-08-17 squeeze
+# pass).
+#
+# De-frameworking: a kept fault whose name/description carries a framework,
+# technology, or manufacturing label that would misdirect the hunting model
+# (mode-2 and mode-4 lens verdicts; mode-3's capture-widening). The fault stays
+# in the catalogue with its authored matching facet (nl/enum_kinds/predicate
+# merged from the range sidecar - this file only rewrites the materialisation
+# name / description / extended_description per key, `generalise: true` marks
+# the override layer). Framework labels never change the probe sequence, so
+# the rewrite removes stack-routing from the wording a hunt model reads when
+# materialising a probe.
+#
+# Conflict resolution: a target that is BOTH generalise-candidate and
+# remove-candidate under another lens is REMOVED instead (CWE-5/12/7/11/13/536/
+# 537/600/554/555/556/1174), so this file only carries the survivors.
+# Extended_descriptions framed entirely for a non-web domain (silicon
+# manufacturing for CWE-1220, WSDL for CWE-651) are nulled so the entry's own
+# body does not re-introduce the misdirection the name/description fix removes.
+entries:
+  CWE-6:
+    generalise: true
+    name: "Misconfiguration: Insufficient Session-ID Length"
+    description: |
+      The application is configured to use an insufficient session ID length.
+  CWE-9:
+    generalise: true
+    name: "Misconfiguration: Weak Access Permissions for Methods"
+    description: |
+      If elevated access rights are assigned to security-relevant methods, then an attacker can take advantage of the permissions to exploit the product.
+  CWE-61:
+    generalise: true
+    name: "Symbolic Link (Symlink) Following"
+  CWE-98:
+    generalise: true
+    name: "Improper Control of Filename for Include/Require Statement ('Remote File Inclusion')"
+    description: |
+      The application receives input from an upstream component, but it does not restrict or incorrectly restricts the input before its usage in "require," "include," or similar functions.
+  CWE-209:
+    generalise: true
+    description: |
+      The product generates or triggers an error message that includes sensitive information about its environment, users, or associated data, whether the message is produced by the application itself, by an external component such as a language runtime, container, or framework, or by an uncaught exception surfacing to the requester.
+  CWE-248:
+    generalise: true
+    description: |
+      An exception is thrown from a function or request handler and is not caught, surfacing a runtime error page, stack trace, or debug details to the requester, or degrading availability.
+  CWE-489:
+    generalise: true
+    description: |
+      The product is released or served with debugging functionality still active: debug code paths or handlers, debug endpoints or pages, debug binaries or debug builds, or verbose debug output (stack traces, debug headers, debug payloads) that should have been stripped for a production deployment.
+  CWE-520:
+    generalise: true
+    name: "Misconfiguration: Use of Impersonation"
+    description: |
+      Allowing an application to run at potentially escalated levels of access to the underlying operating and file systems can be dangerous and result in various forms of attacks.
+  CWE-564:
+    generalise: true
+    name: "SQL Injection: Object-Relational Mapping Query"
+    description: |
+      Using an object-relational mapping layer to execute a dynamic query built with user-controlled input can allow an attacker to modify the query's meaning or to execute arbitrary SQL commands.
+  CWE-599:
+    generalise: true
+    name: "Missing Validation of Certificate Verification Result"
+    description: |
+      The product trusts or uses a certificate without checking the result of the certificate verification step, so it does not ensure that the certificate satisfies all necessary security requirements.
+  CWE-644:
+    generalise: true
+    description: |
+      The product does not neutralize or incorrectly neutralizes web scripting syntax in HTTP headers that can be used by web browser components that can process raw headers.
+  CWE-651:
+    generalise: true
+    name: "Exposure of Service-Description File Containing Sensitive Information"
+    description: |
+      The web-services architecture may require exposing a service-description file that contains information on the publicly accessible services and how callers of these services should interact with them (e.g. what parameters they expect and what types they return).
+    extended_description: null
+  CWE-917:
+    generalise: true
+    description: |
+      The product constructs all or part of an expression language (EL) statement using externally-influenced input from an upstream component, but it does not neutralize or incorrectly neutralizes special elements that could modify the intended EL statement before it is executed.
+  CWE-1220:
+    generalise: true
+    description: |
+      The application's access-control enforcement is too coarse-grained to express the intended policy: a single privilege, role, or route guard admits actors who should be denied access to specific resources, because the policy cannot distinguish them at the required granularity.
+    extended_description: null

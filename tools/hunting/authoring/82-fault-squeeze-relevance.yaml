@@ -1,0 +1,139 @@
+# Authoring sidecar: #66 operator relevance pass (2026-08-18). Second squeeze.
+#
+# Scope confirmation (operator, 2026-08-18): the TLS/crypto cluster and the
+# error/behavioral-oracle cluster are entirely out of scope for the kinds of
+# web targets in scope; the debug-code pair CWE-489/CWE-215 is a duplicate
+# (489 kept); CWE-804 is a trivial finding; the traversal family collapses to
+# CWE-22 as the sole capture; CWE-641 folds under CWE-73.
+#
+# OMITS (removed, not in scope):
+#   * TLS/crypto: CWE-295(+599) cert validation, CWE-300 channel non-endpoint,
+#     CWE-319 cleartext transmission, CWE-322 key exchange, CWE-331(+6)
+#     entropy, CWE-334/335(+336/337/339) small/PRNG-random, CWE-338 weak PRNG,
+#     CWE-341/342 predictable, CWE-347 signature, CWE-523 credential
+#     transport, CWE-649 obfuscation without integrity, CWE-916(+759/760)
+#     password-hash effort, CWE-836 password-hash-as-password, CWE-1394
+#     default crypto key. The TRANSITIONAL password-storage cluster
+#     (CWE-257/260/261) stays: it is not a pure crypto mechanism, it is a
+#     storage-hygiene finding reachable from the web estate. Names
+#     CWE-215/804/114/778/1329 additionally removed as trivial/duplicate/
+#     out-of-scope per the operator's pass.
+#   * error/behavioral oracles: CWE-203/204/208 observable discrepancy,
+#     CWE-209 error-message disclosure, CWE-1254 timing comparison.
+#
+# FOLD-TO (the operator's taxonomy corrections, `fold_to` marker):
+#   * the traversal family collapses: CWE-23 relative, CWE-36 absolute,
+#     CWE-41 path-equivalence, CWE-59 link-following all fold under CWE-22
+#     (their own folded descendants re-fold to 22 through the jump-through).
+#   * CWE-641 (improper restriction of file names) folds under CWE-73.
+#     CWE-73's matching facet (yes, "captures both") subsumes 641.
+entries:
+  CWE-203:
+    omit: true
+    omit_reason: "behavioral oracle (observable discrepancy), out of scope (operator pass 2026-08-18)"
+  CWE-204:
+    omit: true
+    omit_reason: "behavioral oracle (response discrepancy), out of scope (operator pass 2026-08-18)"
+  CWE-208:
+    omit: true
+    omit_reason: "behavioral oracle (timing discrepancy), out of scope (operator pass 2026-08-18)"
+  CWE-209:
+    omit: true
+    omit_reason: "error oracle, out of scope (operator pass 2026-08-18)"
+  CWE-215:
+    omit: true
+    omit_reason: "debug-code duplicate of CWE-489 (operator pass 2026-08-18; 489 kept)"
+  CWE-295:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-300:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-319:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-322:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-331:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-334:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-335:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-338:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-341:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-342:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-347:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-523:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-599:
+    omit: true
+    omit_reason: "TLS/crypto folded recipe under CWE-295, out of scope (operator pass 2026-08-18)"
+  CWE-6:
+    omit: true
+    omit_reason: "TLS/crypto folded recipe under CWE-334, out of scope (operator pass 2026-08-18)"
+  CWE-336:
+    omit: true
+    omit_reason: "TLS/crypto folded recipe under CWE-335, out of scope (operator pass 2026-08-18)"
+  CWE-337:
+    omit: true
+    omit_reason: "TLS/crypto folded recipe under CWE-335, out of scope (operator pass 2026-08-18)"
+  CWE-339:
+    omit: true
+    omit_reason: "TLS/crypto folded recipe under CWE-335, out of scope (operator pass 2026-08-18)"
+  CWE-649:
+    omit: true
+    omit_reason: "TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-759:
+    omit: true
+    omit_reason: "password-hash folded recipe under CWE-916, out of scope (operator pass 2026-08-18)"
+  CWE-760:
+    omit: true
+    omit_reason: "password-hash folded recipe under CWE-916, out of scope (operator pass 2026-08-18)"
+  CWE-778:
+    omit: true
+    omit_reason: "insufficient logging, out of scope (operator pass 2026-08-18)"
+  CWE-804:
+    omit: true
+    omit_reason: "trivial finding (guessable CAPTCHA), operator pass 2026-08-18"
+  CWE-836:
+    omit: true
+    omit_reason: "password-hash-as-password, crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-916:
+    omit: true
+    omit_reason: "password-hash effort, crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-114:
+    omit: true
+    omit_reason: "process control, out of scope (operator pass 2026-08-18)"
+  CWE-1254:
+    omit: true
+    omit_reason: "behavioral oracle (comparison timing), out of scope (operator pass 2026-08-18)"
+  CWE-1329:
+    omit: true
+    omit_reason: "un-updatable component, out of scope (operator pass 2026-08-18)"
+  CWE-1394:
+    omit: true
+    omit_reason: "default crypto key, TLS/crypto cluster, out of scope (operator pass 2026-08-18)"
+  CWE-23:
+    fold_to: "CWE-22"
+  CWE-36:
+    fold_to: "CWE-22"
+  CWE-41:
+    fold_to: "CWE-22"
+  CWE-59:
+    fold_to: "CWE-22"
+  CWE-641:
+    fold_to: "CWE-73"

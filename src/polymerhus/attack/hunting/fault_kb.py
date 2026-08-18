@@ -13,6 +13,9 @@ the spec's two facets (spec section 6):
     never silently dropped.
   * `load_materialisation` - the MATERIALISATION facet: rich NL content by
     `fault_id` for the prompt-builder (probe-materialisation grounding).
+  * `load_fold_families` - the fold-family relation: for each SELECTION-TIER
+    fault_id, the folded fault_ids captured under it (the reflection material
+    the hunt-orchestrator's graph logic attaches to the parent fault unit).
 
 Fail-open contract: a missing or malformed catalogue yields an EMPTY KB (an
 empty tuple / empty mapping), never an exception to the caller - consistent
@@ -26,6 +29,7 @@ context's own data seam, not a graph consumer.
 from __future__ import annotations
 
 import logging
+from collections import defaultdict
 from dataclasses import dataclass, field
 from importlib import resources
 from pathlib import Path
@@ -252,3 +256,49 @@ def load_materialisation(
         if materialisation is not None:
             by_id[materialisation.fault_id] = materialisation
     return by_id
+
+
+def load_fold_families(
+        path: Path | str | None = None) -> Mapping[str, tuple[str, ...]]:
+    """The fold-family relation (the selection-tier parent -> folded-faults
+    map): for every SELECTION-TIER fault_id, the sorted tuple of folded
+    fault_ids captured under it - an empty tuple for a leaf parent. This is
+    the shape the hunt-orchestrator's graph logic consumes to attach each
+    folded recipe (the reflection material) to its parent fault unit, so the
+    hunting agent bounds the parent fault while the folded recipes stay
+    addressable as consideration material.
+
+    Fail-open to an empty map on a missing or malformed catalogue (never
+    crashes the caller). A recipe whose `fold_parent` does not name a
+    selection-tier entry is skipped with a logged diagnostic (per-entry
+    fail-open, never a silent drop). Deterministic: sorted iteration.
+    """
+    try:
+        rows = _read_catalogue(path)
+    except Exception as exc:  # noqa: BLE001 - fail-open is the contract
+        log.warning("fault-KB catalogue read failed (fail-open to empty): %s",
+                    exc)
+        return {}
+    selection: set[str] = set()
+    recipes: dict[str, list[str]] = defaultdict(list)
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+        fault_id = row.get("fault_id")
+        if not isinstance(fault_id, str) or not fault_id:
+            continue
+        fold_parent = row.get("fold_parent")
+        if fold_parent is None:
+            selection.add(fault_id)
+        elif isinstance(fold_parent, str):
+            recipes[fold_parent].append(fault_id)
+    families: dict[str, tuple[str, ...]] = {
+        fault_id: () for fault_id in sorted(selection)}
+    for capture, folded in recipes.items():
+        if capture not in selection:
+            log.warning(
+                "fault-KB folded recipe folds to %s, not a selection-tier "
+                "entry (skipped)", capture)
+            continue
+        families[capture] = tuple(sorted(folded))
+    return families
