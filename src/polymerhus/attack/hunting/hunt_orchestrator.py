@@ -113,12 +113,22 @@ class GateInput(BaseModel):
     set, the KB evidence (empty + degraded flag when the KB is unavailable,
     D67-11), and the read-only graph surface. The #110 engine drives it PER
     PAIR: `candidates` carries the ONE pair this turn reasons over, so every
-    turn is stateful on the run's orchestration thread."""
+    turn is stateful on the run's orchestration thread.
+
+    The #135 symbolic render rides the SAME input: the unit's typed projection
+    (spine + outgoing typed edges), the fault's materialisation-facet content
+    for the pair's `fault_class`, and the sorted sub-fault fold family captured
+    under it (empty tuple for a leaf parent). Each slot is degraded
+    independently - `projection` None, an absent materialisation/fold-family
+    key - and renders as UNKNOWN, never FALSE, never a prune signal (C16)."""
 
     candidates: list[DeliveredCandidate] = Field(default_factory=list)
     kb_degraded: bool = False
     kb_evidences: dict = Field(default_factory=dict)
     surface: list[dict] = Field(default_factory=list)
+    projection: object | None = None
+    materialisation: dict = Field(default_factory=dict)
+    fold_family: dict = Field(default_factory=dict)
 
 
 class GateDecision(BaseModel):
@@ -311,12 +321,17 @@ def mint_hunt_config(
     prior_hunt_insights: Sequence[dict],
     tool_registry: Sequence[dict],
     target_caveats: Sequence[str] = (),
+    sub_fault_ids: Sequence[str] = (),
 ) -> HuntConfig:
     """Mint the five-part `HuntConfig` (D3) for a carried direction: the prompt
     template (rationale + extension points + assumptions + supposed payload
     vectors + L0 fault-applicability evidence), the wide surface context (the
     adapted index-card), the target caveats, the prior-hunt insights, and the
-    fault-targeting tool registry."""
+    fault-targeting tool registry. `sub_fault_ids` carries the folded fault_ids
+    captured under the parent `fault_class` by the fold-family relation (#135):
+    the dispatch stretch supplies them from `fault_kb.load_fold_families`, so
+    the hunting agent bounds the parent fault while the folded variants stay
+    consideration material."""
     evidence: list[str] = []
     if candidate.applies_witnesses.deterministic is not None:
         evidence.append(f"deterministic: {candidate.applies_witnesses.deterministic}")
@@ -326,6 +341,7 @@ def mint_hunt_config(
         hunt_id=hunt_id,
         unit_id=direction.unit_id,
         fault_class=direction.fault_class,
+        sub_fault_ids=list(sub_fault_ids),
         prompt_template=HuntPromptTemplate(
             rationale=direction.rationale,
             extension_points=list(direction.envisioned_test_primitives),
@@ -428,18 +444,24 @@ async def arun_orchestration(
 
     def _resolve_orchestrator() -> "HuntOrchestratorActor":
         nonlocal orchestrator
-        if orchestrator is not None:
-            return orchestrator
-        if orchestrator_factory is not None:
-            orchestrator = orchestrator_factory(run_id)
-            return orchestrator
-        with _ORCHESTRATOR_LOCK:
-            actor = _ORCHESTRATOR_ACTORS.get(run_id)
-            if actor is None:
-                from polymerhus.attack.hunting.actors import HuntOrchestratorActor  # noqa: PLC0415
-                actor = HuntOrchestratorActor(run_id)
-                _ORCHESTRATOR_ACTORS[run_id] = actor
-            orchestrator = actor
+        if orchestrator is None:
+            if orchestrator_factory is not None:
+                orchestrator = orchestrator_factory(run_id)
+            else:
+                with _ORCHESTRATOR_LOCK:
+                    actor = _ORCHESTRATOR_ACTORS.get(run_id)
+                    if actor is None:
+                        from polymerhus.attack.hunting.actors import HuntOrchestratorActor  # noqa: PLC0415
+                        actor = HuntOrchestratorActor(run_id, tools=tools,
+                                                      project_id=project_id)
+                        _ORCHESTRATOR_ACTORS[run_id] = actor
+                    orchestrator = actor
+        # Arm the run's actor with THIS pass's tool seam bodies and project
+        # root (#135): the actor binds them onto its session agent lazily on
+        # first use, so the gate turn gets the run's real seam bodies (and a
+        # later pass on the same run re-arms its own).
+        orchestrator.tools = tools
+        orchestrator.project_id = project_id
         return orchestrator
 
     async def _await_seam(fn, *args):
@@ -555,6 +577,22 @@ async def arun_orchestration(
         except Exception as exc:  # noqa: BLE001 - O5: degrade to an empty view
             logger.warning("graph view read failed, gate grounds degraded (%s)", exc)
 
+    # The #135 symbolic render's shared facets: the materialisation and
+    # fold-family maps load ONCE per pass (static YAML reads) and are reused
+    # across every pair. A failing read degrades the maps (each pair's slot
+    # then renders UNKNOWN), never any single turn (C16).
+    materialisations: dict = {}
+    fold_families: dict = {}
+    try:
+        from polymerhus.attack.hunting.fault_kb import (  # noqa: PLC0415
+            load_fold_families,
+            load_materialisation,
+        )
+        materialisations = dict(load_materialisation())
+        fold_families = dict(load_fold_families())
+    except Exception as exc:  # noqa: BLE001 - fail-open, per-slot degrade
+        logger.warning("fault-KB symbolic render degraded (%s)", exc)
+
     # --- The #110 graph engine -------------------------------------------------
     # Build the node closures over the canon helpers, compile IN-MEMORY per pass
     # (the durable memory stays in the actor's pooled session checkpointer and
@@ -567,26 +605,78 @@ async def arun_orchestration(
     by_identity = {(c.unit_id, c.fault_class): c for c in intake.accepted}
 
     async def _reason_node(state) -> dict:
-        """The per-pair stateful REASON stretch: ONE gate turn for the current
-        pair on the run's orchestration thread, appending its carried
-        directions + gate-pruned trail events. Fail-open: a raising/empty turn
-        carries the pair bare."""
+        """The per-pair stateful REASON stretch: the #135 symbolic render (the
+        per-pair `GateInput` - projection, materialisation, fold family - from
+        the symbolic layer, each slot fail-open) then ONE gate turn for the
+        current pair on the run's orchestration thread, appending its carried
+        directions + gate-pruned trail events. The render is pure symbolic
+        mapping: nothing calls ahead of it (C20), and it always completes (a
+        degenerate pass renders without firing the gate). Fail-open: a
+        raising/empty turn carries the pair bare."""
         current = state.get("current")
         if current is None:
             return {"directions": [], "trail": []}
-        directions: list[EnvisionedDirection] = []
-        if reason_fn is not None:
+
+        # --- the symbolic render (#135, spec 3.1) -----------------------------
+        # Projection: the unit's typed facets via the read-only graph view
+        # (fail-open per slot: a raise/None degrades `projection` to None,
+        # never prunes - C16). Materialisation and fold family ride the
+        # per-pass maps, attached for the pair's fault_class only.
+        projection = None
+        if tools.graph_view is not None:
             try:
-                decision = await _await_seam(reason_fn, GateInput(
-                    candidates=[current],
-                    kb_degraded=kb_degraded,
-                    kb_evidences=kb_evidences,
-                    surface=surface,
-                ))
-                directions = list(getattr(decision, "directions", None) or [])
-            except Exception as exc:  # noqa: BLE001 - fail-open: carry the pair
-                logger.warning("gate reasoning failed for %s, carrying (%s)",
+                from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
+                    build_projection,
+                )
+                projection = build_projection(
+                    project_id, current.unit_id, read_fn=tools.graph_view.read)
+            except Exception as exc:  # noqa: BLE001 - per-slot degrade
+                logger.warning("unit projection degraded for %s (%s)",
                                revival_key(current.unit_id, current.fault_class), exc)
+        materialisation = materialisations.get(current.fault_class)
+        fold_ids = fold_families.get(current.fault_class)
+        gate_input = GateInput(
+            candidates=[current],
+            kb_degraded=kb_degraded,
+            kb_evidences=kb_evidences,
+            surface=surface,
+            projection=projection,
+            materialisation={current.fault_class: materialisation},
+            fold_family={current.fault_class: fold_ids},
+        )
+
+        directions: list[EnvisionedDirection] = []
+        from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
+            orchestrator_gate_span,
+            trace_gate_step,
+        )
+        with orchestrator_gate_span(run_id):
+            trace_gate_step("symbolic-render", input={
+                "pair": revival_key(current.unit_id, current.fault_class),
+                "projection": "ok" if projection is not None else "UNKNOWN",
+                "materialisation": "ok" if materialisation is not None else "UNKNOWN",
+                "fold_family": "ok" if fold_ids is not None else "UNKNOWN",
+                "kb_degraded": kb_degraded,
+            })
+            if reason_fn is not None:
+                try:
+                    decision = await _await_seam(reason_fn, gate_input)
+                    directions = list(getattr(decision, "directions", None) or [])
+                    trace_gate_step("gate-decision", output={
+                        "directions": [{
+                            "pair": revival_key(d.unit_id, d.fault_class),
+                            "carried": bool(d.carried),
+                            "rationale": d.rationale,
+                            "assumptions": list(d.assumptions),
+                            "envisioned_test_primitives": list(
+                                d.envisioned_test_primitives),
+                            "supposed_payload_vectors": list(
+                                d.supposed_payload_vectors),
+                        } for d in directions],
+                    })
+                except Exception as exc:  # noqa: BLE001 - fail-open: carry the pair
+                    logger.warning("gate reasoning failed for %s, carrying (%s)",
+                                   revival_key(current.unit_id, current.fault_class), exc)
         if not directions:
             directions = [
                 EnvisionedDirection(unit_id=current.unit_id,
@@ -682,6 +772,9 @@ async def arun_orchestration(
         caveats = (["yellow match re-matched after back-edge"] if routed else [])
 
         # Mint (D3), dispatch (IA-2), record (D8) - fail-open at every step.
+        # The folded sub-fault ids ride the fold-family map (#135): the mint
+        # attaches the direction's fold family deterministically, exactly like
+        # every other non-seed slot of the config.
         hunt_id = uuid.uuid4().hex
         config = mint_hunt_config(
             direction,
@@ -691,6 +784,7 @@ async def arun_orchestration(
             prior_hunt_insights=prior_insights,
             tool_registry=_registry_from_kb(kb_evidences.get(direction.fault_class, {})),
             target_caveats=caveats,
+            sub_fault_ids=fold_families.get(direction.fault_class) or (),
         )
         config_ref = _write("config", config.model_dump())
 

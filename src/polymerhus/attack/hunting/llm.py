@@ -167,9 +167,112 @@ def _rematch_skill() -> str:
     return skill_for("hunting/hunt-orchestrator-rematch", fallback=_REMATCH_SKILL_FALLBACK)
 
 
+def _render_projection(projection) -> str:
+    """Deterministic render of the unit's typed projection (spec 3.1): the
+    typed spine keys present, per-family outgoing Service->System edges (target
+    kind + role presence), the data-edge counts, and the DataRelationship kinds
+    among the unit's items - each facet sorted, absence rendered as UNKNOWN
+    (never FALSE, never a prune signal - C16). The projection is an
+    `object | None` in `GateInput`, so every facet is read via getattr and a
+    missing facet degrades that slot only."""
+    if projection is None:
+        return "UNKNOWN (projection read failed or absent)"
+    kind = getattr(projection, "kind", None) or "UNKNOWN"
+    spine = getattr(projection, "spine", None) or {}
+    edges = getattr(projection, "edges", None) or {}
+    data_edges = getattr(projection, "data_edges", None) or {}
+    data_rel = getattr(projection, "data_rel_kinds", None) or frozenset()
+
+    out = [f"unit kind: {kind}"]
+    spine_keys = sorted(k for k in spine if k)
+    out.append(f"spine (present keys): {spine_keys or '(none present)'}")
+    if edges:
+        families = []
+        for family in sorted(edges):
+            infos = edges.get(family) or ()
+            rendered = []
+            for e in infos:
+                target = getattr(e, "target_kind", None) or "UNKNOWN"
+                role = getattr(e, "role", None)
+                rendered.append(
+                    f"{target}{' (role present)' if role is not None else ''}")
+            families.append(f"{family}: {sorted(rendered) or '(no edges)'}")
+        out.append("outgoing edges:")
+        out += [f"  - {line}" for line in families]
+    else:
+        out.append("outgoing edges: (none)")
+    if data_edges:
+        out.append("data edges: " + ", ".join(
+            f"{fam}={data_edges[fam]}" for fam in sorted(data_edges)))
+    else:
+        out.append("data edges: (none)")
+    out.append("data-relationship kinds: " +
+               ("; ".join(sorted(data_rel)) if data_rel else "(none)"))
+    return "\n".join(out)
+
+
+def _render_materialisation(entry) -> str:
+    """Deterministic render of a fault's materialisation-facet content (the CWE
+    NL evidence, spec 3.1): name, description, extended description, alternate
+    terms, related attack patterns, likelihood, common consequences,
+    potential mitigations, functional areas - each facet sorted where it is a
+    sequence; an absent entry renders UNKNOWN (never a prune signal - C16).
+    Accepts the `FaultMaterialisation` dataclass or a plain dict (both shapes
+    occur on the `GateInput` surface)."""
+    if entry is None:
+        return "UNKNOWN (materialisation unavailable for this fault_class)"
+
+    def _f(name):
+        if isinstance(entry, dict):
+            return entry.get(name)
+        return getattr(entry, name, None)
+
+    name = _f("name")
+    description = _f("description")
+    extended = _f("extended_description")
+    alt_terms = _f("alternate_terms") or []
+    patterns = _f("related_attack_patterns") or []
+    likelihood = _f("likelihood")
+    consequences = _f("common_consequences") or []
+    mitigations = _f("potential_mitigations") or []
+    areas = _f("functional_areas") or []
+
+    out = []
+    if name:
+        out.append(f"fault: {name}")
+    if description:
+        out.append(f"description: {description}")
+    if extended:
+        out.append(f"extended description: {extended}")
+    if alt_terms:
+        out.append("alternate terms: " + "; ".join(sorted(map(str, alt_terms))))
+    if patterns:
+        out.append("related attack patterns: " + "; ".join(sorted(map(str, patterns))))
+    if likelihood:
+        out.append(f"likelihood: {likelihood}")
+    if consequences:
+        out.append("common consequences: " + "; ".join(sorted(map(str, consequences))))
+    if mitigations:
+        out.append("potential mitigations: " + "; ".join(sorted(map(str, mitigations))))
+    if areas:
+        out.append("functional areas: " + "; ".join(sorted(map(str, areas))))
+    return "\n".join(out) or "(materialisation entry empty)"
+
+
+def _render_fold_family(ids) -> str:
+    """Deterministic render of the folded sub-fault family (spec 3.1): the
+    sorted tuple of folded fault_ids captured under the parent fault class -
+    consideration material, never a prune signal. An absent key renders
+    UNKNOWN (C16)."""
+    if not ids:
+        return "UNKNOWN (no sub-fault fold family captured under this fault)"
+    return ", ".join(sorted(map(str, ids)))
+
+
 def _compose_gate_prompt(inp: GateInput) -> str:
-    """Render the Q8 gate input (accepted candidates + KB evidence + graph surface)
-    into the reasoning turn's user prompt."""
+    """Render the Q8 gate input (accepted candidates + KB evidence + graph
+    surface + the #135 symbolic render: unit projection, fault materialisation,
+    folded sub-fault family) into the reasoning turn's user prompt."""
     lines = [
         f"KB grounding: {'DEGRADED (KB unavailable; do not prune on this)' if inp.kb_degraded else 'available'}",
         "",
@@ -185,6 +288,19 @@ def _compose_gate_prompt(inp: GateInput) -> str:
     lines += [
         "",
         f"Read-only graph surface (index cards): {inp.surface or '(none)'}",
+        "",
+        "Unit projection (typed facet surface):",
+        _render_projection(inp.projection),
+        "",
+        f"Fault materialisation ({inp.candidates[0].fault_class if inp.candidates else '?'}):",
+        _render_materialisation(
+            (inp.materialisation or {}).get(
+                inp.candidates[0].fault_class if inp.candidates else None)),
+        "",
+        "Sub-fault fold family (consideration material):",
+        _render_fold_family(
+            (inp.fold_family or {}).get(
+                inp.candidates[0].fault_class if inp.candidates else None)),
         "",
         "Return one direction per candidate: set carried true/false, and for a "
         "carried direction fill rationale, assumptions, envisioned_test_primitives, "

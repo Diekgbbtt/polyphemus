@@ -76,7 +76,7 @@ class _TurnActor:
         raise NotImplementedError
 
     async def _ensure_started(self, response_format=None, system_prompt=None,
-                              middleware_extra: list = None) -> None:
+                              middleware_extra: list = None, tools=None) -> None:
         """Spawn the actor task on first use (lazy: a pass with no turns never
         pays for an actor), wiring the reply middleware into its turns."""
         if self._task is not None:
@@ -109,6 +109,8 @@ class _TurnActor:
             "model_factory": self._model_factory,
             "observe": self._observe,
         }
+        if tools:
+            kwargs["tools"] = list(tools)
         if response_format is not None:
             kwargs["response_format"] = response_format
         if system_prompt is not None:
@@ -174,6 +176,102 @@ class _TurnActor:
                 pass
 
 
+def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | None):
+    """The model-facing tool surface bound onto the orchestrator's session
+    agent (#135, D67-04): EXACTLY the three tools `back_edge`, `graph_view`,
+    `store_reads` - no HuntConfig-writing tool (the mint stays deterministic at
+    the dispatch stretch). Each READ-side tool is bound to its seam body when
+    present; a missing seam body degrades to a fail-open stub returning a
+    denoted error object (C18) - never raising into the turn. `graph_view`
+    rides `ReadOnlyGraphView`, so a write-shaped cypher surfaces
+    `ReadOnlyGraphViewError` and never executes the write (C19/C5).
+
+    The seam bodies themselves are constructed lazily (this module imports no
+    driver at import); the tools are JSON-serialisable callables a
+    structured-output session turn can bind."""
+    from langchain_core.tools import tool
+
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        ReadOnlyGraphViewError,
+    )
+    from polymerhus.recon.control.targeted import (  # noqa: PLC0415
+        AnalyserReconRequest,
+        ReconScope,
+    )
+
+    back_edge_seam = getattr(tools, "back_edge", None)
+    graph_view_seam = getattr(tools, "graph_view", None)
+    store_seam = getattr(tools, "store_reads", None)
+    surface: list = []
+
+    @tool
+    def back_edge(job: str, unit_id: str, targets: list | None = None,
+                  note: str | None = None) -> dict:
+        """Raise a targeted-recon need on the hunt back-edge (IA-6, origin
+        'hunting'). The returned recon evidence lands in the run's hunt store
+        and refoots the re-match. job is a registered recon tool; unit_id the
+        kind-qualified testable-unit identity ('Service:<slug>'); targets the
+        concrete L0 handles; note records why the need arose."""
+        if back_edge_seam is None:
+            return {"error": "no back_edge seam configured; recon need not raised",
+                    "unit_id": unit_id, "job": job}
+        try:
+            request = AnalyserReconRequest(
+                job=job,
+                scope=ReconScope(unit_id=unit_id, targets=list(targets or ()),
+                                 note=note),
+                origin="hunting",
+                requester_id=f"hunt-orchestrator-{run_id}",
+            )
+            result = back_edge_seam(request, run_id, project_id)
+            return result.model_dump() if hasattr(result, "model_dump") else {"result": result}
+        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            logger.warning("back_edge tool degraded for %s (%s)", unit_id, exc)
+            return {"error": f"back_edge degraded: {exc}", "unit_id": unit_id,
+                    "job": job}
+
+    @tool
+    def graph_view(cypher: str, params: dict | None = None) -> dict:
+        """Read the live L0/L1 graph through the run's read-only view (D67-04):
+        read index cards / typed facets with read-only cypher. Write-shaped
+        cypher is rejected (surfaces ReadOnlyGraphViewError, never writes); a
+        read failure degrades to an empty denoted-error result (O5)."""
+        if graph_view_seam is None:
+            return {"error": "no graph view configured; reading degraded"}
+        read_fn = getattr(graph_view_seam, "read", None)
+        if not callable(read_fn):
+            return {"error": "graph view misconfigured; reading degraded"}
+        try:
+            rows = read_fn(cypher, params or {})
+            if not isinstance(rows, list):
+                return {"rows": [rows] if rows is not None else []}
+            return {"rows": rows}
+        except ReadOnlyGraphViewError:
+            raise  # surfaced to the model by the tool runtime - never a write
+        except Exception as exc:  # noqa: BLE001 - fail-open (O5)
+            logger.warning("graph_view tool degraded (%s)", exc)
+            return {"error": f"graph_view degraded: {exc}"}
+
+    @tool
+    def store_reads(revival_key: str) -> dict:
+        """Read the prior-hunt insights for a revival key
+        ('<unit_id>::<fault_class>') from the run's hunt store (O4): a failed or
+        absent store degrades to a denoted error, never into the turn."""
+        if store_seam is None:
+            return {"error": "no hunt store configured; prior insights unavailable",
+                    "revival_key": revival_key}
+        try:
+            insights = store_seam.read_memory(revival_key)
+            return {"revival_key": revival_key,
+                    "insights": list(insights) if isinstance(insights, list) else []}
+        except Exception as exc:  # noqa: BLE001 - fail-open (O4)
+            logger.warning("store_reads tool degraded for %s (%s)", revival_key, exc)
+            return {"error": f"store_reads degraded: {exc}", "revival_key": revival_key}
+
+    surface.extend([back_edge, graph_view, store_reads])
+    return surface
+
+
 class HuntOrchestratorActor(_TurnActor):
     """The hunt-orchestrator as a persistent MAILBOX actor (feat/async-actor-agents).
 
@@ -198,10 +296,12 @@ class HuntOrchestratorActor(_TurnActor):
     _role_id = "hunting_orchestrator"
 
     def __init__(self, run_id: str, *, checkpointer=None, model_factory=None,
-                 observe: bool = True):
+                 observe: bool = True, tools=None, project_id: str | None = None):
         super().__init__(checkpointer=checkpointer, model_factory=model_factory,
                          observe=observe)
         self._run_id = run_id
+        self.tools = tools
+        self.project_id = project_id
 
     def _make_address(self):
         from polymerhus.app.llm.session_address import HuntingOrchestratorSession  # noqa: PLC0415
@@ -213,8 +313,18 @@ class HuntOrchestratorActor(_TurnActor):
             MatchVerdict,
         )
         from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
+        surface = ()
+        if getattr(self.tools, "back_edge", None) is not None or getattr(
+                self.tools, "graph_view", None) is not None or getattr(
+                self.tools, "store_reads", None) is not None:
+            surface = build_orchestrator_tool_surface(
+                self.tools,
+                run_id=self._run_id,
+                project_id=self.project_id,
+            )
         await super()._ensure_started(
             response_format=ToolStrategy(GateDecision | MatchVerdict),
+            tools=list(surface) or None,
         )
 
     def _on_message(self, message, last_turn):
