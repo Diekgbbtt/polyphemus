@@ -106,6 +106,7 @@ def test_hunter_tool_calling_lane_compacts_e2e(monkeypatch):
     import polymerhus.app.llm.providers as P
 
     monkeypatch.setenv("LLM_MODEL_HUNTING_HUNTER", "opencode:gpt-test")
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
 
     def spy(provider, model, **kw):
         return _RealisticModel(body="", summary_text=GOOD_SUMMARY_TEXT)

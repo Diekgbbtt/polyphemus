@@ -599,6 +599,22 @@ BARRIER_PENDING_TIMEOUT_S = 90.0 * 60.0
 # time, so a handful of workers covers concurrent session threads).
 DEFAULT_MAX_WORKERS = 4
 
+# ONE process-wide pass pool, shared by every manager (D4): a per-manager pool
+# would leak idle worker threads for each run/actor's lifetime - the manager has
+# no lifecycle hook to reap them, so the pool is module-scoped and bounded.
+_executor: ThreadPoolExecutor | None = None
+_executor_lock = threading.Lock()
+
+
+def _shared_executor() -> ThreadPoolExecutor:
+    global _executor
+    with _executor_lock:
+        if _executor is None:
+            _executor = ThreadPoolExecutor(
+                max_workers=DEFAULT_MAX_WORKERS, thread_name_prefix="compaction")
+        return _executor
+
+
 _middleware_cls = None
 
 
@@ -721,7 +737,6 @@ class CompactionManager:
         self._streak: dict[str, int] = {}
         self._last_reports: dict[str, CompactReport] = {}
         self._escalated: dict[str, bool] = {}
-        self._executor: ThreadPoolExecutor | None = None
         self._lock = threading.RLock()
 
     # -- the observable surface ------------------------------------------------
@@ -772,7 +787,7 @@ class CompactionManager:
             if thread_id in self._pending:
                 return None
             existing = self._existing.get(thread_id)
-            executor = self._executor_pool()
+            executor = _shared_executor()
             future = executor.submit(
                 self._run_pass, thread_id, list(messages), existing)
             self._pending[thread_id] = future
@@ -899,15 +914,6 @@ class CompactionManager:
             self._streak[thread_id] = 0
             self._escalated.pop(thread_id, None)
             entry.escalated = False
-
-    def _executor_pool(self) -> ThreadPoolExecutor:
-        with self._lock:
-            if self._executor is None:
-                self._executor = ThreadPoolExecutor(
-                    max_workers=DEFAULT_MAX_WORKERS,
-                    thread_name_prefix="compaction",
-                )
-            return self._executor
 
     def _run_pass(self, thread_id: str, messages: list, existing: Any) -> CompactResult:
         """Run the pass out-of-band; the runner is fail-open so a raising pass is a

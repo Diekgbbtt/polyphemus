@@ -58,6 +58,8 @@ The END of the turn (`after_agent` / the post-turn seam) spawns the out-of-band 
 `before_model` is the barrier: it awaits any pending task, applies the staged result, and - as a backstop - if the ledger is over budget with NO pending task (a lost or restarted task), compaction runs synchronously there.
 A call never proceeds on an over-budget window; the backstop is what guarantees it after task loss.
 
+**Known limitation (bounded, fail-open):** the barrier is a SYNCHRONOUS block (`future.result` under the `BARRIER_PENDING_TIMEOUT_S` bound), because langchain's `AgentMiddleware.before_model` hook is synchronous by contract. In the SYNC lane (`run_session_turn`) that is the natural blocking point; in the ASYNC actor lane (`arun_session_turn` -> `ainvoke`) the same hook blocks the event loop for the pass's duration. The pass is bounded (the #73 escalating read budget) and the barrier releases on timeout (fail-open), so the freeze is bounded and never a crash; making the barrier genuinely awaitable would require an async middleware hook the built seam does not expose, and is a follow-up if a live run shows the freeze matters.
+
 **Rationale.**
 Separating the non-blocking ledger update (cheap, per response) from the spawn (once per turn) keeps the model<->tool loop untouched while placing the only blocking point exactly where the next request is about to be built.
 
@@ -112,18 +114,19 @@ mem0 is evaluated and REJECTED for this ticket's offload: it serves semantic rec
 **Rationale.**
 The only current tool is the raw terminal, whose payload is the whole command output; cutting past the header is heuristic, so the header must carry the command, the outcome, and the body's head/tail shape - everything else lives in the module store at full fidelity.
 
-## D9 - Consumers: the hunting hunter's async actor lane + the analysis mechanism-typist's session lane
+## D9 - Consumers: every checkpointer-backed production session agent
 
-The wired consumers are the two production state machines that exercise the component's client seam, so BOTH a tool-calling agent loop and a chained single-shot text generator are covered:
+The wired consumers are the checkpointer-backed (`create_agent`) production session agents across the modules, so BOTH agent shapes - a tool-calling actor loop and a chained single-shot text generator - are covered, and the middleware is proven orthogonal to the state machine it wraps:
 
 - the hunting hunter's ASYNC lane: `HuntingHunterActor` -> `run_session_agent` -> `arun_session_turn` (a tool-calling mailbox actor);
-- the analysis mechanism-typist's CHAINED TEXT-GENERATOR lane: `stateful_invoke_fn` -> `stateful_turn` -> `run_session_turn` (the 3-call reflection/extraction/linking chain over one growing session thread, no tools).
+- the analysis mechanism-typist's CHAINED TEXT-GENERATOR lane: `stateful_invoke_fn` -> `stateful_turn` -> `run_session_turn` (the 3-call reflection/extraction/linking chain over one growing session thread, no tools);
+- the H generalisation (ticket #134, ratified 2026-08-18): every remaining checkpointer-backed agent - the analysis assigner + data-modeller (joining the mechanism-typist), the recon-pod configurator + triager (a process-wide per-role middleware, the manager keying state by `thread_id`), and the recon-orchestrator + hunt-orchestrator actors. The wiring is additive at session construction (`middleware`/`middleware_extra`), never agent-logic changes.
 
 The sync `hunt_session` ContextVar rollback lane is NOT wired (counterchecked per the operator's request: `hunting_agent.py`'s dispatch comment states "The actor-backed production seams ignore it - the per-hunt `HuntingHunterActor` already owns that thread"; `actors.py` documents the actor as "replacing the `hunt_session` ContextVar + `stateful_turn` seam, which remains the sync rollback lane").
-No other consumer is wired in this change; the #84 test-executor pod's migration (interim `trim_messages` -> offload + summarise) is a follow-up against this component's client seam.
+The one-shot `invoke_role` leaves (bootstrapper, anatomy, curation, sweep, the legacy gate/re-match/decide_routing seams) and the StateGraph-without-checkpointer pipelines (supervisor, pod_graph, job_agent) are NOT compacted - they hold no resumable session thread to compact. The #84 test-executor pod's migration (interim `trim_messages` -> offload + summarise) is a follow-up against this component's client seam.
 
 **Rationale.**
-The hunter and the mechanism-typist are implemented and production-bound; the rollback lane must not gain behaviour production does not share. Wiring two consumers of different agent shape (tool-calling vs chained single-shot) proves the middleware is orthogonal to the state machine it wraps, not bound to one loop.
+The hunter and the mechanism-typist are implemented and production-bound; the rollback lane must not gain behaviour production does not share. Wiring consumers of different agent shape (tool-calling vs chained single-shot) proves the middleware is orthogonal to the state machine it wraps, not bound to one loop.
 
 ## D10 - In-flight generation: post-response only, client-side only
 
