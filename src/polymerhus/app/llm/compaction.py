@@ -2,18 +2,22 @@
 
 Long-horizon session agents accumulate reasoning turns and tool outputs until they
 exceed the model's context window. This module owns the compaction logic: it
-measures a session trail's occupancy from the provider's REAL per-step usage,
-flags the session as over budget once occupancy crosses a configurable threshold
-of the model's real window (read from the gateway capability surface, never a
-hardcoded table), and - in later slices - runs the out-of-band compact pass
-(summarise reasoning, offload tool bodies, preserve the replay tail) behind a
-barrier. It augments the SESSION path only (`run_session_turn` /
-`arun_session_turn` via the `middleware` seam); the one-shot path is untouched.
+    measures a session trail's occupancy from the provider's REAL per-step usage,
+    flags the session as over budget once occupancy crosses a configurable threshold
+    of the model's real window (read from the gateway capability surface, never a
+    hardcoded table), and - behind the spawn/barrier of later slices - runs the
+    out-of-band compact pass (summarise reasoning, offload tool bodies, preserve
+    the replay tail) that STAGES its result rather than writing the checkpointer
+    (D1). It augments the SESSION path only (`run_session_turn` /
+    `arun_session_turn` via the `middleware` seam); the one-shot path is untouched.
 
-Slice A (this module's current surface) is the measurement half: the per-thread
-usage ledger and the threshold trigger, wired as an `AgentMiddleware.after_model`
-hook that updates the ledger and NEVER spawns compaction. The spawn, the barrier,
-the compact pass, and the running summary land in later slices.
+Slice A (the measurement half) is the per-thread usage ledger and the threshold
+trigger, wired as an `AgentMiddleware.after_model` hook that updates the ledger
+and NEVER spawns compaction. Slice D (this module's second surface) is the pure
+compact pass - `compact_pass` - composing the tool-output offload (slice B) and
+the running summary (slice C) into ONE staged result honouring the D7
+replay-collision precedence. The spawn, the barrier, and the wiring land in
+later slices.
 
 The load-bearing principles (ADR `docs/design/context-compaction-95-decisions.md`):
 
@@ -30,6 +34,11 @@ The load-bearing principles (ADR `docs/design/context-compaction-95-decisions.md
   `count_tokens_approximately` is the fail-open fallback when usage is absent.
 - **Cache-track is observability, never a gate (D11 item 3)**: cache-read is
   recorded on the ledger, never load-bearing on its own.
+- **Replay-collision precedence (D7)**: a reasoning-capable profile reserves a
+  token-bounded byte-identical tail (default 30k, measured from the trail's end)
+  that compaction neither summarises nor offloads; profile false/None means all
+  reasoning-bearing content is summarisable - there is nothing byte-identical
+  to preserve.
 
 Importing this module performs no I/O and requires no env var (CODING_STANDARD
 section 6). The `AgentMiddleware` base class is imported lazily inside the factory,
@@ -38,12 +47,21 @@ never at import (the `actor.py` precedent).
 from __future__ import annotations
 
 import datetime as dt
+import json
 import logging
 import os
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Literal
 
-from langchain_core.messages import AIMessage, BaseMessage
+from langchain_core.messages import (
+    AIMessage,
+    BaseMessage,
+    SystemMessage,
+    ToolMessage,
+)
+
+from polymerhus.app.llm.summary import RunningSummary, summarise
+from polymerhus.app.llm.tool_output import ToolOutputStore, offload_tool_message
 
 logger = logging.getLogger(__name__)
 
@@ -57,7 +75,10 @@ DEFAULT_THRESHOLD = 0.90
 
 # The conservative window default (D6 of the gateway ADR, imported from the
 # capability reader - the single source, never re-declared here).
-from polymerhus.app.llm.capability import DEFAULT_CONTEXT_LIMIT  # noqa: E402
+from polymerhus.app.llm.capability import (  # noqa: E402
+    CapabilityProfile,
+    DEFAULT_CONTEXT_LIMIT,
+)
 
 
 @dataclass(frozen=True)
@@ -264,6 +285,246 @@ def is_over_budget(occupancy: int, window: CompactionWindow) -> bool:
     """The threshold trigger (D2): inclusive at the boundary - a call never proceeds
     on an over-budget window."""
     return occupancy >= window.budget
+
+
+# --- D7/D8: the compact pass (pure assembly: offload + running summary) --------
+
+# D7: the reserved byte-identical tail budget (operator-ruled default), measured
+# from the trail's end in approximate tokens.
+DEFAULT_REPLAY_KEEP_TOKENS = 30_000
+
+# The prefix marking a synthetic running-summary message in the trail (D5) - kept
+# in lockstep with `RunningSummary.to_text()`.
+_SUMMARY_MESSAGE_PREFIX = "[running summary]"
+
+# The readability signal of a compact pass (D7/D11) - "compacted"/"unchanged" in
+# the spirit of the reasoning pipeline's "replayed"/"absent" vocabulary.
+READABILITY_COMPACTED = "compacted"
+READABILITY_UNCHANGED = "unchanged"
+
+# The pairing fallback when no preceding tool call matches a tool result (D8).
+_TOOL_FALLBACK_NAME = "tool"
+_TOOL_FALLBACK_ARGS = ""
+
+
+@dataclass(frozen=True)
+class CompactReport:
+    """The report of ONE compact pass (D7/D11).
+
+    `exempted_spans` is the reserved byte-identical tail's size, `summarised_spans`
+    the AIMessage spans folded into the running summary, `offloaded_bodies` the
+    tool bodies written to the module store, `reclaimed_tokens` the before-minus-
+    after occupancy (floored at 0), `readability` the "compacted"/"unchanged"
+    signal, `summary_status` the pass outcome, and `new_summary` the summary the
+    pass produced (None on failed/terminal/no-call)."""
+
+    exempted_spans: int
+    summarised_spans: int
+    offloaded_bodies: int
+    reclaimed_tokens: int
+    readability: str
+    summary_status: Literal["ok", "failed", "terminal"]
+    new_summary: RunningSummary | None
+
+
+@dataclass(frozen=True)
+class CompactResult:
+    """The compact pass's output (D1 staging).
+
+    `messages` is the STAGED compacted trail, or the ORIGINAL trail unchanged when
+    the summarisation failed or was terminal; `report` carries the pass's report."""
+
+    messages: list
+    report: CompactReport
+
+
+def _exempt_tail_size(
+    messages: list[BaseMessage],
+    profile: CapabilityProfile | None,
+    replay_keep_tokens: int,
+) -> int:
+    """The number of trailing messages reserved byte-identical (D7).
+
+    Walked FROM the end, accumulating approximate tokens per message until the
+    replay budget is reached; that suffix is exempt - neither summarised nor
+    offloaded. When the profile is None or its reasoning surface is falsy, the tail
+    is empty (no replay surface, everything summarisable)."""
+    if profile is None or not getattr(profile, "reasoning_in_response", None):
+        return 0
+    if replay_keep_tokens <= 0:
+        return 0
+    acc = 0
+    size = 0
+    for message in reversed(messages):
+        try:
+            acc += approx_tokens([message])
+        except Exception:  # noqa: BLE001 - an unmeasurable message degrades, never raises
+            acc += 1
+        size += 1
+        if acc >= replay_keep_tokens:
+            break
+    return size
+
+
+def _args_text(args: Any) -> str:
+    """Render a tool call's args to the D8 outline string: a str passes through,
+    anything else JSON-renders; an unrenderable value degrades to the empty string."""
+    if args is None:
+        return ""
+    if isinstance(args, str):
+        return args
+    try:
+        return json.dumps(args)
+    except Exception:  # noqa: BLE001 - fail-open: an unrenderable outline degrades
+        return ""
+
+
+def _tool_pairing(ai_message: Any, tool_call_id: str) -> tuple[str, str]:
+    """The (name, args) outline for one tool result, from the PRECEDING AIMessage's
+    tool_calls matched by tool-call id (D8); name="tool" and args="" when no
+    pairing is found - the pass's documented fallback."""
+    if isinstance(ai_message, AIMessage):
+        for call in getattr(ai_message, "tool_calls", None) or []:
+            call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+            if call_id == tool_call_id:
+                name = call.get("name") if isinstance(call, dict) else getattr(call, "name", None)
+                args = call.get("args") if isinstance(call, dict) else getattr(call, "args", None)
+                name = name if isinstance(name, str) and name else _TOOL_FALLBACK_NAME
+                return name, _args_text(args)
+    return _TOOL_FALLBACK_NAME, _TOOL_FALLBACK_ARGS
+
+
+def _is_synthetic_summary(message: BaseMessage) -> bool:
+    """Whether a message is the prior synthetic running-summary message (D5): a
+    SystemMessage whose content starts with the summary prefix. Replaced each pass,
+    never duplicated."""
+    if not isinstance(message, SystemMessage):
+        return False
+    content = message.content
+    return isinstance(content, str) and content.startswith(_SUMMARY_MESSAGE_PREFIX)
+
+
+def _compact_pass(
+    messages: list[BaseMessage],
+    *,
+    thread_id: str,
+    profile: CapabilityProfile | None,
+    store: ToolOutputStore,
+    summariser: Any,
+    existing: RunningSummary | None,
+    replay_keep_tokens: int,
+) -> CompactResult:
+    """The compact pass's assembly, wrapped by `compact_pass` for fail-open."""
+    original = list(messages)
+    tail_size = _exempt_tail_size(original, profile, replay_keep_tokens)
+    tail = original[len(original) - tail_size:] if tail_size else []
+    region = original[:len(original) - tail_size] if tail_size else original
+
+    staged: list[BaseMessage] = []
+    spans: list[AIMessage] = []
+    offloaded_bodies = 0
+    preceding_ai: AIMessage | None = None
+    for message in region:
+        if isinstance(message, AIMessage):
+            preceding_ai = message
+            spans.append(message)
+            continue
+        if isinstance(message, ToolMessage):
+            name, args = _tool_pairing(preceding_ai, message.tool_call_id)
+            try:
+                result = offload_tool_message(
+                    store, thread_id, message, name=name, args=args)
+            except Exception:  # noqa: BLE001 - a failing offload keeps the body full
+                logger.debug("compact pass: tool offload failed; keeping the body full",
+                             exc_info=True)
+                result = message
+            if result is not message:
+                offloaded_bodies += 1
+            staged.append(result)
+            continue
+        if _is_synthetic_summary(message):
+            continue
+        staged.append(message)
+
+    new_summary: RunningSummary | None = None
+    if spans or existing is not None:
+        outcome = summarise(summariser, existing=existing, spans=spans)
+        if outcome.status in ("failed", "terminal") or outcome.summary is None:
+            # An "ok" without a summary is a degenerate pass - degrade the same
+            # way as a failed one, never stage it (fail-open).
+            return CompactResult(
+                messages=original,
+                report=CompactReport(
+                    exempted_spans=tail_size,
+                    summarised_spans=len(spans),
+                    offloaded_bodies=offloaded_bodies,
+                    reclaimed_tokens=0,
+                    readability=READABILITY_UNCHANGED,
+                    summary_status=outcome.status,
+                    new_summary=None,
+                ),
+            )
+        new_summary = outcome.summary
+        staged = staged + [SystemMessage(content=new_summary.to_text())] + tail
+    else:
+        staged = staged + tail
+
+    reclaimed = max(0, approx_tokens(original) - approx_tokens(staged))
+    return CompactResult(
+        messages=staged,
+        report=CompactReport(
+            exempted_spans=tail_size,
+            summarised_spans=len(spans),
+            offloaded_bodies=offloaded_bodies,
+            reclaimed_tokens=reclaimed,
+            readability=(
+                READABILITY_COMPACTED if new_summary is not None
+                else READABILITY_UNCHANGED
+            ),
+            summary_status="ok",
+            new_summary=new_summary,
+        ),
+    )
+
+
+def compact_pass(
+    messages: list[BaseMessage],
+    *,
+    thread_id: str,
+    profile: CapabilityProfile | None,
+    store: ToolOutputStore,
+    summariser: Any,
+    existing: RunningSummary | None = None,
+    replay_keep_tokens: int = DEFAULT_REPLAY_KEEP_TOKENS,
+) -> CompactResult:
+    """Run ONE compact pass (D7/D8, D1-staging): compose the tool-output offload
+    and the running summary into a single STAGED result.
+
+    `thread_id` keys the offload into the module store (D8). The pass never writes
+    the checkpointer (D1) - it stages. A reasoning-capable profile reserves a
+    token-bounded byte-identical tail that is neither summarised nor offloaded;
+    everything older is summarisable, tool bodies over the cut offload to the
+    module store (D8), and the ONE atomic running-summary call (D5) folds the prior
+    summary and new spans into a single synthetic message inserted immediately
+    before the tail. A failed or terminal summarisation returns the ORIGINAL trail
+    unchanged (D6 fail-safe); a bad message shape degrades (kept or summarised
+    safely), never raises."""
+    try:
+        return _compact_pass(
+            messages, thread_id=thread_id, profile=profile, store=store,
+            summariser=summariser, existing=existing,
+            replay_keep_tokens=replay_keep_tokens)
+    except Exception:  # noqa: BLE001 - fail-open: never into the caller
+        logger.warning("compact pass failed; returning the original trail unchanged",
+                       exc_info=True)
+        return CompactResult(
+            messages=list(messages),
+            report=CompactReport(
+                exempted_spans=0, summarised_spans=0, offloaded_bodies=0,
+                reclaimed_tokens=0, readability=READABILITY_UNCHANGED,
+                summary_status="failed", new_summary=None,
+            ),
+        )
 
 
 # --- the middleware (slice A: ledger update only) -----------------------------
