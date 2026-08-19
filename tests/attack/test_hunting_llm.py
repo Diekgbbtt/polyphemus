@@ -164,3 +164,40 @@ def test_author_and_judge_share_ONE_per_hunt_thread_when_session_bound(monkeypat
     assert seen[0] == ("hunting_hunter", "run1:hunt-A:hunting_hunter")
     assert seen[1] == ("hunting_hunter", "run1:hunt-A:hunting_hunter")  # SAME thread -> shared memory
     assert seen[2] == ("hunting_hunter", "run1:hunt-B:hunting_hunter")  # other hunt -> distinct thread
+
+
+# --- _parse_json_object: free-text D4/D5 replies -------------------------------
+
+
+def test_parse_json_object_extracts_fenced_block_after_prose():
+    """A live D4 reply may open with prose and THEN carry a ```json fence (the
+    model's free-text answer before the spec); the parser must recover it."""
+    reply = (
+        "The LightRAG retrieval returned a fallback, so I ground the spec in "
+        "the rationale.\n\n"
+        '```json\n{"target_identity": {"unit": "a"}, "rationale": "spec"}\n```\n'
+    )
+    assert HL._parse_json_object(reply) == {
+        "target_identity": {"unit": "a"},
+        "rationale": "spec",
+    }
+
+
+def test_parse_json_object_keeps_leading_fence_support():
+    reply = '```json\n{"meaningful_insight": false, "next_step": "end"}\n```'
+    assert HL._parse_json_object(reply) == {
+        "meaningful_insight": False,
+        "next_step": "end",
+    }
+
+
+def test_parse_json_object_rejects_unfenced_prose_with_inline_json():
+    # No code fence: prose-plus-json stays unparseable (fail-open), so the
+    # harness treats the turn as degraded instead of guessing.
+    assert HL._parse_json_object('Here is the answer {"ok": true}.') is None
+
+
+def test_parse_json_object_passthrough_and_empty():
+    assert HL._parse_json_object({"ok": True}) == {"ok": True}
+    assert HL._parse_json_object("") is None
+    assert HL._parse_json_object(None) is None
