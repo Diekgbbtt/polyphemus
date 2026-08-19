@@ -1,4 +1,15 @@
-"""LangChain tool exposing the LightRAG query pipeline, with a streamed answer."""
+"""LangChain tool exposing the LightRAG query pipeline, with a streamed answer.
+
+The tool deliberately re-implements the retrieval -> prompt -> validation
+sequence instead of calling `pipeline.run_query_pipeline`: that function is a
+BATCH seam (it returns one aggregated `QueryPipelineResultV1` and generates
+via `DeepSeekClient.complete`, the non-streaming path), while this tool must
+yield incremental SSE `delta` events and a final validated `answer` event.
+Reusing the pipeline would drop the streaming contract or force a breaking
+signature change; the shared normalization helpers (`build_retrieval_payload`,
+`from_raw_response`, `build_reference_registry`, `build_generation_prompt`)
+remain the single source of truth for the sequence itself.
+"""
 
 from __future__ import annotations
 

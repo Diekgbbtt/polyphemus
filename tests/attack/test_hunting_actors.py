@@ -32,6 +32,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     MatchVerdict,
     Witness,
 )
+from polymerhus.lightrag.tool import LightRagQueryTool
 from polymerhus.recon.control.targeted import TargetedReconResult
 
 
@@ -48,6 +49,19 @@ class _ToolFake(BaseChatModel):
             content="",
             tool_calls=[{"name": self.call_name, "args": self.args, "id": "c1", "type": "tool_call"}],
         ))])
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        # Async-native on purpose: `ainvoke` on a SYNC-only BaseChatModel routes
+        # `_generate` through `run_in_executor`, and langgraph (1.2.5) deadlocks
+        # that path when the agent thread RESUMES from a checkpoint - the second
+        # turn's model call never returns. Production models (ChatOpenAI) are
+        # async-native, so the fakes must mirror that.
+        return self._generate(
+            messages,
+            stop=stop,
+            run_manager=run_manager.get_sync() if run_manager else None,
+            **kwargs,
+        )
 
     @property
     def _llm_type(self) -> str:
@@ -66,9 +80,60 @@ class _TextFake(BaseChatModel):
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.body))])
 
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        # Async-native: see `_ToolFake._agenerate` for why (sync-only fakes
+        # deadlock the resumed agent thread's model call).
+        return self._generate(
+            messages,
+            stop=stop,
+            run_manager=run_manager.get_sync() if run_manager else None,
+            **kwargs,
+        )
+
     @property
     def _llm_type(self) -> str:
         return "fake"
+
+
+class _ToolLoopFake(BaseChatModel):
+    """A per-instance two-reply scripted model: the first model call emits a
+    `query_lightrag` tool call, the second emits the final text answer. The
+    counter lives on the instance because ONE agent turn's tool loop reuses the
+    same model for every model call."""
+
+    tool_args: dict = {}
+    final_body: str = ""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        calls = getattr(self, "_calls", 0)
+        self._calls = calls + 1
+        if calls == 0:
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(
+                content="",
+                tool_calls=[{
+                    "name": "query_lightrag",
+                    "args": self.tool_args,
+                    "id": "c1",
+                    "type": "tool_call",
+                }],
+            ))])
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.final_body))])
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        # Async-native: see `_ToolFake._agenerate` for why.
+        return self._generate(
+            messages,
+            stop=stop,
+            run_manager=run_manager.get_sync() if run_manager else None,
+            **kwargs,
+        )
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
 
 
 def _factory(args_list):
@@ -136,6 +201,9 @@ def test_hunt_orchestrator_actor_fail_open_on_raising_model():
     None, which the pass's fail-open canon handles (carry / unresolved)."""
     class _Boom(BaseChatModel):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            raise RuntimeError("llm down")
+
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
             raise RuntimeError("llm down")
 
         @property
@@ -218,6 +286,33 @@ def test_hunting_hunter_actor_unparseable_turn_is_none():
     assert asyncio.run(_drive()) is None  # degraded turn, fail-open
 
 
+def test_hunting_hunter_actor_resumes_after_two_author_turns():
+    """Regression: two consecutive turns on the SAME per-hunt thread must both
+    complete. This used to deadlock inside the second turn's model call with
+    sync-only fakes (langgraph resume + `run_in_executor`); the fakes are now
+    async-native, matching the production ChatOpenAI path."""
+    cursor = {"i": 0}
+
+    def factory(role_id):
+        i = cursor["i"]
+        cursor["i"] = i + 1
+        return _TextFake(body=json.dumps({"spec": i}))
+
+    async def _drive():
+        actor = HuntingHunterActor(
+            "run1", "hunt-r", checkpointer=InMemorySaver(), model_factory=factory,
+            observe=False,
+        )
+        first = await actor.author("compose first")
+        second = await actor.author("compose second")
+        await actor.stop()
+        return first, second
+
+    first, second = asyncio.run(_drive())
+    assert first == {"spec": 0}
+    assert second == {"spec": 1}
+
+
 # --- the per-run registry -----------------------------------------------------------
 
 def test_registry_routes_per_hunt_and_reaps_every_actor():
@@ -271,6 +366,79 @@ def test_author_tools_reach_run_session_agent(monkeypatch):
     actor = asyncio.run(_drive())
     assert actor._tools == ["fake-tool"]
     assert captured["tools"] == ["fake-tool"]
+
+
+def test_hunting_hunter_actor_runs_query_lightrag_tool_loop_hermetically():
+    """The full tool-calling loop, without any live service: the outer model
+    first calls `query_lightrag`, the fake client/llm answer hermetically, a
+    ToolMessage is produced, and the actor's final author reply uses the tool
+    output (the mini live smoke, repeatable in the unit suite)."""
+    class _FakeClient:
+        def query_data(self, payload):
+            return {
+                "status": "success",
+                "message": "ok",
+                "data": {
+                    "entities": [],
+                    "relationships": [],
+                    "chunks": [
+                        {
+                            "reference_id": "doc-1",
+                            "file_path": "WSTG-ATHZ/x.md",
+                            "content": "Methodology text about object id tampering.",
+                        }
+                    ],
+                    "references": [
+                        {"reference_id": "doc-1", "file_path": "WSTG-ATHZ/x.md"}
+                    ],
+                },
+                "metadata": {"processing_info": {"final_chunks_count": 1}},
+            }
+
+    class _FakeLlm:
+        def stream(self, prompt):
+            yield {"type": "delta", "text": '{"scenario_id": "SIM-01", "summary": "ok",'}
+            yield {
+                "type": "delta",
+                "text": (
+                    '"ontology_explanations": [{"entity_type": "AttackTechnique", '
+                    '"entity_name": "Object-level authorization comparison", '
+                    '"explanation": "Compare authorization behavior for adjacent ids."}],'
+                ),
+            }
+            yield {"type": "delta", "text": '"knowledge_gaps": ["g"]}'}
+            yield {"type": "finish", "finish_reason": "stop"}
+
+    tool = LightRagQueryTool(client=_FakeClient(), llm=_FakeLlm())
+    tool_args = {
+        "scenario_id": "SIM-01",
+        "attack_goal": "Identify a bounded comparison hypothesis",
+        "concern": "object-level authorization",
+        "acceptable_technique_families": ["Object-level authorization comparison"],
+    }
+    final_body = json.dumps({
+        "methodology": "Object-level authorization comparison",
+        "verdict": "grounded",
+    })
+
+    async def _drive():
+        actor = HuntingHunterActor(
+            "run1", "hunt-tool", checkpointer=InMemorySaver(),
+            model_factory=lambda role: _ToolLoopFake(
+                tool_args=tool_args, final_body=final_body,
+            ),
+            observe=False, author_tools=[tool],
+        )
+        out = await actor.author("compose")
+        await actor.stop()
+        return out, actor
+
+    out, actor = asyncio.run(_drive())
+    assert out == {"methodology": "Object-level authorization comparison", "verdict": "grounded"}
+    trail = actor._task.result().turns[-1].messages
+    tool_msgs = [m for m in trail if type(m).__name__ == "ToolMessage"]
+    assert tool_msgs, "the query_lightrag tool call must be executed"
+    assert "Object-level authorization comparison" in tool_msgs[0].content
 
 
 def test_lightrag_tool_enabled_by_flag(monkeypatch):

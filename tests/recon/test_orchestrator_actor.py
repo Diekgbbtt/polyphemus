@@ -34,6 +34,18 @@ class _ToolFake(BaseChatModel):
             tool_calls=[{"name": "RoutingDecision", "args": self.args, "id": "c1", "type": "tool_call"}],
         ))])
 
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        # Async-native on purpose: `ainvoke` on a SYNC-only BaseChatModel routes
+        # `_generate` through `run_in_executor`, and langgraph (1.2.5) deadlocks
+        # that path when the agent thread RESUMES from a checkpoint - the second
+        # turn's model call never returns (same fix as the hunting actor fakes).
+        return self._generate(
+            messages,
+            stop=stop,
+            run_manager=run_manager.get_sync() if run_manager else None,
+            **kwargs,
+        )
+
     @property
     def _llm_type(self) -> str:
         return "fake"

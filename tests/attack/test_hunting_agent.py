@@ -23,8 +23,13 @@ import pytest
 
 from polymerhus.attack.hunting.hunting_agent import (
     HypothesisVerdict,
+    compose_authoring_prompt,
     derive_technological_axis,
     derive_verdict,
+)
+from polymerhus.attack.hunting.hunt_orchestrator import (
+    HuntConfig,
+    HuntPromptTemplate,
 )
 from polymerhus.app.llm.providers import HUNTING_ROLES, ROLES
 
@@ -123,3 +128,74 @@ def test_hypothesis_verdict_vocabulary_is_four_valued():
     assert set(HypothesisVerdict.__args__) == {
         "successful", "unsuccessful", "insufficient-evidence", "underspecified-spec",
     }
+
+
+# --- compose_authoring_prompt: optional query_lightrag guidance ---------------
+
+
+def _prompt_config() -> HuntConfig:
+    return HuntConfig(
+        hunt_id="hunt-1",
+        unit_id="Service:slug:a",
+        fault_class="fault-x",
+        prompt_template=HuntPromptTemplate(
+            rationale="rationale",
+            extension_points=["ext"],
+            assumptions=["assumption"],
+            supposed_payload_vectors=["vector"],
+            l0_evidence=["l0"],
+        ),
+        surface_context={"cards": [{"title": "card"}]},
+        target_caveats=["caveat"],
+        tool_registry=[{"name": "registry-tool"}],
+    )
+
+
+def _authoring_prompt(lightrag_tool_enabled: bool) -> str:
+    return compose_authoring_prompt(
+        _prompt_config(),
+        {"kb": "kb-text"},
+        "http",
+        kb_degraded=False,
+        working_set="fresh hunt: no prior dispatch",
+        lightrag_tool_enabled=lightrag_tool_enabled,
+    )
+
+
+def test_authoring_prompt_disabled_mentions_no_lightrag_tool():
+    prompt = _authoring_prompt(lightrag_tool_enabled=False)
+    assert "query_lightrag" not in prompt
+    assert "QuerySpecV1" not in prompt
+    assert "Your working set: fresh hunt: no prior dispatch" in prompt
+
+
+def test_authoring_prompt_enabled_instructs_the_agent_on_the_tool():
+    prompt = _authoring_prompt(lightrag_tool_enabled=True)
+    assert "query_lightrag" in prompt
+    for field in (
+        "scenario_id",
+        "attack_goal",
+        "concern",
+        "technology_stack",
+        "target_refs",
+        "input_vectors",
+        "known_facts",
+        "acceptable_technique_families",
+        "unsupported_claims",
+        "evidence",
+        "expected_no_hypothesis",
+    ):
+        assert field in prompt
+    # the guidance sits before the working set, and the disabled prompt is a
+    # strict prefix of the enabled one (byte-equivalent when off).
+    assert prompt.index("Your working set:") > prompt.index("query_lightrag")
+
+
+def test_authoring_prompt_flag_helper_reads_app_config(monkeypatch):
+    import polymerhus.attack.hunting.hunting_agent as hunting_agent
+    import polymerhus.app.config as config_module
+
+    monkeypatch.setattr(config_module.config, "HUNTING_LIGHTRAG_TOOL", True)
+    assert hunting_agent._hunting_lightrag_tool_enabled() is True
+    monkeypatch.setattr(config_module.config, "HUNTING_LIGHTRAG_TOOL", False)
+    assert hunting_agent._hunting_lightrag_tool_enabled() is False

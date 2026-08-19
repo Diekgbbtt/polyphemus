@@ -283,6 +283,30 @@ def _config_gaps(config: HuntConfig) -> list[str]:
     return gaps
 
 
+_LIGHTRAG_TOOL_GUIDANCE = (
+    "Hai a disposizione il tool `query_lightrag`. Usalo quando il grounding "
+    "della KB non è sufficiente a formulare una metodologia riutilizzabile.\n"
+    "Costruisci uno `QuerySpecV1` con i campi derivati dallo HuntConfig: "
+    "scenario_id, attack_goal, concern, technology_stack, target_refs, "
+    "input_vectors, known_facts, acceptable_technique_families, "
+    "unsupported_claims, evidence, expected_no_hypothesis.\n"
+    "Il tool restituisce un AnswerBundle validato: usalo come metodologia e "
+    "come vincolo di provenance, non come conferma di vulnerabilità.\n"
+    "Se il tool fallisce, prosegui con il grounding disponibile e segnala il "
+    "gap nel feedback.\n\n"
+)
+
+
+def _hunting_lightrag_tool_enabled() -> bool:
+    """The opt-in flag for the hunting author lane, read lazily (the app
+    config requires env vars at import; fail-open to disabled)."""
+    try:
+        from polymerhus.app.config import config  # noqa: PLC0415
+        return bool(config.HUNTING_LIGHTRAG_TOOL)
+    except Exception:  # noqa: BLE001 - fail-open
+        return False
+
+
 def compose_authoring_prompt(
     config: HuntConfig,
     kb_result: dict,
@@ -290,14 +314,19 @@ def compose_authoring_prompt(
     *,
     kb_degraded: bool,
     working_set: str,
+    lightrag_tool_enabled: bool = False,
 ) -> str:
     """The per-invocation authoring user prompt (verbatim 4.7): the HuntConfig's
-    five-part parameter set, the KB retrieval, and the working-set state."""
+    five-part parameter set, the KB retrieval, and the working-set state. When
+    `lightrag_tool_enabled`, a `query_lightrag` usage block is inserted before
+    the working set; disabled keeps the prompt byte-equivalent to the plain
+    form."""
     tpl = config.prompt_template
     surface = config.surface_context or {}
     cards = surface.get("cards") or []
     kb_text = (kb_result if not kb_degraded
                else "(KB unavailable; grounded on the HuntConfig alone)")
+    tool_guidance = _LIGHTRAG_TOOL_GUIDANCE if lightrag_tool_enabled else ""
     return (
         f"You are dispatched to hunt {config.unit_id} for fault class "
         f"{config.fault_class}.\n\n"
@@ -314,6 +343,7 @@ def compose_authoring_prompt(
         f"Fault-targeting tool registry: {_fmt_list(config.tool_registry)}\n\n"
         f"Symptom-technique KB retrieval on ({config.fault_class}, {axis}): "
         f"{kb_text}\n\n"
+        f"{tool_guidance}"
         f"Your working set: {working_set}\n\n"
         "Navigate the decision tree from where the working set leaves you, "
         "honouring the decision points, and return the spec as JSON with the "
@@ -464,6 +494,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                     config, kb_result, axis_value,
                     kb_degraded=kb_degraded,
                     working_set="fresh hunt: no prior dispatch; begin at GROUND",
+                    lightrag_tool_enabled=_hunting_lightrag_tool_enabled(),
                 ))
                 trace_span("spec-composition", input={"prompt": turn})
                 spec = await _await_seam(author, turn)
