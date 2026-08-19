@@ -12,9 +12,21 @@ The next call's `before_model` hook is the barrier: it awaits any pending compac
 While a compaction is in flight, no further LLM turns are triggered, neither initialised - the context will be rebuilt from scratch (operator ruling).
 The #94 comment's "never by reaching into the persisted checkpointed messages" is read as "never mid-call": the post-turn out-of-band path is the sanctioned non-racy mechanism, exactly as replay proved.
 
+**The pass compacts exactly what the ledger measured; the fresh delta rides untouched.**
+The out-of-band pass's input is the trail as of its turn's end (the ledger's boundary - the exact ids the ledger last measured).
+A later message the pass never saw - most importantly the CURRENT turn's own input, which the graph merged into the channel before the barrier runs - MUST survive the pass.
+The barrier therefore splices: it applies the staged trail, then re-appends the fresh delta (messages whose ids are not in the measured boundary).
+The same splice governs the synchronous backstop (D4), which compacts the boundary subset of the current channel and preserves the delta verbatim.
+Without this, the `remove_all` replacement would silently wipe the caller's fresh question - compaction must never eat input it never measured.
+
+**Relationships are not what the summary replaces - asked questions are.**
+When a compact pass produces a running summary, the region BEFORE the reserved tail folds more than assistant reasoning: older turn INPUTS (human directives the summary now carries) are summarised away too, so the window actually shrinks.
+Only the D7-tail stays byte-identical, and only the measured span is ever replaced - a pass that produces no summary leaves every message verbatim (a lone unmatched question is never dropped).
+
 **Rationale.**
 A mid-call mutation races the in-flight graph execution; a before_model state update is applied through LangGraph's own reducer machinery, so the write is race-free by construction and the next turn RESTORES the compacted trail naturally.
 The strict barrier is what makes "a call never proceeds on an over-budget window" true even when a previous pass failed (D6).
+The boundary/delta splice keeps the barrier fail-open (a lost boundary degrades to last-known-good) while making the replacement sound under the out-of-band/next-turn race - the load-bearing concurrency edge of this whole design.
 
 ## D2 - The window is `context_limit` only; the bound is `threshold * context_limit`
 
