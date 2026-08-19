@@ -233,7 +233,7 @@ class DeepSeekClient:
         base_url: str,
         api_key: str,
         model: str,
-        max_tokens: int = 4096,
+        max_tokens: int = 16384,
         timeout: float = 120.0,
     ):
         self.base_url = base_url.rstrip("/")

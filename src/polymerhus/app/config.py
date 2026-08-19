@@ -72,7 +72,9 @@ class Config:
     QUERY_LLM_MODEL = os.environ.get(
         "QUERY_LLM_MODEL", "RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731"
     )
-    QUERY_LLM_MAX_TOKENS = _int_env("QUERY_LLM_MAX_TOKENS", 4096)
+    # Generous ceiling: the hunter's validated AnswerBundle needs detailed,
+    # verbose explanations; 4096 truncated long answers into schema failures.
+    QUERY_LLM_MAX_TOKENS = _int_env("QUERY_LLM_MAX_TOKENS", 16384)
     QUERY_LLM_TIMEOUT_SECONDS = _float_env("QUERY_LLM_TIMEOUT_SECONDS", 120.0)
     QUERY_PIPELINE_MOCK = os.environ.get("QUERY_PIPELINE_MOCK", "") == "1"
     INGESTION_ROOT = os.environ.get("INGESTION_ROOT", "/data/ingestion")
