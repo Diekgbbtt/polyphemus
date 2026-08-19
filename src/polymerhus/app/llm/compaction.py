@@ -1065,3 +1065,19 @@ def build_role_compaction_middleware(
         summariser=build_summariser(role_id),
         profile=resolve_compaction_profile(role_id),
     )
+
+
+_shared_middleware: dict[str, Any] = {}
+_shared_middleware_lock = threading.Lock()
+
+
+def cached_role_compaction_middleware(role_id: str) -> Any:
+    """A process-wide per-role compaction middleware (D9/H): the manager keys its
+    ledger/streak/pending state by thread_id internally, so ONE shared middleware
+    isolates per-thread state correctly across concurrent or re-entrant consumers -
+    the pattern for consumers with no per-run builder (the recon pod's
+    configurator/triager, whose per-pod session threads span re-witnesses)."""
+    with _shared_middleware_lock:
+        if role_id not in _shared_middleware:
+            _shared_middleware[role_id] = build_role_compaction_middleware(role_id)
+        return _shared_middleware[role_id]

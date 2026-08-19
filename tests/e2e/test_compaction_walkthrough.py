@@ -153,7 +153,12 @@ def test_mechanism_typist_chained_lane_compacts_e2e(monkeypatch):
             summary_text=GOOD_SUMMARY_TEXT,
             usage=_usage(5000, output_tokens=50))
 
+    # The turn model resolves through `chat_model_for` (which holds a module-level
+    # `build_chat_model` reference) while the summariser resolves the provider's
+    # `build_chat_model` lazily - patch both so the chained lane is fully faked.
+    import polymerhus.app.llm.roles as R
     monkeypatch.setattr(P, "build_chat_model", spy)
+    monkeypatch.setattr(R, "build_chat_model", spy)
 
     from polymerhus.analysis.mechanism_typist import stateful_invoke_fn
 

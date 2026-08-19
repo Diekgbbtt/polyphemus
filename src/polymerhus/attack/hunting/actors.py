@@ -198,10 +198,17 @@ class HuntOrchestratorActor(_TurnActor):
     _role_id = "hunting_orchestrator"
 
     def __init__(self, run_id: str, *, checkpointer=None, model_factory=None,
-                 observe: bool = True):
+                 observe: bool = True, compaction=None):
         super().__init__(checkpointer=checkpointer, model_factory=model_factory,
                          observe=observe)
         self._run_id = run_id
+        self._compaction = compaction  # #95 D9/H: None auto-wires, False disables
+
+    @property
+    def compaction_manager(self):
+        """The wired compaction middleware's manager (#95 D9), or None when
+        compaction is disabled or the actor has not taken its first turn."""
+        return getattr(self._compaction, "manager", None)
 
     def _make_address(self):
         from polymerhus.app.llm.session_address import HuntingOrchestratorSession  # noqa: PLC0415
@@ -213,8 +220,16 @@ class HuntOrchestratorActor(_TurnActor):
             MatchVerdict,
         )
         from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
+        if self._compaction is None:
+            from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+            self._compaction = C.build_role_compaction_middleware(
+                "hunting_orchestrator")
+        middleware_extra = None
+        if self._compaction is not False:
+            middleware_extra = [self._compaction]
         await super()._ensure_started(
             response_format=ToolStrategy(GateDecision | MatchVerdict),
+            middleware_extra=middleware_extra,
         )
 
     def _on_message(self, message, last_turn):

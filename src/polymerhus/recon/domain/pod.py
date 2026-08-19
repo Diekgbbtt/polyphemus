@@ -589,9 +589,11 @@ def default_configure_fn(job: JobSpec, input_asset: dict, signals: list[dict]) -
         ctx = _pod_ctx().get()
         if ctx is not None:
             from polymerhus.app.llm.session import stateful_turn
+            from polymerhus.app.llm import compaction as C
 
             return stateful_turn("configurator", ctx.address, [HumanMessage(content=prompt)],
-                                 checkpointer=ctx.checkpointer, schema=PodConfig)
+                                 checkpointer=ctx.checkpointer, schema=PodConfig,
+                                 middleware=[C.cached_role_compaction_middleware("configurator")])
         from polymerhus.app.llm.roles import invoke_role
 
         return invoke_role("configurator", [HumanMessage(content=prompt)], schema=PodConfig)
@@ -647,8 +649,10 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     ctx = _pod_ctx().get()
     if ctx is not None:
         from polymerhus.app.llm.session import stateful_turn
+        from polymerhus.app.llm import compaction as C
         result = stateful_turn("triager", ctx.address, messages,
-                               checkpointer=ctx.checkpointer, schema=_ObservationBatch)
+                               checkpointer=ctx.checkpointer, schema=_ObservationBatch,
+                               middleware=[C.cached_role_compaction_middleware("triager")])
     else:
         result = invoke_role("triager", messages, schema=_ObservationBatch)
     return result.observations if result else []  # None = exhausted generation -> no observations

@@ -583,15 +583,25 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     The Assigner is dispatched sequentially (the supervisor's chunk-major schedule holds
     `ANALYSER_PASS_SEMAPHORE`), so this structurally-sync stateful turn needs no async;
     its statefulness is what lets chunk N+1 reason with what it proposed for chunk N,
-    not merely re-read the graph."""
+    not merely re-read the graph.
+
+    Context-window compaction (#95 H/D9): the run's turns run COMPACTED - the
+    analysis-side compaction middleware is built once per run and passed through
+    `stateful_turn`, so an over-budget thread spawns out-of-band running-summary
+    passes that the next turn's barrier awaits. Built fail-open: a missing role
+    config degrades the profile/window, never the session."""
     from polymerhus.app.llm.session import stateful_turn
     from polymerhus.app.llm.session_address import AnalysisSession
 
     address = AnalysisSession(run_id, "assigner")
 
+    from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+    middleware = [C.build_role_compaction_middleware("assigner")]
+
     def invoke(messages):
         return stateful_turn("assigner", address, messages,
-                             checkpointer=checkpointer, schema=L1DeltaBatch)
+                             checkpointer=checkpointer, schema=L1DeltaBatch,
+                             middleware=middleware)
 
     return invoke
 

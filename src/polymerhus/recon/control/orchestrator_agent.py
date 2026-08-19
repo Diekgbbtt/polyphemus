@@ -150,6 +150,7 @@ class ReconOrchestratorActor:
         checkpointer=None,
         model_factory=None,
         observe: bool = True,
+        compaction=None,
     ):
         # Construction must perform NO imports (CODING_STANDARD 6): the actor is
         # built at run_pipeline START on the event loop, and importing
@@ -162,9 +163,16 @@ class ReconOrchestratorActor:
         self._checkpointer = checkpointer
         self._model_factory = model_factory
         self._observe = observe
+        self._compaction = compaction  # #95 D9/H: None auto-wires, False disables
         self._inbox = None
         self._replies: "AgentInbox | None" = None
         self._task: "asyncio.Task | None" = None
+
+    @property
+    def compaction_manager(self):
+        """The wired compaction middleware's manager (#95 D9), or None when
+        compaction is disabled or the actor has not taken its first turn."""
+        return getattr(self._compaction, "manager", None)
 
     @property
     def thread_id(self) -> str:
@@ -198,6 +206,12 @@ class ReconOrchestratorActor:
         middleware = build_inbox_middleware(
             replies, kind=_REPLY_KIND, source=_REPLY_SOURCE
         )
+        if self._compaction is None:
+            from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+            self._compaction = C.build_role_compaction_middleware("job_orchestrator")
+        middleware_list = [middleware] if middleware else []
+        if self._compaction is not False:
+            middleware_list.append(self._compaction)
         self._task = asyncio.ensure_future(
             run_session_agent(
                 self._address.role_id,
@@ -207,7 +221,7 @@ class ReconOrchestratorActor:
                 inbox=self._inbox,
                 on_message=self._on_message,
                 response_format=ToolStrategy(RoutingDecision),
-                middleware=[middleware] if middleware else [],
+                middleware=middleware_list,
                 system_prompt=ORCHESTRATOR_STEERING,
                 model_factory=self._model_factory,
                 observe=self._observe,

@@ -694,15 +694,25 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     resuming from its OWN per-run checkpoint (`AnalysisSession(run_id, "data_modeller")`, distinct from every other agent's), so its call chain and
     every chunk append to ONE growing context. Structured turns go through `ToolStrategy`
     (#44-safe); a `schema=None` turn returns prose. Same `(messages, *, schema)` shape as
-    `_default_invoke_fn`. Structurally sync (sequential dispatch)."""
+    `_default_invoke_fn`. Structurally sync (sequential dispatch).
+
+    Context-window compaction (#95 H/D9): the run's turns run COMPACTED - the
+    analysis-side compaction middleware is built once per run and passed through
+    `stateful_turn`, so an over-budget thread spawns out-of-band running-summary
+    passes that the next turn's barrier awaits. Built fail-open: a missing role
+    config degrades the profile/window, never the session."""
     from polymerhus.app.llm.session import stateful_turn
     from polymerhus.app.llm.session_address import AnalysisSession
 
     address = AnalysisSession(run_id, "data_modeller")
 
+    from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+    middleware = [C.build_role_compaction_middleware("data_modeller")]
+
     def invoke(messages, *, schema=None):
         return stateful_turn("data_modeller", address, messages,
-                             checkpointer=checkpointer, schema=schema)
+                             checkpointer=checkpointer, schema=schema,
+                             middleware=middleware)
 
     return invoke
 

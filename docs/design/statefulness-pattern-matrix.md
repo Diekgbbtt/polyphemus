@@ -140,3 +140,22 @@ resumes from chunk N's reasoning) without the overhead of a persistent actor loo
 | Agent is a leaf, stateless one-shot call | **sync leaf + `invoke_role`** (no checkpointer) | `bootstrapper`, `anatomy`, `curation`, `sweep` |
 | Graph orchestrates multiple nodes with routing logic | **StateGraph without checkpointer** (in-memory; durable archive lives in the spawned agents' pooled checkpointer) | `supervisor` (see #102 for the actor-model conversion) |
 | Graph is a deterministic pipeline, short-lived | **StateGraph without checkpointer** (fault tolerance via node-level fail-open) | `pod_graph`, `job_agent` |
+
+## Compaction wiring (#95)
+
+Every `checkpointer (create_agent)` consumer is COMPACTED as of #95 (ADR
+`context-compaction-95-decisions.md` D9 + the H generalisation): the compaction
+middleware rides the session construction seam as an additive `middleware`
+parameter, never agent-logic changes.
+
+| Consumer | Seam | Builder |
+|---|---|---|
+| `assigner` / `mechanism_typist` / `data_modeller` (analysis) | `stateful_invoke_fn` builds one middleware per run, passed through `stateful_turn` | `compaction.build_role_compaction_middleware(role_id)` |
+| `configurator` / `triager` (recon pod) | the pod-graph node's ContextVar path passes a process-wide per-role middleware through `stateful_turn` (manager keyed by `thread_id`, so re-witnesses share state) | `compaction.cached_role_compaction_middleware(role_id)` |
+| `ReconOrchestratorActor` / `HuntOrchestratorActor` / `HuntingHunterActor` | `_ensure_started` appends the middleware to `run_session_agent` (`compaction=None` auto-wires, `False` disables) | `compaction.build_role_compaction_middleware(role_id)` |
+
+The one-shot `invoke_role` leaves (bootstrapper, anatomy, curation, sweep, the
+legacy gate/re-match/decide_routing seams) and the StateGraph-without-checkpointer
+pipelines (`supervisor`, `pod_graph`, `job_agent`) are NOT compacted - they hold no
+resumable session thread to compact. The sync `_hunter_turn` ContextVar rollback
+lane is deliberately NOT wired (D9).
