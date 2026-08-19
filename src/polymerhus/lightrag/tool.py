@@ -69,21 +69,28 @@ class LightRagQueryTool(BaseTool):
         return _deterministic_fallback(spec, result.errors), False
 
     def stream(self, spec: QuerySpecV1) -> Iterator[dict]:
-        raw = self.client.query_data(
-            {
-                "query": _q3(spec),
-                "mode": self.retrieval_config.mode,
-                "chunk_top_k": self.retrieval_config.chunk_top_k,
-                "max_total_tokens": self.retrieval_config.max_total_tokens,
-            }
-        )
-        prompt, registry = self._build_prompt(spec, raw)
-        collected: list[str] = []
-        for event in self.llm.stream(prompt):
-            if event.get("type") == "delta":
-                collected.append(event["text"])
-            yield event
-        bundle, accepted = self._validate_text(spec, registry, "".join(collected))
+        try:
+            raw = self.client.query_data(
+                {
+                    "query": _q3(spec),
+                    "mode": self.retrieval_config.mode,
+                    "chunk_top_k": self.retrieval_config.chunk_top_k,
+                    "max_total_tokens": self.retrieval_config.max_total_tokens,
+                }
+            )
+            prompt, registry = self._build_prompt(spec, raw)
+            collected: list[str] = []
+            for event in self.llm.stream(prompt):
+                if event.get("type") == "delta":
+                    collected.append(event["text"])
+                yield event
+            bundle, accepted = self._validate_text(spec, registry, "".join(collected))
+        except Exception as exc:  # noqa: BLE001 - fail-open: the author lane keeps going
+            from polymerhus.lightrag.pipeline import _deterministic_fallback  # noqa: PLC0415
+            bundle = _deterministic_fallback(
+                spec, [f"tool_failed: {type(exc).__name__}"]
+            )
+            accepted = False
         yield {
             "type": "answer",
             "answer": bundle.model_dump() if bundle else {},

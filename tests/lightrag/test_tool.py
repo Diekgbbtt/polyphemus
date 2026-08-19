@@ -43,6 +43,17 @@ class _FakeLlm:
         yield {"type": "finish", "finish_reason": "stop"}
 
 
+class _RaisingLlm:
+    def stream(self, prompt):
+        raise RuntimeError("llm down")
+        yield  # pragma: no cover - unreachable, keeps this a generator
+
+
+class _RaisingClient:
+    def query_data(self, payload):
+        raise RuntimeError("lightrag down")
+
+
 def _spec():
     return QuerySpecV1(
         scenario_id="SIM-01",
@@ -65,3 +76,30 @@ def test_arun_returns_answer_json():
     text = asyncio.run(tool._arun(**_spec().model_dump()))
     parsed = json.loads(text)
     assert parsed["schema_version"] == "lightrag-answer/v2"
+
+
+def test_stream_fails_open_on_llm_error():
+    """An LLM outage must NOT raise through the tool: the author lane degrades
+    to the deterministic fallback (accepted False) so the agent can continue
+    with the available grounding, per the D4 tool guidance."""
+    tool = LightRagQueryTool(client=_FakeClient(), llm=_RaisingLlm())
+    events = list(tool.stream(_spec()))
+    assert events[-1]["type"] == "answer"
+    assert events[-1]["accepted"] is False
+    assert events[-1]["answer"]["ontology_explanations"]
+    assert events[-1]["answer"]["schema_version"] == "lightrag-answer/v2"
+
+
+def test_arun_returns_fallback_json_on_llm_error():
+    tool = LightRagQueryTool(client=_FakeClient(), llm=_RaisingLlm())
+    text = asyncio.run(tool._arun(**_spec().model_dump()))
+    parsed = json.loads(text)
+    assert parsed["schema_version"] == "lightrag-answer/v2"
+    assert not parsed["ontology_explanations"][0]["evidence_references"]
+
+
+def test_stream_fails_open_on_retrieval_error():
+    tool = LightRagQueryTool(client=_RaisingClient(), llm=_FakeLlm())
+    events = list(tool.stream(_spec()))
+    assert events[-1]["type"] == "answer"
+    assert events[-1]["accepted"] is False
