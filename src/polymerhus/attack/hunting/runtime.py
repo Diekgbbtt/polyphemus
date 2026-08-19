@@ -179,6 +179,22 @@ async def start_hunting(
                 hunting_run_id = str(uuid.uuid4())
         _register_active(hunting_run_id)
 
+        registry = None
+        if "dispatch_fn" not in orchestration_kwargs:
+            # Production default dispatch closure (the #83 wiring closure): the
+            # actor-backed hunting agent, real fault-KB grounding and the real
+            # HTTP probing pod - instead of the "hunting agent unavailable" gap.
+            from polymerhus.attack.hunting.symptom_kb import (  # noqa: PLC0415
+                build_gate_kb_retriever,
+            )
+            dispatch_fn, registry = build_production_hunting_agent(
+                store=HuntStore(), run_id=hunting_run_id,
+            )
+            orchestration_kwargs["dispatch_fn"] = dispatch_fn
+            orchestration_kwargs.setdefault(
+                "kb_retrieve_fn", build_gate_kb_retriever()
+            )
+
         if tools is None:
             try:
                 tools = OrchestratorTools(
@@ -214,6 +230,15 @@ async def start_hunting(
                     "start_hunting: actor reap failed for %s (fail-open)",
                     hunting_run_id,
                 )
+            if registry is not None:
+                try:
+                    await registry.stop_all()
+                except Exception:  # noqa: BLE001 - teardown must never raise
+                    logger.warning(
+                        "start_hunting: hunting-agent registry reap failed "
+                        "for %s (fail-open)",
+                        hunting_run_id,
+                    )
             if status is not None:
                 try:
                     pg.set_hunting_run_status(hunting_run_id, status)
@@ -225,6 +250,31 @@ async def start_hunting(
                     )
             _unregister_active(hunting_run_id)
         return hunting_run_id
+
+
+def build_production_hunting_agent(*, store, run_id, target_url=None,
+                                   checkpointer=None, model_factory=None,
+                                   observe: bool = True):
+    """The production default hunting-agent dispatch seam: the actor-backed
+    harness wired to the REAL fault-KB symptom-technique lookup and the REAL
+    deterministic HTTP probing pod. Construction performs no I/O (everything
+    heavy resolves on first use).
+
+    Returns `(dispatch_fn, registry)`; the caller must reap the registry
+    (`stop_all`) when the run's orchestration finishes."""
+    from polymerhus.attack.hunting.hunting_pod import HuntingHttpPod  # noqa: PLC0415
+    from polymerhus.attack.hunting.llm import build_actor_hunting_agent  # noqa: PLC0415
+    from polymerhus.attack.hunting.symptom_kb import build_fault_kb_lookup  # noqa: PLC0415
+
+    return build_actor_hunting_agent(
+        store=store,
+        run_id=run_id,
+        kb=build_fault_kb_lookup(),
+        pod=HuntingHttpPod(target_url=target_url),
+        checkpointer=checkpointer,
+        model_factory=model_factory,
+        observe=observe,
+    )
 
 
 async def stop_hunting(hunting_run_id: str) -> None:

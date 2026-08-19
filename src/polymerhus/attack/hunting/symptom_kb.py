@@ -86,3 +86,54 @@ def query_symptom_technique(
         return _fail_open_stub(query)
     except Exception:  # noqa: BLE001 - fail-open is the contract
         return SymptomTechniqueResult()
+
+
+def build_fault_kb_lookup(
+    catalogue_path=None,
+) -> SymptomTechniqueLookup:
+    """The REAL symptom-technique lookup, wired to the packaged fault-KB
+    materialisation facet (fault_kb.load_materialisation): symptoms come from
+    the entry's description, probing techniques from its related attack
+    patterns and alternate terms. Loading is lazy (first call) and the lookup
+    is fail-open: an unknown fault id returns an empty `SymptomTechniqueResult`,
+    never raising (CODING_STANDARD section 12 - no I/O at import)."""
+    from polymerhus.attack.hunting.fault_kb import load_materialisation  # noqa: PLC0415
+
+    cache: dict | None = None
+
+    def lookup(query: object) -> SymptomTechniqueResult:
+        nonlocal cache
+        if cache is None:
+            cache = load_materialisation(catalogue_path)
+        entry = cache.get(getattr(query, "fault_id", ""))
+        if entry is None:
+            return SymptomTechniqueResult()
+        techniques = tuple(dict.fromkeys(
+            [*(entry.related_attack_patterns or ()), *(entry.alternate_terms or ())]
+        ))
+        symptoms = (entry.description,) if entry.description else ()
+        return SymptomTechniqueResult(
+            symptoms=symptoms,
+            techniques=techniques,
+            source="fault-kb",
+        )
+
+    return lookup
+
+
+def build_gate_kb_retriever(catalogue_path=None):
+    """The orchestrator gate's KB evidence retriever (D67-11): `fault_class ->
+    dict` with the materialised symptoms/probing techniques, consumed by the
+    gate prompt and the fault-targeting tool registry. Fail-open to an empty
+    entry for an unknown fault."""
+    lookup = build_fault_kb_lookup(catalogue_path)
+
+    def retrieve(fault_class: str) -> dict:
+        result = lookup(SymptomTechniqueQuery(fault_id=fault_class))
+        return {
+            "symptoms": list(result.symptoms),
+            "probing_techniques": list(result.techniques),
+            "source": result.source,
+        }
+
+    return retrieve

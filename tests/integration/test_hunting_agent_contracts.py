@@ -139,8 +139,9 @@ def test_spec_validates_against_typed_base(tmp_path):
     assert len(pod_calls) == 1
     # The KB join key was (fault-class, unit technological-axis) (D10, IA-8).
     assert len(queries) == 1
-    assert queries[0].fault_class == FAULT_X
-    assert isinstance(queries[0].axis, str) and queries[0].axis
+    assert queries[0].fault_id == FAULT_X
+    assert isinstance(queries[0].technological_axis, tuple)
+    assert queries[0].technological_axis
     # The spec record (D4) carries the full typed base and both NL fields.
     specs = store.list_records(RUN_ID, "spec")
     assert len(specs) == 1

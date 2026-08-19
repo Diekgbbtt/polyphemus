@@ -108,6 +108,19 @@ def test_failing_orchestration_still_lands_a_terminal_status(monkeypatch):
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "failed")]
 
 
+def test_build_production_hunting_agent_wires_real_seams(tmp_path):
+    """The production default dispatch closure: construction is inert (no I/O,
+    no LLM, no network) and returns a callable dispatch plus a reapable
+    registry, wired to the real fault-KB lookup and the real HTTP pod."""
+    from polymerhus.attack.hunting.runtime import build_production_hunting_agent
+
+    dispatch, registry = build_production_hunting_agent(
+        store=HuntStore(tmp_path), run_id="prod-run",
+    )
+    assert callable(dispatch)
+    assert registry is not None
+
+
 def test_start_hunting_fail_open_when_pg_is_unavailable(monkeypatch, caplog):
     """Fail-open: with the PG row AND the status write unavailable the run still
     proceeds (a generated id keys the trail) and nothing raises."""

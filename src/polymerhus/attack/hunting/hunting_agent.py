@@ -466,13 +466,23 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         kb_degraded = False
         axis_value = axis or derive_technological_axis(_first_card(config))
         if not ws["kb_grounded"]:
-            query = SymptomTechniqueQuery(fault_class=config.fault_class, axis=axis_value)
+            query = SymptomTechniqueQuery(
+                fault_id=config.fault_class,
+                technological_axis=(axis_value,) if axis_value else (),
+            )
             try:
                 trace_span("kb-retrieval", input={
                     "fault_class": config.fault_class,
                     "axis": axis_value,
                 })
                 kb_result = await _await_seam(kb, query) or {}
+                if hasattr(kb_result, "symptoms"):
+                    # The typed SymptomTechniqueResult -> the prompt's dict shape.
+                    kb_result = {
+                        "symptoms": list(kb_result.symptoms),
+                        "probing_techniques": list(kb_result.techniques),
+                        "source": kb_result.source,
+                    }
             except Exception as exc:  # noqa: BLE001 - C2/C3: degrade, never raise
                 kb_degraded = True
                 logger.warning("symptom-technique KB degraded for %s (%s)",
