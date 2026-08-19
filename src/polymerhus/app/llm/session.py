@@ -340,6 +340,7 @@ def stateful_turn(
     schema=None,
     system_prompt: str | None = None,
     model_factory: ModelFactory | None = None,
+    middleware: Sequence = (),
     observe: bool = True,
 ):
     """The UBIQUITOUS stateful-agent invocation (#94): one turn of a sequentially
@@ -359,6 +360,7 @@ def stateful_turn(
         role_id, _as_thread_id(thread), new_messages,
         checkpointer=checkpointer, response_format=response_format,
         system_prompt=system_prompt, model_factory=model_factory, observe=observe,
+        middleware=middleware,
     ).content
 
 

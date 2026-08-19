@@ -370,3 +370,18 @@ def build_actor_hunting_agent(*, store, run_id, kb, pod, axis=None,
     )
     return dispatch_fn, registry
 
+
+# --- the hunting-side context-window compaction (#95 D9) -----------------------
+
+def build_hunter_compaction_middleware(*, window=None, threshold=None, store=None):
+    """Build the hunting-side compaction middleware (#95 D9) for the per-hunt
+    async lane: the hunter's OWN model as the running-summary engine (D5), its
+    fail-open D7 reasoning profile, and its resolved window - so out-of-band
+    passes can spawn on the per-hunt thread. `window` is explicit for tests; the
+    shared `app.llm.compaction` builder owns the role wiring, and a raising
+    capability reader degrades the profile and the window, never the actor."""
+    from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+
+    return C.build_role_compaction_middleware(
+        HUNTER_ROLE, window=window, threshold=threshold, store=store)
+

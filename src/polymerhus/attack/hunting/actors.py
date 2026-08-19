@@ -295,16 +295,44 @@ class HuntingHunterActor(_TurnActor):
 
     Turns are free-text-then-parse (the D4 typed base is #83/#84's to ratify), so
     no `response_format` is bound; a None reply is the degraded signal the
-    harness already handles. Fail-open: a dead actor yields None."""
+    harness already handles. Fail-open: a dead actor yields None.
+
+    Context-window compaction (#95 D9): the actor's turns run COMPACTED on the
+    production async lane - the hunting-side compaction middleware
+    (`build_hunter_compaction_middleware`) is wired as an extra turn middleware,
+    so an over-budget thread spawns out-of-band running-summary passes that the
+    next turn's barrier awaits. `compaction=None` auto-wires the middleware from
+    the actor's own model (the default), `False` disables it (a plain session,
+    identical to the pre-wiring behaviour), and a middleware instance is used
+    as-is (tests inject one). `compaction_manager` exposes the wired manager
+    (`None` when disabled or before the first turn)."""
 
     _role_id = "hunting_hunter"
 
     def __init__(self, run_id: str, hunt_id: str, *, checkpointer=None,
-                 model_factory=None, observe: bool = True):
+                 model_factory=None, observe: bool = True, compaction=None):
         super().__init__(checkpointer=checkpointer, model_factory=model_factory,
                          observe=observe)
         self._run_id = run_id
         self._hunt_id = hunt_id
+        self._compaction = compaction
+
+    @property
+    def compaction_manager(self):
+        """The wired hunting-side compaction middleware's manager (#95 D9), or None
+        when compaction is disabled or the actor has not taken its first turn."""
+        return getattr(self._compaction, "manager", None)
+
+    async def _ensure_started(self) -> None:
+        if self._compaction is None:
+            from polymerhus.attack.hunting.llm import (  # noqa: PLC0415
+                build_hunter_compaction_middleware,
+            )
+            self._compaction = build_hunter_compaction_middleware()
+        middleware_extra = None
+        if self._compaction is not False:
+            middleware_extra = [self._compaction]
+        await super()._ensure_started(middleware_extra=middleware_extra)
 
     def _make_address(self):
         from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415

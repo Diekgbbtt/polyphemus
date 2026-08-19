@@ -112,14 +112,18 @@ mem0 is evaluated and REJECTED for this ticket's offload: it serves semantic rec
 **Rationale.**
 The only current tool is the raw terminal, whose payload is the whole command output; cutting past the header is heuristic, so the header must carry the command, the outcome, and the body's head/tail shape - everything else lives in the module store at full fidelity.
 
-## D9 - First consumer: the hunting hunter's async actor lane only
+## D9 - Consumers: the hunting hunter's async actor lane + the analysis mechanism-typist's session lane
 
-The wired consumer is the hunting hunter's ASYNC lane: `HuntingHunterActor` -> `run_session_agent` -> `arun_session_turn`, which already accepts `middleware`.
-The sync `hunt_session` ContextVar + `stateful_turn` lane is the zombie rollback lane and is NOT wired (counterchecked per the operator's request: `hunting_agent.py`'s dispatch comment states "The actor-backed production seams ignore it - the per-hunt `HuntingHunterActor` already owns that thread"; `actors.py` documents the actor as "replacing the `hunt_session` ContextVar + `stateful_turn` seam, which remains the sync rollback lane").
+The wired consumers are the two production state machines that exercise the component's client seam, so BOTH a tool-calling agent loop and a chained single-shot text generator are covered:
+
+- the hunting hunter's ASYNC lane: `HuntingHunterActor` -> `run_session_agent` -> `arun_session_turn` (a tool-calling mailbox actor);
+- the analysis mechanism-typist's CHAINED TEXT-GENERATOR lane: `stateful_invoke_fn` -> `stateful_turn` -> `run_session_turn` (the 3-call reflection/extraction/linking chain over one growing session thread, no tools).
+
+The sync `hunt_session` ContextVar rollback lane is NOT wired (counterchecked per the operator's request: `hunting_agent.py`'s dispatch comment states "The actor-backed production seams ignore it - the per-hunt `HuntingHunterActor` already owns that thread"; `actors.py` documents the actor as "replacing the `hunt_session` ContextVar + `stateful_turn` seam, which remains the sync rollback lane").
 No other consumer is wired in this change; the #84 test-executor pod's migration (interim `trim_messages` -> offload + summarise) is a follow-up against this component's client seam.
 
 **Rationale.**
-The hunter is implemented and production-bound; the rollback lane must not gain behaviour production does not share.
+The hunter and the mechanism-typist are implemented and production-bound; the rollback lane must not gain behaviour production does not share. Wiring two consumers of different agent shape (tool-calling vs chained single-shot) proves the middleware is orthogonal to the state machine it wraps, not bound to one loop.
 
 ## D10 - In-flight generation: post-response only, client-side only
 

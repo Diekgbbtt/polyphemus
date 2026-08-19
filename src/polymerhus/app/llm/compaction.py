@@ -719,6 +719,7 @@ class CompactionManager:
         self._pending: dict[str, Future] = {}
         self._existing: dict[str, Any] = {}
         self._streak: dict[str, int] = {}
+        self._last_reports: dict[str, CompactReport] = {}
         self._escalated: dict[str, bool] = {}
         self._executor: ThreadPoolExecutor | None = None
         self._lock = threading.RLock()
@@ -739,6 +740,13 @@ class CompactionManager:
         """The pending pass Future for the thread, or None when nothing is in flight."""
         with self._lock:
             return self._pending.get(thread_id)
+
+    def last_report(self, thread_id: str) -> "CompactReport | None":
+        """The last COMPLETED pass's report for the thread (D11 observability), or
+        None when no pass has settled yet - whether it applied, failed, or was
+        terminal; the caller reads `summary_status` / `readability` to distinguish."""
+        with self._lock:
+            return self._last_reports.get(thread_id)
 
     # -- the D4 spawn ----------------------------------------------------------
 
@@ -938,6 +946,9 @@ class CompactionManager:
         terminal pass toward the cap (escalating loudly at it), and otherwise release
         on last-known-good - never raising into the turn. `delta` carries the fresh
         messages that ride untouched on top of the staged trail."""
+        if isinstance(result, CompactResult):
+            with self._lock:
+                self._last_reports[thread_id] = result.report
         if isinstance(result, CompactResult) and result.report.summary_status == "ok":
             if self._is_applyable(result):
                 return self.apply_staged(thread_id, result, delta=delta)
@@ -1015,4 +1026,42 @@ def create_compaction_middleware(
         replay_keep_tokens=replay_keep_tokens,
         pending_timeout_s=pending_timeout_s,
         consecutive_pass_cap=consecutive_pass_cap,
+    )
+
+
+def resolve_compaction_profile(role_id: str):
+    """The role's T3 capability profile for the compaction replay tail (D7),
+    fail-open to None (no reasoning surface, empty replay tail) - a raising
+    capability reader degrades the profile, never the middleware's construction."""
+    try:
+        from polymerhus.app.llm.capability import resolve_capability
+        from polymerhus.app.llm.providers import resolve_role
+
+        provider, model = resolve_role(role_id)
+        return resolve_capability(provider, model)
+    except Exception:  # noqa: BLE001 - fail-open, never into the consumer
+        return None
+
+
+def build_role_compaction_middleware(
+    role_id: str,
+    *,
+    window: CompactionWindow | None = None,
+    threshold: float | None = None,
+    store: ToolOutputStore | None = None,
+) -> Any:
+    """Build the compaction middleware for a session role (D9): the role's own
+    budgeted structured summariser (D5) and its fail-open capability profile (D7),
+    bound to the role's resolved window. `window` is explicit for tests; `store` is
+    the module-owned tool-body store (defaults in-memory). Fully fail-open at build
+    time - a missing role config degrades the profile/window, never raises."""
+    from polymerhus.app.llm.summary import build_summariser
+
+    return create_compaction_middleware(
+        role_id,
+        window=window,
+        threshold=threshold,
+        store=store,
+        summariser=build_summariser(role_id),
+        profile=resolve_compaction_profile(role_id),
     )

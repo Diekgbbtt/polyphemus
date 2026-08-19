@@ -319,6 +319,34 @@ def summarise(
     return SummaryOutcome(summary=_to_running_summary(result), status="ok")
 
 
+def build_summariser(role_id: str):
+    """Build the role's running-summary summariser (D5): a single-shot structured
+    `SummaryUpdate` call on the role's OWN model, budgeted per attempt under the
+    #73 escalating read budget - exactly `invoke_role`'s shape (a FRESH client per
+    attempt, `read_timeout=budget`, `max_retries=0`), so the pass and the role's
+    turns share one retry discipline. The provider/model resolves lazily inside the
+    summariser (at pass time, not build time), so building the summariser never
+    reads env; a missing config raises at pass time and `summarise` degrades the
+    pass. Returns the `(messages, read_timeout_s) -> SummaryUpdate | None`
+    contract `summarise` invokes."""
+    def summariser(messages, read_timeout_s: float) -> "SummaryUpdate | None":
+        from polymerhus.app.llm.providers import (
+            build_chat_model,
+            resolve_role,
+            thinking_for,
+        )
+
+        provider, model = resolve_role(role_id)
+        llm = build_chat_model(provider, model, temperature=0,
+                               read_timeout=read_timeout_s, max_retries=0,
+                               thinking=thinking_for(role_id))
+        result = llm.with_structured_output(
+            SummaryUpdate, method="function_calling").invoke(messages)
+        return result if isinstance(result, SummaryUpdate) else None
+
+    return summariser
+
+
 # --- the per-thread summary ledger (D5/D6) -------------------------------------
 
 @dataclass
