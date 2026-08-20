@@ -69,7 +69,9 @@ The `extra_body` open question (does `extra_body` reach `create()` through `with
 
 ### SDK pinning (ADR A4, lands inside #99)
 
-Pin exact versions in `requirements-app.txt` (`langchain-openai==1.3.2`, `langgraph` at the resolved lock) landed WITH the increment that exercises `with_structured_output`, so the T6 pin-behavior tests ship against the pinned resolution. Rationale: the `ReasoningPreservingChatOpenAI` subclass pins langchain-openai 1.3.x internals (`_create_chat_result`, `_get_request_payload`), and `with_structured_output` behavior changed across 0.3.12/0.3.21 - a floor-bound is not a pin.
+Pin exact versions in `requirements-app.txt` (`langchain-openai==1.3.2`, `langchain==1.3.14`, `langchain-core==1.5.3`, `langgraph==1.2.7` at the resolved lock) landed WITH the increment that exercises `with_structured_output`, so the T6 pin-behavior tests ship against the pinned resolution. Rationale: the `ReasoningPreservingChatOpenAI` subclass pins langchain-openai 1.3.x internals (`_create_chat_result`, `_get_request_payload`), and `with_structured_output` behavior changed across 0.3.12/0.3.21 - a floor-bound is not a pin.
+
+The T1 pin tests also locked a construction consequence of the pinned resolution: `method="json_schema"` with a DICT schema and `strict=False` reaches the wire as `"strict": false`, but the PYDANTIC-CLASS path silently defaults to `"strict": true` on 1.3.2 - so the json_schema rung's construction passes `model_json_schema()` dicts, and a bump that changes either path turns the pin tests red on purpose.
 
 ### Out of scope in the seams (ADR A3)
 

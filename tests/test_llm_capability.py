@@ -78,6 +78,7 @@ def test_profile_fields_default_to_none():
     assert p.context_limit is None
     assert p.output_limit is None
     assert p.supports_tool_calling is None
+    assert p.supports_structured_output is None
     assert p.source is None
     assert p.synced_at is None
     assert p.reasoning_in_response is None
@@ -286,6 +287,77 @@ def test_tool_calling_wrong_typed_wire_value_degrades_to_unknown(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# The D5 structured-output surface (the #99 negotiation consumes this) -------
+# ---------------------------------------------------------------------------
+
+def test_structured_output_is_provenance_gated(monkeypatch):
+    """D5: supports_structured_output maps to the wire key of the same name
+    (the sync authors it, `sync_mapping.py`). Rule 1: an UNTAGGED record's flag
+    is NEVER trusted (litellm could be echoing something of its own); a TAGGED
+    record's flag is trusted - never asserted true, never asserted false on
+    untrusted records."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    untagged = FakeHttp({"data": [
+        _record("openrouter/untagged-so", supports_structured_output=True),
+    ]})
+    p = C.resolve_capability("openrouter", "untagged-so", http=untagged)
+    assert p.supports_structured_output is None
+
+    tagged = FakeHttp({"data": [
+        _tagged("openrouter/tagged-so", supports_structured_output=True),
+    ]})
+    p = C.resolve_capability("openrouter", "tagged-so", http=tagged)
+    assert p.supports_structured_output is True
+
+
+def test_structured_output_true_is_read_from_the_wire_key(monkeypatch):
+    """The profile value comes from the wire key `supports_structured_output` -
+    the D5 custom passthrough key the sync authors from the canonical record's
+    `supports_structured_output`."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/so-wire", supports_structured_output=True),
+    ]})
+    p = C.resolve_capability("openrouter", "so-wire", http=fake)
+    assert p.supports_structured_output is True
+
+
+def test_structured_output_absent_field_is_unknown(monkeypatch):
+    """Tag present but the structured-output field absent -> unknown (None),
+    never guessed - the negotiation must then resolve via its own matrix."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/tagged-no-so", max_input_tokens=200_000),
+    ]})
+    p = C.resolve_capability("openrouter", "tagged-no-so", http=fake)
+    assert p.supports_structured_output is None
+
+
+def test_structured_output_false_is_trusted_not_unknown(monkeypatch):
+    """An explicitly authored False is a trustworthy value, distinct from
+    unknown (None): conservative-unknown is about ABSENCE, never distrusting an
+    authored False."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/so-false", supports_structured_output=False),
+    ]})
+    p = C.resolve_capability("openrouter", "so-false", http=fake)
+    assert p.supports_structured_output is False
+
+
+def test_structured_output_wrong_typed_wire_value_degrades_to_unknown(monkeypatch):
+    """The typed profile contract: a wrong-typed wire value degrades to unknown
+    (None) - the negotiation then treats the rung as unasserted rather than
+    trusting a string that looks true."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/so-wrong-typed", supports_structured_output="yes"),
+    ]})
+    p = C.resolve_capability("openrouter", "so-wrong-typed", http=fake)
+    assert p.supports_structured_output is None
+
+
+# ---------------------------------------------------------------------------
 # Resolution order (D6): gateway -> env -> 150k default ----------------------
 # ---------------------------------------------------------------------------
 
@@ -447,11 +519,14 @@ def test_wrong_typed_wire_values_degrade_to_unknown(monkeypatch):
     fake = FakeHttp({"data": [
         _tagged("openrouter/wrong-typed",
                 max_input_tokens="200000", max_output_tokens=True,
+                supports_function_calling="yes", supports_structured_output="yes",
                 reasoning_in_response="yes", reasoning_field=123),
     ]})
     p = C.resolve_capability("openrouter", "wrong-typed", http=fake)
     assert p.context_limit == DEFAULT_CONTEXT  # string count -> unknown -> default
     assert p.output_limit is None  # bool output -> unknown
+    assert p.supports_tool_calling is None
+    assert p.supports_structured_output is None
     assert p.reasoning_in_response is None
     assert p.reasoning_field is None
 

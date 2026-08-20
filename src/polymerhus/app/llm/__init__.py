@@ -14,3 +14,7 @@ from polymerhus.app.llm.checkpoints import (  # noqa: F401
 from polymerhus.app.llm.capability import (  # noqa: F401
     CapabilityProfile, resolve_capability, DEFAULT_CONTEXT_LIMIT,
 )
+from polymerhus.app.llm.negotiation import (  # noqa: F401
+    Method, SchemaShape, DEGRADE_CHAIN, negotiate_method, next_rung,
+    result_validates,
+)

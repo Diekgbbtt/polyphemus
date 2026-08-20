@@ -62,11 +62,20 @@ Rule 1 applies exactly as to the other fields: absent tag or absent field
 `None` as `false` for capability gating - the crawl seam REFUSES the
 tool-loop on both `False` and `None` (#108).
 
+#99 structured-output surface (consumed by the method negotiation, ADR A1):
+`supports_structured_output` (bool) is read from the tagged record's custom
+passthrough key of the same name (the sync authors it from the canonical
+record's `supports_structured_output`, `sync_mapping.py`). Rule 1 applies
+exactly as to every other capability field: absent tag or absent field =
+`None` (unknown), never asserted true, never asserted false - the
+negotiation then applies its semantic default instead of trusting a guess.
+
 Wire shape: the /model/info bodies read here are exactly what the sync (T2,
 `sync_mapping.py`) authors - provenance keys `capability_source` /
 `capability_synced_at` / `capability_staleness`, the D5 mapped fields
 `max_input_tokens` / `max_output_tokens` / `supports_function_calling`
-(+ `supports_parallel_function_calling`), the D11 keys, and the slash-form
+(+ `supports_parallel_function_calling`), the custom passthrough
+`supports_structured_output` + D11 keys, and the slash-form
 registered model name `<provider>/<id>` (zen-family id stripped) - which is
 also the reader's lookup key. The gateway is the co-located litellm proxy
 (D1); `/model/info` is litellm's standard `{"data": [{"model_name": ...,
@@ -137,6 +146,11 @@ class CapabilityProfile:
       key with the same value (a later consumer may read it separately).
       Rule 1: absent tag or absent field = `None` (unknown) - `None` is
       treated as `false` by the gating consumers (spec §5).
+    - `supports_structured_output` (#99): whether the model supports native
+      structured output (`response_format=json_schema`) - the method
+      negotiation's first rung (ADR A1). Read from the custom passthrough key
+      `supports_structured_output` the sync authors. Rule 1 applies exactly
+      like the tool-calling flag: absent tag or absent field = `None`.
     - `source` / `synced_at`: full provenance (`capability_source` /
       `capability_synced_at`) for logging and staleness; `source` may be the
       literal `"unknown"` (D9 unknown-model path).
@@ -149,6 +163,7 @@ class CapabilityProfile:
     context_limit: int | None = None
     output_limit: int | None = None
     supports_tool_calling: bool | None = None
+    supports_structured_output: bool | None = None
     source: str | None = None
     synced_at: dt.datetime | None = None
     reasoning_in_response: bool | None = None
@@ -270,6 +285,7 @@ def _profile_from_record(provider: str, model: str, body: Any) -> CapabilityProf
             context_limit=_typed_positive_int(info.get("max_input_tokens")),
             output_limit=_typed_positive_int(info.get("max_output_tokens")),
             supports_tool_calling=_typed_bool(info.get("supports_function_calling")),
+            supports_structured_output=_typed_bool(info.get("supports_structured_output")),
             source=_typed_str(info[PROVENANCE_SOURCE_KEY]),
             synced_at=synced_at,
             reasoning_in_response=_typed_bool(info.get("reasoning_in_response")),
@@ -351,6 +367,9 @@ def resolve_capability(
         output_limit=profile.output_limit if profile is not None else None,
         supports_tool_calling=(
             profile.supports_tool_calling if profile is not None else None
+        ),
+        supports_structured_output=(
+            profile.supports_structured_output if profile is not None else None
         ),
         source=profile.source if profile is not None else None,
         synced_at=profile.synced_at if profile is not None else None,
