@@ -283,18 +283,24 @@ def _config_gaps(config: HuntConfig) -> list[str]:
     return gaps
 
 
-_LIGHTRAG_TOOL_GUIDANCE = (
-    "Hai a disposizione il tool `query_lightrag`. Usalo quando il grounding "
-    "della KB non è sufficiente a formulare una metodologia riutilizzabile.\n"
-    "Costruisci uno `QuerySpecV1` con i campi derivati dallo HuntConfig: "
-    "scenario_id, attack_goal, concern, technology_stack, target_refs, "
-    "input_vectors, known_facts, acceptable_technique_families, "
-    "unsupported_claims, evidence, expected_no_hypothesis.\n"
-    "Il tool restituisce un AnswerBundle validato: usalo come metodologia e "
-    "come vincolo di provenance, non come conferma di vulnerabilità.\n"
+_LIGHTRAG_TOOL_SKILL_FALLBACK = (
+    "Se il grounding della KB non basta a formulare una metodologia "
+    "riutilizzabile, usa il tool `query_lightrag` costruendo uno "
+    "`QuerySpecV1` dai campi dell'HuntConfig; l'AnswerBundle validato è "
+    "metodologia e vincolo di provenance, non conferma di vulnerabilità. "
     "Se il tool fallisce, prosegui con il grounding disponibile e segnala il "
-    "gap nel feedback.\n\n"
+    "gap nel feedback."
 )
+
+
+def _load_lightrag_query_skill() -> str:
+    """The `query_lightrag` usage guidance, single-sourced from
+    `skills/hunting/lightrag-query/SKILL.md` through the shared `skill_for`
+    (implementation doc 4.10): YAML frontmatter stripped, cached in-process,
+    degraded to the terse fallback above when the mount is unavailable."""
+    from polymerhus.recon.domain.skills import skill_for
+
+    return skill_for("hunting/lightrag-query", fallback=_LIGHTRAG_TOOL_SKILL_FALLBACK)
 
 
 def _hunting_lightrag_tool_enabled() -> bool:
@@ -326,7 +332,7 @@ def compose_authoring_prompt(
     cards = surface.get("cards") or []
     kb_text = (kb_result if not kb_degraded
                else "(KB unavailable; grounded on the HuntConfig alone)")
-    tool_guidance = _LIGHTRAG_TOOL_GUIDANCE if lightrag_tool_enabled else ""
+    tool_guidance = _load_lightrag_query_skill() if lightrag_tool_enabled else ""
     return (
         f"You are dispatched to hunt {config.unit_id} for fault class "
         f"{config.fault_class}.\n\n"

@@ -19,6 +19,8 @@ This tier pins the pure functions the harness relies on:
   ROLES - the `hunting` role joins the LLM role registry keyed by
       `LLM_MODEL_HUNTING` (Q1).
 """
+from pathlib import Path
+
 import pytest
 
 from polymerhus.attack.hunting.hunting_agent import (
@@ -162,6 +164,19 @@ def _authoring_prompt(lightrag_tool_enabled: bool) -> str:
     )
 
 
+def _lightrag_query_skill_body() -> str:
+    """The mounted skill body (YAML frontmatter stripped), the single source
+    of the `query_lightrag` guidance the enabled prompt must inject."""
+    path = (
+        Path(__file__).resolve().parents[2]
+        / "skills" / "hunting" / "lightrag-query" / "SKILL.md"
+    )
+    text = path.read_text(encoding="utf-8")
+    if text.startswith("---"):
+        text = text.split("---", 2)[-1].lstrip()
+    return text
+
+
 def test_authoring_prompt_disabled_mentions_no_lightrag_tool():
     prompt = _authoring_prompt(lightrag_tool_enabled=False)
     assert "query_lightrag" not in prompt
@@ -171,6 +186,7 @@ def test_authoring_prompt_disabled_mentions_no_lightrag_tool():
 
 def test_authoring_prompt_enabled_instructs_the_agent_on_the_tool():
     prompt = _authoring_prompt(lightrag_tool_enabled=True)
+    assert _lightrag_query_skill_body() in prompt
     assert "query_lightrag" in prompt
     for field in (
         "scenario_id",
@@ -189,6 +205,35 @@ def test_authoring_prompt_enabled_instructs_the_agent_on_the_tool():
     # the guidance sits before the working set, and the disabled prompt is a
     # strict prefix of the enabled one (byte-equivalent when off).
     assert prompt.index("Your working set:") > prompt.index("query_lightrag")
+
+
+def test_load_lightrag_query_skill_returns_mounted_body():
+    import polymerhus.attack.hunting.hunting_agent as hunting_agent
+
+    body = _lightrag_query_skill_body()
+    assert body
+    assert hunting_agent._load_lightrag_query_skill() == body
+
+
+def test_load_lightrag_query_skill_degrades_to_terse_fallback(monkeypatch):
+    """A missing skill mount must degrade to the terse fallback, never crash
+    and never duplicate the full field contract in code."""
+    import polymerhus.attack.hunting.hunting_agent as hunting_agent
+    import polymerhus.recon.domain.skills as skills_module
+
+    # Simulate an unmounted skills dir through the REAL skill_for degradation
+    # path (it never raises; it returns the fallback), then restore the cache.
+    monkeypatch.setattr(
+        skills_module, "_SKILLS_ROOT", Path("/nonexistent-skills-mount")
+    )
+    skills_module.clear_cache()
+    try:
+        result = hunting_agent._load_lightrag_query_skill()
+    finally:
+        skills_module.clear_cache()
+    assert result
+    assert "query_lightrag" in result
+    assert "acceptable_technique_families" not in result
 
 
 def test_authoring_prompt_flag_helper_reads_app_config(monkeypatch):
