@@ -21,6 +21,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     HuntConfig,
     MatchVerdict,
+    NoteOut,
     OrchestratorReport,
     OrchestratorTools,
     ReadOnlyGraphView,
@@ -191,7 +192,10 @@ def test_graph_view_rejects_writes():
     view = ReadOnlyGraphView("project-1", read_fn=spy_read)
     with pytest.raises(ReadOnlyGraphViewError):
         view.merge("MATCH (n) MERGE (m) ...")  # write-shaped call through the view
-    assert TOOL_SURFACE == frozenset({"back_edge", "store_reads", "graph_view"})
+    # The #137/#140 extended surface is asserted OUTSIDE the raising block (the
+    # raise above exits the `with` before it would otherwise run).
+    assert TOOL_SURFACE == frozenset(
+        {"back_edge", "store_reads", "graph_view", "read_memory_notes"})
 
 
 # --- C6: dispatch target failure degrades the hunt (O6, IA-2) -----------------
@@ -384,3 +388,111 @@ def test_orchestration_actor_survives_the_pass_and_is_reused(tmp_path):
 
     asyncio.run(_reap_orchestrator(RUN_ID))  # teardown: the stop path reaps it
     assert _ORCHESTRATOR_ACTORS.get(RUN_ID) is None
+
+
+# --- C8/C9: the deterministic note-taking node (#139) -------------------------
+
+def _note_producer(notes):
+    """The fixture note-taking turn: returns the given notes for the current state."""
+    def produce(state) -> dict:
+        return {"notes": notes}
+    return produce
+
+
+def test_note_node_writes_per_pair_notes(tmp_path):
+    """C8/C9 - the note node is reached deterministically per pair and writes
+    the produced notes to the per-project store, keyed unit_id:fault_class with a
+    kind-namespaced name; carried and refused notes both persist."""
+    store = HuntStore(tmp_path)
+    notes = [
+        NoteOut(unit_id=SERVICE_A, fault_class=FAULT_X,
+                name="implicit_test_primitive:csrf-probe",
+                kind="implicit_test_primitive", body="probe the POST with a bare token"),
+        NoteOut(unit_id=SERVICE_A, fault_class=FAULT_X,
+                name="hypothesis_refusal:missing-csrf",
+                kind="hypothesis_refusal", body="form Z carries no CSRF token",
+                evidence="observed on form Z"),
+    ]
+    _run(store, [_candidate(SERVICE_A, FAULT_X)], note_fn=_note_producer(notes))
+
+    mem = store.project_memory
+    got = mem.read_notes("project-1")
+    assert len(got) == 2
+    kinds = {n["kind"] for n in got}
+    assert kinds == {"implicit_test_primitive", "hypothesis_refusal"}
+    assert all(n["unit_id"] == SERVICE_A and n["fault_class"] == FAULT_X for n in got)
+    keys = {n["key"] for n in got}
+    assert any("implicit_test_primitive:csrf-probe" in k for k in keys)
+    assert any("hypothesis_refusal:missing-csrf" in k for k in keys)
+
+
+def test_note_node_absent_fails_open_writes_nothing(tmp_path):
+    """C8 - the default (absent) note node writes nothing and never aborts."""
+    store = HuntStore(tmp_path)
+    report = _run(store, [_candidate(SERVICE_A, FAULT_X)])  # note_fn not passed
+    assert report.hunts_dispatched == 1
+    assert store.project_memory.read_notes("project-1") == []
+
+
+# --- C10/C11: the reading tool (#140) ------------------------------------------
+
+def test_reading_tool_grep_match_and_contains_logic(tmp_path):
+    """C10 - the reading tool delegates to the per-project store's grep-match read;
+    C11 - a parent-index-only query returns the prior notes for that key (the old
+    read_memory semantics), so existing call sites degrade compatibly."""
+    store = HuntStore(tmp_path)
+    memory = store.project_memory
+    memory.append_note("project-1", SERVICE_A, FAULT_X, "hypothesis_refusal:no-csrf",
+                       "hypothesis_refusal", "form Z carries no CSRF token")
+    tools = OrchestratorTools(
+        store_reads=store,
+        graph_view=ReadOnlyGraphView("project-1", read_fn=lambda cy, p: []),
+    )
+    # parent-index-only (compatible with read_memory semantics).
+    hit = tools.read_memory_notes("project-1", parent_key=revival_key(SERVICE_A, FAULT_X))
+    assert len(hit) == 1 and hit[0]["kind"] == "hypothesis_refusal"
+    # body keyword.
+    assert len(tools.read_memory_notes("project-1", body_keyword="csrf")) == 1
+    # key keyword.
+    assert len(tools.read_memory_notes("project-1", key_keyword="no-csrf")) == 1
+    # combinable.
+    assert len(tools.read_memory_notes("project-1",
+                                       key_keyword="no-csrf", body_keyword="csrf")) == 1
+    # empty-but-valid.
+    assert tools.read_memory_notes("project-1", body_keyword="nothing") == []
+    # no store -> empty, never crash.
+    bare = OrchestratorTools(store_reads=None, graph_view=None)
+    assert bare.read_memory_notes("project-1", body_keyword="x") == []
+
+
+def test_config_accumulates_per_project_on_dispatch(tmp_path):
+    """#142 - a dispatched pass accumulates a hunt-config direction stamp in the
+    per-project config store (the overlap-prevention memory)."""
+    store = HuntStore(tmp_path)
+    _run(store, [_candidate(SERVICE_A, FAULT_X)])
+    cfg = store.project_memory.config_keys("project-1")
+    assert cfg == [revival_key(SERVICE_A, FAULT_X)]
+
+
+# --- C12: gate-prompt key-list embedding (#141) --------------------------------
+
+from polymerhus.attack.hunting.llm import _compose_gate_prompt  # noqa: E402
+from polymerhus.attack.hunting.hunt_orchestrator import GateInput  # noqa: E402
+
+
+def test_gate_prompt_embeds_prior_config_keys():
+    """C12 - the gate prompt embeds the previous hunt-config keys as a header
+    list (Seam 3); an empty prior set embeds an empty index (valid)."""
+    prompt = _compose_gate_prompt(GateInput(
+        candidates=[_candidate(SERVICE_A, FAULT_X)],
+        prior_config_keys=[revival_key(SERVICE_A, FAULT_X), revival_key(SERVICE_A, FAULT_Y)],
+    ))
+    assert "Prior hunt-config research-direction keys" in prompt
+    assert revival_key(SERVICE_A, FAULT_X) in prompt
+    assert revival_key(SERVICE_A, FAULT_Y) in prompt
+
+    empty = _compose_gate_prompt(GateInput(
+        candidates=[_candidate(SERVICE_A, FAULT_X)],
+        prior_config_keys=[],
+    ))
+    assert "Prior hunt-config research-direction keys" not in empty

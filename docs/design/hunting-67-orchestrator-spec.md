@@ -237,7 +237,7 @@ E13 - Dispatch target failure (O6, IA-2): given a hunting agent that raises, exe
 Yields: `...::test_E13_dispatch_failure_degrades_the_hunt`.
 E14 - Budget cut (O9): given a budget governor that cuts one of two directions, exercising ordering, the cut direction is recorded, not dispatched, and one config/hunt pair results.
 Yields: `...::test_E14_budget_cut_records_undispatched_direction`.
-E15 - Cross-run memory by revival key (#70, E1): given a completed first pass, exercising persistence, the first pass's feedback becomes the second pass's prior-hunt insight, read back out of the real cross-run `memory.md`.
+E15 - Cross-run memory by revival key (#70, E1): given a completed first pass, exercising persistence, the first pass's feedback becomes the second pass's prior-hunt insight, read back out of the real cross-run `memory.md`. (As of the #137 memory workstream the cross-run `memory.md` is superseded by the **per-project** hunt-config + note memory store; the revive-keyed prior-hunt insight persists there via the note + config reading tool - see the memory system.)
 Yields: `...::test_E15_cross_run_memory_by_revival_key`.
 E16 - The read-only view over the live graph (D67-04): given a write-shaped call through the real view, exercising malformed, the view rejects the write and still serves reads against the live graph.
 Yields: `...::test_read_only_view_rejects_writes`.

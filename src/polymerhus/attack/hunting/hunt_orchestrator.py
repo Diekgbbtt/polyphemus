@@ -59,9 +59,9 @@ from polymerhus.recon.control.targeted import (
 
 logger = logging.getLogger(__name__)
 
-# The orchestrator's tool surface (#67 D67-04, spec 5.1): exactly these three,
-# nothing more.
-TOOL_SURFACE = frozenset({"back_edge", "store_reads", "graph_view"})
+# The orchestrator's tool surface (#67 D67-04, spec 5.1; extended by #137/#140
+# with the note + config reading tool): exactly these, nothing more.
+TOOL_SURFACE = frozenset({"back_edge", "store_reads", "graph_view", "read_memory_notes"})
 
 # The per-run orchestration actor registry (#110): ONE `HuntOrchestratorActor`
 # per run_id, lazily resolved on the pass's first LLM turn and HELD after the
@@ -119,12 +119,30 @@ class GateInput(BaseModel):
     kb_degraded: bool = False
     kb_evidences: dict = Field(default_factory=dict)
     surface: list[dict] = Field(default_factory=list)
+    prior_config_keys: list[str] = Field(default_factory=list)
 
 
 class GateDecision(BaseModel):
     """The gate's output: the directions, each marked carried or pruned in-turn."""
 
     directions: list[EnvisionedDirection] = Field(default_factory=list)
+
+
+class NoteOut(BaseModel):
+    """One note the deterministic note-taking step writes to the per-project
+    memory store (#137/#139). The kind is the closed enum; `name` is the
+    note-name whose initial namespace encodes the kind, chained with the kind's
+    concrete detail (a missing adversarial capability, a defence, a testing
+    primitive). The model decides whether carried, refused, or both are noted -
+    there is no completeness check."""
+
+    unit_id: str
+    fault_class: str
+    name: str
+    kind: Literal["hypothesis_refusal", "implicit_test_primitive", "freeform"]
+    body: str
+    evidence: str | None = None
+    provenance: str | None = None
 
 
 class HuntPromptTemplate(BaseModel):
@@ -252,12 +270,33 @@ class ReadOnlyGraphView:
 
 @dataclass
 class OrchestratorTools:
-    """The orchestrator's three tools (D67-04): the hunt back-edge (IA-6), the
-    hunt-store reads (#68), and the read-only graph view."""
+    """The orchestrator's tools (D67-04, #137): the hunt back-edge (IA-6), the
+    hunt-store reads (now including the per-project note + config memory read,
+    #140), and the read-only graph view."""
 
     back_edge: Callable[[AnalyserReconRequest, str, str], TargetedReconResult] | None = None
     store_reads: Any = None
     graph_view: ReadOnlyGraphView | None = None
+
+    def read_memory_notes(
+        self,
+        project_id: str,
+        *,
+        parent_key: str | None = None,
+        key_keyword: str | None = None,
+        body_keyword: str | None = None,
+    ) -> list[dict]:
+        """The note + hunt-config reading tool (#140): delegates to the per-project
+        memory store's grep-match read. Returns [] when no store is configured."""
+        if self.store_reads is None:
+            return []
+        memory = getattr(self.store_reads, "project_memory", None)
+        if memory is None:
+            return []
+        return memory.read_memories(
+            project_id, parent_key=parent_key, key_keyword=key_keyword,
+            body_keyword=body_keyword,
+        )
 
 
 def revival_key(unit_id: str, fault_class: str) -> str:
@@ -392,6 +431,7 @@ async def arun_orchestration(
     dispatch_fn: Callable[[HuntConfig, tuple], DispatchResult] | None = None,
     rematch_fn: Callable[[str, str, TargetedReconResult], MatchVerdict] | None = None,
     reason_fn: Callable[[GateInput], GateDecision] | None = None,
+    note_fn: Callable[[dict], dict] | None = None,
     kb_retrieve_fn: Callable[[str], dict] | None = None,
     known_faults: Sequence[str] | None = None,
     exhausted_faults: Sequence[str] = (),
@@ -575,6 +615,12 @@ async def arun_orchestration(
         if current is None:
             return {"directions": [], "trail": []}
         directions: list[EnvisionedDirection] = []
+        prior_keys: list[str] = []
+        try:
+            memory = tools.store_reads.project_memory if tools.store_reads else None
+            prior_keys = memory.config_keys(project_id) if memory is not None else []
+        except Exception:  # noqa: BLE001 - fail-open: an empty key index
+            prior_keys = []
         if reason_fn is not None:
             try:
                 decision = await _await_seam(reason_fn, GateInput(
@@ -582,6 +628,7 @@ async def arun_orchestration(
                     kb_degraded=kb_degraded,
                     kb_evidences=kb_evidences,
                     surface=surface,
+                    prior_config_keys=prior_keys,
                 ))
                 directions = list(getattr(decision, "directions", None) or [])
             except Exception as exc:  # noqa: BLE001 - fail-open: carry the pair
@@ -599,6 +646,25 @@ async def arun_orchestration(
             for d in directions if not d.carried
         ]
         return {"directions": carried, "trail": trail}
+
+    async def _note_node(state) -> dict:
+        """The DETERMINISTIC note-taking turn for the current pair (#139).
+
+        Determinism is invocation: the node is reached by a static edge for
+        every pair; the body (the `note_fn` seam, or a default fail-open) is
+        what decides whether notes are written, and the graph node writes them
+        fail-open. This closure only resolves the pair and delegates to
+        `note_fn`, failing open to no notes on any error."""
+        current = state.get("current")
+        if current is None or note_fn is None:
+            return {"notes": []}
+        try:
+            return await _await_seam(note_fn, state)
+        except Exception as exc:  # noqa: BLE001 - fail-open
+            logger.warning("note turn failed for %s, writing nothing (%s)",
+                           revival_key(getattr(current, "unit_id", "?"),
+                                       getattr(current, "fault_class", "?")), exc)
+            return {"notes": []}
 
     async def _budget_node(state) -> dict:
         """The deterministic budget stage (O9): a batch cut over the whole
@@ -694,6 +760,21 @@ async def arun_orchestration(
         )
         config_ref = _write("config", config.model_dump())
 
+        # Accumulate the hunt-config direction stamp in the per-project memory
+        # store (#142): the config set IS the overlap-prevention memory. Fail-open.
+        try:
+            memory = tools.store_reads.project_memory if tools.store_reads else None
+            if memory is not None:
+                memory.append_config(project_id, {
+                    "key": key,
+                    "revival_key": key,
+                    "hunt_id": hunt_id,
+                    "fault_class": direction.fault_class,
+                    "unit_id": direction.unit_id,
+                })
+        except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
+            logger.warning("hunt store: config memory write failed (%s)", exc)
+
         hunt: dict[str, Any] = {
             "hunt_id": hunt_id,
             "revival_key": key,
@@ -781,13 +862,15 @@ async def arun_orchestration(
         "tools": tools,
         "store_reads": tools.store_reads,
         "reason_fn": reason_fn,
+        "note_fn": note_fn,
         "budget_fn": budget_fn,
         "dispatch_fn": dispatch_fn,
         "rematch_fn": rematch_fn,
         "exhausted_faults": tuple(exhausted_faults),
     }
     graph = build_hunting_graph(
-        reason_node=_reason_node, budget_node=_budget_node, dispatch_node=_dispatch_node,
+        reason_node=_reason_node, note_node=_note_node,
+        budget_node=_budget_node, dispatch_node=_dispatch_node,
     )
     terminal = await graph.compile().ainvoke(
         initial, {"configurable": {"thread_id": run_id}},
@@ -817,6 +900,7 @@ def run_orchestration(
     dispatch_fn: Callable[[HuntConfig, tuple], DispatchResult] | None = None,
     rematch_fn: Callable[[str, str, TargetedReconResult], MatchVerdict] | None = None,
     reason_fn: Callable[[GateInput], GateDecision] | None = None,
+    note_fn: Callable[[dict], dict] | None = None,
     kb_retrieve_fn: Callable[[str], dict] | None = None,
     known_faults: Sequence[str] | None = None,
     exhausted_faults: Sequence[str] = (),
@@ -844,6 +928,7 @@ def run_orchestration(
         dispatch_fn=dispatch_fn,
         rematch_fn=rematch_fn,
         reason_fn=reason_fn,
+        note_fn=note_fn,
         kb_retrieve_fn=kb_retrieve_fn,
         known_faults=known_faults,
         exhausted_faults=exhausted_faults,

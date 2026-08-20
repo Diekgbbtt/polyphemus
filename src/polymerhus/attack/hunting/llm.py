@@ -182,6 +182,23 @@ def _compose_gate_prompt(inp: GateInput) -> str:
             f"witness_deterministic={w.deterministic!r} witness_llm={w.llm!r} "
             f"kb_evidence={inp.kb_evidences.get(c.fault_class) or '(none)'}"
         )
+    if inp.prior_config_keys:
+        lines += [
+            "",
+            "There is a budget to avoid overlapping research directions with past "
+            "hunts on this project.",
+        ]
+        lines += [
+            f"Prior hunt-config research-direction keys: {', '.join(inp.prior_config_keys)}",
+            "",
+            "If any of these prior directions is relevant to the current candidate, "
+            "you may call the note/config reading tool to retrieve its notes before "
+            "deciding. The tool filters by the parent (unit, fault) index, a keyword "
+            "over the note keys, and a keyword over the note body; note kinds are: "
+            "hypothesis_refusal (a refused direction with its reason and evidence), "
+            "implicit_test_primitive (a testing primitive on a carried config), "
+            "freeform (any forward-useful note).",
+        ]
     lines += [
         "",
         f"Read-only graph surface (index cards): {inp.surface or '(none)'}",

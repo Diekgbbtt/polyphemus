@@ -43,6 +43,7 @@ logger = logging.getLogger(__name__)
 
 # Stable node names (routed by the supervisor).
 _REASON = "reason"
+_NOTE = "note"
 _BUDGET = "budget"
 _DISPATCH = "dispatch"
 
@@ -71,6 +72,7 @@ class HuntOrchestrationState(TypedDict, total=False):
     tools: Any                               # read-only (OrchestratorTools)
     store_reads: Any                         # read-only
     reason_fn: Callable | None               # the gate turn seam (GateInput -> GateDecision)
+    note_fn: Callable | None                 # the note-taking turn seam (pair -> NoteOut list)
     budget_fn: Callable | None               # the budget seam (Sequence -> Sequence)
     dispatch_fn: Callable | None             # the per-config dispatch seam
     rematch_fn: Callable | None              # the re-match judge seam
@@ -146,6 +148,64 @@ def _make_reason(reason_node: Callable | None) -> Callable[[HuntOrchestrationSta
     return reason
 
 
+def _make_note(note_node: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
+    """Build the `note` node: the DETERMINISTIC note-taking step (#137, #139).
+
+    Determinism is about INVOCATION, not cognitive output: the node is reached
+    via a static edge for every pair, never gated on the model's behaviour or
+    tool calls. Its body runs the note-taking turn (injected, sync or async)
+    for the current pair and writes the returned notes to the per-project
+    memory store (via `state["tools"].store_reads.project_memory`). The default
+    (no body) and a raising body both fail open (write nothing, never abort the
+    pass), matching the O3/O4 degradation canon."""
+
+    async def note(state: HuntOrchestrationState) -> dict:
+        current = state.get("current")
+        if current is None:
+            return {"trail": []}
+        raw = None
+        try:
+            raw = _call_maybe_await(note_node, state)
+            if inspect.isawaitable(raw):
+                raw = await raw
+        except Exception as exc:  # noqa: BLE001 - fail-open: write nothing
+            logger.warning("note turn failed for %s, writing nothing (%s)",
+                           _pair_label(current), exc)
+        trail: list[dict] = []
+        if not isinstance(raw, dict):
+            return {"trail": trail}
+        notes = raw.get("notes") or []
+        if not notes:
+            return {"trail": trail}
+        tools = state.get("tools")
+        store = getattr(tools, "store_reads", None) if tools is not None else None
+        project_id = state.get("project_id")
+        if store is None or project_id is None:
+            return {"trail": trail}
+        memory = getattr(store, "project_memory", None)
+        if memory is None:
+            return {"trail": trail}
+        key = f"{getattr(current, 'unit_id', '?')}::{getattr(current, 'fault_class', '?')}"
+        for note_data in notes:
+            try:
+                remember = memory.append_note(
+                    project_id,
+                    str(note_data.unit_id),
+                    str(note_data.fault_class),
+                    note_data.name,
+                    note_data.kind,
+                    note_data.body,
+                    evidence=note_data.evidence,
+                    provenance={"ref": getattr(note_data, "provenance", None)},
+                )
+                trail.append({"kind": "note", "revival_key": key, "ref": remember})
+            except Exception as exc:  # noqa: BLE001 - fail-open per note
+                logger.warning("note write failed for %s (%s)", key, exc)
+        return {"trail": trail}
+
+    return note
+
+
 def _make_budget(budget_node: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
     """Build the `budget` node: the deterministic batch stage. The injected body
     cuts over the WHOLE accumulated `directions` set and returns the `worklist`
@@ -200,6 +260,7 @@ def _pair_label(current: Any) -> str:
 def build_hunting_graph(
     *,
     reason_node: Callable | None = None,
+    note_node: Callable | None = None,
     budget_node: Callable | None = None,
     dispatch_node: Callable | None = None,
 ) -> StateGraph:
@@ -211,12 +272,14 @@ def build_hunting_graph(
     g = StateGraph(HuntOrchestrationState)
     g.add_node("supervisor", _supervisor)
     g.add_node(_REASON, _make_reason(reason_node))
+    g.add_node(_NOTE, _make_note(note_node))
     g.add_node(_BUDGET, _make_budget(budget_node))
     g.add_node(_DISPATCH, _make_dispatch(dispatch_node))
     g.add_edge(START, "supervisor")
-    g.add_edge(_REASON, "supervisor")      # static: the pair returns to the supervisor
-    g.add_edge(_BUDGET, "supervisor")      # static: the worklist returns to the supervisor
-    g.add_edge(_DISPATCH, "supervisor")    # static: the dispatch returns to the supervisor
+    g.add_edge(_REASON, _NOTE)            # static: the note step always fires
+    g.add_edge(_NOTE, "supervisor")       # static: the pair returns to the supervisor
+    g.add_edge(_BUDGET, "supervisor")     # static: the worklist returns to the supervisor
+    g.add_edge(_DISPATCH, "supervisor")   # static: the dispatch returns to the supervisor
     return g
 
 
@@ -225,6 +288,7 @@ __all__ = [
     "build_hunting_graph",
     "_supervisor",
     "_REASON",
+    "_NOTE",
     "_BUDGET",
     "_DISPATCH",
 ]

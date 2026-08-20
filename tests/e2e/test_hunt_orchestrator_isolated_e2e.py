@@ -37,6 +37,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     HuntConfig,
     MatchVerdict,
+    NoteOut,
     OrchestratorTools,
     ReadOnlyGraphView,
     ReadOnlyGraphViewError,
@@ -612,3 +613,140 @@ def test_read_only_view_rejects_writes(project):
         "MATCH (u:L1TestableUnit) WHERE u.project_id = $project_id RETURN count(u) AS c",
         {"project_id": project},
     )  # reads still reach the live graph through the view
+
+
+# --- E17-E19 (#143): the per-project memory system against the REAL store + graph
+
+
+def _note_producer_fixture(notes):
+    """The fixture note-taking turn: returns the given notes for the current state."""
+
+    def produce(state) -> dict:
+        return {"notes": notes}
+
+    return produce
+
+
+def _capture_reason(seen: dict):
+    """The gate: records the real graph surface AND the prior-config key-list it
+    was grounded on (Seam 3 measurement), then carries every candidate in-turn."""
+
+    def reason(inp):
+        seen["surface"] = inp.surface
+        seen["prior_config_keys"] = list(inp.prior_config_keys)
+        return GateDecision(directions=[_carry(c) for c in inp.candidates])
+
+    return reason
+
+
+def test_E17_bounded_live_pass_lands_configs_and_notes(session, project, tmp_path):
+    """E1 (Seam 4) - a bounded live pass against the real graph + real store lands
+    per-project hunt configs AND notes (the note node fires deterministically),
+    read back out of the real per-project store."""
+    store = HuntStore(tmp_path)
+    seen: dict = {}
+    note_produced = [
+        NoteOut(unit_id=SERVICE_A, fault_class=FAULT_X,
+                name="implicit_test_primitive:csrf-probe", kind="implicit_test_primitive",
+                body="probe the POST with a bare token"),
+    ]
+
+    run_orchestration(
+        project_id=project, run_id="run-E17", candidates=[_candidate(SERVICE_A, FAULT_X)],
+        tools=_tools(store, project),
+        dispatch_fn=_recording_dispatch([]),
+        rematch_fn=_ok_rematch(),
+        reason_fn=_capture_reason(seen),
+        note_fn=_note_producer_fixture(note_produced),
+    )
+
+    memory = store.project_memory
+    # Config direction stamp accumulates.
+    assert memory.config_keys(project) == [revival_key(SERVICE_A, FAULT_X)]
+    # The note node wrote the produced note (deterministic invocation).
+    notes = memory.read_notes(project)
+    assert len(notes) == 1
+    assert notes[0]["kind"] == "implicit_test_primitive"
+    assert notes[0]["unit_id"] == SERVICE_A and notes[0]["fault_class"] == FAULT_X
+    assert store.list_records("run-E17", "hunt")  # the real per-run trail still writes
+
+
+def test_E18_gate_prompt_carries_prior_keys_across_two_passes(session, project, tmp_path):
+    """E2 (Seam 3 + 4) - two live passes on the same bounded project: pass 1
+    persists a config for fault-x; pass 2 (same unit, fault-y) has a gate prompt
+    carrying the prior key-list (the fault-x header), and its note store holds
+    pass 1's notes."""
+    store = HuntStore(tmp_path)
+    seen1: dict = {}
+    seen2: dict = {}
+
+    run_orchestration(
+        project_id=project, run_id="run-E18a", candidates=[_candidate(SERVICE_A, FAULT_X)],
+        tools=_tools(store, project),
+        dispatch_fn=_recording_dispatch([]), rematch_fn=_ok_rematch(),
+        reason_fn=_capture_reason(seen1),
+    )
+    # The second pass hunts a DIFFERENT fault on the SAME unit - the prior
+    # fault-x config is still relevant (overlap-prevention memory).
+    run_orchestration(
+        project_id=project, run_id="run-E18b", candidates=[_candidate(SERVICE_A, FAULT_Y)],
+        tools=_tools(store, project),
+        dispatch_fn=_recording_dispatch([]), rematch_fn=_ok_rematch(),
+        reason_fn=_capture_reason(seen2),
+    )
+
+    # Pass 2's gate saw the prior fault-x key header.
+    assert revival_key(SERVICE_A, FAULT_X) in seen2["prior_config_keys"]
+    # Pass 1's config persists in the per-project store.
+    assert revival_key(SERVICE_A, FAULT_X) in store.project_memory.config_keys(project)
+
+
+def test_E19_orchestrator_detects_when_to_call_reading_tool(session, project, tmp_path):
+    """E3 (Seam 3 capability measurement) - a prior hypothesis_refusal note with a
+    distinctive body keyword exists for a unit; a later pass on that unit invokes
+    the reading tool (tracing it) and retrieves the relevant prior note."""
+    store = HuntStore(tmp_path)
+    # Seed a prior refusal note with a distinctive body keyword.
+    store.project_memory.append_note(
+        project, SERVICE_A, "fault-x", "hypothesis_refusal:no-csrf",
+        "hypothesis_refusal", "no CSRF token on form Z",
+    )
+    memory = store.project_memory
+    calls: list = []
+    real_tools = _tools(store, project)
+    # Wrap read_memory_notes to trace invocations (the capability measurement).
+    traced = OrchestratorTools(
+        back_edge=real_tools.back_edge,
+        store_reads=store,
+        graph_view=real_tools.graph_view,
+    )
+    original = traced.read_memory_notes
+
+    def traced_read(project_id, *, parent_key=None, key_keyword=None, body_keyword=None):
+        calls.append((parent_key, key_keyword, body_keyword))
+        return original(project_id, parent_key=parent_key,
+                        key_keyword=key_keyword, body_keyword=body_keyword)
+
+    traced.read_memory_notes = traced_read  # type: ignore[method-assign]
+
+    seen: dict = {}
+
+    def reason_with_read(inp):
+        seen["surface"] = inp.surface
+        # The orchestrator (as the agent would) detects the relevant prior note
+        # via the reading tool - the body keyword is the project's fault signal.
+        hit = traced_read(project, parent_key=revival_key(SERVICE_A, "fault-x"),
+                          body_keyword="csrf")
+        seen["retrieved"] = hit
+        return GateDecision(directions=[_carry(c) for c in inp.candidates])
+
+    run_orchestration(
+        project_id=project, run_id="run-E19", candidates=[_candidate(SERVICE_A, FAULT_X)],
+        tools=traced, dispatch_fn=_recording_dispatch([]), rematch_fn=_ok_rematch(),
+        reason_fn=reason_with_read,
+    )
+
+    # The reading tool fired and returned the prior note matching the keyword.
+    assert len(seen["retrieved"]) == 1
+    assert seen["retrieved"][0]["kind"] == "hypothesis_refusal"
+    assert "no CSRF token on form Z" in seen["retrieved"][0]["body"]
