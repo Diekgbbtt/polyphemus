@@ -158,4 +158,8 @@ The one-shot `invoke_role` leaves (bootstrapper, anatomy, curation, sweep, the
 legacy gate/re-match/decide_routing seams) and the StateGraph-without-checkpointer
 pipelines (`supervisor`, `pod_graph`, `job_agent`) are NOT compacted - they hold no
 resumable session thread to compact. The sync `_hunter_turn` ContextVar rollback
-lane is deliberately NOT wired (D9).
+lane is deliberately NOT wired (D9). The `crawler` role is `agent_mode="session"`
+in the registry but runs a vendored ReAct loop (`crawl_agentic.py::_run_agentic_crawl`,
+`llm.bind_tools` + a manual `ainvoke` loop) rather than `create_agent`, so the
+`AgentMiddleware` cannot attach; wiring it means migrating the crawl loop or a
+bespoke non-middleware compaction, both a follow-up.

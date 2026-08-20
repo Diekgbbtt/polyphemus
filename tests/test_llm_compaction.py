@@ -36,7 +36,11 @@ from polymerhus.app.llm import summary as S
 from polymerhus.app.llm import tool_output as T
 from polymerhus.app.llm.capability import CapabilityProfile
 from polymerhus.app.llm.providers import LLMConfigError
-from polymerhus.app.llm.session import read_session_memory, run_session_turn
+from polymerhus.app.llm.session import (
+    _attach_compaction_metadata,
+    read_session_memory,
+    run_session_turn,
+)
 
 
 def _usage(input_tokens, output_tokens=0, cache_read=0, reasoning=None):
@@ -828,3 +832,41 @@ def test_staged_trail_reducer_handles_id_none_defensively():
     merged = add_messages(current, update["messages"])
     assert [m.content for m in merged] == ["[running summary] NEW-NARRATIVE", "keep-me"]
     assert len(merged) == 2
+
+
+def test_attach_compaction_metadata_surfaces_the_last_pass():
+    """D11: the session seam surfaces the last settled pass on the same trace - the
+    `compaction_*` fields ride the config metadata (replayed, like readability), and
+    an absent middleware/report simply omits them (fail-open)."""
+    class _Manager:
+        def __init__(self):
+            self.reports = {}
+
+        def last_report(self, thread_id):
+            return self.reports.get(thread_id)
+
+    class _Middleware:
+        def __init__(self, manager):
+            self.manager = manager
+
+    report = C.CompactReport(
+        exempted_spans=1, summarised_spans=2, offloaded_bodies=0, reclaimed_tokens=123,
+        readability=C.READABILITY_COMPACTED, summary_status="ok",
+        new_summary=S.RunningSummary(summary_text="NEW-NARRATIVE"))
+
+    manager = _Manager()
+    manager.reports["t1"] = report
+    config = {"metadata": {"langfuse_session_id": "t1"}}
+    _attach_compaction_metadata(config, [_Middleware(manager)], "t1")
+    assert config["metadata"]["compaction_readability"] == "compacted"
+    assert config["metadata"]["compaction_reclaimed_tokens"] == 123
+    assert config["metadata"]["compaction_summary_status"] == "ok"
+
+    # No settled pass -> fields omitted, never a raise (fail-open).
+    config2 = {"metadata": {"langfuse_session_id": "t2"}}
+    _attach_compaction_metadata(config2, [_Middleware(manager)], "t2")
+    assert "compaction_readability" not in config2["metadata"]
+    # No compaction middleware -> omitted.
+    config3 = {"metadata": {}}
+    _attach_compaction_metadata(config3, [], "t1")
+    assert "compaction_readability" not in config3["metadata"]

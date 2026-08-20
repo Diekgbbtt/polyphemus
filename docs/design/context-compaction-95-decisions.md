@@ -111,6 +111,8 @@ The model's own transcript verdict (the brief note it writes about a tool result
 Semantic retrieval of bodies is NOT this ticket: it belongs to the unified memory work item (#85, converging on mem0) with semantics-based indexing and domain ontology.
 mem0 is evaluated and REJECTED for this ticket's offload: it serves semantic recall, not exact-ref fidelity retrieval, and would centralise what must stay module-owned.
 
+**Store backing status.** The `ToolOutputStore` Protocol (`put_body`/`get_body`) is the seam; `InMemoryToolOutputStore` (in `tool_output.py`) is the BUILT in-process backing, used by every wired consumer and by the hermetic tests. Durable, module-owned backings are the follow-up - each module supplies a `ToolOutputStore` over its own durable custody when that custody exists: the recon pod over its per-pod/tool log, the hunting module over the append-only `HuntStore`, and the analysis module over its run archive - none of which implements the protocol yet. Until then the offloaded body is in-process only (a ref dangles after process death), which is fail-open for the WINDOW (the header still carries the outline + head/tail excerpts) but loses the byte-identical body across restarts.
+
 **Rationale.**
 The only current tool is the raw terminal, whose payload is the whole command output; cutting past the header is heuristic, so the header must carry the command, the outcome, and the body's head/tail shape - everything else lives in the module store at full fidelity.
 
@@ -123,7 +125,9 @@ The wired consumers are the checkpointer-backed (`create_agent`) production sess
 - the H generalisation (ticket #134, ratified 2026-08-18): every remaining checkpointer-backed agent - the analysis assigner + data-modeller (joining the mechanism-typist), the recon-pod configurator + triager (a process-wide per-role middleware, the manager keying state by `thread_id`), and the recon-orchestrator + hunt-orchestrator actors. The wiring is additive at session construction (`middleware`/`middleware_extra`), never agent-logic changes.
 
 The sync `hunt_session` ContextVar rollback lane is NOT wired (counterchecked per the operator's request: `hunting_agent.py`'s dispatch comment states "The actor-backed production seams ignore it - the per-hunt `HuntingHunterActor` already owns that thread"; `actors.py` documents the actor as "replacing the `hunt_session` ContextVar + `stateful_turn` seam, which remains the sync rollback lane").
-The one-shot `invoke_role` leaves (bootstrapper, anatomy, curation, sweep, the legacy gate/re-match/decide_routing seams) and the StateGraph-without-checkpointer pipelines (supervisor, pod_graph, job_agent) are NOT compacted - they hold no resumable session thread to compact. The #84 test-executor pod's migration (interim `trim_messages` -> offload + summarise) is a follow-up against this component's client seam.
+The one-shot `invoke_role` leaves (bootstrapper, anatomy, curation, sweep, the legacy gate/re-match/decide_routing seams) and the StateGraph-without-checkpointer pipelines (supervisor, pod_graph, job_agent) are NOT compacted - they hold no resumable session thread to compact.
+The `crawler` role is `agent_mode="session"` in `providers.py` but runs a VENDORED ReAct tool loop (`recon/crawl/crawl_agentic.py::_run_agentic_crawl`: `_build_llm_with_model_for_user` -> `llm.bind_tools` -> a manual `ainvoke` loop over `max_iterations`), NOT the `create_agent` session seam - so the `AgentMiddleware` cannot attach there. It is therefore NOT compacted by this change; wiring it means either migrating the crawl loop onto `create_agent` or a bespoke non-middleware compaction, both a follow-up (its loop is iteration-bounded and per-request, so it does not grow an unbounded resumable thread).
+The #84 test-executor pod's migration (interim `trim_messages` -> offload + summarise) is a follow-up against this component's client seam.
 
 **Rationale.**
 The hunter and the mechanism-typist are implemented and production-bound; the rollback lane must not gain behaviour production does not share. Wiring consumers of different agent shape (tool-calling vs chained single-shot) proves the middleware is orthogonal to the state machine it wraps, not bound to one loop.
@@ -139,7 +143,7 @@ Server-side interposition couples the gateway into session state it is architect
 
 ## D11 - Observability and full fidelity
 
-A compact pass is observable on the same session trace (`langfuse_session_id`, the D11 item-4 metadata recipe, fail-open): the pass, its reclaimed-token count, and the compaction-reflected readability value ride the existing metadata surface.
+A compact pass is observable on the same session trace (`langfuse_session_id`, the D11 item-4 metadata recipe, fail-open): the session seam (`session.py::_attach_compaction_metadata`) merges the last settled pass's `compaction_readability` / `compaction_reclaimed_tokens` / `compaction_summary_status` fields into the config metadata, replayed from the turn BEFORE the current one exactly like `reasoning_readability` - the fields ride the metadata the Langfuse CallbackHandler records onto the llm response. With no compaction middleware or no settled pass the fields are simply omitted.
 `cache_read` / `cached_tokens` are recorded, never load-bearing (gateway ADR D11 item 3).
 Compaction bounds only what the agent SEES: the module store keeps the full trail at full fidelity for export/eval, and the checkpointer holds the compacted working set.
 

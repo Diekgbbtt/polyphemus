@@ -109,6 +109,33 @@ def _attach_readability_metadata(config: dict, values: dict | None) -> None:
     config["metadata"].update(reasoning_readability_metadata(messages))
 
 
+def _attach_compaction_metadata(config: dict, middleware: Sequence, thread_id: str) -> None:
+    """#95 (D11): surface the last COMPACT pass on the session trace.
+
+    The compaction manager (held by the compaction middleware, which this turn
+    runs with) records the last settled pass per thread; this merges its
+    `compaction_readability` / `compaction_reclaimed_tokens` /
+    `compaction_summary_status` fields into the config metadata, "replayed" from
+    the turn BEFORE the current one exactly like `reasoning_readability` - the
+    fields ride the metadata the Langfuse CallbackHandler records onto the llm
+    response (same `langfuse_session_id`). Fail-open: no compaction middleware,
+    no settled pass, or an unreadable report simply omits the fields."""
+    for mw in middleware or ():
+        manager = getattr(mw, "manager", None)
+        last_report = getattr(manager, "last_report", None)
+        if last_report is None:
+            continue
+        report = last_report(thread_id)
+        if report is None:
+            continue
+        config["metadata"].update({
+            "compaction_readability": report.readability,
+            "compaction_reclaimed_tokens": report.reclaimed_tokens,
+            "compaction_summary_status": report.summary_status,
+        })
+        return
+
+
 def _build_agent(
     role_id: str,
     *,
@@ -282,6 +309,8 @@ def run_session_turn(
     if observe and checkpointer is not None:
         _attach_readability_metadata(
             config, _read_thread_state(checkpointer, thread_id))
+    if observe:
+        _attach_compaction_metadata(config, middleware, thread_id)
     result = agent.invoke({"messages": list(new_messages)}, config)
     _replay_reasoning(agent, config, result, role_id, thread_id, profile)
     return _to_turn(result, response_format, thread_id)
@@ -315,6 +344,8 @@ async def arun_session_turn(
     if observe and checkpointer is not None:
         _attach_readability_metadata(
             config, await _aread_thread_state(checkpointer, thread_id))
+    if observe:
+        _attach_compaction_metadata(config, middleware, thread_id)
     result = await agent.ainvoke({"messages": list(new_messages)}, config)
     await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
     return _to_turn(result, response_format, thread_id)
