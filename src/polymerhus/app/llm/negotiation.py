@@ -135,16 +135,23 @@ def next_rung(method: Method) -> Method | None:
     return DEGRADE_CHAIN[index + 1] if index + 1 < len(DEGRADE_CHAIN) else None
 
 
-def result_validates(parsed: Any, schema: type | None = None) -> bool:
+def result_validates(parsed: Any, schema: type | dict | None = None) -> bool:
     """The negotiation contract's parse-validation predicate.
 
     Whether a rung's PARSED result is valid for the target schema. This is what
     makes the degrade chain validate the parsed result rather than merely catch
     exceptions: `None` (an unmet generation) is invalid on every rung; a
-    pydantic target validates the dict/model via `model_validate` (catching
-    validation errors, never parsing vendor error text - A2); a non-pydantic
-    target falls back to an isinstance check. The caller descends `next_rung`
-    on False."""
+    pydantic CLASS target validates the dict/model via `model_validate`
+    (catching validation errors, never parsing vendor error text - A2); a
+    non-pydantic class target falls back to an isinstance check.
+
+    A DICT-form target (`model_json_schema()` - the construction form the
+    json_schema rung passes to `with_structured_output`, see the pin tests)
+    carries no executable validator, so only a soft shape-level check applies:
+    the rung is a miss on `None` (nothing parseable came back), otherwise the
+    wire returned a JSON-parseable object and the rung holds. Class targets
+    VALIDATE, dict targets only SHAPE-check - "class for validation vs dict for
+    construction". The caller descends `next_rung` on False."""
     if parsed is None:
         return False
     if schema is None:
@@ -155,5 +162,8 @@ def result_validates(parsed: Any, schema: type | None = None) -> bool:
             validate(parsed)
         except Exception:  # noqa: BLE001 - any validation failure is a rung miss
             return False
+        return True
+    if isinstance(schema, dict):
+        # A JSON-schema dict holds no executable validator - shape-check only.
         return True
     return isinstance(parsed, schema)

@@ -84,10 +84,11 @@ def _wire(model_class, method, *, strict=False):
             http_client=httpx.Client(transport=transport,
                                      base_url="http://127.0.0.1:1/v1"),
         )
-        structured = model.with_structured_output(schema, method=method)
         if method == "json_schema":
             structured = model.with_structured_output(
                 schema, method=method, strict=strict)
+        else:
+            structured = model.with_structured_output(schema, method=method)
         try:
             structured.invoke([{"role": "user", "content": "hi"}])
         except Exception:  # noqa: BLE001 - the wire payload is the assertion target

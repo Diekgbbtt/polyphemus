@@ -248,6 +248,31 @@ def test_result_validates_supports_non_pydantic_schemas_by_type():
     assert N.result_validates(1.5, float) is True
 
 
+def test_result_validates_with_a_dict_schema_never_raises():
+    """The json_schema rung constructs with the DICT form (`model_json_schema()`)
+    - a dict schema carries no executable validator, so the predicate applies
+    the soft shape-level check and NEVER crashes on the dict form: a miss only
+    on `None` (nothing parseable came back), True on any non-None parsed
+    object. Regression: this used to raise isinstance() arg 2 must be a type
+    and would have exploded the increment-2 probe on a json_schema miss."""
+    json_schema = _Batch.model_json_schema()
+    assert N.result_validates(None, json_schema) is False
+    assert N.result_validates({"observations": [{"name": "x"}]}, json_schema) is True
+    assert N.result_validates({}, json_schema) is True
+    assert N.result_validates("parsed-json", json_schema) is True
+
+
+def test_dict_schema_miss_descends_the_chain():
+    """The probe-on-miss loop on a json_schema try (dict form) that returns no
+    parsed result: the predicate reports the miss and the orchestration
+    descends to the next rung - a dict-schema validation miss must NOT crash
+    the loop, it must degrade per DEGRADE_CHAIN."""
+    json_schema = _Batch.model_json_schema()
+    assert N.result_validates(None, json_schema) is False
+    assert N.next_rung("json_schema") == "function_calling"
+    assert N.next_rung(N.next_rung("json_schema")) == "json_mode"
+
+
 def test_json_mode_rung_is_covered_by_the_validation_contract():
     """The #44-absorbed json_mode rung is exactly the one where the SHAPE guard
     is the parse validation (a 200 with the wrong shape must be caught, not
