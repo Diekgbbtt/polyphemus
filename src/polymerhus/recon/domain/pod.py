@@ -609,12 +609,14 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     """
     from polymerhus.app.llm.roles import invoke_role
 
-    # invoke_role uses method="function_calling" (the single coherent escalating
-    # retry, #73). function_calling is REQUIRED here: the default "json_schema"
-    # strict-mode path rejects Observation.anchor (an open-ended `dict` field with
-    # no `additionalProperties: false`) on OpenAI/OpenRouter-family models -
-    # confirmed live against openrouter:openai/gpt-4o-mini, which 400s with
-    # "'additionalProperties' is required to be supplied and to be false".
+    # invoke_role owns the single coherent escalating retry (#73) and chooses
+    # the structured-output method per capability profile (#99, A1): a
+    # tool-calling-only profile degrades to function_calling (the previously
+    # hardcoded method), and the json_schema rung now constructs strict=False
+    # (dict form) so Observation.anchor's open-ended `dict` field no longer 400s
+    # (#44: strict-mode "'additionalProperties' is required to be supplied and
+    # to be false" on OpenAI/OpenRouter-family models) - unknown profiles take
+    # that semantic default unconditionally.
     # Cap the assets serialized into the prompt: a high-volume tool (e.g.
     # subfinder on a large org can yield tens of thousands of Subdomain deltas)
     # would otherwise blow past the model's context window (observed: 41k assets

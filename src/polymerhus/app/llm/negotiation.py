@@ -39,7 +39,9 @@ rung table - the shape must never reopen a method swap inside a tool loop, and
 never changes the ratified rungs. The shape's construction consequence (dict
 schemas honor `strict=False` on the pinned SDK; pydantic-CLASS schemas silently
 default to strict) is locked by the pin-behavior tests
-(`tests/test_llm_structured_output_pin.py`).
+(`tests/test_llm_structured_output_pin.py`). `schema_shape_of` is the seam's
+deriver: a pydantic class carrying a free-form `dict` anywhere in its recursive
+field tree is `open`, anything unprovably typed is conservatively `open`.
 
 The negotiation contract includes the parse-validation step as a companion
 pure predicate, `result_validates`: each degrade rung's outcome is the PARSED
@@ -53,7 +55,9 @@ section 6).
 """
 from __future__ import annotations
 
-from typing import Any, Literal
+from typing import Any, Literal, get_args, get_origin
+
+from pydantic import BaseModel
 
 from polymerhus.app.llm.capability import CapabilityProfile
 
@@ -86,6 +90,44 @@ def _unknown_profile(profile: CapabilityProfile | None) -> bool:
         profile.supports_structured_output is None
         and profile.supports_tool_calling is None
     )
+
+
+def schema_shape_of(schema: Any) -> SchemaShape:
+    """The shape class of a schema TARGET - the A1 contract's third input,
+    derived from a pydantic class: "open" when the class carries a free-form
+    `dict` field ANYWHERE in its recursive field tree (the `Observation.anchor`
+    case), else "closed". A non-pydantic target is conservatively "open" (the
+    caller could not prove it typed). The shape never changes the ratified rung
+    table - A1 rung 1's strict=False is unconditional - it is the total-contract
+    input the construction seam records so every negotiate call is total.
+
+    This is the seam's way of recording the shape; the SAME shape must be
+    presented to `negotiate_method` that the construction will pass to the wire
+    (dict-form for the json_schema rung, per the pin tests)."""
+    if isinstance(schema, type) and issubclass(schema, BaseModel):
+        return "open" if _annotation_is_open(schema) else "closed"
+    return "open"
+
+
+def _annotation_is_open(annotation: Any) -> bool:
+    """Whether an annotation - recursively through nested models and generic /
+    union args - carries a free-form `dict`: a dict type with no constrained
+    value shape (bare `dict`, bare `Dict`). A TYPED dict (`dict[str, X]`)
+    serializes its value schema as the object's additionalProperties, so only
+    the unconstrained form is the free-form field class A1 names; recursing
+    into a typed dict's VALUE type still finds a nested model's open field."""
+    if isinstance(annotation, type) and issubclass(annotation, BaseModel):
+        return any(_annotation_is_open(f.annotation)
+                   for f in annotation.model_fields.values())
+    if annotation is dict:
+        return True
+    args = get_args(annotation)
+    origin = get_origin(annotation)
+    if origin is None:
+        return False
+    if origin is dict and (not args or all(a is Any or a is object for a in args)):
+        return True
+    return any(_annotation_is_open(a) for a in args)
 
 
 def negotiate_method(

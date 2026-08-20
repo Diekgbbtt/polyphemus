@@ -209,6 +209,94 @@ def test_schema_shape_refuses_unknown_values():
 
 
 # ---------------------------------------------------------------------------
+# schema_shape_of: the seam records the schema's shape class (A1's third input)
+# ---------------------------------------------------------------------------
+
+def test_schema_shape_of_free_form_dict_is_open():
+    """The `Observation.anchor` class of field: a bare `dict` field makes the
+    schema `open` (the shape the construction seam records for the negotiate
+    contract's third input)."""
+    class _Open(BaseModel):
+        anchor: dict
+        label: str
+
+    assert N.schema_shape_of(_Open) == "open"
+
+
+def test_schema_shape_of_nested_model_carries_open_through_containers():
+    """An open field nested one level down (e.g. `_ObservationBatch` is a list
+    of `Observation`s and `Observation.anchor` is a bare dict) still reads
+    open - the detector walks the recursive field tree."""
+    class _Inner(BaseModel):
+        anchor: dict
+
+    class _Batch(BaseModel):
+        observations: list[_Inner]
+
+    assert N.schema_shape_of(_Batch) == "open"
+
+
+def test_schema_shape_of_open_list_of_dicts():
+    class _Items(BaseModel):
+        items: list[dict]
+
+    assert N.schema_shape_of(_Items) == "open"
+
+
+def test_schema_shape_of_fully_typed_schema_is_closed():
+    """A fully-typed schema (the `PodConfig` class) is `closed` - no free-form
+    dict anywhere in the tree."""
+    class _Closed(BaseModel):
+        rate_profile: str = "default"
+        rationale: str = ""
+
+    assert N.schema_shape_of(_Closed) == "closed"
+
+
+def test_schema_shape_of_typed_dict_is_not_a_free_form_field():
+    """`dict[str, X]` serializes its value schema as additionalProperties - a
+    constrained shape, not the free-form field A1's `open` names. A recursion
+    into a typed dict's VALUE type still finds a nested model's open field."""
+    class _Typed(BaseModel):
+        mapping: dict[str, str]
+
+    assert N.schema_shape_of(_Typed) == "closed"
+
+
+def test_schema_shape_of_nullable_and_optional_open_fields():
+    """Optional/union wrappers recurse into their members - an optional bare
+    dict is still the free-form shape."""
+    from typing import Optional, Union
+
+    class _Maybe(BaseModel):
+        anchor: Optional[dict] = None
+
+    class _Union(BaseModel):
+        payload: Union[dict, str]
+
+    assert N.schema_shape_of(_Maybe) == "open"
+    assert N.schema_shape_of(_Union) == "open"
+
+
+def test_schema_shape_of_non_pydantic_target_is_conservative_open():
+    """A non-pydantic target (a raw JSON-schema dict, an arbitrary type) cannot
+    prove itself typed - conservatively `open`. The shape never changes the
+    ratified rung table, so this is a total-contract input only."""
+    assert N.schema_shape_of(dict) == "open"
+    assert N.schema_shape_of({"type": "object"}) == "open"
+    assert N.schema_shape_of(str) == "open"
+
+
+def test_schema_shape_of_the_domain_observation_is_open():
+    """The integration contract predicate at the seam: the REAL triager schema
+    (Observation.anchor, pod.py) is detected open - the exact case A1 rung 1's
+    unconditional strict=False exists for."""
+    from polymerhus.recon.domain.types import Observation
+
+    assert N.schema_shape_of(Observation) == "open"
+
+
+# ---------------------------------------------------------------------------
 # The parse-validation companion (part of the negotiation contract) ----------
 # ---------------------------------------------------------------------------
 

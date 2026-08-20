@@ -13,7 +13,7 @@ and the thread identity (how concurrent instances avoid collision).
 | Dimension | Values |
 |---|---|
 | **Execution model** | `sync leaf` = called synchronously from a graph node or function; `async actor` = persistent `run_session_agent` loop with `AgentInbox`; `StateGraph` = LangGraph `StateGraph` compiled and invoked |
-| **Statefulness** | `checkpointer (create_agent)` = `run_session_turn` / `arun_session_turn` / `stateful_turn` -> `create_agent` with a `BaseCheckpointSaver`; `ContextVar + stateful_turn` = a `ContextVar` routes to `stateful_turn` when set, `invoke_role` when absent; `invoke_role` = stateless `function_calling` call; `StateGraph checkpointer` = the graph itself is compiled with a checkpointer; `StateGraph (no checkpointer)` = the graph is compiled without one |
+| **Statefulness** | `checkpointer (create_agent)` = `run_session_turn` / `arun_session_turn` / `stateful_turn` -> `create_agent` with a `BaseCheckpointSaver`; `ContextVar + stateful_turn` = a `ContextVar` routes to `stateful_turn` when set, `invoke_role` when absent; `invoke_role` = stateless one-shot call whose structured-output method is capability-negotiated (#99, A1: `json_schema`/`function_calling`/`json_mode`); `StateGraph checkpointer` = the graph itself is compiled with a checkpointer; `StateGraph (no checkpointer)` = the graph is compiled without one |
 
 ### Recon
 

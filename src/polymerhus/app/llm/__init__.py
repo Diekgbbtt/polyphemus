@@ -16,5 +16,5 @@ from polymerhus.app.llm.capability import (  # noqa: F401
 )
 from polymerhus.app.llm.negotiation import (  # noqa: F401
     Method, SchemaShape, DEGRADE_CHAIN, negotiate_method, next_rung,
-    result_validates,
+    result_validates, schema_shape_of,
 )
