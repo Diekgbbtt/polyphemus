@@ -10,7 +10,7 @@ Read the ticket first (`gh issue view 99`): it generalises and absorbs **#44** (
 
 ## 1. Component rationale (the design intent to honour)
 
-The client hard-codes one capability preset (`method="function_calling"` on the one-shot seam, native `bind_tools` on the session seam) and every non-mainline provider fails at the LLM boundary, not in pipeline logic. You are building the capability-adaptive layer: resolve what each (provider, model, schema-shape) actually supports, choose the structured-output/tool-calling strategy at call-construction time, and hold it for the session.
+The client hard-codes one capability preset (`method="function_calling"` on the one-shot seam, native `bind_tools` on the session seam) and every non-mainline provider fails at the LLM boundary, not in pipeline logic. You are building the capability-adaptive layer: resolve what each (provider, model, schema-shape) actually supports, choose the structured-output/tool-calling strategy at call-construction time, and hold it for the session. The ratified selection is semantic-first + profile-corrected (ADR A1): no-tools one-shot extraction -> `structured_output` json_schema `strict=False`; tool-bound session/crawl -> `function_calling` (T5 gate); degrade chain `json_schema` -> `function_calling` -> `json_mode`, each validating the parsed result; `reasoning_effort` is orthogonal to method.
 
 The load-bearing principles, all ratified - do not silently deviate:
 
@@ -38,10 +38,12 @@ Run the **grilling** skill with the operator before any code; drive it to a solu
 1. **The structured-output method negotiation for P1** (the ticket's increment-1): which of `json_schema` / `function_calling` / `json_mode` per (provider, model, schema-shape class), with what universal fallback ordering (the ticket's candidate: `json_schema, strict=False`) - and exactly WHERE the decision lands: `_structured_response_format`/`invoke_role` on the one-shot path and the session seam's `response_format`/`ToolStrategy` on the session path.
 2. **Probe-on-miss**: T3 seeds known models from the sync table only; `unknown` models need a probe. Decide the probe protocol (try-in-order + validate parsed result, never error-string parsing), its cadence (session-construction once, per the D6 resolve-and-hold), and its cost bounds (off the #73 axis; cold-start only).
 3. **The `extra_body` open question**: does `extra_body` reach `create()` through `with_structured_output` kwargs (the vLLM `guided_json` path)? If not, use `bind_tools(response_format=...)` or a targeted raw-SDK escape hatch.
-4. **Scope**: only the seams that already fail + the P2 sites that share the construction path (`invoke_role`, `steering.resolve_model`, the session seam). Do not speculatively build strategy-fallbacks nothing uses yet.
+4. **Scope**: only the seams that already fail + the P2 sites that share the construction path (`invoke_role`, the session seam). Do not speculatively build strategy-fallbacks nothing uses yet.
 5. **The unpinned-SDK risk** (the ticket's step 4): `langchain-openai`/`langgraph` are under-pinned in repo-tracked requirements - decide whether to file it as its own small ticket (likely yes; the T6 tier pinned behavior under 1.3.x).
 
 Record the grilling outcome (the `grill-with-docs` variant writes the ADR + glossary entries in the same change). Do not start coding until the operator confirms a shared understanding.
+
+**THIS GRILLING IS COMPLETE (2026-08-20) - the four decisions are ratified in `docs/design/capability-adaptive-client-99-decisions.md` (A1-A4). READ THAT ADR AND HONOUR IT; the items above are the question set that produced it, and A1/A3/A4 explicitly supersede the ticket's candidate "universal `json_schema, strict=False`" default, the item-4 scope (`steering.resolve_model` is OUT of #99, retired separately), and the item-5 "separate small ticket" for the SDK pin (pinned inside #99 instead).**
 
 ## 3. Grounding - read these directly from the filesystem before designing
 
