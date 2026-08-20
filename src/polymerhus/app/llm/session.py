@@ -355,8 +355,9 @@ def _structured_response_format(schema):
     """Wrap a structured-output `schema` in `ToolStrategy` (tool-calling) - the
     `function_calling`-equivalent, so an open `dict` field (e.g. `Observation.anchor`,
     #44) survives, unlike the provider-native json_schema strict mode which 400s on
-    it. This is why the one_shot path pins `method="function_calling"`; the session
-    path pins `ToolStrategy` for the same reason."""
+    it. The one_shot path now negotiates its structured-output method per ADR A1
+    (json_schema dict-form / function_calling / json_mode, #146); this session path
+    still pins `ToolStrategy`. Moving it onto the same negotiation is ticket #147."""
     from langchain.agents.structured_output import ToolStrategy
 
     return ToolStrategy(schema)

@@ -173,10 +173,12 @@ def test_open_shape_does_not_swap_the_json_schema_rung(monkeypatch):
     assert _wso(record)["kwargs"] == {"method": "json_schema", "strict": False}
 
 
-def test_json_schema_rung_descends_on_a_shape_miss(monkeypatch):
+def test_json_schema_shape_miss_treats_result_as_unmet_generation(monkeypatch):
     """The parse-validation contract on the json_schema rung: a dict-form
-    result that does not validate against the class is a MISS that escalates
-    (retried under the next budget, same held method), never accepted."""
+    result that does not validate against the class is an unmet generation - a
+    miss that escalates under the next budget with the SAME held method
+    (increment-1 semantics: a wrong shape on a held rung is never a rung
+    descent), never accepted."""
     _env(monkeypatch)
     profile = CapabilityProfile(supports_structured_output=True)
     record = _wire(monkeypatch, profile, [
