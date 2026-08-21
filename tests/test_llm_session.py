@@ -191,6 +191,42 @@ def test_stateful_turn_unknown_profile_fails_open_to_json_schema(monkeypatch):
     assert seen["rf"].schema_spec.strict is False
 
 
+def test_stateful_turn_neither_profile_uses_toolstrategy(monkeypatch):
+    """The operator-ratified session-seam rider (2026-08-21, spec line 51): a
+    neither-capability no-tools session turn resolves its json_mode rung to
+    `ToolStrategy` on the SESSION path - json_mode is a one-shot-seam-only rung,
+    inexpressible through create_agent's response_format vocabulary.
+    `negotiate_method` yields json_mode for the neither profile; the seam maps
+    every non-json_schema method to `ToolStrategy`."""
+    from langchain.agents.structured_output import ToolStrategy
+    from pydantic import BaseModel
+
+    import polymerhus.app.llm.session as S
+
+    class _Open(BaseModel):
+        anchor: dict = {}
+        label: str = "y"
+
+    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
+
+    seen = {}
+
+    def fake_capability(provider, model):
+        return type("_P", (), {"supports_structured_output": False,
+                               "supports_tool_calling": False})()
+
+    monkeypatch.setattr(S, "resolve_capability", fake_capability)
+
+    def fake_run(role_id, thread_id, msgs, *, response_format=None, **kw):
+        seen["rf"] = response_format
+        return S.SessionTurn(content="ok", messages=[], thread_id=thread_id)
+
+    monkeypatch.setattr(S, "run_session_turn", fake_run)
+    S.stateful_turn("triager", "t", [HumanMessage(content="x")],
+                    checkpointer=None, schema=_Open, observe=False)
+    assert isinstance(seen["rf"], ToolStrategy)
+
+
 def test_stateful_turn_tool_bound_is_unchanged_toolstrategy(monkeypatch):
     """Tool-bound sessions stay on native tool calling - a tool loop has no
     method-swap (A1 rung 2). The explicit `ToolStrategy` response_format passed
