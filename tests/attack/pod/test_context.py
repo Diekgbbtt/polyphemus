@@ -1,54 +1,18 @@
 """Unit tier: the in-memory context-management component - the experiment log,
-the dedup ledger, the filtered agent context, token-aware compaction, the
+the dedup ledger, the filtered agent context, the
 BaseMessage id stamping (D84-4), and (D84-2) the pod-owned canonical spec hash
-+ HuntSession address derivation."""
-from langchain_core.messages.utils import count_tokens_approximately
-
++ HuntSession address derivation. The interim token-aware `curate_messages`
+compaction is removed (D84-13: #95's shared `CompactionManager` replaces it)."""
 from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
     _lc_to_dicts,
-    curate_messages,
 )
 from polymerhus.attack.hunting.pod.types import (
     Interpretation,
     RawObservation,
     VariantSpec,
 )
-
-
-def test_curation_bounds_the_window_and_compacts_reasoning():
-    # A long session: many reasoning turns AND many tool results across laps.
-    msgs = [{"role": "system", "content": "SYSTEM PROMPT"}]
-    for i in range(300):
-        msgs.append({"role": "ai", "content": f"reasoning turn {i} " * 40})
-        msgs.append({"role": "tool", "content": f"TOOL RESULT {i} " * 40})
-
-    curated = curate_messages(msgs, max_tokens=800)
-
-    # Token-bounded (the window can never grow unbounded across laps).
-    assert count_tokens_approximately(_dicts_to_lc(curated)) <= 800 + 200
-    # The system prompt is always kept.
-    assert curated[0]["role"] == "system"
-    # Reasoning turns are compacted too, not only tool bodies (the old gap).
-    assert len(curated) < len(msgs)
-    # A compaction marker records the elision; the recent turns survive.
-    assert any("compacted" in m["content"] for m in curated)
-    assert any("turn 299" in m["content"] for m in curated)
-
-
-def test_short_session_is_untouched_by_compaction():
-    msgs = [{"role": "system", "content": "SYS"},
-            {"role": "human", "content": "go"},
-            {"role": "ai", "content": "ok"}]
-    curated = curate_messages(msgs, max_tokens=6000)
-    # Compaction never fires on a short session: one curated view per input, in
-    # order, role/content verbatim. The views additionally carry the
-    # deterministic channel id (D84-4), so a re-stated message still dedups
-    # under the channel's `add_messages` reducer.
-    assert [(m["role"], m["content"]) for m in curated] == \
-           [(m["role"], m["content"]) for m in msgs]
-    assert [m["id"] for m in curated] == [m.id for m in _dicts_to_lc(msgs)]
 
 
 # --- D84-4: BaseMessage + add_messages id stamping -----------------------------

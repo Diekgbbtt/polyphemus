@@ -27,12 +27,6 @@ from polymerhus.recon.config import EXEC_TIMEOUT_S, MAX_POD_ITERS  # noqa: F401 
 # DECIDE -> RUNNER boundary so every lap completes atomically (operator, 2026-08-06).
 HUNT_POD_MAX_ITERS = int(os.environ.get("HUNT_POD_MAX_ITERS", "8"))
 
-# The curated-session token budget: the semi-stateful agents keep a canonical
-# full session, but the context-management component compacts a bounded VIEW of
-# it for each model call (the LangGraph pre_model_hook / llm_input_messages
-# pattern). Token-aware so it tracks the model's real context window, not chars.
-HUNT_POD_SESSION_TOKENS = int(os.environ.get("HUNT_POD_SESSION_TOKENS", "6000"))
-
 # The INNER stretch cap: the max tool calls the runner may drive within ONE probe
 # stretch before the harness forces it to conclude. This is the structural
 # termination guarantee for the runner's agentic loop - the runner is the control

@@ -36,8 +36,9 @@ The FSM (production):
 
 THE CONTRACT-TIER LANE: an injected `runner_step_fn` (a sync fake such as
 `symbolic_runner_step_fn`) keeps the pre-regrounding node shape - the same
-`runner_agent` <-> `tool_exec` bounded loop with curated message views - so the
-LLM-free contract tier runs unchanged. The PRODUCTION default seam
+`runner_agent` <-> `tool_exec` bounded loop with dict message views (the interim
+`curate_messages` pre_model_hook is removed - D84-13) - so the LLM-free
+contract tier runs unchanged. The PRODUCTION default seam
 (`default_runner_step_fn`, chosen when `runner_step_fn=None`) performs the whole
 ReAct loop inside its turn and returns a synthetic `conclude` step: the
 `tool_exec` node is then NOT registered at all (D84-29: "the tool_exec node
@@ -77,7 +78,6 @@ from polymerhus.attack.hunting.pod.context import (
     _lc_to_dicts,
     compose_runner_delta,
     compose_triager_delta,
-    curate_messages,
 )
 from polymerhus.attack.hunting.pod.llm import (
     POD_DEFAULT_RUN_ID,
@@ -108,12 +108,13 @@ from polymerhus.attack.hunting.pod.verification import validate_decision, valida
 
 
 def _curated(messages) -> list[dict]:
-    """Channel BaseMessages -> the seam-facing curated dict views (D84-4): the
+    """Channel BaseMessages -> the seam-facing dict views (D84-4): the
     message-type conversion happens HERE, at the graph-channel boundary, never
     inside the seams. The runner's tool results live on the channel as
     HumanMessages (`_dicts_to_lc` maps the `tool` role onto one) but are
-    re-tagged to their semantic `tool` role so `curate_messages` keeps
-    body-slicing them (G4); the triager channel carries no tool messages."""
+    re-tagged to their semantic `tool` role so the seam-facing views keep the
+    established shape (the interim body-slicing/window `curate_messages` step is
+    removed - D84-13); the triager channel carries no tool messages."""
     views = _lc_to_dicts(messages)
     for v in views:
         if (v["role"] == "human"
@@ -300,7 +301,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
                               role_id=POD_RUNNER_ROLE, middleware=runner_middleware):
             step = await _await_seam(runner_step_fn, spec,
-                                     curate_messages(_curated(msgs)),
+                                     _curated(msgs),
                                      state.get("tool_calls", 0))
         if not isinstance(step, RunnerStep):
             try:
@@ -398,7 +399,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             seam_view = [human]
         else:
             human = {"role": "human", "content": log.triager_context(spec, obs)}
-            seam_view = curate_messages(_curated(state.get("triager_messages", [])) + [human])
+            seam_view = _curated(state.get("triager_messages", [])) + [human]
         decision: dict = {}
 
         if symbolic == SYMPTOM_CONFIRMED_CLASS:

@@ -83,57 +83,6 @@ def _lc_to_dicts(messages) -> list[dict]:
     return out
 
 
-def curate_messages(messages: list[dict], max_tokens: int | None = None) -> list[dict]:
-    """Compact a bounded VIEW of an agent's canonical session for one model call
-    (the LangGraph pre_model_hook / `llm_input_messages` pattern): the full
-    session stays on the graph state, this returns what the model SEES.
-
-    Two-stage, token-aware compaction (the context-window handling):
-      1. per-turn filtering - each raw tool-output body is truncated to a slice
-         so one huge response cannot dominate the window;
-      2. window compaction - `trim_messages` keeps the system prompt plus the
-         most recent turns that fit `max_tokens` (counted with
-         `count_tokens_approximately`), dropping the OLDEST turns - reasoning AND
-         tool turns alike, so the session can never grow unbounded across laps.
-    A compaction marker records how many earlier turns were elided; the FULL raw
-    trail is always preserved in the experiment log (D6) for export - compaction
-    only bounds what the agent sees, never what the pod reports."""
-    from langchain_core.messages import trim_messages
-    from langchain_core.messages.utils import count_tokens_approximately
-
-    from polymerhus.attack.hunting.pod.config import HUNT_POD_SESSION_TOKENS
-
-    budget = max_tokens if max_tokens is not None else HUNT_POD_SESSION_TOKENS
-
-    filtered: list[dict] = []
-    for m in messages:
-        content = m.get("content", "")
-        if m.get("role") == "tool" and len(content) > _BODY_SLICE:
-            content = content[:_BODY_SLICE] + f"\n...[{len(content) - _BODY_SLICE} chars elided]"
-        view = {"role": m.get("role", "human"), "content": content}
-        mid = m.get("id")
-        if mid:
-            view["id"] = mid  # the view keeps pointing at its source channel message
-        filtered.append(view)
-
-    lc = _dicts_to_lc(filtered)
-    trimmed = trim_messages(
-        lc, max_tokens=budget, token_counter=count_tokens_approximately,
-        strategy="last", include_system=True, start_on="human", allow_partial=False)
-    out = _lc_to_dicts(trimmed)
-
-    dropped = len(filtered) - len(out)
-    if dropped > 0:
-        marker = {"role": "human",
-                  "content": f"[context compacted: {dropped} earlier turn(s) elided to fit "
-                             f"the window; the full experiment log is preserved for export]"}
-        if out and out[0]["role"] == "system":
-            out = [out[0], marker] + out[1:]
-        else:
-            out = [marker] + out
-    return out
-
-
 class ExperimentLog:
     """The D6 experiment log plus the dedup ledger. Append-only in spirit; the
     terminal node renders its lists into the `PodExport`."""
