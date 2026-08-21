@@ -55,11 +55,14 @@ section 6).
 """
 from __future__ import annotations
 
-from typing import Any, Literal, get_args, get_origin
+import logging
+from typing import Any, Callable, Literal, get_args, get_origin
 
 from pydantic import BaseModel
 
 from polymerhus.app.llm.capability import CapabilityProfile
+
+logger = logging.getLogger(__name__)
 
 # The negotiated method vocabulary - EXACTLY the `with_structured_output`
 # `method=` values (langchain-openai ~1.3), so a chosen rung passes straight
@@ -224,3 +227,149 @@ def result_validates(parsed: Any, schema: type | dict | None = None) -> bool:
         # A JSON-schema dict holds no executable validator - shape-check only.
         return True
     return isinstance(parsed, schema)
+
+
+# --- Probe-on-miss (increment-2, ADR A2) -----------------------------------
+#
+# Unknown-to-registry models get a try-in-order probe at session construction
+# (the degenerate one-call session for one-shot) that validates the PARSED
+# Pydantic result at each rung via `result_validates` - never parsing vendor
+# error strings. Cadence: once per (provider, model, schema-class) and held
+# for the process lifetime (D6 resolve-and-hold, off the #73 axis). Cost:
+# cold-start only, no retry budget spent on #73; a probe failure degrades per
+# the chain and the session still starts (fail-open D7). Observable: each
+# resolution gets a langfuse span/trace (D11 discipline) and is logged.
+
+# Process-lifetime probe hold: winner method per (provider, model, schema-class).
+_PROBE_CACHE: dict[tuple[str, str, str], Method | None] = {}
+
+
+def _probe_cache_key(provider: str, model: str, schema: Any) -> tuple[str, str, str]:
+    """Cache key for the probe winner - per (provider, model, schema-class).
+
+    The schema-class is the stable identity of the target type, not the shape.
+    A pydantic class keys by its fully-qualified name; a dict schema or other
+    target keys by its repr so distinct raw schemas do not collide. The key is
+    hashable and stable for the process lifetime."""
+    if isinstance(schema, type):
+        name = f"{schema.__module__}.{schema.__qualname__}"
+    elif isinstance(schema, dict):
+        # A JSON-schema dict target - hash the repr truncated to keep keys bounded.
+        name = repr(schema)[:400]
+    elif schema is None:
+        name = "None"
+    else:
+        name = getattr(schema, "__name__", repr(schema)[:200])
+    return (provider, model, name)
+
+
+def clear_probe_cache() -> None:
+    """Clear the held probe winners - test seam only, not a production path."""
+    _PROBE_CACHE.clear()
+
+
+def _emit_probe_span(
+    provider: str,
+    model: str,
+    schema: Any,
+    chosen: Method | None,
+    provenance: str | None,
+    attempted: list[Method],
+) -> None:
+    """Emit a langfuse span/trace for one probe resolution (D11). Fail-open:
+    never raises, never blocks the caller if langfuse is absent or misconfigured."""
+    try:
+        from langfuse import get_client
+
+        name = "capability-probe"
+        schema_name = getattr(schema, "__name__", str(schema)[:80])
+        with get_client().start_as_current_observation(
+            name=name,
+            as_type="span",
+            input={
+                "provider": provider,
+                "model": model,
+                "schema": schema_name,
+                "attempted": list(attempted),
+            },
+        ) as span:
+            span.update(
+                output={
+                    "chosen": chosen,
+                    "provenance": provenance,
+                }
+            )
+    except Exception:
+        logger.debug(
+            "probe langfuse span unavailable for %s/%s; continuing untraced",
+            provider,
+            model,
+            exc_info=True,
+        )
+
+
+def probe_with_invoker(
+    provider: str,
+    model: str,
+    schema: Any,
+    invoker: Callable[[Method], Any],
+    profile: CapabilityProfile | None = None,
+) -> Method | None:
+    """Try the degrade chain in order, validating the parsed result at each rung.
+
+    `invoker(method)` performs one structured-output call for the given rung and
+    returns its parsed result (or raises). The probe validates each parsed result
+    via `result_validates` - never by parsing vendor error strings - and returns
+    the first method whose result validates, or None if every rung misses. The
+    winner (including None for all-miss) is held in `_PROBE_CACHE` per
+    (provider, model, schema-class) and never re-probed at construction. Fail-open:
+    a probe failure does not raise; the caller decides the degraded fallback.
+    Observable: a langfuse span per resolution plus an info log with method and
+    provenance.
+
+    Off the #73 axis by construction - single-shot, no escalating wrapper, no retry
+    budget spent. The caller must invoke this ONCE at construction, before the
+    escalating loop, and cache the winner for the session."""
+    key = _probe_cache_key(provider, model, schema)
+    if key in _PROBE_CACHE:
+        return _PROBE_CACHE[key]
+    attempted: list[Method] = []
+    winner: Method | None = None
+    provenance = getattr(profile, "source", None) if profile is not None else None
+    for method in DEGRADE_CHAIN:
+        attempted.append(method)
+        try:
+            parsed = invoker(method)
+        except Exception as exc:  # noqa: BLE001 - a rung miss, descend
+            logger.debug(
+                "probe rung %s for %s/%s raised %s; descending",
+                method,
+                provider,
+                model,
+                exc,
+            )
+            continue
+        if result_validates(parsed, schema):
+            winner = method
+            break
+        logger.debug(
+            "probe rung %s for %s/%s failed validation; descending",
+            method,
+            provider,
+            model,
+        )
+    _PROBE_CACHE[key] = winner
+    try:
+        _emit_probe_span(provider, model, schema, winner, provenance, attempted)
+    except Exception:
+        logger.debug("probe span emit failed for %s/%s", provider, model, exc_info=True)
+    logger.info(
+        "capability probe: provider=%s model=%s schema=%s chosen=%s provenance=%s attempted=%s",
+        provider,
+        model,
+        getattr(schema, "__name__", str(schema)[:80]),
+        winner,
+        provenance,
+        attempted,
+    )
+    return winner

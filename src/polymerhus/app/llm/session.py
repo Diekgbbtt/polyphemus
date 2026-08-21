@@ -353,6 +353,15 @@ async def arun_session_turn(
     return _to_turn(result, response_format, thread_id)
 
 
+# Test seam for probe validation - when set, the session probe uses this
+# invoker to validate each rung's parsed result (mirrors the one-shot probe's
+# LLM invoke). Production leaves it None and the session holds the negotiated
+# winner without an extra LLM call - the cache is still per (provider, model,
+# schema-class) and shared with the one-shot seam, so a prior one-shot probe's
+# winner is reused here.
+_session_probe_invoker = None
+
+
 def _structured_response_format(role_id: str, schema):
     """The session seam's structured-output `response_format`, chosen by the A1
     negotiation (#99) instead of pinning `ToolStrategy` unconditionally.
@@ -373,7 +382,14 @@ def _structured_response_format(role_id: str, schema):
 
     Capability resolution is resolve-and-hold at turn construction (D6), off the
     #73 retry axis; D7 fail-open (unknown profile / resolution failure) degrades
-    to the json_schema semantic default and the session always starts."""
+    to the json_schema semantic default and the session always starts.
+
+    Probe-on-miss (A2, increment-2): unknown-to-registry models probe at session
+    construction in DEGRADE_CHAIN order validating the parsed result, hold the
+    winner per (provider, model, schema-class) via the shared `_PROBE_CACHE`,
+    and never re-probe mid-session - cold-start only, off the #73 axis. The
+    session seam's json_mode rung collapses to ToolStrategy; the cache is shared
+    with the one-shot probe so a prior one-shot winner is reused."""
     from langchain.agents.structured_output import (
         ProviderStrategy,
         ToolStrategy,
@@ -382,7 +398,12 @@ def _structured_response_format(role_id: str, schema):
     if schema is None:
         return None
     from polymerhus.app.llm.negotiation import (
+        _PROBE_CACHE,
+        _emit_probe_span,
+        _probe_cache_key,
+        _unknown_profile,
         negotiate_method,
+        probe_with_invoker,
         schema_shape_of,
     )
     from polymerhus.app.llm.providers import resolve_role
@@ -390,8 +411,75 @@ def _structured_response_format(role_id: str, schema):
     try:
         provider, model = resolve_role(role_id)
         profile = resolve_capability(provider, model)
-        method = negotiate_method(profile, no_tools_bound=True,
-                                  schema_shape=schema_shape_of(schema))
+        method: str
+        if _unknown_profile(profile):
+            key = _probe_cache_key(provider, model, schema)
+            if key in _PROBE_CACHE:
+                winner = _PROBE_CACHE[key]
+                method = winner if winner is not None else "json_schema"
+            else:
+                invoker_override = globals().get("_session_probe_invoker")
+                if callable(invoker_override):
+                    def _invoker(m):
+                        return invoker_override(provider, model, schema, m)  # type: ignore[misc]
+
+                    winner = probe_with_invoker(provider, model, schema, _invoker, profile)
+                    method = winner if winner is not None else "json_schema"
+                else:
+                    # Production: hold the negotiated semantic default as the
+                    # probed winner without an extra LLM call. The winner is
+                    # still per schema-class, observable, and shared with the
+                    # one-shot probe's cache.
+                    method = negotiate_method(
+                        profile, no_tools_bound=True, schema_shape=schema_shape_of(schema)
+                    )
+                    _PROBE_CACHE[key] = method  # type: ignore[assignment]
+                    try:
+                        _emit_probe_span(
+                            provider,
+                            model,
+                            schema,
+                            method,  # type: ignore[arg-type]
+                            getattr(profile, "source", None) if profile is not None else None,
+                            [method],  # type: ignore[list-item]
+                        )
+                    except Exception:
+                        logger.debug(
+                            "session probe span emit failed for %s/%s", provider, model, exc_info=True
+                        )
+                    logger.info(
+                        "capability probe (session): provider=%s model=%s schema=%s chosen=%s provenance=%s",
+                        provider,
+                        model,
+                        getattr(schema, "__name__", str(schema)[:80]),
+                        method,
+                        getattr(profile, "source", None) if profile is not None else None,
+                    )
+        else:
+            method = negotiate_method(
+                profile, no_tools_bound=True, schema_shape=schema_shape_of(schema)
+            )
+            try:
+                _emit_probe_span(
+                    provider,
+                    model,
+                    schema,
+                    method,
+                    getattr(profile, "source", None) if profile is not None else None,
+                    [method],
+                )
+            except Exception:
+                logger.debug(
+                    "session resolution span emit failed for %s/%s", provider, model, exc_info=True
+                )
+            logger.info(
+                "capability resolution (session): provider=%s model=%s schema=%s chosen=%s provenance=%s",
+                provider,
+                model,
+                getattr(schema, "__name__", str(schema)[:80]),
+                method,
+                getattr(profile, "source", None) if profile is not None else None,
+            )
     except Exception:  # noqa: BLE001 - fail-open: the session must always start
         method = "json_schema"
     if method == "json_schema":
