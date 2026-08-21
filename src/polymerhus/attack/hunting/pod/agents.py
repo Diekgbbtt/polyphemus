@@ -61,7 +61,8 @@ TriagerFn = Callable[[dict, RawObservation, list, object], dict]
 def symbolic_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
     """The LLM-free runner: on the first turn of a stretch it issues the default
     probe from the payload vector space (O12/C11), then concludes and hands the
-    observation to the critic. Drives E1 and is the fail-open fallback."""
+    observation to the critic. Drives the LLM-free CONTRACT TIER (an injected
+    seam - the production default is the ReAct turn, D84-16)."""
     from polymerhus.attack.hunting.pod.symbolic import default_probe_from_spec
     from polymerhus.attack.hunting.pod.tools import curl_command
 
@@ -129,7 +130,7 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
 async def default_triager_fn(spec: dict, observation: RawObservation,
                              messages: list, log) -> dict:
     """The PRODUCTION Triager (D84-23): a `stateful_turn` over the typed
-    `HuntSession` thread with `ToolStrategy(TriagerDecision)` and the critier's
+    `HuntSession` thread with `ToolStrategy(TriagerDecision)` and the critic's
     compaction middleware, reading the delta the graph composed (`messages` =
     the verbatim P3 note + filtered triager context + memory guidance, D84-23).
     Bound tools: note read + kb_retrieve (D84-27) - NEVER exec. Hard-fails on an
