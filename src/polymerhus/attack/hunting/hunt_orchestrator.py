@@ -76,7 +76,7 @@ TOOL_SURFACE = frozenset({
 # The per-run orchestration actor registry (#110): ONE `HuntOrchestratorActor`
 # per run_id, lazily resolved on the pass's first LLM turn and HELD after the
 # graph completes - so the SAME actor (same `hunting_orchestrator` thread)
-# serves every pair of the run and stays live until the module's stop path
+# serves every fault of the run and stays live until the module's stop path
 # reaps it. Reaping is never a pass's `finally` responsibility.
 _ORCHESTRATOR_ACTORS: dict[str, "HuntOrchestratorActor"] = {}
 _ORCHESTRATOR_LOCK = threading.Lock()
@@ -609,7 +609,7 @@ async def arun_orchestration(
         return await asyncio.to_thread(fn, *args)
 
     if reason_fn is None:
-        # The gate turn rides the run's orchestration thread, per pair.
+        # The gate turn rides the run's orchestration thread, per fault.
         reason_fn = lambda inp: _resolve_orchestrator().reason(inp)  # noqa: E731
     if rematch_fn is None:
         # The re-match judge rides the SAME orchestration thread.
@@ -716,7 +716,7 @@ async def arun_orchestration(
 
     # The #135 symbolic render's shared facets: the materialisation and
     # fold-family maps load ONCE per pass (static YAML reads) and are reused
-    # across every pair. A failing read degrades the maps (each pair's slot
+    # across every fault. A failing read degrades the maps (each fault's slot
     # then renders UNKNOWN), never any single turn (C16).
     materialisations: dict = {}
     fold_families: dict = {}
@@ -789,16 +789,25 @@ async def arun_orchestration(
             sub_fault_ids=fold_families.get(direction.fault_class) or (),
         )
 
-    def _note_for_unit(unit_id: str, key: str, configs: Sequence[HuntConfig]) -> str:
-        """The deterministic `record_note` content: the unit's emission
-        research-direction (the model's submission record, `mint_emissions`) when
-        present, else a deterministic synthetic note - the ONE consumption path
-        that makes the mint-emission cadence real. Fires recommend at the unit
-        boundary, never after an intra-unit tool call."""
+    def _note_for_unit(direction: EnvisionedDirection, key: str,
+                       configs: Sequence[HuntConfig]) -> str:
+        """The deterministic `record_note` content (the dual-source emission
+        seam, A2): PREFER the structured `EnvisionedDirection.research_direction`
+        (always the carried direction's own, so it names the RIGHT fault even
+        when one unit sits under two faults); THEN the run-local `mint_emissions`
+        bucket, now keyed on the revival key (unit_id matched within the fault
+        context) rather than on `unit_id` alone; else a deterministic synthetic
+        note. Fires at the unit boundary, never after an intra-unit tool call."""
+        if direction.research_direction:
+            return direction.research_direction
+        match = revival_key(direction.unit_id, direction.fault_class)
         for emission in (tools.mint_emissions or ()):
-            if isinstance(emission, dict) and emission.get("unit_id") == unit_id \
-                    and emission.get("research_direction"):
-                return emission["research_direction"]
+            if not (isinstance(emission, dict) and emission.get("research_direction")):
+                continue
+            if revival_key(emission.get("unit_id") or "",
+                           direction.fault_class) != match:
+                continue
+            return emission["research_direction"]
         return f"minted {len(configs)} config(s) for {key}"
 
     async def _reason_node(state) -> dict:
@@ -915,7 +924,7 @@ async def arun_orchestration(
             ledger.minted_config_keys.append(key)
             _write("notes", {
                 "revival_key": key,
-                "note": _note_for_unit(direction.unit_id, key, configs),
+                "note": _note_for_unit(direction, key, configs),
             })
             ledger.notes_recorded += 1
             ledger.units_done += 1
@@ -1003,11 +1012,28 @@ async def arun_orchestration(
 
         # The configs the per-fault REASON body minted at the unit boundary. A
         # missing entry (the graph-default fail-open carry path) degrades to a
-        # deterministic mint here, exactly the canon's D3 fan-out.
+        # deterministic mint here, exactly the canon's D3 fan-out - and books
+        # the note + `LoopLedger` (A3) exactly like the unit-boundary stage, so
+        # the fail-open path never reads `units_done=0` while dispatching N.
+        # The normal path never reaches this branch, so nothing double-books.
         configs = list((state.get("minted_configs") or {}).get(key) or [])
+        fallback_ledger: LoopLedger | None = None
+        fallback_minted: dict | None = None
         if not configs:
             prior_insights = await _read_prior_insights(key)
             configs = _mint_for_direction(direction, candidate, prior_insights)
+            ledger = state.get("ledger")
+            fallback_ledger = ledger.model_copy(deep=True) \
+                if isinstance(ledger, LoopLedger) else LoopLedger()
+            _write("notes", {
+                "revival_key": key,
+                "note": _note_for_unit(direction, key, configs),
+            })
+            fallback_ledger.minted_config_keys.append(key)
+            fallback_ledger.notes_recorded += 1
+            fallback_ledger.units_done += 1
+            fallback_minted = dict(state.get("minted_configs") or {})
+            fallback_minted[key] = list(configs)
 
         hunt_trails: list[dict] = []
         for config in configs:
@@ -1085,7 +1111,11 @@ async def arun_orchestration(
                 "kind": "hunt", "revival_key": key, "hunt_id": hunt_id,
                 "degraded": bool(hunt.get("degraded")),
             })
-        return {"trail": hunt_trails}
+        dispatch_ret: dict = {"trail": hunt_trails}
+        if fallback_ledger is not None:
+            dispatch_ret["ledger"] = fallback_ledger
+            dispatch_ret["minted_configs"] = fallback_minted
+        return dispatch_ret
 
     initial = {
         "project_id": project_id,

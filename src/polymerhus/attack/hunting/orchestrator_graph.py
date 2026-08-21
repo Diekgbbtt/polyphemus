@@ -54,7 +54,8 @@ _DISPATCH = "dispatch"
 
 class HuntOrchestrationState(TypedDict, total=False):
     """The graph's channels. Every field is last-write EXCEPT the two reducer
-    channels `directions` (the pair accumulator the budget stage cuts over) and
+    channels `directions` (the per-fault directional accumulator the budget
+    stage cuts over) and
     `trail` (report bookkeeping). As of the candidates-rewrite the schedule head
     is a FAULT work item (a `FaultWorkItem`: `fault_class` + the fault's full
     matched-unit list), `current` is that work item, and the harness-owned
@@ -235,7 +236,7 @@ def build_hunting_graph(
     g.add_node(_BUDGET, _make_budget(budget_node))
     g.add_node(_DISPATCH, _make_dispatch(dispatch_node))
     g.add_edge(START, "supervisor")
-    g.add_edge(_REASON, "supervisor")      # static: the pair returns to the supervisor
+    g.add_edge(_REASON, "supervisor")      # static: the fault returns to the supervisor
     g.add_edge(_BUDGET, "supervisor")      # static: the worklist returns to the supervisor
     g.add_edge(_DISPATCH, "supervisor")    # static: the dispatch returns to the supervisor
     return g
