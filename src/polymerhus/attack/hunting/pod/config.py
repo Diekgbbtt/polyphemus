@@ -37,5 +37,7 @@ HUNT_POD_SESSION_TOKENS = int(os.environ.get("HUNT_POD_SESSION_TOKENS", "6000"))
 # stretch before the harness forces it to conclude. This is the structural
 # termination guarantee for the runner's agentic loop - the runner is the control
 # plane of the stretch (it chooses the tool sequence and branches), but the
-# harness owns the loop and can never let it run unbounded (G1).
-HUNT_POD_MAX_TOOL_CALLS = int(os.environ.get("HUNT_POD_MAX_TOOL_CALLS", "6"))
+# harness owns the loop and can never let it run unbounded (G1). As of D84-22
+# (T7) the default is 200 (not the legacy 6): in the ReAct production lane the
+# harness middleware enforces this cap inside `create_agent`.
+HUNT_POD_MAX_TOOL_CALLS = int(os.environ.get("HUNT_POD_MAX_TOOL_CALLS", "200"))

@@ -203,3 +203,35 @@ class ExperimentLog:
             parts.append("## Recent interpretations\n"
                          + "\n".join(f"- [{i.classification}] {i.note}" for i in recent))
         return "\n\n".join(parts)
+
+
+def compose_runner_delta(log: ExperimentLog, spec: dict, feedback: str,
+                         iteration: int, budget: int, *, store, spec_id: str) -> str:
+    """The Runner's lap-opener HumanMessage delta (D84-9/10/11/27): the filtered
+    `runner_context` slice PLUS the per-turn indexable pod-memory key-list +
+    reading guidance. `store` may be None (fail-open: the guidance renders with
+    an empty index)."""
+    from polymerhus.attack.hunting.pod.pod_memory import compose_memory_guidance
+
+    base = log.runner_context(spec, feedback, iteration, budget)
+    return f"{base}\n\n{compose_memory_guidance(store, spec_id)}"
+
+
+def compose_triager_delta(log: ExperimentLog, spec: dict,
+                          observation: RawObservation | None, *, store,
+                          spec_id: str, variant_ref: str) -> str:
+    """The Triager's delta (D84-23): the VERBATIM P3 consolidation note (read
+    from the pod-owned store) + the filtered `triager_context` + the per-turn
+    memory key-list/guidance. No structured `RunnerStep` crosses the seam; a
+    missing note degrades to the raw context (fail-open)."""
+    from polymerhus.attack.hunting.pod.pod_memory import (
+        compose_memory_guidance,
+        read_variant_summary,
+    )
+
+    note_body = read_variant_summary(store, spec_id, variant_ref)
+    note_part = (f"## Runner's consolidation note (verbatim)\n{note_body}" if note_body
+                 else "## Runner's consolidation note (verbatim)\n"
+                       "(no consolidation note for this stretch yet)")
+    return (f"{note_part}\n\n{log.triager_context(spec, observation)}\n\n"
+            f"{compose_memory_guidance(store, spec_id)}")

@@ -54,7 +54,9 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                    kb_fn: Callable | None = None,
                    trace_fn: Callable | None = None,
                    runner_middleware: Sequence = (),
-                   triager_middleware: Sequence = ()) -> dict:
+                   triager_middleware: Sequence = (),
+                   memory_store=None,
+                   model_factory: Callable | None = None) -> dict:
     """Execute `spec` against the live target and return the IA-4 envelope.
 
     Async-only (D84-15): the graph is driven with `ainvoke`, and every injected
@@ -70,7 +72,13 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     middleware sets (T5, D9 wiring): threaded into the graph's pod-session
     bindings (D84-7), where T7's stateful default seams pass them to
     `stateful_turn` verbatim. Default `()` = compaction disabled - the pod runs
-    exactly as before, nothing breaks."""
+    exactly as before, nothing breaks.
+
+    `memory_store` is the pod-owned experiment-memory store (D84-20/28; default =
+    the fixed `data/pod-memory` root when a PRODUCTION seam is in play); the
+    `model_factory(role) -> chat model` seam lets a harness or test inject a fake
+    model for the production stateful turns (default None = the role's real
+    model)."""
     exec_fn = exec_fn or default_exec_fn
     trace_fn = trace_fn if trace_fn is not None else _default_trace_fn
 
@@ -85,7 +93,8 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
         graph = build_pod_graph(
             exec_fn=exec_fn, runner_step_fn=runner_step_fn,
             triager_fn=triager_fn, kb_fn=kb_fn,
-            runner_middleware=runner_middleware, triager_middleware=triager_middleware)
+            runner_middleware=runner_middleware, triager_middleware=triager_middleware,
+            memory_store=memory_store, model_factory=model_factory)
         final = await graph.ainvoke(
             {"spec": dict(spec or {}), "run_id": run_id},
             config={"recursion_limit": RECURSION_LIMIT, "callbacks": callbacks})

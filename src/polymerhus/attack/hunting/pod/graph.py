@@ -1,40 +1,53 @@
 """The pod's looped state machine (D67-06) as a LangGraph StateGraph, with the
-runner driving the execution stretch as an agentic tool-calling loop.
+PRODUCTION runner driving each stretch as ONE stateful `create_agent` ReAct turn
+(T7, D84-16/17/22/29).
 
-Inversion of control (operator, 2026-08-06): the RUNNER is the control plane of
-the probe stretch - it proposes one step at a time, sees each tool result, and
-adjusts the kill chain (intra-chain data flow + decision blocks). The HARNESS
-owns the loop and GUARANTEES boundedness and the contract:
+Inversion of control (operator, 2026-08-06, re-specified in the #84 regrounding):
+the RUNNER is the control plane of the probe stretch - it perceives a tool
+result, interprets, and reasons the next step INSIDE `create_agent`; it is a pure
+ReAct plan designer running the P0-P3 plan (D84-16). The HARNESS owns the bounds
+and the contract:
 
-  G1 termination - the inner loop is capped at `HUNT_POD_MAX_TOOL_CALLS` tool
-     calls per stretch (`runner_router`), the outer loop at `HUNT_POD_MAX_ITERS`
-     stretches (`decide_router`); LangGraph's recursion limit is the backstop.
-  G2 safety      - `tool_exec` validates every proposed call and bounds each exec
-     by `EXEC_TIMEOUT_S` / `MAX_POD_ITERS`; a malformed call is rejected, not run.
+  G1 termination - the ReAct loop is capped at `HUNT_POD_MAX_TOOL_CALLS` per
+     stretch by the harness middleware (D84-22) and the outer loop at
+     `HUNT_POD_MAX_ITERS` stretches (`decide_router`); LangGraph's recursion
+     limit is the backstop.
+  G2 safety      - a malformed exec call is rejected by the harness gate; tool
+     ARGUMENT validation is the tool's own `extra="forbid"` contract (a wrong
+     parameter is a REJECTED tool call, never re-validated by the harness).
   G3 contract    - only the triager + terminal nodes assign the verdict and the
      terminal_reason; the runner never touches the terminal vocabulary.
-  G4 honesty     - every tool result is recorded RAW in the experiment log (D6)
-     before curation; curation only bounds what the AGENT sees, never the export.
+  G4 honesty     - every exec result is recorded RAW in the experiment log (D6)
+     by the exec tool before curation.
   G5 fail-open   - a raising collaborator degrades to a terminal with the partial
      trail; nothing raises past `arun_pod`.
 
-The FSM:
+The FSM (production):
 
   INIT-schema (deterministic gate; C1: reject with no tool call)
-    -> runner_agent  <->  tool_exec           (the runner's bounded agentic loop)
-           |  conclude / exhausted / infeasible
-    -> triager (symbolic fast-path, else the critic classifies + decides)
+    -> runner_agent     (ONE `arun_session_turn` per stretch: the ReAct loop with
+                         tools=[exec, kb_retrieve, note], system_prompt = the
+                         P0-P3 plan, new_messages = the consumed inbox delta;
+                         the P3 note write is the runner's FINAL tool call)
+    -> triager (symbolic fast-path, else the critic's note-reading stateful turn)
     -> decide  -> {terminal | mine variant -> [POD-BUDGET CHECK] -> runner_agent
                    | budget_terminal}
     -> TERMINAL (render the D5 + D6 envelope)
 
+THE CONTRACT-TIER LANE: an injected `runner_step_fn` (a sync fake such as
+`symbolic_runner_step_fn`) keeps the pre-regrounding node shape - the same
+`runner_agent` <-> `tool_exec` bounded loop with curated message views - so the
+LLM-free contract tier runs unchanged. The PRODUCTION default seam
+(`default_runner_step_fn`, chosen when `runner_step_fn=None`) performs the whole
+ReAct loop inside its turn and returns a synthetic `conclude` step: the
+`tool_exec` node is then NOT registered at all (D84-29: "the tool_exec node
+disappears").
+
 The pod is ASYNC-NATIVE (D84-15, Q7): the nodes that call injected seams
 (`runner_agent`, `tool_exec`, `triager`) are `async def` and ride every
 collaborator call through `_await_seam` - an async seam is awaited natively, a
-sync seam is offloaded via `asyncio.to_thread` (the `_await_seam` pattern
-mirrors `hunt_orchestrator.py` / `hunting_agent.py`). The graph is driven with
-`ainvoke`; the deterministic nodes (init, the routers, mint_variant, the
-terminals) stay sync - LangGraph 1.x mixes them under `ainvoke`.
+sync seam is offloaded via `asyncio.to_thread`. The graph is driven with
+`ainvoke`; the deterministic nodes stay sync.
 
 `build_pod_graph` injects every side-effecting collaborator so the contract tier
 runs without a live target, a live LLM, or the downstream agents.
@@ -42,7 +55,6 @@ runs without a live target, a live LLM, or the downstream agents.
 from __future__ import annotations
 
 import asyncio
-import hashlib
 import inspect
 
 from langgraph.graph import END, START, StateGraph
@@ -63,16 +75,20 @@ from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
     _lc_to_dicts,
+    compose_runner_delta,
+    compose_triager_delta,
     curate_messages,
 )
 from polymerhus.attack.hunting.pod.llm import (
     POD_DEFAULT_RUN_ID,
     POD_RUNNER_ROLE,
     POD_TRIAGER_ROLE,
+    PodHarnessContext,
     bind_pod_session,
 )
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_spec_id
 from polymerhus.attack.hunting.pod.symbolic import evaluate_symptom
-from polymerhus.attack.hunting.pod.tools import parse_curl, run_with_retry
+from polymerhus.attack.hunting.pod.tools import command_signature, parse_curl, run_with_retry
 from polymerhus.attack.hunting.pod.types import (
     BUDGET_TIMEOUT,
     INFEASIBILITY_SIGNAL_CLASS,
@@ -107,8 +123,10 @@ def _curated(messages) -> list[dict]:
 
 
 def _command_signature(variant_ref: str, command: str) -> str:
-    blob = f"{variant_ref}\x00{command}".encode("utf-8")
-    return hashlib.sha256(blob).hexdigest()[:16]
+    """The O7/C10 dedup signature over `(variant_ref, command)` (re-exported from
+    the tools module so the contract-tier tool_exec lane and the harness share
+    one key derivation)."""
+    return command_signature(variant_ref, command)
 
 
 def _step(state: PodState) -> RunnerStep:
@@ -150,30 +168,61 @@ def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
     return {"export": export.to_envelope(), "verdict": verdict, "terminal_reason": reason}
 
 
+def _root_spec_id(state: PodState) -> str:
+    """The memory-store key (D84-20): the ROOT spec's canonical hash (variants
+    are the child attribute), never the current variant's spec hash."""
+    return canonical_spec_id(state.get("root_spec") or state.get("spec") or {})
+
+
+def _harness_ctx(state: PodState, *, exec_fn, kb_fn, memory_store,
+                 model_factory) -> PodHarnessContext:
+    """The run-scoped harness the production seams read (T7): exec/kb/store/log/
+    variant/model factory, with the memory key on the ROOT spec id."""
+    return PodHarnessContext(
+        exec_fn=exec_fn, kb_fn=kb_fn, memory_store=memory_store,
+        spec_id=_root_spec_id(state), log=state.get("log"),
+        variant_ref=state.get("current_variant_ref", "v0"),
+        model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS)
+
+
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None,
-                    runner_middleware=(), triager_middleware=()):
+                    runner_middleware=(), triager_middleware=(),
+                    memory_store=None, model_factory=None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
-    - `runner_step_fn(spec, messages, tool_calls) -> RunnerStep` - the
-      actor's next-step proposer over its curated session; default = the
-      `pod_runner` session with a symbolic fallback.
-    - `triager_fn(spec, observation, messages, log) -> decision` - the critic
-      over its curated session; consulted only when the symbolic recogniser is
-      inconclusive.
-    - `kb_fn(query) -> dict` - the NL knowledge-base tool; default = the fail-open
-      `kb_retrieve` stub.
+    - `runner_step_fn(spec, messages, tool_calls) -> RunnerStep` - PRODUCTION
+      default (`None`) = `default_runner_step_fn`, ONE stateful ReAct turn per
+      stretch (the `tool_exec` node stays unregistered); an injected sync fake =
+      the contract-tier lane (the bounded `runner_agent` <-> `tool_exec` loop).
+    - `triager_fn(spec, observation, messages, log) -> decision` - the critic;
+      the production default is the note-reading `stateful_turn` (D84-23).
+    - `kb_fn(query, *, fault_id, technological_axis) -> dict` - the NL
+      knowledge-base seam; default = the fail-open `kb_retrieve` stub.
     - `runner_middleware` / `triager_middleware` - the per-role #95 compaction
-      middleware sets the run injected (T5); the `runner_agent` / `triager`
-      nodes bind them alongside the pod session (D84-7), so T7's stateful
-      default seams pass them to `stateful_turn` verbatim. Default `()` =
-      compaction disabled.
+      middleware sets the run injected (T5); the production default seams pass
+      them to the stateful turns verbatim (D84-12). Default `()` = uncompacted.
+    - `memory_store` - the pod-owned experiment-memory store (D84-20/28); default
+      = the fixed `data/pod-memory` root when a PRODUCTION seam is in play,
+      `None` (never constructed) for a fully-injected contract tier.
+    - `model_factory(role) -> chat model` - the session model seam for the
+      production turns (`None` = the role's real model; tests inject a fake).
     """
-    runner_step_fn = runner_step_fn if runner_step_fn is not None else default_runner_step_fn
-    triager_fn = triager_fn if triager_fn is not None else default_triager_fn
+    if runner_step_fn is None:
+        runner_step_fn = default_runner_step_fn
+        production_runner = True
+    else:
+        production_runner = False
+    if triager_fn is None:
+        triager_fn = default_triager_fn
+        production_triager = True
+    else:
+        production_triager = False
     if kb_fn is None:
         from polymerhus.attack.hunting.pod.tools import kb_retrieve
         kb_fn = kb_retrieve
+    if memory_store is None and (production_runner or production_triager):
+        memory_store = PodMemoryStore()
 
     def init(state: PodState) -> dict:
         spec = dict(state["spec"])
@@ -181,7 +230,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         log.record_variant(VariantSpec(ref="v0", parent_ref=None, spec=spec))
         violations = validate_spec(spec)
         runner_messages = [{"role": "system", "content": RUNNER_SYSTEM}]
-        if not violations:
+        if not violations and not production_runner:
             runner_messages.append(
                 {"role": "human",
                  "content": log.runner_context(spec, "", 1, HUNT_POD_MAX_ITERS)})
@@ -199,15 +248,55 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         # C1: a schema-malformed spec is rejected here with ZERO tool calls.
         return "reject" if state.get("init_validation") else "runner"
 
-    # --- the runner's agentic loop (the runner is the control plane) -----------
+    # --- the runner's stretch (production ReAct turn OR contract-tier loop) ----
 
     async def runner_agent(state: PodState) -> dict:
-        msgs = state.get("runner_messages", [])
         spec = state["spec"]
-        # D84-7: the graph owns the pod-session binding - the `pod_runner`
-        # session becomes the typed address the default seam reads (derived from
-        # the parent hunt_session when present; a directly-invoked pod runs on
-        # the task-local default run_id with no hunt_id).
+        if production_runner:
+            log: ExperimentLog = state["log"]
+            delta = _dicts_to_lc([{"role": "human",
+                                   "content": compose_runner_delta(
+                                       log, spec, state.get("feedback", ""),
+                                       state.get("iteration", 1), HUNT_POD_MAX_ITERS,
+                                       store=memory_store,
+                                       spec_id=_root_spec_id(state))}])
+            before_obs = len(log.raw_observations)
+            before_exec = len(log.executed)
+            # D84-7: the graph owns the pod-session binding - the `pod_runner`
+            # session + the run's compaction middleware + the harness context
+            # reach the production default seam out-of-band.
+            with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "",
+                                  state.get("root_spec") or spec,
+                                  role_id=POD_RUNNER_ROLE,
+                                  middleware=runner_middleware,
+                                  harness=_harness_ctx(
+                                      state, exec_fn=exec_fn, kb_fn=kb_fn,
+                                      memory_store=memory_store,
+                                      model_factory=model_factory)):
+                step = await _await_seam(runner_step_fn, spec, delta,
+                                         state.get("tool_calls", 0))
+            if not isinstance(step, RunnerStep):
+                try:
+                    step = RunnerStep(**step) if isinstance(step, dict) else RunnerStep()
+                except Exception:  # noqa: BLE001
+                    step = RunnerStep(action="conclude", exhausted=True,
+                                      observation_note="malformed runner turn")
+            obs_added = len(log.raw_observations) - before_obs
+            return {
+                "pending_step": step.model_dump(),
+                # D84-11: the consumed inbox delta is deleted on consumption
+                # (the state update is atomic with the seam call).
+                "feedback": "",
+                "tool_calls": state.get("tool_calls", 0)
+                    + (len(log.executed) - before_exec),
+                "stretch_obs": state.get("stretch_obs", 0) + obs_added,
+                "last_observation": (log.raw_observations[-1].model_dump()
+                                     if log.raw_observations else None),
+                # D84-4: deposit ONLY the consumed delta; `add_messages` merges.
+                "runner_messages": delta,
+            }
+        # --- the contract-tier lane (injected sync proposers) ------------------
+        msgs = state.get("runner_messages", [])
         with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
                               role_id=POD_RUNNER_ROLE, middleware=runner_middleware):
             step = await _await_seam(runner_step_fn, spec,
@@ -232,7 +321,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             return "infeasible"
         if step.exhausted:
             return "exhausted"
-        # G1: the inner cap forces a conclusion once the stretch budget is spent.
+        # G1: the inner cap forces a conclusion once the stretch budget is spent
+        # (the contract-tier lane only; the production harness enforces its own).
         if step.action == "tool_call" and state.get("tool_calls", 0) < HUNT_POD_MAX_TOOL_CALLS:
             return "tool"
         # A conclusion with no observation this stretch is an empty probe.
@@ -241,7 +331,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         return "triager"
 
     async def tool_exec(state: PodState) -> dict:
-        # G2/G4: the HARNESS executes and records; the runner only proposed.
+        # Contract-tier lane only (G2/G4): the HARNESS executes and records; the
+        # injected runner only proposed.
         log: ExperimentLog = state["log"]
         step = _step(state)
         tc = state.get("tool_calls", 0) + 1  # count every call (dedup included) for G1
@@ -297,8 +388,17 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             else RawObservation()
         symptoms = [str(s) for s in (spec.get("verification_symptoms", []) or [])]
         symbolic = evaluate_symptom(symptoms, obs)
-        human = {"role": "human", "content": log.triager_context(spec, obs)}
-        seam_view = curate_messages(_curated(state.get("triager_messages", [])) + [human])
+        if production_triager:
+            # D84-23: the delta = the verbatim P3 note + the filtered context +
+            # the memory guidance + variant_refs; the thread holds the history,
+            # so only the delta is new_messages (D84-11).
+            human = {"role": "human", "content": compose_triager_delta(
+                log, spec, obs, store=memory_store, spec_id=_root_spec_id(state),
+                variant_ref=state.get("current_variant_ref", "v0"))}
+            seam_view = [human]
+        else:
+            human = {"role": "human", "content": log.triager_context(spec, obs)}
+            seam_view = curate_messages(_curated(state.get("triager_messages", [])) + [human])
         decision: dict = {}
 
         if symbolic == SYMPTOM_CONFIRMED_CLASS:
@@ -312,8 +412,14 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         else:
             # D84-7: the `pod_triager` session binding, same shape as the
             # runner's - the graph owns the per-instance session address.
-            with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
-                                  role_id=POD_TRIAGER_ROLE, middleware=triager_middleware):
+            with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "",
+                                  state.get("root_spec") or spec,
+                                  role_id=POD_TRIAGER_ROLE,
+                                  middleware=triager_middleware,
+                                  harness=_harness_ctx(
+                                      state, exec_fn=exec_fn, kb_fn=kb_fn,
+                                      memory_store=memory_store,
+                                      model_factory=model_factory)):
                 raw = await _await_seam(triager_fn, spec, obs, seam_view, log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":
@@ -360,13 +466,17 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                                        declined_attribute=decision.get("declined_attribute", ""),
                                        spec=variant_spec))
         iteration = state.get("iteration", 1) + 1
+        out = {"current_variant_ref": ref, "spec": variant_spec, "iteration": iteration,
+               "tool_calls": 0, "stretch_obs": 0,
+               "feedback": decision.get("feedback", "")}
+        if production_runner:
+            # The runner_agent node composes the next lap's delta on entry and
+            # clears the inbox on consumption (D84-9/11) - no deposit here.
+            return out
         opener = log.runner_context(variant_spec, decision.get("feedback", ""),
                                     iteration, HUNT_POD_MAX_ITERS)
-        return {"current_variant_ref": ref, "spec": variant_spec, "iteration": iteration,
-                "tool_calls": 0, "stretch_obs": 0,
-                "feedback": decision.get("feedback", ""),
-                "runner_messages": _dicts_to_lc(
-                    [{"role": "human", "content": opener}])}
+        return {**out, "runner_messages": _dicts_to_lc(
+            [{"role": "human", "content": opener}])}
 
     # --- terminals -------------------------------------------------------------
 
@@ -398,7 +508,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         return _export(state, verdict="unsuccessful", reason=BUDGET_TIMEOUT, clean=False)
 
     g = StateGraph(PodState)
-    for name, fn in [("init", init), ("runner_agent", runner_agent), ("tool_exec", tool_exec),
+    for name, fn in [("init", init), ("runner_agent", runner_agent),
                      ("triager", triager), ("mint_variant", mint_variant),
                      ("terminal", terminal), ("infeasible_terminal", infeasible_terminal),
                      ("exhausted_terminal", exhausted_terminal),
@@ -408,10 +518,21 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
     g.add_edge(START, "init")
     g.add_conditional_edges("init", init_router,
                             {"reject": "terminal", "runner": "runner_agent"})
-    g.add_conditional_edges("runner_agent", runner_router,
-                            {"tool": "tool_exec", "triager": "triager",
-                             "exhausted": "exhausted_terminal", "infeasible": "infeasible_terminal"})
-    g.add_edge("tool_exec", "runner_agent")
+    if production_runner:
+        # D84-29: the ReAct tool-call loop lives INSIDE `create_agent` - the
+        # `tool_exec` node is NOT registered for the production lane. The harness
+        # middleware owns G1/G4/O7 (D84-22).
+        g.add_conditional_edges("runner_agent", runner_router,
+                                {"triager": "triager",
+                                 "exhausted": "exhausted_terminal",
+                                 "infeasible": "infeasible_terminal"})
+    else:
+        g.add_node("tool_exec", tool_exec)
+        g.add_conditional_edges("runner_agent", runner_router,
+                                {"tool": "tool_exec", "triager": "triager",
+                                 "exhausted": "exhausted_terminal",
+                                 "infeasible": "infeasible_terminal"})
+        g.add_edge("tool_exec", "runner_agent")
     g.add_conditional_edges("triager", decide_router,
                             {"terminal": "terminal", "variant": "mint_variant",
                              "budget": "budget_terminal"})

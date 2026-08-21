@@ -21,7 +21,8 @@ resolve lazily on call.
 from __future__ import annotations
 
 import logging
-from typing import Sequence
+from dataclasses import dataclass
+from typing import Any, Callable, Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -43,6 +44,26 @@ POD_DEFAULT_RUN_ID = "hunt-pod"
 # a binding that failed fail-open).
 _pod_session_ctx: "ContextVar" = None  # lazily created below to keep imports light
 _pod_middleware_ctx: "ContextVar" = None
+_pod_harness_ctx: "ContextVar" = None
+
+
+@dataclass(frozen=True)
+class PodHarnessContext:
+    """The run-scoped pieces the production ReAct seams need beyond the session
+    address (D84-7 extension, T7): the injected terminal (exec_fn), the KB seam
+    (kb_fn), the pod memory store + its spec key (spec_id = the ROOT spec's
+    canonical hash - the D84-20 data model keys the store by the spec, with
+    variants as a child), the D6 log, the CURRENT variant_ref for dedup scope,
+    and the session model factory (None = the role's real model)."""
+
+    exec_fn: Callable
+    kb_fn: Callable | None = None
+    memory_store: Any = None
+    spec_id: str = ""
+    log: Any = None
+    variant_ref: str = ""
+    model_factory: Callable | None = None
+    cap: int = 200  # the harness cap for the ReAct loop (D84-22: default 200)
 
 
 def _pod_ctx():
@@ -65,6 +86,17 @@ def _pod_mw_ctx():
     return _pod_middleware_ctx
 
 
+def _pod_h_ctx():
+    """The harness ContextVar: the `PodHarnessContext` bound for the current
+    seam call, `None` outside any production binding (the contract tier runs
+    stateless fakes and never reads it)."""
+    global _pod_harness_ctx
+    if _pod_harness_ctx is None:
+        from contextvars import ContextVar
+        _pod_harness_ctx = ContextVar("pod_harness_ctx", default=None)
+    return _pod_harness_ctx
+
+
 def pod_session():
     """The pod agent's currently bound session (a typed `SessionContext(address,
     checkpointer)`), or None when the pod runs stateless (tests, a direct graph
@@ -80,6 +112,14 @@ def pod_middleware():
     runs uncompacted) or outside any binding - the T7 default seams pass this to
     `stateful_turn`'s `middleware` verbatim."""
     return _pod_mw_ctx().get()
+
+
+def pod_harness():
+    """The `PodHarnessContext` bound for the CURRENT production seam call (T7):
+    exec_fn / kb_fn / memory_store / spec_id / log / variant_ref / model_factory.
+    None when the pod runs stateless (contract tier) - the production seams
+    hard-fail on None (D84-14), the injected fakes never read it."""
+    return _pod_h_ctx().get()
 
 
 def pod_session_address(run_id: str, hunt_id: str, spec: dict, *, role_id: str):
@@ -109,11 +149,13 @@ def _parent_hunt_session():
 
 
 def bind_pod_session(run_id: str, hunt_id: str, spec: dict, *, role_id: str,
-                     middleware: Sequence = ()):
+                     middleware: Sequence = (), harness: PodHarnessContext | None = None):
     """Context manager the pod graph's `runner_agent` / `triager` nodes wrap their
     seam calls in (D84-7): binds the pod role's typed session for the duration of
     the seam call, plus the #95 compaction middleware the run injected for this
-    role (T5) - the default seam reads BOTH via `pod_session()` / `pod_middleware()`.
+    role (T5) and the T7 `PodHarnessContext` (exec/kb/store/log/variant_ref/
+    model_factory) - the default seams read all THREE via `pod_session()` /
+    `pod_middleware()` / `pod_harness()`.
 
     When the parent `hunt_session` ContextVar is present, the derived session
     takes its run_id/hunt_id; otherwise it falls back to the caller's `run_id`
@@ -121,14 +163,17 @@ def bind_pod_session(run_id: str, hunt_id: str, spec: dict, *, role_id: str,
     discriminators are dropped from the address, never shifting it). `middleware`
     is the injectable per-role set, default `()` (compaction disabled); bound as
     a tuple so the seam hands `stateful_turn` the same stable sequence every
-    turn. Fail-open: any binding failure runs the seam stateless (no session
-    bound), mirroring the recon pod's never-fail-a-pod discipline."""
+    turn. `harness` is the production context, default None (a contract-tier
+    binding) - bound as the PodHarnessContext itself. Fail-open: any binding
+    failure runs the seam stateless (no session bound), mirroring the recon
+    pod's never-fail-a-pod discipline."""
     from contextlib import contextmanager
 
     @contextmanager
     def _cm():
         _token = None
         _mw_token = None
+        _hc_token = None
         try:
             from polymerhus.app.llm.checkpoints import get_session_checkpointer
             from polymerhus.app.llm.session_address import SessionContext
@@ -143,13 +188,17 @@ def bind_pod_session(run_id: str, hunt_id: str, spec: dict, *, role_id: str,
                                                    role_id=role_id),
                                get_session_checkpointer()))
             _mw_token = _pod_mw_ctx().set(tuple(middleware))
+            _hc_token = _pod_h_ctx().set(harness)
         except Exception:  # noqa: BLE001 - fail-open: bind, or run stateless
             logger.warning("pod session binding failed; the seam runs stateless", exc_info=True)
             _token = None
             _mw_token = None
+            _hc_token = None
         try:
             yield
         finally:
+            if _hc_token is not None:
+                _pod_h_ctx().reset(_hc_token)
             if _mw_token is not None:
                 _pod_mw_ctx().reset(_mw_token)
             if _token is not None:

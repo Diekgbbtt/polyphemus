@@ -1,25 +1,27 @@
-"""The two pod agents as curated, semi-stateful sessions (operator, 2026-08-06).
+"""The two pod agents - the PRODUCTION stateful ReAct seams (T7, D84-16/17/23).
 
-The `pod_runner` (actor) is the control plane of the probe stretch: it drives an
-agentic tool-calling loop, proposing ONE step at a time (a tool call, or a
-conclusion) and seeing each tool's result before its next step - so it reflects
-on the intra-chain data flow, adjusts the kill chain, and branches (decision
-blocks). The `pod_triager` (critic) reads the stretch's evidence and decides.
+The `pod_runner` (actor) is a pure ReAct plan designer: ONE `create_agent` turn
+per stretch, `tools=[exec, kb_retrieve, note]`, the P0-P3 plan as `system_prompt`,
+the consumed inbox delta as `new_messages` (D84-9/10/11) - the tool-call loop
+lives INSIDE `create_agent`, with the harness middleware owning G1/G4/O7
+(D84-22). Its final tool call at P3 space-exhaustion writes the consolidated
+`experiment_summary` note (D84-17/19). The `pod_triager` (critic) is a third-party
+variant miner: one `stateful_turn` with `ToolStrategy(TriagerDecision)` reading
+the verbatim P3 note + the filtered context (D84-23).
 
-Both are semi-stateful: their conversation (system prompt + reasoning turns +
-curated tool results) lives on the graph state (`runner_messages` /
-`triager_messages`) and is curated by the context-management component
-(`context.curate_messages`) - reasoning kept, raw tool bodies filtered, the whole
-session bounded. Every seam is injectable and resolves its role LAZILY (never a
-boot-gate); the contract tier passes stateless fakes and the E1 walkthrough uses
-the symbolic runner, so neither the default LLM nor a live LLM is needed to test
-the pod.
+Both default seams read their TYPED session (`pod_session()`), the run's #95
+compaction middleware (`pod_middleware()`), and the run-scoped harness
+(`pod_harness()`: exec/kb/memory-store/log/variant/model factory) from the D84-7
+ContextVar binding the graph wraps each seam call in - the injected seam CONTRACT
+stays untouched, so the contract tier passes stateless fakes
+(`symbolic_runner_step_fn`, scripted proposers) and never touches a live LLM.
+The production seams hard-fail on an unbound session (D84-14): `arun_pod`'s
+fail-open wrapper degrades the run, there is no silent symbolic fallback.
 
 The GUARANTEE that the runner is the control plane yet the pod stays bounded is
-STRUCTURAL and lives in the graph, not here: the harness owns the loop and the
-caps (`HUNT_POD_MAX_TOOL_CALLS`), validates every proposed tool call, records
-every result in the log, and always renders the binary envelope. The runner
-proposes; the harness disposes.
+STRUCTURAL: the harness owns the cap (`HUNT_POD_MAX_TOOL_CALLS`), the exec tool
+records every result RAW (G4), the dedup gate short-circuits repeats (O7), and
+the terminal nodes always render the binary envelope.
 """
 from __future__ import annotations
 
@@ -56,22 +58,6 @@ RunnerStepFn = Callable[[dict, list, int], RunnerStep]
 TriagerFn = Callable[[dict, RawObservation, list, object], dict]
 
 
-def _to_lc_messages(messages: list[dict]):
-    """Convert the curated session (role/content dicts) into LangChain messages."""
-    from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
-
-    out = []
-    for m in messages:
-        role, content = m.get("role"), m.get("content", "")
-        if role == "system":
-            out.append(SystemMessage(content=content))
-        elif role == "ai":
-            out.append(AIMessage(content=content))
-        else:  # human, tool
-            out.append(HumanMessage(content=content))
-    return out
-
-
 def symbolic_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
     """The LLM-free runner: on the first turn of a stretch it issues the default
     probe from the payload vector space (O12/C11), then concludes and hands the
@@ -91,44 +77,85 @@ def symbolic_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> Runn
                       observation_note="default probe issued; handing the observation to the critic")
 
 
-def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
-    """Real actor turn: the `pod_runner` session proposes the next step over its
-    curated conversation. Resolves the role LAZILY from the bound pod-session
-    address (D84-7) when the graph set one, else the `pod_runner` default; on any
-    failure it degrades to the symbolic runner (fail-open) so a stretch always
-    makes progress."""
+async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
+    """The PRODUCTION Runner (D84-16/17/22/29): ONE stateful `create_agent`
+    ReAct turn per stretch - the tool-call loop lives INSIDE the agent, the graph
+    never interrupts per tool result. Reads the typed session + run-scoped
+    harness (exec/kb/store/log/variant/model_factory) from the D84-7 binding
+    (`pod_session()` / `pod_harness()`), binds `tools=[exec, kb_retrieve, note]`
+    with `middleware=[compaction, harness]` (D84-12/22), hands `messages` (the
+    consumed inbox delta, D84-11) as `new_messages`, and synthesizes the stretch
+    `RunnerStep` from the turn: `conclude`, `exhausted` when no raw observation
+    was recorded (the old empty-probe rule), the final model content as the
+    observation note.
+
+    Hard-fails on an unbound session/harness (D84-14: no silent symbolic
+    fallback) - `arun_pod`'s fail-open wrapper degrades the run, never raises
+    into the parent."""
+    from polymerhus.app.llm.session import arun_session_turn  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.harness import (  # noqa: PLC0415
+        build_harness_middleware,
+    )
+    from polymerhus.attack.hunting.pod.llm import (  # noqa: PLC0415
+        pod_harness,
+        pod_middleware,
+        pod_session,
+    )
+
+    ctx = pod_session()
+    hc = pod_harness()
+    if ctx is None or hc is None:
+        raise RuntimeError(
+            "no bound pod session/harness for the stateful runner turn (D84-14)")
+    if hc.log is None:
+        raise RuntimeError("the production runner harness needs the D6 log")
+    before_obs = len(hc.log.raw_observations)
+    tools = runner_react_tools(hc.exec_fn, hc.memory_store, hc.spec_id, hc.log,
+                               hc.variant_ref or "", kb_fn=hc.kb_fn)
+    harness_mw = build_harness_middleware(log=hc.log,
+                                          variant_ref=hc.variant_ref or "",
+                                          cap=hc.cap)
+    mw = list(pod_middleware()) + [harness_mw]
+    turn = await arun_session_turn(
+        ctx.address.role_id, ctx.address, list(messages),
+        checkpointer=ctx.checkpointer, tools=tools, middleware=mw,
+        system_prompt=RUNNER_SYSTEM, model_factory=hc.model_factory)
+    new_obs = len(hc.log.raw_observations) - before_obs
+    content = str(getattr(turn, "content", None) or "")
+    return RunnerStep(action="conclude", exhausted=new_obs == 0,
+                      thought=content, observation_note=content)
+
+
+async def default_triager_fn(spec: dict, observation: RawObservation,
+                             messages: list, log) -> dict:
+    """The PRODUCTION Triager (D84-23): a `stateful_turn` over the typed
+    `HuntSession` thread with `ToolStrategy(TriagerDecision)` and the critier's
+    compaction middleware, reading the delta the graph composed (`messages` =
+    the verbatim P3 note + filtered triager context + memory guidance, D84-23).
+    Bound tools: note read + kb_retrieve (D84-27) - NEVER exec. Hard-fails on an
+    unbound session/harness (D84-14); a FAILED turn degrades to a safe honest
+    terminal, never raises into the loop."""
+    from polymerhus.app.llm.session import stateful_turn  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.context import _dicts_to_lc  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.llm import (  # noqa: PLC0415
+        pod_harness,
+        pod_middleware,
+        pod_session,
+    )
+
     try:
-        from polymerhus.app.llm.roles import chat_model_for
-        from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, pod_session
-
         ctx = pod_session()
-        role = ctx.address.role_id if ctx is not None else POD_RUNNER_ROLE
-        llm = chat_model_for(role).with_structured_output(
-            RunnerStep, method="function_calling")
-        result = llm.invoke(_to_lc_messages(messages))
-        if result is None:
-            raise ValueError("unmet runner generation")
-        return result
-    except Exception:  # noqa: BLE001 - fail-open: fall back to the symbolic runner
-        return symbolic_runner_step_fn(spec, messages, tool_calls)
-
-
-def default_triager_fn(spec: dict, observation: RawObservation,
-                       messages: list, log) -> dict:
-    """Real critic turn: the `pod_triager` session classifies the stretch and
-    decides over its curated conversation. Resolves the role LAZILY from the
-    bound pod-session address (D84-7) when the graph set one, else the
-    `pod_triager` default; on an unmet generation it degrades to a safe honest
-    terminal rather than raising."""
-    try:
-        from polymerhus.app.llm.roles import chat_model_for
-        from polymerhus.attack.hunting.pod.llm import POD_TRIAGER_ROLE, pod_session
-
-        ctx = pod_session()
-        role = ctx.address.role_id if ctx is not None else POD_TRIAGER_ROLE
-        llm = chat_model_for(role).with_structured_output(
-            TriagerDecision, method="function_calling")
-        result = llm.invoke(_to_lc_messages(messages))
+        hc = pod_harness()
+        if ctx is None or hc is None:
+            raise RuntimeError(
+                "no bound pod session/harness for the stateful triager turn (D84-14)")
+        tools = triager_react_tools(hc.memory_store, hc.spec_id, kb_fn=hc.kb_fn)
+        delta = _dicts_to_lc(list(messages))
+        result = stateful_turn(
+            ctx.address.role_id, ctx.address, delta,
+            checkpointer=ctx.checkpointer, schema=TriagerDecision,
+            system_prompt=TRIAGER_SYSTEM, middleware=list(pod_middleware()),
+            model_factory=hc.model_factory)
         if result is None:
             raise ValueError("unmet triager generation")
         return result.model_dump()
@@ -167,3 +194,35 @@ def triager_compaction_middleware(*, window=None, threshold=None, store=None):
 # Re-exported so the graph and arun_pod can name the base prompts.
 RUNNER_SYSTEM = POD_RUNNER_SYSTEM
 TRIAGER_SYSTEM = POD_TRIAGER_SYSTEM
+
+
+def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
+                       kb_fn=None, kb_lookup=None):
+    """The Runner's bound-tool set (D84-16/27): `exec` (raw-recording terminal),
+    `note` (pod memory write/read), `kb_retrieve` (the KB wiring hole closed).
+    Constructed PER STRETCH because `exec` carries the current variant's dedup
+    scope; `kb_fn` is the pod's plain KB seam, `kb_lookup` the contract-tier
+    fixture."""
+    from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.tools import (  # noqa: PLC0415
+        ExecTool,
+        KbRetrieveTool,
+    )
+
+    return [
+        ExecTool(exec_fn=exec_fn, log=log, variant_ref=variant_ref),
+        PodNoteTool(store=memory_store, spec_id=spec_id),
+        KbRetrieveTool(kb_fn=kb_fn, lookup=kb_lookup),
+    ]
+
+
+def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None):
+    """The Triager's bound-tool set (D84-27): note read + kb_retrieve - NEVER
+    exec (the critic never touches the target)."""
+    from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.tools import KbRetrieveTool  # noqa: PLC0415
+
+    return [
+        PodNoteTool(store=memory_store, spec_id=spec_id),
+        KbRetrieveTool(kb_fn=kb_fn, lookup=kb_lookup),
+    ]
