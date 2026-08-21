@@ -734,3 +734,49 @@ def test_integration_c16_hunting_harness_per_hunt_thread():
         assert len(registry._actors) == 0
 
     asyncio.run(_check())
+
+
+# --- C17 (live-tier regression): sync default seams awaiting actor coroutines
+
+def test_integration_c17_sync_seam_returning_coroutine_is_awaited():
+    """C17 - the production default `reason_fn`/`rematch_fn` are sync lambdas
+    that RETURN the actor's async `reason`/`rematch` coroutine. `_await_seam`
+    must await the returned coroutine (not hand the un-awaited coroutine back,
+    which crashed the live tier with ``'coroutine' object has no attribute
+    'verdict'``)."""
+    import asyncio
+    import inspect
+
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        GateDecision,
+        MatchVerdict,
+    )
+
+    async def actor_reason(gate_input) -> GateDecision | None:
+        return GateDecision(directions=[])
+
+    async def actor_rematch(unit_id, fault_class, result) -> MatchVerdict | None:
+        return MatchVerdict(unit_id=unit_id, fault_class=fault_class,
+                            verdict="applies")
+
+    # the production default seams are sync lambdas (they are NOT async def)
+    sync_reason = lambda inp: actor_reason(inp)  # noqa: E731
+    sync_rematch = lambda u, f, r: actor_rematch(u, f, r)  # noqa: E731
+    assert not inspect.iscoroutinefunction(sync_reason)
+    assert not inspect.iscoroutinefunction(sync_rematch)
+
+    async def _await_seam(fn, *args):
+        if inspect.iscoroutinefunction(fn):
+            return await fn(*args)
+        out = await asyncio.to_thread(fn, *args)
+        if inspect.isawaitable(out):  # a sync seam that RETURNS a coroutine
+            return await out
+        return out
+
+    async def check():
+        decision = await _await_seam(sync_reason, GateDecision(directions=[]))
+        assert isinstance(decision, GateDecision)
+        verdict = await _await_seam(sync_rematch, "Service:slug:a", "CWE-352", object())
+        assert verdict.verdict == "applies"
+
+    asyncio.run(check())

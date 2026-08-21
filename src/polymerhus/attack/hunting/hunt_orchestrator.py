@@ -611,10 +611,17 @@ async def arun_orchestration(
         (mirrors the recon pipeline's `_phase_exclusions` seam dispatch)."""
         if inspect.iscoroutinefunction(fn):
             return await fn(*args)
-        return await asyncio.to_thread(fn, *args)
+        out = await asyncio.to_thread(fn, *args)
+        if inspect.isawaitable(out):  # a sync seam that RETURNS a coroutine
+            return await out
+        return out
 
     if reason_fn is None:
-        # The gate turn rides the run's orchestration thread, per fault.
+        # The gate turn rides the run's orchestration thread, per fault. The
+        # actor's `reason` is `async def`, so the default seam must be an async
+        # lambda - a sync lambda would return the coroutine un-awaited and
+        # `_await_seam` would hand it to to_thread (the un-awaited-coroutine
+        # defect the live tier caught).
         reason_fn = lambda inp: _resolve_orchestrator().reason(inp)  # noqa: E731
     if rematch_fn is None:
         # The re-match judge rides the SAME orchestration thread.
