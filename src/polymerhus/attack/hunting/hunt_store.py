@@ -42,6 +42,10 @@ HUNT_STORE_ROOT = Path(__file__).resolve().parent / "data" / "hunts"
 #   cut         - one per direction cut by the budget (O9)
 #   back_edge   - one per targeted-recon request raised by a hunt (IA-6)
 #   memory      - one per completed hunt, the revive-keyed insight (#70)
+#   notes       - one per record_note at a unit boundary, the revive-keyed note
+#                 (candidates-rewrite Q10; the parallel memory workstream #70
+#                 owns the real notes seam, this hunt-store kind is the T3
+#                 default backing so the tool is testable at the seam tier)
 # Record kinds written by the hunting agent (#83, Q6) - exactly the two Q6
 # declares, nothing more:
 #   spec        - one per authored TestImplementationSpec instance (D4), with
@@ -51,6 +55,7 @@ HUNT_STORE_ROOT = Path(__file__).resolve().parent / "data" / "hunts"
 KINDS = (
     "run", "config", "hunt", "dispatch", "result",
     "unresolved", "cut", "back_edge", "memory",
+    "notes",
     "spec", "evidence",
 )
 
@@ -141,4 +146,18 @@ class HuntStore:
         orchestrator degrades to an empty insight set and keeps serving.
         """
         return [r for r in self.list_records("memory", "memory")
+                if r.get("revival_key") == revival_key]
+
+    def read_configs_by_key(self, run_id: str, revival_key: str) -> list[dict]:
+        """The prior dispatched HuntConfig records for a revival key (the Q14
+        `read_memory_hunts` surface): the run's `config` records whose rebuilt
+        `(unit_id, fault_class)` key matches (a config carries no explicit
+        revival-key field, so it is rebuilt on read)."""
+        return [r for r in self.list_records(run_id, "config")
+                if f"{r.get('unit_id', '')}::{r.get('fault_class', '')}" == revival_key]
+
+    def read_notes(self, run_id: str, revival_key: str) -> list[dict]:
+        """The revive-keyed notes for a revival key (the Q14 `read_memory_notes`
+        surface), same key as `read_configs_by_key`."""
+        return [r for r in self.list_records(run_id, "notes")
                 if r.get("revival_key") == revival_key]

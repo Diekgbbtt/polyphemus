@@ -419,7 +419,8 @@ def test_live_back_edge_tool_round_trips_hunting_origin(session, project, tmp_pa
     surface = build_orchestrator_tool_surface(
         tools, run_id="run-e5", project_id=project)
     by_name = {t.name: t for t in surface}
-    assert set(by_name) == {"back_edge", "graph_view", "store_reads"}
+    assert set(by_name) == {"back_edge", "graph_view", "read_memory_hunts",
+                            "read_memory_notes", "mint_hunt_config", "record_note"}
     result = by_name["back_edge"].invoke({
         "job": "httpx_reprofile", "unit_id": SERVICE_A,
         "targets": [BASE], "note": "re-witness the surface",

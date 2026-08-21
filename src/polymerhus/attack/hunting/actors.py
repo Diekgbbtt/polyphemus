@@ -178,13 +178,25 @@ class _TurnActor:
 
 def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | None):
     """The model-facing tool surface bound onto the orchestrator's session
-    agent (#135, D67-04): EXACTLY the three tools `back_edge`, `graph_view`,
-    `store_reads` - no HuntConfig-writing tool (the mint stays deterministic at
-    the dispatch stretch). Each READ-side tool is bound to its seam body when
-    present; a missing seam body degrades to a fail-open stub returning a
-    denoted error object (C18) - never raising into the turn. `graph_view`
-    rides `ReadOnlyGraphView`, so a write-shaped cypher surfaces
+    agent (spec 3.4, the candidates-rewrite Q14/Q15 correction): EXACTLY the
+    six tools `read_memory_hunts`, `read_memory_notes`, `graph_view`,
+    `back_edge`, `mint_hunt_config`, `record_note` - no HuntConfig-writing tool
+    (the mint stays deterministic at dispatch) and no budget-consume tool (Q7).
+    `store_reads` is SPLIT into the two memory reads (`read_memory_hunts`
+    returns prior dispatched config content by revival key, `read_memory_notes`
+    returns the notes on the same key); `mint_hunt_config` carries the model's
+    emitted candidate set onto the run-local emission bucket for the
+    deterministic mint (T4 consumes the bucket), never writing a config object;
+    `record_note` persists a note to the keyed notes seam. `graph_view` rides
+    `ReadOnlyGraphView`, so a write-shaped cypher surfaces
     `ReadOnlyGraphViewError` and never executes the write (C19/C5).
+
+    Each READ/WRITE-side tool is bound to its seam body when present; a missing
+    seam body degrades to a fail-open stub returning a denoted error object
+    (C18) - never raising into the turn. The `mint_hunt_config` seam is the
+    `tools.mint_emissions` bucket; the note/hunt-read seams are the hunt store
+    (`tools.store_reads`, its `config` / `notes` kinds), absent when the store
+    is absent (#70 owns the real notes seam body).
 
     The seam bodies themselves are constructed lazily (this module imports no
     driver at import); the tools are JSON-serialisable callables a
@@ -202,6 +214,7 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
     back_edge_seam = getattr(tools, "back_edge", None)
     graph_view_seam = getattr(tools, "graph_view", None)
     store_seam = getattr(tools, "store_reads", None)
+    mint_seam = getattr(tools, "mint_emissions", None)
     surface: list = []
 
     @tool
@@ -253,22 +266,100 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
             return {"error": f"graph_view degraded: {exc}"}
 
     @tool
-    def store_reads(revival_key: str) -> dict:
-        """Read the prior-hunt insights for a revival key
-        ('<unit_id>::<fault_class>') from the run's hunt store (O4): a failed or
-        absent store degrades to a denoted error, never into the turn."""
+    def read_memory_hunts(revival_key: str) -> dict:
+        """Read the prior dispatched `HuntConfig` content for a revival key
+        ('<unit_id>::<fault_class>') from the run's hunt store (O4/Q14): the
+        prior configs the Q11 novelty reflection inspects. A missing or failing
+        store degrades to a denoted error, never into the turn."""
         if store_seam is None:
-            return {"error": "no hunt store configured; prior insights unavailable",
+            return {"error": "no hunt store configured; prior configs unavailable",
                     "revival_key": revival_key}
         try:
-            insights = store_seam.read_memory(revival_key)
-            return {"revival_key": revival_key,
-                    "insights": list(insights) if isinstance(insights, list) else []}
+            read_fn = getattr(store_seam, "read_configs_by_key", None)
+            if callable(read_fn):
+                return {"revival_key": revival_key,
+                        "configs": list(read_fn(run_id, revival_key))}
+            return {"revival_key": revival_key, "configs": []}
         except Exception as exc:  # noqa: BLE001 - fail-open (O4)
-            logger.warning("store_reads tool degraded for %s (%s)", revival_key, exc)
-            return {"error": f"store_reads degraded: {exc}", "revival_key": revival_key}
+            logger.warning("read_memory_hunts tool degraded for %s (%s)",
+                           revival_key, exc)
+            return {"error": f"read_memory_hunts degraded: {exc}",
+                    "revival_key": revival_key}
 
-    surface.extend([back_edge, graph_view, store_reads])
+    @tool
+    def read_memory_notes(revival_key: str) -> dict:
+        """Read the notes for a revival key from the run's hunt store (Q14),
+        keyed identically to the hunts ('keys of huntconfigs and respective
+        notes are the same'). The real notes seam body is the memory workstream
+        (#70); a missing or failing seam degrades to a denoted error, never
+        into the turn."""
+        if store_seam is None:
+            return {"error": "no notes seam configured; notes unavailable",
+                    "revival_key": revival_key}
+        try:
+            read_fn = getattr(store_seam, "read_notes", None)
+            if callable(read_fn):
+                return {"revival_key": revival_key,
+                        "notes": list(read_fn(run_id, revival_key))}
+            return {"revival_key": revival_key, "notes": []}
+        except Exception as exc:  # noqa: BLE001 - fail-open
+            logger.warning("read_memory_notes tool degraded for %s (%s)",
+                           revival_key, exc)
+            return {"error": f"read_memory_notes degraded: {exc}",
+                    "revival_key": revival_key}
+
+    @tool
+    def mint_hunt_config(unit_id: str, candidates: list,
+                         research_direction: str | None = None) -> dict:
+        """Submit the unit's emitted concrete-fault candidates ONCE at its end
+        (Q8/Q12/Q15): carries the model's choice (research_direction plus the
+        candidates with fault_hypothesis / adversarial_capabilities /
+        blocking_constraints); the MODULE mints the N `HuntConfig`s
+        deterministically from the emitted set afterwards. NO config object is
+        written here. The emission is recorded onto the run-local seam for the
+        deterministic mint to fan out from; a missing seam degrades to a
+        denoted error, never into the turn."""
+        if mint_seam is None:
+            return {"error": "no mint emissions seam configured; emission "
+                             "not recorded", "unit_id": unit_id}
+        try:
+            emission = {
+                "unit_id": unit_id,
+                "research_direction": research_direction or "",
+                "candidates": [dict(c) for c in (candidates or [])],
+            }
+            mint_seam.append(emission)
+            return {"acknowledged": True, "unit_id": unit_id,
+                    "recorded_candidates": len(emission["candidates"])}
+        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            logger.warning("mint_hunt_config tool degraded for %s (%s)",
+                           unit_id, exc)
+            return {"error": f"mint_hunt_config degraded: {exc}", "unit_id": unit_id}
+
+    @tool
+    def record_note(revival_key: str, note: str) -> dict:
+        """Record a note for a revival key at the unit boundary, deterministically
+        (Q10), immediately after `mint_hunt_config`: persists to the keyed notes
+        seam. The parallel memory workstream (#70) owns the real seam body; a
+        missing or failing seam degrades to a denoted error, never into the
+        turn."""
+        if store_seam is None:
+            return {"error": "no notes seam configured; note not recorded",
+                    "revival_key": revival_key}
+        try:
+            store_seam.append(run_id, "notes",
+                              {"revival_key": revival_key, "note": note})
+            return {"recorded": True, "revival_key": revival_key}
+        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            logger.warning("record_note tool degraded for %s (%s)",
+                           revival_key, exc)
+            return {"error": f"record_note degraded: {exc}",
+                    "revival_key": revival_key}
+
+    surface.extend([
+        back_edge, graph_view, read_memory_hunts, read_memory_notes,
+        mint_hunt_config, record_note,
+    ])
     return surface
 
 
@@ -314,9 +405,10 @@ class HuntOrchestratorActor(_TurnActor):
         )
         from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
         surface = ()
-        if getattr(self.tools, "back_edge", None) is not None or getattr(
-                self.tools, "graph_view", None) is not None or getattr(
-                self.tools, "store_reads", None) is not None:
+        if (getattr(self.tools, "back_edge", None) is not None
+                or getattr(self.tools, "graph_view", None) is not None
+                or getattr(self.tools, "store_reads", None) is not None
+                or getattr(self.tools, "mint_emissions", None) is not None):
             surface = build_orchestrator_tool_surface(
                 self.tools,
                 run_id=self._run_id,

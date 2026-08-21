@@ -5,7 +5,7 @@ The contract predicates exercise the four LLM-local artifact surfaces the spec
 owns, with every out-of-tree collaborator injected: the reason stretch's
 symbolic render (projection / materialisation / fold family -> `GateInput` ->
 `_compose_gate_prompt`), the tool surface bound onto the orchestrator turn
-(`build_orchestrator_tool_surface` -> the three D67-04 tools, fail-open per
+(`build_orchestrator_tool_surface` -> the six D67-04 tools, fail-open per
 seam), the skill mounts (`_gate_skill` / `_rematch_skill` -> the mounted
 SKILL.md files), the observability (`orchestrator_tracing`, fake langfuse), and
 the ORDER/topology invariants (no new graph nodes, no schema change). The
@@ -407,9 +407,9 @@ def test_all_slots_degraded_still_runs(tmp_path):
 
 # --- C17: exactly three tools bound; no HuntConfig writer ----------------------
 
-def test_actor_binds_exactly_the_three_tools(tmp_path, monkeypatch):
-    """The agent the actor builds binds EXACTLY the three tool names of
-    `TOOL_SURFACE` - never a fourth HuntConfig-writing tool."""
+def test_actor_binds_exactly_the_six_tools(tmp_path, monkeypatch):
+    """The agent the actor builds binds EXACTLY the six tool names of
+    `TOOL_SURFACE` - never a seventh HuntConfig-writing tool."""
     store = HuntStore(tmp_path)
     seen = {}
 
@@ -431,14 +431,17 @@ def test_actor_binds_exactly_the_three_tools(tmp_path, monkeypatch):
 
     asyncio.run(_drive())
     names = {t.name for t in seen["tools"]}
-    assert names == set(TOOL_SURFACE)                      # exactly the three, no fourth
-    assert len(seen["tools"]) == 3
+    assert names == set(TOOL_SURFACE)                      # exactly the six, no seventh
+    assert len(seen["tools"]) == 6
     assert all(hasattr(t, "invoke") for t in seen["tools"])  # real tool callables
 
 
 def test_no_hunt_config_writing_tool_on_the_surface(tmp_path):
-    """The built surface is exactly `TOOL_SURFACE`: no tool writes or
-    fabricates a `HuntConfig` (the mint stays deterministic at dispatch)."""
+    """The built surface is exactly `TOOL_SURFACE`: every tool's reply shape is
+    a recon / store / graph / acknowledgment object, never a `HuntConfig`
+    dump - no tool writes or fabricates a `HuntConfig` (the mint stays
+    deterministic at dispatch, downstream of the `mint_hunt_config` tool, which
+    only carries the model's emission)."""
     store = HuntStore(tmp_path)
     fake = _FakeGraph(_service_a_row())
     tools = _tools(store, back_edge=_ok_back_edge(), read_fn=fake.read)
@@ -446,10 +449,19 @@ def test_no_hunt_config_writing_tool_on_the_surface(tmp_path):
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
     assert set(by_name) == set(TOOL_SURFACE)
-    assert not any("config" in name for name in by_name)
-    # each tool's reply is a recon/store/graph shape, never a HuntConfig dump
-    out = by_name["store_reads"].invoke({"revival_key": revival_key(SERVICE_A, "CWE-352")})
-    assert "insights" in out
+    # each tool's reply is a recon/store/graph/ack shape, never a HuntConfig
+    out = by_name["read_memory_hunts"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    assert "configs" in out
+    out = by_name["read_memory_notes"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    assert "notes" in out
+    out = by_name["record_note"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352"), "note": "n"})
+    assert out["recorded"] is True
+    out = by_name["mint_hunt_config"].invoke(
+        {"unit_id": SERVICE_A, "candidates": [], "research_direction": "csrf"})
+    assert out["acknowledged"] is True
     out = by_name["back_edge"].invoke({"job": "httpx_reprofile", "unit_id": SERVICE_A})
     assert "correlation_id" in out
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
@@ -474,8 +486,9 @@ def test_absent_back_edge_degrades_the_surface(tmp_path):
     out = by_name["back_edge"].invoke({"job": "httpx_reprofile", "unit_id": SERVICE_A})
     assert out["error"].startswith("no back_edge seam configured")
     assert out["unit_id"] == SERVICE_A
-    out = by_name["store_reads"].invoke({"revival_key": revival_key(SERVICE_A, "CWE-352")})
-    assert out["insights"] == []
+    out = by_name["read_memory_hunts"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    assert out["configs"] == []
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert "rows" in out
 
@@ -514,16 +527,17 @@ def test_absent_graph_view_degrades_the_surface():
     assert set(by_name) == set(TOOL_SURFACE)
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert out["error"] == "no graph view configured; reading degraded"
-    out = by_name["store_reads"].invoke({"revival_key": revival_key(SERVICE_A, "CWE-352")})
-    assert out["insights"] == []
+    out = by_name["read_memory_hunts"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    assert out["configs"] == []
     out = by_name["back_edge"].invoke({"job": "httpx_reprofile", "unit_id": SERVICE_A})
     assert out["origin"] == "hunting"
 
 
-def test_absent_store_reads_degrades_the_surface(tmp_path):
-    """With the hunt-store seam absent the store_reads tool returns a denoted
-    error instead of raising; the back-edge and graph-view tools keep real
-    bodies."""
+def test_absent_hunt_store_degrades_the_surface(tmp_path):
+    """With the hunt-store seam absent the memory-read and note tools all
+    return denoted errors instead of raising; the back-edge and graph-view tools
+    keep real bodies."""
     fake = _FakeGraph(_service_a_row())
     tools = OrchestratorTools(
         back_edge=_ok_back_edge(), store_reads=None,
@@ -532,13 +546,160 @@ def test_absent_store_reads_degrades_the_surface(tmp_path):
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
     assert set(by_name) == set(TOOL_SURFACE)
-    out = by_name["store_reads"].invoke({"revival_key": revival_key(SERVICE_A, "CWE-352")})
-    assert out["error"] == "no hunt store configured; prior insights unavailable"
+    out = by_name["read_memory_hunts"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    assert out["error"] == "no hunt store configured; prior configs unavailable"
     assert out["revival_key"] == revival_key(SERVICE_A, "CWE-352")
+    out = by_name["read_memory_notes"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    assert out["error"] == "no notes seam configured; notes unavailable"
+    out = by_name["record_note"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352"), "note": "n"})
+    assert out["error"] == "no notes seam configured; note not recorded"
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert "rows" in out
     out = by_name["back_edge"].invoke({"job": "httpx_reprofile", "unit_id": SERVICE_A})
     assert out["origin"] == "hunting"
+
+
+# --- C18b: the split memory reads, the mint, and the note tool -----------------
+
+def test_read_memory_hunts_returns_prior_dispatched_configs(tmp_path):
+    """`read_memory_hunts` returns the prior dispatched `config` records for the
+    revival key, rebuilt from the record's `unit_id` / `fault_class`; an absent
+    store degrades to the denoted error."""
+    store = HuntStore(tmp_path)
+    key = revival_key(SERVICE_A, "CWE-352")
+    store.append(RUN_ID, "config", {"unit_id": SERVICE_A, "fault_class": "CWE-352",
+                                    "hunt_id": "h1"})
+    tools = _tools(store)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    out = by_name["read_memory_hunts"].invoke({"revival_key": key})
+    assert out["revival_key"] == key
+    assert [r["hunt_id"] for r in out["configs"]] == ["h1"]
+    # a different key reads nothing on the same store
+    other = by_name["read_memory_hunts"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-9")})
+    assert other["configs"] == []
+
+
+def test_read_memory_hunts_fails_open_when_store_absent():
+    """Without the hunt store the `read_memory_hunts` tool returns the denoted
+    error instead of raising."""
+    tools = OrchestratorTools(back_edge=None, store_reads=None, graph_view=None)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    out = by_name["read_memory_hunts"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    assert out["error"] == "no hunt store configured; prior configs unavailable"
+
+
+def test_read_memory_notes_returns_keyed_notes(tmp_path):
+    """`read_memory_notes` returns the `notes` records on the same revival key;
+    an absent store fails open to the denoted error."""
+    store = HuntStore(tmp_path)
+    key = revival_key(SERVICE_A, "CWE-352")
+    store.append(RUN_ID, "notes", {"revival_key": key, "note": "track it"})
+    tools = _tools(store)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    out = by_name["read_memory_notes"].invoke({"revival_key": key})
+    assert out["revival_key"] == key
+    assert [r["note"] for r in out["notes"]] == ["track it"]
+    other = by_name["read_memory_notes"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-9")})
+    assert other["notes"] == []
+
+
+def test_read_memory_notes_fails_open_when_store_absent():
+    """Without the hunt store the `read_memory_notes` tool returns the denoted
+    error instead of raising."""
+    tools = OrchestratorTools(back_edge=None, store_reads=None, graph_view=None)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    out = by_name["read_memory_notes"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    assert out["error"] == "no notes seam configured; notes unavailable"
+
+
+def test_mint_hunt_config_records_an_emission_not_a_config(tmp_path):
+    """`mint_hunt_config` records the model's emission onto the run-local
+    `mint_emissions` bucket (unit_id + research_direction + candidates dicts)
+    and returns the acknowledgment - it never writes a `HuntConfig` object (the
+    deterministic module mint stays downstream)."""
+    store = HuntStore(tmp_path)
+    tools = _tools(store)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    out = by_name["mint_hunt_config"].invoke({
+        "unit_id": SERVICE_A,
+        "candidates": [{"fault_hypothesis": "CSRF",
+                        "adversarial_capabilities": ["c1"],
+                        "blocking_constraints": ["b1"]}],
+        "research_direction": "csrf on all authed POSTs",
+    })
+    assert out["acknowledged"] is True
+    assert out["recorded_candidates"] == 1
+    assert len(tools.mint_emissions) == 1
+    emission = tools.mint_emissions[0]
+    assert emission["unit_id"] == SERVICE_A
+    assert emission["research_direction"] == "csrf on all authed POSTs"
+    assert emission["candidates"] == [{
+        "fault_hypothesis": "CSRF",
+        "adversarial_capabilities": ["c1"],
+        "blocking_constraints": ["b1"],
+    }]
+    # no HuntConfig ever landed in the store from the tool
+    assert store.list_records(RUN_ID, "config") == []
+
+
+def test_mint_hunt_config_fails_open_without_the_emission_seam():
+    """With `mint_emissions=None` the `mint_hunt_config` tool returns the
+    denoted error instead of raising."""
+    tools = OrchestratorTools(back_edge=None, store_reads=None, graph_view=None,
+                              mint_emissions=None)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    out = by_name["mint_hunt_config"].invoke(
+        {"unit_id": SERVICE_A, "candidates": [], "research_direction": "csrf"})
+    assert out["error"] == "no mint emissions seam configured; emission not recorded"
+
+
+def test_record_note_appends_to_the_keyed_notes_kind(tmp_path):
+    """`record_note` persists a note to the store's `notes` kind keyed by the
+    revival key; an absent store degrades to the denoted error."""
+    store = HuntStore(tmp_path)
+    tools = _tools(store)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    key = revival_key(SERVICE_A, "CWE-352")
+    out = by_name["record_note"].invoke({"revival_key": key, "note": "first"})
+    assert out["recorded"] is True
+    assert out["revival_key"] == key
+    notes = store.list_records(RUN_ID, "notes")
+    assert len(notes) == 1
+    assert notes[0]["revival_key"] == key
+    assert notes[0]["note"] == "first"
+
+
+def test_record_note_fails_open_when_store_absent():
+    """Without the hunt store the `record_note` tool returns the denoted error
+    instead of raising."""
+    tools = OrchestratorTools(back_edge=None, store_reads=None, graph_view=None)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    out = by_name["record_note"].invoke(
+        {"revival_key": revival_key(SERVICE_A, "CWE-352"), "note": "n"})
+    assert out["error"] == "no notes seam configured; note not recorded"
 
 
 # --- C19: the read-only graph view rejects writes through the bound tool -------
@@ -802,7 +963,10 @@ def test_structured_schemas_and_surface_unchanged():
     """The structural-output schemas and the tool surface compile unchanged
     (the 110-vs-135 regression guard), and the deterministic mint still
     attaches the folded sub-fault ids to the HuntConfig."""
-    assert TOOL_SURFACE == frozenset({"back_edge", "store_reads", "graph_view"})
+    assert TOOL_SURFACE == frozenset({
+        "read_memory_hunts", "read_memory_notes", "graph_view", "back_edge",
+        "mint_hunt_config", "record_note",
+    })
 
     direction = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class="CWE-352", carried=True,

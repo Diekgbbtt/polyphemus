@@ -191,7 +191,10 @@ def test_graph_view_rejects_writes():
     view = ReadOnlyGraphView("project-1", read_fn=spy_read)
     with pytest.raises(ReadOnlyGraphViewError):
         view.merge("MATCH (n) MERGE (m) ...")  # write-shaped call through the view
-    assert TOOL_SURFACE == frozenset({"back_edge", "store_reads", "graph_view"})
+    assert TOOL_SURFACE == frozenset({
+        "read_memory_hunts", "read_memory_notes", "graph_view", "back_edge",
+        "mint_hunt_config", "record_note",
+    })
 
 
 # --- C6: dispatch target failure degrades the hunt (O6, IA-2) -----------------

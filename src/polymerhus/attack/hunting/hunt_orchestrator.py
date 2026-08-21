@@ -44,7 +44,7 @@ import logging
 import re
 import threading
 import uuid
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, Callable, Literal, Sequence
 
 from pydantic import BaseModel, Field
@@ -60,9 +60,15 @@ from polymerhus.recon.control.targeted import (
 
 logger = logging.getLogger(__name__)
 
-# The orchestrator's tool surface (#67 D67-04, spec 5.1): exactly these three,
-# nothing more.
-TOOL_SURFACE = frozenset({"back_edge", "store_reads", "graph_view"})
+# The orchestrator's tool surface (spec 3.4, the candidates-rewrite Q14/Q15
+# correction): the split memory reads, the mint, the note, the back-edge, and
+# the read-only graph view - exactly these, nothing more. No HuntConfig-writing
+# tool (the mint stays deterministic at dispatch) and no budget_consume tool
+# (Q7: token budget is a global harness concern, not a hunting-local check).
+TOOL_SURFACE = frozenset({
+    "read_memory_hunts", "read_memory_notes", "graph_view", "back_edge",
+    "mint_hunt_config", "record_note",
+})
 
 # The per-run orchestration actor registry (#110): ONE `HuntOrchestratorActor`
 # per run_id, lazily resolved on the pass's first LLM turn and HELD after the
@@ -289,12 +295,25 @@ class ReadOnlyGraphView:
 
 @dataclass
 class OrchestratorTools:
-    """The orchestrator's three tools (D67-04): the hunt back-edge (IA-6), the
-    hunt-store reads (#68), and the read-only graph view."""
+    """The orchestrator's tool seams (spec 3.4, the candidates-rewrite Q14/Q15
+    correction): the hunt back-edge (IA-6), the hunt store (`store_reads`, the
+    harness WRITE path - the append surface the `_write` helper and both memory
+    reads share), the read-only graph view, and the run-local mint-emission
+    bucket (`mint_hunt_config` records the model's emission onto it for the
+    deterministic mint to fan out from; T4 consumes it).
+
+    The harness write path rides `store_reads` unchanged (`_write` calls
+    `store_reads.append(...)`); the two READ surfaces (`read_memory_hunts`,
+    `read_memory_notes`) and the note write (`record_note`) each thread through
+    the same store's `config` / `notes` kinds, keyed identically by revival
+    key. `mint_emissions` is a run-local mutable bucket so a bare
+    `OrchestratorTools` gets a working seam; the mint tool is still testable
+    fail-open by passing `mint_emissions=None`."""
 
     back_edge: Callable[[AnalyserReconRequest, str, str], TargetedReconResult] | None = None
     store_reads: Any = None
     graph_view: ReadOnlyGraphView | None = None
+    mint_emissions: list | None = field(default_factory=list)
 
 
 def revival_key(unit_id: str, fault_class: str) -> str:
