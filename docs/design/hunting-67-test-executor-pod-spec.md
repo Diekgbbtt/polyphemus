@@ -126,11 +126,11 @@ Stubs (owned by sibling tickets, minimal fixture in this build):
 
 Reuses:
 
-- The recon pod's execution patterns: `MAX_POD_ITERS`/`EXEC_TIMEOUT_S` semantics (`recon/config.py`), the degrade-to-failed-export fail-open (`recon/control/job_agent.py`), the synchronous bridge (`recon/control/async_bridge.py`).
+- The recon pod's execution patterns: `MAX_POD_ITERS`/`EXEC_TIMEOUT_S` semantics (`recon/config.py`) and the degrade-to-failed-export fail-open (`recon/control/job_agent.py`).
 - The `TestImplementationSpec` schema from merged spec section 7 (D4).
 - The shared session abstractions (`HuntSession`, `stateful_turn`, `run_session_turn`/`arun_session_turn`, `create_agent`, the `app/llm/compaction.py` middleware building blocks) - D84-2, D84-6, D84-17.
 - The per-project memory store's indexing/retrieval/data-model patterns (as a PATTERN to replicate, NOT to import) - D84-20.
-- `run_coro_blocking` where a sync wrapper is ever needed (the pod itself is async-only, D84-15).
+- No sync bridge is reused: the pod is async-ONLY (D84-15), so `run_pod`/`run_coro_blocking`/`async_bridge.py` are deliberately NOT used.
 
 ## 4. Happy paths and outliers
 
@@ -204,6 +204,7 @@ Terminal: exactly one verdict `{successful, symptom-confirmed, iterations >= 1}`
 Observed: the hunt-store stub record and the response status read back from the tool call log.
 E1 is a REAL pod run via `arun_pod` (D84-24): it exercises the ReAct runner, the KB tool binding, and the `exec` tool against the live target. The pre-regrounding symbolic runner is removed.
 Yields: `tests/e2e/test_test_executor_pod_walkthrough.py::test_trivial_real_run`. Mechanisable in this ticket segment (the pod and the target are both real; the pod LLM is wired in the in-network e2e stack).
+Living-doc caveat: `tests/e2e/fixtures/eval-targets.yaml` does NOT exist in the repo yet - E1 is currently hermetically mechanised (the production lane over a fake model/exec/KB, #158), with the live edge pending a wired in-network target.
 
 E2 - Full chain, two candidates: grounds merged spec 10.1-10.8 and the orchestrator E1.
 Entry seam: the candidate-set delivery at IA-1.
