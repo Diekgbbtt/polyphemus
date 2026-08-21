@@ -27,6 +27,7 @@ model, no live gateway, no DB (CODING_STANDARD sections 6, 10).
 """
 from pydantic import BaseModel
 
+from polymerhus.app.llm import negotiation as N
 from polymerhus.app.llm import roles
 from polymerhus.app.llm.capability import CapabilityProfile
 
@@ -267,13 +268,19 @@ def test_json_mode_wrong_shape_fail_closes_when_every_attempt_misses(monkeypatch
 
 def test_unknown_profile_uses_the_semantic_default_and_still_works(monkeypatch):
     """Unknown profile (no gateway, no record, all fields None per D5 Rule 1):
-    the semantic default `json_schema` on the no-tool rung - the call still
-    succeeds and returns the parsed instance."""
+    the one-shot seam PROBES the degrade chain through the shared resolver
+    (A2) - the first rung whose parsed result validates wins (`json_schema`
+    strict=False here) - and the call still returns the parsed instance."""
     _env(monkeypatch)
-    record = _wire(monkeypatch, CapabilityProfile(), [{"anchor": {}, "label": "z"}])
+    record = _wire(monkeypatch, CapabilityProfile(), [
+        {"anchor": {}, "label": "z"},   # the probe's json_schema rung validates
+        {"anchor": {}, "label": "z"},   # the real call's result
+    ])
     out = roles.invoke_role("triager", [{"role": "user", "content": "hi"}], schema=_OpenDict)
     assert isinstance(out, _OpenDict) and out.label == "z"
+    # the probe's winner (first validating rung) is json_schema strict=False
     assert _wso(record)["kwargs"] == {"method": "json_schema", "strict": False}
+    assert len(record["llms"]) == 2  # the probe construction + the real call
 
 
 def test_fail_open_when_capability_resolution_raises(monkeypatch, caplog):
@@ -294,14 +301,19 @@ def test_fail_open_when_capability_resolution_raises(monkeypatch, caplog):
 
 def test_fail_open_when_shape_detection_fails(monkeypatch, caplog):
     """D7: a negotiation failure (unclassifiable schema target) also falls to
-    the semantic default - the call proceeds rather than raising."""
+    the semantic default - the call proceeds rather than raising. The shape
+    deriver is consulted INSIDE the shared resolver
+    (`negotiation.resolve_method`) when it assembles the negotiate contract,
+    so the seam to break is the module-level `N.schema_shape_of` - not a
+    `roles` attribute."""
     _env(monkeypatch)
-    record = _wire(monkeypatch, CapabilityProfile(), [{"label": "x"}])
+    record = _wire(monkeypatch, CapabilityProfile(supports_structured_output=True),
+                   [{"label": "x"}])
 
     def broken_shape(schema):
         raise TypeError("unclassifiable")
 
-    monkeypatch.setattr(roles, "schema_shape_of", broken_shape)
+    monkeypatch.setattr(N, "schema_shape_of", broken_shape)
     out = roles.invoke_role("triager", [{"role": "user", "content": "hi"}], schema=_Closed)
     assert isinstance(out, _Closed) and out.label == "x"
     assert "semantic default" in caplog.text.lower()
