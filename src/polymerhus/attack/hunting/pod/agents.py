@@ -27,6 +27,7 @@ from typing import Callable, Literal
 
 from pydantic import BaseModel, Field
 
+from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
 from polymerhus.attack.hunting.pod.prompts import (
     POD_RUNNER_SYSTEM,
     POD_TRIAGER_SYSTEM,
@@ -136,6 +137,31 @@ def default_triager_fn(spec: dict, observation: RawObservation,
             classification="noise", action="terminate", verdict="unsuccessful",
             terminal_reason="no-symptom-evidence", clean=False,
             note=f"triager degraded: {exc}").model_dump()
+
+
+# --- the pod roles' #95 compaction middleware (D9), resolved LAZILY ------------
+
+def runner_compaction_middleware(*, window=None, threshold=None, store=None):
+    """The `pod_runner` role's compaction middleware for the pod's stateful
+    turns (T7): the shared role builder bound to the pod's actor role, with the
+    summariser on its own model and a fail-open D7 reasoning profile. Resolved
+    LAZILY - the shared builder is imported inside the call, never at import, so
+    nothing here is a boot-gate; a missing role config degrades the
+    window/profile, never raises (the recon/analysis consumers' exact shape).
+    `window`/`threshold`/`store` are explicit for hermetic tests."""
+    from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+
+    return C.build_role_compaction_middleware(
+        POD_RUNNER_ROLE, window=window, threshold=threshold, store=store)
+
+
+def triager_compaction_middleware(*, window=None, threshold=None, store=None):
+    """The `pod_triager` role's compaction middleware, same lazy fail-open shape
+    as the runner's - the critic's own session stays under the window."""
+    from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+
+    return C.build_role_compaction_middleware(
+        POD_TRIAGER_ROLE, window=window, threshold=threshold, store=store)
 
 
 # Re-exported so the graph and arun_pod can name the base prompts.

@@ -134,7 +134,8 @@ def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
     return {"export": export.to_envelope(), "verdict": verdict, "terminal_reason": reason}
 
 
-def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None):
+def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None,
+                    runner_middleware=(), triager_middleware=()):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
@@ -146,6 +147,11 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
       inconclusive.
     - `kb_fn(query) -> dict` - the NL knowledge-base tool; default = the fail-open
       `kb_retrieve` stub.
+    - `runner_middleware` / `triager_middleware` - the per-role #95 compaction
+      middleware sets the run injected (T5); the `runner_agent` / `triager`
+      nodes bind them alongside the pod session (D84-7), so T7's stateful
+      default seams pass them to `stateful_turn` verbatim. Default `()` =
+      compaction disabled.
     """
     runner_step_fn = runner_step_fn if runner_step_fn is not None else default_runner_step_fn
     triager_fn = triager_fn if triager_fn is not None else default_triager_fn
@@ -186,7 +192,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         # the parent hunt_session when present; a directly-invoked pod runs on
         # the task-local default run_id with no hunt_id).
         with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
-                              role_id=POD_RUNNER_ROLE):
+                              role_id=POD_RUNNER_ROLE, middleware=runner_middleware):
             step = await _await_seam(runner_step_fn, spec, curate_messages(msgs),
                                      state.get("tool_calls", 0))
         if not isinstance(step, RunnerStep):
@@ -283,7 +289,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             # D84-7: the `pod_triager` session binding, same shape as the
             # runner's - the graph owns the per-instance session address.
             with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
-                                  role_id=POD_TRIAGER_ROLE):
+                                  role_id=POD_TRIAGER_ROLE, middleware=triager_middleware):
                 raw = await _await_seam(triager_fn, spec, obs, curate_messages(tmsgs), log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":

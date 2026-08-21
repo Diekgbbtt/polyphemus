@@ -8,9 +8,11 @@ resolves the pod role's typed session from the PARENT `hunt_session` ContextVar
 when the pod runs inside a hunt; the DEFAULT seams (`agents.py`) then read the
 bound typed session via the `pod_session()` getter, so the typed address reaches
 `stateful_turn` (T7) without changing the injected seam contract (a test double
-simply ignores the ContextVar). Fail-open: no parent hunt, a failed binding, or
-a missing checkpointer yields the task-local default or a stateless call - never
-a crash.
+simply ignores the ContextVar). The same binding carries the per-role #95
+compaction middleware the run injected (`pod_middleware()`), so T7's stateful
+seams pass it to `stateful_turn` verbatim. Fail-open: no parent hunt, a failed
+binding, or a missing checkpointer yields the task-local default or a stateless
+call - never a crash.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
 section 6): `contextvars`, the checkpointer, and the session_address types all
@@ -19,6 +21,7 @@ resolve lazily on call.
 from __future__ import annotations
 
 import logging
+from typing import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -39,6 +42,7 @@ POD_DEFAULT_RUN_ID = "hunt-pod"
 # other's context. `None` => stateless (a directly-invoked pod graph in tests, or
 # a binding that failed fail-open).
 _pod_session_ctx: "ContextVar" = None  # lazily created below to keep imports light
+_pod_middleware_ctx: "ContextVar" = None
 
 
 def _pod_ctx():
@@ -50,12 +54,32 @@ def _pod_ctx():
     return _pod_session_ctx
 
 
+def _pod_mw_ctx():
+    """The middleware ContextVar, same lazy shape as the session one; its value is
+    whatever the run injected for the CURRENT role's binding, `()` when nothing
+    (compaction disabled) or when the pod runs stateless."""
+    global _pod_middleware_ctx
+    if _pod_middleware_ctx is None:
+        from contextvars import ContextVar
+        _pod_middleware_ctx = ContextVar("pod_middleware_ctx", default=())
+    return _pod_middleware_ctx
+
+
 def pod_session():
     """The pod agent's currently bound session (a typed `SessionContext(address,
     checkpointer)`), or None when the pod runs stateless (tests, a direct graph
     invocation). The default seams read this so the typed `HuntSession` address -
     role_id included - rides out-of-band to `stateful_turn` (T7)."""
     return _pod_ctx().get()
+
+
+def pod_middleware():
+    """The #95 compaction middleware bound for the CURRENT role's seam call (T5,
+    D9 wiring): the injectable per-role set `arun_pod` threaded through the graph
+    into `bind_pod_session`, as a tuple. `()` when nothing was injected (the pod
+    runs uncompacted) or outside any binding - the T7 default seams pass this to
+    `stateful_turn`'s `middleware` verbatim."""
+    return _pod_mw_ctx().get()
 
 
 def pod_session_address(run_id: str, hunt_id: str, spec: dict, *, role_id: str):
@@ -84,22 +108,27 @@ def _parent_hunt_session():
         return None
 
 
-def bind_pod_session(run_id: str, hunt_id: str, spec: dict, *, role_id: str):
+def bind_pod_session(run_id: str, hunt_id: str, spec: dict, *, role_id: str,
+                     middleware: Sequence = ()):
     """Context manager the pod graph's `runner_agent` / `triager` nodes wrap their
     seam calls in (D84-7): binds the pod role's typed session for the duration of
-    the seam call.
+    the seam call, plus the #95 compaction middleware the run injected for this
+    role (T5) - the default seam reads BOTH via `pod_session()` / `pod_middleware()`.
 
     When the parent `hunt_session` ContextVar is present, the derived session
     takes its run_id/hunt_id; otherwise it falls back to the caller's `run_id`
     (the task-local default) and the given `hunt_id` (the graph passes "" - empty
-    discriminators are dropped from the address, never shifting it). Fail-open:
-    any binding failure runs the seam stateless (no session bound), mirroring the
-    recon pod's never-fail-a-pod discipline."""
+    discriminators are dropped from the address, never shifting it). `middleware`
+    is the injectable per-role set, default `()` (compaction disabled); bound as
+    a tuple so the seam hands `stateful_turn` the same stable sequence every
+    turn. Fail-open: any binding failure runs the seam stateless (no session
+    bound), mirroring the recon pod's never-fail-a-pod discipline."""
     from contextlib import contextmanager
 
     @contextmanager
     def _cm():
         _token = None
+        _mw_token = None
         try:
             from polymerhus.app.llm.checkpoints import get_session_checkpointer
             from polymerhus.app.llm.session_address import SessionContext
@@ -113,12 +142,16 @@ def bind_pod_session(run_id: str, hunt_id: str, spec: dict, *, role_id: str):
                 SessionContext(pod_session_address(eff_run_id, eff_hunt_id, spec,
                                                    role_id=role_id),
                                get_session_checkpointer()))
+            _mw_token = _pod_mw_ctx().set(tuple(middleware))
         except Exception:  # noqa: BLE001 - fail-open: bind, or run stateless
             logger.warning("pod session binding failed; the seam runs stateless", exc_info=True)
             _token = None
+            _mw_token = None
         try:
             yield
         finally:
+            if _mw_token is not None:
+                _pod_mw_ctx().reset(_mw_token)
             if _token is not None:
                 _pod_ctx().reset(_token)
 

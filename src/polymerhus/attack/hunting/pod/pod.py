@@ -18,7 +18,7 @@ Langfuse optional and never a gate (C12).
 from __future__ import annotations
 
 import logging
-from typing import Callable
+from typing import Callable, Sequence
 
 from polymerhus.attack.hunting.pod.graph import RECURSION_LIMIT, build_pod_graph
 from polymerhus.attack.hunting.pod.llm import POD_DEFAULT_RUN_ID
@@ -52,7 +52,9 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                    runner_step_fn: Callable | None = None,
                    triager_fn: Callable | None = None,
                    kb_fn: Callable | None = None,
-                   trace_fn: Callable | None = None) -> dict:
+                   trace_fn: Callable | None = None,
+                   runner_middleware: Sequence = (),
+                   triager_middleware: Sequence = ()) -> dict:
     """Execute `spec` against the live target and return the IA-4 envelope.
 
     Async-only (D84-15): the graph is driven with `ainvoke`, and every injected
@@ -62,7 +64,13 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     terminals and the contract-tier sync fakes are injectable. The whole run is
     wrapped fail-open: a raise anywhere degrades to `unsuccessful` /
     `technical-infeasibility` with the error in the trail - the pod never raises
-    into the parent."""
+    into the parent.
+
+    `runner_middleware` / `triager_middleware` are the per-role #95 compaction
+    middleware sets (T5, D9 wiring): threaded into the graph's pod-session
+    bindings (D84-7), where T7's stateful default seams pass them to
+    `stateful_turn` verbatim. Default `()` = compaction disabled - the pod runs
+    exactly as before, nothing breaks."""
     exec_fn = exec_fn or default_exec_fn
     trace_fn = trace_fn if trace_fn is not None else _default_trace_fn
 
@@ -76,7 +84,8 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     try:
         graph = build_pod_graph(
             exec_fn=exec_fn, runner_step_fn=runner_step_fn,
-            triager_fn=triager_fn, kb_fn=kb_fn)
+            triager_fn=triager_fn, kb_fn=kb_fn,
+            runner_middleware=runner_middleware, triager_middleware=triager_middleware)
         final = await graph.ainvoke(
             {"spec": dict(spec or {}), "run_id": run_id},
             config={"recursion_limit": RECURSION_LIMIT, "callbacks": callbacks})
