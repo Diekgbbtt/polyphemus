@@ -214,6 +214,30 @@ def test_hunt_config_carries_the_sub_fault_ids_slot():
     assert config.sub_fault_ids == ["CWE-24", "CWE-35"]
 
 
+# --- The risk-descending schedule (the fault_risk policy) -----------------------
+
+def test_schedule_processes_the_riskiest_fault_first():
+    """The per-fault schedule is re-sorted RISK-DESCENDING (operator tiers,
+    `fault_risk.risk_tier`): an intake that first emitted a residual-tier
+    fault still reasons about the broken-access-control fault first - a
+    budget-capped pass spends on the riskiest."""
+    store = _MemoryStore()
+    reason_order: list[str] = []
+
+    def reason_fn(inp):
+        reason_order.append(inp.candidates[0].fault_class)
+        return GateDecision(directions=[_carry(c) for c in inp.candidates])
+
+    report = _run(
+        store,
+        [_candidate(SERVICE_A, "CWE-601"),   # open redirect, tier 4, FIRST
+         _candidate(SERVICE_A, "CWE-639")],  # IDOR, tier 0, SECOND
+        reason_fn=reason_fn,
+    )
+    assert report.hunts_dispatched == 2
+    assert reason_order == ["CWE-639", "CWE-601"]
+
+
 def test_mint_fans_out_one_config_per_distinct_class():
     # N HuntConfigs per distinct web-vulnerability class (the emitted set):
     # the grouping discriminator is the candidate's `fault_hypothesis` text

@@ -55,6 +55,7 @@ from pydantic import BaseModel, Field
 if TYPE_CHECKING:  # the actor is a lazy import (CODING_STANDARD section 6)
     from polymerhus.attack.hunting.actors import HuntOrchestratorActor
 
+from polymerhus.attack.hunting.fault_risk import risk_tier
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
     ReconScope,
@@ -747,13 +748,17 @@ async def arun_orchestration(
 
     # The per-fault schedule grouping (spec 3.1): ONE `FaultWorkItem` per
     # distinct `fault_class`, each holding that fault's FULL matched-unit list,
-    # in deterministic first-emission order of the intake.
+    # in RISK-DESCENDING order (the operator-authored tier policy,
+    # `fault_risk.risk_tier` - broken access control first, then weak
+    # validation, then sophisticated-system targets), stable within a tier so
+    # equal-risk faults keep the deterministic first-emission intake order.
     def _fault_schedule() -> list[FaultWorkItem]:
         grouped: dict[str, list[DeliveredCandidate]] = {}
         for c in intake.accepted:
             grouped.setdefault(c.fault_class, []).append(c)
-        return [FaultWorkItem(fault_class=f, candidates=grouped[f])
-                for f in grouped]
+        items = [FaultWorkItem(fault_class=f, candidates=grouped[f])
+                 for f in grouped]
+        return sorted(items, key=lambda item: risk_tier(item.fault_class))
 
     async def _read_prior_insights(key: str) -> list[dict]:
         """Prior-hunt insights by revival key (O4: a read failure degrades to an
