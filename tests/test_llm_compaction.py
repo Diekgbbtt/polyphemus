@@ -260,7 +260,7 @@ def _good_summariser():
     def fake(messages, budget):
         seen["user"] = messages[-1].content if messages else ""
         seen["calls"] = seen.get("calls", 0) + 1
-        return S.SummaryUpdate(summary_text=GOOD_SUMMARY_TEXT)
+        return S.SummaryUpdate(objective=GOOD_SUMMARY_TEXT, resume_point="resume here")
 
     fake.seen = seen
     return fake
@@ -371,7 +371,7 @@ def test_prior_synthetic_summary_is_replaced_not_duplicated():
     res = C.compact_pass(
         trail, thread_id="thr", profile=None, store=T.InMemoryToolOutputStore(),
         summariser=fake,
-        existing=S.RunningSummary(summary_text="OLD-NARRATIVE told the story so far"),
+        existing=S.RunningSummary(objective="OLD-NARRATIVE told the story so far"),
     )
     synth = [m for m in res.messages
              if isinstance(m, SystemMessage) and m.content.startswith("[running summary]")]
@@ -503,8 +503,10 @@ def test_region_human_inputs_fold_into_the_summary_when_one_is_produced():
     )
     assert res.report.readability == "compacted"
     assert res.report.summarised_spans == 2
+    new_summary = res.report.new_summary
+    assert new_summary is not None
     assert [m.content for m in res.messages] == [
-        "[running summary]\n" + GOOD_SUMMARY_TEXT, tail_q.content]
+        new_summary.to_text(), tail_q.content]
 
     bare = C.compact_pass(
         [HumanMessage(content="only this question")], thread_id="thr",
@@ -667,7 +669,7 @@ def test_call_does_not_proceed_while_a_pass_is_pending():
     def slow_summariser(messages, budget):
         entered.set()
         release.wait(timeout=20)
-        return S.SummaryUpdate(summary_text=GOOD_SUMMARY_TEXT)
+        return S.SummaryUpdate(objective=GOOD_SUMMARY_TEXT, resume_point="resume here")
 
     seen: list = []
     mw = C.create_compaction_middleware(
@@ -824,7 +826,7 @@ def test_staged_trail_reducer_handles_id_none_defensively():
         report=C.CompactReport(
             exempted_spans=0, summarised_spans=1, offloaded_bodies=0, reclaimed_tokens=10,
             readability=C.READABILITY_COMPACTED, summary_status="ok",
-            new_summary=S.RunningSummary(summary_text="NEW-NARRATIVE"),
+            new_summary=S.RunningSummary(objective="NEW-NARRATIVE"),
         ),
     )
     current = [HumanMessage(content="keep-me"), AIMessage(content="old-reasoning")]
@@ -852,7 +854,7 @@ def test_attach_compaction_metadata_surfaces_the_last_pass():
     report = C.CompactReport(
         exempted_spans=1, summarised_spans=2, offloaded_bodies=0, reclaimed_tokens=123,
         readability=C.READABILITY_COMPACTED, summary_status="ok",
-        new_summary=S.RunningSummary(summary_text="NEW-NARRATIVE"))
+        new_summary=S.RunningSummary(objective="NEW-NARRATIVE"))
 
     manager = _Manager()
     manager.reports["t1"] = report

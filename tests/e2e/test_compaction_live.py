@@ -9,9 +9,9 @@ condition compaction READS is real per-step occupancy, which this drives with th
 real model's own usage metadata. Skip-guarded on the model env: a clean environment
 SKIPS, never fails.
 
-Run with the model configured, e.g. from the host:
-  API_KEY_OPENCODE=<key> LLM_MODEL_HUNTING_HUNTER=opencode:deepseek/deepseek-v4-flash-free \
-  .venv/bin/python -m pytest tests/e2e/test_compaction_live.py -q
+Run in-network (the sanctioned live-tier runner) with the model configured in `.env`:
+  docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+    run --rm tests tests/e2e/test_compaction_live.py -q -s
 """
 from __future__ import annotations
 
@@ -19,12 +19,13 @@ import asyncio
 import os
 
 import pytest
-from langgraph.checkpoint.memory import InMemorySaver
 
 from polymerhus.app.llm import compaction as C
+from polymerhus.app.llm.checkpoints import get_session_checkpointer
 from polymerhus.app.llm.session import read_session_memory
 from polymerhus.attack.hunting import llm as HL
 from polymerhus.attack.hunting.actors import HuntingHunterActor
+from polymerhus.attack.hunting.runtime import hunting_module_context
 
 
 def _hunter_model_available() -> bool:
@@ -48,14 +49,17 @@ def test_hunter_lane_compacts_against_the_real_model():
         window=window, store=C.InMemoryToolOutputStore())
 
     async def drive():
-        saver = InMemorySaver()
-        actor = HuntingHunterActor(
-            "run-live", "hunt-x", checkpointer=saver, observe=False, compaction=mw)
-        await actor.author("compose a test spec for a CSRF fault on service a")
-        await actor.author("compose a test spec for an SSRF fault on service b")
-        await actor.author("compose a test spec for an XSS fault on service c")
-        await actor.stop()
-        return actor, saver
+        # Production runtime conditions (#110): the hunting lane's module context,
+        # so the actor resolves the module checkpointer exactly as `start_hunting`
+        # does - not a hand-rolled in-memory saver.
+        async with hunting_module_context():
+            actor = HuntingHunterActor(
+                "run-live", "hunt-x", checkpointer=None, observe=False, compaction=mw)
+            await actor.author("compose a test spec for a CSRF fault on service a")
+            await actor.author("compose a test spec for an SSRF fault on service b")
+            await actor.author("compose a test spec for an XSS fault on service c")
+            await actor.stop()
+            return actor, get_session_checkpointer()
 
     actor, saver = asyncio.run(drive())
     report = mw.manager.last_report(actor.thread_id)

@@ -19,19 +19,15 @@ from openai import BadRequestError
 
 from polymerhus.app.llm import summary as S
 
-GOOD_TEXT = ("The Next.js webapp exposes a login flow; enumeration found "
-             "three auth endpoints and two are already patched.")
+GOOD_OBJECTIVE = "Enumerate and patch the auth endpoints of the target webapp."
+GOOD_RESUME = "probe the third, still-unpatched auth endpoint"
 SHORT_TEXT = "tiny"
-FLOOR = S.SUMMARY_MIN_FLOOR_CHARS
 
 
-def _good_update(summary_text=GOOD_TEXT, decisions=None, evidence_refs=None, open_threads=None):
-    return S.SummaryUpdate(
-        summary_text=summary_text,
-        decisions=list(decisions or []),
-        evidence_refs=list(evidence_refs or []),
-        open_threads=list(open_threads or []),
-    )
+def _good_update(objective=GOOD_OBJECTIVE, resume_point=GOOD_RESUME, **kwargs):
+    fields = dict(objective=objective, resume_point=resume_point)
+    fields.update(kwargs)
+    return S.SummaryUpdate(**fields)
 
 
 def _openai_window_error() -> BadRequestError:
@@ -53,76 +49,99 @@ def _openai_window_error() -> BadRequestError:
 # --- the running summary shape -----------------------------------------------
 
 def test_running_summary_is_frozen_with_tuple_list_fields():
-    """The running summary carries the narrative plus the three list fields as
-    immutable tuples, defaulting to empty when not supplied."""
-    rs = S.RunningSummary(summary_text=GOOD_TEXT)
-    assert rs.summary_text == GOOD_TEXT
+    """The running summary carries the eight concepts as immutable fields; the
+    list concepts are tuples defaulting to empty, and task_status is nested."""
+    rs = S.RunningSummary(objective=GOOD_OBJECTIVE, resume_point=GOOD_RESUME)
+    assert rs.objective == GOOD_OBJECTIVE
+    assert rs.resume_point == GOOD_RESUME
+    assert rs.dead_branches == ()
     assert rs.decisions == ()
-    assert rs.evidence_refs == ()
-    assert rs.open_threads == ()
+    assert rs.artifacts == ()
+    assert rs.task_status.done == ()
+    assert rs.task_status.in_progress == ()
+    assert rs.task_status.remaining == ()
 
     rs2 = S.RunningSummary(
-        summary_text=GOOD_TEXT,
-        decisions=("d1",),
-        evidence_refs=("ref-1",),
-        open_threads=("t1",),
+        objective=GOOD_OBJECTIVE,
+        task_status=S.TaskStatus(done=("d1",), remaining=("r1",)),
+        decisions=("dec1",),
+        artifacts=("art-1",),
+        resume_point=GOOD_RESUME,
     )
-    assert rs2.decisions == ("d1",)
+    assert rs2.decisions == ("dec1",)
+    assert rs2.task_status.done == ("d1",)
 
 
-def test_running_summary_to_text_renders_compact_narrative():
-    """to_text renders a single compact narrative string carrying the narrative
-    and the preserved decisions/evidence/open-threads (the synthetic exchange
-    slice D persists)."""
+def test_running_summary_to_text_renders_static_template():
+    """to_text renders the static markdown template - every concept under its
+    header with markdown structure elements - the synthetic exchange slice D persists."""
     rs = S.RunningSummary(
-        summary_text=GOOD_TEXT,
-        decisions=("d1",),
-        evidence_refs=("ref-1",),
-        open_threads=("t1",),
+        objective=GOOD_OBJECTIVE,
+        workflow="recon then patch",
+        environment_state="two of three patched",
+        task_status=S.TaskStatus(done=("a",), in_progress=("b",), remaining=("c",)),
+        dead_branches=("dead-1",),
+        decisions=("dec-1",),
+        artifacts=("art-1",),
+        resume_point=GOOD_RESUME,
     )
     text = rs.to_text()
     assert isinstance(text, str)
-    assert GOOD_TEXT in text
-    assert "d1" in text and "ref-1" in text and "t1" in text
+    assert text.startswith("[running summary]")
+    # Markdown headers with sub-lists: the template uses headers and markdown
+    # list elements, not flat colon labels. Lists under each paragraph are
+    # generic and PREVIOUS DECISIONS / DISCOVERED ARTIFACTS are lists.
+    for header in ("## Objective", "## Workflow", "## Environment State",
+                   "## Task Status", "## Dead Branches Probed",
+                   "## Previous Decisions with Rationale",
+                   "## Discovered Crucial Artifacts", "## Resume Point"):
+        assert header in text
+    for sub in ("- Done:", "- In Progress:", "- Remaining:"):
+        assert sub in text
+    # Lists are rendered as markdown bullets, including the two explicitly
+    # list-bearing concepts and the generic task-status sub-lists.
+    for bullet in ("- dead-1", "- dec-1", "- art-1", "  - a", "  - b", "  - c"):
+        assert bullet in text
+    for value in (GOOD_OBJECTIVE, "recon then patch", GOOD_RESUME):
+        assert value in text
 
 
 def test_summary_update_is_the_structured_schema():
-    """SummaryUpdate is the pydantic structured-output schema carrying the same
-    four fields."""
-    u = S.SummaryUpdate(
-        summary_text=GOOD_TEXT,
-        decisions=["d1"],
-        evidence_refs=["ref-1"],
-        open_threads=["t1"],
-    )
+    """SummaryUpdate is the pydantic structured-output schema carrying the eight
+    concepts; objective and resume_point are REQUIRED (no default)."""
+    u = S.SummaryUpdate(objective=GOOD_OBJECTIVE, resume_point=GOOD_RESUME,
+                        decisions=["d1"], artifacts=["art-1"])
+    assert u.objective == GOOD_OBJECTIVE
+    assert u.resume_point == GOOD_RESUME
     assert u.decisions == ["d1"]
-    assert u.summary_text == GOOD_TEXT
+    assert u.task_status.done == []
 
 
 # --- message composition -----------------------------------------------------
 
-def test_build_messages_system_prompts_the_four_field_template():
-    """The SYSTEM prompt states the job and presents the output template - the
-    exact four fields, nothing invented."""
+def test_build_messages_system_prompts_the_concept_template():
+    """The SYSTEM prompt states the job and presents the eight core concepts and
+    the length target - nothing invented."""
     msgs = S.build_summary_messages(None, [HumanMessage(content="span")])
     assert msgs[0].type == "system"
-    for field in ("summary_text", "decisions", "evidence_refs", "open_threads"):
-        assert field in msgs[0].content
+    for concept in ("OBJECTIVE", "WORKFLOW", "ENVIRONMENT STATE", "TASK STATUS",
+                    "DEAD BRANCHES", "DECISIONS", "ARTIFACTS", "RESUME POINT",
+                    "200-500 tokens"):
+        assert concept in msgs[0].content
 
 
 def test_build_messages_user_carries_prior_summary_and_spans():
     """The USER message carries the prior running summary plus the spans being
     condensed - the atomic call's whole input."""
     prior = S.RunningSummary(
-        summary_text="PRIOR-NARRATIVE told the decisions so far.",
+        objective="PRIOR-OBJECTIVE told the decisions so far.",
         decisions=("d0",),
-        evidence_refs=("r0",),
-        open_threads=("t0",),
+        resume_point="prior resume point",
     )
     spans = [HumanMessage(content="span one"), AIMessage(content="span two")]
     msgs = S.build_summary_messages(prior, spans)
     assert msgs[1].type == "human"
-    assert "PRIOR-NARRATIVE" in msgs[1].content
+    assert "PRIOR-OBJECTIVE" in msgs[1].content
     assert "span one" in msgs[1].content and "span two" in msgs[1].content
 
 
@@ -137,34 +156,42 @@ def test_build_messages_without_prior_says_none_yet():
 # --- the output-quality gate (D5) --------------------------------------------
 
 def test_quality_gate_accepts_a_good_summary():
-    assert S.is_quality_summary(_good_update(GOOD_TEXT)) is True
+    assert S.is_quality_summary(_good_update()) is True
 
 
 def test_quality_gate_accepts_empty_lists():
-    """The list fields may be empty (they are LISTS, not None) - the narrative is
-    the mandatory content."""
-    assert S.is_quality_summary(S.SummaryUpdate(summary_text=GOOD_TEXT)) is True
-    assert S.is_quality_summary(_good_update(GOOD_TEXT, decisions=[], evidence_refs=[], open_threads=[])) is True
+    """The list fields may be empty (they are LISTS, not None) - objective and
+    resume_point are the mandatory content."""
+    assert S.is_quality_summary(S.SummaryUpdate(objective=GOOD_OBJECTIVE, resume_point=GOOD_RESUME)) is True
+    assert S.is_quality_summary(
+        _good_update(decisions=[], dead_branches=[], artifacts=[])) is True
 
 
-def test_quality_gate_rejects_empty_and_degenerate_summaries():
-    assert S.is_quality_summary(_good_update("")) is False
-    assert S.is_quality_summary(_good_update("   ")) is False
-    assert S.is_quality_summary(_good_update("x" * (FLOOR - 1))) is False
-    assert S.is_quality_summary(_good_update("x" * FLOOR)) is True
+def test_quality_gate_rejects_missing_mandatory_fields():
+    """A summary missing its objective or resume point is a FAILED generation."""
+    assert S.is_quality_summary(_good_update(objective="")) is False
+    assert S.is_quality_summary(_good_update(objective="   ")) is False
+    assert S.is_quality_summary(_good_update(resume_point="")) is False
+    assert S.is_quality_summary(_good_update(resume_point=SHORT_TEXT)) is True
 
 
 def test_quality_gate_rejects_unparseable_inputs():
-    """A list field that is None (or not a list at all), or a non-Update object,
-    is a FAILED generation - never a silent pass, never a raise (fail-open)."""
+    """A list field that is None (or not a list at all), a malformed
+    task_status, or a non-Update object, is a FAILED generation - never a silent
+    pass, never a raise (fail-open)."""
     none_field = S.SummaryUpdate.model_construct(
-        summary_text=GOOD_TEXT, decisions=None, evidence_refs=[], open_threads=[])
+        objective=GOOD_OBJECTIVE, resume_point=GOOD_RESUME,
+        decisions=None, dead_branches=[], artifacts=[])
     assert S.is_quality_summary(none_field) is False
     str_field = S.SummaryUpdate.model_construct(
-        summary_text=GOOD_TEXT, decisions="not-a-list", evidence_refs=[], open_threads=[])
+        objective=GOOD_OBJECTIVE, resume_point=GOOD_RESUME,
+        decisions="not-a-list", dead_branches=[], artifacts=[])
     assert S.is_quality_summary(str_field) is False
+    bad_task = S.SummaryUpdate.model_construct(
+        objective=GOOD_OBJECTIVE, resume_point=GOOD_RESUME, task_status="not-a-task")
+    assert S.is_quality_summary(bad_task) is False
     assert S.is_quality_summary(None) is False
-    assert S.is_quality_summary({"summary_text": GOOD_TEXT}) is False
+    assert S.is_quality_summary({"objective": GOOD_OBJECTIVE}) is False
 
 
 # --- the atomic call + failure taxonomy (D5/D6) ------------------------------
@@ -175,14 +202,15 @@ def test_summarise_ok_returns_a_running_summary():
     seen = {}
     def fake(messages, budget):
         seen["messages"] = messages
-        return _good_update(GOOD_TEXT, decisions=["d1"], evidence_refs=["ref-1"])
+        return _good_update(decisions=["d1"], artifacts=["art-1"])
     outcome = S.summarise(fake, existing=None, spans=[HumanMessage(content="span")])
     assert outcome.status == "ok"
     assert isinstance(outcome.summary, S.RunningSummary)
-    assert outcome.summary.summary_text == GOOD_TEXT
+    assert outcome.summary.objective == GOOD_OBJECTIVE
+    assert outcome.summary.resume_point == GOOD_RESUME
     assert outcome.summary.decisions == ("d1",)
-    assert outcome.summary.evidence_refs == ("ref-1",)
-    assert "summary_text" in seen["messages"][0].content
+    assert outcome.summary.artifacts == ("art-1",)
+    assert "OBJECTIVE" in seen["messages"][0].content
     assert "none yet" in seen["messages"][1].content
 
 
@@ -190,15 +218,17 @@ def test_summarise_passes_existing_and_spans_into_the_call():
     """The fake receives the composed messages: the prior summary and the spans
     both arrive in the USER message (atomic call input)."""
     prior = S.RunningSummary(
-        summary_text="PRIOR-NARRATIVE told the decisions so far.",
-        decisions=("d0",), evidence_refs=("r0",), open_threads=("t0",))
+        objective="PRIOR-OBJECTIVE told the decisions so far.",
+        decisions=("d0",),
+        resume_point="prior resume",
+    )
     seen = {}
     def fake(messages, budget):
         seen["user"] = messages[-1].content
-        return _good_update(GOOD_TEXT)
+        return _good_update()
     outcome = S.summarise(fake, existing=prior, spans=["NEW-SPAN", HumanMessage(content="MSG-SPAN")])
     assert outcome.status == "ok"
-    assert "PRIOR-NARRATIVE" in seen["user"]
+    assert "PRIOR-OBJECTIVE" in seen["user"]
     assert "NEW-SPAN" in seen["user"] and "MSG-SPAN" in seen["user"]
 
 
@@ -231,13 +261,13 @@ def test_summarise_transient_raise_exhausts_to_failed(monkeypatch):
 
 
 def test_summarise_weak_result_is_retried(monkeypatch):
-    """A degenerate short summary (D5 quality gate) is a FAILED generation and is
-    retried under the single retry layer - a later good attempt recovers to ok."""
+    """A summary missing its objective (D5 quality gate) is a FAILED generation
+    and is retried under the single retry layer - a later good attempt recovers."""
     monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1,1,1")
     calls = []
     def fake(messages, budget):
         calls.append(budget)
-        return _good_update(GOOD_TEXT) if len(calls) > 1 else _good_update(SHORT_TEXT)
+        return _good_update() if len(calls) > 1 else _good_update(objective="")
     outcome = S.summarise(fake, existing=None, spans=[])
     assert outcome.status == "ok"
     assert len(calls) == 2
@@ -249,7 +279,7 @@ def test_summarise_weak_result_exhausts_to_failed(monkeypatch):
     calls = []
     def fake(messages, budget):
         calls.append(budget)
-        return _good_update(SHORT_TEXT)
+        return _good_update(resume_point="")
     outcome = S.summarise(fake, existing=None, spans=[])
     assert outcome.status == "failed"
     assert outcome.summary is None

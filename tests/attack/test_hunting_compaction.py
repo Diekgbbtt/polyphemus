@@ -32,6 +32,7 @@ GOOD_SUMMARY_TEXT = (
     "The hunter enumerated three auth endpoints and patched two; the login "
     "flow still exposes the third path to close."
 )
+RESUME_POINT = "resume from the login-flow patch on endpoint three"
 
 # The author's reply is a long JSON body so the compact pass reclaims real tokens.
 AUTHOR_BODY = json.dumps({
@@ -68,7 +69,8 @@ class _CompactedHunterFake(BaseChatModel):
     `SummaryUpdate` tool call."""
 
     body: str = ""
-    summary_text: str = GOOD_SUMMARY_TEXT
+    objective: str = GOOD_SUMMARY_TEXT
+    resume_point: str = RESUME_POINT
     usage: dict | None = None
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
@@ -78,7 +80,8 @@ class _CompactedHunterFake(BaseChatModel):
             return ChatResult(generations=[ChatGeneration(message=AIMessage(
                 content="",
                 tool_calls=[{"name": "SummaryUpdate", "args": {
-                    "summary_text": self.summary_text, "decisions": ["keep it"]},
+                    "objective": self.objective, "resume_point": self.resume_point,
+                    "decisions": ["keep it"]},
                     "id": "sum", "type": "tool_call"}]))])
         return ChatResult(generations=[ChatGeneration(message=AIMessage(
             content=self.body, usage_metadata=self.usage))])
@@ -105,7 +108,7 @@ def _hunter_factory(bodies, usage=None):
     return make
 
 
-def _patch_summary_model(monkeypatch, budgets=None, summary_text=GOOD_SUMMARY_TEXT):
+def _patch_summary_model(monkeypatch, budgets=None, objective=GOOD_SUMMARY_TEXT):
     """Point the summariser's model build at the scripted fake and record the
     per-attempt read budget (#73), exactly as the production `build_chat_model`
     path applies it (`read_timeout=budget` at construction, never an invoke kwarg)."""
@@ -116,7 +119,7 @@ def _patch_summary_model(monkeypatch, budgets=None, summary_text=GOOD_SUMMARY_TE
     def spy(provider, model, **kw):
         if budgets is not None:
             budgets.append(kw.get("read_timeout"))
-        return _CompactedHunterFake(body="", summary_text=summary_text)
+        return _CompactedHunterFake(body="", objective=objective)
 
     monkeypatch.setattr(P, "build_chat_model", spy)
 
@@ -241,13 +244,13 @@ def test_build_summariser_structured_call_under_budget(clean_llm_env, monkeypatc
 
     outcome = S.summarise(summariser, existing=None, spans=[AIMessage(content="reason-one")])
     assert outcome.status == "ok"
-    assert outcome.summary.summary_text == GOOD_SUMMARY_TEXT
+    assert outcome.summary.objective == GOOD_SUMMARY_TEXT
     assert budgets == [300.0]  # the first escalating attempt's default budget
 
     composed = S.build_summary_messages(None, [AIMessage(content="more")])
     direct = summariser(composed, 42.0)
     assert isinstance(direct, S.SummaryUpdate)
-    assert direct.summary_text == GOOD_SUMMARY_TEXT
+    assert direct.objective == GOOD_SUMMARY_TEXT
     assert budgets == [300.0, 42.0]
 
 

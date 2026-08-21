@@ -3,12 +3,14 @@
 The D5 summarisation half of the context-window manager: ONE atomic call per
 compact pass - no split/multi-call summarisation (operator ruling) - using the
 session role's own model via the injectable model factory. The output is
-structured (the running-summary contract: the narrative summary text preserving
-decisions, evidence pointers, and open threads). An OUTPUT-QUALITY GATE applies:
-an empty, unparseable, or degenerately short summary is a FAILED generation,
-retried under the single retry layer and counted toward the consecutive-pass cap
-(D6; the cap itself is slice D's concern - this module only exposes the
-three-way status).
+structured (the running-summary contract: the eight core concepts - OBJECTIVE,
+WORKFLOW, ENVIRONMENT STATE, TASK STATUS, DEAD BRANCHES PROBED, DECISIONS WITH
+RATIONALE, DISCOVERED ARTIFACTS, and RESUME POINT - so the agent resumes exactly
+where it left off, goal intact). An OUTPUT-QUALITY GATE applies: a summary
+missing its mandatory objective or resume point, or carrying unparseable list
+fields, is a FAILED generation, retried under the single retry layer and counted
+toward the consecutive-pass cap (D6; the cap itself is slice D's concern - this
+module only exposes the three-way status).
 
 The D6 failure taxonomy, on top of the existing surfaces:
 
@@ -46,11 +48,12 @@ from pydantic import BaseModel, Field
 
 logger = logging.getLogger(__name__)
 
-# The D5 output-quality floor: the narrative must be a non-empty string of at
-# least this many characters (after stripping). 40 characters is roughly one
-# substantive sentence - below it a summary cannot carry decisions, evidence
-# pointers, and open threads, so it is a FAILED generation, never a silent pass.
-SUMMARY_MIN_FLOOR_CHARS = 40
+# The ideal length band for a running summary, in tokens (operator-ruled). It is
+# stated in the prompt as a TARGET, not a hard gate: the quality gate does not
+# token-count - it rejects only a summary missing its mandatory objective or
+# resume point, or carrying unparseable fields. 200-500 tokens is dense enough to
+# carry all eight concepts yet small enough that compaction still reclaims room.
+SUMMARY_TARGET_TOKENS = (200, 500)
 
 # The terminal window-cap markers (D6), matched case-insensitively against the
 # exception's name/message/code/body - a superset of the openai BadRequestError
@@ -78,37 +81,107 @@ class _TerminalWindowError(BaseException):
 
 
 @dataclass(frozen=True)
+class TaskStatus:
+    """TASK STATUS: the three-way progress split - what is done, in progress,
+    and what remains to be done. Empty tuples are honest (nothing in that bucket)."""
+
+    done: tuple[str, ...] = ()
+    in_progress: tuple[str, ...] = ()
+    remaining: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True)
 class RunningSummary:
-    """The running-summary value: the narrative condensation plus the preserved
-    decisions, evidence pointers, and open threads (ADR D5).
+    """The running-summary value (ADR D5): the eight core concepts, immutable.
 
-    `to_text()` renders the single compact narrative string the synthetic
-    message content slice D persists into the trail."""
+    `to_text()` renders the static template slice D persists as the synthetic
+    message content - a fixed, labelled layout so the agent (and the next pass's
+    summariser) always finds each concept in the same place."""
 
-    summary_text: str
+    objective: str = ""
+    workflow: str = ""
+    environment_state: str = ""
+    task_status: TaskStatus = field(default_factory=TaskStatus)
+    dead_branches: tuple[str, ...] = ()
     decisions: tuple[str, ...] = ()
-    evidence_refs: tuple[str, ...] = ()
-    open_threads: tuple[str, ...] = ()
+    artifacts: tuple[str, ...] = ()
+    resume_point: str = ""
 
     def to_text(self) -> str:
-        parts = ["[running summary]", self.summary_text]
+        ts = self.task_status
+        lines: list[str] = ["[running summary]"]
+        # Objective, Workflow, Environment State are free-form paragraphs
+        # but the markdown template uses a header per concept so the next
+        # pass (and the agent) always finds each concept in the same place.
+        lines.extend(["## Objective", self.objective or "none", ""])
+        lines.extend(["## Workflow", self.workflow or "none", ""])
+        lines.extend(["## Environment State", self.environment_state or "none", ""])
+        # Task Status is the three-way split - rendered as a markdown list
+        # with sub-lists so each bucket stays addressable.
+        lines.append("## Task Status")
+        lines.append("- Done:")
+        if ts.done:
+            lines.extend(f"  - {item}" for item in ts.done)
+        else:
+            lines.append("  - none")
+        lines.append("- In Progress:")
+        if ts.in_progress:
+            lines.extend(f"  - {item}" for item in ts.in_progress)
+        else:
+            lines.append("  - none")
+        lines.append("- Remaining:")
+        if ts.remaining:
+            lines.extend(f"  - {item}" for item in ts.remaining)
+        else:
+            lines.append("  - none")
+        lines.append("")
+        # Dead branches are a generic list - very generic entries and
+        # contained samples are both legitimate (never invent, never drop).
+        lines.append("## Dead Branches Probed")
+        if self.dead_branches:
+            lines.extend(f"- {item}" for item in self.dead_branches)
+        else:
+            lines.append("- none")
+        lines.append("")
+        # PREVIOUS DECISIONS WITH RATIONALE and DISCOVERED CRUCIAL ARTIFACTS
+        # are explicitly lists - each entry carries its rationale / identifier.
+        lines.append("## Previous Decisions with Rationale")
         if self.decisions:
-            parts.append("DECISIONS: " + "; ".join(self.decisions))
-        if self.evidence_refs:
-            parts.append("EVIDENCE REFS: " + "; ".join(self.evidence_refs))
-        if self.open_threads:
-            parts.append("OPEN THREADS: " + "; ".join(self.open_threads))
-        return "\n".join(parts)
+            lines.extend(f"- {item}" for item in self.decisions)
+        else:
+            lines.append("- none")
+        lines.append("")
+        lines.append("## Discovered Crucial Artifacts")
+        if self.artifacts:
+            lines.extend(f"- {item}" for item in self.artifacts)
+        else:
+            lines.append("- none")
+        lines.append("")
+        lines.extend(["## Resume Point", self.resume_point or "none"])
+        return "\n".join(lines)
+
+
+class TaskStatusUpdate(BaseModel):
+    """TASK STATUS: the structured-output three-way progress split."""
+
+    done: list[str] = Field(default_factory=list)
+    in_progress: list[str] = Field(default_factory=list)
+    remaining: list[str] = Field(default_factory=list)
 
 
 class SummaryUpdate(BaseModel):
-    """The structured-output schema for the atomic call - exactly the four
-    running-summary fields, no invented content (D5)."""
+    """The structured-output schema for the atomic call - exactly the eight core
+    concepts, no others (D5). `objective` and `resume_point` are REQUIRED (no
+    default): a summary without them is a failed generation."""
 
-    summary_text: str
+    objective: str
+    workflow: str = ""
+    environment_state: str = ""
+    task_status: TaskStatusUpdate = Field(default_factory=TaskStatusUpdate)
+    dead_branches: list[str] = Field(default_factory=list)
     decisions: list[str] = Field(default_factory=list)
-    evidence_refs: list[str] = Field(default_factory=list)
-    open_threads: list[str] = Field(default_factory=list)
+    artifacts: list[str] = Field(default_factory=list)
+    resume_point: str
 
 
 @dataclass(frozen=True)
@@ -123,16 +196,71 @@ class SummaryOutcome:
 # --- message composition (the atomic call's input) ---------------------------
 
 _SYSTEM_PROMPT = """You are the running-summary engine for a long-horizon agent session (#95 context compaction).
-You condense reasoning and content into a single running summary that preserves decisions, evidence pointers, and open threads.
-Produce structured output filling EXACTLY this template - the four fields, no others:
 
-- summary_text: the narrative condensation - one non-empty string of at least 40 characters
-- decisions: a list of strings - each a decision taken, with its reason
-- evidence_refs: a list of strings - each a retained evidence pointer
-- open_threads: a list of strings - each an unresolved thread that must remain actionable
+Your job is to condense the session material into a single running summary from which the agent can resume its work exactly where it left off, without losing the goal it is executing toward.
 
-Condense the prior running summary TOGETHER with the new session material; the running summary accumulates across passes.
-Never invent material that is absent from the provided spans."""
+## Intention-keeping (highest priority)
+
+Preserve the agent's OBJECTIVE - the goal the execution is driving toward. If the objective is stated in the session material, carry it forward essentially verbatim; otherwise restate it as precisely as the material allows. The objective is the reason the session exists and must survive every compaction unchanged.
+
+## Core concepts (fill EXACTLY these, no others)
+
+- OBJECTIVE: the goal the agent is executing toward.
+- WORKFLOW: how the agent is going about it - the method, stages, or loop it follows.
+- ENVIRONMENT STATE: the relevant current state of the tools, resources, targets, and context the agent depends on.
+- TASK STATUS: what is done, in progress, and what remains to be done.
+- DEAD BRANCHES PROBED: errors, failures, and falsified hypotheses already eliminated - so they are not re-probed.
+- PREVIOUS DECISIONS WITH RATIONALE: each decision taken, with the reason it was taken.
+- DISCOVERED CRUCIAL ARTIFACTS: important tool-call outputs, each with its specific identifier (file/record/id) - list none when there are none.
+- SPECIFIC RESUME POINT: the exact next action the agent should take.
+
+## Output template (markdown - fill EXACTLY this structure, no others)
+
+The structured output you produce is rendered into the trail as markdown
+with headers and sub-lists - the agent (and the next pass's summariser)
+finds each concept under the same header. Use this template verbatim:
+
+[running summary]
+## Objective
+<objective paragraph>
+
+## Workflow
+<workflow paragraph>
+
+## Environment State
+<environment state paragraph>
+
+## Task Status
+- Done:
+  - <done item>
+- In Progress:
+  - <in-progress item>
+- Remaining:
+  - <remaining item>
+
+## Dead Branches Probed
+- <dead branch>  (generic entries allowed - e.g. "probe X returned 404" - keep verbatim)
+
+## Previous Decisions with Rationale
+- <decision> - <rationale>
+
+## Discovered Crucial Artifacts
+- <artifact with its specific identifier - file/record/id>
+
+## Resume Point
+<exact next action>
+
+Lists under each paragraph may be very generic and may contain sample
+entries - preserve them as lists. PREVIOUS DECISIONS WITH RATIONALE and
+DISCOVERED CRUCIAL ARTIFACTS are always lists - never prose paragraphs.
+
+## Length
+
+Aim for 200-500 tokens total. Be dense: preserve meaning, not verbosity.
+
+## Rules
+
+Never invent material that is absent from the provided spans. Condense the prior running summary TOGETHER with the new session material; the summary accumulates across passes. Every field must be grounded in the spans or the prior summary."""
 
 
 def _text_of(content: Any) -> str:
@@ -204,17 +332,26 @@ def build_summary_messages(existing: RunningSummary | None, spans: list) -> list
 def is_quality_summary(update: Any) -> bool:
     """The D5 OUTPUT-QUALITY GATE.
 
-    `summary_text` must be a non-empty string of at least the floor; the three
-    list fields must be LISTs (empty lists are accepted - they are lists, not
-    None). Empty, unparseable, or degenerately short -> False (a FAILED
-    generation), never a raise (fail-open)."""
+    `objective` and `resume_point` must be non-empty strings (the two concepts a
+    resume cannot do without); every list field - and the three task-status
+    sub-fields - must be LISTs (empty lists are accepted - they are lists, not
+    None). Anything else is a FAILED generation, never a raise (fail-open). The
+    200-500 token band is a prompt TARGET, not a hard gate - this gate never
+    token-counts."""
     if not isinstance(update, SummaryUpdate):
         return False
-    text = update.summary_text
-    if not isinstance(text, str) or len(text.strip()) < SUMMARY_MIN_FLOOR_CHARS:
+    if not isinstance(update.objective, str) or not update.objective.strip():
         return False
-    for name in ("decisions", "evidence_refs", "open_threads"):
+    if not isinstance(update.resume_point, str) or not update.resume_point.strip():
+        return False
+    for name in ("dead_branches", "decisions", "artifacts"):
         if not isinstance(getattr(update, name, None), list):
+            return False
+    ts = update.task_status
+    if not isinstance(ts, TaskStatusUpdate):
+        return False
+    for name in ("done", "in_progress", "remaining"):
+        if not isinstance(getattr(ts, name, None), list):
             return False
     return True
 
@@ -261,10 +398,18 @@ def classify_terminal(exc: Any) -> bool:
 
 def _to_running_summary(update: SummaryUpdate) -> RunningSummary:
     return RunningSummary(
-        summary_text=update.summary_text,
+        objective=update.objective,
+        workflow=update.workflow,
+        environment_state=update.environment_state,
+        task_status=TaskStatus(
+            done=tuple(update.task_status.done),
+            in_progress=tuple(update.task_status.in_progress),
+            remaining=tuple(update.task_status.remaining),
+        ),
+        dead_branches=tuple(update.dead_branches),
         decisions=tuple(update.decisions),
-        evidence_refs=tuple(update.evidence_refs),
-        open_threads=tuple(update.open_threads),
+        artifacts=tuple(update.artifacts),
+        resume_point=update.resume_point,
     )
 
 
@@ -303,7 +448,7 @@ def summarise(
         if not is_quality_summary(result):
             logger.warning(
                 "running-summary pass returned a weak summary (%r); "
-                "retrying under the escalating schedule", getattr(result, "summary_text", None))
+                "retrying under the escalating schedule", getattr(result, "objective", None))
             return None
         return result
 
