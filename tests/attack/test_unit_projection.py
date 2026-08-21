@@ -20,7 +20,10 @@ evaluation stage maps that to UNKNOWN (default-open), never FALSE (C12).
 """
 
 from polymerhus.attack.hunting.unit_projection import (
+    DataItem,
+    DataRelationship,
     EdgeInfo,
+    SystemInfo,
     UnitProjection,
     build_projection,
 )
@@ -32,12 +35,12 @@ def _unit_row(kind_label="L1Service", **props):
     return {"labels": [kind_label], "props": props}
 
 
-def _edge_row(family, target_labels, target_kind=None, role=None):
+def _edge_row(family, target_labels, target_props=None, role=None):
     rprops = {"role": role} if role is not None else {}
     return {
         "family": family,
         "tlabels": target_labels,
-        "tprops": {"kind": target_kind} if target_kind is not None else {},
+        "tprops": dict(target_props or {}),
         "rprops": rprops,
     }
 
@@ -46,12 +49,15 @@ class FakeL1:
     """A tiny in-memory L1 model behind the read_fn seam: unit_id -> raw rows."""
 
     def __init__(self, units):
-        # units: {unit_id: {"labels": [...], "props": {...}, "edges": [...]}}
+        # units: {unit_id: {"labels": [...], "props": {...}, "edges": [...],
+        #                    "data_rel_families": [...], "adj": {...}}}
         self.units = units
         self.calls = []
 
     def read(self, cypher, params):
         self.calls.append(cypher)
+        if "cooperating_outs" in cypher:
+            return self._adj_rows(params)
         if "type(dr) AS family" in cypher:
             return self._data_rel_rows(params)
         unit_id = f"{params['kind']}:{params['key']}"
@@ -70,7 +76,16 @@ class FakeL1:
     def _data_rel_rows(self, params):
         unit_id = f"{params['kind']}:{params['key']}"
         unit = self.units.get(unit_id)
+        rows = unit.get("data_rel_rows")
+        if rows is not None:
+            return rows
         return [{"family": f} for f in (unit or {}).get("data_rel_families", [])]
+
+    def _adj_rows(self, params):
+        unit_id = f"{params['kind']}:{params['key']}"
+        unit = self.units.get(unit_id)
+        adj = (unit or {}).get("adj", {})
+        return [{"ins": adj.get("ins", []), "cooperating_outs": adj.get("outs", [])}]
 
 
 def _projection(unit_id, read_fn, project_id="p"):
@@ -86,10 +101,10 @@ def test_build_projection_lifts_card_and_one_hop_edges():
             "props": {"business_function_slug": "checkout",
                       "exposure": "public", "service_contract": "checkout flows"},
             "edges": [
-                _edge_row("EXPOSED_VIA", ["L1System"], target_kind="RESTApi"),
-                _edge_row("EXPOSED_VIA", ["L1System"], target_kind="GraphQLApi"),
-                _edge_row("AUTHORIZED_BY", ["L1System"], target_kind="AuthorizationSystem",
-                          role="admin"),
+                _edge_row("EXPOSED_VIA", ["L1System"], target_props={"kind": "RESTApi"}),
+                _edge_row("EXPOSED_VIA", ["L1System"], target_props={"kind": "GraphQLApi"}),
+                _edge_row("AUTHORIZED_BY", ["L1System"],
+                          target_props={"kind": "AuthorizationSystem"}, role="admin"),
                 _edge_row("CONSUMES", ["L1DataItem"]),
             ],
         },
@@ -101,13 +116,20 @@ def test_build_projection_lifts_card_and_one_hop_edges():
     assert projection.spine == {"exposure": "public",
                                 "service_contract": "checkout flows"}
     assert projection.edges["EXPOSED_VIA"] == (
-        EdgeInfo("EXPOSED_VIA", "RESTApi"),
-        EdgeInfo("EXPOSED_VIA", "GraphQLApi"),
+        EdgeInfo("EXPOSED_VIA", "RESTApi",
+                 target=SystemInfo(kind="RESTApi", props={"kind": "RESTApi"})),
+        EdgeInfo("EXPOSED_VIA", "GraphQLApi",
+                 target=SystemInfo(kind="GraphQLApi", props={"kind": "GraphQLApi"})),
     )
     assert projection.edges["AUTHORIZED_BY"] == (
-        EdgeInfo("AUTHORIZED_BY", "AuthorizationSystem", role="admin"),
+        EdgeInfo("AUTHORIZED_BY", "AuthorizationSystem", role="admin",
+                 target=SystemInfo(kind="AuthorizationSystem",
+                                   props={"kind": "AuthorizationSystem"})),
     )
     assert projection.data_edges == {"CONSUMES": 1}
+    assert projection.data_items == {
+        "CONSUMES": (DataItem(item_key=None),),
+    }
 
 
 def test_build_projection_system_unit_and_its_own_kind():
@@ -146,7 +168,7 @@ def test_build_projection_absent_family_is_absent_facet():
         "Service:sign-in": {
             "labels": ["L1Service"],
             "props": {"business_function_slug": "sign-in"},
-            "edges": [_edge_row("EXPOSED_VIA", ["L1System"], target_kind="WebPresentation")],
+            "edges": [_edge_row("EXPOSED_VIA", ["L1System"], target_props={"kind": "WebPresentation"})],
         },
     })
     projection = _projection("Service:sign-in", fake)
@@ -165,7 +187,7 @@ def test_build_projection_reads_are_scoped_and_deterministic():
         "Service:checkout": {
             "labels": ["L1Service"],
             "props": {"business_function_slug": "checkout"},
-            "edges": [_edge_row("EXPOSED_VIA", ["L1System"], target_kind="RESTApi")],
+            "edges": [_edge_row("EXPOSED_VIA", ["L1System"], target_props={"kind": "RESTApi"})],
         },
     })
     first = _projection("Service:checkout", fake)
@@ -182,9 +204,226 @@ def test_build_projection_ignores_non_system_targets():
         "Service:checkout": {
             "labels": ["L1Service"],
             "props": {"business_function_slug": "checkout"},
-            "edges": [_edge_row("EXPOSED_VIA", ["L1System"], target_kind="RESTApi"),
+            "edges": [_edge_row("EXPOSED_VIA", ["L1System"], target_props={"kind": "RESTApi"}),
                       _edge_row("AGGREGATES", ["L0Endpoint"])],
         },
     })
     projection = _projection("Service:checkout", fake)
     assert set(projection.edges) == {"EXPOSED_VIA"}
+
+
+# --- rich projection (candidates-rewrite spec 3.6), additive over the thin ---
+
+def test_data_items_explode_to_full_lists():
+    # defect 3: PRODUCES/CONSUMES edges resolve to the FULL DataItem node list
+    # (name/type/sensitivity/fields/notes + raw props), not just counts
+    fake = FakeL1({
+        "Service:orders": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "orders"},
+            "edges": [
+                _edge_row("PRODUCES", ["L1DataItem"], target_props={
+                    "item_key": "order", "name": "order", "type": "record",
+                    "sensitivity": "high", "fields": ["id", "total"],
+                    "notes": "an order record"}),
+                _edge_row("CONSUMES", ["L1DataItem"], target_props={
+                    "item_key": "session_token", "name": "session token",
+                    "type": "secret", "sensitivity": "critical"}),
+            ],
+        },
+    })
+    projection = _projection("Service:orders", fake)
+    assert projection.data_edges == {"PRODUCES": 1, "CONSUMES": 1}
+    assert projection.data_items["PRODUCES"] == (
+        DataItem(item_key="order", name="order", type="record", sensitivity="high",
+                 fields=("id", "total"), notes="an order record",
+                 props={"item_key": "order", "name": "order", "type": "record",
+                        "sensitivity": "high", "fields": ["id", "total"],
+                        "notes": "an order record"}),
+    )
+    assert projection.data_items["CONSUMES"] == (
+        DataItem(item_key="session_token", name="session token", type="secret",
+                 sensitivity="critical",
+                 props={"item_key": "session_token", "name": "session token",
+                        "type": "secret", "sensitivity": "critical"}),
+    )
+
+
+def test_edged_systems_unpack_fully():
+    # defect 3: an outgoing Service->System edge resolves to the target System
+    # fully unpacked (kind/discriminator/exposure/description/raw props), not
+    # the collapsed (family, target_kind, role) triple
+    fake = FakeL1({
+        "Service:checkout": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "checkout"},
+            "edges": [
+                _edge_row("EXPOSED_VIA", ["L1System"], target_props={
+                    "kind": "WebPresentation", "discriminator": "checkout::cart",
+                    "exposure": "public", "description": "the cart pages",
+                    "rendering_model": "CSR"}),
+                _edge_row("AUTHORIZED_BY", ["L1System"], role="admin", target_props={
+                    "kind": "AuthorizationSystem", "discriminator": "__singleton__"}),
+            ],
+        },
+    })
+    projection = _projection("Service:checkout", fake)
+    wp = projection.edges["EXPOSED_VIA"][0]
+    assert wp.target_kind == "WebPresentation"
+    assert wp.target == SystemInfo(
+        kind="WebPresentation", discriminator="checkout::cart", exposure="public",
+        description="the cart pages",
+        props={"kind": "WebPresentation", "discriminator": "checkout::cart",
+               "exposure": "public", "description": "the cart pages",
+               "rendering_model": "CSR"})
+    auth = projection.edges["AUTHORIZED_BY"][0]
+    assert auth.role == "admin"
+    assert auth.target.kind == "AuthorizationSystem"
+
+
+def test_data_relationship_kinds_chain_verbatim():
+    # defect 3: connected DataItems resolve relationship edges VERBATIM as kind
+    # chains (the edge type IS the kind, L1D-13), with ordered endpoints
+    fake = FakeL1({
+        "Service:orders": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "orders"},
+            "edges": [
+                _edge_row("PRODUCES", ["L1DataItem"], target_props={"item_key": "line"}),
+                _edge_row("PRODUCES", ["L1DataItem"], target_props={"item_key": "basket"}),
+            ],
+            "data_rel_rows": [
+                {"family": "DERIVED_FROM", "from_key": "line", "to_key": "basket",
+                 "rprops": {"predicate": "line = basket.items", "rationale": "a line derives"}},
+                {"family": "SUBSET_OF", "from_key": "basket", "to_key": "line",
+                 "rprops": {}},
+            ],
+        },
+    })
+    projection = _projection("Service:orders", fake)
+    assert projection.data_rel_kinds == frozenset({"DERIVED_FROM", "SUBSET_OF"})
+    assert projection.data_relationships == (
+        DataRelationship(
+            family="DERIVED_FROM", from_item_key="line", to_item_key="basket",
+            from_item=DataItem(item_key="line", props={"item_key": "line"}),
+            to_item=DataItem(item_key="basket", props={"item_key": "basket"}),
+            predicate="line = basket.items", rationale="a line derives"),
+        DataRelationship(
+            family="SUBSET_OF", from_item_key="basket", to_item_key="line",
+            from_item=DataItem(item_key="basket", props={"item_key": "basket"}),
+            to_item=DataItem(item_key="line", props={"item_key": "line"})),
+    )
+
+
+def test_d3_system_cooperating_systems_adjacency():
+    # D3 (spec 3.7 Q5): a System unit lands the inverse adjacency hop - the
+    # served Services + neighbouring Systems over the §6 System families, both
+    # directions (mirror of dfs_down); a Service unit carries an EMPTY slot.
+    service = {"family": "EXPOSED_VIA", "nlabels": ["L1Service"],
+               "nprops": {"business_function_slug": "checkout", "exposure": "public"}}
+    peer = {"family": "DEPENDS_ON", "nlabels": ["L1System"],
+            "nprops": {"kind": "ReverseProxy", "discriminator": "proxy-1",
+                       "exposure": "public"}}
+    fake = FakeL1({
+        "WAF:__singleton__": {
+            "labels": ["L1System"],
+            "props": {"kind": "WAF", "discriminator": "__singleton__"},
+            "edges": [],
+            "adj": {"ins": [service], "outs": [peer]},
+        },
+    })
+    projection = _projection("WAF:__singleton__", fake)
+    assert projection.kind == "WAF"
+    assert projection.cooperating_systems == {
+        "EXPOSED_VIA": (SystemInfo(kind="Service", discriminator="checkout",
+                                   exposure="public",
+                                   props={"business_function_slug": "checkout",
+                                          "exposure": "public"}),),
+        "DEPENDS_ON": (SystemInfo(kind="ReverseProxy", discriminator="proxy-1",
+                                  exposure="public",
+                                  props={"kind": "ReverseProxy",
+                                         "discriminator": "proxy-1",
+                                         "exposure": "public"}),),
+    }
+    # a Service unit does not run the D3 hop - empty adjacency (fail-open)
+    service_fake = FakeL1({
+        "Service:checkout": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "checkout"},
+            "edges": [_edge_row("EXPOSED_VIA", ["L1System"], target_props={"kind": "WAF"})],
+        },
+    })
+    s = _projection("Service:checkout", service_fake)
+    assert s.cooperating_systems == {}
+    assert len(service_fake.calls) == 2  # no D3 read for a Service unit
+
+
+# --- per-slot degrade: absent rich data -> empty slot, never a raise -----------
+
+def test_absent_data_items_degrade_to_empty_slot():
+    # a unit with no PRODUCES/CONSUMES edges carries an empty data_items surface
+    fake = FakeL1({
+        "Service:sign-in": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "sign-in"},
+            "edges": [_edge_row("EXPOSED_VIA", ["L1System"], target_props={"kind": "RESTApi"})],
+        },
+    })
+    projection = _projection("Service:sign-in", fake)
+    assert projection.data_items == {}
+
+    # untyped data-flow edges (no item props at all) still resolve - the full
+    # item surfaces with None slots, never a raise
+    fake2 = FakeL1({
+        "Service:orders": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "orders"},
+            "edges": [_edge_row("CONSUMES", ["L1DataItem"])],
+        },
+    })
+    assert _projection("Service:orders", fake2).data_items["CONSUMES"][0].item_key is None
+
+
+def test_absent_system_props_degrade_to_empty_slots():
+    # a System-edge target with no props unpacks to an empty SystemInfo (kind
+    # absent), never a raise and never a prune signal
+    fake = FakeL1({
+        "Service:checkout": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "checkout"},
+            "edges": [_edge_row("EXPOSED_VIA", ["L1System"])],
+        },
+    })
+    edge = _projection("Service:checkout", fake).edges["EXPOSED_VIA"][0]
+    assert edge.target_kind is None
+    assert edge.target == SystemInfo(kind="", props={})
+
+
+def test_absent_d3_adjacency_degrades_to_empty():
+    # a System unit with no cooperating-systems adjacency (or a D3 read gap)
+    # surfaces an EMPTY cooperating_systems slot - never a raise, never a prune
+    fake = FakeL1({
+        "WAF:__singleton__": {
+            "labels": ["L1System"],
+            "props": {"kind": "WAF", "discriminator": "__singleton__"},
+            "edges": [],
+        },
+    })
+    projection = _projection("WAF:__singleton__", fake)
+    assert projection.cooperating_systems == {}
+
+
+def test_absent_data_rel_chains_degrade_to_empty():
+    # a unit whose items share no relationship edges surfaces an empty chain
+    # list; untyped relationship rows are dropped, never a raise
+    fake = FakeL1({
+        "Service:orders": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "orders"},
+            "edges": [_edge_row("PRODUCES", ["L1DataItem"], target_props={"item_key": "line"})],
+            "data_rel_rows": [{"family": "BOGUS_REL", "from_key": "line"}],
+        },
+    })
+    projection = _projection("Service:orders", fake)
+    assert projection.data_rel_kinds == frozenset()
+    assert projection.data_relationships == ()

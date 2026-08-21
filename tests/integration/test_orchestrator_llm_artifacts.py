@@ -66,7 +66,7 @@ from polymerhus.attack.hunting.orchestrator_tracing import (
     orchestrator_gate_span,
     trace_gate_step,
 )
-from polymerhus.attack.hunting.unit_projection import EdgeInfo, UnitProjection, build_projection
+from polymerhus.attack.hunting.unit_projection import EdgeInfo, SystemInfo, UnitProjection, build_projection
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
     ReconScope,
@@ -284,7 +284,9 @@ def test_reason_stretch_render_carries_projection_materialisation_fold_family(tm
     assert proj.kind == "Service"                          # typed spine + one edge
     assert proj.spine
     assert proj.edges["EXPOSED_VIA"] == (
-        EdgeInfo("EXPOSED_VIA", "WebPresentation"),)
+        EdgeInfo("EXPOSED_VIA", "WebPresentation",
+                 target=SystemInfo(kind="WebPresentation",
+                                   props={"kind": "WebPresentation"})),)
     assert inp.materialisation == {"CWE-266": materialisations["CWE-266"]}
     assert inp.fold_family == {"CWE-266": ("CWE-520", "CWE-9")}  # real folded variants
 
