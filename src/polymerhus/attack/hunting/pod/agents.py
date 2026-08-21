@@ -92,12 +92,17 @@ def symbolic_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> Runn
 
 def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
     """Real actor turn: the `pod_runner` session proposes the next step over its
-    curated conversation. Resolves `pod_runner` lazily; on any failure it degrades
-    to the symbolic runner (fail-open) so a stretch always makes progress."""
+    curated conversation. Resolves the role LAZILY from the bound pod-session
+    address (D84-7) when the graph set one, else the `pod_runner` default; on any
+    failure it degrades to the symbolic runner (fail-open) so a stretch always
+    makes progress."""
     try:
         from polymerhus.app.llm.roles import chat_model_for
+        from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, pod_session
 
-        llm = chat_model_for("pod_runner").with_structured_output(
+        ctx = pod_session()
+        role = ctx.address.role_id if ctx is not None else POD_RUNNER_ROLE
+        llm = chat_model_for(role).with_structured_output(
             RunnerStep, method="function_calling")
         result = llm.invoke(_to_lc_messages(messages))
         if result is None:
@@ -110,12 +115,17 @@ def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> Runne
 def default_triager_fn(spec: dict, observation: RawObservation,
                        messages: list, log) -> dict:
     """Real critic turn: the `pod_triager` session classifies the stretch and
-    decides over its curated conversation. Resolves `pod_triager` lazily; on an
-    unmet generation it degrades to a safe honest terminal rather than raising."""
+    decides over its curated conversation. Resolves the role LAZILY from the
+    bound pod-session address (D84-7) when the graph set one, else the
+    `pod_triager` default; on an unmet generation it degrades to a safe honest
+    terminal rather than raising."""
     try:
         from polymerhus.app.llm.roles import chat_model_for
+        from polymerhus.attack.hunting.pod.llm import POD_TRIAGER_ROLE, pod_session
 
-        llm = chat_model_for("pod_triager").with_structured_output(
+        ctx = pod_session()
+        role = ctx.address.role_id if ctx is not None else POD_TRIAGER_ROLE
+        llm = chat_model_for(role).with_structured_output(
             TriagerDecision, method="function_calling")
         result = llm.invoke(_to_lc_messages(messages))
         if result is None:

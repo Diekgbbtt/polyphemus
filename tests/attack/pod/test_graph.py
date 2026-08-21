@@ -3,8 +3,16 @@ tools and the two agents mocked. Exercises the control-flow mechanics - the INIT
 gate, the runner's agentic inner loop (intra-chain data flow + the harness inner
 cap), the symbolic fast-path, variant provenance, dedup-feeds-one-execution, the
 pod-budget cap, and the clean-flag semantics."""
+from polymerhus.attack.hunting.llm import hunt_session
 from polymerhus.attack.hunting.pod import run_pod
 from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
+from polymerhus.attack.hunting.pod.context import canonical_spec_hash
+from polymerhus.attack.hunting.pod.llm import (
+    POD_DEFAULT_RUN_ID,
+    POD_RUNNER_ROLE,
+    POD_TRIAGER_ROLE,
+    pod_session,
+)
 from polymerhus.attack.hunting.pod.types import RunnerStep
 from polymerhus.recon.domain.types import ExecResult
 
@@ -207,3 +215,75 @@ def test_clean_false_when_triager_reports_defence():
                   triager_fn=triager, trace_fn=_no_trace)
     assert env["evidence"]["terminal_reason"] == "specific-defence-prevention"
     assert env["evidence"]["clean"] is False
+
+
+# --- T3 (#153): graph-owned pod-session ContextVar binding (D84-7) -----------
+
+def test_runner_seam_observes_pod_runner_session_inside_a_hunt():
+    """D84-7: inside a parent `hunt_session`, the `runner_agent` node binds the
+    pod_runner role's typed `HuntSession` - the parent's run_id/hunt_id + the
+    canonical spec hash - around the seam call, so the default seam receives the
+    typed address (this spy reads the ContextVar like the default seam does)."""
+    seen = []
+
+    def runner(spec, messages, tool_calls):
+        seen.append(pod_session())
+        return symbolic_runner_step_fn(spec, messages, tool_calls)
+
+    with hunt_session("run-1", "hunt-A"):
+        env = run_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
+                      triager_fn=None, trace_fn=_no_trace)
+
+    assert env["verdict"] == "successful"
+    ctx = seen[0]
+    assert ctx is not None
+    assert ctx.address.role_id == POD_RUNNER_ROLE
+    assert ctx.address.run_id == "run-1"
+    assert ctx.address.hunt_id == "hunt-A"
+    assert ctx.address.spec == canonical_spec_hash(VALID_SPEC)
+
+
+def test_runner_seam_sees_a_task_local_default_outside_a_hunt():
+    """Without a parent hunt_session the graph still runs (fail-open): the seam
+    sees the task-local default session - the pod's run_id and an empty hunt_id
+    (an empty discriminator is dropped from the address, never shifting it)."""
+    seen = []
+
+    def runner(spec, messages, tool_calls):
+        seen.append(pod_session())
+        return symbolic_runner_step_fn(spec, messages, tool_calls)
+
+    env = run_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
+                  triager_fn=None, trace_fn=_no_trace)
+
+    assert env["verdict"] == "successful"
+    ctx = seen[0]
+    assert ctx is not None
+    assert ctx.address.role_id == POD_RUNNER_ROLE
+    assert ctx.address.run_id == POD_DEFAULT_RUN_ID
+    assert ctx.address.hunt_id == ""
+
+
+def test_triager_seam_observes_pod_triager_session_inside_a_hunt():
+    """The `triager` node binds the pod_triager role's `HuntSession` when its
+    seam is consulted (the symbolic fast-path stays silent for a semantic
+    symptom), again deriving the instance from the parent hunt."""
+    spec = {**VALID_SPEC, "verification_symptoms": ["reflects the marker"]}
+    seen = []
+
+    def triager(s, obs, messages, log):
+        seen.append(pod_session())
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "space-exhausted", "clean": True}
+
+    with hunt_session("run-1", "hunt-A"):
+        env = run_pod(spec, exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
+                      triager_fn=triager, trace_fn=_no_trace)
+
+    assert env["verdict"] == "unsuccessful"
+    ctx = seen[0]
+    assert ctx is not None
+    assert ctx.address.role_id == POD_TRIAGER_ROLE
+    assert ctx.address.run_id == "run-1"
+    assert ctx.address.hunt_id == "hunt-A"
+    assert ctx.address.spec == canonical_spec_hash(spec)

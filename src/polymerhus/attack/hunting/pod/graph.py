@@ -50,6 +50,12 @@ from polymerhus.attack.hunting.pod.config import (
     MAX_POD_ITERS,
 )
 from polymerhus.attack.hunting.pod.context import ExperimentLog, curate_messages
+from polymerhus.attack.hunting.pod.llm import (
+    POD_DEFAULT_RUN_ID,
+    POD_RUNNER_ROLE,
+    POD_TRIAGER_ROLE,
+    bind_pod_session,
+)
 from polymerhus.attack.hunting.pod.symbolic import evaluate_symptom
 from polymerhus.attack.hunting.pod.tools import parse_curl, run_with_retry
 from polymerhus.attack.hunting.pod.types import (
@@ -154,8 +160,15 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
 
     def runner_agent(state: PodState) -> dict:
         msgs = state.get("runner_messages", [])
-        step = runner_step_fn(state["spec"], curate_messages(msgs),
-                              state.get("tool_calls", 0))
+        spec = state["spec"]
+        # D84-7: the graph owns the pod-session binding - the `pod_runner`
+        # session becomes the typed address the default seam reads (derived from
+        # the parent hunt_session when present; a directly-invoked pod runs on
+        # the task-local default run_id with no hunt_id).
+        with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
+                              role_id=POD_RUNNER_ROLE):
+            step = runner_step_fn(spec, curate_messages(msgs),
+                                  state.get("tool_calls", 0))
         if not isinstance(step, RunnerStep):
             try:
                 step = RunnerStep(**step) if isinstance(step, dict) else RunnerStep()
@@ -246,7 +259,11 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                         "verdict": "unsuccessful", "terminal_reason": TECHNICAL_INFEASIBILITY,
                         "clean": False, "note": "no response captured (symbolic infeasibility)"}
         else:
-            raw = triager_fn(spec, obs, curate_messages(tmsgs), log)
+            # D84-7: the `pod_triager` session binding, same shape as the
+            # runner's - the graph owns the per-instance session address.
+            with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
+                                  role_id=POD_TRIAGER_ROLE):
+                raw = triager_fn(spec, obs, curate_messages(tmsgs), log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":
                 violations = validate_decision({"verdict": decision.get("verdict"),

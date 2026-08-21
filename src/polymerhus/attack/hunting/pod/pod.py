@@ -17,6 +17,7 @@ import logging
 from typing import Callable
 
 from polymerhus.attack.hunting.pod.graph import RECURSION_LIMIT, build_pod_graph
+from polymerhus.attack.hunting.pod.llm import POD_DEFAULT_RUN_ID
 from polymerhus.attack.hunting.pod.tools import default_exec_fn
 from polymerhus.attack.hunting.pod.types import PodExport, TECHNICAL_INFEASIBILITY
 
@@ -34,20 +35,15 @@ def _default_trace_fn(run_id: str):
 
 
 def _pod_session_address(run_id: str, hunt_id: str, spec: dict, role_id: str):
-    """The typed session address of one pod agent (#94, D84-2): the parent's
-    canonical spec hash discriminates concurrent pod sessions on one hunt, so the
-    checkpointer never routes one variant's memory into another; an absent
-    hunt_id defaults to "" (empty discriminators are dropped, never shifting the
-    address). Imports are lazy so this module stays driver-free at import
-    (CODING_STANDARD section 6)."""
-    from polymerhus.app.llm.session_address import HuntSession
-    from polymerhus.attack.hunting.pod.context import canonical_spec_hash
+    """The typed session address of one pod agent (#94, D84-2): rehomed to the
+    session seam (`pod/llm.py::pod_session_address`), which owns the derivation;
+    this thin alias keeps the contract tier's import target stable."""
+    from polymerhus.attack.hunting.pod.llm import pod_session_address
 
-    return HuntSession(run_id=run_id, hunt_id=hunt_id or "",
-                       role_id=role_id, spec=canonical_spec_hash(spec))
+    return pod_session_address(run_id, hunt_id, spec, role_id=role_id)
 
 
-def run_pod(spec: dict, *, run_id: str = "hunt-pod",
+def run_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
             exec_fn: Callable | None = None,
             runner_step_fn: Callable | None = None,
             triager_fn: Callable | None = None,

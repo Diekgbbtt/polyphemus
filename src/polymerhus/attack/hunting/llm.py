@@ -97,6 +97,14 @@ def hunt_session(run_id: str, hunt_id: str):
     return _cm()
 
 
+def hunt_session_context():
+    """The currently bound hunt-session context (a typed `SessionContext`), or
+    None when the turn runs stateless. The pod's session binding (`pod/llm.py`,
+    D84-7) reads this to derive the pod run's run_id/hunt_id from an enclosing
+    hunt."""
+    return _hunt_ctx().get()
+
+
 def _hunter_turn(text: str) -> dict | None:
     """One hunter LLM turn: STATEFUL on the per-hunt thread when the hunting agent set a
     hunt-session context (author + judge + re-entries then share that thread's memory),
