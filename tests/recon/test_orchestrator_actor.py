@@ -122,7 +122,13 @@ def test_actor_drops_hallucinated_job():
 
 
 def test_actor_empty_signals_is_noop():
-    actor = ReconOrchestratorActor("run1", checkpointer=InMemorySaver(), observe=False)
+    async def _drive():
+        actor = ReconOrchestratorActor("run1", checkpointer=InMemorySaver(), observe=False)
+        out = await actor.decide_routing([], ["katana"])
+        await actor.stop()
+        return out
+
+    assert asyncio.run(_drive()) == {}
 
 
 def test_actor_fail_open_when_the_model_raises():

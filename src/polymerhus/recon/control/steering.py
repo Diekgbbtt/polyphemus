@@ -2,8 +2,8 @@
 
 This module owns only what is genuinely SHARED and decision-free: the WAF
 signal vocabulary, job-kind descriptors, the shared domain reasoning
-(`STEERING_PRIMITIVES`), and two thin helpers (signal formatting + model
-resolution). It makes NO steering decisions.
+(`STEERING_PRIMITIVES`), and a thin signal-formatting helper. It makes NO
+steering decisions.
 
 The decisions themselves live with their OWNING agent per the responsibility
 taxonomy: macro cross-job routing in the recon-orchestrator agent
@@ -54,16 +54,3 @@ def format_signals(signals: list[dict]) -> str:
     return "\n".join(
         f"- {s['url']} [{s['macro_kind']}] {s.get('evidence', '')}" for s in signals
     )
-
-
-def resolve_model(role: str, llm=None):
-    """Return the injected `llm`, else the chat model for `role`.
-
-    The import is lazy (no network/provider at import time). Taking `role` as a
-    parameter is the seam that lets the orchestrator and job agents diverge onto
-    distinct model roles later (D22); both pass "job_orchestrator" for now.
-    """
-    if llm is not None:
-        return llm
-    from polymerhus.app.llm.roles import chat_model_for  # noqa: PLC0415
-    return chat_model_for(role)

@@ -118,8 +118,9 @@ Since feat/async-actor-agents it runs as a per-run MAILBOX actor
 (`orchestrator_agent.py::ReconOrchestratorActor`): one `run_session_agent` on the
 run's `OrchestratorSession` thread, fed each phase's steering signals and replying a
 structured `RoutingDecision` per phase, so its checkpointed memory carries the
-steering reasoning across the run's phases. `decide_routing` remains as the sync
-thin wrapper seam (the injected/rollback path).
+steering reasoning across the run's phases. `run_pipeline` also accepts an
+injected `decide_routing` seam for tests, but the production routing path is the
+actor.
 As of #186 its turns run PER-TURN ISOLATED on the shared actor runtime: a raising
 phase turn (transport/timeout/5xx/429 retried under the bounded escalating budget,
 then degraded) posts a NO-DECISION reply - the parent's fail-open fires per-turn

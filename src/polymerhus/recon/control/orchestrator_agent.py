@@ -3,26 +3,23 @@
 The orchestrator's steering responsibility is CROSS-JOB routing - given the WAF
 signals the pipeline has already observed, decide which downstream job should
 not receive which flagged host (route WAF-flagged hosts away from request-based
-crawlers, toward the agentic crawler). `run_pipeline` is the driver that calls
-`decide_routing` between phases; the reasoning lives here, with the agent that
-owns it, not bolted onto the driver function.
+crawlers, toward the agentic crawler). `run_pipeline` is the driver; the
+reasoning lives here, with the agent that owns it, not bolted onto the driver
+function.
 
-Two call paths share the same routing logic:
+The routing logic lives on the `ReconOrchestratorActor` - the MAILBOX ACTOR
+(#94, feat/async-actor-agents): one persistent `run_session_agent` on the
+`job_orchestrator` session role per recon run (`OrchestratorSession(run_id)`
+thread), fed each phase's steering via its inbox, replying a structured
+`RoutingDecision` per phase on the SAME thread, so the checkpointer carries the
+steering reasoning across the run. This is `run_pipeline`'s PRODUCTION default
+(decide_routing=None); the client methods (`decide_routing`, `stop`) are the
+async seams the pipeline drives. `run_pipeline` also accepts an INJECTED
+`decide_routing` seam for tests.
 
-- `decide_routing` - the SYNC one-shot seam (one structured `function_calling`
-  call, `llm` injectable). Kept as the thin compatibility wrapper: `run_pipeline`
-  still accepts it as an injected seam for tests and rollback.
-- `ReconOrchestratorActor` - the MAILBOX ACTOR (#94, feat/async-actor-agents):
-  one persistent `run_session_agent` on the `job_orchestrator` session role per
-  recon run (`OrchestratorSession(run_id)` thread), fed each phase's steering via
-  its inbox, replying a structured `RoutingDecision` per phase on the SAME
-  thread, so the checkpointer carries the steering reasoning across the run.
-  This is `run_pipeline`'s PRODUCTION default (decide_routing=None); the client
-  methods (`decide_routing`, `stop`) are the async seams the pipeline drives.
-
-Fail-open: any LLM/parse error - in either path - returns the neutral decision
-({} = no exclusions), so a steering blip degrades adaptivity, never the run.
-Only invoked with a non-empty signal list.
+Fail-open: any LLM/parse error returns the neutral decision ({} = no
+exclusions), so a steering blip degrades adaptivity, never the run. Only invoked
+with a non-empty signal list.
 
 The `ORCHESTRATOR_STEERING` prompt is the TEMPORARY inline home for this agent's
 thought process; it is slated to move into a dedicated recon-pipeline-agent
@@ -40,7 +37,6 @@ from polymerhus.recon.control.steering import (
     STEERING_PRIMITIVES,
     describe_job_kind,
     format_signals,
-    resolve_model,
 )
 
 logger = logging.getLogger(__name__)
@@ -69,13 +65,14 @@ class RoutingDecision(BaseModel):
     rationale: str = ""
 
 
-# --- shared routing logic (both the one-shot seam and the mailbox actor) -------
+# --- shared routing logic (the mailbox actor) -------------------------------
 
 
 def _steering_human(signals: list[dict], phase_jobs: list[str]):
-    """The per-phase steering brief both paths hand the model: the live signals and
-    the upcoming phase's jobs, with the routing instruction. `phase_jobs` names are
-    already plan-gated, so the model cannot be asked about a job outside the plan."""
+    """The per-phase steering brief handed to the model: the live signals and
+    the upcoming phase's jobs, with the routing instruction. `phase_jobs` names
+    are already plan-gated, so the model cannot be asked about a job outside the
+    plan."""
     from langchain_core.messages import HumanMessage  # noqa: PLC0415
     jobs_desc = "\n".join(f"- {j}: {describe_job_kind(j)}" for j in phase_jobs)
     return HumanMessage(
@@ -94,29 +91,6 @@ def _exclusions_map(decision: "RoutingDecision | None", phase_jobs: list[str]) -
     if decision is None:
         return {}
     return {e.job: e.exclude_urls for e in decision.exclusions if e.job in phase_jobs}
-
-
-def decide_routing(signals: list[dict], phase_jobs: list[str], *, llm=None) -> dict[str, list[str]]:
-    """Given live signals and the upcoming phase's jobs, return
-    {job_name: [urls to exclude from that job]}. Fail-open to {}.
-
-    The SYNC one-shot seam (thin compatibility wrapper over the shared routing
-    logic): `run_pipeline` accepts it as an injected seam; the production default
-    is the `ReconOrchestratorActor` below."""
-    if not signals or not phase_jobs:
-        return {}
-    try:
-        from langchain_core.messages import SystemMessage  # noqa: PLC0415
-        model = resolve_model("job_orchestrator", llm).with_structured_output(
-            RoutingDecision, method="function_calling"
-        )
-        decision = model.invoke(
-            [SystemMessage(content=ORCHESTRATOR_STEERING), _steering_human(signals, phase_jobs)]
-        )
-        return _exclusions_map(decision, phase_jobs)
-    except Exception:
-        logger.warning("decide_routing failed; no routing adaptation", exc_info=True)
-        return {}
 
 
 # --- the mailbox actor (#94, feat/async-actor-agents) --------------------------

@@ -52,11 +52,3 @@ def test_format_signals_renders_one_line_per_host():
     assert "https://a [waf_protected] Incapsula" in out
     assert "https://b [waf_detection]" in out
     assert out.count("\n") == 1  # exactly two lines
-
-
-def test_resolve_model_returns_injected_llm():
-    # The injected-llm path is the only one exercised offline; the role-resolution
-    # branch is lazy and provider-gated, so it is not called here.
-    from polymerhus.recon.control.steering import resolve_model
-    sentinel = object()
-    assert resolve_model("job_orchestrator", sentinel) is sentinel
