@@ -49,9 +49,13 @@ and the thread identity (how concurrent instances avoid collision).
 | `_hunter_turn` (legacy sync) | sync leaf | ContextVar + stateful_turn | `_hunt_ctx().get()` -> `stateful_turn` or `invoke_role` | `HuntSession(run_id, hunt_id)` via ContextVar | `llm.py:104-112` |
 | `build_gate_reason_fn` (legacy) | sync leaf | invoke_role | `invoke_role(GATE_ROLE, ...)` | N/A (one-shot) | `llm.py:237` |
 | `build_rematch_fn` (legacy) | sync leaf | invoke_role | `invoke_role(REMATCH_ROLE, ...)` | N/A (one-shot) | `llm.py:259` |
+| `pod_runner` (test-executor runner) | StateGraph node (sync leaf) | checkpointer (create_agent) | `stateful_turn("pod_runner", HuntSession(...), ...)` - ONE ReAct stretch per `runner_agent` node turn (D84-17/29) | `HuntSession(run_id, hunt_id, spec_hash, "pod_runner")` -> `run:{hunt_id}:{spec_hash}:pod_runner` (D84-2) | `graph.py:155` (node); `providers.py:305` (role) |
+| `pod_triager` (test-executor triager) | StateGraph node (sync leaf) | checkpointer (create_agent) | `stateful_turn("pod_triager", HuntSession(...), ...)` - the critic turn per lap from the `triager` node (D84-23/29) | `HuntSession(run_id, hunt_id, spec_hash, "pod_triager")` -> `run:{hunt_id}:{spec_hash}:pod_triager` (D84-2) | `graph.py:230` (node); `providers.py:306` (role) |
 | `build_actor_hunting_agent` -> `build_hunting_agent` dispatch seam | async harness (dispatch_fn) | working set in closure + per-hunt `HuntingHunterActor` author/judge | `dispatch_fn(config, routed)` passed to `arun_orchestration` as the graph's `dispatch_fn` | `HuntSession(run_id, hunt_id)` via `HuntingActorRegistry` | `llm.py:332-355` (builder); `hunting_agent.py:373` (harness) |
 
 **Hunting-agent wiring status (as of this matrix):** the harness and its production seam are BUILT but NOT wired into the runtime path. `start_hunting` (attack/hunting/runtime.py) calls `arun_orchestration` without injecting `dispatch_fn`, so the orchestration graph's dispatch node (hunt_orchestrator.py:701 `if dispatch_fn is None`) degrades to the "hunting agent unavailable" outcome and the agent is never invoked in production. The wiring is scoped by #110's "Dispatch placement" decision.
+
+**Pod-role registration status (as of this matrix):** `pod_runner` / `pod_triager` join `HUNTING_ROLES` as `session`/`high` with their own `LLM_MODEL_POD_*` keys (D84-1); the two rows above record the RATIFIED execution shape (D84-2/7/12/23/29). The stateful session wiring itself - the `stateful_turn` call sites inside the `runner_agent` / `triager` nodes, the `HuntSession` address derivation, and the `build_role_compaction_middleware` wiring - lands with the #84 regrounding implementation (T2-T7), after which these rows become observed facts.
 
 ## Outliers and deviations
 

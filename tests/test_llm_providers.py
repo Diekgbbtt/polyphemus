@@ -89,7 +89,8 @@ def test_hunting_roles_are_not_validated_at_app_boot(monkeypatch):
     bootstrap, never app boot. So validate_llm_config() (app boot) must not demand
     the hunting model keys, while validate_llm_config(HUNTING_ROLES) does."""
     hunting_ids = {r.role_id for r in P.HUNTING_ROLES}
-    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter"}
+    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter",
+                           "pod_runner", "pod_triager"}
     assert not (hunting_ids & {r.role_id for r in P.ROLES})  # absent from app-boot ROLES
     for r in P.ROLES:
         monkeypatch.setenv(r.model_key, "swissai:x")

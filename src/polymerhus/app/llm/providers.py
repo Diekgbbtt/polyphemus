@@ -270,7 +270,8 @@ class Role:
 # recon-orchestrator (which shares the `job_orchestrator` role, `orchestrator_agent.py`).
 # The rest stay `off`. `hunting_hunter` is `high`; `hunting_orchestrator` is `medium`
 # (its Q8 gate + D2 re-match turns are reasoning-heavy but turn-count-bounded,
-# feat/async-actor-agents). These are TUNABLE
+# feat/async-actor-agents); the pod's roles (`pod_runner` / `pod_triager`) are `high`
+# like the hunter (D84-1). These are TUNABLE
 # baselines; #99 makes them capability-adaptive and fail-safe per model.
 # `agent_mode="session"` marks the roles that run STATEFUL per instance (#94): the
 # per-pod triager and configurator (their own pod session thread each), the
@@ -293,9 +294,16 @@ ROLES: tuple[Role, ...] = (
 # The hunting module's OWN roles (one model per agent), validated by the hunting
 # module itself (`attack/hunting/llm.py`), not by app boot - so a fresh
 # environment never needs the hunting vars unless hunting is launched.
+# The test-executor pod's roles (`pod_runner` / `pod_triager`, #84 D84-1) are
+# `session`/`high` like the hunter: actor (probe/execute) and critic
+# (classify/mine) are distinct cognitive jobs with independent model keys, and
+# the operator directs high-cost reasoning for the looped, feedback-driven
+# probe/interpret work.
 HUNTING_ROLES: tuple[Role, ...] = (
     Role("hunting_orchestrator", "LLM_MODEL_HUNTING_ORCHESTRATOR", "session", "medium"),
     Role("hunting_hunter",       "LLM_MODEL_HUNTING_HUNTER",       "session", "high"),
+    Role("pod_runner",           "LLM_MODEL_POD_RUNNER",           "session", "high"),
+    Role("pod_triager",          "LLM_MODEL_POD_TRIAGER",          "session", "high"),
 )
 
 _ROLE_BY_ID: dict[str, Role] = {r.role_id: r for r in ROLES + HUNTING_ROLES}
