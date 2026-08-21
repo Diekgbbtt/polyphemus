@@ -2,7 +2,7 @@
 
 Minimal deterministic testing-verification helpers the scaffold's later builds
 extend: probe/payload construction from the typed `payload_vector_space`,
-baseline/differential tracking, and a minimal SYMBOLIC symptom recogniser.
+and a minimal SYMBOLIC symptom recogniser.
 
 Symbolic symptom verification is the good development direction but complex
 (operator, 2026-08-06): this recogniser covers the mechanically-checkable
@@ -66,23 +66,6 @@ def _path_from_identity(identity: str) -> str:
         return identity
     # A kind-qualified identity (service:web:...) carries no path -> probe root.
     return "/"
-
-
-def compute_differential(baseline: RawObservation | None,
-                         observation: RawObservation) -> dict:
-    """The in-memory differential the symbolic layer surfaces to both agents:
-    the delta between a baseline (control) and the payload (treatment) response.
-    Empty baseline -> a differential against nothing (still records the absolute
-    observation shape)."""
-    diff: dict = {
-        "status": observation.status,
-        "body_len": len(observation.body or ""),
-    }
-    if baseline is not None:
-        diff["baseline_status"] = baseline.status
-        diff["status_changed"] = baseline.status != observation.status
-        diff["body_len_delta"] = len(observation.body or "") - len(baseline.body or "")
-    return diff
 
 
 # --- Minimal symbolic symptom recogniser ---------------------------------------

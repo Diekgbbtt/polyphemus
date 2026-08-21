@@ -408,3 +408,4 @@ X1-X6 all verdicted. Remaining: (a) the spec re-write itself (from `hunting-67-t
 `differential_shape` (D84-30) and `resume_point` (D84-31) removed.
 `NoteToolSpec` write fields: `operation, variant_ref, note_name, kind, body, classification, symptom_status, kb_primitives_used, exhaustion_evidence` + read filters `parent_key`, `key_keyword`, `body_keyword`.
 The prototype (`impl-20260821-220932` output) must be updated to these fields when T4 lands.
+These canonical fields govern the T7 note-tool build (D84-20/27); T0 ships no note fields nor a note tool.

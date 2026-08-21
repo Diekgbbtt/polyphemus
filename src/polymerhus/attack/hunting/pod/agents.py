@@ -51,8 +51,8 @@ class TriagerDecision(BaseModel):
 
 
 # Injected seam signatures (the graph owns the curated message lists).
-RunnerStepFn = Callable[[dict, list, dict, int], RunnerStep]
-TriagerFn = Callable[[dict, RawObservation, dict, list, object], dict]
+RunnerStepFn = Callable[[dict, list, int], RunnerStep]
+TriagerFn = Callable[[dict, RawObservation, list, object], dict]
 
 
 def _to_lc_messages(messages: list[dict]):
@@ -71,8 +71,7 @@ def _to_lc_messages(messages: list[dict]):
     return out
 
 
-def symbolic_runner_step_fn(spec: dict, messages: list, differential: dict,
-                            tool_calls: int) -> RunnerStep:
+def symbolic_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
     """The LLM-free runner: on the first turn of a stretch it issues the default
     probe from the payload vector space (O12/C11), then concludes and hands the
     observation to the critic. Drives E1 and is the fail-open fallback."""
@@ -91,8 +90,7 @@ def symbolic_runner_step_fn(spec: dict, messages: list, differential: dict,
                       observation_note="default probe issued; handing the observation to the critic")
 
 
-def default_runner_step_fn(spec: dict, messages: list, differential: dict,
-                           tool_calls: int) -> RunnerStep:
+def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) -> RunnerStep:
     """Real actor turn: the `pod_runner` session proposes the next step over its
     curated conversation. Resolves `pod_runner` lazily; on any failure it degrades
     to the symbolic runner (fail-open) so a stretch always makes progress."""
@@ -106,10 +104,10 @@ def default_runner_step_fn(spec: dict, messages: list, differential: dict,
             raise ValueError("unmet runner generation")
         return result
     except Exception:  # noqa: BLE001 - fail-open: fall back to the symbolic runner
-        return symbolic_runner_step_fn(spec, messages, differential, tool_calls)
+        return symbolic_runner_step_fn(spec, messages, tool_calls)
 
 
-def default_triager_fn(spec: dict, observation: RawObservation, differential: dict,
+def default_triager_fn(spec: dict, observation: RawObservation,
                        messages: list, log) -> dict:
     """Real critic turn: the `pod_triager` session classifies the stretch and
     decides over its curated conversation. Resolves `pod_triager` lazily; on an

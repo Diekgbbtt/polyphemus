@@ -61,7 +61,7 @@ class ProbeStep(BaseModel):
     """One tool call in a test's chain: a dependency/setup call or the core
     payload-carrying call. A test is a CHAIN (operator, 2026-08-06), never a
     single request - the `core` call carries the agent-authored testing
-    payload; the dependency calls set up state (a session, a token, a baseline)."""
+    payload; the dependency calls set up state (a session, a token)."""
 
     role: Literal["dependency", "core"] = "core"
     method: str = "GET"
@@ -95,7 +95,6 @@ class RawObservation(BaseModel):
     stderr: str = ""
     returncode: int | None = None
     duration_ms: int = 0
-    differential: dict | None = None
 
 
 class Interpretation(BaseModel):
@@ -190,9 +189,7 @@ class PodState(TypedDict, total=False):
     tool_calls: int        # the INNER stretch counter (harness-capped)
     pending_step: dict     # the RunnerStep the runner proposed this turn
     stretch_obs: int       # observations recorded in the current stretch
-    baseline_obs: dict     # the previous observation, for the differential
     last_observation: dict
-    differential: dict
     decision: dict         # the Triager's per-lap decision
     verdict: str
     terminal_reason: str

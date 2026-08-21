@@ -2,8 +2,8 @@
 
 The pod's "memory" (D67-01): it holds the experiment log (the D6 trail), tracks
 the dedup signatures, and builds the FILTERED context each agent's session
-sees - only the relevant slice (prior variants, filtered tool outputs, the
-differential), never the whole raw log. This is what makes the two agents
+sees - only the relevant slice (prior variants, filtered tool outputs), never
+the whole raw log. This is what makes the two agents
 semi-stateful: the Triager has direct observability of every prior variant, so
 it does not elicit a duplicate (the dedup solution), and the Runner sees the
 filtered log so it does not re-issue an identical chain.
@@ -135,16 +135,14 @@ class ExperimentLog:
         return [v.ref for v in self.variant_specs]
 
     def runner_context(self, spec: dict, feedback: str, iteration: int,
-                       budget: int, differential: dict | None) -> str:
+                       budget: int) -> str:
         """The filtered slice the Runner's session sees each lap: the current
-        spec variant, the last differential, the tried-probe signatures (so it
-        does not duplicate), the Triager's feedback, and the budget state."""
+        spec variant, the tried-probe signatures (so it does not duplicate),
+        the Triager's feedback, and the budget state."""
         parts = [
             f"# Lap {iteration} of at most {budget}",
             f"## Current spec variant\n{json.dumps(spec, indent=2)}",
         ]
-        if differential:
-            parts.append(f"## Last differential\n{json.dumps(differential, indent=2)}")
         if self.executed:
             parts.append("## Probe signatures already executed (do not repeat)\n"
                          + "\n".join(f"- {s}" for s in self.executed))
@@ -152,18 +150,16 @@ class ExperimentLog:
             parts.append(f"## Triager feedback (declination to honour)\n{feedback}")
         return "\n\n".join(parts)
 
-    def triager_context(self, spec: dict, observation: RawObservation | None,
-                        differential: dict | None) -> str:
+    def triager_context(self, spec: dict,
+                        observation: RawObservation | None) -> str:
         """The filtered slice the Triager's session sees each lap: the current
-        variant, the latest raw observation (body-capped), the differential, and
-        every prior variant (so it does not re-mine one)."""
+        variant, the latest raw observation (body-capped), and every prior
+        variant (so it does not re-mine one)."""
         parts = [f"## Current spec variant\n{json.dumps(spec, indent=2)}"]
         if observation is not None:
             obs = observation.model_dump()
             obs["body"] = (obs.get("body") or "")[:_BODY_SLICE]
             parts.append(f"## Latest observation\n{json.dumps(obs, indent=2)}")
-        if differential:
-            parts.append(f"## Differential\n{json.dumps(differential, indent=2)}")
         if self.variant_refs():
             parts.append("## Variants already tried (never mine a duplicate)\n"
                          + "\n".join(f"- {r}" for r in self.variant_refs()))

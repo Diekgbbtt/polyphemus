@@ -34,7 +34,7 @@ _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
 def _scripted(steps):
     it = iter(steps)
 
-    def runner(spec, messages, differential, tool_calls):
+    def runner(spec, messages, tool_calls):
         try:
             return next(it)
         except StopIteration:
@@ -78,7 +78,7 @@ def test_runner_drives_a_multi_step_chain_with_intra_chain_flow():
         RunnerStep(action="conclude", observation_note="chain complete"),
     ]
 
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "no-symptom-evidence", "clean": True}
 
@@ -94,11 +94,11 @@ def test_inner_tool_cap_forces_conclusion(monkeypatch):
     monkeypatch.setattr("polymerhus.attack.hunting.pod.graph.HUNT_POD_MAX_TOOL_CALLS", 2)
     calls = []
 
-    def runner(spec, messages, differential, tool_calls):
+    def runner(spec, messages, tool_calls):
         return RunnerStep(action="tool_call", tool="exec",
                           command=f"curl -k -sS https://t/{tool_calls}")
 
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
@@ -113,13 +113,13 @@ def test_runner_sees_tool_results_in_its_curated_session():
     # the first tool's result, so it can reflect and branch (semi-stateful).
     seen = []
 
-    def runner(spec, messages, differential, tool_calls):
+    def runner(spec, messages, tool_calls):
         seen.append(list(messages))
         if tool_calls == 0:
             return RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/")
         return RunnerStep(action="conclude", observation_note="saw the result")
 
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
@@ -139,7 +139,7 @@ def test_variant_loop_records_provenance():
          "verdict": "unsuccessful", "terminal_reason": "space-exhausted", "clean": True},
     ])
 
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return next(decisions)
 
     env = run_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
@@ -155,7 +155,7 @@ def test_variant_loop_records_provenance():
 def test_pod_budget_cap_terminates_only_the_pod(monkeypatch):
     monkeypatch.setattr("polymerhus.attack.hunting.pod.graph.HUNT_POD_MAX_ITERS", 3)
 
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return {"classification": "symptom-absent", "action": "variant",
                 "declined_attribute": "testing_pattern", "variant_spec": dict(spec),
                 "feedback": "keep trying"}
@@ -176,7 +176,7 @@ def test_dedup_one_execution_per_identical_probe():
         RunnerStep(action="conclude", observation_note="done"),
     ]
 
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
@@ -197,7 +197,7 @@ def test_runner_infeasible_is_an_init_gate_with_evidence():
 
 
 def test_clean_false_when_triager_reports_defence():
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return {"classification": "infeasibility-signal", "action": "terminate",
                 "verdict": "unsuccessful", "terminal_reason": "specific-defence-prevention",
                 "clean": False, "note": "WAF soft-blocked every probe"}

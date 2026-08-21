@@ -65,7 +65,7 @@ def test_triager_context_surfaces_prior_variants_for_non_duplication():
     log.record_interpretation(Interpretation(variant="v0", classification="symptom-absent",
                                              note="no reflection"))
     ctx = log.triager_context({"target_identity": "svc"},
-                              RawObservation(status=200, body="hi"), {"status": 200})
+                              RawObservation(status=200, body="hi"))
     assert "v0" in ctx and "v1" in ctx           # sees what was tried
     assert "never mine a duplicate" in ctx.lower()
 
@@ -74,7 +74,7 @@ def test_runner_context_lists_executed_signatures():
     log = ExperimentLog()
     log.mark_executed("sig-abc")
     ctx = log.runner_context({"target_identity": "svc"}, feedback="vary the encoding",
-                             iteration=2, budget=8, differential={"status": 200})
+                             iteration=2, budget=8)
     assert "sig-abc" in ctx
     assert "vary the encoding" in ctx
     assert "Lap 2" in ctx

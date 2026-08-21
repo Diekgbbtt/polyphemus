@@ -1,7 +1,6 @@
 """Unit tier: the helper symbolic layer - probe construction, the dedup
-signature, the differential, and the minimal symptom recogniser."""
+signature, and the minimal symptom recogniser (the differential is gone, D84-30)."""
 from polymerhus.attack.hunting.pod.symbolic import (
-    compute_differential,
     default_probe_from_spec,
     evaluate_symptom,
     probe_signature,
@@ -67,11 +66,3 @@ def test_non_decidable_symptom_returns_none():
 def test_missing_response_is_an_infeasibility_signal():
     obs = RawObservation(status=None, body="", returncode=7, stderr="connection refused")
     assert evaluate_symptom(SPEC["verification_symptoms"], obs) == INFEASIBILITY_SIGNAL_CLASS
-
-
-def test_differential_against_baseline():
-    baseline = RawObservation(status=200, body="aaa")
-    treatment = RawObservation(status=500, body="aaaaa")
-    diff = compute_differential(baseline, treatment)
-    assert diff["status_changed"] is True
-    assert diff["body_len_delta"] == 2

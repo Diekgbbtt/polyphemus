@@ -55,7 +55,7 @@ _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
 
 
 def _terminate(reason, *, clean=True, verdict="unsuccessful"):
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return {"action": "terminate", "verdict": verdict,
                 "terminal_reason": reason, "clean": clean}
     return triager
@@ -133,7 +133,7 @@ def test_infeasibility_asserted_with_evidence():
 def test_budget_timeout_lands_unsuccessful(monkeypatch):
     monkeypatch.setattr("polymerhus.attack.hunting.pod.graph.HUNT_POD_MAX_ITERS", 3)
 
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return {"classification": "symptom-absent", "action": "variant",
                 "declined_attribute": "testing_pattern", "variant_spec": dict(spec),
                 "feedback": "keep searching"}
@@ -187,7 +187,7 @@ def test_variant_derivation_with_provenance():
          "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence", "clean": False},
     ])
 
-    def triager(spec, obs, diff, messages, log):
+    def triager(spec, obs, messages, log):
         return next(decisions)
 
     env = run_pod(SEMANTIC_SPEC, exec_fn=_exec(_ABSENT),
@@ -209,7 +209,7 @@ def test_duplicate_probe_recorded_once():
         RunnerStep(action="conclude", observation_note="done"),
     ])
 
-    def runner(spec, messages, differential, tool_calls):
+    def runner(spec, messages, tool_calls):
         return next(steps)
 
     env = run_pod(SEMANTIC_SPEC, exec_fn=_exec(_ABSENT, calls=calls), runner_step_fn=runner,

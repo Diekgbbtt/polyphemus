@@ -50,7 +50,7 @@ from polymerhus.attack.hunting.pod.config import (
     MAX_POD_ITERS,
 )
 from polymerhus.attack.hunting.pod.context import ExperimentLog, curate_messages
-from polymerhus.attack.hunting.pod.symbolic import compute_differential, evaluate_symptom
+from polymerhus.attack.hunting.pod.symbolic import evaluate_symptom
 from polymerhus.attack.hunting.pod.tools import parse_curl, run_with_retry
 from polymerhus.attack.hunting.pod.types import (
     BUDGET_TIMEOUT,
@@ -112,12 +112,12 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
-    - `runner_step_fn(spec, messages, differential, tool_calls) -> RunnerStep` -
-      the actor's next-step proposer over its curated session; default = the
+    - `runner_step_fn(spec, messages, tool_calls) -> RunnerStep` - the
+      actor's next-step proposer over its curated session; default = the
       `pod_runner` session with a symbolic fallback.
-    - `triager_fn(spec, observation, differential, messages, log) -> decision` -
-      the critic over its curated session; consulted only when the symbolic
-      recogniser is inconclusive.
+    - `triager_fn(spec, observation, messages, log) -> decision` - the critic
+      over its curated session; consulted only when the symbolic recogniser is
+      inconclusive.
     - `kb_fn(query) -> dict` - the NL knowledge-base tool; default = the fail-open
       `kb_retrieve` stub.
     """
@@ -136,14 +136,14 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         if not violations:
             runner_messages = _append(
                 runner_messages, "human",
-                log.runner_context(spec, "", 1, HUNT_POD_MAX_ITERS, {}))
+                log.runner_context(spec, "", 1, HUNT_POD_MAX_ITERS))
         return {
             "log": log, "root_spec": spec, "spec": spec,
             "init_validation": violations, "iteration": 1,
             "current_variant_ref": "v0", "feedback": "",
             "runner_messages": runner_messages,
             "triager_messages": [{"role": "system", "content": TRIAGER_SYSTEM}],
-            "tool_calls": 0, "stretch_obs": 0, "differential": {}, "baseline_obs": {},
+            "tool_calls": 0, "stretch_obs": 0,
         }
 
     def init_router(state: PodState) -> str:
@@ -155,7 +155,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
     def runner_agent(state: PodState) -> dict:
         msgs = state.get("runner_messages", [])
         step = runner_step_fn(state["spec"], curate_messages(msgs),
-                              state.get("differential", {}), state.get("tool_calls", 0))
+                              state.get("tool_calls", 0))
         if not isinstance(step, RunnerStep):
             try:
                 step = RunnerStep(**step) if isinstance(step, dict) else RunnerStep()
@@ -212,21 +212,17 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         result, _attempts = run_with_retry(exec_fn, command,
                                            timeout_s=EXEC_TIMEOUT_S, max_iters=MAX_POD_ITERS)
         parsed = parse_curl(result)
-        baseline = RawObservation(**state["baseline_obs"]) if state.get("baseline_obs") else None
         observation = RawObservation(
             probe_ref=sig, variant_ref=variant_ref, request={"command": command},
             status=parsed.get("status"), body=parsed.get("body", "") or result.stdout,
             stdout=result.stdout, stderr=result.stderr, returncode=result.returncode,
             duration_ms=result.duration_ms or parsed.get("time_ms", 0))
-        observation.differential = compute_differential(baseline, observation)
         log.mark_executed(sig)
         log.record_observation(observation)
         result_text = (f"TOOL RESULT: status={observation.status} "
                        f"body={observation.body[:400]!r} stderr={observation.stderr[:200]!r}")
         return {"tool_calls": tc, "stretch_obs": state.get("stretch_obs", 0) + 1,
                 "last_observation": observation.model_dump(),
-                "baseline_obs": observation.model_dump(),
-                "differential": observation.differential,
                 "runner_messages": _append(state.get("runner_messages", []), "tool", result_text)}
 
     # --- the critic ------------------------------------------------------------
@@ -239,7 +235,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         symptoms = [str(s) for s in (spec.get("verification_symptoms", []) or [])]
         symbolic = evaluate_symptom(symptoms, obs)
         tmsgs = _append(state.get("triager_messages", []), "human",
-                        log.triager_context(spec, obs, state.get("differential", {})))
+                        log.triager_context(spec, obs))
 
         if symbolic == SYMPTOM_CONFIRMED_CLASS:
             decision = {"classification": SYMPTOM_CONFIRMED_CLASS, "action": "terminate",
@@ -250,7 +246,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                         "verdict": "unsuccessful", "terminal_reason": TECHNICAL_INFEASIBILITY,
                         "clean": False, "note": "no response captured (symbolic infeasibility)"}
         else:
-            raw = triager_fn(spec, obs, state.get("differential", {}), curate_messages(tmsgs), log)
+            raw = triager_fn(spec, obs, curate_messages(tmsgs), log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":
                 violations = validate_decision({"verdict": decision.get("verdict"),
@@ -294,9 +290,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                                        spec=variant_spec))
         iteration = state.get("iteration", 1) + 1
         opener = log.runner_context(variant_spec, decision.get("feedback", ""),
-                                    iteration, HUNT_POD_MAX_ITERS, state.get("differential"))
+                                    iteration, HUNT_POD_MAX_ITERS)
         return {"current_variant_ref": ref, "spec": variant_spec, "iteration": iteration,
-                "tool_calls": 0, "stretch_obs": 0, "baseline_obs": {},
+                "tool_calls": 0, "stretch_obs": 0,
                 "feedback": decision.get("feedback", ""),
                 "runner_messages": _append(state.get("runner_messages", []), "human", opener)}
 
