@@ -275,6 +275,8 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
 
     # The DataRelationship kind chains among the unit's items, resolved
     # VERBATIM (the edge type IS the kind, L1D-13) with the ordered endpoints.
+    # RETURN DISTINCT orders deterministically (family, from_key, to_key - all
+    # returned columns), so the kind chains render in stable order (T5).
     data_rel_rows = read_fn(
         "MATCH (u:L1TestableUnit) "
         f"WHERE u.project_id = $project_id AND {where} "
@@ -282,7 +284,8 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
         "MATCH (u)-[:PRODUCES|CONSUMES]->(other:L1DataItem) "
         "MATCH (item)-[dr]->(other) "
         "RETURN DISTINCT type(dr) AS family, item.item_key AS from_key, "
-        "other.item_key AS to_key, properties(dr) AS rprops",
+        "other.item_key AS to_key, properties(dr) AS rprops "
+        "ORDER BY family, from_key, to_key",
         {"project_id": project_id, "kind": kind, "key": key},
     )
     data_rel_kinds = frozenset(

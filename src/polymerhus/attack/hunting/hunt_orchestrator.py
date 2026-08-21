@@ -152,9 +152,12 @@ class GateInput(BaseModel):
     materialisation-facet content for the `fault_class`, and the sorted
     sub-fault fold family captured under it (empty tuple for a leaf parent).
     `projection` reflects the single-unit slot for backward compatibility.
-    Every slot is degraded independently - `unit_projection[unit_id]` None, an
-    absent materialisation/fold-family key - and renders as UNKNOWN, never
-    FALSE, never a prune signal (C16)."""
+    `prior_minted_keys` carries the CURRENT `LoopLedger.minted_config_keys`
+    (the revival keys the Q11 novelty reflection lists - seeded by the reason
+    node from the ledger state, fail-open to []). Every slot is degraded
+    independently - `unit_projection[unit_id]` None, an absent
+    materialisation/fold-family key - and renders as UNKNOWN, never FALSE,
+    never a prune signal (C16)."""
 
     candidates: list[DeliveredCandidate] = Field(default_factory=list)
     kb_degraded: bool = False
@@ -164,6 +167,7 @@ class GateInput(BaseModel):
     unit_projection: dict[str, object | None] = Field(default_factory=dict)
     materialisation: dict = Field(default_factory=dict)
     fold_family: dict = Field(default_factory=dict)
+    prior_minted_keys: list[str] = Field(default_factory=list)
 
 
 class GateDecision(BaseModel):
@@ -847,6 +851,14 @@ async def arun_orchestration(
                 unit_projection[c.unit_id] = proj
         materialisation = materialisations.get(fault_class)
         fold_ids = fold_families.get(fault_class)
+        # The Q11 novelty-reflection list: the CURRENT ledger's minted config
+        # keys (read exactly like the unit-boundary stage below - fail-open to
+        # [] when the ledger slot is absent or not a LoopLedger). Re-injected
+        # into the prompt ONLY at this per-fault turn boundary, never after an
+        # intra-unit tool call (spec 3.3).
+        prior_ledger = state.get("ledger")
+        prior_ledger = prior_ledger.model_copy(deep=True) \
+            if isinstance(prior_ledger, LoopLedger) else LoopLedger()
         gate_input = GateInput(
             candidates=units,
             kb_degraded=kb_degraded,
@@ -856,6 +868,7 @@ async def arun_orchestration(
             unit_projection=unit_projection,
             materialisation={fault_class: materialisation},
             fold_family={fault_class: fold_ids},
+            prior_minted_keys=list(prior_ledger.minted_config_keys),
         )
 
         directions: list[EnvisionedDirection] = []

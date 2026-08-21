@@ -959,6 +959,34 @@ def test_no_new_graph_nodes():
     assert set(g.nodes) == {"supervisor", "reason", "budget", "dispatch"}
 
 
+def test_reason_node_seeds_prior_minted_keys_from_the_ledger(tmp_path):
+    """T5 (spec 3.2/3.3 Q11): `_reason_node` seeds each fault's `GateInput` with
+    the CURRENT `LoopLedger.minted_config_keys` - a pass whose first fault has
+    minted nothing yet fails open to [], and once the first fault's mint lands
+    at its unit boundary (strictly after `record_note`), the second distinct
+    fault's gate input carries that revival key as the prior minted-config list
+    the Loop protocol reflects on. The rendered prompt carries the list."""
+    store = HuntStore(tmp_path)
+    gate_inputs: list = []
+    a = _candidate(SERVICE_A, "CWE-352")
+    c = _candidate(SERVICE_A, "CWE-639")
+
+    def reason_fn(inp):
+        gate_inputs.append(inp)
+        return GateDecision(directions=[_carry(x) for x in inp.candidates])
+
+    report = _run(store, [a, c], reason_fn=reason_fn)
+
+    assert len(gate_inputs) == 2
+    assert gate_inputs[0].prior_minted_keys == []           # fresh ledger -> fail-open
+    assert gate_inputs[1].prior_minted_keys == [f"{SERVICE_A}::CWE-352"]
+    text = _compose_gate_prompt(gate_inputs[1])
+    assert "Prior minted-config keys to reflect on" in text
+    assert f"{SERVICE_A}::CWE-352" in text
+    assert "(none)" not in text.split("Prior minted-config keys")[1].splitlines()[0]
+    assert report.ledger.units_done == 2
+
+
 def test_structured_schemas_and_surface_unchanged():
     """The structural-output schemas and the tool surface compile unchanged
     (the 110-vs-135 regression guard), and the deterministic mint still
