@@ -121,7 +121,7 @@ The pod binding reads the parent's `hunt_session` ContextVar to derive `run_id` 
 
 ## D84-9 - Q3.1 Inbox pooling: graph owns delivery, idle gate is runner_agent entry (Q3.1 VERDICTED)
 
-**Decision:** Pool inbox messages in graph state (`feedback: str`, `differential: dict` as last-write channels, plus the hunter's `spec` via `PodState.spec`). The `runner_agent` node at entry is the idle gate: when `feedback`/`differential` present, compose one `HumanMessage` with the verbatim and clear the inbox channels after handing the delta to `stateful_turn`. No inbox is fed while the `create_agent` ReAct loop is mid-trajectory.
+**Decision:** Pool inbox messages in graph state (`feedback: str`, `differential: dict` as last-write channels, plus the hunter's `spec` via `PodState.spec`). The `runner_agent` node at entry is the idle gate: when `feedback`/`differential` present, compose one `HumanMessage` with the verbatim and clear the inbox channels after handing the delta to `stateful_turn`. No inbox is fed while the `create_agent` ReAct loop is mid-trajectory. (The `differential` channel reference is superseded by D84-30 - the landed channel set is `feedback`/`spec` only.)
 
 **Validation:** When this ticket is addressed the operator will give validation feedback on the graph shape. The agent implementing the graph must use `/overthink` and the harness should track internal plan execution state (acknowledged as complex given the pod's feedback-driven loop nature).
 
@@ -141,7 +141,7 @@ The pod binding reads the parent's `hunt_session` ContextVar to derive `run_id` 
 
 ## D84-11 - Q3.3 Delta via inbox deletion, not committed tracking (Q3.3 VERDICTED)
 
-**Decision:** Do not track a committed-ids set. Inbox messages are **deleted from the inbox when consumed**, reliably (graph state update clearing the `feedback`/`differential` channels via the `add_messages`/`last-write` reducer or explicit `RemoveMessage`). `new_messages` to `stateful_turn` is exactly the consumed inbox `HumanMessage` delta; the thread holds full history so no duplication tracking is needed. Reliability of deletion is the load-bearing invariant (the graph's state update must be atomic with the `stateful_turn` call).
+**Decision:** Do not track a committed-ids set. Inbox messages are **deleted from the inbox when consumed**, reliably (graph state update clearing the `feedback`/`differential` channels via the `add_messages`/`last-write` reducer or explicit `RemoveMessage`). `new_messages` to `stateful_turn` is exactly the consumed inbox `HumanMessage` delta; the thread holds full history so no duplication tracking is needed. Reliability of deletion is the load-bearing invariant (the graph's state update must be atomic with the `stateful_turn` call). (The `differential` channel reference is superseded by D84-30.)
 
 **Rationale:** Simpler than tracking `runner_committed_ids`/`triager_committed_ids`; inbox pooling + deletion is the pattern the operator prefers when reliable. The messages channel (`add_messages` BaseMessage) itself is the thread's memory, not a separate graph copy needing a cursor.
 
@@ -306,6 +306,8 @@ The pod binding reads the parent's `hunt_session` ContextVar to derive `run_id` 
 
 **NOTE:** E1 is now LLM-dependent (the runner's default probe needs the pod_runner model wired). If E1 must remain LLM-free, that is a leading contradiction to resolve in the spec re-write (E1 in-network with the stack provides LLM, so the model IS available - acceptable).
 
+**Landed reconciliation (T7/T10, 2026-08-22):** `symbolic_runner_step_fn` was NOT deleted outright - it was retained as the CONTRACT-TIER injected fake (the LLM-free driver for the C1-C12 contract predicates and for the E1 walkthrough's symbolic lane), while the PRODUCTION lane (`runner_step_fn=None`) uses the real ReAct `arun_session_turn`. The `compute_differential` reference here is superseded by D84-30 (the whole differential machinery, including that keep-list line, is removed).
+
 ---
 
 ## D84-25 - X6 `run_pod` removed, `arun_pod` everywhere (VERDICTED)
@@ -360,7 +362,7 @@ X1-X6 all verdicted. Remaining: (a) the spec re-write itself (from `hunting-67-t
 - **Store root:** `src/polymerhus/attack/hunting/data/pod-memory/` (the hunting module's store seam, sibling to `data/hunts/`). Layout `<root>/specs/<spec_id>/notes.yaml`.
 - **`spec_id`:** `canonical_spec_id(spec)` = sha256 of sorted-key JSON, byte-identical to the parent's `hunting_agent._canonical_hash` (D84-2), relocated into the pod.
 - **Note key hierarchy:** `notation_key(spec_id, variant_ref, note_name) = "<spec_id>:<variant_ref>:<note_name>"` - parent index = spec id (D84-19.3 per-variant, per-stretch).
-- **Note VALUE fields (the consolidation attributes, D84-20):** `{_seq, _ref, key, spec_id, variant_ref, note_name, kind, body, classification, symptom_status, differential_shape, kb_primitives_used, exhaustion_evidence, resume_point, evidence, provenance}`; `_seq` monotonic per spec, `_ref = note-<seq:04d>`; append-only; grep-match read (`parent_key` / `key_keyword` / `body_keyword`); read-latest.
+- **Note VALUE fields (the consolidation attributes, D84-20; superseded field set by D84-30/31/32):** `{_seq, _ref, key, spec_id, variant_ref, note_name, kind, body, classification, symptom_status, differential_shape, kb_primitives_used, exhaustion_evidence, resume_point, evidence, provenance}`; `_seq` monotonic per spec, `_ref = note-<seq:04d>`; append-only; grep-match read (`parent_key` / `key_keyword` / `body_keyword`); read-latest. The CANONICAL landed fields omit `differential_shape`/`resume_point` (D84-32).
 - **Closed `POD_NOTE_KINDS`:** `("experiment_summary", "kb_insight", "freeform")` - `experiment_summary` = the ONE consolidated P3 note per stretch (primary triager artifact, D84-17/19/23); `kb_insight` = a KB-derived testing primitive (the `implicit_test_primitive` analogue); `freeform` = any forward-useful note.
 - **Prompt-memory pattern (hunt-orchestrator replication, `_compose_gate_prompt` + `config_keys`/#141):** `MEMORY_READ_GUIDANCE` (persistent SYSTEM block: tool contract + kinds + read filters) + `compose_memory_guidance(store, spec_id)` (per-turn USER INDEXABLE key-list header) - both embedded in the Runner's lap opener and the Triager's delta; no deterministic retrieval stage, the agent indexes then calls the `note` tool.
 - **Tool:** `PodNoteTool(BaseTool)` with `args_schema=NoteToolSpec` (`extra="forbid"` - D84-22), operation discriminator write/read, coded contract rejections (`NOTES_ARGS_REJECTED`, `NOTES_EMPTY_BODY`, `NOTES_BAD_KIND`, `NOTES_NO_STORE`), fail-open on None store (O10). Proven in a real `create_agent` ReAct loop (fake model): valid write persists, wrong param becomes the `Error invoking tool 'note' ... Extra inputs are not permitted` ToolMessage, valid read returns the note un-truncated.
