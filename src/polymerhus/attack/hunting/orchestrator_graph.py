@@ -1,10 +1,15 @@
 """The hunt-orchestration graph engine (#110): the StateGraph topology.
 
 The O1-O10 orchestration canon's algorithm is a supervisor-state schedule loop
-over the candidate pairs. The supervisor is the single routing authority
-(`Command(goto=...)` only from it - DP-5: the both-paths-fire pitfall cannot
-occur); the deterministic stages ride static edges back to the supervisor, and
-the loop restarts naturally when the supervisor pops the next pair.
+over the accepted faults. As of the candidates-rewrite each schedule head is a
+FAULT work item (`FaultWorkItem`: `fault_class` + the fault's full matched-unit
+list), so ONE REASON turn covers the fault over all its matched units; the
+configs the REASON body mints at the unit boundary accumulate on state under
+`minted_configs` and the DISPATCH phase pops them per allowed direction. The
+supervisor is the single routing authority (`Command(goto=...)` only from it -
+DP-5: the both-paths-fire pitfall cannot occur); the deterministic stages ride
+static edges back to the supervisor, and the loop restarts naturally when the
+supervisor pops the next fault.
 
 Topology:
   START -> supervisor
@@ -18,7 +23,7 @@ Topology:
 
 Determinism: routing ONLY from the supervisor; static edges everywhere else;
 one logical writer per super-step. Every channel is LAST-WRITE EXCEPT the two
-reducer channels `directions` (the per-pair accumulator the budget stage cuts
+reducer channels `directions` (the per-fault accumulator the budget stage cuts
 over) and `trail` (report bookkeeping), both append-only - the supervisor's
 `receipts` discipline generalised to the two accumulators this engine needs.
 
@@ -26,7 +31,7 @@ This module builds (never compiles) the graph; `build_hunting_graph` takes
 injectable node closures (mirroring `analysis.supervisor.build_supervisor_graph`)
 so a pass compiles IN-MEMORY and the driver (arun_orchestration, Task 2)
 supplies the canon-delegating closures. Each default node is fail-open - a
-collaborator failure carries the pair, never aborts the pass (the O1-O10
+collaborator failure carries the fault, never aborts the pass (the O1-O10
 degradation canon). No driver and no I/O at import (CODING_STANDARD section 6).
 """
 from __future__ import annotations
@@ -50,21 +55,27 @@ _DISPATCH = "dispatch"
 class HuntOrchestrationState(TypedDict, total=False):
     """The graph's channels. Every field is last-write EXCEPT the two reducer
     channels `directions` (the pair accumulator the budget stage cuts over) and
-    `trail` (report bookkeeping). `kb_evidences` / `kb_degraded` / `surface` /
-    `tools` / `store_reads` are read-only inputs the driver assembles before the
-    graph runs; the seam closures (`reason_fn` / `budget_fn` / `dispatch_fn` /
-    `rematch_fn`) ride the state so the default nodes can call the canon
-    delegates without the driver rebuilding the graph."""
+    `trail` (report bookkeeping). As of the candidates-rewrite the schedule head
+    is a FAULT work item (a `FaultWorkItem`: `fault_class` + the fault's full
+    matched-unit list), `current` is that work item, and the harness-owned
+    `ledger` / `minted_configs` channels carry the unit-boundary state (the
+    `LoopLedger` and the configs the per-fault REASON body minted). `kb_evidences`
+    / `kb_degraded` / `surface` / `tools` / `store_reads` are read-only inputs
+    the driver assembles before the graph runs; the seam closures (`reason_fn` /
+    `budget_fn` / `dispatch_fn` / `rematch_fn`) ride the state so the default
+    nodes can call the canon delegates without the driver rebuilding the graph."""
 
     project_id: str
     run_id: str
     phase: str                               # "reason" | "dispatch"
     schedule: list[Any]                      # last-write: the supervisor rewrites the tail
-    current: Any                             # last-write: the pair being reasoned
+    current: Any                             # last-write: the fault work item being reasoned
     worklist: list[Any]                      # last-write: the allowed dispatch queue
     current_direction: Any                   # last-write: the direction being dispatched
     directions: Annotated[list[Any], operator.add]  # the ONLY per-pair accumulator
     trail: Annotated[list[dict], operator.add]      # report bookkeeping
+    ledger: Any                              # last-write: the LoopLedger, updated at the unit boundary
+    minted_configs: dict                     # last-write: revival_key -> minted HuntConfig list
     kb_evidences: dict                       # read-only, assembled by the driver
     kb_degraded: bool                        # read-only
     surface: list[dict]                      # read-only
@@ -79,10 +90,10 @@ class HuntOrchestrationState(TypedDict, total=False):
 
 def _supervisor(state: HuntOrchestrationState) -> Command:
     """The single routing authority. REASON phase: pop the schedule head, set it
-    as the current pair, route to `reason`; an empty schedule -> `budget`.
-    DISPATCH phase: pop the worklist head, route to `dispatch`; an empty
-    worklist -> END. Routing ONLY (a single `Command` - never both paths); the
-    payload travels as the typed values on state."""
+    as the current fault work item, route to `reason`; an empty schedule ->
+    `budget`. DISPATCH phase: pop the worklist head, route to `dispatch`; an
+    empty worklist -> END. Routing ONLY (a single `Command` - never both paths);
+    the payload travels as the typed values on state."""
     if state.get("phase", "reason") == "reason":
         schedule = list(state.get("schedule") or [])
         if not schedule:
@@ -101,14 +112,20 @@ def _supervisor(state: HuntOrchestrationState) -> Command:
 
 
 def _carry_current(state: HuntOrchestrationState) -> dict:
-    """Fail-open: carry the current pair as a bare carried direction (Task 1;
-    Task 2 delegates to the canon's gate-carry so the minted config matches)."""
+    """Fail-open: carry the current FAULT work item as bare carried directions,
+    one per matched unit (Task 1; Task 2 delegates to the canon's gate-carry so
+    the minted config matches)."""
     current = state.get("current")
     if current is None:
         return {}
-    from polymerhus.attack.hunting.hunt_orchestrator import EnvisionedDirection  # noqa: PLC0415
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        EnvisionedDirection,
+    )
+    units = list(getattr(current, "candidates", None) or [])
+    fault_class = getattr(current, "fault_class", "?")
     return {"directions": [
-        EnvisionedDirection(unit_id=current.unit_id, fault_class=current.fault_class),
+        EnvisionedDirection(unit_id=c.unit_id, fault_class=fault_class)
+        for c in units
     ]}
 
 
@@ -125,11 +142,11 @@ def _call_maybe_await(body: Callable | None, state: HuntOrchestrationState):
 
 
 def _make_reason(reason_node: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
-    """Build the `reason` node: run the LLM-analysis stretch for the current
-    pair (the injected body - sync or async), or carry the pair when the stretch
-    is absent or raises (fail-open - the O1-O10 gate-carry). The body (Task 2)
-    performs the stateful actor turn and returns the pair's `directions` + trail
-    events."""
+    """Build the `reason` node: run the per-fault REASON stretch for the current
+    fault work item (the injected body - sync or async), or carry every unit of
+    the fault when the stretch is absent or raises (fail-open - the O1-O10
+    gate-carry). The body (Task 2) performs the stateful actor turn and returns
+    the fault's `directions` + trail events + the unit-boundary state."""
 
     async def reason(state: HuntOrchestrationState) -> dict:
         try:
@@ -138,7 +155,7 @@ def _make_reason(reason_node: Callable | None) -> Callable[[HuntOrchestrationSta
                 out = await out
             if out is not None:
                 return out
-        except Exception as exc:  # noqa: BLE001 - fail-open: carry the pair
+        except Exception as exc:  # noqa: BLE001 - fail-open: carry the fault
             logger.warning("reason stretch failed for %s, carrying (%s)",
                            _pair_label(state.get("current")), exc)
         return _carry_current(state)
@@ -170,11 +187,11 @@ def _make_budget(budget_node: Callable | None) -> Callable[[HuntOrchestrationSta
 
 def _make_dispatch(dispatch_node: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
     """Build the `dispatch` node: the per-direction dispatch stage. The injected
-    body (Task 2) does park/resume + rematch for a yellow candidate, the
-    deterministic mint, and the per-config dispatch with inline back-edge
-    rounds, returning trail events. The default (no body) degrades to a
-    `hunting agent unavailable` trail event - fail-open, exactly the canon's
-    no-`dispatch_fn` outcome."""
+    body (Task 2) does park/resume + rematch for a yellow candidate, then the
+    per-config dispatch of the configs the per-fault REASON body minted at the
+    unit boundary, with inline back-edge rounds, returning trail events. The
+    default (no body) degrades to a `hunting agent unavailable` trail event -
+    fail-open, exactly the canon's no-`dispatch_fn` outcome."""
 
     async def dispatch(state: HuntOrchestrationState) -> dict:
         out = _call_maybe_await(dispatch_node, state)
@@ -194,7 +211,11 @@ def _make_dispatch(dispatch_node: Callable | None) -> Callable[[HuntOrchestratio
 def _pair_label(current: Any) -> str:
     if current is None:
         return "<none>"
-    return f"{getattr(current, 'unit_id', '?')}::{getattr(current, 'fault_class', '?')}"
+    fault_class = getattr(current, "fault_class", "?")
+    units = getattr(current, "candidates", None)
+    if isinstance(units, (list, tuple)) and units:
+        return f"{len(units)} unit(s)::{fault_class}"
+    return f"{getattr(current, 'unit_id', '?')}::{fault_class}"
 
 
 def build_hunting_graph(
