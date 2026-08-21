@@ -3,14 +3,10 @@ import logging
 from polymerhus.app.llm.capability import resolve_capability
 from polymerhus.app.llm.negotiation import (
     Method,
-    _PROBE_CACHE,
-    _emit_probe_span,
-    _probe_cache_key,
-    _unknown_profile,
     negotiate_method,
     probe_with_invoker,
+    resolve_method,
     result_validates,
-    schema_shape_of,
 )
 from polymerhus.app.llm.providers import (
     build_chat_model,
@@ -24,45 +20,6 @@ logger = logging.getLogger(__name__)
 # The A1 semantic default for the no-tool rung (unknown/absent profile); D7
 # fail-open lands here on any resolution/negotiation miss.
 _SEMANTIC_DEFAULT: Method = "json_schema"
-
-
-def _one_shot_method(provider: str, model: str, schema) -> Method:
-    """The structured-output method for one `invoke_role` call: resolve the
-    held capability profile once and consult the PURE negotiate contract with
-    `no_tools_bound=True` (the one-shot path never binds tools). Fail-open
-    (D7): ANY resolution or negotiation failure lands the semantic default and
-    the call still proceeds - and capability stays OFF the #73 retry axis (a
-    single synchronous resolve-and-hold read at call start, never inside the
-    escalating attempts, never re-attempted). Observable per resolution via
-    langfuse span (D11) and log with provenance."""
-    try:
-        profile = resolve_capability(provider, model)
-        method = negotiate_method(profile, no_tools_bound=True,
-                                  schema_shape=schema_shape_of(schema))
-        try:
-            _emit_probe_span(
-                provider,
-                model,
-                schema,
-                method,
-                getattr(profile, "source", None) if profile is not None else None,
-                [method],
-            )
-        except Exception:
-            logger.debug("one-shot resolution span emit failed for %s/%s", provider, model, exc_info=True)
-        logger.info(
-            "capability resolution: provider=%s model=%s schema=%s chosen=%s provenance=%s",
-            provider,
-            model,
-            getattr(schema, "__name__", str(schema)[:80]) if schema is not None else "None",
-            method,
-            getattr(profile, "source", None) if profile is not None else None,
-        )
-        return method
-    except Exception as exc:  # noqa: BLE001 - fail-open: never block the call
-        logger.warning("one-shot method negotiation failed for %s/%s (%s); "
-                       "using the semantic default", provider, model, exc)
-        return _SEMANTIC_DEFAULT
 
 
 def structured_output_for(llm, schema, method: Method):
@@ -96,42 +53,17 @@ def chat_model_for(role: str, *, temperature: float = 0, max_retries: int | None
                             max_retries=max_retries, thinking=thinking_for(role))
 
 
-def _method_for_probe(
-    provider: str,
-    model: str,
-    schema,
-    messages,
-    temperature: float,
-    role: str,
-):
-    """Resolve the method for an unknown profile via probe-on-miss (A2).
+def _method_for_probe(provider, model, schema, profile, messages, temperature, role) -> Method:
+    """Resolve the one-shot method via the SHARED `resolve_method` orchestration.
 
-    Off the #73 axis: single-shot probe at construction, before the escalating
-    wrapper, never re-probed mid-session. Resolve capability once, check
-    `_unknown_profile`, then try DEGRADE_CHAIN in order validating the parsed
-    result via `result_validates` - never parsing vendor error strings. Winner
-    is held in `_PROBE_CACHE` per (provider, model, schema-class) and shared
-    by the session. Fail-open (D7): a probe that misses every rung degrades to
-    the semantic default and the session still starts. Observable per resolution
-    via langfuse span (D11) and log with provenance."""
-    try:
-        profile = resolve_capability(provider, model)
-    except Exception as exc:  # noqa: BLE001 - fail-open
-        logger.warning(
-            "one-shot method negotiation failed for %s/%s (%s); "
-            "using the semantic default",
-            provider,
-            model,
-            exc,
-        )
-        return _SEMANTIC_DEFAULT
-    if not _unknown_profile(profile):
-        return None  # signal caller to use normal negotiate path
-    key = _probe_cache_key(provider, model, schema)
-    if key in _PROBE_CACHE:
-        winner = _PROBE_CACHE[key]
-        return winner if winner is not None else _SEMANTIC_DEFAULT
-
+    The caller has already resolved the capability profile once (resolve-and-
+    hold, D6); this helper builds the probe invoker - the one-shot seam always
+    probes unknown profiles, unlike the session seam (Q2) - and delegates the
+    unknown-check -> cache-read -> probe -> emit+log sequence to the single
+    resolver in `negotiation.py`, so one-shot and session never drift. Off the
+    #73 axis: the probe is single-shot at construction. Fail-open (D7): a
+    probe that misses every rung degrades to the semantic default and the call
+    still proceeds."""
     def invoker(method: Method):
         llm = build_chat_model(
             provider,
@@ -142,8 +74,18 @@ def _method_for_probe(
         )
         return structured_output_for(llm, schema, method).invoke(messages)
 
-    winner = probe_with_invoker(provider, model, schema, invoker, profile)
-    return winner if winner is not None else _SEMANTIC_DEFAULT
+    method, _provenance = resolve_method(
+        profile,
+        schema,
+        True,
+        invoker=invoker,
+        role=role,
+        provider=provider,
+        model=model,
+        negotiate=negotiate_method,
+        probe=probe_with_invoker,
+    )
+    return method
 
 
 def invoke_role(role, messages, *, schema=None, temperature: float = 0):
@@ -170,13 +112,19 @@ def invoke_role(role, messages, *, schema=None, temperature: float = 0):
     provider, model = resolve_role(role)
     method: Method | None = None
     if schema is not None:
-        # Probe path for unknown profiles - off the #73 axis, held per schema-class.
-        probed = _method_for_probe(provider, model, schema, messages, temperature, role)
-        if probed is not None:
-            method = probed
-        else:
-            # Known profile or probe miss signal - fall back to normal negotiate.
-            method = _one_shot_method(provider, model, schema)
+        # Capability is resolved ONCE per logical call (resolve-and-hold, D6),
+        # before the escalating attempts, then delegated to the shared
+        # `resolve_method` orchestration. Fail-open (D7): ANY resolution or
+        # negotiation failure lands the semantic default and the call proceeds.
+        try:
+            profile = resolve_capability(provider, model)
+            method = _method_for_probe(
+                provider, model, schema, profile, messages, temperature, role
+            )
+        except Exception as exc:  # noqa: BLE001 - fail-open: never block the call
+            logger.warning("one-shot method negotiation failed for %s/%s (%s); "
+                           "using the semantic default", provider, model, exc)
+            method = _SEMANTIC_DEFAULT
 
     def call(budget):
         llm = build_chat_model(provider, model, temperature=temperature,

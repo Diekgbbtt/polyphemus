@@ -142,31 +142,16 @@ def test_probe_off_escalating_axis_cold_start_only():
     """A2 cadence: probe happens once at construction, off the #73 axis - no retry budget spent.
     The escalating wrapper retries the SAME probed winner, not re-probing per attempt."""
     N.clear_probe_cache()
-    # Simulate invoke_role probe caching - ensure probe_with_invoker is called once, then escalating loop uses winner
     from polymerhus.app.llm import roles as R
 
-    # Patch resolve_capability to unknown, and build_chat_model + structured_output_for
     with patch.object(R, "resolve_capability", return_value=_unknown_profile()):
         with patch.object(R, "resolve_role", return_value=("openrouter", "probe-off-axis")):
             N.clear_probe_cache()
             invoke_counts = {"probe": 0, "call": 0}
-
-            def fake_probe_provider_build(*a, **kw):
-                # This is used inside probe invoker - count probe invokes
-                invoke_counts["probe"] += 1
-                m = Mock()
-                # structured_output_for returns object with .invoke that returns valid dict
-                mock_struct = Mock()
-                mock_struct.invoke.return_value = {"label": "x"}
-                m.with_structured_output.return_value = mock_struct
-                return m
-
-            # Patch probe's build path via negotiation probe helper directly
-            # Instead test roles.invoke_role with mocked probe helper: patch probe_with_invoker
             original_probe = N.probe_with_invoker
+
             def counting_probe(provider, model, schema, invoker, profile):
                 invoke_counts["probe"] += 1
-                # simulate one probe attempt that validates first rung
                 return original_probe(provider, model, schema, lambda m: {"label": "x"}, profile)
 
             with patch.object(R, "probe_with_invoker", side_effect=counting_probe):
@@ -177,9 +162,9 @@ def test_probe_off_escalating_axis_cold_start_only():
                     mock_llm.with_structured_output.return_value = mock_struct
                     mock_build.return_value = mock_llm
                     with patch.object(R, "invoke_with_escalating_timeout") as mock_escalating:
-                        # escalating wrapper should receive a call that retries same winner
+                        # The same probed winner retries across the escalating attempts -
+                        # the probe never re-runs mid-session (A2 cadence).
                         def escalating_side_effect(call):
-                            # Simulate two attempts: first returns valid, should not re-probe
                             invoke_counts["call"] += 1
                             r1 = call(300)
                             invoke_counts["call"] += 1
@@ -187,10 +172,8 @@ def test_probe_off_escalating_axis_cold_start_only():
                             return r1 or r2
 
                         mock_escalating.side_effect = escalating_side_effect
-                        result = R.invoke_role("triager", [{"role": "user", "content": "hi"}], schema=_Good)
-                        # probe happened once at construction
+                        R.invoke_role("triager", [{"role": "user", "content": "hi"}], schema=_Good)
                         assert invoke_counts["probe"] == 1
-                        # escalating attempts both used same winner (call invoked twice, but probe not re-run)
                         assert mock_escalating.call_count == 1
 
 
@@ -227,27 +210,17 @@ def test_probe_observability_span_and_log(monkeypatch, caplog):
     """Each resolution gets a langfuse span/trace (D11) and is logged with provenance."""
     N.clear_probe_cache()
     caplog.set_level(logging.INFO)
-    # Mock langfuse get_client to assert span created
+    import sys
+    import types
+
     mock_span = Mock()
     mock_span.__enter__ = Mock(return_value=mock_span)
     mock_span.__exit__ = Mock(return_value=False)
     mock_client = Mock()
     mock_client.start_as_current_observation.return_value = mock_span
-    mock_langfuse = Mock()
-    mock_langfuse.get_client.return_value = mock_client
-    monkeypatch.setitem(__import__("sys").modules, "langfuse", mock_langfuse)
-
-    # Need to also patch the import inside negotiation._emit_probe_span - it does `from langfuse import get_client`
-    # So mocking sys.modules langfuse with get_client attribute works
-    mock_langfuse.get_client = mock_client.get_client if hasattr(mock_client, "get_client") else mock_client
-
-    # Actually _emit does `from langfuse import get_client` - so we need that symbol
-    import sys
-    import types
-
     fake_langfuse = types.ModuleType("langfuse")
     fake_langfuse.get_client = lambda: mock_client
-    sys.modules["langfuse"] = fake_langfuse
+    monkeypatch.setitem(sys.modules, "langfuse", fake_langfuse)
 
     def invoker(method):
         return {"label": "x"}
@@ -255,28 +228,21 @@ def test_probe_observability_span_and_log(monkeypatch, caplog):
     profile = CapabilityProfile(source="models.dev/test", supports_structured_output=None, supports_tool_calling=None)
     winner = N.probe_with_invoker("openrouter", "obs/model", _Good, invoker, profile)
     assert winner == "json_schema"
-    # span was requested
     assert mock_client.start_as_current_observation.call_count >= 1
     call_kwargs = mock_client.start_as_current_observation.call_args
     assert call_kwargs is not None
-    # input should contain provider/model
-    inp = call_kwargs[1].get("input") if len(call_kwargs) > 1 else call_kwargs[0][0] if call_kwargs[0] else {}
-    # Check log contains provenance
     assert "obs/model" in caplog.text or "obs" in caplog.text
     assert "models.dev/test" in caplog.text or "provenance" in caplog.text
-    # cleanup
-    sys.modules.pop("langfuse", None)
 
 
-def test_probe_observability_fail_open_when_langfuse_absent(caplog):
+def test_probe_observability_fail_open_when_langfuse_absent(monkeypatch, caplog):
     """Langfuse absent never blocks probe - fail-open."""
     caplog.set_level(logging.INFO)
     N.clear_probe_cache()
     import sys
 
-    # Ensure langfuse not importable
-    sys.modules.pop("langfuse", None)
-    # If langfuse not installed, probe should still succeed
+    monkeypatch.setitem(sys.modules, "langfuse", None)  # not importable -> fail-open
+
     def invoker(method):
         return {"label": "x"}
 
@@ -362,7 +328,7 @@ def test_session_cold_start_miss_never_writes_cache_and_marks_default_unvalidate
     mock_client.start_as_current_observation.return_value = mock_span
     fake_langfuse = types.ModuleType("langfuse")
     fake_langfuse.get_client = lambda: mock_client
-    sys.modules["langfuse"] = fake_langfuse
+    monkeypatch.setitem(sys.modules, "langfuse", fake_langfuse)
 
     monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:cold-start-unknown")
     monkeypatch.setattr(S, "resolve_capability", lambda provider, model: _unknown_profile())
@@ -381,7 +347,6 @@ def test_session_cold_start_miss_never_writes_cache_and_marks_default_unvalidate
     span_output = mock_span.update.call_args.kwargs["output"]
     assert span_output.get("provenance") == "semantic-default-unvalidated; no prior probe entry"
     assert "semantic-default-unvalidated" in caplog.text
-    sys.modules.pop("langfuse", None)
     N.clear_probe_cache()
 
 

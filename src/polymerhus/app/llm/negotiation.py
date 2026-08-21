@@ -47,8 +47,10 @@ The negotiation contract includes the parse-validation step as a companion
 pure predicate, `result_validates`: each degrade rung's outcome is the PARSED
 result validated against the target schema - not an exception-caught miss, so
 `json_mode`'s silent wrong-shape failure (HTTP 200, wrong JSON) is caught and
-renegotiated per A2 (increment-2 probes the chain in `DEGRADE_CHAIN` order via
-`next_rung`). No vendor error string is ever parsed (A2).
+renegotiated per A2. The probe-on-miss orchestration walks the fixed
+`DEGRADE_CHAIN` directly, validating the parsed result at each rung - it does
+not call `next_rung` (that predicate is the one-shot construction/degrade
+helper for a single held rung). No vendor error string is ever parsed (A2).
 
 Importing this module performs no I/O and requires no env var (CODING_STANDARD
 section 6).
@@ -77,9 +79,10 @@ SchemaShape = Literal["closed", "open"]
 
 _SCHEMA_SHAPES = set(SchemaShape.__args__)
 
-# The fixed profile-corrected degrade chain (A1), in descent order. Each rung's
-# result is validated via `result_validates`; a probe/construction orchestration
-# descends with `next_rung` (increment-2, A2).
+# The fixed profile-corrected degrade chain (A1), in descent order. The
+# probe-on-miss orchestration walks this tuple directly (validating each rung
+# via `result_validates`); `next_rung` is the one-shot construction/degrade
+# helper for a single held rung, not the probe's iterator.
 DEGRADE_CHAIN: tuple[Method, ...] = ("json_schema", "function_calling", "json_mode")
 
 # A profile is "unknown" for negotiation when it is absent OR carries no
@@ -308,6 +311,38 @@ def _emit_probe_span(
         )
 
 
+def _emit_resolution(
+    provider: str,
+    model: str,
+    schema: Any,
+    method: Method | None,
+    provenance: str | None,
+    attempted: list[Method],
+) -> None:
+    """The ONE emit-span (D11) + info-log block for a capability resolution.
+
+    Both `probe_with_invoker` (its internal probe winner) and `resolve_method`
+    (the shared seam-owned orchestration) report through here, so the
+    observable line and its provenance strings never diverge across the
+    one-shot and session seams. Fail-open: never raises, never blocks the
+    caller if langfuse is absent or misconfigured."""
+    try:
+        _emit_probe_span(provider, model, schema, method, provenance, attempted)
+    except Exception:  # noqa: BLE001 - fail-open, never into the caller
+        logger.debug(
+            "probe span emit failed for %s/%s", provider, model, exc_info=True
+        )
+    logger.info(
+        "capability probe: provider=%s model=%s schema=%s chosen=%s provenance=%s attempted=%s",
+        provider,
+        model,
+        getattr(schema, "__name__", str(schema)[:80]) if schema is not None else "None",
+        method,
+        provenance,
+        attempted,
+    )
+
+
 def probe_with_invoker(
     provider: str,
     model: str,
@@ -359,17 +394,80 @@ def probe_with_invoker(
             model,
         )
     _PROBE_CACHE[key] = winner
-    try:
-        _emit_probe_span(provider, model, schema, winner, provenance, attempted)
-    except Exception:
-        logger.debug("probe span emit failed for %s/%s", provider, model, exc_info=True)
-    logger.info(
-        "capability probe: provider=%s model=%s schema=%s chosen=%s provenance=%s attempted=%s",
-        provider,
-        model,
-        getattr(schema, "__name__", str(schema)[:80]),
-        winner,
-        provenance,
-        attempted,
-    )
+    _emit_resolution(provider, model, schema, winner, provenance, attempted)
     return winner
+
+
+def resolve_method(
+    profile: CapabilityProfile | None,
+    schema: Any,
+    no_tools_bound: bool,
+    *,
+    invoker: Callable[[Method], Any] | None = None,
+    role: str | None = None,
+    provider: str,
+    model: str,
+    negotiate: Callable[..., Method] = negotiate_method,
+    probe: Callable[..., Method | None] = probe_with_invoker,
+) -> tuple[Method, str | None]:
+    """The shared capability-method resolver owning the whole decision, once.
+
+    This is the single orchestration the one-shot (`roles.invoke_role`) and
+    session (`session._structured_response_format`) seams both point at, so the
+    resolve -> unknown-check -> cache-read -> (probe | semantic default) ->
+    emit-span+log sequence never drifts between them. The caller hands it an
+    ALREADY-RESOLVED `profile` (resolve-and-hold, D6) plus the seam's own
+    `negotiate` / `probe` references (so each module's tests can patch them) and
+    returns `(method, provenance)`.
+
+    `no_tools_bound` is the A1 semantic axis (True for a one-shot/session
+    no-tools extraction). Unknown-to-registry models (D5 Rule 1) apply
+    probe-on-miss (A2): a `probe` (default `probe_with_invoker`) only runs when
+    an `invoker` is supplied - the one-shot seam always supplies one, the
+    session seam supplies one only under its test seam and otherwise takes the
+    UNVALIDATED semantic default (Q2), never writing the shared cache (Q4). A
+    cached winner (probed by a prior one-shot) is reused with the
+    `probe-cache-hit` provenance. Fail-open (D7): every path returns a method;
+    an all-miss probe or an unknown no-invoker profile degrades to the semantic
+    default and the session still starts."""
+    if not no_tools_bound:
+        # A1 rung 1: tools bound -> the ONLY tool-loop option; no profile can
+        # change this. No cache read, no probe, no unknown-check.
+        method: Method = "function_calling"
+        provenance: str | None = None
+        _emit_resolution(provider, model, schema, method, provenance, [method])
+        return method, provenance
+    if not _unknown_profile(profile):
+        # A known profile never probes (Q1): the pure negotiate contract picks
+        # the rung from the held profile.
+        method = negotiate(
+            profile, no_tools_bound=True, schema_shape=schema_shape_of(schema)
+        )
+        provenance = getattr(profile, "source", None)
+        _emit_resolution(provider, model, schema, method, provenance, [method])
+        return method, provenance
+    # Unknown profile (D5 Rule 1). Cache-read first (Q3): a prior one-shot probe
+    # winner is held per (provider, model, schema-class) and reused.
+    key = _probe_cache_key(provider, model, schema)
+    if key in _PROBE_CACHE:
+        winner = _PROBE_CACHE[key]
+        method = "json_schema" if winner is None else winner
+        provenance = "probe-cache-hit"
+        _emit_resolution(provider, model, schema, method, provenance, [method])
+        return method, provenance
+    if invoker is not None:
+        # The one-shot seam supplies an invoker -> real probe. `probe` writes
+        # the shared cache and reports its own span/log; this resolver does not
+        # double-emit here (that is the ONE place the probe itself observes).
+        winner = probe(provider, model, schema, invoker, profile)
+        method = "json_schema" if winner is None else winner
+        return method, None
+    # No invoker (the session seam's production path, Q2): no extra LLM call at
+    # construction. Hold the UNVALIDATED semantic default for this turn, mark it
+    # observable at generation time, and NEVER write the shared cache (Q4).
+    method = negotiate(
+        profile, no_tools_bound=True, schema_shape=schema_shape_of(schema)
+    )
+    provenance = "semantic-default-unvalidated; no prior probe entry"
+    _emit_resolution(provider, model, schema, method, provenance, [method])
+    return method, provenance
