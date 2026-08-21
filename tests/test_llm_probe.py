@@ -341,6 +341,123 @@ def test_probe_winner_held_per_provider_model_schema_and_shared_by_session(monke
         N.clear_probe_cache()
 
 
+def test_session_cold_start_miss_never_writes_cache_and_marks_default_unvalidated(
+    monkeypatch, caplog
+):
+    """Q2/Q4 (operator-ratified 2026-08-21): a production cold-start session
+    (no prior one-shot probe entry) holds the UNVALIDATED semantic default
+    json_schema for THIS turn, emits the span/log with the
+    semantic-default-unvalidated provenance marker, and NEVER writes into the
+    shared _PROBE_CACHE - probe_with_invoker is the only cache writer."""
+    N.clear_probe_cache()
+    import sys
+    import types
+
+    from polymerhus.app.llm import session as S
+
+    mock_span = Mock()
+    mock_span.__enter__ = Mock(return_value=mock_span)
+    mock_span.__exit__ = Mock(return_value=False)
+    mock_client = Mock()
+    mock_client.start_as_current_observation.return_value = mock_span
+    fake_langfuse = types.ModuleType("langfuse")
+    fake_langfuse.get_client = lambda: mock_client
+    sys.modules["langfuse"] = fake_langfuse
+
+    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:cold-start-unknown")
+    monkeypatch.setattr(S, "resolve_capability", lambda provider, model: _unknown_profile())
+    caplog.set_level(logging.INFO)
+    assert S._session_probe_invoker is None  # production path, no override
+
+    rf = S._structured_response_format("triager", _Good)
+    from langchain.agents.structured_output import ProviderStrategy
+
+    assert isinstance(rf, ProviderStrategy)  # semantic default, still starts
+    key = N._probe_cache_key("openrouter", "cold-start-unknown", _Good)
+    assert key not in N._PROBE_CACHE  # session never writes the cache (Q4)
+    # The span carries the unvalidated-default provenance (Q2 generation-time
+    # failure-risk documentation), and the log mirrors it.
+    assert mock_client.start_as_current_observation.call_count >= 1
+    span_output = mock_span.update.call_args.kwargs["output"]
+    assert span_output.get("provenance") == "semantic-default-unvalidated; no prior probe entry"
+    assert "semantic-default-unvalidated" in caplog.text
+    sys.modules.pop("langfuse", None)
+    N.clear_probe_cache()
+
+
+def test_session_cold_start_miss_all_miss_cache_none_still_starts():
+    """Q2: the cold-start miss path still fails open (D7) - the session starts
+    on the semantic default regardless of cache state."""
+    N.clear_probe_cache()
+    from polymerhus.app.llm import session as S
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:cold-start-unknown-2")
+    monkeypatch.setattr(S, "resolve_capability", lambda provider, model: _unknown_profile())
+    try:
+        rf = S._structured_response_format("triager", _Good)
+        from langchain.agents.structured_output import ProviderStrategy
+
+        assert isinstance(rf, ProviderStrategy)
+        key = N._probe_cache_key("openrouter", "cold-start-unknown-2", _Good)
+        assert key not in N._PROBE_CACHE
+    finally:
+        monkeypatch.undo()
+        N.clear_probe_cache()
+
+
+def test_session_primed_cache_hit_reuses_winner_without_reinvoking(caplog):
+    """Q4: the session READS the shared _PROBE_CACHE primed by a prior one-shot
+    probe - the cached winner is used without any invoker call, and the span/log
+    carries the probe-cache-hit provenance."""
+    N.clear_probe_cache()
+    from polymerhus.app.llm import session as S
+
+    caplog.set_level(logging.INFO)
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:primed-hit")
+    monkeypatch.setattr(S, "resolve_capability", lambda provider, model: _unknown_profile())
+    # Prime the cache exactly as a prior one-shot probe_with_invoker would.
+    key = N._probe_cache_key("openrouter", "primed-hit", _Good)
+    N._PROBE_CACHE[key] = "function_calling"
+    # Any invoker call means the session wrongly re-probed - make it fail loudly.
+    S._session_probe_invoker = lambda provider, model, schema, method: (_ for _ in ()).throw(
+        AssertionError("cache hit must not re-probe")
+    )
+    try:
+        rf = S._structured_response_format("triager", _Good)
+        from langchain.agents.structured_output import ToolStrategy
+
+        assert isinstance(rf, ToolStrategy)  # cached function_calling winner
+        assert N._PROBE_CACHE[key] == "function_calling"  # unchanged, session never writes
+        assert "probe-cache-hit" in caplog.text
+    finally:
+        S._session_probe_invoker = None
+        monkeypatch.undo()
+        N.clear_probe_cache()
+
+
+def test_session_primed_cache_all_miss_none_fails_open_to_json_schema():
+    """Q4: the all-miss None sentinel cached by a prior probe fails open to the
+    json_schema semantic default on the session seam."""
+    N.clear_probe_cache()
+    from polymerhus.app.llm import session as S
+
+    monkeypatch = pytest.MonkeyPatch()
+    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:primed-miss")
+    monkeypatch.setattr(S, "resolve_capability", lambda provider, model: _unknown_profile())
+    key = N._probe_cache_key("openrouter", "primed-miss", _Good)
+    N._PROBE_CACHE[key] = None  # all-miss sentinel from a prior probe
+    try:
+        rf = S._structured_response_format("triager", _Good)
+        from langchain.agents.structured_output import ProviderStrategy
+
+        assert isinstance(rf, ProviderStrategy)
+    finally:
+        monkeypatch.undo()
+        N.clear_probe_cache()
+
+
 def test_probe_never_parses_vendor_error_string():
     """Validation via result_validates never branches on error strings."""
     N.clear_probe_cache()
