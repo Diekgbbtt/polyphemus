@@ -118,7 +118,9 @@ def test_invoke_role_tool_only_profile_reaches_wire_as_forced_tool_choice(monkey
     tool-calling-only profile negotiates `function_calling` and the class-form
     construction reaches the provider as a forced `tool_choice` naming the
     schema tool - the ONLY wire form a tool loop tolerates - with no
-    response_format. RED on purpose if the pin moves the construction."""
+    response_format.     RED on purpose if the pin moves the construction."""
+    import langchain_openai
+    assert tuple(int(p) for p in langchain_openai.__version__.split(".")) == _PINNED
     _env(monkeypatch)
     bodies = _inject(monkeypatch, CapabilityProfile(supports_tool_calling=True))
     roles.invoke_role("triager", [{"role": "user", "content": "hi"}], schema=_OpenDict)

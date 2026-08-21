@@ -109,15 +109,25 @@ def schema_shape_of(schema: Any) -> SchemaShape:
     return "open"
 
 
-def _annotation_is_open(annotation: Any) -> bool:
+def _annotation_is_open(annotation: Any, _seen: frozenset[type] | None = None) -> bool:
     """Whether an annotation - recursively through nested models and generic /
     union args - carries a free-form `dict`: a dict type with no constrained
-    value shape (bare `dict`, bare `Dict`). A TYPED dict (`dict[str, X]`)
-    serializes its value schema as the object's additionalProperties, so only
-    the unconstrained form is the free-form field class A1 names; recursing
-    into a typed dict's VALUE type still finds a nested model's open field."""
+    value shape (bare `dict`, bare `Dict`, or a `dict[str, Any|object]` whose
+    value slot is unprovably typed). A TYPED dict (`dict[str, X]`) serializes its
+    value schema as the object's additionalProperties, so only the unconstrained
+    form is the free-form field class A1 names; recursing into a typed dict's
+    VALUE type still finds a nested model's open field.
+
+    A `_seen` set of already-visited model classes keeps the recursion total over
+    SELF-REFERENTIAL schemas (`class Node(BaseModel): children: list["Node"]`) -
+    re-entering a visited model contributes nothing new, so it terminates with a
+    fixed point instead of a RecursionError."""
     if isinstance(annotation, type) and issubclass(annotation, BaseModel):
-        return any(_annotation_is_open(f.annotation)
+        _seen = _seen if _seen is not None else frozenset()
+        if annotation in _seen:
+            return False
+        _seen = _seen | {annotation}
+        return any(_annotation_is_open(f.annotation, _seen)
                    for f in annotation.model_fields.values())
     if annotation is dict:
         return True
@@ -125,9 +135,14 @@ def _annotation_is_open(annotation: Any) -> bool:
     origin = get_origin(annotation)
     if origin is None:
         return False
-    if origin is dict and (not args or all(a is Any or a is object for a in args)):
-        return True
-    return any(_annotation_is_open(a) for a in args)
+    if origin is dict:
+        if not args:
+            return True
+        value = args[-1]
+        if value is Any or value is object:
+            return True
+        return _annotation_is_open(value, _seen)
+    return any(_annotation_is_open(a, _seen) for a in args)
 
 
 def negotiate_method(

@@ -256,7 +256,7 @@ def test_json_mode_wrong_shape_fail_closes_when_every_attempt_misses(monkeypatch
     ])
     out = roles.invoke_role("triager", [{"role": "user", "content": "hi"}], schema=_OpenDict)
     assert out is None  # fail-closed on the validation miss, never a wrong shape
-    # every attempt hit the same message - verify the message marker
+    # every attempt re-sent the same held method (no re-negotiation on retry)
     methods = {w["kwargs"]["method"] for llm in record["llms"] for w in llm.wso_calls}
     assert methods == {"json_mode"}
 

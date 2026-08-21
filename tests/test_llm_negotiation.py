@@ -30,6 +30,7 @@ conversion-boundary pair.
 """
 import pytest
 from pydantic import BaseModel
+from typing import Any
 
 from polymerhus.app.llm import negotiation as N
 from polymerhus.app.llm.capability import CapabilityProfile
@@ -261,6 +262,31 @@ def test_schema_shape_of_typed_dict_is_not_a_free_form_field():
         mapping: dict[str, str]
 
     assert N.schema_shape_of(_Typed) == "closed"
+
+
+def test_schema_shape_of_unconstrained_dict_value_is_open():
+    """`dict[str, Any|object]` has an UNPROVABLY typed value slot - it serializes
+    identically to the bare-dict open form (`additionalProperties: true`), so the
+    conservative-open rule reads it as `open` (same as a bare `dict`)."""
+    class _AnyValue(BaseModel):
+        mapping: dict[str, Any]
+
+    class _ObjectValue(BaseModel):
+        mapping: dict[str, object]
+
+    assert N.schema_shape_of(_AnyValue) == "open"
+    assert N.schema_shape_of(_ObjectValue) == "open"
+
+
+def test_schema_shape_of_self_referential_model_terminates():
+    """A SELF-REFERENTIAL pydantic model must record a shape deterministically,
+    not recurse forever: the visited-model guard turns the cycle into a fixed
+    point. This is the total contract `schema_shape_of` promises (#99, ADR A1)."""
+    class _Node(BaseModel):
+        label: str = ""
+        children: list["_Node"] = []
+
+    assert N.schema_shape_of(_Node) == "closed"
 
 
 def test_schema_shape_of_nullable_and_optional_open_fields():
