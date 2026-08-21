@@ -329,3 +329,108 @@ def test_triager_seam_observes_pod_triager_session_inside_a_hunt():
     assert ctx.address.run_id == "run-1"
     assert ctx.address.hunt_id == "hunt-A"
     assert ctx.address.spec == canonical_spec_hash(spec)
+
+
+# --- T6 (#156): BaseMessage + add_messages channels (D84-4) -------------------
+
+def test_runner_channel_accumulates_appended_messages_in_order():
+    """D84-4: the message channels are `Annotated[list[BaseMessage],
+    add_messages]` - every node deposits ONLY its turn's new messages and the
+    reducer appends them onto the channel, so the agentic loop's turns
+    ACCUMULATE (order preserved, types intact) instead of replacing the channel
+    wholesale."""
+    from langchain_core.messages import BaseMessage
+
+    from polymerhus.attack.hunting.pod.agents import RUNNER_SYSTEM, TRIAGER_SYSTEM
+    from polymerhus.attack.hunting.pod.graph import build_pod_graph
+
+    steps = iter([
+        RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/"),
+        RunnerStep(action="conclude", observation_note="chain done"),
+    ])
+
+    def runner(spec, messages, tool_calls):
+        return next(steps)
+
+    def triager(spec, obs, messages, log):
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "space-exhausted", "clean": True}
+
+    graph = build_pod_graph(exec_fn=_exec(_ABSENT), runner_step_fn=runner,
+                            triager_fn=triager)
+    final = _run(graph.ainvoke({"spec": dict(VALID_SPEC)}))
+
+    msgs = final["runner_messages"]
+    assert all(isinstance(m, BaseMessage) for m in msgs)     # the typed channel
+    assert [m.type for m in msgs] == ["system", "human", "ai", "human", "ai"]
+    assert msgs[0].content == RUNNER_SYSTEM                  # the system prompt
+    assert "action: tool_call" in msgs[2].content            # turn 1's proposal
+    assert "TOOL RESULT" in msgs[3].content                  # the recorded observation
+    assert "action: conclude" in msgs[4].content             # turn 2: appended, not replaced
+
+    tmsgs = final["triager_messages"]                        # the critic's own channel
+    assert [m.type for m in tmsgs] == ["system", "human", "ai"]
+    assert tmsgs[0].content == TRIAGER_SYSTEM
+    assert "terminate" in tmsgs[2].content
+
+
+def test_duplicate_content_messages_dedup_under_same_id_in_the_channel():
+    """A repeated identical runner turn stamps the same id, so add_messages
+    merges it in place (dedup-under-same-id) instead of stacking a duplicate
+    turn; execution dedup stays the experiment log's job (O7/C10), untouched."""
+    from polymerhus.attack.hunting.pod.graph import build_pod_graph
+
+    steps = iter([
+        RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/"),
+        RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/"),  # identical turn
+        RunnerStep(action="conclude", observation_note="done"),
+    ])
+
+    def runner(spec, messages, tool_calls):
+        return next(steps)
+
+    def triager(spec, obs, messages, log):
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "space-exhausted", "clean": True}
+
+    graph = build_pod_graph(exec_fn=_exec(_ABSENT), runner_step_fn=runner,
+                            triager_fn=triager)
+    final = _run(graph.ainvoke({"spec": dict(VALID_SPEC)}))
+
+    ais = [m for m in final["runner_messages"] if m.type == "ai"]
+    # The two identical tool_call turns merged to ONE (dedup-under-same-id)...
+    assert len([m for m in ais if "tool_call" in m.content]) == 1
+    # ...while the distinct conclude turn still appended.
+    assert len([m for m in ais if "conclude" in m.content]) == 1
+    tools = [m for m in final["runner_messages"]
+             if m.type == "human" and "TOOL" in m.content]
+    assert len(tools) == 2                        # both tool RESULTS recorded (log-deduped)
+
+
+def test_seams_receive_curated_dict_views_with_role_and_content():
+    """D84-4: the message-type conversion happens at the graph-channel boundary -
+    the channel is BaseMessage, but every seam still receives its CURATED DICT
+    views ({role, content}) exactly like before; the type boundary never leaks
+    into the seams."""
+    runner_views, triager_views = [], []
+
+    def runner(spec, messages, tool_calls):
+        runner_views.append(list(messages))
+        return symbolic_runner_step_fn(spec, messages, tool_calls)
+
+    def triager(spec, obs, messages, log):
+        assert all(isinstance(m, dict) for m in messages)
+        triager_views.append(list(messages))
+        return {"action": "terminate", "verdict": "unsuccessful",
+                "terminal_reason": "space-exhausted", "clean": True}
+
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                        exec_fn=_exec(_ABSENT), runner_step_fn=runner,
+                        triager_fn=triager, trace_fn=_no_trace))
+    assert env["verdict"] == "unsuccessful"
+    assert runner_views and triager_views
+    for view in runner_views[0]:
+        assert "role" in view and "content" in view
+        assert view["role"] in ("system", "human", "ai", "tool")
+    assert triager_views[0][0]["role"] == "system"     # the critic sees its own system prompt
+    assert all("role" in v and "content" in v for v in triager_views[0])

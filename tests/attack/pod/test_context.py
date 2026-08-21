@@ -1,11 +1,13 @@
 """Unit tier: the in-memory context-management component - the experiment log,
-the dedup ledger, the filtered agent context, token-aware compaction, and
-(D84-2) the pod-owned canonical spec hash + HuntSession address derivation."""
+the dedup ledger, the filtered agent context, token-aware compaction, the
+BaseMessage id stamping (D84-4), and (D84-2) the pod-owned canonical spec hash
++ HuntSession address derivation."""
 from langchain_core.messages.utils import count_tokens_approximately
 
 from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
+    _lc_to_dicts,
     curate_messages,
 )
 from polymerhus.attack.hunting.pod.types import (
@@ -39,7 +41,58 @@ def test_short_session_is_untouched_by_compaction():
     msgs = [{"role": "system", "content": "SYS"},
             {"role": "human", "content": "go"},
             {"role": "ai", "content": "ok"}]
-    assert curate_messages(msgs, max_tokens=6000) == msgs
+    curated = curate_messages(msgs, max_tokens=6000)
+    # Compaction never fires on a short session: one curated view per input, in
+    # order, role/content verbatim. The views additionally carry the
+    # deterministic channel id (D84-4), so a re-stated message still dedups
+    # under the channel's `add_messages` reducer.
+    assert [(m["role"], m["content"]) for m in curated] == \
+           [(m["role"], m["content"]) for m in msgs]
+    assert [m["id"] for m in curated] == [m.id for m in _dicts_to_lc(msgs)]
+
+
+# --- D84-4: BaseMessage + add_messages id stamping -----------------------------
+
+def test_dicts_to_lc_stamps_ids_for_add_messages_merge_semantics():
+    """D84-4: `_dicts_to_lc` stamps every message with a deterministic id over
+    (role, content), so the channel's `add_messages` reducer merges duplicate
+    content (dedup-under-same-id) while changed content appends in order."""
+    from langgraph.graph.message import add_messages
+
+    a = _dicts_to_lc([{"role": "ai", "content": "same"}])
+    b = _dicts_to_lc([{"role": "ai", "content": "same"}])
+    assert a[0].id == b[0].id                       # identical content - identical id
+    assert [m.id for m in add_messages(a, b)] == [a[0].id]   # merged, not stacked
+
+    c = _dicts_to_lc([{"role": "ai", "content": "other"}])
+    assert a[0].id != c[0].id                       # changed content - fresh id, appends
+    assert [m.content for m in add_messages(a, c)] == ["same", "other"]
+
+    # The role is part of the identity: same content under a different role differs.
+    d = _dicts_to_lc([{"role": "human", "content": "same"}])
+    assert a[0].id != d[0].id
+
+
+def test_lc_to_dicts_views_carry_a_stable_id_and_honour_explicit_ones():
+    """The seam-facing views stay `{role, content}` dicts while carrying the
+    channel id: re-converting a view through `_dicts_to_lc` reproduces the SAME
+    id, an id-less BaseMessage is stamped to the same deterministic id, and an
+    explicit dict id overrides the stamp - so a seam-side re-statement still
+    dedups under `add_messages`."""
+    from langchain_core.messages import HumanMessage
+
+    lc = _dicts_to_lc([{"role": "human", "content": "go"}])
+    view = _lc_to_dicts(lc)[0]
+    assert view["role"] == "human" and view["content"] == "go"
+    assert view["id"] == lc[0].id                    # the stamped id survives the view
+    assert _dicts_to_lc([view])[0].id == lc[0].id    # ... and the round trip
+
+    # An id-less BaseMessage is stamped to the same deterministic id.
+    assert _lc_to_dicts([HumanMessage(content="go")])[0]["id"] == lc[0].id
+
+    # An explicit id wins over the deterministic stamp.
+    assert _dicts_to_lc(
+        [{"role": "human", "content": "go", "id": "custom-1"}])[0].id == "custom-1"
 
 
 def test_dedup_ledger_marks_and_reports():

@@ -12,7 +12,10 @@ verdict derivation reads (hunting-83 contract tests C13-C17).
 """
 from __future__ import annotations
 
-from typing import Any, Literal, TypedDict
+from typing import Annotated, Any, Literal, TypedDict
+
+from langchain_core.messages import BaseMessage
+from langgraph.graph.message import add_messages
 
 from pydantic import BaseModel, Field
 
@@ -173,8 +176,12 @@ class PodState(TypedDict, total=False):
     """The LangGraph loop state. Injected side-effecting collaborators
     (runner/triager/exec/kb) read and extend it; the terminal node renders the
     `PodExport`. The D6 experiment log lives on the `log` object
-    (`context.ExperimentLog`), mutated in place across nodes; the runner's
-    curated conversation lives on `runner_messages`."""
+    (`context.ExperimentLog`), mutated in place across nodes. The two message
+    channels are typed `BaseMessage` lists merged by LangChain `add_messages`
+    (D84-4): every node deposits ONLY its turn's appended messages (never the
+    full replacement list), and identical (role, content) messages carry the
+    same deterministic id, so the reducer dedups them in place. The seams still
+    receive the CURATED DICT views converted at the node boundary."""
 
     spec: dict            # the current variant's spec dict (D4-shaped)
     root_spec: dict       # the original D4 as received
@@ -184,8 +191,8 @@ class PodState(TypedDict, total=False):
     iteration: int        # outer actor-critic lap counter (one per stretch)
     current_variant_ref: str
     feedback: str         # Triager -> Runner declination
-    runner_messages: list  # the Runner's curated session (semi-stateful)
-    triager_messages: list  # the Triager's curated session (semi-stateful)
+    runner_messages: Annotated[list[BaseMessage], add_messages]
+    triager_messages: Annotated[list[BaseMessage], add_messages]
     tool_calls: int        # the INNER stretch counter (harness-capped)
     pending_step: dict     # the RunnerStep the runner proposed this turn
     stretch_obs: int       # observations recorded in the current stretch

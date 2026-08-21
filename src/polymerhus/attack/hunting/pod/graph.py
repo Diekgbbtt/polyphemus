@@ -59,7 +59,12 @@ from polymerhus.attack.hunting.pod.config import (
     HUNT_POD_MAX_TOOL_CALLS,
     MAX_POD_ITERS,
 )
-from polymerhus.attack.hunting.pod.context import ExperimentLog, curate_messages
+from polymerhus.attack.hunting.pod.context import (
+    ExperimentLog,
+    _dicts_to_lc,
+    _lc_to_dicts,
+    curate_messages,
+)
 from polymerhus.attack.hunting.pod.llm import (
     POD_DEFAULT_RUN_ID,
     POD_RUNNER_ROLE,
@@ -86,8 +91,19 @@ from polymerhus.attack.hunting.pod.types import (
 from polymerhus.attack.hunting.pod.verification import validate_decision, validate_spec
 
 
-def _append(msgs: list, role: str, content: str) -> list:
-    return list(msgs or []) + [{"role": role, "content": content}]
+def _curated(messages) -> list[dict]:
+    """Channel BaseMessages -> the seam-facing curated dict views (D84-4): the
+    message-type conversion happens HERE, at the graph-channel boundary, never
+    inside the seams. The runner's tool results live on the channel as
+    HumanMessages (`_dicts_to_lc` maps the `tool` role onto one) but are
+    re-tagged to their semantic `tool` role so `curate_messages` keeps
+    body-slicing them (G4); the triager channel carries no tool messages."""
+    views = _lc_to_dicts(messages)
+    for v in views:
+        if (v["role"] == "human"
+                and v["content"].startswith(("TOOL RESULT:", "TOOL ERROR:", "KB RESULT:"))):
+            v["role"] = "tool"
+    return views
 
 
 def _command_signature(variant_ref: str, command: str) -> str:
@@ -166,15 +182,16 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         violations = validate_spec(spec)
         runner_messages = [{"role": "system", "content": RUNNER_SYSTEM}]
         if not violations:
-            runner_messages = _append(
-                runner_messages, "human",
-                log.runner_context(spec, "", 1, HUNT_POD_MAX_ITERS))
+            runner_messages.append(
+                {"role": "human",
+                 "content": log.runner_context(spec, "", 1, HUNT_POD_MAX_ITERS)})
         return {
             "log": log, "root_spec": spec, "spec": spec,
             "init_validation": violations, "iteration": 1,
             "current_variant_ref": "v0", "feedback": "",
-            "runner_messages": runner_messages,
-            "triager_messages": [{"role": "system", "content": TRIAGER_SYSTEM}],
+            "runner_messages": _dicts_to_lc(runner_messages),
+            "triager_messages": _dicts_to_lc(
+                [{"role": "system", "content": TRIAGER_SYSTEM}]),
             "tool_calls": 0, "stretch_obs": 0,
         }
 
@@ -193,7 +210,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         # the task-local default run_id with no hunt_id).
         with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
                               role_id=POD_RUNNER_ROLE, middleware=runner_middleware):
-            step = await _await_seam(runner_step_fn, spec, curate_messages(msgs),
+            step = await _await_seam(runner_step_fn, spec,
+                                     curate_messages(_curated(msgs)),
                                      state.get("tool_calls", 0))
         if not isinstance(step, RunnerStep):
             try:
@@ -203,8 +221,10 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                                   observation_note="malformed runner step")
         ai = (f"thought: {step.thought}\naction: {step.action} "
               f"{step.tool} {step.command}{step.kb_query}").strip()
+        # D84-4: deposit ONLY the turn's new messages - `add_messages` merges
+        # them onto the channel (never the replacement list).
         return {"pending_step": step.model_dump(),
-                "runner_messages": _append(msgs, "ai", ai)}
+                "runner_messages": _dicts_to_lc([{"role": "ai", "content": ai}])}
 
     def runner_router(state: PodState) -> str:
         step = _step(state)
@@ -233,20 +253,22 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             except Exception as exc:  # noqa: BLE001 - fail-open KB
                 kb = {"error": str(exc)}
             return {"tool_calls": tc,
-                    "runner_messages": _append(state.get("runner_messages", []),
-                                               "tool", f"KB RESULT: {kb}")}
+                    "runner_messages": _dicts_to_lc(
+                        [{"role": "tool", "content": f"KB RESULT: {kb}"}])}
 
         command = step.command.strip()
         if not command:  # G2: reject a malformed tool call, do not execute
             return {"tool_calls": tc,
-                    "runner_messages": _append(state.get("runner_messages", []),
-                                               "tool", "TOOL ERROR: empty command rejected")}
+                    "runner_messages": _dicts_to_lc(
+                        [{"role": "tool",
+                          "content": "TOOL ERROR: empty command rejected"}])}
 
         sig = _command_signature(variant_ref, command)
         if log.has_executed(sig):  # O7/C10: one execution per identical probe
             return {"tool_calls": tc,
-                    "runner_messages": _append(state.get("runner_messages", []),
-                                               "tool", "TOOL RESULT: (already executed; deduped)")}
+                    "runner_messages": _dicts_to_lc(
+                        [{"role": "tool",
+                          "content": "TOOL RESULT: (already executed; deduped)"}])}
 
         result, _attempts = await run_with_retry(exec_fn, command,
                                                  timeout_s=EXEC_TIMEOUT_S,
@@ -263,7 +285,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                        f"body={observation.body[:400]!r} stderr={observation.stderr[:200]!r}")
         return {"tool_calls": tc, "stretch_obs": state.get("stretch_obs", 0) + 1,
                 "last_observation": observation.model_dump(),
-                "runner_messages": _append(state.get("runner_messages", []), "tool", result_text)}
+                "runner_messages": _dicts_to_lc(
+                    [{"role": "tool", "content": result_text}])}
 
     # --- the critic ------------------------------------------------------------
 
@@ -274,8 +297,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             else RawObservation()
         symptoms = [str(s) for s in (spec.get("verification_symptoms", []) or [])]
         symbolic = evaluate_symptom(symptoms, obs)
-        tmsgs = _append(state.get("triager_messages", []), "human",
-                        log.triager_context(spec, obs))
+        human = {"role": "human", "content": log.triager_context(spec, obs)}
+        seam_view = curate_messages(_curated(state.get("triager_messages", [])) + [human])
+        decision: dict = {}
 
         if symbolic == SYMPTOM_CONFIRMED_CLASS:
             decision = {"classification": SYMPTOM_CONFIRMED_CLASS, "action": "terminate",
@@ -290,7 +314,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             # runner's - the graph owns the per-instance session address.
             with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
                                   role_id=POD_TRIAGER_ROLE, middleware=triager_middleware):
-                raw = await _await_seam(triager_fn, spec, obs, curate_messages(tmsgs), log)
+                raw = await _await_seam(triager_fn, spec, obs, seam_view, log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":
                 violations = validate_decision({"verdict": decision.get("verdict"),
@@ -307,12 +331,15 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                             "action": "terminate", "verdict": "unsuccessful",
                             "terminal_reason": NO_SYMPTOM_EVIDENCE, "clean": False,
                             "note": "triager action missing; degraded"}
-            tmsgs = _append(tmsgs, "ai", str(decision))
 
         log.record_interpretation(Interpretation(
             variant=state.get("current_variant_ref", "v0"),
             classification=decision.get("classification", ""), note=decision.get("note", "")))
-        return {"decision": decision, "triager_messages": tmsgs}
+        # D84-4: deposit ONLY this lap's new messages (the context turn + the
+        # decision turn); `add_messages` merges them onto the triager channel.
+        return {"decision": decision,
+                "triager_messages": _dicts_to_lc(
+                    [human, {"role": "ai", "content": str(decision)}])}
 
     def decide_router(state: PodState) -> str:
         decision = state.get("decision", {})
@@ -338,7 +365,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         return {"current_variant_ref": ref, "spec": variant_spec, "iteration": iteration,
                 "tool_calls": 0, "stretch_obs": 0,
                 "feedback": decision.get("feedback", ""),
-                "runner_messages": _append(state.get("runner_messages", []), "human", opener)}
+                "runner_messages": _dicts_to_lc(
+                    [{"role": "human", "content": opener}])}
 
     # --- terminals -------------------------------------------------------------
 

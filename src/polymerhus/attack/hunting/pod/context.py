@@ -40,27 +40,46 @@ def canonical_spec_hash(spec: dict) -> str:
     ).hexdigest()
 
 
+def _message_id(role: str, content: str) -> str:
+    """The deterministic channel-message id (D84-4): identical (role, content)
+    stamps identically, so the graph channel's `add_messages` reducer merges
+    duplicate-content messages (dedup-under-same-id) while changed content gets
+    a fresh id and appends."""
+    return hashlib.sha256(f"{role}\x00{content}".encode("utf-8")).hexdigest()
+
+
 def _dicts_to_lc(messages: list[dict]):
+    """Dict views -> id-bearing BaseMessages (D84-4): every message is stamped
+    with the deterministic (role, content) id - or carries an explicit dict
+    "id" when present - so the channel's `add_messages` can dedup/merge instead
+    of stacking duplicates."""
     from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 
     out = []
     for m in messages:
-        role, content = m.get("role"), m.get("content", "")
+        role = m.get("role") or "human"
+        content = m.get("content", "")
+        msg_id = m.get("id") or _message_id(role, content)
         if role == "system":
-            out.append(SystemMessage(content=content))
+            out.append(SystemMessage(content=content, id=msg_id))
         elif role == "ai":
-            out.append(AIMessage(content=content))
+            out.append(AIMessage(content=content, id=msg_id))
         else:  # human, tool
-            out.append(HumanMessage(content=content))
+            out.append(HumanMessage(content=content, id=msg_id))
     return out
 
 
 def _lc_to_dicts(messages) -> list[dict]:
+    """BaseMessages -> the seam-facing curated views: `{role, content}` plus the
+    channel id (stamped when the message carries none), so a view re-converted
+    by `_dicts_to_lc` keeps its identity under `add_messages`."""
     role_of = {"system": "system", "ai": "ai", "human": "human"}
     out = []
     for m in messages:
         role = role_of.get(getattr(m, "type", "human"), "human")
-        out.append({"role": role, "content": m.content})
+        content = m.content
+        out.append({"role": role, "content": content,
+                    "id": getattr(m, "id", None) or _message_id(role, content)})
     return out
 
 
@@ -91,7 +110,11 @@ def curate_messages(messages: list[dict], max_tokens: int | None = None) -> list
         content = m.get("content", "")
         if m.get("role") == "tool" and len(content) > _BODY_SLICE:
             content = content[:_BODY_SLICE] + f"\n...[{len(content) - _BODY_SLICE} chars elided]"
-        filtered.append({"role": m.get("role", "human"), "content": content})
+        view = {"role": m.get("role", "human"), "content": content}
+        mid = m.get("id")
+        if mid:
+            view["id"] = mid  # the view keeps pointing at its source channel message
+        filtered.append(view)
 
     lc = _dicts_to_lc(filtered)
     trimmed = trim_messages(
