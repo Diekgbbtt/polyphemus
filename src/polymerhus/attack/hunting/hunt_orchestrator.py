@@ -899,7 +899,18 @@ async def arun_orchestration(
                                 d.envisioned_test_primitives),
                             "supposed_payload_vectors": list(
                                 d.supposed_payload_vectors),
+                            "research_direction": d.research_direction,
+                            "concrete_fault_candidates": [
+                                {
+                                    "fault_hypothesis": c.fault_hypothesis,
+                                    "adversarial_capabilities": list(
+                                        c.adversarial_capabilities),
+                                    "blocking_constraints": list(
+                                        c.blocking_constraints),
+                                } for c in d.concrete_fault_candidates
+                            ],
                         } for d in directions],
+                        "prior_minted_keys": list(gate_input.prior_minted_keys),
                     })
                 except Exception as exc:  # noqa: BLE001 - fail-open: carry the fault
                     logger.warning("gate reasoning failed for %s, carrying (%s)",
@@ -935,10 +946,19 @@ async def arun_orchestration(
             configs = _mint_for_direction(direction, candidate, prior_insights)
             minted[key] = list(configs)
             ledger.minted_config_keys.append(key)
+            trace_gate_step("emit-mint", input={
+                "revival_key": key,
+                "configs": len(configs),
+                "classes": sorted(
+                    c.fault_hypothesis
+                    for cfg in configs
+                    for c in cfg.prompt_template.concrete_fault_candidates),
+            })
             _write("notes", {
                 "revival_key": key,
                 "note": _note_for_unit(direction, key, configs),
             })
+            trace_gate_step("note-written", input={"revival_key": key})
             ledger.notes_recorded += 1
             ledger.units_done += 1
         return {
