@@ -84,7 +84,11 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
 )
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.orchestrator_graph import build_hunting_graph
-from polymerhus.attack.hunting.unit_projection import SystemInfo, UnitProjection
+from polymerhus.attack.hunting.unit_projection import (
+    SystemInfo,
+    UnitProjection,
+    build_projection,
+)
 from polymerhus.recon.control.targeted import TargetedReconResult
 from tests.conftest import neo4j_target, pg_live_dsn, wait_for
 from tests.e2e.hunting_observability import (
@@ -579,67 +583,78 @@ def test_e2e_e5_empty_after_prunes_is_empty_pass(tmp_path):
 # --- E6: cooperating systems surface in System-targeting hunt (Q5) ----------
 
 def test_e2e_e6_cooperating_systems_rendered(session, tmp_path):
-    """E6 - System-targeting hunt renders cooperating systems with neo4j mini-fixture.
+    """E6 - System-targeting hunt renders cooperating systems from the REAL L1
+    graph over a System-to-System adjacency (D3, spec 3.6 Q5).
 
-    Blocked when neo4j unavailable (not substituted). Validates stale fixture
-    by reading back Cypher counts before hunting.
+    Blocked when neo4j unavailable (not substituted). The fixture seeds a cache
+    System with a CALLS neighbor and a WebPresentation overlay; build_projection
+    reads the live graph so the prompt's cooperating line is judged against real
+    graph evidence, not a hand-built UnitProjection.
     """
     if not _hunting_stack_available():
         pytest.skip("sibling container not reachable - hunting e2e blocked (neo4j mini-fixture unavailable)")
 
-    # seed cooperating neighbors for System:cache:1
     pid = "proj-e6-" + uuid.uuid4().hex[:8]
-    load_l1_fixture(pid, session)
-    # add cooperating systems: cache:1 -> db and Service slug:b -> cache:1 already via load_l1_fixture?
-    # Add explicit CALLS edge cache:1 -> db
+    # cache:1 system (matches SYSTEM_CACHE identity), a db neighbor it CALLS,
+    # and a WebPresentation overlay (EXPOSED_VIA) so D3 adjacency is real.
     session.run(
-        "MERGE (s:L1TestableUnit:L1System {kind: 'db', discriminator: 'db-1', project_id: $p}) "
-        "WITH s MATCH (c:L1TestableUnit:L1System {kind: 'Cache', discriminator: '1', project_id: $p}) "
-        "MERGE (c)-[:CALLS]->(s)",
+        "MERGE (:L1TestableUnit:L1System {kind: 'cache', discriminator: '1', "
+        "project_id: $p, exposure: 'internal'}) "
+        "MERGE (:L1TestableUnit:L1System {kind: 'db', discriminator: 'db-1', "
+        "project_id: $p, exposure: 'internal'}) "
+        "MERGE (:L1TestableUnit:L1System {kind: 'WebPresentation', "
+        "discriminator: 'cache::status', project_id: $p, rendering_model: 'CSR'})",
         p=pid,
     )
-    # validate fixture
+    session.run(
+        "MATCH (c:L1System {kind:'cache', discriminator:'1', project_id:$p}) "
+        "MATCH (d:L1System {kind:'db', discriminator:'db-1', project_id:$p}) "
+        "MATCH (w:L1System {kind:'WebPresentation', discriminator:'cache::status', "
+        "project_id:$p}) "
+        "MERGE (c)-[:DEPENDS_ON]->(d) "
+        "MERGE (c)<-[:EXPOSED_VIA]-(w)",
+        p=pid,
+    )
+    # validate fixture: cache depends_on db, WebPresentation exposes cache
     cnt = session.run(
-        "MATCH (s:System {discriminator:'1'})-[r:CALLS]->(t) RETURN count(t) AS c",
-        p=pid,
-    )
-    # fallback cypher for L1System label
-    cnt2 = session.run(
-        "MATCH (c:L1System {discriminator:'1', project_id:$p})-[r:CALLS]->(t) RETURN count(t) AS c",
-        p=pid,
+        "MATCH (c:L1System {kind:'cache', discriminator:'1', project_id:$p})"
+        "-[:DEPENDS_ON]->(t) RETURN count(t) AS c", p=pid,
     ).single()["c"]
-    assert cnt2 == 1, f"fixture stale: expected 1 CALLS neighbor, got {cnt2}"
+    cnt_ov = session.run(
+        "MATCH (c:L1System {kind:'cache', discriminator:'1', project_id:$p})"
+        "<-[:EXPOSED_VIA]-(t) RETURN count(t) AS c", p=pid,
+    ).single()["c"]
+    assert cnt == 1, f"fixture stale: expected 1 DEPENDS_ON neighbor, got {cnt}"
+    assert cnt_ov == 1, f"fixture stale: expected 1 EXPOSED_VIA overlay, got {cnt_ov}"
+
+    def real_read(cypher, params):
+        return session.run(cypher, **params).data()
 
     store = HuntStore(tmp_path)
-    c = _candidate(SYSTEM_CACHE, FAULT_639, llm_witness="System cache internal")
-    # use real graph view (session-driven read_fn)
-    def real_read(cypher, params):
-        # delegate to the neo4j driver via ReadOnlyGraphView's default driver is mocked;
-        # we simulate by directly running session for the projection reads?
-        # For this E6, we instead bypass projection read_fn and let build_projection use a stub
-        # that returns cooperating adjacency directly.
-        return []
-    # Instead prove prompt rendering path via GateInput construction
+    cache_id = "cache:1"  # kind-qualified System identity <kind>:<discriminator>
+    c = _candidate(cache_id, FAULT_639, llm_witness="System cache internal")
+    view = ReadOnlyGraphView(pid, read_fn=real_read)
+    proj = build_projection(pid, cache_id, read_fn=view.read)
+    assert proj is not None, "live projection for cache:1 missing"
+    assert {"DEPENDS_ON", "EXPOSED_VIA"} <= set(proj.cooperating_systems), \
+        f"cooperating_systems missing D3 adjacency: {proj.cooperating_systems}"
+
     from polymerhus.attack.hunting.llm import _compose_gate_prompt
     gate_input = GateInput(
         candidates=[c],
-        unit_projection={
-            SYSTEM_CACHE: UnitProjection(
-                unit_id=SYSTEM_CACHE, kind="System", spine={}, edges={}, data_edges={},
-                data_rel_kinds=frozenset(), data_items={},
-                cooperating_systems={"CALLS": (SystemInfo(kind="db", props={"kind": "db"}),)},
-            ),
-        },
+        unit_projection={cache_id: proj},
         materialisation={FAULT_639: type("M", (), {"name": "Cache"})()},
         fold_family={FAULT_639: ()},
     )
     prompt = _compose_gate_prompt(gate_input)
     assert "cooperating systems:" in prompt
     assert "kind=db" in prompt
-    # run orchestration to mint 1 HuntConfig
+    assert "kind=WebPresentation" in prompt or "WebPresentation" in prompt
+
+    # run orchestration with the REAL graph view so surface_context is grounded.
     report = run_orchestration(
         project_id=pid, run_id="run-e6", candidates=[c],
-        tools=_tools(store, pid, graph_view=ReadOnlyGraphView(pid, read_fn=lambda cy,p: [])),
+        tools=_tools(store, pid, graph_view=view),
         dispatch_fn=_recording_dispatch([]),
     )
     assert report.hunts_dispatched == 1
