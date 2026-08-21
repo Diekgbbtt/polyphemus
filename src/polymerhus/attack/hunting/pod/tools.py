@@ -279,7 +279,9 @@ class ExecTool(BaseTool):
 
     def _run(self, **kwargs: Any) -> str:
         spec = ExecSpec(**kwargs)
-        result, _attempts = asyncio.run(run_with_retry(
+        from polymerhus.recon.control.async_bridge import run_coro_blocking
+
+        result, _attempts = run_coro_blocking(run_with_retry(
             self._exec_fn, spec.command, timeout_s=EXEC_TIMEOUT_S, max_iters=MAX_POD_ITERS))
         return self._record(spec.command, result)
 

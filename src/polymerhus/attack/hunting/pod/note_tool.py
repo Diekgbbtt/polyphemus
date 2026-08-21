@@ -17,8 +17,8 @@ reads return a graceful empty result, so the ReAct loop survives an unwired
 store. A read returns the note bodies prompt-verbatim and un-truncated
 (D84-19.2) - the summary is a different object from a raw tool body slice.
 
-The VALUE fields stored match the D84-32 CANONICAL set (`differential_shape`
-and `resume_point` are gone, D84-30/31).
+The VALUE fields stored match the D84-32 CANONICAL set (the D84-30/31
+removals applied).
 """
 from __future__ import annotations
 
