@@ -37,6 +37,8 @@ from typing import Any, Callable, Sequence
 
 from langchain_core.messages import BaseMessage
 
+from polymerhus.app.llm.capability import resolve_capability
+
 logger = logging.getLogger(__name__)
 
 # The collision-free session ADDRESSING lives in `session_address.py` (the typed,
@@ -351,15 +353,49 @@ async def arun_session_turn(
     return _to_turn(result, response_format, thread_id)
 
 
-def _structured_response_format(schema):
-    """Wrap a structured-output `schema` in `ToolStrategy` (tool-calling) - the
-    `function_calling`-equivalent, so an open `dict` field (e.g. `Observation.anchor`,
-    #44) survives, unlike the provider-native json_schema strict mode which 400s on
-    it. The one_shot path now negotiates its structured-output method per ADR A1
-    (json_schema dict-form / function_calling / json_mode, #146); this session path
-    still pins `ToolStrategy`. Moving it onto the same negotiation is ticket #147."""
-    from langchain.agents.structured_output import ToolStrategy
+def _structured_response_format(role_id: str, schema):
+    """The session seam's structured-output `response_format`, chosen by the A1
+    negotiation (#99) instead of pinning `ToolStrategy` unconditionally.
 
+    A no-tools structured session turn (`stateful_turn(schema=...)`) negotiates
+    like the one-shot seam: a structured-output-capable (or unknown) profile ->
+    `ProviderStrategy(schema, strict=False)` (the provider-native json_schema
+    rung - an open `dict` field survives under strict=False without the dict-form
+    workaround, unlike the one-shot `with_structured_output` path), a
+    tool-calling-only profile -> `ToolStrategy` (the proven force-tool rung).
+    TOOL-BOUND sessions and the session seam's json_mode rung stay on
+    `ToolStrategy`: a tool loop has no method-swap (A1 rung 2), and json_mode is
+    NOT expressible through `create_agent` (operator-confirmed 2026-08-21 - its
+    response_format vocabulary is ToolStrategy|ProviderStrategy|AutoStrategy
+    only; a pre-bound json_mode model raises NotImplementedError in the graph),
+    so a neither-capability no-tools turn falls back to ToolStrategy - the
+    current safe default that keeps a structured session turn working.
+
+    Capability resolution is resolve-and-hold at turn construction (D6), off the
+    #73 retry axis; D7 fail-open (unknown profile / resolution failure) degrades
+    to the json_schema semantic default and the session always starts."""
+    from langchain.agents.structured_output import (
+        ProviderStrategy,
+        ToolStrategy,
+    )
+
+    if schema is None:
+        return None
+    from polymerhus.app.llm.negotiation import (
+        negotiate_method,
+        schema_shape_of,
+    )
+    from polymerhus.app.llm.providers import resolve_role
+
+    try:
+        provider, model = resolve_role(role_id)
+        profile = resolve_capability(provider, model)
+        method = negotiate_method(profile, no_tools_bound=True,
+                                  schema_shape=schema_shape_of(schema))
+    except Exception:  # noqa: BLE001 - fail-open: the session must always start
+        method = "json_schema"
+    if method == "json_schema":
+        return ProviderStrategy(schema, strict=False)
     return ToolStrategy(schema)
 
 
@@ -384,10 +420,12 @@ def stateful_turn(
     `SessionAddress` (`session_address.py`) - or, for back-compat, a raw thread-id string
     - so each concurrent instance has a DISTINCT checkpoint the next session resumes from
     soundly (never a shared, colliding key). Structured output (when `schema` is given)
-    goes through `ToolStrategy` (the function_calling-equivalent, #44-safe). Returns the
-    parsed `schema` object (or None), or the text content when no schema - the same shape
-    the legacy `invoke_role` seam returned, so a call site swaps in place."""
-    response_format = _structured_response_format(schema) if schema is not None else None
+    is negotiated per ADR A1 (#99): json_schema (ProviderStrategy strict=False) on a
+    structured-output profile, ToolStrategy (the function_calling-equivalent, #44-safe)
+    on a tool-calling-only profile. Returns the parsed `schema` object (or None), or the
+    text content when no schema - the same shape the legacy `invoke_role` seam returned,
+    so a call site swaps in place."""
+    response_format = _structured_response_format(role_id, schema) if schema is not None else None
     return run_session_turn(
         role_id, _as_thread_id(thread), new_messages,
         checkpointer=checkpointer, response_format=response_format,
