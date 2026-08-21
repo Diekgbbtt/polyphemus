@@ -818,7 +818,7 @@ def test_structured_schemas_and_surface_unchanged():
         direction, _candidate(SERVICE_A, "CWE-352"), "hunt-1",
         surface_context={}, prior_hunt_insights=[], tool_registry=[],
         sub_fault_ids=["CWE-520", "CWE-9"],
-    )
+    )[0]
     assert config.sub_fault_ids == ["CWE-520", "CWE-9"]
     assert config.prompt_template.extension_points == ["p"]
     assert config.prompt_template.assumptions == ["a"]

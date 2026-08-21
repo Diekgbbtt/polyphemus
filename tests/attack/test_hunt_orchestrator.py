@@ -12,6 +12,7 @@ in tests/integration/test_hunt_orchestrator_contracts.py and are never
 repeated in this tier's red/green loop.
 """
 from polymerhus.attack.hunting.hunt_orchestrator import (
+    ConcreteFaultCandidate,
     DeliveredCandidate,
     DispatchResult,
     EnvisionedDirection,
@@ -162,14 +163,26 @@ def test_does_not_apply_is_pruned_and_never_reaches_the_gate():
 
 # --- Pure mechanics: the D3 HuntConfig minting --------------------------------
 
+def _ccf(*, hypothesis: str, capabilities=(), blockers=()) -> ConcreteFaultCandidate:
+    """A concrete fault candidate: a web-vulnerability CLASS (hypothesis text)
+    with the Q9-refined capability / blocker analysis."""
+    return ConcreteFaultCandidate(
+        fault_hypothesis=hypothesis,
+        adversarial_capabilities=list(capabilities),
+        blocking_constraints=list(blockers),
+    )
+
+
 def test_mint_hunt_config_carries_the_five_part_parameter_set():
+    # the candidates-rewrite fan-out: a direction with no concrete fault
+    # candidates degrades to ONE carried-bare config (the legacy seeded slots)
     candidate = _candidate(deterministic_witness=None)
     config = mint_hunt_config(
         direction=_carry(candidate), candidate=candidate, hunt_id="hunt-1",
         surface_context={"card": {"kind": "Service", "spine": {}}},
         prior_hunt_insights=[{"insight": "form Z carries no CSRF token"}],
         tool_registry=[{"tool": "csrf-probe"}],
-    )
+    )[0]
     assert config.hunt_id == "hunt-1"
     assert config.unit_id == SERVICE_A
     assert config.fault_class == FAULT_X
@@ -196,9 +209,141 @@ def test_hunt_config_carries_the_sub_fault_ids_slot():
         surface_context={},
         prior_hunt_insights=[],
         tool_registry=[],
-    )
+    )[0]
     config.sub_fault_ids = ["CWE-24", "CWE-35"]
     assert config.sub_fault_ids == ["CWE-24", "CWE-35"]
+
+
+def test_mint_fans_out_one_config_per_distinct_class():
+    # N HuntConfigs per distinct web-vulnerability class (the emitted set):
+    # the grouping discriminator is the candidate's `fault_hypothesis` text
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.concrete_fault_candidates = [
+        _ccf(hypothesis="csrf"),
+        _ccf(hypothesis="idor"),
+        _ccf(hypothesis="ssti"),
+    ]
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+    )
+    assert len(configs) == 3
+    # each config carries its own class's candidate as the class marker
+    assert [c.prompt_template.concrete_fault_candidates[0].fault_hypothesis
+            for c in configs] == ["csrf", "idor", "ssti"]
+    # the seeding identity persists on every fan-out config
+    assert {c.unit_id for c in configs} == {SERVICE_A}
+    assert {c.fault_class for c in configs} == {FAULT_X}
+
+
+def test_mint_collapses_same_class_duplicates_deterministically():
+    # the (LLM-owned, Q16) same-class merge should already have removed
+    # duplicates; the mint still collapses candidates sharing the same
+    # hypothesis text into one config, keeping the class's full subset
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.concrete_fault_candidates = [
+        _ccf(hypothesis="csrf", capabilities=["token bypass"], blockers=["WAF guards"]),
+        _ccf(hypothesis="csrf", capabilities=["same-origin policy"], blockers=[]),
+        _ccf(hypothesis="idor"),
+    ]
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+    )
+    assert len(configs) == 2
+    csrf, idor = configs
+    assert csrf.prompt_template.concrete_fault_candidates == [
+        _ccf(hypothesis="csrf", capabilities=["token bypass"], blockers=["WAF guards"]),
+        _ccf(hypothesis="csrf", capabilities=["same-origin policy"], blockers=[]),
+    ]
+    assert idor.prompt_template.concrete_fault_candidates == [
+        _ccf(hypothesis="idor"),
+    ]
+
+
+def test_mint_without_candidates_is_the_carried_bare_fallback():
+    # a direction with no emitted class markers still mints ONE dispatchable
+    # config from the legacy seeds + research direction (no class-specific slot)
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.research_direction = "csrf hygiene across state-changing flows"
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+    )
+    assert len(configs) == 1
+    config = configs[0]
+    assert config.hunt_id == "hunt-1"
+    assert config.prompt_template.concrete_fault_candidates == []
+    assert config.prompt_template.research_direction == \
+        "csrf hygiene across state-changing flows"
+
+
+def test_mint_with_only_empty_hypotheses_is_the_carried_bare_fallback():
+    # candidates whose hypothesis carries no class marker degrade the same way
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.concrete_fault_candidates = [_ccf(hypothesis=""), _ccf(hypothesis="")]
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+    )
+    assert len(configs) == 1
+    assert configs[0].prompt_template.concrete_fault_candidates == []
+
+
+def test_mint_passes_research_direction_and_preserves_the_seed_slots():
+    # the extended template mapping: research_direction passes through, the
+    # legacy seeds keep their old direction-to-template slots, and the fan-out
+    # hides nothing
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.research_direction = "enumerating the receipts resource"
+    direction.concrete_fault_candidates = [
+        _ccf(hypothesis="idor", capabilities=["direct object ref"], blockers=["authz check"]),
+        _ccf(hypothesis="csrf", capabilities=["token bypass"], blockers=["same-site cookies"]),
+    ]
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+    )
+    assert [c.hunt_id for c in configs] == ["hunt-1", "hunt-1-1"]
+    for config in configs:
+        template = config.prompt_template
+        assert template.rationale == "r"
+        assert template.extension_points == ["p"]
+        assert template.assumptions == ["a"]
+        assert template.supposed_payload_vectors == ["v"]
+        assert template.l0_evidence == ["llm: witness"]
+        assert template.research_direction == "enumerating the receipts resource"
+    assert configs[0].prompt_template.concrete_fault_candidates == [
+        _ccf(hypothesis="idor", capabilities=["direct object ref"], blockers=["authz check"])]
+    assert configs[1].prompt_template.concrete_fault_candidates == [
+        _ccf(hypothesis="csrf", capabilities=["token bypass"], blockers=["same-site cookies"])]
+
+
+def test_fanned_out_direction_dispatches_each_config():
+    # the dispatch stretch consumes the entire fan-out set: one hunt per
+    # distinct class, each with its own config record and hunt_id
+    store = _MemoryStore()
+
+    def reason_fn(inp):
+        direction = _carry(inp.candidates[0])
+        direction.concrete_fault_candidates = [
+            _ccf(hypothesis="csrf class"),
+            _ccf(hypothesis="idor class"),
+        ]
+        return GateDecision(directions=[direction])
+
+    report = _run(store, [_candidate()], reason_fn=reason_fn)
+    assert report.hunts_dispatched == 2
+    assert len(report.hunt_ids) == 2
+    assert len(set(report.hunt_ids)) == 2
+    assert len(store.list_records("run-1", "config")) == 2
+    assert len(store.list_records("run-1", "hunt")) == 2
+    assert len(store.list_records("run-1", "memory")) == 2
 
 
 # --- Seam behaviours: park/resume (H3) ----------------------------------------

@@ -1,13 +1,14 @@
 """The hunt-orchestrator (#82): the central memory of the hunting effort.
 
 Consumes the FaultSource candidate set (IA-1, spec 4.1), runs the single
-embedded gate-reasoning turn (Q8), mints one `HuntConfig` (D3) per carried
-direction, dispatches one hunting agent per hunt (IA-2, synchronous
-in-process), and writes every event to the append-only hunt store (#68,
-O12). It is the planner: it selects, configures, dispatches, holds memory and
-budget, and writes the D8 hunt records. It never writes L0/L1 (its graph
-access is the read-only view, D67-04); the hunting agent (#83), not this
-module, is the test-DESIGN actor.
+embedded gate-reasoning turn (Q8), mints the deterministically fan-out
+`HuntConfig` set (D3, one per distinct web-vulnerability class a direction's
+emitted concrete fault candidates carry), dispatches one hunting agent per
+hunt (IA-2, synchronous in-process), and writes every event to the
+append-only hunt store (#68, O12). It is the planner: it selects, configures,
+dispatches, holds memory and budget, and writes the D8 hunt records. It never
+writes L0/L1 (its graph access is the read-only view, D67-04); the hunting
+agent (#83), not this module, is the test-DESIGN actor.
 
 The pass runs NATIVE-ASYNC (feat/async-actor-agents) on the #110 GRAPH engine:
 `arun_orchestration` is the single O1-O10 canon and its body IS a
@@ -94,10 +95,29 @@ class DeliveredCandidate(BaseModel):
     match_verdict: Literal["applies", "does-not-apply", "insufficient-evidence"]
 
 
+class ConcreteFaultCandidate(BaseModel):
+    """The Q8 hypothesis-manner concretisation grain the mint fans out on
+    (spec 3.5): a web-vulnerability CLASS with a `fault_hypothesis` (the class
+    marker - never narrowed to a surface locale / payload / vector / symptom),
+    plus the Q9-refined adversarial capabilities and the constraints that block
+    the candidate's testing primitives. The LLM's Q16 same-class merge runs
+    BEFORE the mint, so same-class duplicates should already be gone; the mint
+    still collapses them deterministically."""
+
+    fault_hypothesis: str
+    adversarial_capabilities: list[str] = Field(default_factory=list)
+    blocking_constraints: list[str] = Field(default_factory=list)
+
+
 class EnvisionedDirection(BaseModel):
     """One gate output: a carried (or pruned) direction, seeded with the
     rationale, assumptions, and envisioned test primitives that stub the
-    hunting agent's later, more concrete hypothesis (Q8)."""
+    hunting agent's later, more concrete hypothesis (Q8). As of the
+    candidates-rewrite it also carries the class-level `research_direction`
+    (verbatim prose, never narrowed to a surface locale / payload / vector /
+    symptom) and the emitted concrete fault candidates (the Q8 hypothesis
+    manner + the Q9 capability/blocker analysis) the mint fans out into one
+    `HuntConfig` per distinct web-vulnerability class."""
 
     unit_id: str
     fault_class: str
@@ -106,6 +126,8 @@ class EnvisionedDirection(BaseModel):
     assumptions: list[str] = Field(default_factory=list)
     envisioned_test_primitives: list[str] = Field(default_factory=list)
     supposed_payload_vectors: list[str] = Field(default_factory=list)
+    research_direction: str = ""
+    concrete_fault_candidates: list[ConcreteFaultCandidate] = Field(default_factory=list)
 
 
 class GateInput(BaseModel):
@@ -141,13 +163,18 @@ class HuntPromptTemplate(BaseModel):
     """Part 1 of the five-part HuntConfig parameter set (Q8/D3): the fault-matching
     rationale, the suggested extension points (the orchestrator's envisioned
     test primitives), the adversarial-capability / environmental assumptions,
-    the supposed payload vectors, and the L0 fault-applicability evidence."""
+    the supposed payload vectors, and the L0 fault-applicability evidence. The
+    candidates-rewrite concretisation slots ride along: the class-level
+    `research_direction` and the per-class `concrete_fault_candidates` subset
+    the mint fills (one `HuntConfig` per distinct web-vulnerability class)."""
 
     rationale: str = ""
     extension_points: list[str] = Field(default_factory=list)
     assumptions: list[str] = Field(default_factory=list)
     supposed_payload_vectors: list[str] = Field(default_factory=list)
     l0_evidence: list[str] = Field(default_factory=list)
+    research_direction: str = ""
+    concrete_fault_candidates: list[ConcreteFaultCandidate] = Field(default_factory=list)
 
 
 class HuntConfig(BaseModel):
@@ -312,6 +339,33 @@ def normalize_candidates(
     return intake
 
 
+def _class_discriminator(candidate: ConcreteFaultCandidate) -> str:
+    """The mint's per-candidate fan-out discriminator: the concrete fault
+    candidate's web-vulnerability class. There is no dedicated typed class
+    field on the candidate, so the `fault_hypothesis` text carries the class
+    marker (the candidates-rewrite spec 3.5 / 4). An empty hypothesis carries
+    no class marker and never forms a minted group."""
+    return candidate.fault_hypothesis
+
+
+def _concrete_candidates_by_class(
+    candidates: Sequence[ConcreteFaultCandidate],
+) -> list[list[ConcreteFaultCandidate]]:
+    """Partition the direction's emitted concrete-fault candidates into one
+    group per distinct class (grouping on the `fault_hypothesis` discriminator).
+    Same-class duplicates - already merged by the LLM's Q16 same-class merge -
+    collapse into ONE group; first-emission order is preserved, so the
+    partition (and the fan-out that consumes it) is deterministic given the
+    emitted set. Candidates with an empty hypothesis carry no class marker and
+    are excluded: they degrade to the carried-bare fallback."""
+    by_class: dict[str, list[ConcreteFaultCandidate]] = {}
+    for candidate in candidates:
+        if not _class_discriminator(candidate):
+            continue
+        by_class.setdefault(candidate.fault_hypothesis, []).append(candidate)
+    return list(by_class.values())
+
+
 def mint_hunt_config(
     direction: EnvisionedDirection,
     candidate: DeliveredCandidate,
@@ -322,38 +376,61 @@ def mint_hunt_config(
     tool_registry: Sequence[dict],
     target_caveats: Sequence[str] = (),
     sub_fault_ids: Sequence[str] = (),
-) -> HuntConfig:
-    """Mint the five-part `HuntConfig` (D3) for a carried direction: the prompt
-    template (rationale + extension points + assumptions + supposed payload
-    vectors + L0 fault-applicability evidence), the wide surface context (the
-    adapted index-card), the target caveats, the prior-hunt insights, and the
-    fault-targeting tool registry. `sub_fault_ids` carries the folded fault_ids
-    captured under the parent `fault_class` by the fold-family relation (#135):
-    the dispatch stretch supplies them from `fault_kb.load_fold_families`, so
-    the hunting agent bounds the parent fault while the folded variants stay
-    consideration material."""
+) -> list[HuntConfig]:
+    """Mint the five-part `HuntConfig` set (D3) for a carried direction - the
+    candidates-rewrite fan-out: ONE `HuntConfig` per distinct web-vulnerability
+    class the direction's emitted concrete-fault candidates carry, after the
+    (LLM-owned, Q16) same-class merge. The prompt template maps the direction's
+    seeds verbatim (rationale -> rationale, envisioned test primitives ->
+    extension points, assumptions -> assumptions, supposed payload vectors ->
+    supposed payload vectors, the L0 fault-applicability evidence from the
+    candidate's witnesses) and adds the candidates-rewrite slots: `research_direction`
+    passes through and each config's `concrete_fault_candidates` carries that
+    class's distinct subset. The remaining four parameter-set slots - the wide
+    surface context (adapted index-card), the target caveats, the prior-hunt
+    insights, and the fault-targeting tool registry - and `sub_fault_ids`
+    (the folded fault_ids captured under the parent `fault_class` by the
+    fold-family relation, #135) are unchanged.
+
+    The mint stays deterministic given the emitted set (no LLM, no I/O): the
+    distinct-class grouping preserves first-emission order, and config hunt_ids
+    derive from the single `hunt_id` base (the first config keeps the base, the
+    i-th fan-out config gets `base-<i>`). A direction with NO emitted class
+    markers - empty or absent concrete fault candidates - degrades to a single
+    carried-bare config: it still renders with the legacy seeds and the
+    research direction, without minting a class-specific config."""
     evidence: list[str] = []
     if candidate.applies_witnesses.deterministic is not None:
         evidence.append(f"deterministic: {candidate.applies_witnesses.deterministic}")
     if candidate.applies_witnesses.llm is not None:
         evidence.append(f"llm: {candidate.applies_witnesses.llm}")
-    return HuntConfig(
-        hunt_id=hunt_id,
-        unit_id=direction.unit_id,
-        fault_class=direction.fault_class,
-        sub_fault_ids=list(sub_fault_ids),
-        prompt_template=HuntPromptTemplate(
-            rationale=direction.rationale,
-            extension_points=list(direction.envisioned_test_primitives),
-            assumptions=list(direction.assumptions),
-            supposed_payload_vectors=list(direction.supposed_payload_vectors),
-            l0_evidence=evidence,
-        ),
-        surface_context=surface_context,
-        target_caveats=list(target_caveats),
-        prior_hunt_insights=list(prior_hunt_insights),
-        tool_registry=list(tool_registry),
-    )
+    groups = _concrete_candidates_by_class(direction.concrete_fault_candidates)
+    if not groups:
+        # the carried-bare degrade: one config, no class-specific material
+        groups = [[]]
+    configs: list[HuntConfig] = []
+    for index, group in enumerate(groups):
+        config_id = hunt_id if index == 0 else f"{hunt_id}-{index}"
+        configs.append(HuntConfig(
+            hunt_id=config_id,
+            unit_id=direction.unit_id,
+            fault_class=direction.fault_class,
+            sub_fault_ids=list(sub_fault_ids),
+            prompt_template=HuntPromptTemplate(
+                rationale=direction.rationale,
+                extension_points=list(direction.envisioned_test_primitives),
+                assumptions=list(direction.assumptions),
+                supposed_payload_vectors=list(direction.supposed_payload_vectors),
+                l0_evidence=evidence,
+                research_direction=direction.research_direction,
+                concrete_fault_candidates=list(group),
+            ),
+            surface_context=surface_context,
+            target_caveats=list(target_caveats),
+            prior_hunt_insights=list(prior_hunt_insights),
+            tool_registry=list(tool_registry),
+        ))
+    return configs
 
 
 def build_back_edge_request(
@@ -772,92 +849,102 @@ async def arun_orchestration(
         caveats = (["yellow match re-matched after back-edge"] if routed else [])
 
         # Mint (D3), dispatch (IA-2), record (D8) - fail-open at every step.
-        # The folded sub-fault ids ride the fold-family map (#135): the mint
+        # The candidates-rewrite fan-out: the mint emits ONE `HuntConfig` per
+        # distinct web-vulnerability class the direction's emitted concrete
+        # fault candidates carry (a class-less direction degrades to a single
+        # carried-bare config), each config's hunt_id derived from one base;
+        # every minted config is then dispatched (and recorded) in turn. The
+        # folded sub-fault ids ride the fold-family map (#135): the mint
         # attaches the direction's fold family deterministically, exactly like
         # every other non-seed slot of the config.
-        hunt_id = uuid.uuid4().hex
-        config = mint_hunt_config(
+        configs = mint_hunt_config(
             direction,
             candidate,
-            hunt_id,
+            uuid.uuid4().hex,
             surface_context={"cards": surface},
             prior_hunt_insights=prior_insights,
             tool_registry=_registry_from_kb(kb_evidences.get(direction.fault_class, {})),
             target_caveats=caveats,
             sub_fault_ids=fold_families.get(direction.fault_class) or (),
         )
-        config_ref = _write("config", config.model_dump())
 
-        hunt: dict[str, Any] = {
-            "hunt_id": hunt_id,
-            "revival_key": key,
-            "config_ref": config_ref,
-            "degraded": False,
-            "error": None,
-        }
-        round_no = 1
-        while True:
-            if dispatch_fn is None:
-                hunt.update({"degraded": True, "error": "hunting agent unavailable"})
-                _write("dispatch", {
-                    "hunt_id": hunt_id, "round": round_no,
-                    "error": "hunting agent unavailable",
-                })
-                break
-            try:
-                result = await _await_seam(dispatch_fn, config, tuple(routed))
-            except Exception as exc:  # noqa: BLE001 - O6: degrade the hunt
-                logger.warning("hunt %s dispatch failed (%s)", hunt_id, exc)
-                hunt.update({"degraded": True, "error": str(exc)})
-                _write("dispatch", {
-                    "hunt_id": hunt_id, "round": round_no, "error": str(exc),
-                })
-                break
-            if result.back_edge_needs:
-                # Inline request-response (S5/S6, D67-14): each returned
-                # back-edge result re-evaluates the hypothesis verdict, and the
-                # evaluation continues unbounded while needs keep surfacing -
-                # the agent ends it by returning a result without needs.
-                _write("dispatch", {
-                    "hunt_id": hunt_id, "round": round_no,
-                    "back_edge_needs": [n.correlation_id for n in result.back_edge_needs],
-                })
-                for need in result.back_edge_needs:
-                    routed.append(await _record_back_edge(need))
-                round_no += 1
-                continue
-            _write("dispatch", {
-                "hunt_id": hunt_id, "round": round_no,
-                "spec_ref": result.spec_ref,
-                "pod_result_ref": result.pod_result_ref,
-                "hypothesis_verdict": result.hypothesis_verdict,
-                "feedback": result.feedback,
-            })
-            _write("result", {
+        hunt_trails: list[dict] = []
+        for config in configs:
+            hunt_id = config.hunt_id
+            config_ref = _write("config", config.model_dump())
+
+            hunt: dict[str, Any] = {
                 "hunt_id": hunt_id,
-                "spec_ref": result.spec_ref,
-                "pod_result_ref": result.pod_result_ref,
-                "hypothesis_verdict": result.hypothesis_verdict,
-                "feedback": result.feedback,
-            })
-            hunt.update({
-                "spec_ref": result.spec_ref,
-                "pod_result_ref": result.pod_result_ref,
-                "hypothesis_verdict": result.hypothesis_verdict,
-            })
-            # The revive-keyed memory (#70): the feedback becomes the
-            # prior-hunt insight the next pass on this key retrieves.
-            _write("memory", {
                 "revival_key": key,
-                "hunt_id": hunt_id,
-                "insight": result.feedback,
+                "config_ref": config_ref,
+                "degraded": False,
+                "error": None,
+            }
+            round_no = 1
+            while True:
+                if dispatch_fn is None:
+                    hunt.update({"degraded": True, "error": "hunting agent unavailable"})
+                    _write("dispatch", {
+                        "hunt_id": hunt_id, "round": round_no,
+                        "error": "hunting agent unavailable",
+                    })
+                    break
+                try:
+                    result = await _await_seam(dispatch_fn, config, tuple(routed))
+                except Exception as exc:  # noqa: BLE001 - O6: degrade the hunt
+                    logger.warning("hunt %s dispatch failed (%s)", hunt_id, exc)
+                    hunt.update({"degraded": True, "error": str(exc)})
+                    _write("dispatch", {
+                        "hunt_id": hunt_id, "round": round_no, "error": str(exc),
+                    })
+                    break
+                if result.back_edge_needs:
+                    # Inline request-response (S5/S6, D67-14): each returned
+                    # back-edge result re-evaluates the hypothesis verdict, and
+                    # the evaluation continues unbounded while needs keep
+                    # surfacing - the agent ends it by returning a result
+                    # without needs.
+                    _write("dispatch", {
+                        "hunt_id": hunt_id, "round": round_no,
+                        "back_edge_needs": [n.correlation_id for n in result.back_edge_needs],
+                    })
+                    for need in result.back_edge_needs:
+                        routed.append(await _record_back_edge(need))
+                    round_no += 1
+                    continue
+                _write("dispatch", {
+                    "hunt_id": hunt_id, "round": round_no,
+                    "spec_ref": result.spec_ref,
+                    "pod_result_ref": result.pod_result_ref,
+                    "hypothesis_verdict": result.hypothesis_verdict,
+                    "feedback": result.feedback,
+                })
+                _write("result", {
+                    "hunt_id": hunt_id,
+                    "spec_ref": result.spec_ref,
+                    "pod_result_ref": result.pod_result_ref,
+                    "hypothesis_verdict": result.hypothesis_verdict,
+                    "feedback": result.feedback,
+                })
+                hunt.update({
+                    "spec_ref": result.spec_ref,
+                    "pod_result_ref": result.pod_result_ref,
+                    "hypothesis_verdict": result.hypothesis_verdict,
+                })
+                # The revive-keyed memory (#70): the feedback becomes the
+                # prior-hunt insight the next pass on this key retrieves.
+                _write("memory", {
+                    "revival_key": key,
+                    "hunt_id": hunt_id,
+                    "insight": result.feedback,
+                })
+                break
+            _write("hunt", hunt)
+            hunt_trails.append({
+                "kind": "hunt", "revival_key": key, "hunt_id": hunt_id,
+                "degraded": bool(hunt.get("degraded")),
             })
-            break
-        _write("hunt", hunt)
-        return {"trail": [{
-            "kind": "hunt", "revival_key": key, "hunt_id": hunt_id,
-            "degraded": bool(hunt.get("degraded")),
-        }]}
+        return {"trail": hunt_trails}
 
     initial = {
         "project_id": project_id,
