@@ -1,10 +1,18 @@
-"""Unit tier: the pod's looped state machine driven through `run_pod` with the
-tools and the two agents mocked. Exercises the control-flow mechanics - the INIT
-gate, the runner's agentic inner loop (intra-chain data flow + the harness inner
-cap), the symbolic fast-path, variant provenance, dedup-feeds-one-execution, the
-pod-budget cap, and the clean-flag semantics."""
+"""Unit tier: the pod's looped state machine driven through `arun_pod` (the
+async-only entry, D84-15) with the tools and the two agents mocked. Exercises
+the control-flow mechanics - the INIT gate, the runner's agentic inner loop
+(intra-chain data flow + the harness inner cap), the symbolic fast-path,
+variant provenance, dedup-feeds-one-execution, the pod-budget cap, and the
+clean-flag semantics.
+
+The repo runs pytest WITHOUT pytest-asyncio: sync tests drive the async entry
+with `asyncio.run`, exactly like the hunt-orchestrator graph tier's `_drive`.
+"""
+import asyncio
+import inspect
+
 from polymerhus.attack.hunting.llm import hunt_session
-from polymerhus.attack.hunting.pod import run_pod
+from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
 from polymerhus.attack.hunting.pod.context import canonical_spec_hash
 from polymerhus.attack.hunting.pod.llm import (
@@ -54,12 +62,43 @@ def _no_trace(_run_id):
     return []
 
 
+def _run(coro):
+    """Drive the pod's async entry to completion (repo convention: no
+    pytest-asyncio; sync tests `asyncio.run` the coroutine)."""
+    return asyncio.run(coro)
+
+
+# --- D84-15: the async entry is awaitable, the sync wrapper is gone -------------
+
+def test_arun_pod_is_awaitable_and_run_pod_is_gone():
+    assert inspect.iscoroutinefunction(arun_pod)
+    import polymerhus.attack.hunting.pod as pod_mod
+    assert not hasattr(pod_mod, "run_pod")
+
+
+def test_async_seams_are_awaited_natively_by_the_graph():
+    """D84-15: an ASYNC runner and ASYNC terminal are awaited in-graph (the
+    `_await_seam` `iscoroutinefunction` branch), not to_thread-ed - the async
+    production path the sync fakes below only approximate."""
+    async def runner(spec, messages, tool_calls):
+        return symbolic_runner_step_fn(spec, messages, tool_calls)
+
+    async def exec_fn(command, timeout_s):
+        return ExecResult(stdout=_OK, stderr="", returncode=0, duration_ms=1)
+
+    env = _run(arun_pod(VALID_SPEC, exec_fn=exec_fn, runner_step_fn=runner,
+                        triager_fn=None, trace_fn=_no_trace))
+    assert env["verdict"] == "successful"
+    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+
+
 def test_init_rejection_makes_no_tool_call():
     calls = []
-    env = run_pod({"target_identity": "", "verification_symptoms": [],
-                   "testing_pattern": "", "payload_vector_space": {}},
-                  exec_fn=_exec(_OK, calls=calls),
-                  runner_step_fn=symbolic_runner_step_fn, triager_fn=None, trace_fn=_no_trace)
+    env = _run(arun_pod({"target_identity": "", "verification_symptoms": [],
+                         "testing_pattern": "", "payload_vector_space": {}},
+                        exec_fn=_exec(_OK, calls=calls),
+                        runner_step_fn=symbolic_runner_step_fn, triager_fn=None,
+                        trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
     assert env["evidence"]["init_validation"]
@@ -67,8 +106,8 @@ def test_init_rejection_makes_no_tool_call():
 
 
 def test_symbolic_symptom_confirmed_needs_no_triager():
-    env = run_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
-                  triager_fn=None, trace_fn=_no_trace)
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=None, trace_fn=_no_trace))
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
     assert env["evidence"]["iterations"] == 1
@@ -90,9 +129,9 @@ def test_runner_drives_a_multi_step_chain_with_intra_chain_flow():
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "no-symptom-evidence", "clean": True}
 
-    env = run_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
-                  exec_fn=_exec(_ABSENT, calls=calls), runner_step_fn=_scripted(steps),
-                  triager_fn=triager, trace_fn=_no_trace)
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                        exec_fn=_exec(_ABSENT, calls=calls), runner_step_fn=_scripted(steps),
+                        triager_fn=triager, trace_fn=_no_trace))
     assert len(calls) == 2                           # both chain steps executed
     assert len(env["evidence"]["raw_observations"]) == 2
 
@@ -110,8 +149,8 @@ def test_inner_tool_cap_forces_conclusion(monkeypatch):
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
-    env = run_pod(VALID_SPEC, exec_fn=_exec(_ABSENT, calls=calls),
-                  runner_step_fn=runner, triager_fn=triager, trace_fn=_no_trace)
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_ABSENT, calls=calls),
+                        runner_step_fn=runner, triager_fn=triager, trace_fn=_no_trace))
     assert len(calls) == 2                           # bounded by the inner cap
     assert env["verdict"] == "unsuccessful"
 
@@ -131,8 +170,9 @@ def test_runner_sees_tool_results_in_its_curated_session():
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
-    run_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
-            exec_fn=_exec(_OK), runner_step_fn=runner, triager_fn=triager, trace_fn=_no_trace)
+    _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                  exec_fn=_exec(_OK), runner_step_fn=runner, triager_fn=triager,
+                  trace_fn=_no_trace))
     assert len(seen) >= 2
     assert any("TOOL RESULT" in m["content"] for m in seen[1])   # 2nd turn sees the 1st result
 
@@ -150,9 +190,9 @@ def test_variant_loop_records_provenance():
     def triager(spec, obs, messages, log):
         return next(decisions)
 
-    env = run_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
-                  exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
-                  triager_fn=triager, trace_fn=_no_trace)
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                        exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=triager, trace_fn=_no_trace))
     assert env["evidence"]["iterations"] == 2
     variants = env["evidence"]["variant_specs"]
     assert [v["ref"] for v in variants] == ["v0", "v1"]
@@ -168,9 +208,9 @@ def test_pod_budget_cap_terminates_only_the_pod(monkeypatch):
                 "declined_attribute": "testing_pattern", "variant_spec": dict(spec),
                 "feedback": "keep trying"}
 
-    env = run_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
-                  exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
-                  triager_fn=triager, trace_fn=_no_trace)
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                        exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=triager, trace_fn=_no_trace))
     assert env["evidence"]["terminal_reason"] == "budget-timeout"
     assert env["evidence"]["clean"] is False
     assert env["evidence"]["iterations"] == 3
@@ -188,17 +228,17 @@ def test_dedup_one_execution_per_identical_probe():
         return {"action": "terminate", "verdict": "unsuccessful",
                 "terminal_reason": "space-exhausted", "clean": True}
 
-    env = run_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+    _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
                   exec_fn=_exec(_ABSENT, calls=calls), runner_step_fn=_scripted(steps),
-                  triager_fn=triager, trace_fn=_no_trace)
+                  triager_fn=triager, trace_fn=_no_trace))
     assert len(calls) == 1                           # O7/C10: executed once
 
 
 def test_runner_infeasible_is_an_init_gate_with_evidence():
     steps = [RunnerStep(action="conclude", infeasible=True,
                         unverified=["no WAF on /api/a could not be confirmed"])]
-    env = run_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=_scripted(steps),
-                  triager_fn=None, trace_fn=_no_trace)
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=_scripted(steps),
+                        triager_fn=None, trace_fn=_no_trace))
     assert env["verdict"] == "unsuccessful"
     assert env["evidence"]["terminal_reason"] == "technical-infeasibility"
     assert any("WAF" in v for v in env["evidence"]["init_validation"])
@@ -210,9 +250,9 @@ def test_clean_false_when_triager_reports_defence():
                 "verdict": "unsuccessful", "terminal_reason": "specific-defence-prevention",
                 "clean": False, "note": "WAF soft-blocked every probe"}
 
-    env = run_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
-                  exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
-                  triager_fn=triager, trace_fn=_no_trace)
+    env = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                        exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=triager, trace_fn=_no_trace))
     assert env["evidence"]["terminal_reason"] == "specific-defence-prevention"
     assert env["evidence"]["clean"] is False
 
@@ -223,7 +263,9 @@ def test_runner_seam_observes_pod_runner_session_inside_a_hunt():
     """D84-7: inside a parent `hunt_session`, the `runner_agent` node binds the
     pod_runner role's typed `HuntSession` - the parent's run_id/hunt_id + the
     canonical spec hash - around the seam call, so the default seam receives the
-    typed address (this spy reads the ContextVar like the default seam does)."""
+    typed address (this spy reads the ContextVar like the default seam does; the
+    sync spy rides `asyncio.to_thread` via `_await_seam`, whose context copy
+    carries the binding)."""
     seen = []
 
     def runner(spec, messages, tool_calls):
@@ -231,8 +273,8 @@ def test_runner_seam_observes_pod_runner_session_inside_a_hunt():
         return symbolic_runner_step_fn(spec, messages, tool_calls)
 
     with hunt_session("run-1", "hunt-A"):
-        env = run_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
-                      triager_fn=None, trace_fn=_no_trace)
+        env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
+                            triager_fn=None, trace_fn=_no_trace))
 
     assert env["verdict"] == "successful"
     ctx = seen[0]
@@ -253,8 +295,8 @@ def test_runner_seam_sees_a_task_local_default_outside_a_hunt():
         seen.append(pod_session())
         return symbolic_runner_step_fn(spec, messages, tool_calls)
 
-    env = run_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
-                  triager_fn=None, trace_fn=_no_trace)
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
+                        triager_fn=None, trace_fn=_no_trace))
 
     assert env["verdict"] == "successful"
     ctx = seen[0]
@@ -277,8 +319,8 @@ def test_triager_seam_observes_pod_triager_session_inside_a_hunt():
                 "terminal_reason": "space-exhausted", "clean": True}
 
     with hunt_session("run-1", "hunt-A"):
-        env = run_pod(spec, exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
-                      triager_fn=triager, trace_fn=_no_trace)
+        env = _run(arun_pod(spec, exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
+                            triager_fn=triager, trace_fn=_no_trace))
 
     assert env["verdict"] == "unsuccessful"
     ctx = seen[0]

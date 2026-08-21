@@ -3,6 +3,7 @@ machinery is gone from the pod. Asserts the seam signatures, the typed channels,
 the graph state keys, the context slices, and the prompt verbatims carry no
 `differential` / `baseline_obs` remnant, so the regrounded ReAct runner (D84-29)
 can build on a clean surface."""
+import asyncio
 import inspect
 
 import polymerhus.attack.hunting.pod.prompts as prompts_mod
@@ -51,10 +52,11 @@ def test_typed_channels_carry_no_differential_field():
 
 
 def test_graph_runs_without_differential_or_baseline_obs_state():
-    graph = build_pod_graph(exec_fn=_ok_exec, runner_step_fn=symbolic_runner_step_fn,
-                            triager_fn=None)
-    final = graph.invoke({"spec": dict(VALID_SPEC), "run_id": "t0"},
-                          config={"recursion_limit": 100})
+    final = asyncio.run(build_pod_graph(exec_fn=_ok_exec,
+                                        runner_step_fn=symbolic_runner_step_fn,
+                                        triager_fn=None).ainvoke(
+                                            {"spec": dict(VALID_SPEC), "run_id": "t0"},
+                                            config={"recursion_limit": 100}))
     assert "baseline_obs" not in final
     assert "differential" not in final
     for obs in final["log"].raw_observations:
@@ -62,9 +64,11 @@ def test_graph_runs_without_differential_or_baseline_obs_state():
 
 
 def test_exported_raw_observations_carry_no_differential():
-    env = build_pod_graph(exec_fn=_ok_exec, runner_step_fn=symbolic_runner_step_fn,
-                          triager_fn=None).invoke({"spec": dict(VALID_SPEC), "run_id": "t0"},
-                                                  config={"recursion_limit": 100})
+    env = asyncio.run(build_pod_graph(exec_fn=_ok_exec,
+                                      runner_step_fn=symbolic_runner_step_fn,
+                                      triager_fn=None).ainvoke(
+                                          {"spec": dict(VALID_SPEC), "run_id": "t0"},
+                                          config={"recursion_limit": 100}))
     for obs in env["export"]["evidence"]["raw_observations"]:
         assert "differential" not in obs
 

@@ -1,12 +1,16 @@
 """The test-executor pod's public entry (IA-3 in, IA-4 out).
 
-`run_pod(spec)` is the synchronous typed handoff (spec section 5, delivery
-canon): it takes the D4 `TestImplementationSpec` and returns the D5 + D6
-`{verdict, evidence}` envelope. It NEVER raises into the parent HuntingAgent
-(IA-4): any collaborator failure degrades to `unsuccessful` with the error in
-the evidence trail, mirroring the recon degrade-to-failed-export pattern
-(`recon/control/job_agent.py`). The pod touches no store and no graph (spec
-1.5); the parent persists the returned envelope (operator, 2026-08-06).
+`arun_pod(spec)` is the ASYNC typed handoff (spec section 5, delivery canon,
+D84-15): it takes the D4 `TestImplementationSpec` and returns the D5 + D6
+`{verdict, evidence}` envelope. The pod is async-ONLY - the sync `run_pod`
+wrapper is DELETED (Q7 VERDICTED): the parent HuntingAgent awaits `arun_pod`
+natively through its `_await_seam` (async seams are awaited, sync seams are
+to_thread-ed), so no sync wrapper remains a public entry. It NEVER raises into
+the parent HuntingAgent (IA-4): any collaborator failure degrades to
+`unsuccessful` with the error in the evidence trail, mirroring the recon
+degrade-to-failed-export pattern (`recon/control/job_agent.py`). The pod
+touches no store and no graph (spec 1.5); the parent persists the returned
+envelope (operator, 2026-08-06).
 
 Observability is the shared fail-open recipe (D67-05): one trace per pod run,
 Langfuse optional and never a gate (C12).
@@ -43,16 +47,20 @@ def _pod_session_address(run_id: str, hunt_id: str, spec: dict, role_id: str):
     return pod_session_address(run_id, hunt_id, spec, role_id=role_id)
 
 
-def run_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
-            exec_fn: Callable | None = None,
-            runner_step_fn: Callable | None = None,
-            triager_fn: Callable | None = None,
-            kb_fn: Callable | None = None,
-            trace_fn: Callable | None = None) -> dict:
+async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
+                   exec_fn: Callable | None = None,
+                   runner_step_fn: Callable | None = None,
+                   triager_fn: Callable | None = None,
+                   kb_fn: Callable | None = None,
+                   trace_fn: Callable | None = None) -> dict:
     """Execute `spec` against the live target and return the IA-4 envelope.
 
-    Every collaborator is injectable (the contract tier passes fakes). The whole
-    run is wrapped fail-open: a raise anywhere degrades to `unsuccessful` /
+    Async-only (D84-15): the graph is driven with `ainvoke`, and every injected
+    seam - `exec_fn`, `runner_step_fn`, `triager_fn`, `kb_fn` - rides the
+    `_await_seam` pattern inside the nodes (async seams awaited natively, sync
+    seams offloaded via `asyncio.to_thread`), so both the production async
+    terminals and the contract-tier sync fakes are injectable. The whole run is
+    wrapped fail-open: a raise anywhere degrades to `unsuccessful` /
     `technical-infeasibility` with the error in the trail - the pod never raises
     into the parent."""
     exec_fn = exec_fn or default_exec_fn
@@ -69,7 +77,7 @@ def run_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
         graph = build_pod_graph(
             exec_fn=exec_fn, runner_step_fn=runner_step_fn,
             triager_fn=triager_fn, kb_fn=kb_fn)
-        final = graph.invoke(
+        final = await graph.ainvoke(
             {"spec": dict(spec or {}), "run_id": run_id},
             config={"recursion_limit": RECURSION_LIMIT, "callbacks": callbacks})
         export = final.get("export")

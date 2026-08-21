@@ -9,10 +9,10 @@ This build ships the minimal scaffold only (D67-01).
 from __future__ import annotations
 
 from polymerhus.attack.hunting.pod.graph import build_pod_graph
-from polymerhus.attack.hunting.pod.pod import run_pod
+from polymerhus.attack.hunting.pod.pod import arun_pod
 from polymerhus.attack.hunting.pod.types import (
     PodExport,
     TestImplementationSpec,
 )
 
-__all__ = ["run_pod", "build_pod_graph", "PodExport", "TestImplementationSpec"]
+__all__ = ["arun_pod", "build_pod_graph", "PodExport", "TestImplementationSpec"]

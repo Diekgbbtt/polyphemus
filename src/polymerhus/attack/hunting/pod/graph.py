@@ -16,7 +16,7 @@ owns the loop and GUARANTEES boundedness and the contract:
   G4 honesty     - every tool result is recorded RAW in the experiment log (D6)
      before curation; curation only bounds what the AGENT sees, never the export.
   G5 fail-open   - a raising collaborator degrades to a terminal with the partial
-     trail; nothing raises past `run_pod`.
+     trail; nothing raises past `arun_pod`.
 
 The FSM:
 
@@ -28,12 +28,22 @@ The FSM:
                    | budget_terminal}
     -> TERMINAL (render the D5 + D6 envelope)
 
+The pod is ASYNC-NATIVE (D84-15, Q7): the nodes that call injected seams
+(`runner_agent`, `tool_exec`, `triager`) are `async def` and ride every
+collaborator call through `_await_seam` - an async seam is awaited natively, a
+sync seam is offloaded via `asyncio.to_thread` (the `_await_seam` pattern
+mirrors `hunt_orchestrator.py` / `hunting_agent.py`). The graph is driven with
+`ainvoke`; the deterministic nodes (init, the routers, mint_variant, the
+terminals) stay sync - LangGraph 1.x mixes them under `ainvoke`.
+
 `build_pod_graph` injects every side-effecting collaborator so the contract tier
 runs without a live target, a live LLM, or the downstream agents.
 """
 from __future__ import annotations
 
+import asyncio
 import hashlib
+import inspect
 
 from langgraph.graph import END, START, StateGraph
 
@@ -100,6 +110,16 @@ def _clean_from_trail(log: ExperimentLog) -> bool:
     return bool(log.raw_observations)
 
 
+async def _await_seam(fn, *args):
+    """Await an async seam, else offload a sync one to a worker thread - the
+    `_await_seam` pattern mirrored from `hunt_orchestrator.py` /
+    `hunting_agent.py`. `asyncio.to_thread` copies the caller's context, so the
+    graph's pod-session ContextVar binding (D84-7) reaches sync seams too."""
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args)
+    return await asyncio.to_thread(fn, *args)
+
+
 def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
             init_validation=None, error=None) -> dict:
     log: ExperimentLog = state["log"]
@@ -158,7 +178,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
 
     # --- the runner's agentic loop (the runner is the control plane) -----------
 
-    def runner_agent(state: PodState) -> dict:
+    async def runner_agent(state: PodState) -> dict:
         msgs = state.get("runner_messages", [])
         spec = state["spec"]
         # D84-7: the graph owns the pod-session binding - the `pod_runner`
@@ -167,8 +187,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         # the task-local default run_id with no hunt_id).
         with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
                               role_id=POD_RUNNER_ROLE):
-            step = runner_step_fn(spec, curate_messages(msgs),
-                                  state.get("tool_calls", 0))
+            step = await _await_seam(runner_step_fn, spec, curate_messages(msgs),
+                                     state.get("tool_calls", 0))
         if not isinstance(step, RunnerStep):
             try:
                 step = RunnerStep(**step) if isinstance(step, dict) else RunnerStep()
@@ -194,7 +214,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             return "exhausted"
         return "triager"
 
-    def tool_exec(state: PodState) -> dict:
+    async def tool_exec(state: PodState) -> dict:
         # G2/G4: the HARNESS executes and records; the runner only proposed.
         log: ExperimentLog = state["log"]
         step = _step(state)
@@ -203,7 +223,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
 
         if step.tool == "kb_retrieve":
             try:
-                kb = kb_fn(step.kb_query)
+                kb = await _await_seam(kb_fn, step.kb_query)
             except Exception as exc:  # noqa: BLE001 - fail-open KB
                 kb = {"error": str(exc)}
             return {"tool_calls": tc,
@@ -222,8 +242,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                     "runner_messages": _append(state.get("runner_messages", []),
                                                "tool", "TOOL RESULT: (already executed; deduped)")}
 
-        result, _attempts = run_with_retry(exec_fn, command,
-                                           timeout_s=EXEC_TIMEOUT_S, max_iters=MAX_POD_ITERS)
+        result, _attempts = await run_with_retry(exec_fn, command,
+                                                 timeout_s=EXEC_TIMEOUT_S,
+                                                 max_iters=MAX_POD_ITERS)
         parsed = parse_curl(result)
         observation = RawObservation(
             probe_ref=sig, variant_ref=variant_ref, request={"command": command},
@@ -240,7 +261,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
 
     # --- the critic ------------------------------------------------------------
 
-    def triager(state: PodState) -> dict:
+    async def triager(state: PodState) -> dict:
         log: ExperimentLog = state["log"]
         spec = state["spec"]
         obs = RawObservation(**state["last_observation"]) if state.get("last_observation") \
@@ -263,7 +284,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             # runner's - the graph owns the per-instance session address.
             with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
                                   role_id=POD_TRIAGER_ROLE):
-                raw = triager_fn(spec, obs, curate_messages(tmsgs), log)
+                raw = await _await_seam(triager_fn, spec, obs, curate_messages(tmsgs), log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":
                 violations = validate_decision({"verdict": decision.get("verdict"),

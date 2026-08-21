@@ -17,15 +17,16 @@ probe is #98. This module performs no I/O at import (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
+import asyncio
+import inspect
 import shlex
-import time
 from typing import Callable
 
 from polymerhus.attack.hunting.pod.config import EXEC_TIMEOUT_S, MAX_POD_ITERS
 from polymerhus.attack.hunting.pod.types import ProbeStep
 from polymerhus.recon.domain.types import ExecResult
 
-# The injected exec seam: (command, timeout_s) -> ExecResult.
+# The injected exec seam: (command, timeout_s) -> ExecResult (async or sync).
 ExecFn = Callable[[str, int], ExecResult]
 
 # A sentinel that separates a curl body from its status/timing trailer.
@@ -42,16 +43,26 @@ def default_exec_fn(command: str, timeout_s: int = EXEC_TIMEOUT_S) -> ExecResult
     return recon_exec(command, "hunt-pod", timeout_s)
 
 
-def run_with_retry(exec_fn: ExecFn, command: str, *,
-                   timeout_s: int = EXEC_TIMEOUT_S,
-                   max_iters: int = MAX_POD_ITERS) -> tuple[ExecResult, int]:
+async def _await_seam(fn, *args):
+    """Await an async exec seam, else offload a sync one to a worker thread -
+    the `_await_seam` pattern mirrored from `hunt_orchestrator.py`."""
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args)
+    return await asyncio.to_thread(fn, *args)
+
+
+async def run_with_retry(exec_fn: ExecFn, command: str, *,
+                         timeout_s: int = EXEC_TIMEOUT_S,
+                         max_iters: int = MAX_POD_ITERS) -> tuple[ExecResult, int]:
     """Run `command`, retrying on a non-zero exit up to `max_iters` (O2/C7).
     Returns the last `ExecResult` and the attempt count. A clean exit (0) stops
-    immediately; the caps are pod-internal (D67-09)."""
+    immediately; the caps are pod-internal (D67-09). Async-native (D84-15): each
+    attempt rides `_await_seam`, so an async terminal is awaited and a sync one
+    (the contract-tier fakes) is offloaded to a worker thread."""
     attempts = 0
     result = ExecResult(stdout="", stderr="no exec performed", returncode=1)
     for attempts in range(1, max(1, max_iters) + 1):
-        result = exec_fn(command, timeout_s)
+        result = await _await_seam(exec_fn, command, timeout_s)
         if result.returncode == 0:
             break
     return result, attempts

@@ -27,7 +27,7 @@ logger = logging.getLogger(__name__)
 POD_RUNNER_ROLE = "pod_runner"
 POD_TRIAGER_ROLE = "pod_triager"
 
-# The task-local run_id fallback: what `run_pod` uses by default, so a pod
+# The task-local run_id fallback: what `arun_pod` uses by default, so a pod
 # invoked directly (outside any hunt) still derives a stable session address.
 POD_DEFAULT_RUN_ID = "hunt-pod"
 

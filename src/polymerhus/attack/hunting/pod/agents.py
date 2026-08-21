@@ -138,6 +138,6 @@ def default_triager_fn(spec: dict, observation: RawObservation,
             note=f"triager degraded: {exc}").model_dump()
 
 
-# Re-exported so the graph and run_pod can name the base prompts.
+# Re-exported so the graph and arun_pod can name the base prompts.
 RUNNER_SYSTEM = POD_RUNNER_SYSTEM
 TRIAGER_SYSTEM = POD_TRIAGER_SYSTEM
