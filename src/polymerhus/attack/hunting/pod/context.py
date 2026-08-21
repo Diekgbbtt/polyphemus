@@ -16,6 +16,7 @@ This module is pure and DB/LLM-free (unit-tier safe).
 """
 from __future__ import annotations
 
+import hashlib
 import json
 
 from polymerhus.attack.hunting.pod.types import (
@@ -26,6 +27,17 @@ from polymerhus.attack.hunting.pod.types import (
 
 # Max chars of a raw tool body surfaced into a session turn (per-turn filtering).
 _BODY_SLICE = 1200
+
+
+def canonical_spec_hash(spec: dict) -> str:
+    """The canonical spec fingerprint (D84-2, relocated from the parent
+    `hunting_agent._canonical_hash`): equal D4 dicts hash equal regardless of
+    key order, so an identical spec is never dispatched twice (C9) and the pod's
+    per-spec session discriminator stays byte-identical to the parent's
+    experiment-log key."""
+    return hashlib.sha256(
+        json.dumps(spec, sort_keys=True, default=str).encode("utf-8")
+    ).hexdigest()
 
 
 def _dicts_to_lc(messages: list[dict]):

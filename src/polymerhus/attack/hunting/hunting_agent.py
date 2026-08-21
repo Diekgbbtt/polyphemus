@@ -36,8 +36,6 @@ section 6).
 """
 from __future__ import annotations
 
-import hashlib
-import json
 import logging
 from dataclasses import dataclass
 from typing import Any, Callable, Literal
@@ -51,6 +49,7 @@ from polymerhus.attack.hunting.hunting_tracing import (
     hunting_span,
     trace_span,
 )
+from polymerhus.attack.hunting.pod.context import canonical_spec_hash
 
 logger = logging.getLogger(__name__)
 
@@ -219,12 +218,10 @@ def _verdict_line(derived: str, evidence: dict | None) -> str:
 
 
 def _canonical_hash(spec: dict) -> str:
-    """The canonical spec fingerprint for Q5's experiment log (C9): equal D4
-    dicts hash equal regardless of key order, so an identical spec is never
-    dispatched twice."""
-    return hashlib.sha256(
-        json.dumps(spec, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
+    """The Q5 experiment-log fingerprint (C9). The canonical spec hash is OWNED
+    by the pod (D84-2); this module re-exports it so the experiment-log key and
+    the pod's session discriminator can never drift."""
+    return canonical_spec_hash(spec)
 
 
 def _nonempty(parts: list[str]) -> list[str]:

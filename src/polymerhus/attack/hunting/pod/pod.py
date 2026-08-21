@@ -33,6 +33,20 @@ def _default_trace_fn(run_id: str):
     return get_langfuse_callbacks()
 
 
+def _pod_session_address(run_id: str, hunt_id: str, spec: dict, role_id: str):
+    """The typed session address of one pod agent (#94, D84-2): the parent's
+    canonical spec hash discriminates concurrent pod sessions on one hunt, so the
+    checkpointer never routes one variant's memory into another; an absent
+    hunt_id defaults to "" (empty discriminators are dropped, never shifting the
+    address). Imports are lazy so this module stays driver-free at import
+    (CODING_STANDARD section 6)."""
+    from polymerhus.app.llm.session_address import HuntSession
+    from polymerhus.attack.hunting.pod.context import canonical_spec_hash
+
+    return HuntSession(run_id=run_id, hunt_id=hunt_id or "",
+                       role_id=role_id, spec=canonical_spec_hash(spec))
+
+
 def run_pod(spec: dict, *, run_id: str = "hunt-pod",
             exec_fn: Callable | None = None,
             runner_step_fn: Callable | None = None,
