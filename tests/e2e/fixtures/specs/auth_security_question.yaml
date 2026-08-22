@@ -1,0 +1,85 @@
+name: auth-security-question-recovery
+# Designed for N2 (ReAct trajectory, multi-step P0-P2), N7 (triager reflection),
+# and the six-way termination (a multi-step flow whose failure modes are many).
+# Terminal expected: successful if the password-recovery abuse works, else a
+# well-evidenced unsuccessful terminal.
+target_identity: >-
+  service:web:soupmarket; the password-recovery flow of the Juice Shop web
+  application over HTTPS to https://soupmarket.shop/: the REST endpoints
+  /rest/user/security-question?email=<address> (leaks the registered user's
+  security QUESTION without authentication) and /rest/user/reset-password
+  (POST accepting {email, answer, new, repeat} and resetting the password when
+  the answer matches). The flow sits behind no rate-limit strong enough to
+  stop enumeration (X-RateLimit-Limit: 100 observed on the reset endpoint).
+  The attack surface: the security question is insufficient entropy (name of a
+  city/superhero/planet-style question with limited answer space) and the
+  question itself is disclosable pre-auth, turning account takeover into
+  answer-guessing. A fresh sacrificial account is registered for the run so
+  the probe never touches a real user's password.
+verification_symptoms:
+  - >-
+    Account takeover via the recovery flow: a freshly-registered account whose
+    security question leaks unauth at /rest/user/security-question?email= is
+    reset through /rest/user/reset-password with the leaked question's answer,
+    and the NEW password then authenticates at /rest/user/login (200/ok
+    instead of 401). Confirmed = the whole chain completes with the new
+    credential accepted.
+  - >-
+    The question-leak alone is a corroborating symptom: the unauth response
+    to /rest/user/security-question?email=<address of an existing user> names a
+    question, which would not be disclosed if recovery were designed against
+    account enumeration.
+testing_pattern: >-
+  multi-step flow replay: (P0) register a sacrificial account with a known
+  low-entropy security answer; (P1) confirm the INVALID current password is
+  rejected at /rest/user/login (401 baseline); (P2) recover the flow - GET the
+  security question unauth, POST the reset with the guessed answer + a new
+  password, then login with the new password. The bind on the new credential
+  authenticating is the discriminator; a failed reset (wrong-answer 401) is a
+  negative control proving the answer is genuinely checked (a brute bypass
+  would succeed regardless of the answer).
+assumptions:
+  - network egress allowed; https://soupmarket.shop reachable
+  - registration with a fresh random email is unauthenticated and open (Juice
+    Shop default)
+  - the security question is disclosed pre-auth for an existing user (verified live: admin's question leaks unauth)
+  - the answer space of the observed question family is small/guessable (the
+    hypothesis under test); the sacrificial account uses a deliberately weak
+    answer so the positive control is valid
+  - reset is rate-limited at 100/hour (observed header) - stay under it
+payload_vector_space:
+  method: POST
+  path: "https://soupmarket.shop/rest/user/reset-password"
+  parameter: answer
+  body: '{"email": "<sacrificial-email>", "answer": "<candidate>", "new": "<newpass>", "repeat": "<newpass>"}'
+  families:
+    - "wrong-answer-control: <a deliberately wrong answer>"
+    - "correct-answer: <the sacrificial account's registered answer>"
+    - "empty-answer: ''"
+    - "answer-from-leaked-hint: the leaked question's typical value set (e.g. the city/planet/homeschool names)"
+  companion_endpoints:
+    get-question: "GET /rest/user/security-question?email=<sacrificial-email>"
+    login-probe: "POST /rest/user/login {email, password}"
+rationale: >-
+  Recovery-flows with disclosed, low-entropy questions are the classic broken
+  authentication pattern (Juice Shop deliberately ships it): if the question is
+  disclosed pre-auth AND the reset honours a guessable answer, an attacker
+  takes over any account whose question is weak. The chain - register, leak,
+  reset, login - is fully observable from raw HTTP and has a built-in negative
+  control (the wrong answer must fail), so the run discriminates "recovery
+  abuse via weak question" from "no such exposure" cleanly.
+interpretation_guidance: >-
+  Confirmed requires the wrong-answer control to FAIL (401) and the
+  correct-answer reset to succeed AND the new password to authenticate. If the
+  reset succeeds regardless of the answer, that is itself a finding
+  (no-answer-check bypass) - record it as symptom-confirmed with the bypass
+  shape. If the question does not leak (empty {}) for the sacrificial account,
+  or the reset is blocked (429/soft-block), the flow is defended - terminate
+  unsuccessful with the blockage evidence; a hard endpoint failure across all
+  probes routes to technical-infeasibility.
+comments: >-
+  Grounded live 2026-08-22: admin's security question leaked unauth; reset
+  carries X-RateLimit-Limit: 100; a freshly-registered account returned {} for
+  the question leak (a version quirk - the leak-when-profile-exists case is
+  the real surface). The pod must work around the {} and target an account
+  whose question is disclosed.

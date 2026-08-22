@@ -3,7 +3,7 @@
 **Source:** spec `docs/design/hunting-67-test-executor-pod-spec.md` section 6; ADR `docs/design/hunting-84-regrounding-decisions.md` (D84-1..D84-32); parent `docs/design/hunting-67-per-agent-specs-spec.md` section 6.
 **Seams under assertion:** the `arun_pod` async entry (IA-3 in / IA-4 out, D84-15); the HIGH-LEVEL workflow map (INIT -> RUNNER STRETCH -> TRIAGER -> decide -> TERMINAL, D84-16/29); the six-way termination + `terminal_reason`/`clean`/`init_validation` vocabulary (D5, Q3-amended); the fixed caps (`HUNT_POD_MAX_TOOL_CALLS`=200, `HUNT_POD_MAX_ITERS`=8, `MAX_POD_ITERS`=3, `EXEC_TIMEOUT_S`=300); variants + experiment log (D67-08, D6); the pod experiment-memory store + `note` tool (D84-20/27/32); the KB tool binding (D84-16/26); the production ReAct lane vs the injected contract lane (D84-22/29); the E1-E4 bulletproof chain walkthroughs (merged spec section 10).
 
-**Coverage state (2026-08-22):** the catalogue is three-tier. The CONTRACT predicates C1-C15 are mechanised at the `arun_pod` seam in `tests/integration/test_test_executor_pod_contracts.py` (C1-C12 + C13-C15 via the injected-symbolic lane for the workflow temperature and the production fake-model lane for the T7 tool/KB/note surface). Walkthrough E1 is mechanised hermetically; E2-E4 are carried skeletons blocked on the #83 chain.
+**Coverage state (2026-08-22):** the catalogue is three-tier. The CONTRACT predicates C1-C15 are mechanised at the `arun_pod` seam in `tests/integration/test_test_executor_pod_contracts.py` (C1-C12 + C13-C15 via the injected-symbolic lane for the workflow temperature and the production fake-model lane for the T7 tool/KB/note surface). Walkthrough E1 is mechanised hermetically. **Scope is the test-executor pod ONLY**: the full-pipeline chain walkthroughs (orchestrator -> hunter -> pod) and any other single-component testing are OUT OF SCOPE for this workstream; the E2-E4 chain predicates are carried as blocked references, never active coverage here.
 
 ## Contract predicates (integration tier)
 
@@ -87,11 +87,11 @@ yields: `test_tool_contract_rejection_codes` (integration; direct bound-tool inv
 **E1 - One trivial real run.** grounds merged spec 6.12 + H1 (spec 6.2 E1).
 entry seam: IA-3 (a fixture `TestImplementationSpec`).
 input: target identity `"service:web:soupmarket"`, verification symptom `"HTTP 200 with a non-empty body on GET /"`, testing pattern `"blind-boolean"`, assumptions `["network egress allowed"]`, payload vector space `{method: GET, path: "/"}`, rationale `"reachability probe from H1"`, interpretation guidance `"a 200 with a non-empty body confirms the symptom"`.
-live edge: the eval target `soupmarket.shop` (live HTTP mode) - **HERMETICALLY MECHANISED** (D84-24/#158): the live LLM is a scripted `BaseChatModel` through `model_factory`, the terminal a fixed synthetic curl trailer (200), the KB a fail-open empty `kb_fn`. **Live-edge readiness verified 2026-08-22**: `tests/e2e/fixtures/eval-targets.yaml` now exists in the tree (copied from `dev`); the kali container resolves `soupmarket.shop -> 192.33.91.87` (`docker-compose.yml` `extra_hosts`, confirmed live in `polymerhus-kali-1` `/etc/hosts`), and `curl -k https://soupmarket.shop/` returns `200` from inside kali. The pod's live LLM as the remaining un-wired piece (no model env / gateway in the in-network stack) - a real live-target E1 can layer on when the pod LLM is wired.
+live edge: the eval target `soupmarket.shop` (Juice Shop on the operator's remote host, reached from kali via `192.33.91.87 soupmarket.shop` in `/etc/hosts`) - **HERMETICALLY MECHANISED** (D84-24/#158): the live LLM is a scripted `BaseChatModel` through `model_factory`, the terminal a fixed synthetic curl trailer (200), the KB a fail-open empty `kb_fn`. **Live-edge readiness verified 2026-08-22**: `tests/e2e/fixtures/eval-targets.yaml` now exists in the tree (copied from `dev`); the kali container resolves `soupmarket.shop -> 192.33.91.87` (`docker-compose.yml` `extra_hosts`, confirmed live in `polymerhus-kali-1` `/etc/hosts`), and `curl -k https://soupmarket.shop/` returns `200` from inside kali. The pod's live LLM as the remaining un-wired piece (no model env / gateway in the in-network stack) - the sibling-container e2e harness (muse-spark, mocked kb) is the scaffold that closes it.
 path: INIT validates -> RUNNER STRETCH (production ReAct lane, `tool_exec` absent) -> the runner's first turn issues the default probe through `kb_retrieve` + `exec` -> symbolic symptomatic classification -> TERMINAL.
 terminal: exactly ONE verdict `{successful, symptom-confirmed, iterations >= 1}`, `clean is True`, experiment log holding the v0 variant spec, at least one raw observation with `status == 200` and a non-empty body, and an interpretation `classification == symptom-confirmed`; the KB binding ran once (1 `kb_retrieve` call).
 observed: the tool-call log (the curl command issued, status read back) and the result envelope.
-yields: `test_trivial_real_run`.
+yields: `test_trivial_real_run` (hermetic). A HOLISTIC sibling-container variant (real ReAct over the in-network stack, muse-spark models, mocked kb) is scaffolded for execution once the REST-exposure stream lands on dev.
 
 **E1/H2 - Space-exhausted with the P3 note.** grounds spec 2 (H2/H6) + C14.
 entry seam: IA-3. input: the same E1 spec; the terminal returns the 404 trailer.
@@ -101,23 +101,24 @@ terminal: `{unsuccessful, space-exhausted}`, `clean True`, exactly 1 raw observa
 observed: the store read back (one note) + the interpretation.
 yields: `test_space_exhausted_run_writes_the_p3_note`.
 
-**E2 - Full chain, two candidates.** grounds merged spec 10.1-10.8 + orchestrator E1.
-entry seam: candidate-set delivery at IA-1. live edge: `soupmarket.shop` live HTTP.
-path: FaultSource fixture -> gate -> ranker -> two `HuntConfig`s -> two hunting agents -> two pod runs -> two verdicts -> S7.
-terminal: exactly two hunt records with spec/result refs and hypothesis verdicts.
-yields: `test_full_chain_two_candidates` - **carried, blocked on the #83 dispatch wiring** (skipped; do not chase the parent chain).
+**E5-E8 - Holistic pod e2e over the in-network stack (SCAFFOLDED, executes after the REST-exposure stream lands).** grounds the NFR evaluation framework below (section 8). entry seam: `arun_pod` inside a sibling `polymerhus-agent` container mounting this worktree's `src/`, real session/checkpointer/compaction/memory-store stack, real kali exec, mocked `kb_retrieve`. input: the rich juice-shop fixture specs (section 9). live edge: `soupmarket.shop` live HTTP from kali; kb returns mocked results (KB workstream not merged - taints realism, acknowledged). Each is a self-contained pass whose traces + experiment log + memory-store notes feed the scoring rubric.
 
-**E3 - Yellow park/resume.** grounds merged spec 10.4/10.7 + orchestrator E2.
-entry seam: IA-1. input: `{(service applies), (system yellow)}`.
-path: dispatch for the service; park for the system; recon lands; re-match applies; second dispatch.
-terminal: two hunt records, one back-edge record.
-yields: `test_yellow_park_resume` - **carried, blocked on the #83 chain**.
+## 8. Non-functional evaluation framework (pod e2e)
 
-**E4 - Zero-candidate run.** grounds merged spec 10.1 + orchestrator E1-empty.
-entry seam: IA-1. input: the empty candidate set.
-path: gate on nothing -> no dispatch -> S7.
-terminal: zero hunt records, run complete.
-yields: `test_zero_candidate_run` - **carried, blocked on the #83 chain**.
+The qualitative gate for the holistic e2e. Every run is scored 0-3 (0 = absent/broken, 1 = present but shallow, 2 = correct, 3 = exemplary) on each criterion, with the evidence source named. The coordinator inspects per run: the Langfuse trace (model steps + tool calls + reasoning spans), the pod's experiment log (D6), the pod memory-store notes, and the returned envelope.
+
+| # | Criterion | What is evaluated | Scoring anchors (4pt) | Evidence |
+|---|---|---|---|---|
+| N1 | Prompt materialization | The runner's system prompt carries every spec attribute: target identity, verification symptom(s), testing pattern, assumptions, payload vector space, rationale, interpretation guidance + the P0-P3 plan + the control-then-intervene paradigm + the KB/note tool contract | 3 = all spec attributes verbatim + plan phases clearly present; 2 = all attributes, plan implicit; 1 = partial; 0 = garbled/missing | Langfuse trace (system prompt) |
+| N2 | Runner ReAct trajectory | Did the loop traverse P0-P3 (feasibility -> concretize -> execute -> confirm exhaustion)? Were tools called correctly (`exec` for probes, `kb_retrieve` for grounding, `note` for the P3 summary), in the right sequence, each succeeding? | 3 = full P0-P3 arc, tools correct + sequenced + recovered from a rejection; 2 = arc complete, minor tool misuse; 1 = partial arc / skipped phases; 0 = degenerate | Langfuse trace (model + tool steps) |
+| N3 | Note detail level | The P3 `experiment_summary` note (and any `kb_insight`/`freeform`): does it carry a dense, specific account - what was probed, the payloads, the observations, the exhaustion evidence - not boilerplate? | 3 = dense, specific, references actual probes + observations; 2 = specific but thin; 1 = boilerplate; 0 = absent | memory-store note bodies |
+| N4 | INIT validation criticality | Did the pod validate the spec against the typed base + environment contract before executing? Was a malformed/infeasible spec REJECTED with evidence, not silent-run? | 3 = strict rejection with init_validation evidence, zero tool calls; 2 = rejected, thin evidence; 1 = lenient/warnings-only; 0 = no validation | envelope `init_validation` + trace first step |
+| N5 | Space exploration | Across the laps, did the triager mine VARIANTS that elicited different payloads/vectors/schemes, new symptoms, new techniques? How exhausted was the probe space really (raw observations count, distinct probes vs the cap)? | 3 = 2+ variant mints changing payload/scheme/technique + a genuinely exhausted space (many distinct probes); 2 = variants but narrow edits; 1 = re-executes same probes / single variant; 0 = no variation | experiment log variant_specs + raw_observations |
+| N6 | Termination + persistence | Did the run terminate through the SIX-way vocabulary with the right `terminal_reason`/`clean`? Is the experiment log persisted (variant specs, raw observations, interpretations) and readable? | 3 = correct terminal + full D6 persisted; 2 = correct terminal, log thin; 1 = terminal wrong / log partial; 0 = no persistence | envelope + D6 export + hunt-store stub |
+| N7 | Triager reflection | Prompt materialization for the triager; was the critic's reflection truly critical? Did it mint a NEW variant that SHARPLY changed the testing procedure paradigm (e.g. new technique, new vector family), not a cosmetic tweak? | 3 = critical reflection + paradigm-sharp new variant; 2 = reflective but incremental variant; 1 = rubber-stamp terminate; 0 = degenerate | Langfuse trace (triager turn) + variant_specs |
+| N8 | Seamless spec-conformant loop | Overall: did the pod cycle INIT -> RUNNER STRETCH -> TRIAGER -> decide -> TERMINAL exactly as the spec's high-level map, with no hangs, no raise, fail-open degradation handled, within the fixed caps? | 3 = flawless arc in cap; 2 = one hiccup, recovered; 1 = several errors, still terminated; 0 = crashed/hung | full trace + envelope + logs |
+
+Scoring: a run is GREEN for a criterion at >= 2; an e2e PASS requires N1-N4 each >= 2 AND N5-N8 each >= 1 (terminality is the floor). Each run's scorecard is appended to the run's entry in this document.
 
 ## Verification commands
 
