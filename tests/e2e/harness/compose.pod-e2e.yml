@@ -1,0 +1,36 @@
+# Pod e2e overlay (worktree-local): a SIBLING agent container for the
+# test-executor pod holistic e2e tier (#84, E5-E8).
+#
+# Loaded AFTER docker-compose.yml + docker-compose.dev.yml. Re-declares the
+# agent service with:
+#   - the WORKTREE as the mounted source (never the baked image layer), so the
+#     regrounded pod code under test is the edited tree;
+#   - the pod-role models explicitly wired to the operator-chosen model
+#     (opencode:muse-spark-1.2-contributor-free - the same model the hunting
+#     hunter uses in the deployed stack, verified live 2026-08-22);
+#   - a MOCKED kb_retrieve seam: the symptom-technique KB workstream is not
+#     merged, so the e2e injects a canned KB (returns fixture symptom/technique
+#     entries) rather than a live KB call. Taints realism, acknowledged.
+#
+# This overlay is WORKTREE-LOCAL (tests/e2e/harness/) - the base compose file
+# under the repo root does NOT carry it. The coordinator runs it from the
+# worktree:
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#                  -f tests/e2e/harness/compose.pod-e2e.yml up -d
+services:
+  agent:
+    # Re-declare the volumes so the sibling container sees THIS worktree's src
+    # (the dev overlay already mounts ./src: the merge keeps that mount; here
+    # we make the bind source explicit and worktree-scoped).
+    volumes:
+      - ./src:/srv/src
+      - ./db:/srv/db
+      - ./skills:/srv/skills
+      - ./gateway:/srv/gateway
+    environment:
+      LLM_MODEL_POD_RUNNER: "opencode:muse-spark-1.2-contributor-free"
+      LLM_MODEL_POD_TRIAGER: "opencode:muse-spark-1.2-contributor-free"
+      # The mocked KB switch the driver reads: when set, the driver's
+      # kb_retrieve injection returns canned entries instead of a live KB.
+      POD_E2E_MOCK_KB: "1"
+      POD_E2E_MOCK_KB_FILE: "/srv/tests/e2e/fixtures/mock-kb.yaml"
