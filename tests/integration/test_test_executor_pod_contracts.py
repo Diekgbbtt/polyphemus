@@ -1,5 +1,5 @@
-"""Integration tier: the test-executor pod assertion catalogue C1-C12
-(hunting-67-test-executor-pod-spec.md section 6.1).
+"""Integration tier: the test-executor pod assertion catalogue C1-C15
+(hunting-67-test-executor-pod-spec.md section 6.1, `docs/design/hunting-84-assertions.md`).
 
 The contract predicates exercise the pod's EXTERNAL behaviour through its one
 seam - `arun_pod(spec) -> {verdict, evidence}` (IA-3 in, IA-4 out, D84-15: the
@@ -7,8 +7,10 @@ async entry is the ONLY entry; the sync `run_pod` wrapper is gone) - with every
 side-effecting collaborator injected: the terminal (`exec_fn`), the Runner
 (`runner_step_fn`), the Critic (`triager_fn`), the KB, and the Langfuse trace
 stub. Most predicates drive the symbolic Runner (`symbolic_runner_step_fn`) so no
-live LLM is needed; the real chain is walked in the e2e tier (E1 real; E2-E4
-blocked on #83). No live target, no downstream agent.
+live LLM is needed; C13-C15 (T7: the KB tool binding, the P3 note write/read, and
+the tool-contract rejection codes) drive the PRODUCTION ReAct lane through
+`model_factory` with a fake chat model - the same hermetic harness as the e2e E1
+walkthrough. No live target, no downstream agent.
 
 The repo runs pytest WITHOUT pytest-asyncio (pyproject has no `asyncio_mode`):
 async entry points are driven to completion with `asyncio.run`, exactly like the
@@ -22,10 +24,27 @@ import asyncio
 import inspect
 
 import pytest
+from langchain_core.language_models import BaseChatModel
+from langchain_core.messages import AIMessage
+from langchain_core.outputs import ChatGeneration, ChatResult
 
 from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
 from polymerhus.attack.hunting.pod.config import EXEC_TIMEOUT_S, MAX_POD_ITERS
+from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
+from polymerhus.attack.hunting.pod.note_tool import (
+    NOTES_BAD_KIND,
+    NOTES_EMPTY_BODY,
+    PodNoteTool,
+    note_tool_for,
+)
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_spec_id
+from polymerhus.attack.hunting.pod.tools import (
+    ExecSpec,
+    ExecTool,
+    KbRetrieveSpec,
+    KbRetrieveTool,
+)
 from polymerhus.attack.hunting.pod.types import RunnerStep, TERMINAL_REASONS
 from polymerhus.recon.domain.types import ExecResult
 
@@ -270,3 +289,178 @@ def test_langfuse_failure_is_fail_open():
                         triager_fn=None, trace_fn=raising_trace))
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+
+
+# --- the production-lane harness (C13-C15: T7's ReAct lane) -------------------
+
+class _FakeModel(BaseChatModel):
+    """The scripted chat model (the e2e E1 / react-seams pattern): `_generate`
+    replays `replies` one per model step (the last repeats), `bind_tools` is a
+    passthrough so no real tool binding resolves - the ReAct loop is
+    deterministic, no live LLM."""
+
+    replies: list = []
+    idx: dict = {}
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        i = self.idx.get("i", 0)
+        self.idx["i"] = i + 1
+        return ChatResult(generations=[ChatGeneration(
+            message=self.replies[min(i, len(self.replies) - 1)])])
+
+    @property
+    def _llm_type(self):
+        return "fake"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def _factory(by_role):
+    """A `model_factory(role_id) -> model` walking `by_role[role_id]`; each
+    `arun_session_turn` builds a fresh agent on a fresh instance, so the scripts
+    are role-scoped, never cross-thread."""
+
+    def make(role_id):
+        replies = by_role.get(role_id) or [AIMessage(content="done")]
+        return _FakeModel(replies=list(replies), idx={})
+
+    return make
+
+
+def _kb_empty(calls=None):
+    def fake(query, *, fault_id="", technological_axis=()):
+        if calls is not None:
+            calls.append(query)
+        return {"symptoms": [], "techniques": [], "source": None}
+    return fake
+
+
+# The triager's production turn terminating `{unsuccessful, space-exhausted}`.
+_TRIAGER_ABSENT = [
+    AIMessage(content="", tool_calls=[{"name": "TriagerDecision", "id": "c9", "args": {
+        "classification": "symptom-absent", "action": "terminate",
+        "verdict": "unsuccessful", "terminal_reason": "space-exhausted", "clean": True,
+        "note": "third-party miner: no symptom is established across the probe space"}}]),
+]
+
+
+# --- C13 - KB tool bound on the Runner (D84-16/26) ------------------------------
+
+def test_kb_retrieve_bound_and_fails_open(tmp_path):
+    """The production Runner's `create_agent` binds `kb_retrieve` - the KB wiring
+    hole is closed. The ReAct script issues exactly one `kb_retrieve` call, the
+    empty result fails open (O13: degrade to the spec's primitives), and the pod
+    lands a binary end with the KB call recorded once."""
+    exec_calls = []
+    kb_calls = []
+    runner_script = [
+        AIMessage(content="", tool_calls=[
+            {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
+             "id": "c0"}]),
+        AIMessage(content="", tool_calls=[
+            {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
+        AIMessage(content="concluded; the observation grounds the verdict"),
+    ]
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls), kb_fn=_kb_empty(kb_calls),
+        trace_fn=_no_trace, memory_store=PodMemoryStore(tmp_path),
+        model_factory=_factory({POD_RUNNER_ROLE: runner_script})))
+
+    assert len(kb_calls) == 1                       # the binding was EXERCISED
+    assert kb_calls[0] == "csrf patterns on form posts"
+    assert len(exec_calls) == 1
+    assert env["verdict"] == "successful"           # fail-open: the empty KB degraded
+    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+
+
+# --- C14 - the P3 note written and read by the triager (D84-17/19/23) -----------
+
+def test_note_written_on_p3_and_read_by_triager(tmp_path):
+    """On P3 space exhaustion the production Runner writes the ONE consolidated
+    `experiment_summary` note to the pod memory store as its FINAL tool call
+    (D84-17/19), and the Triager's production note-reading turn terminates
+    `{unsuccessful, space-exhausted}` (D84-23, C14/H6)."""
+    exec_calls = []
+    store = PodMemoryStore(tmp_path)
+    runner_script = [
+        AIMessage(content="", tool_calls=[
+            {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
+             "id": "c0"}]),
+        AIMessage(content="", tool_calls=[
+            {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
+        AIMessage(content="", tool_calls=[
+            {"name": "note", "args": {"operation": "write", "variant_ref": "v0",
+                                      "note_name": "experiment",
+                                      "kind": "experiment_summary",
+                                      "body": "the default probe returned HTTP 404 "
+                                              "with an empty body; no kb primitive "
+                                              "differs from the initial set"},
+             "id": "c2"}]),
+        AIMessage(content="space exhausted; the consolidated summary was written"),
+    ]
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls), kb_fn=_kb_empty(),
+        trace_fn=_no_trace, memory_store=store,
+        model_factory=_factory({POD_RUNNER_ROLE: runner_script,
+                                POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
+
+    assert env["verdict"] == "unsuccessful"
+    assert env["evidence"]["terminal_reason"] == "space-exhausted"
+    assert env["evidence"]["clean"] is True
+    assert len(exec_calls) == 1
+
+    notes = store.read_notes(canonical_spec_id(VALID_SPEC))
+    assert len(notes) == 1                          # exactly ONE consolidated note
+    assert notes[0]["kind"] == "experiment_summary"
+    assert notes[0]["variant_ref"] == "v0"
+    assert "404" in notes[0]["body"]
+
+
+# --- C15 - tool-contract validation (D84-22, extra="forbid") --------------------
+
+def test_tool_contract_rejects_foreign_params(tmp_path):
+    """A `note` write carrying a parameter outside `NoteToolSpec` is REJECTED by
+    the args schema (`extra="forbid"`, D84-22) - a ValueError at the schema
+    boundary - and `_run` provably never executes. The harness does not
+    re-validate: the tool's OWN contract is the validator."""
+    store = PodMemoryStore(tmp_path)
+    calls = []
+
+    class SpyTool(PodNoteTool):
+        def _run(self, **kwargs):
+            calls.append(kwargs)
+            return super()._run(**kwargs)
+
+    tool = SpyTool(store=store, spec_id="spec-x")
+    with pytest.raises(ValueError):
+        tool.invoke({"operation": "write", "variant_ref": "v0",
+                     "note_name": "x", "kind": "experiment_summary",
+                     "body": "consolidation", "surprise_field": "oops"})
+    assert calls == []                              # never reached _run
+
+
+def test_tool_contract_coded_rejections(tmp_path):
+    """The tool-contract coded rejections (D84-22) fire for the semantics only
+    the run can judge: an empty write body and an unknown kind are returned as
+    coded rejections, never executed, never persisted."""
+    store = PodMemoryStore(tmp_path)
+    tool = note_tool_for(store, "spec-x")
+    empty = tool.invoke({"operation": "write", "kind": "experiment_summary",
+                         "note_name": "x", "body": "   "})
+    assert empty.startswith(NOTES_EMPTY_BODY)
+    bad = tool.invoke({"operation": "write", "kind": "not-a-kind",
+                       "note_name": "x", "body": "body"})
+    assert bad.startswith(NOTES_BAD_KIND)
+    assert store.read_notes("spec-x") == []         # nothing rejected persisted
+
+
+def test_exec_and_kb_contracts_are_typed():
+    """`exec` and `kb_retrieve` carry the typed `extra="forbid"` schemas: a
+    foreign parameter is rejected at the schema boundary (D84-22), and the pod's
+    caps are never model-chosen fields."""
+    spec = ExecSpec(command="curl -k https://t/")
+    assert spec.command == "curl -k https://t/"
+    assert ExecSpec.model_config.get("extra") == "forbid"
+    assert KbRetrieveSpec.model_config.get("extra") == "forbid"
+    assert "command" not in KbRetrieveSpec.model_fields
