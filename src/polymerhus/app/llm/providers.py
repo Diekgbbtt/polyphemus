@@ -430,6 +430,58 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
         return payload
 
 
+def _thinking_wire_form(provider: str, model: str, thinking: "ThinkingLevel") -> dict:
+    """The A5 thinking-effort wire decision (ADR A5, increment-3): the `extra`
+    kwargs that make `build_chat_model` emit EXACTLY what the provider/model
+    offers for a role's DECLARED `thinking` baseline - never an unconditional
+    translation.
+
+    Resolves the capability profile once per (provider, model) (resolve-and-
+    hold, D6; the reader is process-lifetime cached) and runs the pure
+    `negotiate_thinking` selector to get `(form, value, provenance)`:
+
+    - `form == "effort"` -> `reasoning_effort=<level>` (the wire the gateway
+      forwards via `allowed_openai_params`).
+    - `form == "budget"` -> `extra_body.thinking.budget_tokens=<int>` (the
+      Anthropic-style thinking-budget form the OpenAI-compatible wire carries
+      through `extra_body`; the pinned SDK passes it in `extra_body`).
+    - `form == "toggle"` -> `extra_body.thinking = {"type": "enabled"}` (the
+      thinking-ON toggle for toggle-only control).
+    - `form == "omit"` -> `{}` (send nothing: always-on model, off declared,
+      no offered level can honor the declared non-off level).
+
+    Off the #73 axis (single synchronous read at first construction, never
+    re-entered into the retry wrapper); fail-open (D7): an unknown or
+    gateway-less profile keeps the declared baseline (the reader requires no
+    gateway and degrades to all-unknown when unconfigured), and the mismatch /
+    chosen provenance is logged so a degraded adaptation is observable, never
+    silent."""
+    if thinking == "off":
+        return {}
+    try:
+        from polymerhus.app.llm.capability import resolve_capability
+        from polymerhus.app.llm.negotiation import negotiate_thinking
+
+        profile = resolve_capability(provider, model)
+        form, value, provenance = negotiate_thinking(thinking, profile)
+    except Exception as exc:  # noqa: BLE001 - fail-open: never into construction
+        logger.warning(
+            "thinking-effort adaptation failed for %s/%s (%s); keeping the "
+            "declared baseline %r as the raw reasoning_effort",
+            provider, model, exc, thinking)
+        return {"reasoning_effort": thinking}
+    logger.info("thinking-effort: provider=%s model=%s declared=%s decision=%s "
+                "value=%r provenance=%s", provider, model, thinking, form, value, provenance)
+    if form == "effort" and isinstance(value, str):
+        return {"reasoning_effort": value}
+    if form == "budget" and isinstance(value, int):
+        return {"extra_body": {"thinking": {"type": "enabled",
+                                            "budget_tokens": value}}}
+    if form == "toggle":
+        return {"extra_body": {"thinking": {"type": "enabled"}}}
+    return {}
+
+
 def build_chat_model(provider: str, model: str, *, temperature: float = 0,
                      read_timeout: float | None = None,
                      max_retries: int | None = None,
@@ -482,13 +534,14 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     # not propagate. Empty list (Langfuse unconfigured) is inert. Fail-open.
     from polymerhus.app.observability import get_langfuse_callbacks
 
-    # The thinking BASELINE (#94): a non-`off` level sets the OpenAI-compatible
-    # `reasoning_effort` the configured (reasoning-capable) models accept. The dynamic
-    # capability-adaptive workstream (#99) is what will verify a given model actually
-    # supports it and fail-safe otherwise; here we only translate the declared baseline.
-    extra: dict = {}
-    if thinking != "off":
-        extra["reasoning_effort"] = thinking
+    # The thinking BASELINE (#94 / A5): a non-`off` level is ADAPTED to what the
+    # provider/model actually offers (capability-adaptive workstream #99, ADR A5
+    # increment-3) before it is emitted - the exact `reasoning_effort` / budget /
+    # toggle / nothing the wire will carry is a resolved decision, never an
+    # unconditional translation. Resolve-and-hold (D6) via the capability
+    # reader; off the #73 retry axis; fail-open (D7): an unknown/gateway-less
+    # profile keeps the declared baseline and the mismatches are logged.
+    extra: dict = _thinking_wire_form(provider, model, thinking)
     return ReasoningPreservingChatOpenAI(model=model, api_key=api_key,
                                          base_url=base_url, temperature=temperature,
                                          timeout=timeout, max_retries=retries,

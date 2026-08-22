@@ -27,9 +27,8 @@ Ratified rung table (ADR A1, authoritative):
      `function_calling` on the tool rung. Capability never gates session start
      (D7 fail-open).
 
-`reasoning_effort` is orthogonal (operator corrigendum, A1): the negotiated
-method never depends on the thinking dial - this module carries no thinking
-input at all.
+`reasoning_effort` is orthogonal (operator corrigendum, A1): the *method*
+negotiation never reads the thinking dial - it shares no state with it.
 
 The thinking-effort dial IS the module's second surface (A5, increment-3):
 `negotiate_thinking` - the pure selector mirror of `negotiate_method` - adapts
@@ -213,7 +212,7 @@ def next_rung(method: Method) -> Method | None:
 # --- Thinking-effort adaptation (A5, increment-3) -----------------------------
 #
 # The SECOND capability dial, the SAME component-profile pattern as the method
-# negotiation: a pure selector `(declared_level, profile) -> (wire_form,
+# negotiation: a pure selector `(declared_level, profile) -> (form, value,
 # provenance)` that adapts what the role declared to what the model offers.
 # The wire_form vocabulary tells the seam (#162) what to emit unambiguously:
 #   "effort"   -> a level string for `reasoning_effort`
