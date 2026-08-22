@@ -48,6 +48,9 @@ POD_COMPOSE = str(Path(os.environ.get(
 COMPOSE = ["docker", "compose", "-f", BASE_COMPOSE, "-f", DEV_COMPOSE,
            "-f", POD_COMPOSE]
 
+# The SIBLING service name: the pod-e2e overlay adds a distinct `pod-e2e-agent`
+# service (never the fleet `agent`) so the run never collides with the
+# operator's running container. It stays DOWN until the operator green-lights.
 AGENT_SERVICE = os.environ.get("POD_E2E_SERVICE", "pod-e2e-agent")
 
 RUNS_DIR = REPO_ROOT / "tests" / "e2e" / "fixtures" / "runs"
@@ -96,20 +99,23 @@ def driver_command(script: str, run_id: str) -> list[str]:
                       "python", "-c", script]
 
 
-def run_one_spec(spec_path: str, *, run_id: str | None = None) -> dict:
+def run_one_spec(spec_path: str, *, run_id: str | None = None,
+                 container_driver: str = "/srv/tests/e2e/harness/driver.py",
+                 container_spec_root: str = "/srv/tests/e2e/fixtures/specs") -> dict:
     """Drive ONE spec through the pod in the sibling container as a
-    self-contained pass. `spec_path` is absolute (the container sees the mount
-    at the same path). Returns the run's metadata (run_id, artifact dir)."""
+    self-contained pass. `spec_path` names the spec fixture RELATIVE to the
+    container's `/srv/tests/e2e/fixtures/specs` mount (e.g. "xss_search.yaml").
+    Returns the run's metadata (run_id, artifact dir)."""
     run_id = run_id or f"pod-{uuid.uuid4().hex[:8]}"
     out_dir = RUNS_DIR / run_id
     out_dir.mkdir(parents=True, exist_ok=True)
-    # The driver script runs INSIDE the container; POD_RUN_ID + POD_SPEC_PATH
-    # reach it via env. The script itself lives at
-    # tests/e2e/harness/driver.py (mounted at the same path under /srv).
-    driver = HARNESS_DIR / "driver.py"
+    # The driver runs INSIDE the container (the tests/ tree is mounted at
+    # /srv/tests), so BOTH paths are container-rooted - docker compose exec
+    # resolves the command inside the container, never on the host.
+    spec = f"{container_spec_root}/{spec_path.lstrip('/')}"
     res = _run(COMPOSE + ["exec", "-e", f"POD_RUN_ID={run_id}",
-                          "-e", f"POD_SPEC_PATH={spec_path}",
-                          AGENT_SERVICE, "python", str(driver)],
+                          "-e", f"POD_SPEC_PATH={spec}",
+                          AGENT_SERVICE, "python", container_driver],
                cwd=REPO_ROOT)
     if res.returncode != 0:
         raise RuntimeError(f"pod e2e run failed: {res.stdout}\n{res.stderr}")

@@ -24,7 +24,6 @@ from __future__ import annotations
 import pytest
 
 from tests.e2e.harness import host
-from tests.e2e.harness.host import RUNS_DIR
 
 SPECS = {
     "xss": "xss_search.yaml",
@@ -63,8 +62,7 @@ def _assert_terminal(artifacts: dict) -> None:
 
 
 def _run_spec(name: str, spec_file: str) -> dict:
-    spec_path = str(RUNS_DIR.parent / "specs" / spec_file)
-    meta = host.run_one_spec(spec_path)
+    meta = host.run_one_spec(spec_file)
     return host.read_run_artifacts(meta["run_id"])
 
 

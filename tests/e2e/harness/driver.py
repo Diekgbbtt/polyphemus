@@ -83,11 +83,28 @@ async def _run_pod(spec: dict) -> dict[str, Any]:
         return {"verdict": "unsuccessful", "evidence": {"error": str(exc)}}
 
 
+def _read_notes(spec: dict) -> list[dict]:
+    """Read the pod's run notes back from the fixed memory-store root the
+    production lane wrote (D84-28 `data/pod-memory` under the hunting module),
+    keyed by the spec's canonical id - the N3 note-detail evidence source."""
+    try:
+        from polymerhus.attack.hunting.pod.pod_memory import (
+            PodMemoryStore,
+            canonical_spec_id,
+        )
+
+        store = PodMemoryStore()
+        return store.read_notes(canonical_spec_id(spec))
+    except Exception:  # noqa: BLE001 - a missing store yields [], never a raise
+        return []
+
+
 def main() -> None:
     spec = _load_spec()
     _persist("spec.json", spec)
     out = asyncio.run(_run_pod(spec))
     _persist("envelope.json", out)
+    _persist("notes.json", _read_notes(spec))
     print(json.dumps({"run_id": RUN_ID, "verdict": out.get("verdict"),
                       "terminal_reason": out.get("evidence", {}).get(
                           "terminal_reason")}, indent=2))
