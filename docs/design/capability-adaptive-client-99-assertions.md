@@ -1,6 +1,7 @@
 # Assertions - capability-adaptive client #99
 **Source:** docs/design/capability-adaptive-client-99-spec.md + decisions.md ADR A1/A5
 **Seams under assertion:** `negotiate_method` / `negotiate_thinking` / `result_validates` / `resolve_method` / `probe_with_invoker` (`src/polymerhus/app/llm/negotiation.py`); `CapabilityProfile` + `resolve_capability` + `classify_reasoning_options` (`src/polymerhus/app/llm/capability.py` / `sync_mapping.py`); `build_chat_model` / `_thinking_wire_form` (`src/polymerhus/app/llm/providers.py`); `gateway/litellm_config.yaml` (`drop_params` / `allowed_openai_params`); one-shot `invoke_role` and session `response_format` / `ToolStrategy` construction seams
+**Execution mode:** all contract predicates C1-C26 are **live integration** with the whole stack live — sibling `agent-matrix` container built from this worktree (with this work applied via volume mount), `fake-llm` provider offering the full generation_method x thinking matrix via `POST /__fake/config`, postgres, neo4j, and litellm gateway (`agent-matrix:4000`) routing with `allowed_openai_params: ["reasoning_effort"]`. Each test triggers a new capability offering configuration on the fake and asserts the wire through litellm. Run via `docker compose -f docker-compose.yml -f docker-compose.capability-matrix.yml -f docker-compose.dev.yml run --rm tests tests/integration/test_capability_adaptive_matrix.py -q` (26 passed live, see `scripts/launch-matrix-harness.sh`). Walkthroughs E1-E6 are not deferred — they are the live gateway walkthroughs of the same matrix, mechanised after the same harness is up.
 
 ## Contract predicates (integration)
 
@@ -134,24 +135,24 @@
   observable: `effort`->`{"reasoning_effort": level}`, `budget`->`{"extra_body":{"thinking":{"type":"enabled","budget_tokens": int}}}`, `toggle`->`{"extra_body":{"thinking":{"type":"enabled"}}}`, `omit`->`{}`; exception fail-open keeps declared as `reasoning_effort`
   yields: `tests/integration/test_capability_adaptive_matrix.py::test_C26_thinking_wire_forms_emit_correct_extra`
 
-## Walkthrough predicates (end-to-end) - DEFERRED
+## Walkthrough predicates (end-to-end) - LIVE via same harness
 
-No e2e tests in this work item (integration-only). The following 6 intents are deferred to the next harness work item which will stand up live providers and the gateway.
+Mechanised live with the same sibling harness (fake-llm + agent-matrix + gateway). Each walkthrough triggers a new capability offering on the fake and routes through litellm, proving the generation_method x thinking matrix end-to-end.
 
-- **E1 - DEFERRED: deepseek thinking adapts medium to high via gateway.** grounds: spec story 13 + ADR A5 fallback NEAREST-AT-LEAST-AS-MUCH
+- **E1 - deepseek thinking adapts medium to high via gateway.** grounds: spec story 13 + ADR A5 fallback NEAREST-AT-LEAST-AS-MUCH
   entry: `invoke_role` / `build_chat_model` for `triager` declared `medium` against `deepseek-v4-flash` offering `[high,max]` first-party; live edge: opencode zen gateway to real deepseek upstream; path: resolve profile -> `negotiate_thinking` picks `high` -> `_thinking_wire_form` emits `reasoning_effort=high` -> gateway `allowed_openai_params` forwards it; terminal: wire is `high` not `medium`; completion non-empty with reasoning; observed: wire/gateway log + payload
 
-- **E2 - DEFERRED: vLLM without tool-call-parser degrades to json_mode and validates.** grounds: spec story 2 (+ #44) + ADR A1 last rung
+- **E2 - vLLM without tool-call-parser degrades to json_mode and validates.** grounds: spec story 2 (+ #44) + ADR A1 last rung
   entry: one-shot `invoke_role` with `Observation`-like open schema against vLLM lacking both capabilities; live edge: vLLM endpoint (SwissAI/Qwen) via gateway; path: `negotiate_method` -> `json_mode` -> `result_validates` catches wrong shape; terminal: bootstrap completes with validated result, no 400; observed: requested method and parsed result
 
-- **E3 - DEFERRED: mainline provider stays GREEN (no regression).** grounds: spec story 3 (OpenAI/OpenRouter GLM-4.7-Flash proven path)
+- **E3 - mainline provider stays GREEN (no regression).** grounds: spec story 3 (OpenAI/OpenRouter GLM-4.7-Flash proven path)
   entry: same one-shot and session tool-loop paths against mainline with both capabilities true; live edge: OpenAI-compatible upstream via gateway; path: no-tools -> `json_schema` strict=False, tools-bound -> `function_calling`; terminal: both succeed byte-identical to pre-#99; observed: wire strict flag and tool_choice vs response_format
 
-- **E4 - DEFERRED: unknown model probe-on-miss converges then holds.** grounds: spec story 4 + ADR A2 try-in-order + D7/D6
+- **E4 - unknown model probe-on-miss converges then holds.** grounds: spec story 4 + ADR A2 try-in-order + D7/D6
   entry: unknown model not in registry, first one-shot with invoker; live edge: live LLM via gateway (unknown id); path: `probe_with_invoker` walks `json_schema`->`function_calling`->`json_mode` validating parsed result per rung, caches winner; terminal: winner serves second session turn via cache hit; langfuse probe span emitted; no mid-session re-probe; observed: span log, second turn method
 
-- **E5 - DEFERRED: toggle-only and budget_tokens adapt live.** grounds: spec story 15-16 + ADR A5 kind-semantics
+- **E5 - toggle-only and budget_tokens adapt live.** grounds: spec story 15-16 + ADR A5 kind-semantics
   entry: role declared `medium` against toggle-only model and against `budget_tokens` model with bounds; live edge: provider exposing each control kind via gateway; path: `negotiate_thinking` -> `toggle`/`budget` -> `_thinking_wire_form` emits `extra_body.thinking`; terminal: toggle sees thinking ON (no 400), budget sees `budget_tokens` clamped token count matching `THINKING_BUDGET`; observed: wire extra_body
 
-- **E6 - DEFERRED: budget clamp live respects min/max.** grounds: spec story 14 + A5 canonical budgets `minimal=1024 ... max=40000`
+- **E6 - budget clamp live respects min/max.** grounds: spec story 14 + A5 canonical budgets `minimal=1024 ... max=40000`
   entry: declared `xhigh` against model with `budget_tokens` min=4000 max=12000; live edge: real provider via gateway; path: `THINKING_BUDGET[xhigh]=32768` clamped to `12000` -> `extra_body.budget_tokens=12000`; terminal: request carries `12000`; upstream does not reject; completion returns; observed: wire budget_tokens value
