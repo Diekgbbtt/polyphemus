@@ -35,15 +35,11 @@ Assertion catalogue (bounded, spec 6.2 E1 + H1/H2):
       the runner's FINAL tool call (H2/C14), and the Triager's production
       note-reading turn lands the terminal (D84-23).
 
-E2-E4 (the full chain with candidates, orchestration -> hunter -> pod) are the
-spec's chain walkthroughs (merged spec 10.1-10.8): "mechanisable when all three
-agents exist (this ticket segment is last, so its e2e tier completes the
-chain)". They are CARRIED, blocked on the #83 hunting agent's production
-dispatch not being wired into `start_hunting` (#110 "Dispatch placement" - the
-orchestration graph's `dispatch_fn` today degrades to the `hunting agent
-unavailable` trail event, `orchestrator_graph.py:_make_dispatch`); per the
-ticket mandate we do NOT chase the parent chain, so they stand as skip-marked
-skeletons carrying the spec's exact input/path/terminal.
+The full-pipeline chain walkthroughs (E2-E4, orchestrator -> hunter -> pod) are
+OUT OF SCOPE (2026-08-22): the operator narrowed this workstream to the
+test-executor pod alone, so those skeletons are REMOVED. The holistic pod e2e
+over the in-network stack (E5-E8, sibling container + juice-shop spec fixtures)
+and the NFR scorer live in the sibling test modules.
 """
 from __future__ import annotations
 
@@ -264,43 +260,8 @@ def test_space_exhausted_run_writes_the_p3_note(tmp_path):
     assert "404" in notes[0]["body"]
 
 
-# --- E2-E4: the full-chain walkthroughs (merged spec 10.1-10.8) -----------------
-
-_BLOCKED_CHAIN = (
-    "carried, blocked at the pod ticket segment: the chain's live edge is "
-    "FaultSource -> orchestrator -> hunting agent -> pod through the REAL "
-    "start_hunting path, but the #83 hunting agent's production dispatch seam "
-    "is not wired into start_hunting (#110 'Dispatch placement' - the "
-    "orchestration graph's dispatch_fn degrades to the 'hunting agent "
-    "unavailable' trail event). Per spec 6.2 these are 'mechanisable when all "
-    "three agents exist (this ticket segment is last)'; per the ticket mandate "
-    "we do not chase the parent chain."
-)
-
-
-@pytest.mark.skip(reason=_BLOCKED_CHAIN)
-def test_full_chain_two_candidates():
-    """E2 - Full chain, two candidates (grounds merged spec 10.1-10.8 and the
-    orchestrator E1). Entry seam: the candidate-set delivery at IA-1. Live
-    edge: the eval target `soupmarket.shop`, live HTTP mode. Path: FaultSource
-    fixture -> gate -> ranker -> two `HuntConfig`s -> two hunting agents -> two
-    pod runs -> two verdicts -> S7. Terminal: exactly two hunt records with
-    spec/result refs and hypothesis verdicts. When unblocked, this body drives
-    the REAL chain and reads the terminal quantities out of the hunt store."""
-
-
-@pytest.mark.skip(reason=_BLOCKED_CHAIN)
-def test_yellow_park_resume():
-    """E3 - Yellow park/resume (grounds merged spec 10.4/10.7 and the
-    orchestrator E2). Entry seam: the candidate-set delivery at IA-1. Input:
-    `{(service applies), (system yellow)}` per orchestrator E2. Path: dispatch
-    for the service; park for the system; recon lands; re-match applies; second
-    dispatch. Terminal: two hunt records, one back-edge record."""
-
-
-@pytest.mark.skip(reason=_BLOCKED_CHAIN)
-def test_zero_candidate_run():
-    """E4 - Zero-candidate run (grounds merged spec 10.1 and the orchestrator
-    E1-empty). Entry seam: the candidate-set delivery at IA-1. Input: the empty
-    candidate set. Path: gate on nothing -> no dispatch -> S7. Terminal: zero
-    hunt records, run complete."""
+# --- E2-E4 are OUT OF SCOPE (2026-08-22): the full-pipeline chain walkthroughs
+# (orchestrator -> hunter -> pod) and any other single-component testing are
+# removed per the operator's scope narrowing. The holistic pod e2e (E5-E8, the
+# sibling-container in-network stack + juice-shop spec fixtures) lives in
+# test_pod_e2e_holistic.py and the NFR scorer in test_pod_e2e_nfr.py.

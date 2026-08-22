@@ -62,6 +62,21 @@ def _run(cmd: list[str], *, timeout: int = 600, cwd=None) -> subprocess.Complete
                           text=True, timeout=timeout)
 
 
+def compose_ps(service: str = AGENT_SERVICE) -> list[dict]:
+    """`docker compose ps` rows for the sibling service ([] when it has no
+    container / the stack is down) - the holistic-tier stack gate."""
+    result = _run(COMPOSE + ["ps", "--format", "json", service])
+    if result.returncode != 0:
+        return []
+    rows = []
+    for line in result.stdout.strip().splitlines():
+        try:
+            rows.append(json.loads(line))
+        except json.JSONDecodeError:
+            continue
+    return rows
+
+
 def compose_up() -> None:
     """Bring the sibling pod-e2e agent container up (in the compose network,
     worktree source mounted, pod roles wired)."""
