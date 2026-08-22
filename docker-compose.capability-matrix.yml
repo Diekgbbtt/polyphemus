@@ -1,0 +1,33 @@
+name: polymerhus-matrix
+
+services:
+  fake-llm:
+    image: python:3.11-slim
+    command: bash -lc "pip install fastapi uvicorn -q && uvicorn tests.support.fake_llm_provider:app --host 0.0.0.0 --port 8001"
+    volumes:
+      - ./tests:/srv/tests:ro
+      - ./src:/srv/src:ro
+    working_dir: /srv
+    ports: ["8001:8001"]
+    networks: [polymerhus-net]
+
+  agent-matrix:
+    build: { context: ., dockerfile: Dockerfile }
+    image: polymerhus-agent:capability-matrix
+    environment:
+      LLM_GATEWAY_URL: http://agent-matrix:4000
+      API_KEY_FAKE: test
+      LITELLM_MASTER_KEY: sk-polymerhus-dev-gateway
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus_gateway
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+    ports: ["8081:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      neo4j: { condition: service_healthy }
+      kali: { condition: service_started }
+      fake-llm: { condition: service_started }
+    networks: [polymerhus-net]
