@@ -31,6 +31,18 @@ Ratified rung table (ADR A1, authoritative):
 method never depends on the thinking dial - this module carries no thinking
 input at all.
 
+The thinking-effort dial IS the module's second surface (A5, increment-3):
+`negotiate_thinking` - the pure selector mirror of `negotiate_method` - adapts
+a role's DECLARED thinking level to what the provider/model actually offers
+(the capability profile's A5 surface: `reasoning_control` /
+`reasoning_efforts` / `thinking_budget_bounds`). Same component-profile
+pattern, same discipline: pure, except it is reached from the same seams
+(`build_chat_model` is the single construction point), resolve-and-hold (D6),
+off the #73 axis, fail-open (D7 - an unknown profile keeps the declared
+baseline, never drops reasoning the operator asked for), observable (D11
+span/log provenance). It shares NO state with the method negotiation and
+NEVER affects method selection.
+
 `schema_shape` (`closed` | `open`) is the third input of the total contract
 the ADR fixed (the seam records whether a call's schema carries free-form
 `dict` fields, e.g. `Observation.anchor`). Under A1 rung 1, `strict=False` is
@@ -196,6 +208,149 @@ def next_rung(method: Method) -> Method | None:
         raise ValueError(f"unknown negotiation method {method!r}; known: {DEGRADE_CHAIN}")
     index = DEGRADE_CHAIN.index(method)
     return DEGRADE_CHAIN[index + 1] if index + 1 < len(DEGRADE_CHAIN) else None
+
+
+# --- Thinking-effort adaptation (A5, increment-3) -----------------------------
+#
+# The SECOND capability dial, the SAME component-profile pattern as the method
+# negotiation: a pure selector `(declared_level, profile) -> (wire_form,
+# provenance)` that adapts what the role declared to what the model offers.
+# The wire_form vocabulary tells the seam (#162) what to emit unambiguously:
+#   "effort"   -> a level string for `reasoning_effort`
+#   "budget"   -> a token int for the thinking-budget param
+#   "toggle"   -> thinking-ON (the wire form; value is "on")
+#   "omit"     -> send nothing (value None)
+# `off` is a DECLARED level (no reasoning requested), never a wire value; its
+# wire mapping is omit/none depending on what the model offers. The `none` /
+# `null` slot in an offered effort list IS the model's "off" - only a declared
+# `off` ever maps to it. Never parses vendor error strings.
+
+# The canonical per-level thinking-budget ladder (operator-ratified 2026-08-22).
+# A `budget_tokens`-control model honors a level through this map, clamped to
+# the model's declared bounds when the profile carries them.
+THINKING_BUDGET: dict[str, int] = {
+    "minimal": 1024,
+    "low": 2048,
+    "medium": 4096,
+    "high": 16384,
+    "xhigh": 32768,
+    "max": 40000,
+}
+
+# The declared-level ordering (off < minimal < low < medium < high < xhigh <
+# max) that the NEAREST-AT-LEAST-AS-MUCH fallback uses. "none"/"null"/"default"
+# are NOT levels - they are off/provider-default markers, never candidates for
+# an at-least-as-much comparison.
+_THINKING_ORDER = ("off", "minimal", "low", "medium", "high", "xhigh", "max")
+_THINKING_RANK = {level: rank for rank, level in enumerate(_THINKING_ORDER)}
+
+# The wire-form vocabulary `negotiate_thinking` returns.
+THINKING_FORM_EFFORT = "effort"
+THINKING_FORM_BUDGET = "budget"
+THINKING_FORM_TOGGLE = "toggle"
+THINKING_FORM_OMIT = "omit"
+
+
+def _thinking_unknown(profile: CapabilityProfile | None) -> bool:
+    """A profile is "unknown" for thinking adaptation when absent OR carries
+    no authored A5 surface (D5 Rule 1: an absent field is the encoding of
+    unknown; window/provenance-only records tell the effort dial nothing)."""
+    return profile is None or (
+        profile.reasoning_control is None
+        and profile.reasoning_efforts is None
+        and profile.thinking_budget_bounds is None
+    )
+
+
+def _off_form(profile: CapabilityProfile | None) -> tuple[str, str | int | None, str]:
+    """A declared `off`: only OMIT or the model's literal `none`/`null` off slot
+    (operator-ratified). A toggle/budget/always-on model gets OMIT; an effort-
+    list model carrying a `none` (or JSON-null-canonicalized "none") slot emits
+    that as the off marker."""
+    offered = profile.reasoning_efforts if profile is not None else None
+    if offered and "none" in offered:
+        return (THINKING_FORM_EFFORT, "none", "off-maps-to-offered-none-slot")
+    return (THINKING_FORM_OMIT, None, "off-omit")
+
+
+def _fallback_effort(declared_level: str, offered: tuple[str, ...]) -> str | None:
+    """The ratified NEAREST-AT-LEAST-AS-MUCH fallback: the LOWEST offered level
+    that is at least as much thinking as declared (declared `medium`, offered
+    `[high, max]` -> `high`). Reasoning never silently downgraded below what the
+    operator declared. Returns None when no offered level is >= declared."""
+    declared_rank = _THINKING_RANK.get(declared_level)
+    if declared_rank is None:
+        return None
+    candidates = sorted(
+        (rank, level) for level, rank in _THINKING_RANK.items()
+        if level in offered and rank >= declared_rank
+    )
+    return candidates[0][1] if candidates else None
+
+
+def _budget_form(declared_level: str, profile: CapabilityProfile) -> tuple[str, int | None, str]:
+    """A `budget_tokens`-control model: the canonical THINKING_BUDGET[level]
+    clamped to the model's declared bounds. The budget map covers every declared
+    non-off level; an unmapped level omits."""
+    budget = THINKING_BUDGET.get(declared_level)
+    if budget is None:
+        return (THINKING_FORM_OMIT, None, "budget-no-canonical-level-omit")
+    bounds = profile.thinking_budget_bounds
+    if bounds is not None:
+        lo, hi = bounds
+        budget = min(max(budget, lo), hi)
+    return (THINKING_FORM_BUDGET, budget, "budget-canonical-clamped")
+
+
+def negotiate_thinking(
+    declared_level: str,
+    profile: CapabilityProfile | None,
+) -> tuple[str, str | int | None, str]:
+    """The A5 selector: the wire form for a role's DECLARED thinking level,
+    adapted to what the provider/model offers.
+
+    Codomain `(form, value, provenance)` - the 3-tuple keeps the FORM and the
+    VALUE unambiguous for the seam:
+    - `("effort", level, ...)` - send `reasoning_effort=<level>`.
+    - `("budget", int, ...)` - send the thinking-budget with the canonical token
+      count (clamped to the model's bounds).
+    - `("toggle", "on", ...)` - send the thinking-ON toggle (toggle-only control).
+    - `("omit", None, ...)` - send nothing (always-on model, off declared, or
+      no offered level can honor the declared non-off level).
+
+    Ratified semantics (ADR A5): exact match wins; else NEAREST-AT-LEAST-AS-
+    MUCH fallback (reasoning never silently downgraded); `off` declared maps
+    only to OMIT or the model's literal `none`/`null` slot; toggle-only non-off
+    -> toggle-on; budget-only non-off -> canonical budget clamped; `[]`
+    always-on -> OMIT; unknown profile (no authored A5 surface) -> keep the
+    declared baseline (D7 fail-open - never drop reasoning the operator asked
+    for, and the wire keeps the legacy unconditional behavior with an honest
+    provenance). Pure: no I/O, no env, no vendor-error parsing. """
+    if declared_level == "off":
+        return _off_form(profile)
+    if _thinking_unknown(profile):
+        # Fail-open: unknown tells the dial nothing, so the declared baseline
+        # is kept exactly as before - observable, never silently dropped.
+        return (THINKING_FORM_EFFORT, declared_level, "unknown-profile-declared-kept")
+
+    control = profile.reasoning_control if profile is not None else None
+    offered = profile.reasoning_efforts if profile is not None else ()
+    if control in (None, "none"):
+        return (THINKING_FORM_OMIT, None, "always-on-or-unknown-omit")
+    if "toggle" in control and "effort" not in control and "budget_tokens" not in control:
+        # toggle-only: non-off declared -> thinking ON.
+        return (THINKING_FORM_TOGGLE, "on", "toggle-on")
+    if "effort" in control and offered:
+        if declared_level in offered:
+            return (THINKING_FORM_EFFORT, declared_level, "exact-match")
+        fallback = _fallback_effort(declared_level, offered)
+        if fallback is not None:
+            return (THINKING_FORM_EFFORT, fallback, "fallback-nearest-at-least-as-much")
+        return (THINKING_FORM_OMIT, None, "fallback-none-at-or-above-declared-omit")
+    if "budget_tokens" in control:
+        return _budget_form(declared_level, profile)
+    # Toggle present but effort absent (toggle+budget elsewhere handled above).
+    return (THINKING_FORM_OMIT, None, "no-effort-no-budget-omit")
 
 
 def result_validates(parsed: Any, schema: type | dict | None = None) -> bool:

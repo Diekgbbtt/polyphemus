@@ -263,8 +263,9 @@ def test_capability_to_model_info_absence_is_unknown():
                 "output_cost_per_token", "input_cost_per_token_cache_read",
                 "input_cost_per_token_cache_write", "supports_function_calling",
                 "supports_parallel_function_calling", "supports_structured_output",
-                "supports_reasoning", "reasoning_in_response", "reasoning_field",
-                "modalities_in", "modalities_out", "open_weights"):
+"supports_reasoning", "reasoning_in_response", "reasoning_field",
+                 "reasoning_control", "reasoning_efforts", "thinking_budget_bounds",
+                 "modalities_in", "modalities_out", "open_weights"):
         assert key not in info, f"{key} must be ABSENT when unknown (Rule 1)"
     # Provenance keys are authored even for an unknown record.
     assert info["capability_source"] == "unknown"
@@ -300,3 +301,129 @@ def test_provenance_key_names_are_the_d5_contract():
     assert M.PROVENANCE_SOURCE_KEY == "capability_source"
     assert M.PROVENANCE_SYNCED_AT_KEY == "capability_synced_at"
     assert M.PROVENANCE_STALENESS_KEY == "capability_staleness"
+
+
+# ---------------------------------------------------------------------------
+# A5 thinking-effort surface (increment-3): classify_reasoning_options -------
+# ---------------------------------------------------------------------------
+
+def test_classify_absent_and_malformed_degrade_to_unknown():
+    for bad in (None, "not-a-list", {}, [1, 2], [{"type": "unknown"}]):
+        assert M.classify_reasoning_options(bad) == (None, None, None)
+
+
+def test_classify_empty_list_is_always_on_no_control():
+    assert M.classify_reasoning_options([]) == ("none", None, None)
+
+
+def test_classify_toggle_only():
+    assert M.classify_reasoning_options([{"type": "toggle"}]) == ("toggle", None, None)
+
+
+def test_classify_effort_only():
+    opts = [{"type": "effort", "values": ["low", "medium", "high"]}]
+    assert M.classify_reasoning_options(opts) == ("effort", ("low", "medium", "high"), None)
+
+
+def test_classify_budget_tokens_only():
+    opts = [{"type": "budget_tokens", "min": 1024, "max": 32768}]
+    assert M.classify_reasoning_options(opts) == ("budget_tokens", None, (1024, 32768))
+
+
+def test_classify_budget_bounds_degrade_when_unusable():
+    for bad in ({"min": 1024}, {"max": 8192}, {"min": -1, "max": 8192},
+                {"min": 0, "max": 0}, {"min": 9000, "max": 1000},
+                {"min": "lo", "max": 1000}, {"min": 100, "max": True}):
+        opts = [{"type": "budget_tokens", **bad}]
+        assert M.classify_reasoning_options(opts) == ("budget_tokens", None, None)
+
+
+def test_classify_effort_toggle_combo():
+    opts = [{"type": "toggle"}, {"type": "effort", "values": ["none", "low", "high"]}]
+    assert M.classify_reasoning_options(opts) == (
+        "effort+toggle", ("none", "low", "high"), None)
+
+
+def test_classify_effort_budget_combo_order_is_canonical():
+    opts = [{"type": "budget_tokens", "min": 1024, "max": 32768},
+            {"type": "effort", "values": ["low", "high"]}]
+    assert M.classify_reasoning_options(opts) == (
+        "effort+budget_tokens", ("low", "high"), (1024, 32768))
+
+
+def test_classify_json_null_effort_canonicalizes_to_none():
+    """models.dev carries a real JSON `null` inside some effort value lists
+    (sarvam-family). It is canonicalized to the literal "none" off slot at this
+    authoring seam, so the profile surface stays a clean tuple[str, ...]."""
+    opts = [{"type": "effort", "values": [None, "low", "medium", "high"]}]
+    assert M.classify_reasoning_options(opts) == (
+        "effort", ("none", "low", "medium", "high"), None)
+
+
+def test_classify_all_three_kinds():
+    opts = [{"type": "toggle"},
+            {"type": "effort", "values": ["medium", "high"]},
+            {"type": "budget_tokens", "min": 1024, "max": 32768}]
+    assert M.classify_reasoning_options(opts) == (
+        "effort+toggle+budget_tokens", ("medium", "high"), (1024, 32768))
+
+
+def test_classify_excludes_non_string_effort_values():
+    opts = [{"type": "effort", "values": ["low", 42, "high"]}]
+    assert M.classify_reasoning_options(opts) == ("effort", ("low", "high"), None)
+
+
+# ---------------------------------------------------------------------------
+# A5 record -> model_info authoring (Rule 1: absent stays absent) ------------
+# ---------------------------------------------------------------------------
+
+def test_capability_to_model_info_authors_the_thinking_surface():
+    rec = M.CapabilityRecord(
+        model_id="deepseek/deepseek-v4-flash",
+        provider="opencode",
+        supports_reasoning=True,
+        reasoning_control="effort",
+        reasoning_efforts=("low", "high", "max"),
+        thinking_budget_bounds=(1024, 32768),
+        source="models.dev/deepseek/deepseek-v4-flash",
+        synced_at="2026-08-22T12:00:00+00:00",
+        staleness="fresh",
+    )
+    info = M.capability_to_model_info(rec)
+    assert info["reasoning_control"] == "effort"
+    assert info["reasoning_efforts"] == ["low", "high", "max"]
+    assert info["thinking_budget_bounds"] == [1024, 32768]
+    assert info["capability_source"] == "models.dev/deepseek/deepseek-v4-flash"
+
+
+def test_capability_to_model_info_omits_absent_thinking_surface():
+    """Rule 1: a record whose A5 surface is unknown never encodes it - the
+    keys are simply absent, so the reader treats the dial as unknown."""
+    rec = M.CapabilityRecord(
+        model_id="swissai/large",
+        provider="swissai",
+        supports_reasoning=True,
+        source="unknown",
+        synced_at="2026-08-22T12:00:00+00:00",
+        staleness="unknown",
+    )
+    info = M.capability_to_model_info(rec)
+    for key in ("reasoning_control", "reasoning_efforts", "thinking_budget_bounds"):
+        assert key not in info
+    assert info["supports_reasoning"] is True
+
+
+def test_capability_record_from_resolved_authors_thinking_surface():
+    resolved = {
+        "reasoning": True,
+        "reasoning_options": [
+            {"type": "toggle"},
+            {"type": "effort", "values": ["minimum", "high"]},
+        ],
+    }
+    rec = M.capability_record_from_resolved("deepseek", "deepseek-v4-flash",
+                                            resolved, synced_at="2026-08-22T12:00:00+00:00")
+    assert rec.supports_reasoning is True
+    assert rec.reasoning_control == "effort+toggle"
+    assert rec.reasoning_efforts == ("minimum", "high")
+    assert rec.thinking_budget_bounds is None

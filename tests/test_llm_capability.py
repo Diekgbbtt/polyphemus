@@ -83,6 +83,9 @@ def test_profile_fields_default_to_none():
     assert p.synced_at is None
     assert p.reasoning_in_response is None
     assert p.reasoning_field is None
+    assert p.reasoning_control is None
+    assert p.reasoning_efforts is None
+    assert p.thinking_budget_bounds is None
 
 
 def test_profile_has_no_reasoning_caching_field():
@@ -616,3 +619,108 @@ def test_zen_family_matches_stripped_registered_name(monkeypatch):
     p = C.resolve_capability("opencode", "deepseek/deepseek-v4-flash-free", http=fake)
     assert p.context_limit == 200_000
     assert p.source == "models.dev/opencode/deepseek-v4-flash-free"
+
+
+# ---------------------------------------------------------------------------
+# A5 thinking-effort surface (increment-3): provenance-gated typed read ------
+# ---------------------------------------------------------------------------
+
+def test_thinking_surface_is_provenance_gated(monkeypatch):
+    """Rule 1: an UNTAGGED record carrying A5-looking fields must yield all-
+    unknown thinking fields - never trusted."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _record("openai/gpt-5",
+                reasoning_control="effort",
+                reasoning_efforts=["low", "medium", "high"],
+                thinking_budget_bounds=[1024, 32768]),
+    ]})
+    p = C.resolve_capability("openai", "gpt-5", http=fake)
+    assert p.reasoning_control is None
+    assert p.reasoning_efforts is None
+    assert p.thinking_budget_bounds is None
+    assert fake.call_count == 1
+
+
+def test_thinking_surface_is_read_from_tagged_wire(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("deepseek/deepseek-v4-flash",
+                reasoning_control="effort+toggle",
+                reasoning_efforts=["none", "low", "high", "max"],
+                thinking_budget_bounds=[1024, 32768]),
+    ]})
+    p = C.resolve_capability("deepseek", "deepseek-v4-flash", http=fake)
+    assert p.reasoning_control == "effort+toggle"
+    assert p.reasoning_efforts == ("none", "low", "high", "max")
+    assert p.thinking_budget_bounds == (1024, 32768)
+    assert p.source == "models.dev/deepseek/deepseek-v4-flash"
+
+
+def test_thinking_surface_absent_fields_are_unknown(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("deepseek/deepseek-r1", max_input_tokens=200_000),
+    ]})
+    p = C.resolve_capability("deepseek", "deepseek-r1", http=fake)
+    assert p.reasoning_control is None
+    assert p.reasoning_efforts is None
+    assert p.thinking_budget_bounds is None
+
+
+def test_thinking_control_wrong_typed_degrades_to_unknown(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    for bad in ("bogus", "toggle+", 42, True, None):
+        fake = FakeHttp({"data": [
+            _tagged(f"prov/model-{bad}", reasoning_control=bad),
+        ]})
+        p = C.resolve_capability("prov", f"model-{bad}", http=fake)
+        assert p.reasoning_control is None
+
+
+def test_thinking_efforts_wrong_typed_degrades_to_unknown(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    for bad in ("low", 42, [], ["low", 42], [""]):
+        fake = FakeHttp({"data": [
+            _tagged(f"prov/e-{type(bad).__name__}", reasoning_efforts=bad),
+        ]})
+        p = C.resolve_capability("prov", f"e-{type(bad).__name__}", http=fake)
+        assert p.reasoning_efforts is None
+
+
+def test_thinking_budget_bounds_wrong_typed_degrades_to_unknown(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    for bad in ([1024], [1024, 32768, 1], [9000, 1000], [0, 5000], [-1, 5000],
+                ["lo", "hi"], [True, 5000]):
+        fake = FakeHttp({"data": [
+            _tagged(f"prov/b-{len(str(bad))}", thinking_budget_bounds=bad),
+        ]})
+        p = C.resolve_capability("prov", f"b-{len(str(bad))}", http=fake)
+        assert p.thinking_budget_bounds is None
+
+
+def test_thinking_surface_round_trips_the_authored_wire(monkeypatch):
+    """The sync authors reasoning_control/reasoning_efforts/thinking_budget_bounds
+    as JSON arrays; the reader parses them back typed - the author-read pair
+    (sync_mapping -> capability.py) is the round-trip contract."""
+    from polymerhus.app.llm import sync_mapping as M
+
+    rec = M.CapabilityRecord(
+        model_id="deepseek/deepseek-v4-flash",
+        provider="deepseek",
+        supports_reasoning=True,
+        reasoning_control="effort",
+        reasoning_efforts=("none", "low", "high", "max"),
+        thinking_budget_bounds=(1024, 32768),
+        source="models.dev/deepseek/deepseek-v4-flash",
+        synced_at="2026-08-22T12:00:00+00:00",
+        staleness="fresh",
+    )
+    info = M.capability_to_model_info(rec)
+    key = "deepseek/deepseek-v4-flash-roundtrip"
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [_tagged(key, **info)]})
+    p = C.resolve_capability("deepseek", "deepseek-v4-flash-roundtrip", http=fake)
+    assert p.reasoning_control == "effort"
+    assert p.reasoning_efforts == ("none", "low", "high", "max")
+    assert p.thinking_budget_bounds == (1024, 32768)

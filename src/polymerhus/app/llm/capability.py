@@ -158,6 +158,14 @@ class CapabilityProfile:
       tokens come back in the response and under which field - the reasoning-
       replay surface, provenance-gated exactly like the window fields.
       NO reasoning-CACHING field here (D11 grey point; T6's work).
+    - `reasoning_control` / `reasoning_efforts` / `thinking_budget_bounds`
+      (A5, increment-3): the thinking-EFFORT surface - the model's reasoning
+      control kind (effort / toggle / budget_tokens / combos / "none" for
+      always-on), the literal offered effort levels (incl. any "none" off
+      slot), and the declared budget min/max. Provenance-gated like every
+      other field (Rule 1: absent tag or absent field = None); the consumer
+      (`negotiation.py` `negotiate_thinking`) adapts the declared thinking
+      level to this surface.
     """
 
     context_limit: int | None = None
@@ -168,6 +176,10 @@ class CapabilityProfile:
     synced_at: dt.datetime | None = None
     reasoning_in_response: bool | None = None
     reasoning_field: str | None = None
+
+    reasoning_control: str | None = None
+    reasoning_efforts: tuple[str, ...] | None = None
+    thinking_budget_bounds: tuple[int, int] | None = None
 
 
 # The process-lifetime hold (resolve-and-hold, D7): one resolution per
@@ -254,6 +266,45 @@ def _typed_str(value: Any) -> str | None:
     return value if isinstance(value, str) else None
 
 
+# The reasoning-control field name is load-bearing (authored by the sync from
+# `classify_reasoning_options`): single kind or `+`-joined combos, plus the
+# `"none"` always-on marker. A wrong-typed or unattested value degrades to
+# unknown (None) - never leaks into the typed profile contract.
+_REASONING_CONTROL_KINDS = {
+    "effort", "toggle", "budget_tokens", "none",
+    "effort+toggle", "effort+budget_tokens", "toggle+budget_tokens",
+    "effort+toggle+budget_tokens",
+}
+
+
+def _typed_reasoning_control(value: Any) -> str | None:
+    return value if isinstance(value, str) and value in _REASONING_CONTROL_KINDS else None
+
+
+def _typed_str_tuple(value: Any) -> tuple[str, ...] | None:
+    """A wire `reasoning_efforts` list -> tuple, or None for an absent /
+    wrong-typed / empty / mixed-typed value (Rule 1: `unknown` is never
+    encoded - a list carrying a non-string element is a wrong-typed wire value
+    and degrades whole, never partially; the sync authors only clean lists)."""
+    if (not isinstance(value, list) or not value
+            or any(not isinstance(v, str) or not v for v in value)):
+        return None
+    return tuple(value)
+
+
+def _typed_budget_bounds(value: Any) -> tuple[int, int] | None:
+    """A wire `thinking_budget_bounds` pair (min, max) usable as bounds: a
+    list of exactly two positive ints with min <= max. Anything else degrades
+    to None (unknown) - the consumer clamps with the canonical THINKING_BUDGET
+    ladder alone."""
+    if (not isinstance(value, list) or len(value) != 2
+            or any(isinstance(v, bool) or not isinstance(v, int) or v <= 0
+                   for v in value)):
+        return None
+    lo, hi = value
+    return (lo, hi) if lo <= hi else None
+
+
 def _profile_from_record(provider: str, model: str, body: Any) -> CapabilityProfile | None:
     """Build the profile from a /model/info body for the given (provider,
     model); None when the gateway answers but holds no matching record.
@@ -290,6 +341,9 @@ def _profile_from_record(provider: str, model: str, body: Any) -> CapabilityProf
             synced_at=synced_at,
             reasoning_in_response=_typed_bool(info.get("reasoning_in_response")),
             reasoning_field=_typed_str(info.get("reasoning_field")),
+            reasoning_control=_typed_reasoning_control(info.get("reasoning_control")),
+            reasoning_efforts=_typed_str_tuple(info.get("reasoning_efforts")),
+            thinking_budget_bounds=_typed_budget_bounds(info.get("thinking_budget_bounds")),
         )
         return profile
     logger.warning("no gateway capability record for %s; resolving unknown", key)
@@ -375,6 +429,9 @@ def resolve_capability(
         synced_at=profile.synced_at if profile is not None else None,
         reasoning_in_response=profile.reasoning_in_response if profile is not None else None,
         reasoning_field=profile.reasoning_field if profile is not None else None,
+        reasoning_control=profile.reasoning_control if profile is not None else None,
+        reasoning_efforts=profile.reasoning_efforts if profile is not None else None,
+        thinking_budget_bounds=profile.thinking_budget_bounds if profile is not None else None,
     )
     _PROFILE_CACHE[(provider, model)] = held
     return held
