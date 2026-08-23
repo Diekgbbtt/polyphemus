@@ -238,6 +238,7 @@ def test_mint_fans_out_one_config_per_distinct_class():
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
         surface_context={}, prior_hunt_insights=[], tool_registry=[],
+        sub_fault_ids=["CWE-520", "CWE-9"],
     )
     assert len(configs) == 3
     # each config carries its own class as the identity axis
@@ -248,6 +249,8 @@ def test_mint_fans_out_one_config_per_distinct_class():
     # the seeding identity persists on every fan-out config
     assert {c.unit_id for c in configs} == {SERVICE_A}
     assert {c.fault_class for c in configs} == {FAULT_X}
+    # sub_fault_ids feeds EACH class-config (the fold family, #66 non-conflation)
+    assert all(c.sub_fault_ids == ["CWE-520", "CWE-9"] for c in configs)
 
 
 def test_mint_collapses_same_class_duplicates_deterministically():
@@ -326,7 +329,8 @@ def test_surface_context_replaces_edge_degree_with_connected_data_items():
     """The config surface-context transform (ADR G5): a Service card's
     edge_degree counts are replaced by the detailed connected DataItems
     (name/type/sensitivity/fields/notes) from the unit's rich projection;
-    an absent projection or a non-matching card degrades to the counts card."""
+    an absent projection, a non-matching card, or a malformed card degrades
+    unchanged (fail-open)."""
     from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
         _surface_cards_with_connected_data_items,
     )
@@ -344,14 +348,22 @@ def test_surface_context_replaces_edge_degree_with_connected_data_items():
     proj = UnitProjection(
         unit_id="Service:a", kind="Service", spine={}, edges={},
         data_edges={"CONSUMES": 1}, data_rel_kinds=frozenset(),
-        data_items={"CONSUMES": (
-            DataItem(item_key="session_token", name="session token", type="secret",
-                     sensitivity="high", fields=("sid",), notes="session-bound"),
-        )},
+        data_items={
+            "CONSUMES": (
+                DataItem(item_key="session_token", name="session token", type="secret",
+                         sensitivity="high", fields=("sid",), notes="session-bound"),
+            ),
+            "PRODUCES": (
+                DataItem(item_key="order", name="order", type="record",
+                         sensitivity="medium", fields=("id",), notes="order record"),
+            ),
+        },
     )
     cards = _surface_cards_with_connected_data_items([card], proj)
     transformed = cards[0]
     assert "edge_degree" not in transformed
+    # families render sorted (render determinism, M1)
+    assert list(transformed["connected_data_items"]) == ["CONSUMES", "PRODUCES"]
     assert transformed["connected_data_items"]["CONSUMES"] == [
         {"name": "session token", "type": "secret", "sensitivity": "high",
          "fields": ["sid"], "notes": "session-bound"},
@@ -370,6 +382,13 @@ def test_surface_context_replaces_edge_degree_with_connected_data_items():
         data_items={"PRODUCES": (DataItem(item_key="k", name="x"),)},
     )
     assert _surface_cards_with_connected_data_items([card], other_proj) == [card]
+    # a malformed card (a non-dict element) degrades unchanged, never a raise
+    malformed = ["not-a-dict"]
+    assert _surface_cards_with_connected_data_items(malformed, proj) == malformed
+    # a Service card whose key is not a dict degrades unchanged, never a raise
+    broken_key = {"kind": "Service", "key": "not-a-dict",
+                  "edge_degree": {"EXPOSED_VIA": 1}}
+    assert _surface_cards_with_connected_data_items([broken_key], proj) == [broken_key]
 
 
 def test_fanned_out_direction_dispatches_each_config():

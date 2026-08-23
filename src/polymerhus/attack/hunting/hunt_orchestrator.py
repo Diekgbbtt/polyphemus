@@ -89,6 +89,12 @@ _ORCHESTRATOR_LOCK = threading.Lock()
 # unit's surface); the agent's inline needs carry their own job.
 _DEFAULT_BACK_EDGE_JOB = "httpx_reprofile"
 
+# The config status lifecycle (ADR G5/G6): hypothesised -> ratified | dropped.
+# `noted` is a LOOP state, never a config status; `consumed` is tautological in
+# the produced/consumed memory topology, never a status enum member. Single-
+# sourced so the config model and the mint share one vocabulary (C_STD §7).
+ConfigStatus = Literal["hypothesised", "ratified", "dropped"]
+
 
 class Witness(BaseModel):
     """The applies-witness pair of a delivered candidate: a deterministic
@@ -202,7 +208,7 @@ class HuntConfig(BaseModel):
     hunt_id: str
     unit_id: str
     fault_class: str
-    status: Literal["hypothesised", "ratified", "dropped"] = "hypothesised"
+    status: ConfigStatus = "hypothesised"
     vulnerability_class: str = ""
     sub_fault_ids: list[str] = Field(default_factory=list)
     prompt_template: HuntPromptTemplate
@@ -438,25 +444,32 @@ def _data_item_detail(item) -> dict:
 
 
 def _surface_cards_with_connected_data_items(
-    surface: Sequence[dict], projection,
-) -> list[dict]:
+    surface: Sequence[Any], projection,
+) -> list[Any]:
     """The config surface-context transform (ADR G5, operator correction): a
     Service card's `edge_degree` counts are replaced by the detailed connected
     DataItems (name/type/sensitivity/fields/notes) of the unit's rich
     projection, mirroring the projection reader - the slot becomes
-    `connected_data_items` (family -> the item details). The transform applies
-    only to the card of the projection's own unit (the config's target); an
-    absent projection, a non-matching card, or a projection that resolved no
-    data items degrades to the counts card unchanged - fail-open per the canon,
-    never a raise, never a prune signal."""
+    `connected_data_items` (family -> the item details, families and fields
+    sorted for render determinism). The transform applies only to the card of
+    the projection's own unit (the config's target); an absent projection, a
+    non-matching card, a projection that resolved no data items, or a malformed
+    card (a non-dict surface element) degrades to the card unchanged - fail-open
+    per the canon, never a raise, never a prune signal."""
     unit_id = getattr(projection, "unit_id", None)
     data_items = getattr(projection, "data_items", None) if projection is not None \
         else None
     cards: list[dict] = []
-    for card in surface:
-        key = (card or {}).get("key") or {}
+    for raw_card in surface:
+        if not isinstance(raw_card, dict):
+            # a malformed surface element degrades unchanged (fail-open)
+            cards.append(raw_card)
+            continue
+        card = raw_card
+        key = card.get("key")
+        key = key if isinstance(key, dict) else {}
         slug = key.get("business_function_slug")
-        if not (card.get("kind") == "Service" and slug
+        if not (card.get("kind") == "Service" and isinstance(slug, str) and slug
                 and unit_id == f"Service:{slug}" and data_items):
             cards.append(card)
             continue
@@ -464,7 +477,7 @@ def _surface_cards_with_connected_data_items(
         transformed.pop("edge_degree", None)
         transformed["connected_data_items"] = {
             family: [_data_item_detail(item) for item in items]
-            for family, items in data_items.items()
+            for family, items in sorted(data_items.items())
         }
         cards.append(transformed)
     return cards
@@ -480,7 +493,7 @@ def mint_hunt_config(
     tool_registry: Sequence[dict],
     target_caveats: Sequence[str] = (),
     sub_fault_ids: Sequence[str] = (),
-    status: Literal["hypothesised", "ratified", "dropped"] = "hypothesised",
+    status: ConfigStatus = "hypothesised",
 ) -> list[HuntConfig]:
     """Mint the five-part `HuntConfig` set (D3) for a carried direction - the
     typing-rework fan-out: ONE `HuntConfig` per distinct elicited

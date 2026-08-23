@@ -109,7 +109,7 @@ def test_yellow_park_resume(session, project, tmp_path):
     Observed: the store's back-edge records and both hunt records.
 
     When unblocked: run one orchestration pass with the real dispatch and the
-    real back_edge tool, then assert
+    real back-edge harness seam, then assert
       len(store.list_records(run_id, "hunt")) == 2
       len(store.list_records(run_id, "back_edge")) == 1
       store.list_records(run_id, "unresolved") == []
@@ -124,7 +124,7 @@ def test_yellow_park_resume(session, project, tmp_path):
 # the live role is configured (LLM_MODEL_HUNTING_ORCHESTRATOR set and the
 # gateway/direct provider reachable) they run the REAL production build - the
 # mounted skill as the system prompt, the per-pair symbolic render as the user
-# prompt, the three-tool surface bound onto the actor's session agent, and the
+# prompt, the five-tool surface bound onto the actor's session agent, and the
 # real hunt store. They skip ONLY on a missing/unreachable live role or missing
 # Neo4j, never on a hard marker. E1/E2 stay blocked on #83/#84.
 
@@ -276,15 +276,16 @@ def test_live_gate_turn_reasons_over_the_rich_render(session, project, tmp_path)
     direction (grounds spec 3.1/3.2/3.3, 4, 5; assertions C13/C14/C15/C17 live).
 
     Live edge: the real hunting_orchestrator LLM role (the gate turn) + the
-    mounted skills + the per-pair symbolic render + the three-tool actor
+    mounted skills + the per-pair symbolic render + the five-tool actor
     surface + a live Neo4j L1 graph.
     Path: intake -> reason stretch renders projection/materialisation/fold-
       family from the live graph + fault-KB -> mounted system prompt + per-pair
       user prompt on the actor thread -> GateDecision (structured) -> mint for
       the carried direction -> dispatch -> store records.
-    Terminal: exactly one carried, non-pruned direction; one config record with
-      the four seed fields non-empty; one hunt record; gate_pruned == ();
-      the report/trail shapes intact. Run twice for determinism confidence.
+    Terminal: exactly one carried, non-pruned direction; one hypothesised
+      config record with the hypothesise-phase fields set; one hunt record;
+      gate_pruned == (); the report/trail shapes intact. Run twice for
+      determinism confidence.
     """
     reason = _hunting_role_live_reason()
     if reason is not None:
@@ -312,7 +313,10 @@ def test_live_gate_turn_reasons_over_the_rich_render(session, project, tmp_path)
         assert cfg["prompt_template"]["rationale"]
         assert cfg["prompt_template"]["research_direction"]
         assert cfg["status"] == "hypothesised"
-        assert cfg["vulnerability_class"] == ""
+        # the live gate turn may elicit a class or fall back to the bare-carry
+        # degrade (an empty class) - both are valid hypothesised drafts; never
+        # assert emptiness for a real model turn
+        assert isinstance(cfg["vulnerability_class"], str)
         assert len(store.list_records(run_id, "hunt")) == 1
         assert len(store.list_records(run_id, "dispatch")) == 1
     assert _graph_counts(session, project) == before
@@ -373,17 +377,23 @@ def test_gate_renders_unknown_never_false_on_degraded_slots_live(
     assert _graph_counts(session, project) == before
 
 
-def test_live_back_edge_tool_round_trips_hunting_origin(session, project, tmp_path):
-    """E5 - a real back-edge tool call flows origin="hunting" and lands in the
-    store (grounds spec 4.1, IA-6; assertions C17/C18/C19 live).
+def test_live_tool_surface_is_the_five_tools_and_grounds_in_the_real_graph(
+        session, project, tmp_path):
+    """E5 - the REAL five-tool surface bound onto the actor (assertions
+    C17/C18/C19 live): the back_edge request to recon is NOT an agent tool in
+    this tree (operator ruling 2026-08-22 - the target-knowledge loop rides
+    graph_view, never a recon request), so the surface is exactly
+    read_memory_hunts / read_memory_notes / graph_view / mint_hunt_config /
+    record_note. A graph_view read round-trips against the live graph, and the
+    park/resume back-edge still lands an origin="hunting" store record through
+    the harness seam (IA-6), not through a tool.
 
-    Live edge: the real three-tool surface bound onto the actor (the gate turn
+    Live edge: the real five-tool surface bound onto the actor (the gate turn
     is a scripted reason_fn for deterministic replay, as the E5 table allows);
-    a real live graph; a recorded back-edge seam. The back-edge record the
-    store carries must round-trip correlation_id / origin="hunting".
-    Terminal: exactly one back_edge store record whose origin is "hunting" and
-      whose correlation_id round-trips; the run completes with the outcome
-      recorded; the graph is untouched.
+    a real live graph; a recorded back-edge harness seam.
+    Terminal: exactly the five tool names; a graph_view read returns the live
+    rows; exactly one back_edge store record whose origin is "hunting"; the
+    graph is untouched.
     """
     reason = _hunting_role_live_reason()
     if reason is not None:
@@ -392,21 +402,12 @@ def test_live_back_edge_tool_round_trips_hunting_origin(session, project, tmp_pa
     from polymerhus.attack.hunting.actors import (  # noqa: PLC0415
         build_orchestrator_tool_surface,
     )
-    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        GateDecision,
-    )
-    from polymerhus.recon.control.targeted import (  # noqa: PLC0415
-        AnalyserReconRequest,
-        ReconScope,
-    )
 
     _seed_live_project(session, project)
     store = HuntStore(tmp_path)
     before = _graph_counts(session, project)
     seen: list = []
 
-    # Bind the REAL tool surface and drive the back_edge tool directly - the
-    # request must carry origin="hunting" and a round-trippable correlation id.
     from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
         OrchestratorTools,
         ReadOnlyGraphView,
@@ -419,20 +420,24 @@ def test_live_back_edge_tool_round_trips_hunting_origin(session, project, tmp_pa
     surface = build_orchestrator_tool_surface(
         tools, run_id="run-e5", project_id=project)
     by_name = {t.name: t for t in surface}
-    assert set(by_name) == {"back_edge", "graph_view", "read_memory_hunts",
+    assert set(by_name) == {"graph_view", "read_memory_hunts",
                             "read_memory_notes", "mint_hunt_config", "record_note"}
-    result = by_name["back_edge"].invoke({
-        "job": "httpx_reprofile", "unit_id": SERVICE_A,
-        "targets": [BASE], "note": "re-witness the surface",
-    })
-    assert len(seen) == 1
-    request = seen[0]
-    assert request.origin == "hunting"
-    assert request.scope.unit_id == SERVICE_A
-    assert result.get("correlation_id") == request.correlation_id
+    assert "back_edge" not in by_name  # no back-edge-to-recon tool (2026-08-22)
+
+    # A graph_view read round-trips against the LIVE graph: the seeded unit is
+    # readable through the read-only view (the target-knowledge loop's seam).
+    out = by_name["graph_view"].invoke(
+        {"cypher": "MATCH (u:L1TestableUnit) WHERE u.project_id = $p "
+                   "RETURN labels(u) AS labels", "params": {"p": project}})
+    assert "rows" in out and out["rows"], \
+        f"graph_view read returned no live rows: {out}"
+    labels = {tuple(r.get("labels") or []) for r in out["rows"]}
+    assert any("L1Service" in l for l in labels)
+    assert any("L1System" in l for l in labels)
 
     # And the full pass: a park/resume back-edge for a yellow candidate lands
-    # the SAME-shaped store record (origin round-trips in the store).
+    # the SAME-shaped store record (origin round-trips in the store) through
+    # the HARNESS seam - the orchestrator's park/resume path, never a tool.
     report = _run_live(
         store, project, "run-e5",
         [_candidate(SERVICE_A, FAULT_LIVE, verdict="insufficient-evidence")],
@@ -454,7 +459,7 @@ def test_full_pass_canon_unchanged_with_new_artifacts(session, project, tmp_path
     (grounds spec 7, the C1-C12 canon; assertions C22 live).
 
     Live edge: the real hunting_orchestrator LLM role (the gate turn) + the
-    mounted skills + the three tools + tracing, over the two-candidate fixture
+    mounted skills + the five tools + tracing, over the two-candidate fixture
     (one applies, one yellow insufficient-evidence).
     Terminal: the O1-O10 report shape, hunts_dispatched, gate_pruned,
       unresolved, budget_cut, and trail/store-record shapes identical to the

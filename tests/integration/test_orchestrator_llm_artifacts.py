@@ -388,11 +388,11 @@ def test_all_slots_degraded_still_runs(tmp_path):
     assert "FALSE" not in seen["text"]
 
 
-# --- C17: exactly three tools bound; no HuntConfig writer ----------------------
+# --- C17: exactly five tools bound; no HuntConfig writer ----------------------
 
-def test_actor_binds_exactly_the_six_tools(tmp_path, monkeypatch):
-    """The agent the actor builds binds EXACTLY the six tool names of
-    `TOOL_SURFACE` - never a seventh HuntConfig-writing tool."""
+def test_actor_binds_exactly_the_five_tools(tmp_path, monkeypatch):
+    """The agent the actor builds binds EXACTLY the five tool names of
+    `TOOL_SURFACE` - never a sixth HuntConfig-writing tool."""
     store = HuntStore(tmp_path)
     seen = {}
 

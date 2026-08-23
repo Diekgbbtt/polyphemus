@@ -136,8 +136,8 @@ _GATE_SKILL_FALLBACK = (
     "its applies-witnesses and three-valued match verdict, the fault's "
     "materialisation and fold family, the read-only graph surface, and the rich "
     "typed projection (including cooperating systems adjacency). Carry a direction "
-    "when the fault plausibly applies and seed it with rationale, assumptions, "
-    "envisioned test primitives, research_direction, and vulnerability_classes; "
+    "when the fault plausibly applies and seed it with rationale, "
+    "research_direction, and vulnerability_classes; "
     "prune only on positive grounds. NEVER prune on "
     "degraded grounds: when the KB is unavailable (kb_degraded), reason from the "
     "candidate and surface alone and carry rather than prune. "
@@ -489,8 +489,10 @@ def _compose_gate_prompt(inp: GateInput) -> str:
         "the pass.",
         "",
         "Return one direction per candidate: set carried true/false, and for a "
-        "carried direction fill rationale, assumptions, research_direction, "
-        "vulnerability_classes, and envisioned_test_primitives.",
+        "carried direction fill rationale, research_direction, and "
+        "vulnerability_classes ONLY. The capability/assumption/"
+        "technique-primitive analysis is the RATIFICATION phase's work (a later "
+        "turn) - never a seed you fill at this hypothesise turn.",
     ]
     return "\n".join(lines)
 
