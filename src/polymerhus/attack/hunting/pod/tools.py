@@ -1,23 +1,20 @@
 """The pod's minimal tool surface (spec 1.4, 6.8) with enforcement.
 
-Two tools, both injectable so the contract tier runs without a live target:
+One core tool, injectable so the contract tier runs without a live target:
 
   * A general-purpose terminal (`exec`): the recon pod's kali exec surface,
     reused verbatim - any command-line tool (curl for HTTP probing) plus package
     managers to install a tool the pod lacks. Each call is bounded by
     `EXEC_TIMEOUT_S`; a non-zero exit is retried up to `MAX_POD_ITERS` (O2/C7).
-  * The knowledge-base retrieval tool (`kb_retrieve`, the prompts' `{KB_TOOL}`):
-    an inert fail-open NL stub typed per the merged #66 seam
-    (`SymptomTechniqueQuery`/`SymptomTechniqueResult`); a not-ready or raising KB
-    yields an empty result and never fabricates (CODING_STANDARD section 12). A
-    contract-tier caller injects a fixture `lookup`.
 
-As of T7 (#157) both are ALSO surfaced as bound `BaseTool`s (D84-16/26) - the
-KB wiring hole is closed: `KbRetrieveTool` joins the Runner's `create_agent`
-`tools=[exec, kb_retrieve, note]` list exactly like the hunting agent's author
-tool, and `ExecTool` is the same terminal behind a typed `args_schema`. Every
-pod args schema sets `extra="forbid"` (D84-22): the tool's OWN contract is the
-validator - a wrong parameter FAILS as a REJECTED tool call before `_run`.
+The KB query capability is the single `query_lightrag` tool from the lightrag
+branch (the pod runner can be configured with it, exactly like the hunting
+agent's author lane, gated by `HUNTING_LIGHTRAG_TOOL`); the former
+`symptom-technique` typed seam (surface B) is retired.
+
+As of T7 (#157) `exec` is ALSO surfaced as a bound `BaseTool` (D84-16/26).
+Every pod args schema sets `extra="forbid"` (D84-22): the tool's OWN contract is
+the validator - a wrong parameter FAILS as a REJECTED tool call before `_run`.
 
 The specialised fault-targeting tool registry is #71's future home; the browser
 probe is #98. This module performs no I/O at import (CODING_STANDARD section 6).
@@ -125,106 +122,7 @@ def parse_curl(result: ExecResult) -> dict:
     return {"status": status, "body": body, "time_ms": time_ms}
 
 
-# --- The knowledge-base retrieval tool (the prompts' {KB_TOOL}) -----------------
-
-def kb_retrieve(query: str, *, fault_id: str = "",
-                technological_axis: tuple[str, ...] = (),
-                lookup=None) -> dict:
-    """The pod's NL knowledge-base retrieval tool (spec section 3 KB stub).
-
-    Accepts a natural-language `query` (citing ontology elements) and the typed
-    join-key hints, wraps the merged #66 typed seam, and NEVER crashes: a
-    not-ready or raising KB yields an empty result. A contract-tier caller
-    injects a fixture `lookup` (the in-memory fixture KB). The technological
-    axis and the technical-axis SYSTEM_KINDS never share a field (FKB-6): this
-    tool carries only the technological axis."""
-    from polymerhus.attack.hunting.symptom_kb import (
-        SymptomTechniqueQuery,
-        query_symptom_technique,
-    )
-
-    typed_query = SymptomTechniqueQuery(
-        fault_id=fault_id or query,
-        technological_axis=tuple(technological_axis),
-    )
-    try:
-        result = query_symptom_technique(typed_query, lookup=lookup)
-    except Exception:  # noqa: BLE001 - fail-open is the contract
-        return {"symptoms": [], "techniques": [], "source": None}
-    return {
-        "symptoms": list(result.symptoms),
-        "techniques": list(result.techniques),
-        "source": result.source,
-    }
-
-
 # --- the bound-tool surface (T7, D84-16/22/26) --------------------------------
-
-class KbRetrieveSpec(BaseModel):
-    """The `kb_retrieve` tool's ARGS contract: an NL query citing ontology
-    elements, the typed join-key hints (#66). `extra="forbid"` (D84-22) rejects
-    a parameter outside this contract BEFORE `_run`; the pod's contract never
-    carries a retrieval config or LLM-generation switch."""
-
-    query: str
-    fault_id: str = ""
-    technological_axis: list[str] = Field(default_factory=list)
-
-    model_config = ConfigDict(extra="forbid")
-
-
-class KbRetrieveTool(BaseTool):
-    """The NL knowledge-base retrieval tool as a bound `BaseTool` (D84-16/26):
-    the same fail-open `SymptomTechniqueQuery` seam, behind `extra="forbid"`
-    args validation. A not-ready or raising KB yields the EMPTY result - the
-    runner degrades to the spec's own primitives (O13), never a raise."""
-
-    name: str = "kb_retrieve"
-    description: str = (
-        "Query the fault knowledge base in natural language, citing any ontology "
-        "element(s) (fault, symptom, assumption, defence, payload, vector, "
-        "strategy, technology), singly or combined, to ground a probe or a "
-        "payload family. Returns symptoms and probing techniques; an empty "
-        "result means the KB has nothing further - degrade to the spec's own "
-        "primitives and continue."
-    )
-    args_schema: type[BaseModel] = KbRetrieveSpec
-
-    def __init__(self, *, kb_fn: Callable | None = None,
-                 lookup: Callable | None = None, **kwargs):
-        super().__init__(**kwargs)
-        self._kb_fn = kb_fn      # the pod's plain `kb_retrieve`-shaped seam
-        self._lookup = lookup    # the symptom_kb-shaped fixture (contract tier)
-
-    def _run(self, **kwargs: Any) -> str:
-        spec = KbRetrieveSpec(**kwargs)
-        try:
-            if self._kb_fn is not None:
-                result = self._kb_fn(
-                    spec.query, fault_id=spec.fault_id,
-                    technological_axis=tuple(spec.technological_axis)) or {}
-                return json.dumps({
-                    "symptoms": list(result.get("symptoms") or []),
-                    "techniques": list(result.get("techniques") or []),
-                    "source": result.get("source"),
-                })
-            from polymerhus.attack.hunting.symptom_kb import (  # noqa: PLC0415
-                SymptomTechniqueQuery,
-                query_symptom_technique,
-            )
-
-            typed = SymptomTechniqueQuery(
-                fault_id=spec.fault_id or spec.query,
-                technological_axis=tuple(spec.technological_axis),
-            )
-            result = query_symptom_technique(typed, lookup=self._lookup)
-            return json.dumps({
-                "symptoms": list(result.symptoms),
-                "techniques": list(result.techniques),
-                "source": result.source,
-            })
-        except Exception:  # noqa: BLE001 - fail-open is the contract (O13)
-            return json.dumps({"symptoms": [], "techniques": [], "source": None})
 
 
 class ExecSpec(BaseModel):

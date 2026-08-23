@@ -1,17 +1,15 @@
 """Unit tier: T7 (#157) - the pod's bound-tool surface (D84-16/22/26/27).
 
-The ReAct Runner binds `tools=[exec, kb_retrieve, note]` (D84-27); this tier
-proves the KB wiring hole is closed (D84-16) - `kb_retrieve` is a `BaseTool`
-bound on the runner's `tools=` list, with a typed `extra="forbid"` args schema
-and fail-open semantics (O13: an empty or failing KB degrades the runner to the
-spec's own primitives, never raises) - and that the `exec` tool stays the
-raw-recording terminal (G4) with retry and dedup-marking. Hermetic: fake
-terminal, no live KB, no live LLM.
+The ReAct Runner binds `tools=[exec, note]` (D84-27) plus - when
+`HUNTING_LIGHTRAG_TOOL` is enabled - the single `query_lightrag` tool from the
+lightrag branch (the pod runner can be configured with it, exactly like the
+hunting agent's author lane). The former `kb_retrieve` symptom-technique seam
+(surface B) is retired. The `exec` tool stays the raw-recording terminal (G4)
+with retry and dedup-marking. Hermetic: fake terminal, no live KB, no live LLM.
 """
 from __future__ import annotations
 
 import asyncio
-import json
 
 import pytest
 from pydantic import ValidationError
@@ -24,9 +22,6 @@ from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_s
 from polymerhus.attack.hunting.pod.tools import (
     ExecSpec,
     ExecTool,
-    KbRetrieveSpec,
-    KbRetrieveTool,
-    kb_retrieve,
 )
 from polymerhus.recon.domain.types import ExecResult
 
@@ -47,25 +42,40 @@ def _exec(stdout=_OK, returncode=0, calls=None):
     return fake
 
 
-# --- the KB wiring hole is closed (D84-16): kb_retrieve is bound on the Runner -
+# --- the KB tool: the single config-gated query_lightrag (retired kb_retrieve) -
 
-def test_runner_binds_kb_retrieve_as_a_bound_tool(tmp_path):
-    """The Runner's ReAct `tools=` list carries a `kb_retrieve` BaseTool (the
-    D84-16 defect: the KB existed in the prompt text but was never bound)."""
+def test_runner_binds_exec_and_note_without_a_kb_tool_by_default(tmp_path):
+    """The Runner's ReAct `tools=` list carries `exec` + `note`; with
+    `HUNTING_LIGHTRAG_TOOL` off (the default) there is NO KB tool (the former
+    `kb_retrieve` seam is retired)."""
     tools = runner_react_tools(exec_fn=_exec(), memory_store=PodMemoryStore(tmp_path),
                                spec_id=canonical_spec_id(SPEC), log=ExperimentLog(),
                                variant_ref="v0")
     names = {t.name for t in tools}
-    assert {"exec", "kb_retrieve", "note"} <= names
-    kb = next(t for t in tools if t.name == "kb_retrieve")
-    assert isinstance(kb, KbRetrieveTool)
+    assert {"exec", "note"} <= names
+    assert "kb_retrieve" not in names
+    assert "query_lightrag" not in names
 
 
-def test_triager_binds_note_and_kb_and_no_exec(tmp_path):
+def test_runner_binds_query_lightrag_when_the_flag_is_on(tmp_path, monkeypatch):
+    """With `HUNTING_LIGHTRAG_TOOL=1` the Runner's tool set carries the single
+    `query_lightrag` tool (the lightrag branch's KB tool)."""
+    import polymerhus.app.config as config_module
+
+    monkeypatch.setattr(config_module.config, "HUNTING_LIGHTRAG_TOOL", True)
+    tools = runner_react_tools(exec_fn=_exec(), memory_store=PodMemoryStore(tmp_path),
+                               spec_id=canonical_spec_id(SPEC), log=ExperimentLog(),
+                               variant_ref="v0")
+    names = {t.name for t in tools}
+    assert {"exec", "note", "query_lightrag"} <= names
+
+
+def test_triager_binds_note_and_no_exec(tmp_path):
     tools = triager_react_tools(PodMemoryStore(tmp_path), canonical_spec_id(SPEC))
     names = {t.name for t in tools}
-    assert {"note", "kb_retrieve"} <= names
+    assert {"note"} <= names
     assert "exec" not in names
+    assert "kb_retrieve" not in names
 
 
 def test_runner_tools_are_injective_constructed_per_stretch(tmp_path):
@@ -80,50 +90,6 @@ def test_runner_tools_are_injective_constructed_per_stretch(tmp_path):
     sig0 = exec_v0._signature("curl -k -sS /")        # variant-sensitive keys
     sig1 = exec_v1._signature("curl -k -sS /")
     assert sig0 != sig1
-
-
-def test_kb_retrieve_tool_has_a_typed_contract_and_forbids_extras():
-    kb = KbRetrieveTool()
-    with pytest.raises(ValidationError):
-        kb.invoke({"query": "x", "bogus": 1})
-    out = kb.invoke({"query": "csrf on search"})
-    assert isinstance(out, str)
-    parsed = json.loads(out)
-    assert set(parsed) == {"symptoms", "techniques", "source"}
-    assert parsed["symptoms"] == []                   # dormant KB: fail-open empty
-
-
-def test_kb_retrieve_uses_the_injected_lookup_when_given():
-    def lookup(query):
-        return {"symptoms": ("s1",), "techniques": ("t1",), "source": "fixture"}
-
-    from polymerhus.attack.hunting import symptom_kb as SK
-
-    def fake_lookup(q):
-        return SK.SymptomTechniqueResult(symptoms=("s1",), techniques=("t1",),
-                                         source="fixture")
-
-    kb = KbRetrieveTool(lookup=fake_lookup)
-    parsed = json.loads(kb.invoke({"query": "CSRF", "fault_id": "CWE-352",
-                                   "technological_axis": ["web"]}))
-    assert parsed["symptoms"] == ["s1"]
-    assert parsed["techniques"] == ["t1"]
-    assert parsed["source"] == "fixture"
-
-
-def test_kb_retrieve_raising_lookup_fails_open():
-    def boom(query):
-        raise RuntimeError("kb down")
-
-    kb = KbRetrieveTool(lookup=boom)
-    parsed = json.loads(kb.invoke({"query": "x"}))
-    assert parsed == {"symptoms": [], "techniques": [], "source": None}
-
-
-def test_kb_plain_function_seam_is_untouched():
-    # The legacy plain seam stays importable and fail-open for the contract tier.
-    out = kb_retrieve("csrf on search")
-    assert out == {"symptoms": [], "techniques": [], "source": None}
 
 
 # --- the exec tool: G4 raw recording + retry + dedup signature -----------------
@@ -180,9 +146,7 @@ def test_exec_tool_rejects_a_foreign_parameter(monkeypatch):
 def test_exec_spec_does_not_expose_the_pod_cap_to_the_model():
     # D67-09: the per-exec cap is the POD's, never a model-chosen field.
     assert "timeout_s" not in ExecSpec.model_fields
-    assert KbRetrieveSpec.model_config.get("extra") == "forbid"
     assert ExecSpec.model_config.get("extra") == "forbid"
-    assert "query" in KbRetrieveSpec.model_fields
 
 
 def test_exec_tool_async_path_records_same_shape():

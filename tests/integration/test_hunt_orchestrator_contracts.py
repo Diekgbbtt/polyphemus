@@ -201,9 +201,14 @@ def test_ratify_turn_failure_degrades_the_pass(tmp_path, caplog):
     assert "warning" in caplog.text.lower()
 
 
-# --- C7: KB failure degrades the gate, never prunes (D67-11) ------------------
+# --- C7: KB retrieval seam retired (D67-11) -----------------------------------
 
-def test_kb_failure_degrades_the_gate(tmp_path, caplog):
+def test_kb_seam_retired_gate_grounds_on_materialisation(tmp_path):
+    """The duplicate symptom-technique retrieval seam (surface B) is RETIRED:
+    the gate no longer calls a `kb_retrieve_fn`; `kb_evidences` stays empty and
+    `kb_degraded` stays False (available) - the gate grounds via the direct
+    fault-KB materialisation read (the CWE catalogue), and never prunes on
+    degraded grounds."""
     store = HuntStore(tmp_path)
     seen = {}
 
@@ -212,15 +217,11 @@ def test_kb_failure_degrades_the_gate(tmp_path, caplog):
         seen["kb_evidences"] = inp.kb_evidences
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
-    def kb_retrieve(fault_class):
-        raise RuntimeError("KB unavailable")
-
     report = _run(store, [_candidate(SERVICE_A, FAULT_X)],
-                  hypothesise=hypothesise_fn, kb_retrieve_fn=kb_retrieve)
-    assert seen["kb_degraded"] is True
+                  hypothesise=hypothesise_fn)
+    assert seen["kb_degraded"] is False
     assert seen["kb_evidences"] == {}
     assert report.pairs_processed == 1
-    assert "warning" in caplog.text.lower()
 
 
 # --- C8/C9: park/resume + inline back-edge → recon are OUT OF SCOPE ----------

@@ -66,17 +66,6 @@ HypothesisVerdict = Literal[
 _MAX_RE_AUTHORING_PASSES = 1
 
 
-@dataclass(frozen=True)
-class SymptomTechniqueQuery:
-    """The IA-8 join key (implementation doc 2.2): the symptom-technique KB is
-    queried on the `(fault-class, unit technological-axis)` pair; the axis is
-    derived deterministically from the unit's card, never a typed predicate
-    facet (#66 non-conflation)."""
-
-    fault_class: str
-    axis: str
-
-
 def derive_technological_axis(card: dict | None) -> str:
     """The deterministic technological axis of a unit's index card (IA-8/D10).
 
@@ -478,36 +467,14 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         hunt_id = config.hunt_id
         feedback: list[str] = list(_config_gaps(config))
 
-        # GROUND / QUERY (D1, IA-8): one KB call per hunt on the join key; an
-        # empty or raising KB degrades to HuntConfig-only grounding (C2/C3).
+        # GROUND / QUERY retired: the hunter no longer queries the
+        # symptom-technique KB (surface B). Grounding is via the
+        # query_lightrag tool (when HUNTING_LIGHTRAG_TOOL enabled) in the
+        # author lane.
         kb_result: dict = {}
         kb_degraded = False
         axis_value = axis or derive_technological_axis(_first_card(config))
-        if not ws["kb_grounded"]:
-            query = SymptomTechniqueQuery(
-                fault_id=config.fault_class,
-                technological_axis=(axis_value,) if axis_value else (),
-            )
-            try:
-                trace_span("kb-retrieval", input={
-                    "fault_class": config.fault_class,
-                    "axis": axis_value,
-                })
-                kb_result = await _await_seam(kb, query) or {}
-                if hasattr(kb_result, "symptoms"):
-                    # The typed SymptomTechniqueResult -> the prompt's dict shape.
-                    kb_result = {
-                        "symptoms": list(kb_result.symptoms),
-                        "probing_techniques": list(kb_result.techniques),
-                        "source": kb_result.source,
-                    }
-            except Exception as exc:  # noqa: BLE001 - C2/C3: degrade, never raise
-                kb_degraded = True
-                logger.warning("symptom-technique KB degraded for %s (%s)",
-                               config.fault_class, exc)
-                feedback.append("symptom-technique KB unavailable; "
-                                "grounded on the HuntConfig alone")
-            ws["kb_grounded"] = True
+        ws["kb_grounded"] = True
 
         # Re-entry after a routed back-edge (D67-14): the candidate is
         # dispatched; the verdict may revise with each returned result.

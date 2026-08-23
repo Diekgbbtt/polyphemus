@@ -737,7 +737,6 @@ async def arun_orchestration(
     hypothesise_fn: Callable[[GateInput], GateDecision] | None = None,
     ratify_fn: Callable[[PhaseTurnInput], RatifyDecision] | None = None,
     note_fn: Callable[[PhaseTurnInput], NoteDecision] | None = None,
-    kb_retrieve_fn: Callable[[str], dict] | None = None,
     known_faults: Sequence[str] | None = None,
     exhausted_faults: Sequence[str] = (),
     orchestrator_factory: Callable[[str], "HuntOrchestratorActor"] | None = None,
@@ -767,10 +766,10 @@ async def arun_orchestration(
     Every injected collaborator is called through `_await_seam` (an async seam
     is awaited; a sync seam is offloaded via `asyncio.to_thread`), so the pass
     never stalls the caller's event loop and sync fakes stay injectable.
-    `hypothesise_fn`/`ratify_fn`/`note_fn`/`kb_retrieve_fn` are injected (the
-    production defaults are the actor turns); `tools` carries the store, the
-    back-edge (retained for the runtime plane's dispatch ownership, G12), and
-    the read-only graph view. The O1-O10 canon is single-sourced HERE;
+    `hypothesise_fn`/`ratify_fn`/`note_fn` are injected (the production defaults
+    are the actor turns); `tools` carries the store, the back-edge (retained
+    for the runtime plane's dispatch ownership, G12), and the read-only graph
+    view. The O1-O10 canon is single-sourced HERE;
     `run_orchestration` is its thin sync wrapper.
     """
     import asyncio
@@ -924,19 +923,14 @@ async def arun_orchestration(
             duplicate_config_writes=duplicate_config_writes,
         )
 
-    # KB evidence, per fault (D67-11: an unavailable KB degrades the gate, and
-    # the gate must never prune on degraded grounds).
+    # KB evidence (D67-11): the duplicate symptom-technique retrieval seam is
+    # RETIRED - the gate grounds via the direct fault-KB materialisation read
+    # below (the CWE catalogue), never a second projection. The gate's
+    # `kb_evidences`/`kb_degraded` slots stay as the empty/available defaults so
+    # the phase-turn inputs and the prompt render keep their contract shape, and
+    # the gate must never prune on degraded grounds.
     kb_evidences: dict[str, dict] = {}
-    kb_degraded = kb_retrieve_fn is None
-    if kb_retrieve_fn is not None:
-        for candidate in intake.accepted:
-            try:
-                kb_evidences[candidate.fault_class] = await _await_seam(
-                    kb_retrieve_fn, candidate.fault_class)
-            except Exception as exc:  # noqa: BLE001 - D67-11 fail-open
-                kb_degraded = True
-                logger.warning("KB retrieval degraded for %s (%s)",
-                               candidate.fault_class, exc)
+    kb_degraded = False
 
     # The read-only graph surface (D67-04): grounding for the phase turns.
     surface: list[dict] = []
@@ -1349,7 +1343,6 @@ def run_orchestration(
     hypothesise_fn: Callable[[GateInput], GateDecision] | None = None,
     ratify_fn: Callable[[PhaseTurnInput], RatifyDecision] | None = None,
     note_fn: Callable[[PhaseTurnInput], NoteDecision] | None = None,
-    kb_retrieve_fn: Callable[[str], dict] | None = None,
     known_faults: Sequence[str] | None = None,
     exhausted_faults: Sequence[str] = (),
     orchestrator_factory: Callable[[str], "HuntOrchestratorActor"] | None = None,
@@ -1375,7 +1368,6 @@ def run_orchestration(
         hypothesise_fn=hypothesise_fn,
         ratify_fn=ratify_fn,
         note_fn=note_fn,
-        kb_retrieve_fn=kb_retrieve_fn,
         known_faults=known_faults,
         exhausted_faults=exhausted_faults,
         orchestrator_factory=orchestrator_factory,

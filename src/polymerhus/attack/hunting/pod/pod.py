@@ -51,7 +51,6 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                    exec_fn: Callable | None = None,
                    runner_step_fn: Callable | None = None,
                    triager_fn: Callable | None = None,
-                   kb_fn: Callable | None = None,
                    trace_fn: Callable | None = None,
                    runner_middleware: Sequence = (),
                    triager_middleware: Sequence = (),
@@ -60,13 +59,12 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     """Execute `spec` against the live target and return the IA-4 envelope.
 
     Async-only (D84-15): the graph is driven with `ainvoke`, and every injected
-    seam - `exec_fn`, `runner_step_fn`, `triager_fn`, `kb_fn` - rides the
-    `_await_seam` pattern inside the nodes (async seams awaited natively, sync
-    seams offloaded via `asyncio.to_thread`), so both the production async
-    terminals and the contract-tier sync fakes are injectable. The whole run is
-    wrapped fail-open: a raise anywhere degrades to `unsuccessful` /
-    `technical-infeasibility` with the error in the trail - the pod never raises
-    into the parent.
+    seam - `exec_fn`, `runner_step_fn`, `triager_fn` - rides the `_await_seam`
+    pattern inside the nodes (async seams awaited natively, sync seams offloaded
+    via `asyncio.to_thread`), so both the production async terminals and the
+    contract-tier sync fakes are injectable. The whole run is wrapped fail-open:
+    a raise anywhere degrades to `unsuccessful` / `technical-infeasibility` with
+    the error in the trail - the pod never raises into the parent.
 
     `runner_middleware` / `triager_middleware` are the per-role #95 compaction
     middleware sets (T5, D9 wiring): threaded into the graph's pod-session
@@ -92,7 +90,7 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     try:
         graph = build_pod_graph(
             exec_fn=exec_fn, runner_step_fn=runner_step_fn,
-            triager_fn=triager_fn, kb_fn=kb_fn,
+            triager_fn=triager_fn,
             runner_middleware=runner_middleware, triager_middleware=triager_middleware,
             memory_store=memory_store, model_factory=model_factory)
         final = await graph.ainvoke(

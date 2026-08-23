@@ -206,21 +206,20 @@ def test_harness_does_not_replace_the_tool_contract_validation():
 # --- the harness is inert for non-exec tools ------------------------------------
 
 def test_harness_is_a_pass_through_for_non_exec_tools():
-    """The harness gates only the exec tool; note/kb calls flow to their own
+    """The harness gates only the exec tool; note calls flow to their own
     handlers (their contract rejection still happens at the args schema)."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool
     from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
-    from polymerhus.attack.hunting.pod.tools import KbRetrieveTool
 
     store = PodMemoryStore("/tmp/__ph_tmp__")
     log = ExperimentLog()
     harness = build_harness_middleware(log=log, variant_ref="v0", cap=10)
-    tools = [KbRetrieveTool(), PodNoteTool(store=store, spec_id="h")]
+    tools = [PodNoteTool(store=store, spec_id="h")]
     result = _run_loop([
         AIMessage(content="", tool_calls=[
-            {"name": "kb_retrieve", "args": {"query": "csrf"}, "id": "c1"}]),
+            {"name": "note", "args": {"operation": "read", "variant_ref": "v0",
+                                       "note_name": "n"}, "id": "c1"}]),
         AIMessage(content="done"),
     ], tools, [harness])
     texts = " ".join(str(getattr(m, "content", "")) for m in result["messages"])
-    assert '"symptoms": []' in texts                  # the KB tool ran untouched
     assert harness.calls == 1

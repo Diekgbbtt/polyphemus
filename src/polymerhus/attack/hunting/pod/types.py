@@ -162,9 +162,9 @@ class RunnerStep(BaseModel):
 
     thought: str = ""
     action: Literal["tool_call", "conclude"] = "conclude"
-    tool: Literal["exec", "kb_retrieve", ""] = ""
+    tool: Literal["exec", ""] = ""
     command: str = ""          # the terminal command (curl, an installed tool, ...)
-    kb_query: str = ""         # a natural-language KB query citing ontology elements
+    kb_query: str = ""         # (retired) the symptom-technique KB query; kept for schema compat
     # conclude-only signals:
     infeasible: bool = False
     unverified: list[str] = Field(default_factory=list)

@@ -60,6 +60,18 @@ class _FakeModel(BaseChatModel):
         return ChatResult(generations=[ChatGeneration(
             message=self.replies[min(i, len(self.replies) - 1)])])
 
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        # Async-native on purpose: `ainvoke` on a SYNC-only BaseChatModel routes
+        # `_generate` through `run_in_executor`, and langgraph deadlocks that
+        # path when the agent thread RESUMES from a checkpoint (the same fix as
+        # the hunting actor fakes in test_hunting_actors.py).
+        return self._generate(
+            messages,
+            stop=stop,
+            run_manager=run_manager.get_sync() if run_manager else None,
+            **kwargs,
+        )
+
     @property
     def _llm_type(self):
         return "fake"
@@ -112,7 +124,7 @@ def test_runner_turn_performs_one_react_stretch_and_synthesizes_conclude(tmp_pat
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
     spec_id = canonical_spec_id(SPEC)
-    hc = PodHarnessContext(exec_fn=_exec(_OK, calls=calls), kb_fn=None,
+    hc = PodHarnessContext(exec_fn=_exec(_OK, calls=calls),
                            memory_store=store, spec_id=spec_id, log=log,
                            variant_ref="v0", model_factory=_factory(REACT_EXEC_AND_CONCLUDE))
     step = _run(_drive_runner(SPEC, hc))
@@ -130,7 +142,7 @@ def test_runner_turn_flags_an_empty_stretch_as_exhausted(tmp_path):
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
     spec_id = canonical_spec_id(SPEC)
-    hc = PodHarnessContext(exec_fn=_exec(_OK), kb_fn=None, memory_store=store,
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store,
                            spec_id=spec_id, log=log, variant_ref="v0",
                            model_factory=_factory([AIMessage(content="nothing to probe")]))
     step = _run(_drive_runner(SPEC, hc))
@@ -139,17 +151,16 @@ def test_runner_turn_flags_an_empty_stretch_as_exhausted(tmp_path):
     assert len(log.raw_observations) == 0
 
 
-def test_runner_turn_binds_note_and_kb_on_the_same_agent(tmp_path):
-    """D84-16/27: the runner's ONE turn binds exec + kb_retrieve + note - the KB
-    wiring hole and the P3 note tool ride the SAME create_agent loop; the P3 note
-    write is the runner's FINAL tool call (D84-17/19)."""
+def test_runner_turn_binds_note_on_the_same_agent(tmp_path):
+    """D84-16/27: the runner's ONE turn binds exec + note on the SAME
+    create_agent loop; the P3 note write is the runner's FINAL tool call
+    (D84-17/19). The former `kb_retrieve` seam (surface B) is retired; the KB
+    capability is the config-gated `query_lightrag` tool."""
     calls = []
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
     spec_id = canonical_spec_id(SPEC)
     replies = [
-        AIMessage(content="", tool_calls=[
-            {"name": "kb_retrieve", "args": {"query": "csrf on search"}, "id": "c1"}]),
         AIMessage(content="", tool_calls=[
             {"name": "note", "args": {"operation": "write", "variant_ref": "v0",
                                       "note_name": "experiment",
@@ -158,7 +169,7 @@ def test_runner_turn_binds_note_and_kb_on_the_same_agent(tmp_path):
              "id": "c2"}]),
         AIMessage(content="space exhausted; summary note written"),
     ]
-    hc = PodHarnessContext(exec_fn=_exec(_OK, calls=calls), kb_fn=None,
+    hc = PodHarnessContext(exec_fn=_exec(_OK, calls=calls),
                            memory_store=store, spec_id=spec_id, log=log,
                            variant_ref="v0", model_factory=_factory(replies))
     step = _run(_drive_runner(SPEC, hc))
@@ -198,7 +209,7 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path):
     spec_id = canonical_spec_id(SPEC)
     store.append(spec_id, variant_ref="v0", note_name="experiment",
                  kind="experiment_summary", body="the verbatim consolidation")
-    hc = PodHarnessContext(exec_fn=_exec(_OK), kb_fn=None, memory_store=store,
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store,
                            spec_id=spec_id, log=log, variant_ref="v0",
                            model_factory=_factory([AIMessage(content="", tool_calls=[
                                {"name": "TriagerDecision", "id": "c1", "args": {
@@ -221,7 +232,7 @@ def test_triager_seam_degrades_to_a_safe_terminal_on_failure(tmp_path):
     def raising(role_id):
         raise RuntimeError("no model")
 
-    hc = PodHarnessContext(exec_fn=_exec(_OK), kb_fn=None, memory_store=store,
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store,
                            spec_id=spec_id, log=log, variant_ref="v0",
                            model_factory=raising)
     decision = _run(_drive_triager(SPEC, hc, log))

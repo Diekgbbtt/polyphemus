@@ -7,12 +7,13 @@ binary verdict with the full experiment log as evidence (D5 + D6), via IA-4.
 
 As of T7 (#157) the Runner and Triager are production `create_agent` ReAct
 sessions (D84-16/17/23): the Runner is ONE stateful ReAct turn per stretch with
-`tools=[exec, kb_retrieve, note]` (the KB wiring hole closed, D84-16/26) and the
-P3 experiment_summary note write as its final tool call (D84-17/19); the Triager
-reads that note through a `stateful_turn` (D84-23). The pod owns a persistent
-experiment-memory store (`PodMemoryStore`, D84-20/28) with the prompt-memory
-pattern (D84-27); the harness middleware owns G1/G4/O7 (D84-22) and the
-`tool_exec` graph node is retired from the production lane (D84-29).
+`tools=[exec, note]` (plus the config-gated `query_lightrag` KB tool from the
+lightrag branch; the former `kb_retrieve` symptom-technique seam is retired) and
+the P3 experiment_summary note write as its final tool call (D84-17/19); the
+Triager reads that note through a `stateful_turn` (D84-23). The pod owns a
+persistent experiment-memory store (`PodMemoryStore`, D84-20/28) with the
+prompt-memory pattern (D84-27); the harness middleware owns G1/G4/O7 (D84-22)
+and the `tool_exec` graph node is retired from the production lane (D84-29).
 """
 from __future__ import annotations
 

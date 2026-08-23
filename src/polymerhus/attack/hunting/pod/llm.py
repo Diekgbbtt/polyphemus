@@ -50,14 +50,15 @@ _pod_harness_ctx: "ContextVar" = None
 @dataclass(frozen=True)
 class PodHarnessContext:
     """The run-scoped pieces the production ReAct seams need beyond the session
-    address (D84-7 extension, T7): the injected terminal (exec_fn), the KB seam
-    (kb_fn), the pod memory store + its spec key (spec_id = the ROOT spec's
-    canonical hash - the D84-20 data model keys the store by the spec, with
-    variants as a child), the D6 log, the CURRENT variant_ref for dedup scope,
-    and the session model factory (None = the role's real model)."""
+    address (D84-7 extension, T7): the injected terminal (exec_fn), the pod
+    memory store + its spec key (spec_id = the ROOT spec's canonical hash - the
+    D84-20 data model keys the store by the spec, with variants as a child), the
+    D6 log, the CURRENT variant_ref for dedup scope, and the session model
+    factory (None = the role's real model). The KB query capability is the
+    single `query_lightrag` tool (lightrag branch, config-gated); the former
+    `kb_fn` symptom-technique seam (surface B) is retired."""
 
     exec_fn: Callable
-    kb_fn: Callable | None = None
     memory_store: Any = None
     spec_id: str = ""
     log: Any = None
@@ -116,7 +117,7 @@ def pod_middleware():
 
 def pod_harness():
     """The `PodHarnessContext` bound for the CURRENT production seam call (T7):
-    exec_fn / kb_fn / memory_store / spec_id / log / variant_ref / model_factory.
+    exec_fn / memory_store / spec_id / log / variant_ref / model_factory.
     None when the pod runs stateless (contract tier) - the production seams
     hard-fail on None (D84-14), the injected fakes never read it."""
     return _pod_h_ctx().get()

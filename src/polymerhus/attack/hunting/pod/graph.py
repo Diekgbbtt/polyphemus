@@ -175,18 +175,18 @@ def _root_spec_id(state: PodState) -> str:
     return canonical_spec_id(state.get("root_spec") or state.get("spec") or {})
 
 
-def _harness_ctx(state: PodState, *, exec_fn, kb_fn, memory_store,
+def _harness_ctx(state: PodState, *, exec_fn, memory_store,
                  model_factory) -> PodHarnessContext:
-    """The run-scoped harness the production seams read (T7): exec/kb/store/log/
+    """The run-scoped harness the production seams read (T7): exec/store/log/
     variant/model factory, with the memory key on the ROOT spec id."""
     return PodHarnessContext(
-        exec_fn=exec_fn, kb_fn=kb_fn, memory_store=memory_store,
+        exec_fn=exec_fn, memory_store=memory_store,
         spec_id=_root_spec_id(state), log=state.get("log"),
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS)
 
 
-def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None,
+def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                     runner_middleware=(), triager_middleware=(),
                     memory_store=None, model_factory=None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
@@ -198,8 +198,6 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
       the contract-tier lane (the bounded `runner_agent` <-> `tool_exec` loop).
     - `triager_fn(spec, observation, messages, log) -> decision` - the critic;
       the production default is the note-reading `stateful_turn` (D84-23).
-    - `kb_fn(query, *, fault_id, technological_axis) -> dict` - the NL
-      knowledge-base seam; default = the fail-open `kb_retrieve` stub.
     - `runner_middleware` / `triager_middleware` - the per-role #95 compaction
       middleware sets the run injected (T5); the production default seams pass
       them to the stateful turns verbatim (D84-12). Default `()` = uncompacted.
@@ -219,9 +217,6 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         production_triager = True
     else:
         production_triager = False
-    if kb_fn is None:
-        from polymerhus.attack.hunting.pod.tools import kb_retrieve
-        kb_fn = kb_retrieve
     if memory_store is None and (production_runner or production_triager):
         memory_store = PodMemoryStore()
 
@@ -271,7 +266,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                                   role_id=POD_RUNNER_ROLE,
                                   middleware=runner_middleware,
                                   harness=_harness_ctx(
-                                      state, exec_fn=exec_fn, kb_fn=kb_fn,
+                                      state, exec_fn=exec_fn,
                                       memory_store=memory_store,
                                       model_factory=model_factory)):
                 step = await _await_seam(runner_step_fn, spec, delta,
@@ -338,15 +333,6 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         step = _step(state)
         tc = state.get("tool_calls", 0) + 1  # count every call (dedup included) for G1
         variant_ref = state.get("current_variant_ref", "v0")
-
-        if step.tool == "kb_retrieve":
-            try:
-                kb = await _await_seam(kb_fn, step.kb_query)
-            except Exception as exc:  # noqa: BLE001 - fail-open KB
-                kb = {"error": str(exc)}
-            return {"tool_calls": tc,
-                    "runner_messages": _dicts_to_lc(
-                        [{"role": "tool", "content": f"KB RESULT: {kb}"}])}
 
         command = step.command.strip()
         if not command:  # G2: reject a malformed tool call, do not execute
@@ -418,7 +404,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                                   role_id=POD_TRIAGER_ROLE,
                                   middleware=triager_middleware,
                                   harness=_harness_ctx(
-                                      state, exec_fn=exec_fn, kb_fn=kb_fn,
+                                      state, exec_fn=exec_fn,
                                       memory_store=memory_store,
                                       model_factory=model_factory)):
                 raw = await _await_seam(triager_fn, spec, obs, seam_view, log)

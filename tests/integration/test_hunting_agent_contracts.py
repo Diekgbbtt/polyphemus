@@ -141,10 +141,9 @@ def test_spec_validates_against_typed_base(tmp_path):
 
     assert result.hypothesis_verdict == "successful"
     assert len(pod_calls) == 1
-    # The KB join key was (fault-class, unit technological-axis) (D10, IA-8).
-    assert len(queries) == 1
-    assert queries[0].fault_class == FAULT_X
-    assert isinstance(queries[0].axis, str) and queries[0].axis
+    # Surface B retired: the hunter no longer queries the symptom-technique KB;
+    # grounding is via query_lightrag (when HUNTING_LIGHTRAG_TOOL enabled).
+    assert len(queries) == 0
     # The D4 spec (as the pod received it) carries the full typed base and
     # both NL fields.
     spec = pod_calls[0]

@@ -1,7 +1,8 @@
 """The two pod agents - the PRODUCTION stateful ReAct seams (T7, D84-16/17/23).
 
 The `pod_runner` (actor) is a pure ReAct plan designer: ONE `create_agent` turn
-per stretch, `tools=[exec, kb_retrieve, note]`, the P0-P3 plan as `system_prompt`,
+per stretch, `tools=[exec, note]` (plus the config-gated `query_lightrag` tool),
+the P0-P3 plan as `system_prompt`,
 the consumed inbox delta as `new_messages` (D84-9/10/11) - the tool-call loop
 lives INSIDE `create_agent`, with the harness middleware owning G1/G4/O7
 (D84-22). Its final tool call at P3 space-exhaustion writes the consolidated
@@ -82,13 +83,13 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
     """The PRODUCTION Runner (D84-16/17/22/29): ONE stateful `create_agent`
     ReAct turn per stretch - the tool-call loop lives INSIDE the agent, the graph
     never interrupts per tool result. Reads the typed session + run-scoped
-    harness (exec/kb/store/log/variant/model_factory) from the D84-7 binding
-    (`pod_session()` / `pod_harness()`), binds `tools=[exec, kb_retrieve, note]`
-    with `middleware=[compaction, harness]` (D84-12/22), hands `messages` (the
-    consumed inbox delta, D84-11) as `new_messages`, and synthesizes the stretch
-    `RunnerStep` from the turn: `conclude`, `exhausted` when no raw observation
-    was recorded (the old empty-probe rule), the final model content as the
-    observation note.
+    harness (exec/store/log/variant/model_factory) from the D84-7 binding
+    (`pod_session()` / `pod_harness()`), binds `tools=[exec, note]` (plus the
+    config-gated `query_lightrag` tool) with `middleware=[compaction, harness]`
+    (D84-12/22), hands `messages` (the consumed inbox delta, D84-11) as
+    `new_messages`, and synthesizes the stretch `RunnerStep` from the turn:
+    `conclude`, `exhausted` when no raw observation was recorded (the old
+    empty-probe rule), the final model content as the observation note.
 
     Hard-fails on an unbound session/harness (D84-14: no silent symbolic
     fallback) - `arun_pod`'s fail-open wrapper degrades the run, never raises
@@ -112,7 +113,7 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
         raise RuntimeError("the production runner harness needs the D6 log")
     before_obs = len(hc.log.raw_observations)
     tools = runner_react_tools(hc.exec_fn, hc.memory_store, hc.spec_id, hc.log,
-                               hc.variant_ref or "", kb_fn=hc.kb_fn)
+                               hc.variant_ref or "")
     harness_mw = build_harness_middleware(log=hc.log,
                                           variant_ref=hc.variant_ref or "",
                                           cap=hc.cap)
@@ -133,9 +134,9 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
     `HuntSession` thread with `ToolStrategy(TriagerDecision)` and the critic's
     compaction middleware, reading the delta the graph composed (`messages` =
     the verbatim P3 note + filtered triager context + memory guidance, D84-23).
-    Bound tools: note read + kb_retrieve (D84-27) - NEVER exec. Hard-fails on an
-    unbound session/harness (D84-14); a FAILED turn degrades to a safe honest
-    terminal, never raises into the loop."""
+    Bound tools: note read + (config-gated) query_lightrag (D84-27) - NEVER exec.
+    Hard-fails on an unbound session/harness (D84-14); a FAILED turn degrades to
+    a safe honest terminal, never raises into the loop."""
     from polymerhus.app.llm.session import stateful_turn  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.context import _dicts_to_lc  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.llm import (  # noqa: PLC0415
@@ -150,7 +151,7 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
         if ctx is None or hc is None:
             raise RuntimeError(
                 "no bound pod session/harness for the stateful triager turn (D84-14)")
-        tools = triager_react_tools(hc.memory_store, hc.spec_id, kb_fn=hc.kb_fn)
+        tools = triager_react_tools(hc.memory_store, hc.spec_id)
         delta = _dicts_to_lc(list(messages))
         result = stateful_turn(
             ctx.address.role_id, ctx.address, delta,
@@ -200,30 +201,42 @@ TRIAGER_SYSTEM = POD_TRIAGER_SYSTEM
 def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
                        kb_fn=None, kb_lookup=None):
     """The Runner's bound-tool set (D84-16/27): `exec` (raw-recording terminal),
-    `note` (pod memory write/read), `kb_retrieve` (the KB wiring hole closed).
-    Constructed PER STRETCH because `exec` carries the current variant's dedup
-    scope; `kb_fn` is the pod's plain KB seam, `kb_lookup` the contract-tier
-    fixture."""
+    `note` (pod memory write/read), and - when `HUNTING_LIGHTRAG_TOOL` is
+    enabled - the single `query_lightrag` tool from the lightrag branch (the pod
+    runner can be configured with it, exactly like the hunting agent's author
+    lane). Constructed PER STRETCH because `exec` carries the current variant's
+    dedup scope. The former `kb_retrieve` symptom-technique seam (surface B) is
+    retired."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
-    from polymerhus.attack.hunting.pod.tools import (  # noqa: PLC0415
-        ExecTool,
-        KbRetrieveTool,
-    )
+    from polymerhus.attack.hunting.pod.tools import ExecTool  # noqa: PLC0415
 
-    return [
+    tools = [
         ExecTool(exec_fn=exec_fn, log=log, variant_ref=variant_ref),
         PodNoteTool(store=memory_store, spec_id=spec_id),
-        KbRetrieveTool(kb_fn=kb_fn, lookup=kb_lookup),
     ]
+    tools += _lightrag_query_tools()
+    return tools
 
 
 def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None):
-    """The Triager's bound-tool set (D84-27): note read + kb_retrieve - NEVER
-    exec (the critic never touches the target)."""
+    """The Triager's bound-tool set (D84-27): note read + (when enabled) the
+    `query_lightrag` tool - NEVER exec (the critic never touches the target)."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
-    from polymerhus.attack.hunting.pod.tools import KbRetrieveTool  # noqa: PLC0415
 
-    return [
-        PodNoteTool(store=memory_store, spec_id=spec_id),
-        KbRetrieveTool(kb_fn=kb_fn, lookup=kb_lookup),
-    ]
+    tools = [PodNoteTool(store=memory_store, spec_id=spec_id)]
+    tools += _lightrag_query_tools()
+    return tools
+
+
+def _lightrag_query_tools() -> list:
+    """The optional `query_lightrag` tool for the pod's ReAct turns, gated by
+    `HUNTING_LIGHTRAG_TOOL` (the lightrag branch's single KB tool; fail-open to
+    an empty list when disabled or the config is unavailable)."""
+    try:
+        from polymerhus.app.config import config  # noqa: PLC0415
+        if not config.HUNTING_LIGHTRAG_TOOL:
+            return []
+        from polymerhus.lightrag.tool import build_lightrag_tool  # noqa: PLC0415
+        return [build_lightrag_tool()]
+    except Exception:  # noqa: BLE001 - fail-open to no KB tool
+        return []
