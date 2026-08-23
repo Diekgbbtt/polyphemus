@@ -151,7 +151,7 @@ L1_ONTOLOGY_PRIMER = (
     "abstraction - the data a Service produces or consumes, carrying its "
     "name, type, and sensitivity. The L1 is a judged abstraction over the "
     "observed L0 graph: every node here is an inference licensed by "
-    "observations, never a witness. The projection is the typed facet surface "
+    "observations, never direct evidence. The projection is the typed facet surface "
     "you reason over - a proxy for the full characterisation, not an "
     "authoritative classification - so an absent or unknown facet is missing "
     "evidence, never evidence of absence."
