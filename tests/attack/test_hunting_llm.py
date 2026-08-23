@@ -164,3 +164,17 @@ def test_author_and_judge_share_ONE_per_hunt_thread_when_session_bound(monkeypat
     assert seen[0] == ("hunting_hunter", "run1:hunt-A:hunting_hunter")
     assert seen[1] == ("hunting_hunter", "run1:hunt-A:hunting_hunter")  # SAME thread -> shared memory
     assert seen[2] == ("hunting_hunter", "run1:hunt-B:hunting_hunter")  # other hunt -> distinct thread
+
+
+def test_hunt_session_context_reads_the_bound_binding_only_inside_a_hunt():
+    """The public `hunt_session_context()` getter returns the typed binding set by
+    `hunt_session()` (None outside it) - the pod's session binding (D84-7) reads
+    this to derive the pod run's run_id/hunt_id from an enclosing hunt."""
+    assert HL.hunt_session_context() is None
+    with HL.hunt_session("run1", "hunt-A"):
+        ctx = HL.hunt_session_context()
+        assert ctx is not None
+        assert ctx.address.role_id == "hunting_hunter"
+        assert ctx.address.run_id == "run1"
+        assert ctx.address.hunt_id == "hunt-A"
+    assert HL.hunt_session_context() is None

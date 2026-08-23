@@ -1,0 +1,78 @@
+name: sqli-search-blind-boolean
+# Designed for N2 (ReAct trajectory, P1 concretization), N5 (space exploration).
+# Terminal expected: unsuccessful / space-exhausted OR no-symptom-evidence with a
+# rich differential trail - the real Juice Shop search SQLi is historical; the
+# spec must make the RUNNER prove absence, not assume it.
+target_identity: >-
+  service:web:soupmarket; the REST search endpoint /rest/products/search?q=<term>
+  of the Juice Shop web application over HTTPS to https://soupmarket.shop/. The
+  server-side SQL query is built by string interpolation inside a parenthesised
+  expression: an injected q is wrapped so a bare q=' is benign but q=') or a
+  boolean/union construct changes the query shape. The endpoint returns JSON
+  {status: "success", data: [...]} on a normal query; an error shape (a
+  SQLITE_ERROR 500 HTML page whose title can echo injected marker text) appears
+  when the query breaks. No authentication required.
+verification_symptoms:
+  - >-
+    A boolean differential: the response to q with a payload that makes the
+    predicate TRUE (e.g. an AND 1=1 that yields the full catalogue) differs from
+    the response to the FALSE variant (AND 1=2 that yields an empty data array),
+    while both return HTTP 200. Confirmed means the two queries observably
+    return different result sets through a boolean-conditioned filter.
+  - >-
+    Error-based echo: an injected marker appears verbatim in the error page's
+    server-rendered title (the SQLite error text reflects the unescaped marker),
+    demonstrating server-side SQL string interpolation reaction to the payload.
+testing_pattern: >-
+  blind-boolean with an error-based companion: probe the parameter with a
+  control (inert term -> full catalogue), then a TRUE-promoting payload and a
+  FALSE-forcing payload with identical structure except the boolean constant,
+  then an error-forcing payload that breaks the enclosing parentheses and
+  echoes a marker. The discriminator is the response SHAPE (rows vs empty vs
+  500-error-echo), not a literal string. Conclude confirmed only when the
+  boolean pair diverges consistently; conclude absent when control+TRUE+FALSE
+  all return the identical full catalogue.
+assumptions:
+  - network egress allowed; https://soupmarket.shop reachable
+  - the search endpoint is anonymous
+  - q is wrapped in a parenthesised SQL expression, so the injection must close
+    the paren (a bare single quote is treated as a plain character, not a
+    delimiter)
+  - the search endpoint returns JSON; the SQLite error path returns the 500 HTML
+    with the unescaped marker in the title (verified live)
+  - no WAF in front that normalises the probes (the differential pair must not
+    be rewritten into identical requests)
+payload_vector_space:
+  method: GET
+  path: "https://soupmarket.shop/rest/products/search"
+  parameter: q
+  families:
+    - "inert-control: banana"
+    - "boolean-true: ') OR 1=1-- {marker}"
+    - "boolean-false: ') AND 1=2-- {marker}"
+    - "parenthesis-close: '){marker}"
+    - "union-columns: ') UNION SELECT 1,2,3,4,5,6,7-- {marker}"
+    - "comment-terminated-true: ' OR 1=1-- {marker}"
+rationale: >-
+  The parenthesised interpolation is Juice Shop's blind SQLi surface: a
+  well-formed boolean pair either filters the catalogue or does not, which is
+  machine-observable through the JSON result-set difference. This discriminates
+  the "SQL string-injection reachable" hypothesis with a control and two
+  structural twins - the cleanest blind-boolean execution the pod can run and
+  interpret from raw HTTP responses alone.
+interpretation_guidance: >-
+  Divergent TRUE/FALSE result sets (one full, one empty) across the same
+  structure confirm the injection. The union/column-count probe narrows the
+  schema; the error-echo of the marker confirms raw interpolation. If all
+  probes return the identical full catalogue with no empty result and no
+  500/error echo, the parameter is safely parameterised - terminate
+  unsuccessful/space-exhausted, listing the differential pair outputs in the
+  evidence as the proof of absence. A blanket blockade across all probes
+  (captcha/bot page every time) routes to technical-infeasibility, not absence.
+comments: >-
+  Grounded live 2026-08-22: q=' alone is benign (200 full catalogue), q=' OR
+  1=1-- triggers the SQLITE_ERROR page (inside parens), ')' errors, the boolean
+  pair (AND 1=1 all-rows vs AND 1=2 empty, both 200) and a 7-column union
+  (data row showing 2,3,4,5,6,7 as literal columns) were verified. Whether the
+  historical SQLi still exists on THIS deployment is the question the pod must
+  answer - the fixture neither asserts it is exploitable nor patched.

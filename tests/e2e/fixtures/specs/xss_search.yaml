@@ -1,0 +1,73 @@
+name: xss-search-reflected
+# Designed for N2 (ReAct trajectory), N5 (space exploration), N7 (triager reflection).
+# Terminal expected in the happy case: successful / symptom-confirmed.
+target_identity: >-
+  service:web:soupmarket; the search functionality of the Juice Shop web
+  application, exercised over HTTPS to https://soupmarket.shop/ through the
+  search box at the root page. The search happens client-side against the
+  REST search endpoint /rest/products/search?q=<term>; the response is the
+  product catalogue filtered server-side. The SPA renders the search term
+  back in the "search results" heading via an innerHTML binding (confirmed in
+  the served main.js: h("innerHTML", e.searchValue, Je)), so a term carrying
+  a hostile HTML fragment is injected into the DOM unescaped when the results
+  render. No authentication is required to search.
+verification_symptoms:
+  - >-
+    The literal marker string XSSTEST42 appears in the HTTP response body of
+    the search results page, unescaped, as executable HTML (not html-encoded,
+    not escaped) after submitting a search whose term embeds that marker
+    inside an HTML tag or event-handler attribute. Confirmed means the raw
+    bytes <b>XSSTEST42</b> (or an equivalent executable wrapper around the
+    marker) are present in the body; absent means the marker is either absent,
+    html-escaped (&lt;b&gt;XSSTEST42&lt;/b&gt;), or swallowed.
+  - >-
+    The injected fragment executes in a browser context (an alert or attribute
+    handler fires); since the pod observes raw HTTP, treat the unescaped
+    marker in the 200 body as the first-class confirmation and the execution
+    claim as the secondary (interpretation) judgement.
+testing_pattern: >-
+  differential payload-family probing on the search parameter: submit a marker
+  wrapped in each of several XSS vector families (a plain tag, a tag with an
+  attribute, an img/onerror, an svg/onload), one family per probe, and compare
+  the raw response for the marker's escape state. The control is the same
+  marker wrapped in inert text (should stay escaped or plain). Use a fresh
+  random marker per family so a cached/filtered response cannot alias probes.
+assumptions:
+  - network egress from the pod is allowed and https://soupmarket.shop is reachable
+  - the search endpoint is anonymous (no login required)
+  - the served SPA bundle is the Juice Shop main.js whose search heading binds
+    the term via innerHTML (client-side sink), so server-side reflection of the
+    marker inside the results HTML is the observable to chase
+  - a charset/WAF in front may escape some families but not all - families are
+    tried independently so one survivor confirms
+payload_vector_space:
+  method: GET
+  path: "https://soupmarket.shop/rest/products/search"
+  parameter: q
+  families:
+    - "plain-text-control: <XSSTEST42{marker}>"
+    - "html-tag: <b{marker}></b>"
+    - "event-handler: <div{marker} onclick=1></div>"
+    - "img-onerror: <img{marker} src=x onerror=alert(1)>"
+    - "svg-onload: <svg{marker} onload=alert(1)>"
+    - "attribute-breakout: \" onmouseover=alert({marker}) x=\""
+rationale: >-
+  The Juice Shop search results heading is a documented DOM XSS sink (the SPA
+  binds the term via innerHTML). A reflected XSS here discriminates the
+  "client-side input re-injection" hypothesis: if the server echoes the term
+  into a response the SPA renders as HTML, any family whose escaping is not
+  applied confirms the fault. XSS has an unambiguous observable (the unescaped
+  marker) and a cheap control, so handful of families cleanly separate
+  confirmed from absent.
+interpretation_guidance: >-
+  A confirmed marker in ANY family is sufficient for symptom-confirmed; the
+  plain-text control should NOT confirm. If all families return the marker
+  absent or html-escaped, the symptom is absent (the sink is escaped or the
+  term is sanitised server-side) - terminate unsuccessful/space-exhausted
+  with the escape-state samples in the evidence. If the search endpoint stops
+  responding or returns a blanket-capture page across families, treat it as
+  technical-infeasibility (a WAF/bot-wall in front) rather than absence.
+comments: >-
+  Grounded live 2026-08-22: root serves the SPA shell, wrong-Host is closed,
+  /rest/products/search?q= returns 200 with the filtered catalogue, and
+  main.js contains the h("innerHTML", e.searchValue, Je) sink.
