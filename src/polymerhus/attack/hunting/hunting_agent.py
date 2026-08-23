@@ -463,6 +463,22 @@ def build_hunting_agent(
         new_messages = [HumanMessage(content=_compose_first_step(config, state))]
 
         for _step in range(_MAX_STEPS):
+            # Capability (#99) attaches NATIVELY via the session seam, not as an
+            # explicit middleware (verified against `app/llm/session.py` +
+            # `app/llm/capability.py`): no capability `AgentMiddleware` exists in
+            # the codebase - #99 is the A1 method negotiation
+            # (`_structured_response_format`, used by `stateful_turn(schema=...)`)
+            # plus the A5 thinking-effort adaptor in `build_chat_model`. This
+            # `response_format=ToolStrategy(HunterStep)` IS the A1 rung-2 result
+            # for a tool-bound session (a tool loop has no method-swap), so
+            # passing it directly is exactly what the negotiation would pick, and
+            # the negotiation + middleware still attach because every turn rides
+            # `arun_session_turn`.
+            # The HunterStep type is persisted in the session checkpoint (via the
+            # `structured_response` channel) - langgraph's "unregistered type"
+            # msgpack advisory is the ACCEPTED codebase pattern, identical to the
+            # orchestrator's `ToolStrategy(GateDecision | MatchVerdict)` on
+            # `run_session_agent` (verified: same advisory, same working turns).
             try:
                 turn = await arun_session_turn(
                     _HUNTER_ROLE, thread_id, new_messages,
@@ -487,7 +503,11 @@ def build_hunting_agent(
 
             if step.action != "tool":
                 # The model concluded the hunt: the hypothesis list is exhausted
-                # -> END -> idle (verdict consumption is the OUT-OF-SCOPE graph).
+                # -> END -> idle. The terminal phase is `concluded` (spec 2.4's
+                # deterministic surface): the harness lands the state, derives NO
+                # verdict (the verdict-consumption graph is OUT OF SCOPE and
+                # derives it from the pod-verdict messages the surfer feeds the
+                # idle hunt), and the dispatch result reports the terminal state.
                 state["phase"] = "concluded"
                 feedback.append(_terminal_feedback(state, step.answer))
                 return _assemble(state, feedback)

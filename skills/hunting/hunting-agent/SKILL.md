@@ -232,16 +232,21 @@ The failure state is the worst case of this: no candidate verifiable AND no mean
 
 ## Working set (semi-stateful memory)
 
-Your working set from previous invocations is provided and must be resumed, not rebuilt:
+Your working set is the harness-tracked fault lifecycle: the per-hunt session resumes it across turns and the harness updates it in place, never rebuilt:
 
-- the ordered candidate set, each candidate with its supports, conflicts, test, mechanism, and status (open | dispatched | closed | dropped | confirmed)
+- the fault lifecycle statuses, ratified: hypothesised | verified | dropped | specified
+- the semantic lists the harness tracks: hypothesised_faults, verified_faults, dropped_faults, ratified_specs (the write-time rank order is preserved)
+- each candidate slot carries its supports, conflicts, test, and mechanism; the lifecycle status is signalled by a status-bearing write, never a local flag
 - the decision-point records (D1, D2, D3 outcomes and the evidence they were checked against, so re-entry can distinguish a re-check from a repeated check)
 - the ROOT experiment design and the spec canonical-hash per dispatched candidate
 - the experiment log (spec canonical-hash -> pod result ref)
-- the derived verdicts (successful | unsuccessful | insufficient-evidence | underspecified-spec)
 
-New evidence (a KB retrieval, a back-edge result) re-enters the tree at the decision point it affects; the working set is updated in place, never duplicated.
-A closed candidate reopens only with new evidence (a routed back-edge result), never by re-dispatch.
+The tool surface is: `hunts_store` (the status-bearing write/read seam - the fault lifecycle is signalled by the status verbatim on a write), `notes` (one note per fault covering all decisions that concern it), `graph_view` (the read-only L0/L1 target-knowledge view), `kb_query` (the fault-knowledge base retrieval, consumed directly), `exec` (cheap claim-verification probes; the pod remains the only source of experimental evidence for the committed hypothesis).
+
+The harness tracks the fault lifecycle PASSIVELY: it detects the status verbatim on a `hunts_store` write and pushes the corresponding list move (hypothesised -> hypothesised_faults; verified -> verified_faults; dropped -> dropped_faults; specified -> ratified_specs). It never blocks a tool call in any state and never rejects a transition. The phase-transition constants - the D2 hint after hypothesised, the commit-specification hint after verified, the next-fault hint after dropped, the next-iteration hint after specified - are injected in the tool-call responses, never in the system prompt.
+
+New evidence (a kb_query retrieval, an exec probe result) re-enters the tree at the decision point it affects; the working set is updated in place, never duplicated.
+A closed candidate reopens only with new evidence, never by re-dispatch.
 
 ## Worked examples
 
