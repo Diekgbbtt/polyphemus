@@ -36,8 +36,8 @@
 - **seam:** `attack/hunting/llm.py::_gate_skill` + `_compose_gate_prompt` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface`
 - **delivery semantic:** success
 - **input:** `GateInput(prior_minted_keys=["Service:slug:a::CWE-352"], candidates=[DeliveredCandidate("Service:slug:b","CWE-352",Witness(llm="x"),"applies")])`
-- **observable:** prompt contains verbatim `Prior-hunt reflection (Q11): Prior minted-config keys to reflect on: Service:slug:a::CWE-352`, `Knowledge-sufficiency decision point (Q9)`, `Target-knowledge loop (Q9)`, `Same-class merge (Q16)`, `The hypothesise write (spec 3.3): call hunts_store(write, config,`; the phase-TRANSITION verbatims ride the tool-call responses (constants), never this prompt (re-scoped #167)
-- **yields:** `test_integration_c5_loop_protocol_verbatim`
+- **observable:** prompt OPENS with the `L1_ONTOLOGY_PRIMER` constant (G9, #168: the Service / System / DataItem conceptions + the domain-model philosophy, at the TOP of the user frame, never the system prompt) and contains verbatim `Prior-hunt reflection (Q11): Prior minted-config keys to reflect on: Service:slug:a::CWE-352`, `Knowledge-sufficiency decision point (Q9)`, `Target-knowledge loop (Q9)`, `Same-class merge (Q16)`, `The hypothesise write (spec 3.3): call hunts_store(write, config,`; the phase-TRANSITION verbatims ride the tool-call responses (constants), never this prompt (re-scoped #167)
+- **yields:** `test_integration_c5_loop_protocol_verbatim` + `test_gate_prompt_opens_with_the_l1_ontology_primer`
 
 ### C6 - supervisor is sole router via Command(goto=...) DP-5; the phase machine is the REASON stretch (re-scoped #167)
 - **seam:** `attack/hunting/orchestrator_graph.py::build_hunting_graph` <-> langgraph StateGraph
@@ -60,11 +60,11 @@
 - **observable:** `report.pairs_processed==3`, `report.configs_ratified==3`; the report has NO `budget_cut` field and the ledger has NO `budget_remaining` - spending is the runtime plane's and the pod's (D67-09)
 - **yields:** `test_integration_c8_budget_stage_removed`
 
-### C9 - HuntStore per-project topology, config + notes split (re-scoped #166)
-- **seam:** `attack/hunting/hunt_store.py::HuntStore` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface{read_memory_hunts,read_memory_notes}`
+### C9 - HuntStore per-project topology, config + notes split (re-scoped #166, tool surface re-scoped #168)
+- **seam:** `attack/hunting/hunt_store.py::HuntStore` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface{hunts_store,notes}`
 - **delivery semantic:** success
 - **input:** `HuntStore(tmp_path).write_config("project-1", {unit_id, fault_class="CWE-352", vulnerability_class="CSRF", hunt_id="h1"})` then `append_note("project-1", "Service:slug:a::CWE-352", "track it")`
-- **observable:** file `project-1/orchestration/hunt_configs/produced/Service:slug:a_CWE-352_CSRF.yaml` carries the config YAML (no `_seq`/`_ref`); file `project-1/orchestration/memory.yaml` holds the notes; `read_configs_by_key("project-1","Service:slug:a::CWE-352")==[{"hunt_id":"h1"}]`; `read_notes("project-1","Service:slug:a::CWE-352")==[{"note":"track it"}]`; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data` (no env var); the per-run kind files and `memory.md` are gone
+- **observable:** file `project-1/orchestration/hunt_configs/produced/Service:slug:a_CWE-352_CSRF.yaml` carries the config YAML - the produced/consumed kind files carry NO `_seq`/`_ref` (G11, the file name IS the key); file `project-1/orchestration/memory.yaml` holds the notes (natural append order, no `_seq`); `read_configs_by_key("project-1","Service:slug:a::CWE-352")==[{"hunt_id":"h1"}]`; `read_notes("project-1","Service:slug:a::CWE-352")==[{"note":"track it"}]`; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data` (no env var); the per-run kind files (`run`/`config`/`hunt`/`dispatch`/...) and the repo-global `memory.md` are gone
 - **yields:** `test_integration_c9_store_append_and_split_reads`
 
 ### C10 - store read failure degrades to empty prior insights (O4)
@@ -102,11 +102,11 @@
 - **observable:** `registry[run_id]` is same object identity across both faults, `len(registry)==1`, actor `run_id` thread name `hunting_orchestrator:run-c14` reused, reaped only via `await _reap_orchestrator(run_id)` not via pass finally, after reap `registry.get(run_id) is None`
 - **yields:** `test_integration_c14_actor_thread_reused`
 
-### C15 - cross-pass config visibility via the fixed HUNT_STORE_ROOT (re-scoped #166)
-- **seam:** `attack/hunting/hunt_store.py::HUNT_STORE_ROOT` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface{read_memory_hunts}`
+### C15 - cross-pass config visibility via the fixed HUNT_STORE_ROOT (re-scoped #166, tool surface re-scoped #168)
+- **seam:** `attack/hunting/hunt_store.py::HUNT_STORE_ROOT` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface{hunts_store,notes}`
 - **delivery semantic:** success (cross-pass) + ordering
 - **input:** `storeA = HuntStore()` at default `src/polymerhus/attack/hunting/data` writes a config `Service:slug:a::CWE-352::CSRF` and a note; `storeB = HuntStore()` same default reads the same project
-- **observable:** `storeB.read_configs_by_key("project-1","Service:slug:a::CWE-352")` returns the config from pass-a; the note reads back from `memory.yaml`; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data` string equality, no env var; no `memory.md` anywhere
+- **observable:** `storeB.read_configs_by_key("project-1","Service:slug:a::CWE-352")` returns the config from pass-a; the note reads back from `memory.yaml`; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data` string equality, no env var; NO repo-global `memory.md` anywhere - the per-project produced/consumed + `memory.yaml` topology is the whole memory (G10/G11)
 - **yields:** `test_integration_c15_cross_run_memory_fixed_root`
 
 ### C16 - HuntingAgent dispatch harness per-hunt thread via HuntingActorRegistry
@@ -290,7 +290,7 @@ Each walkthrough is self-contained except the fixtures it cannot invent. A walkt
 - **E9 (Q3 detail):** Q: HuntingAgent DECOMPOSE - which agent version judges research_direction sufficient, and what length threshold (>20) is ratified?
 - **E10 (Q4 trajectory):** Q: trace backend - which Langfuse/span table holds `orchestrator_gate_span` durations and is it writable in CI?
 - **E11 (Q5 mint+note):** Q: store path - confirm `data/` root is writable for count assertions, or is HuntStore tmp_path acceptable?
-- **E12 (Q6 tool use):** Q: read seam - which `graph_view` spy and prior `read_memory_hunts` store fixture define the UNKNOWN/keys cases?
+- **E12 (Q6 tool use):** Q: read seam - which `graph_view` spy and prior `hunts_store(read)` store fixture define the UNKNOWN/keys cases?
 - **E13 (Q7 reflection):** Q: locale leak oracle - which forbidden locale tokens (`Origin:`, `/state-change`, payload strings) define class-level vs narrowed?
 - **E14 (fail-open):** Q: fault injection - which store failure mode (first 2 appends raise) and KB unavailability stub are used to assert fail-open counts?
 - **E15 (concurrency/duplicate/malformed):** Q: worker loop - which shared loop runs concurrent `arun_orchestration` gathers, and what malformed GateDecision JSON triggers carry-bare degrade vs crash?
