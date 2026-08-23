@@ -9,10 +9,13 @@ Two things live here, both keyed off the hunting role records in
    hunting model vars, so app boot validates only `ROLES` and this validates
    `HUNTING_ROLES` on the first hunt.
 
-2. The production seam factories that bind the orchestrator's and the hunting agent's
-   injected LLM seams (`hunt_orchestrator.run_orchestration`'s `reason_fn` /
-   `rematch_fn`; `hunting_agent.build_hunting_agent`'s `author` / `judge`) to a
-   real model through `roles.invoke_role`.
+2. The production seam factories that bind the orchestrator's injected LLM seams
+   (`hunt_orchestrator.run_orchestration`'s `reason_fn` / `rematch_fn`) to a
+   real model through `roles.invoke_role`; the hunting-agent harness
+   (`hunting_agent.build_hunting_agent`) drives `arun_session_turn` DIRECTLY on
+   the per-hunt `HuntSession` thread as of #164 W5, so its author/judge seams
+   are retired (R1) and the factories below are the thin SYNC lane for the
+   orchestrator's turns and the hunter's legacy sync rollback.
 
 Statefulness now lives in the MAILBOX ACTORS (`attack/hunting/actors.py`,
 feat/async-actor-agents): `arun_orchestration` drives the gate turn and the
@@ -346,12 +349,19 @@ def build_actor_judge_fn(registry):
     return judge
 
 
-def build_actor_hunting_agent(*, store, run_id, kb, pod, axis=None,
+def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
+                              graph_view_fn=None, kb_fn=None, exec_fn=None,
                               checkpointer=None, model_factory=None,
                               observe: bool = True):
-    """Compose the production hunting-agent dispatch seam (feat/async-actor-agents):
-    a `build_hunting_agent` harness whose `author`/`judge` are per-hunt
-    `HuntingHunterActor` turns, registered per run by a `HuntingActorRegistry`.
+    """Compose the production hunting-agent dispatch seam (as of #164 W5).
+
+    As of W5 the harness (`hunting_agent.build_hunting_agent`) is the turn-by-turn
+    ReAct host: it drives `arun_session_turn` DIRECTLY on the per-hunt
+    `HuntSession(run_id, hunt_id)` thread with the bound tool surface, so the
+    per-hunt `author`/`judge` actor lane is no longer its mechanism (R1 retired
+    the `kb`/`pod`/`author`/`judge` seams). A `HuntingActorRegistry` is still
+    built and returned so the run's actor lifecycle bookkeeping (`stop_all`)
+    keeps its contract; the harness itself spawns no actor turns.
 
     Returns `(dispatch_fn, registry)`: the harness `dispatch_fn` is async-native
     (see `hunting_agent.build_hunting_agent`); the caller passes it to
@@ -363,10 +373,10 @@ def build_actor_hunting_agent(*, store, run_id, kb, pod, axis=None,
     registry = HuntingActorRegistry(run_id, checkpointer=checkpointer,
                                     model_factory=model_factory, observe=observe)
     dispatch_fn = build_hunting_agent(
-        store=store, run_id=run_id, kb=kb, pod=pod,
-        author=build_actor_author_fn(registry),
-        judge=build_actor_judge_fn(registry),
-        axis=axis,
+        run_id=run_id, project_id=project_id,
+        memory_store=memory_store,
+        graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
+        checkpointer=checkpointer, model_factory=model_factory, observe=observe,
     )
     return dispatch_fn, registry
 
