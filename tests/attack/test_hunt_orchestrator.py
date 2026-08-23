@@ -564,3 +564,36 @@ def test_arun_orchestration_does_not_block_the_event_loop():
     report, ticks = asyncio.run(_drive())
     assert report.hunts_dispatched == 1
     assert ticks == 50  # the loop kept ticking while the pass ran off-loop
+
+
+# --- I3: prior_hunt_insights never embed nested configs (no snowball) ---------
+
+def test_prior_hunt_insights_never_embed_nested_configs():
+    """I3 - the recursive prior_hunt_insights snowball is broken: a minted
+    config's prior_hunt_insights carries a shallow PROJECTION of each prior
+    config (identity + hypothesise seeds), never the full dump - so a persisted
+    config never embeds another config's prior_hunt_insights (the nesting
+    would grow unbounded across passes)."""
+    store = _MemoryStore()
+    # pass N-1's persisted config carried ITS prior-hunt insights (the old
+    # full-dump merge); the projection must strip that baggage
+    store.write_config("project-1", {
+        "unit_id": SERVICE_A, "fault_class": FAULT_X,
+        "vulnerability_class": "CSRF", "status": "hypothesised",
+        "hunt_id": "prior",
+        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+        "prior_hunt_insights": [{"unit_id": "ancient"}],
+    })
+    report = _run(store, [_candidate()])
+    assert report.hunts_dispatched == 1
+    minted = [c for c in store.read_configs("project-1")
+              if c.get("hunt_id") != "prior"]
+    assert len(minted) == 1
+    insights = minted[0]["prior_hunt_insights"]
+    assert insights, "the second pass should have read the prior config as an insight"
+    # never a nested prior_hunt_insights key (the snowball is cut)
+    for insight in insights:
+        assert "prior_hunt_insights" not in insight
+    # the projection keeps the identity + hypothesise seeds for the Q11 read
+    assert any(i.get("unit_id") == SERVICE_A and i.get("fault_class") == FAULT_X
+               for i in insights)

@@ -60,6 +60,10 @@ if TYPE_CHECKING:  # the actor is a lazy import (CODING_STANDARD section 6)
     from polymerhus.attack.hunting.actors import HuntOrchestratorActor
 
 from polymerhus.attack.hunting.fault_risk import risk_tier
+from polymerhus.attack.hunting.hunt_store import (
+    DuplicateConfigError,
+    KEY_SEPARATOR,
+)
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
     ReconScope,
@@ -290,7 +294,9 @@ class OrchestratorReport(BaseModel):
     """The pass summary (spec O1-O10): what was dispatched, dropped, pruned,
     cut, left unresolved, and how often the store writes failed. `ledger` is the
     harness-owned `LoopLedger` as of the candidates-rewrite, surfaced for
-    observability (the canonical O1-O10 fields are unchanged)."""
+    observability (the canonical O1-O10 fields are unchanged).
+    `duplicate_config_writes` is the G4 deduplication-signal count, kept
+    separate from (but additive with) the O3 `store_write_failures` counter."""
 
     hunts_dispatched: int = 0
     hunt_ids: list[str] = Field(default_factory=list)
@@ -302,6 +308,7 @@ class OrchestratorReport(BaseModel):
     unresolved: tuple[str, ...] = ()
     budget_cut: tuple[str, ...] = ()
     store_write_failures: int = 0
+    duplicate_config_writes: int = 0
     ledger: LoopLedger = Field(default_factory=LoopLedger)
 
 
@@ -377,8 +384,34 @@ class OrchestratorTools:
 def revival_key(unit_id: str, fault_class: str) -> str:
     """The kind-qualified pair that persists a hunt's place (Q5/#70): survives
     the hunt, drives change-driven re-test, and joins the fault on the wire
-    (the back-edge itself is fault-agnostic)."""
-    return f"{unit_id}::{fault_class}"
+    (the back-edge itself is fault-agnostic). Single-sourced on the store's
+    `KEY_SEPARATOR` (M1), so it can never drift from being the 2-part prefix
+    of a config's semantic key."""
+    return f"{unit_id}{KEY_SEPARATOR}{fault_class}"
+
+
+def _prior_config_insight(config: dict) -> dict:
+    """The shallow projection of a prior persisted config embedded as a
+    prior-hunt insight (I3): identity + the hypothesise-phase seeds only
+    (`unit_id`, `fault_class`, `vulnerability_class`, `status`,
+    `sub_fault_ids`, and the `prompt_template` rationale / research_direction),
+    never the full `model_dump`. A persisted config's `prior_hunt_insights`
+    must never contain a nested `prior_hunt_insights` key - the full-dump
+    merge would embed pass N-1's config inside pass N's config and snowball
+    without bound. Present keys only; absent seeds stay absent (a carried-bare
+    degrade has no class)."""
+    template = config.get("prompt_template")
+    if not isinstance(template, dict):
+        template = {}
+    out: dict = {}
+    for key in ("unit_id", "fault_class", "vulnerability_class",
+                "status", "sub_fault_ids"):
+        if config.get(key) is not None:
+            out[key] = config[key]
+    for key in ("rationale", "research_direction"):
+        if template.get(key) is not None:
+            out[key] = template[key]
+    return out
 
 
 def normalize_candidates(
@@ -689,18 +722,37 @@ async def arun_orchestration(
         rematch_fn = lambda u, f, r: _resolve_orchestrator().rematch(u, f, r)  # noqa: E731
 
     write_failures = 0
+    duplicate_config_writes = 0
 
     def _write_config(config) -> str | None:
         """Persist one minted `HuntConfig` into the project's `produced/`
         (the hypothesise write, memory-system spec 3.2). Fail-open (O3): a
         raising write - including `DuplicateConfigError`, the storage-layer
         deduplication signal (G4) - warns and counts; the pass keeps serving
-        with the in-memory config."""
-        nonlocal write_failures
+        with the in-memory config.
+
+        G4 gap (documented, owned by #167): a duplicate config is NOT dropped
+        here - the in-memory config still proceeds to dispatch, because the
+        deterministic orchestrator has no model-facing surface to interpret
+        the deduplication signal. #167's `hunts_store` TOOL surfaces it to
+        the model (which then merges/refreshes instead of duplicating); this
+        ticket only enforces the storage-layer gate and counts the event."""
+        nonlocal write_failures, duplicate_config_writes
         try:
             if tools.store_reads is None:
                 raise OSError("no hunt store configured")
             return tools.store_reads.write_config(project_id, config)
+        except DuplicateConfigError:
+            # The G4 deduplication signal is deliberately CONFLATED into the
+            # O3 counter (the ADR/assertions pin store_write_failures): a
+            # duplicate write IS a failed write (no file was created). The
+            # separate duplicate_config_writes field gives the signal its own
+            # observability without unbundling the pinned metric.
+            write_failures += 1
+            duplicate_config_writes += 1
+            logger.warning("hunt store: duplicate config write blocked (%s)",
+                           config if isinstance(config, dict) else getattr(config, "hunt_id", ""))
+            return None
         except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
             write_failures += 1
             logger.warning("hunt store: config write failed (%s)", exc)
@@ -762,6 +814,7 @@ async def arun_orchestration(
             unresolved=(),
             budget_cut=(),
             store_write_failures=write_failures,
+            duplicate_config_writes=duplicate_config_writes,
         )
 
     # KB evidence, per fault (D67-11: an unavailable KB degrades the gate, and
@@ -832,7 +885,10 @@ async def arun_orchestration(
         to an empty insight set, never aborts the hunt). The store's
         `read_configs_by_key` (produced/ + consumed/) and `read_notes`
         (memory.yaml) both key on the revival key; the merged list feeds the
-        minted configs' `prior_hunt_insights` slot."""
+        minted configs' `prior_hunt_insights` slot. Each prior config is
+        embedded as its shallow projection (`_prior_config_insight`), NEVER the
+        full dump - so a persisted config never embeds another config's
+        `prior_hunt_insights` (the nesting would snowball across passes, I3)."""
         if tools.store_reads is None:
             return []
         try:
@@ -840,7 +896,7 @@ async def arun_orchestration(
                 tools.store_reads.read_configs_by_key, project_id, key)
             notes = await _await_seam(
                 tools.store_reads.read_notes, project_id, key)
-            return list(configs) + list(notes)
+            return [_prior_config_insight(c) for c in configs] + list(notes)
         except Exception as exc:  # noqa: BLE001
             logger.warning("hunt store read degraded for %s (%s)", key, exc)
             return []
@@ -1031,6 +1087,10 @@ async def arun_orchestration(
                 "classes": sorted(cfg.vulnerability_class for cfg in configs),
             })
             for config in configs:
+                # G4 note: a duplicate write (the deduplication signal) is
+                # counted and the in-memory config still dispatches - the
+                # model-facing interpretation of the signal is #167's
+                # `hunts_store` TOOL (see _write_config's docstring).
                 _write_config(config)
             _append_note(key, _note_for_unit(direction, key, configs))
             trace_gate_step("note-written", input={"revival_key": key})
@@ -1132,6 +1192,9 @@ async def arun_orchestration(
             fallback_ledger = ledger.model_copy(deep=True) \
                 if isinstance(ledger, LoopLedger) else LoopLedger()
             for config in configs:
+                # G4 note: same as the unit-boundary write - the duplicate
+                # signal is counted, the config still dispatches (see
+                # _write_config's docstring; the model-facing signal is #167's).
                 _write_config(config)
             _append_note(key, _note_for_unit(direction, key, configs))
             fallback_ledger.minted_config_keys.append(key)
@@ -1229,6 +1292,7 @@ async def arun_orchestration(
         unresolved=tuple(t["revival_key"] for t in trail if t.get("kind") == "unresolved"),
         budget_cut=tuple(t["revival_key"] for t in trail if t.get("kind") == "cut"),
         store_write_failures=write_failures,
+        duplicate_config_writes=duplicate_config_writes,
         ledger=terminal.get("ledger") or LoopLedger(),
     )
 

@@ -366,6 +366,10 @@ def test_duplicate_hypothesis_not_redispatched(tmp_path):
     second = agent(config, routed=(_route(first.back_edge_needs[0]),))
 
     assert len(pod_calls) == 1  # no second dispatch for the identical spec
+    # both refs are None BY DESIGN (#166 removes the durable spec/evidence
+    # records; the agent's durable trail is #164's own memory, G5) - the
+    # equality is over the None refs, and the pod-call count above is what
+    # carries the dedup assertion
     assert second.spec_ref == first.spec_ref
     assert second.pod_result_ref == first.pod_result_ref
     assert len(judge_calls) == 2

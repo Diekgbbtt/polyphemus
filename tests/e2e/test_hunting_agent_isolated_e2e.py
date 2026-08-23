@@ -250,7 +250,7 @@ def test_E5_kb_join_key_derived_per_unit_kind(tmp_path):
 # notes only; the agent's durable trail is #164's own memory, G5), so the
 # assertion is the fail-open degrade, never a persisted record.
 
-def test_E6_kb_raise_degrades_and_still_persists(tmp_path):
+def test_E6_kb_raise_degrades_fail_open(tmp_path):
     store = HuntStore(tmp_path)
     run_id = "run-e6"
     agent = _agent(

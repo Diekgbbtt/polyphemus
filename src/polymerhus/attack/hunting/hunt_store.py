@@ -26,6 +26,12 @@ keeps its natural append order (no `_seq`, G11); the notes surface exposes
 read / append / update / delete primitives (spec 6.2; the notes TOOL contract
 is another workstream's - #167 - this is the store it binds to).
 
+Writes are atomic (a temp file in the same directory, then `os.replace` - a
+crash mid-dump leaves the previous file content intact) and serialised per
+project (a `threading.Lock` per `project_id` covers the whole check-then-write
+and read-modify-write critical section, whatever thread calls - the async
+caller offloads reads to worker threads while writes stay on the loop).
+
 Fail-open canon unchanged: a read failure degrades to an empty set (O4) - a
 missing file, an unreadable YAML, or a malformed record degrades per-record
 with a warning, never a raise into the turn; a write failure raises to the
@@ -40,7 +46,9 @@ section 6).
 from __future__ import annotations
 
 import logging
+import os
 import re
+import threading
 import uuid
 from pathlib import Path
 
@@ -54,6 +62,13 @@ logger = logging.getLogger(__name__)
 # stores.
 HUNT_STORE_ROOT = Path(__file__).resolve().parent / "data"
 
+# The semantic-key separator (single-sourced, M1): the revival key
+# (`<unit_id>::<fault_class>`, hunt_orchestrator.revival_key) is the 2-part
+# prefix of a semantic key, so both MUST use the same separator or the
+# prefix matching drifts. `::` is safe - it appears in neither unit ids nor
+# fault/class ids.
+KEY_SEPARATOR = "::"
+
 # The config file-name convention (G4): <unit_id>_<CWE_ID>_<vulnerability_class>.yaml.
 # The regex parses on the LAST two underscores: `CWE-\d+` disambiguates the
 # middle segment, so a unit_id (or vulnerability class) containing `_`
@@ -62,6 +77,30 @@ HUNT_STORE_ROOT = Path(__file__).resolve().parent / "data"
 _CONFIG_FILE_RE = re.compile(
     r"^(?P<unit>.+)_(?P<cwe>CWE-\d+)_(?P<cls>.*)\.yaml$"
 )
+
+# The writeable config directories. `consumed` is the inbox surfer's target
+# (G13, another workstream); the store exposes the primitive so the substrate
+# exists.
+_CONFIG_DIRECTORIES = ("produced", "consumed")
+
+# Per-project write serialisation (I2): write_config is check-then-write and
+# the notes surface is read-modify-write, and the async caller offloads reads
+# to worker threads while writes stay on the loop. A per-project lock covers
+# the whole critical section regardless of which thread calls, so the
+# duplicate gate is not TOCTOU and concurrent note appends never lose a note.
+_PROJECT_LOCKS: dict[str, threading.Lock] = {}
+_PROJECT_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(project_id: str) -> threading.Lock:
+    """The per-project lock, created once (the registry itself is guarded
+    against concurrent creation)."""
+    with _PROJECT_LOCKS_GUARD:
+        lock = _PROJECT_LOCKS.get(project_id)
+        if lock is None:
+            lock = threading.Lock()
+            _PROJECT_LOCKS[project_id] = lock
+        return lock
 
 
 def config_file_name(unit_id: str, fault_class: str, vulnerability_class: str) -> str:
@@ -73,11 +112,11 @@ def config_file_name(unit_id: str, fault_class: str, vulnerability_class: str) -
 
 def semantic_key(unit_id: str, fault_class: str, vulnerability_class: str) -> str:
     """The store's ONE canonical internal config identity (documented choice):
-    `<unit_id>::<CWE_ID>::<vulnerability_class>`. Round-trips with the file
-    name (`config_file_name` / `parse_config_file_name`); a revival key
-    (`<unit_id>::<fault_class>`) is its 2-part prefix and reads every class at
-    the locus."""
-    return f"{unit_id}::{fault_class}::{vulnerability_class}"
+    `<unit_id>::<CWE_ID>::<vulnerability_class>` (`KEY_SEPARATOR`). Round-trips
+    with the file name (`config_file_name` / `parse_config_file_name`); a
+    revival key (`<unit_id>::<fault_class>`) is its 2-part prefix and reads
+    every class at the locus."""
+    return KEY_SEPARATOR.join((unit_id, fault_class, vulnerability_class))
 
 
 def parse_config_file_name(name: str) -> tuple[str, str, str] | None:
@@ -94,13 +133,13 @@ def parse_config_file_name(name: str) -> tuple[str, str, str] | None:
 
 
 def _keys_match(record_key: str, query_key: str) -> bool:
-    """The key match rule: an exact semantic key, or a `::`-bounded prefix in
-    either direction. A 2-part revival key (`unit::cwe`) reads every class at
-    the locus; a 3-part semantic key reads exactly its config; a note keyed by
-    the revival key is found by either."""
+    """The key match rule: an exact semantic key, or a `KEY_SEPARATOR`-bounded
+    prefix in either direction. A 2-part revival key (`unit::cwe`) reads every
+    class at the locus; a 3-part semantic key reads exactly its config; a note
+    keyed by the revival key is found by either."""
     return (record_key == query_key
-            or record_key.startswith(query_key + "::")
-            or query_key.startswith(record_key + "::"))
+            or record_key.startswith(query_key + KEY_SEPARATOR)
+            or query_key.startswith(record_key + KEY_SEPARATOR))
 
 
 class DuplicateConfigError(ValueError):
@@ -131,6 +170,27 @@ class HuntStore:
     def _memory_file(self, project_id: str) -> Path:
         return self._project_dir(project_id) / "memory.yaml"
 
+    # --- atomic write primitive (I1) --------------------------------------------
+
+    @staticmethod
+    def _dump_yaml_atomic(path: Path, body) -> None:
+        """Write `body` as YAML atomically: dump to a temp file in the SAME
+        directory, then `os.replace` onto the target. A crash mid-dump leaves
+        the previous file content intact (the old store's documented "append
+        is atomic per file" guarantee) and never a partial target; the leftover
+        temp is cleaned up best-effort."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            with tmp.open("w", encoding="utf-8") as fh:
+                yaml.safe_dump(body, fh, sort_keys=False)
+            os.replace(tmp, path)
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+
     # --- config surface ----------------------------------------------------------
 
     def write_config(self, project_id: str, config, *, directory: str = "produced") -> str:
@@ -141,30 +201,34 @@ class HuntStore:
         `DuplicateConfigError` - the deduplication signal (G4). A `dropped`
         config stays on disk statused `dropped`, never deleted (G6). Returns
         the config's semantic key. Raises on write failure - the caller warns
-        and counts (O3)."""
-        data = config.model_dump() if not isinstance(config, dict) else dict(config)
-        unit_id = str(data.get("unit_id") or "")
-        fault_class = str(data.get("fault_class") or "")
-        vulnerability_class = str(data.get("vulnerability_class") or "")
-        name = config_file_name(unit_id, fault_class, vulnerability_class)
-        produced = self._produced_dir(project_id) / name
-        consumed = self._consumed_dir(project_id) / name
-        if produced.exists() or consumed.exists():
-            raise DuplicateConfigError(
-                f"a config for {semantic_key(unit_id, fault_class, vulnerability_class)} "
-                "already exists in produced/ or consumed/; the write is the "
-                "deduplication signal, not a second file"
-            )
-        target = produced if directory == "produced" else consumed
-        # The topology is created lazily at the first write: both config
-        # directories (and the orchestration/ parent for memory.yaml) land
-        # together, so the produced/consumed substrate exists for the inbox
-        # surfer to operate on.
-        produced.parent.mkdir(parents=True, exist_ok=True)
-        consumed.parent.mkdir(parents=True, exist_ok=True)
-        with target.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump(data, fh, sort_keys=False)
-        return semantic_key(unit_id, fault_class, vulnerability_class)
+        and counts (O3). The whole check-then-write runs under the project's
+        lock, so the duplicate gate is not TOCTOU (I2)."""
+        if directory not in _CONFIG_DIRECTORIES:
+            raise ValueError(
+                f"unknown config directory {directory!r}; known: {_CONFIG_DIRECTORIES}")
+        with _lock_for(project_id):
+            data = config.model_dump() if not isinstance(config, dict) else dict(config)
+            unit_id = str(data.get("unit_id") or "")
+            fault_class = str(data.get("fault_class") or "")
+            vulnerability_class = str(data.get("vulnerability_class") or "")
+            name = config_file_name(unit_id, fault_class, vulnerability_class)
+            produced = self._produced_dir(project_id) / name
+            consumed = self._consumed_dir(project_id) / name
+            if produced.exists() or consumed.exists():
+                raise DuplicateConfigError(
+                    f"a config for {semantic_key(unit_id, fault_class, vulnerability_class)} "
+                    "already exists in produced/ or consumed/; the write is the "
+                    "deduplication signal, not a second file"
+                )
+            target = produced if directory == "produced" else consumed
+            # The topology is created lazily at the first write: both config
+            # directories (and the orchestration/ parent for memory.yaml) land
+            # together, so the produced/consumed substrate exists for the inbox
+            # surfer to operate on.
+            produced.parent.mkdir(parents=True, exist_ok=True)
+            consumed.parent.mkdir(parents=True, exist_ok=True)
+            self._dump_yaml_atomic(target, data)
+            return semantic_key(unit_id, fault_class, vulnerability_class)
 
     @staticmethod
     def _read_yaml(path: Path) -> dict | None:
@@ -178,21 +242,26 @@ class HuntStore:
             return None
         return body if isinstance(body, dict) else None
 
-    def _config_key_of(self, path: Path) -> str | None:
-        """One config file's semantic key: the file-name identity first (the
-        convention, G4), the content rebuild as the fallback (a non-CWE
-        fault_class or foreign yaml with the identity fields)."""
+    def _config_with_key(self, path: Path) -> tuple[str, dict] | None:
+        """One config file's `(semantic key, body)`: the file-name identity
+        first (the convention, G4), the content rebuild as the fallback (a
+        non-CWE fault_class or foreign yaml with the identity fields). The body
+        is loaded ONCE and shared, so a keyed read never double-reads the file
+        (M7)."""
+        body = self._read_yaml(path)
+        if body is None:
+            return None
         parsed = parse_config_file_name(path.name)
         if parsed is not None:
-            return semantic_key(*parsed)
-        body = self._read_yaml(path)
-        if body is None or body.get("unit_id") is None:
+            return semantic_key(*parsed), body
+        unit_id = body.get("unit_id")
+        if unit_id is None:
             return None
-        return semantic_key(
-            str(body["unit_id"]),
+        return (semantic_key(
+            str(unit_id),
             str(body.get("fault_class") or ""),
             str(body.get("vulnerability_class") or ""),
-        )
+        ), body)
 
     def _config_paths(self, project_id: str) -> list[Path]:
         """Every config file path, produced/ then consumed/, in file-name
@@ -208,25 +277,28 @@ class HuntStore:
         2-part revival-key prefix (`unit::cwe`): produced/ then consumed/, in
         file-name order. A missing store or a failing read degrades to an
         empty set - the caller keeps serving (O4)."""
-        out: list[dict] = []
-        for path in self._config_paths(project_id):
-            record_key = self._config_key_of(path)
-            if record_key is None or not _keys_match(record_key, key):
-                continue
-            body = self._read_yaml(path)
-            if body is not None:
+        with _lock_for(project_id):
+            out: list[dict] = []
+            for path in self._config_paths(project_id):
+                item = self._config_with_key(path)
+                if item is None:
+                    continue
+                record_key, body = item
+                if not _keys_match(record_key, key):
+                    continue
                 out.append(body)
-        return out
+            return out
 
     def read_configs(self, project_id: str) -> list[dict]:
         """Every persisted config (produced + consumed), in deterministic
         order. Fail-open per record (O4)."""
-        out: list[dict] = []
-        for path in self._config_paths(project_id):
-            body = self._read_yaml(path)
-            if body is not None:
-                out.append(body)
-        return out
+        with _lock_for(project_id):
+            out: list[dict] = []
+            for path in self._config_paths(project_id):
+                body = self._read_yaml(path)
+                if body is not None:
+                    out.append(body)
+            return out
 
     # --- notes surface (memory.yaml) ----------------------------------------------
 
@@ -248,47 +320,50 @@ class HuntStore:
 
     def _save_notes(self, project_id: str, notes: list[dict]) -> None:
         """Rewrite `memory.yaml` (the whole-file notes write; a failure raises
-        to the caller, which warns and counts - O3)."""
-        path = self._memory_file(project_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open("w", encoding="utf-8") as fh:
-            yaml.safe_dump({"notes": notes}, fh, sort_keys=False)
+        to the caller, which warns and counts - O3). Atomic: the previous file
+        content survives a crash mid-dump (I1)."""
+        self._dump_yaml_atomic(self._memory_file(project_id), {"notes": notes})
 
     def read_notes(self, project_id: str, key: str | None = None) -> list[dict]:
         """The notes for a key (a 2-part revival key or a 3-part semantic key)
         in natural append order; `key=None` returns every note. Fail-open
         (O4)."""
-        notes = self._load_notes(project_id)
-        if key is None:
-            return notes
-        return [n for n in notes
-                if _keys_match(str(n.get("revival_key") or ""), key)]
+        with _lock_for(project_id):
+            notes = self._load_notes(project_id)
+            if key is None:
+                return notes
+            return [n for n in notes
+                    if _keys_match(str(n.get("revival_key") or ""), key)]
 
     def append_note(self, project_id: str, key: str, note: str) -> dict:
         """Append one note for `key`; the record keeps the natural append
         order (no `_seq`, G11). Returns the stored record - its `note_id`
-        identifies it for update/delete."""
-        record = {"note_id": uuid.uuid4().hex[:12], "revival_key": key, "note": note}
-        notes = self._load_notes(project_id)
-        notes.append(record)
-        self._save_notes(project_id, notes)
-        return record
+        identifies it for update/delete. The load-append-rewrite runs under
+        the project's lock, so concurrent appends never lose a note (I2)."""
+        with _lock_for(project_id):
+            record = {"note_id": uuid.uuid4().hex[:12], "revival_key": key, "note": note}
+            notes = self._load_notes(project_id)
+            notes.append(record)
+            self._save_notes(project_id, notes)
+            return record
 
     def update_note(self, project_id: str, note_id: str, note: str) -> bool:
         """Amend the note with `note_id`; False when no such note exists."""
-        notes = self._load_notes(project_id)
-        for record in notes:
-            if record.get("note_id") == note_id:
-                record["note"] = note
-                self._save_notes(project_id, notes)
-                return True
-        return False
+        with _lock_for(project_id):
+            notes = self._load_notes(project_id)
+            for record in notes:
+                if record.get("note_id") == note_id:
+                    record["note"] = note
+                    self._save_notes(project_id, notes)
+                    return True
+            return False
 
     def delete_note(self, project_id: str, note_id: str) -> bool:
         """Remove the note with `note_id`; False when no such note exists."""
-        notes = self._load_notes(project_id)
-        kept = [n for n in notes if n.get("note_id") != note_id]
-        if len(kept) == len(notes):
-            return False
-        self._save_notes(project_id, kept)
-        return True
+        with _lock_for(project_id):
+            notes = self._load_notes(project_id)
+            kept = [n for n in notes if n.get("note_id") != note_id]
+            if len(kept) == len(notes):
+                return False
+            self._save_notes(project_id, kept)
+            return True
