@@ -254,6 +254,50 @@ def test_stateful_turn_tool_bound_is_unchanged_toolstrategy(monkeypatch):
     assert isinstance(seen["rf"], ToolStrategy)
 
 
+def test_stateful_turn_structured_output_parse_failure_degrades_to_none(monkeypatch):
+    """FAIL-OPEN invariant (the reasoning-token-exhaustion / schema-gap fix): a
+    stateful turn whose provider output does not parse into the schema - the
+    native `StructuredOutputValidationError` raised by `create_agent`'s factory
+    when a reasoning model returns a bare `[]` / empty / prose instead of the
+    wrapped object - must degrade to None (the exhausted-generation signal),
+    exactly like the one-shot `invoke_role` seam, NEVER propagate and kill the
+    pod (which would silently drop the already-parsed assets)."""
+    from langchain.agents.structured_output import StructuredOutputValidationError
+    from pydantic import BaseModel
+
+    import polymerhus.app.llm.session as S
+
+    class _Schema(BaseModel):
+        observations: list = []
+
+    seen = {}
+
+    def boom(role_id, thread_id, msgs, *, response_format=None, **kw):
+        seen["called"] = True
+        raise StructuredOutputValidationError("_Schema", ValueError("bad json"), None)
+
+    monkeypatch.setattr(S, "run_session_turn", boom)
+    result = S.stateful_turn("triager", "t", [HumanMessage(content="x")],
+                             checkpointer=None, schema=_Schema, observe=False)
+    assert result is None
+    assert seen["called"] is True
+
+
+def test_stateful_turn_other_error_also_degrades_to_none(monkeypatch):
+    """Fail-open is broad: a NON-parse exception (transport / provider error) also
+    degrades the stateful turn to None rather than crashing the caller - the same
+    shape the one-shot escalating wrapper returns on exhaustion."""
+    import polymerhus.app.llm.session as S
+
+    def boom(role_id, thread_id, msgs, *, response_format=None, **kw):
+        raise RuntimeError("provider on fire")
+
+    monkeypatch.setattr(S, "run_session_turn", boom)
+    result = S.stateful_turn("triager", "t", [HumanMessage(content="x")],
+                             checkpointer=None, schema=None, observe=False)
+    assert result is None
+
+
 def test_session_carries_prior_conversation_across_turns():
     """The core session property: a second turn on the same thread resumes the
     checkpointed history, so the post-turn trail is human1+ai1+human2+ai2 = 4

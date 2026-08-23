@@ -32,6 +32,44 @@ class LLMConfigError(RuntimeError):
 DEFAULT_REQUEST_TIMEOUT_SECONDS = 300.0
 CONNECT_TIMEOUT_SECONDS = 10.0
 
+# Reasoning-token budget. Reasoning models (muse-spark, deepseek-v4-flash, ...)
+# burn output tokens on `reasoning_content` BEFORE emitting the answer, and the
+# upstream counts those against the total output budget. A tight `max_tokens`
+# (or an upstream default) can exhaust the whole budget on thinking alone, so
+# the model returns `content: null` / `finish_reason: stop` and the answer never
+# arrives (observed live on muse-spark: reasoning bursts up to ~9k tokens). We
+# therefore bound EVERY model construction with `max_completion_tokens` (the
+# OpenAI-compatible param that INCLUDES reasoning) set generously - comfortably
+# above the largest observed reasoning burst - so a thinking-heavy turn still
+# has room to emit its answer. `langchain-openai`'s `ChatOpenAI` has no
+# `max_completion_tokens` field in the pinned 1.3.x/1.6.x line, so it rides in
+# `model_kwargs` (verified: it reaches the wire payload verbatim). Overridable
+# via `LLM_MAX_COMPLETION_TOKENS` so a value that proves too tight in the field
+# is correctable without a rebuild; an unusable override is a config lie, so it
+# fails fast rather than silently degrading to the default.
+DEFAULT_MAX_COMPLETION_TOKENS = 32768
+
+
+def max_completion_tokens() -> int | None:
+    """The reasoning-inclusive output budget sent on EVERY model construction,
+    overridable via `LLM_MAX_COMPLETION_TOKENS` (a positive int). An unusable
+    override is a config lie, so it fails fast. `None` is never returned - the
+    budget is a fixed, generous ceiling, not an optional dial."""
+    raw = os.environ.get("LLM_MAX_COMPLETION_TOKENS")
+    if raw is None or raw.strip() == "":
+        return DEFAULT_MAX_COMPLETION_TOKENS
+    try:
+        value = int(raw)
+    except ValueError:
+        raise LLMConfigError(
+            f"LLM_MAX_COMPLETION_TOKENS must be an integer (got {raw!r})"
+        ) from None
+    if value <= 0:
+        raise LLMConfigError(
+            f"LLM_MAX_COMPLETION_TOKENS must be positive (got {raw!r})"
+        )
+    return value
+
 # Explicit, because the SDK's silent default of 2 MULTIPLIES with caller-side
 # retry: analysis' `bounded_retry(attempts=3)` on top of a client that retries
 # twice is up to 9 provider round-trips for one logical attempt, with neither
@@ -542,9 +580,17 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     # reader; off the #73 retry axis; fail-open (D7): an unknown/gateway-less
     # profile keeps the declared baseline and the mismatches are logged.
     extra: dict = _thinking_wire_form(provider, model, thinking)
+    # The reasoning-inclusive output budget on EVERY construction: the generous
+    # `max_completion_tokens` ceiling so a thinking-heavy turn still has room to
+    # emit its answer (see `max_completion_tokens` above). Rides in `model_kwargs`
+    # because the pinned langchain-openai `ChatOpenAI` has no `max_completion_tokens`
+    # field; verified to reach the wire payload. Merged after `extra` so nothing in
+    # `_thinking_wire_form` (reasoning_effort / thinking budget) collides with it.
+    model_kwargs = {"max_completion_tokens": max_completion_tokens()}
     return ReasoningPreservingChatOpenAI(model=model, api_key=api_key,
                                          base_url=base_url, temperature=temperature,
                                          timeout=timeout, max_retries=retries,
+                                         model_kwargs=model_kwargs,
                                          callbacks=get_langfuse_callbacks(), **extra)
 
 def validate_llm_config(roles: Sequence[Role] | None = None) -> None:
