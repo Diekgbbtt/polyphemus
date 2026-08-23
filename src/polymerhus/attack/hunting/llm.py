@@ -474,11 +474,13 @@ def _compose_gate_prompt(inp: GateInput) -> str:
         "web-vulnerability CLASS with a research-direction rationale (e.g. CSRF, "
         "IDOR) - never narrowed to a surface locale, payload profile, vector, or "
         "symptom; the narrowing belongs to the hunting agent at spec-writing.",
-        "  Testing-primitive / capability / blocker analysis (Q9): reason on the "
-        "required testing primitives and what could block their usage (auth "
-        "level, interaction method, target state, request context); "
-        "that yields the adversarial capabilities and assumptions the fault "
-        "hypothesis relies on.",
+        "  Testing-primitive / capability / blocker analysis (Q9, RATIFICATION "
+        "phase): reason on the required testing primitives and what could block "
+        "their usage (auth level, interaction method, target state, request "
+        "context); that yields the adversarial capabilities and assumptions the "
+        "fault hypothesis relies on. NOT seeds you fill at this hypothesise turn - "
+        "the draft carries only rationale, research_direction, and "
+        "vulnerability_classes.",
         "  Same-class merge (Q16): if multiple elicited vulnerability classes at "
         "one unit are the SAME web-vulnerability class, merge them into one; only "
         "fundamentally discriminable classes survive as distinct configs. Pure "
