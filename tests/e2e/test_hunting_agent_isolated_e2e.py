@@ -1,28 +1,32 @@
 """E3-E9 e2e predicates for the hunting agent in ISOLATION (spec section 6.2).
 
 The hunting agent's OWN infrastructure seams are REAL here: the REAL harness
-under test (this build's artifact), the REAL append-only markdown hunt store
-on the filesystem (S7 record files with `_seq`/`_ref` provenance), the REAL
-stable system prompt resolved from `skills/hunting/hunting-agent/SKILL.md`
-through the shared `skill_for` (implementation doc 4.10, embedded ahead of
-every LLM turn), the REAL deterministic technological-axis derivation forming
-the KB join key (IA-8), and the REAL tracing seam against the configured
-Langfuse (best-effort, fail-open). Only the un-built collaborators are
-fixtures at their contract boundaries - the pod (IA-3/IA-4, #84), the
-spec-authoring and continuation-judgment LLM turns (Q8/D5), and the
-symptom-technique KB content (operator-built external, IA-8). That is exactly
-the fixture-agent contract spec section 3 sanctions; the REAL pod chain is the
-blocked E1/E2 walkthrough's live edge
-(test_hunting_agent_walkthrough.py), never substituted here.
+under test (this build's artifact), the REAL stable system prompt resolved
+from `skills/hunting/hunting-agent/SKILL.md` through the shared `skill_for`
+(implementation doc 4.10, embedded ahead of every LLM turn), the REAL
+deterministic technological-axis derivation forming the KB join key (IA-8),
+and the REAL tracing seam against the configured Langfuse (best-effort,
+fail-open). Only the un-built collaborators are fixtures at their contract
+boundaries - the pod (IA-3/IA-4, #84), the spec-authoring and
+continuation-judgment LLM turns (Q8/D5), and the symptom-technique KB content
+(operator-built external, IA-8). That is exactly the fixture-agent contract
+spec section 3 sanctions; the REAL pod chain is the blocked E1/E2 walkthrough's
+live edge (test_hunting_agent_walkthrough.py), never substituted here.
+
+The agent's durable `spec`/`evidence` S7 record files are REMOVED (#166): the
+per-project store holds hunt configs + notes only, and the hunting agent's
+durable record trail is #164's own memory (G5). Predicates whose subject is
+that removed machinery (E4) are hard-skipped with the owning ticket; the
+rest assert the agent's BEHAVIOUR (skill embedding, join-key derivation,
+tracing, re-entry dedup, re-authoring) with the refs degraded fail-open.
 
 Why this file exists (the gap it closes): C1-C17 (integration tier) drive the
-agent with canned KB results and per-test tmp_path stores, asserting the
-records read back in-memory; nothing asserted that (a) the ratified
-decision-tree verbatims actually REACH the LLM turns (the loader was dead
-code - fixed in this build), (b) the S7 persistence lands as real files with
-provenance, (c) the automated join key is queried once per hunt across
-differently-typed units, or (d) the tracing seam holds against a configured
-observability stack. This catalogue pins all of those.
+agent with canned KB results and per-test tmp_path stores; nothing asserted
+that (a) the ratified decision-tree verbatims actually REACH the LLM turns
+(the loader was dead code - fixed in this build), (b) the automated join key
+is queried once per hunt across differently-typed units, or (c) the tracing
+seam holds against a configured observability stack. This catalogue pins all
+of those.
 
 Source: docs/design/hunting-67-hunting-agent-spec.md section 6.2 (isolated
 predicates, added 2026-08-05).
@@ -63,6 +67,15 @@ SYSTEM_B = "System:key:b"
 FAULT_X = "fault-x"
 FAULT_Y = "fault-y"
 
+# The S7 durable `spec`/`evidence` per-run record files with `_seq`/`_ref`
+# provenance were REMOVED by the memory-system spec (#166): the per-project
+# store holds hunt configs + notes only, and the hunting agent's durable
+# record trail is #164's own memory (G5). Predicates whose subject is that
+# removed machinery are hard-skipped with this named blocker - their re-scope
+# to #164's memory is that ticket's, never a failing assertion here.
+_BLOCKED = ("S7 spec/evidence file-provenance machinery removed (#166); the "
+            "hunting agent's durable record trail is #164's own memory (G5)")
+
 # The real adapted index-cards (D3 part 2): a Service riding a REST mechanism
 # (api_paradigm on its spine) and a System riding a CSR mechanism
 # (navigation_model), so the automated join-key axes differ per unit kind.
@@ -90,17 +103,19 @@ def _config(unit_id: str, fault_class: str, *, card: dict, **overrides) -> HuntC
         hunt_id="hunt-" + uuid.uuid4().hex[:8],
         unit_id=unit_id,
         fault_class=fault_class,
+        vulnerability_class="CSRF",
         prompt_template=HuntPromptTemplate(
             rationale=f"{fault_class} applies to {unit_id} because ...",
-            extension_points=["csrf-probe"],
-            assumptions=["public exposure"],
-            supposed_payload_vectors=["q=value"],
             l0_evidence=["GET /api/a answers 200"],
+            research_direction="probe the state-changing form for token verification",
         ),
         surface_context={"cards": [card]},
         target_caveats=["perimeter WAF on /api/*"],
         prior_hunt_insights=[],
         tool_registry=[{"technique": "csrf-probe"}],
+        adversarial_capabilities=["authenticated session obtainable"],
+        assumptions=["public exposure"],
+        technique_primitives=["foreign-origin tokenless submission"],
     )
     return base.model_copy(update=overrides)
 
@@ -171,45 +186,23 @@ def test_E3_real_skill_reaches_authoring_and_judgment_turns(tmp_path):
 
 
 # --- E4: the S7 persistence is REAL files with provenance ---------------------
-# Q6: the agent writes exactly the `spec` and `evidence` kinds; each lands as
-# an append-only markdown file under the run dir with store-wide ordering.
+# BLOCKED (#164): this predicate's subject is the durable `spec`/`evidence`
+# per-run record files with `_seq`/`_ref` provenance - machinery REMOVED by
+# the memory-system spec (#166): the per-project store holds hunt configs +
+# notes only, and the hunting agent's durable record trail is #164's own
+# memory (G5). Hard-skipped with the owning ticket; never a failing assertion.
 
+@pytest.mark.skip(reason=_BLOCKED)
 def test_E4_real_file_persistence_with_provenance(tmp_path):
-    store = HuntStore(tmp_path)
-    run_id = "run-e4"
-    agent = _agent(
-        store, run_id,
-        kb=_kb(result={"symptoms": ["csrf-absent"], "probing_techniques": ["csrf-probe"]}),
-        pod=_pod(outcomes=[_outcome("symptom-confirmed", verdict="successful")]),
-        author=_author(),
-        judge=_no_judge(),
-    )
+    """S7 persistence - BLOCKED (#164).
 
-    result = agent(_config(SERVICE_A, FAULT_X, card=CARD_SERVICE))
-
-    assert result.hypothesis_verdict == "successful"
-    spec_file = tmp_path / run_id / "spec.md"
-    evidence_file = tmp_path / run_id / "evidence.md"
-    assert spec_file.is_file() and evidence_file.is_file()
-    # The files actually carry the records (raw markdown round-trips).
-    assert "## " in spec_file.read_text()
-    # The in-memory listing agrees with the files, one record per kind.
-    specs = store.list_records(run_id, "spec")
-    evidence = store.list_records(run_id, "evidence")
-    assert len(specs) == 1 and len(evidence) == 1
-    # Store-wide provenance: _seq/_ref carry run, kind, and ordering.
-    assert specs[0]["_seq"] == 1 and evidence[0]["_seq"] == 2
-    assert specs[0]["_ref"] == f"{run_id}/spec-0001"
-    assert evidence[0]["_ref"] == f"{run_id}/evidence-0002"
-    # The result's refs are the file records' refs, and the spec record is the
-    # flattened D4 typed base plus the hunt identity.
-    assert result.spec_ref == specs[0]["_ref"]
-    assert result.pod_result_ref == evidence[0]["_ref"]
-    assert specs[0]["hunt_id"] and specs[0]["unit_id"] == SERVICE_A
-    assert specs[0]["fault_class"] == FAULT_X
-    assert specs[0]["target_identity"] and specs[0]["verification_symptoms"]
-    assert evidence[0]["derived_verdict"] == "successful"
-    assert evidence[0]["terminal_reason"] == "symptom-confirmed"
+    The durable `spec`/`evidence` record files with `_seq`/`_ref` provenance
+    are removed (#166); the agent's durable record trail is #164's own memory.
+    When #164 lands, drive the real agent over the new memory and assert the
+    spec/evidence trail lives there (the old terminal quantities - the spec
+    file, the evidence file, the store-wide `_seq` ordering, and the
+    `spec_ref`/`pod_result_ref` linkage - no longer have a store equivalent).
+    """
 
 
 # --- E5: the automated KB join key, once per hunt, per unit kind --------------
@@ -245,16 +238,19 @@ def test_E5_kb_join_key_derived_per_unit_kind(tmp_path):
     assert by_fault[FAULT_Y] == derive_technological_axis(CARD_SYSTEM)
     assert by_fault[FAULT_X] == "rest"  # api_paradigm preferred
     assert by_fault[FAULT_Y] == "csr"  # navigation_model preferred
-    # The spec records still landed per hunt, carrying the axis-relevant
-    # retrieval in the authored turn (recorded by the fixture author).
-    assert len(store.list_records(run_id, "spec")) == 2
+    # The durable spec records are gone (#166): the per-project store holds
+    # configs + notes only, the agent's refs degrade fail-open to None, and
+    # its durable record trail is #164's own memory (G5).
+    assert service.spec_ref is None and system.spec_ref is None
 
 
-# --- E6: a raising KB degrades over REAL files, never prunes ------------------
-# O2/C3: the agent authors from the HuntConfig alone, flags the gap, and the
-# spec still persists.
+# --- E6: a raising KB degrades, never prunes -------------------------------
+# O2/C3: the agent authors from the HuntConfig alone and flags the gap; the
+# durable spec record is gone (#166 - the per-project store holds configs +
+# notes only; the agent's durable trail is #164's own memory, G5), so the
+# assertion is the fail-open degrade, never a persisted record.
 
-def test_E6_kb_raise_degrades_and_still_persists(tmp_path):
+def test_E6_kb_raise_degrades_fail_open(tmp_path):
     store = HuntStore(tmp_path)
     run_id = "run-e6"
     agent = _agent(
@@ -269,17 +265,15 @@ def test_E6_kb_raise_degrades_and_still_persists(tmp_path):
 
     assert result.hypothesis_verdict == "successful"
     assert result.feedback and "symptom-technique KB unavailable" in result.feedback
-    specs = store.list_records(run_id, "spec")
-    assert len(specs) == 1
-    assert specs[0]["target_identity"]  # authored from the HuntConfig alone
-    assert (tmp_path / run_id / "spec.md").is_file()
+    assert result.spec_ref is None  # the durable spec record is gone (#166)
+    assert result.pod_result_ref is None
 
 
-# --- E7: inline re-entry dedups over the REAL files ---------------------------
+# --- E7: inline re-entry dedups over the in-memory experiment log ------------
 # D67-14/C9: a routed back-edge re-enters the SAME candidate - the committed
-# spec stands, the judge consumes the routed evidence, and the real files hold
-# exactly one spec and one evidence record (no re-dispatch of an identical
-# spec).
+# spec stands, the judge consumes the routed evidence, and the working-set
+# experiment log (Q5) holds exactly one spec (no re-dispatch of an identical
+# spec). The durable spec/evidence files are gone (#166).
 
 def test_E7_reentry_dedup_over_real_files(tmp_path):
     store = HuntStore(tmp_path)
@@ -310,10 +304,7 @@ def test_E7_reentry_dedup_over_real_files(tmp_path):
     second = agent(config, routed=(_route(first.back_edge_needs[0]),))
 
     assert len(pod_calls) == 1  # no second dispatch for the identical spec
-    specs = store.list_records(run_id, "spec")
-    evidence = store.list_records(run_id, "evidence")
-    assert len(specs) == 1 and len(evidence) == 1
-    assert second.spec_ref == first.spec_ref
+    assert second.spec_ref == first.spec_ref  # both None: the store has no refs (#166)
     assert second.pod_result_ref == first.pod_result_ref
     assert len(judge_calls) == 2
     # The routed result reached the judgment turn (correlation_id on the wire).
@@ -323,10 +314,14 @@ def test_E7_reentry_dedup_over_real_files(tmp_path):
     assert second.back_edge_needs == []
 
 
-# --- E8: INIT-rejection lineage over the REAL files ---------------------------
-# Q3/Q5: one re-authoring pass, parent lineage on the second spec record, and
-# the second rejection lands underspecified-spec with the validation evidence
-# on the evidence record.
+# --- E8: INIT-rejection lineage over the in-memory experiment log -------------
+# Q3/Q5: one re-authoring pass, parent lineage on the second spec, and the
+# second rejection lands underspecified-spec with the validation evidence.
+# The D67-03/D67-08 parent lineage and the validation evidence rode the durable
+# spec/evidence records, which are removed (#166 - the per-project store holds
+# configs + notes only; the hunter's durable trail is #164's own memory, G5);
+# the lineage now lives in the in-memory working-set experiment log, so the
+# assertions are the re-authoring BEHAVIOUR, not the store records.
 
 def test_E8_init_rejection_lineage_over_real_files(tmp_path):
     store = HuntStore(tmp_path)
@@ -359,21 +354,14 @@ def test_E8_init_rejection_lineage_over_real_files(tmp_path):
 
     assert result.hypothesis_verdict == "underspecified-spec"
     assert len(pod_calls) == 2  # exactly two dispatches, no third attempt (Q5)
-    specs = store.list_records(run_id, "spec")
-    evidence = store.list_records(run_id, "evidence")
-    assert len(specs) == 2 and len(evidence) == 2
-    # D67-03/D67-08 lineage: the re-authored spec records its parent's ref.
-    assert specs[1]["parent_spec_ref"] == specs[0]["_ref"]
     # The re-authoring turn carried the skill AND the INIT validation evidence.
     reauthoring = author_calls[1]
     assert reauthoring.startswith("You are the hunting agent:")
     assert "INIT validation evidence" in reauthoring
     assert "references an unobservable surface" in reauthoring
-    # The validation evidence rides the second evidence record (Q6).
-    assert evidence[1]["derived_verdict"] == "underspecified-spec"
-    assert evidence[1]["init_validation"]
-    # The re-authored spec declined the unsupported method (Q5 decline).
-    assert "json" not in specs[1]["payload_vector_space"]["encodings"]
+    # The re-authored spec declined the unsupported method (Q5 decline) - the
+    # pod received it (the durable record's lineage is #164's own memory).
+    assert "json" not in pod_calls[1]["payload_vector_space"]["encodings"]
 
 
 # --- E9: the tracing seam against the observability stack ---------------------
@@ -423,7 +411,8 @@ def test_E9_tracing_seam_live_and_fail_open(tmp_path, monkeypatch):
     degraded = _happy_leg("run-e9-degraded")(
         _config(SERVICE_A, FAULT_X, card=CARD_SERVICE))
     assert ok.hypothesis_verdict == degraded.hypothesis_verdict == "successful"
-    assert ok.spec_ref and degraded.spec_ref
+    # the durable spec refs are gone (#166); both legs degrade identically
+    assert ok.spec_ref is None and degraded.spec_ref is None
     assert ok.feedback == degraded.feedback  # tracing perturbed nothing
 
 

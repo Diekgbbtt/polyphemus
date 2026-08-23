@@ -1,15 +1,23 @@
-"""Unit tier: the hunt-orchestrator graph engine's topology skeleton (#110).
+"""Unit tier: the hunt-orchestrator graph engine's topology skeleton (#110,
+reworked by #167).
 
 Task 1 pins the StateGraph topology only (no LLM, no Neo4j): the graph builds
-and compiles; the supervisor-state schedule loop visits REASON(pair) -> budget
--> DISPATCH(direction) in deterministic order and ENDs on an empty worklist; a
-routing decision is a SINGLE `Command` (DP-5: both-paths-fire cannot occur); the
-two reducer channels append rather than overwrite; an empty schedule ENDs after
-budget with nothing dispatched; and a raising reason stretch carries the pair
-fail-open while the graph still reaches END.
+and compiles; the supervisor-state schedule loop pops FAULT work items (the
+fault stays the schedule unit, spec 3.1) and iterates each fault's candidate
+queue as the pairs the phase nodes operate on; every (unit, fault) pair runs
+the three phase nodes `hypothesise -> ratify -> note` (the phase machine is
+embedded in the graph - G2), the loop states transition
+`HYPOTHESISED -> RATIFIED -> NOTED` as the graph executes (G5), the graph ENDs
+after the last pair's note phase, and a routing decision is a SINGLE `Command`
+(DP-5: both-paths-fire cannot occur); the `trail` and `loop_states` reducers
+append rather than overwrite; an empty schedule ENDs with nothing; and a
+raising hypothesise seam skips that phase's side effect (fail-open) while the
+pass still reaches END.
 
-The O1-O10 canon semantics live in `test_hunt_orchestrator.py` and the C1-C12
-catalogue in tests/integration - this tier never repeats them.
+The dispatch node is REMOVED (G12) and the O9 budget stage is REMOVED (G7) -
+the graph ENDs at the REASON stretch. The O1-O10 canon semantics live in
+`test_hunt_orchestrator.py` and the integration catalogue - this tier never
+repeats them.
 """
 import asyncio
 
@@ -18,10 +26,13 @@ from langgraph.types import Command
 
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
-    EnvisionedDirection,
+    FaultWorkItem,
     Witness,
 )
 from polymerhus.attack.hunting.orchestrator_graph import (
+    _HYPOTHESISE,
+    _NOTE,
+    _RATIFY,
     _supervisor,
     build_hunting_graph,
 )
@@ -36,23 +47,29 @@ def _candidate(unit_id: str, fault_class: str) -> DeliveredCandidate:
     )
 
 
-def _direction(candidate: DeliveredCandidate) -> EnvisionedDirection:
-    return EnvisionedDirection(
-        unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=True,
-    )
+def _fault_grouped(candidates: list[DeliveredCandidate]) -> list[FaultWorkItem]:
+    """The schedule group (spec 3.1): ONE `FaultWorkItem` per distinct
+    fault_class, in deterministic (input) order."""
+    grouped: dict[str, list[DeliveredCandidate]] = {}
+    for c in candidates:
+        grouped.setdefault(c.fault_class, []).append(c)
+    return [FaultWorkItem(fault_class=f, candidates=grouped[f])
+            for f in grouped]
 
 
-def _initial(pairs, *, phase: str = "reason") -> dict:
+def _initial(pairs) -> dict:
     return {
         "project_id": "project-1",
         "run_id": "run-1",
-        "phase": phase,
-        "schedule": list(pairs),
+        "schedule": _fault_grouped(list(pairs)),
         "current": None,
-        "worklist": [],
-        "current_direction": None,
-        "directions": [],
+        "pairs": [],
+        "current_pair": None,
+        "loop_state": None,
+        "loop_states": [],
         "trail": [],
+        "ledger": None,
+        "minted_configs": {},
         "kb_evidences": {},
         "kb_degraded": False,
         "surface": [],
@@ -72,134 +89,208 @@ def test_build_hunting_graph_compiles():
     assert compiled is not None
 
 
-# --- The loop: REASON -> budget -> DISPATCH -> ... -> END -----------------------
+# --- The phase machine: hypothesise -> ratify -> note per pair, then END ------
 
-def test_two_pair_schedule_loops_in_deterministic_order_and_ends():
+def test_reason_stretch_runs_three_phase_nodes_per_pair_and_ends():
     p1, p2 = _candidate("u-1", "f-1"), _candidate("u-2", "f-2")
     visits: list[tuple] = []
 
-    def reason(state):
-        current = state["current"]
-        visits.append(("reason", current.unit_id))
-        return {"directions": [_direction(current)],
-                "trail": [{"kind": "gate", "revival_key": current.unit_id}]}
+    def hypothesise(state):
+        pair = state["current_pair"]
+        visits.append(("hypothesise", pair.unit_id))
+        return {"trail": [{"kind": "hypothesised", "revival_key": pair.unit_id}]}
 
-    def budget(state):
-        visits.append(("budget", None))
-        return {"worklist": list(state["directions"]), "phase": "dispatch", "trail": []}
+    def ratify(state):
+        pair = state["current_pair"]
+        visits.append(("ratify", pair.unit_id))
+        return {"trail": [{"kind": "ratified", "revival_key": pair.unit_id}]}
 
-    def dispatch(state):
-        direction = state["current_direction"]
-        visits.append(("dispatch", direction.unit_id))
-        return {"trail": [{"kind": "hunt", "revival_key": direction.unit_id}]}
+    def note(state):
+        pair = state["current_pair"]
+        visits.append(("note", pair.unit_id))
+        return {"trail": [{"kind": "note", "revival_key": pair.unit_id}]}
 
     final = _drive(build_hunting_graph(
-        reason_node=reason, budget_node=budget, dispatch_node=dispatch,
+        hypothesise_node=hypothesise, ratify_node=ratify, note_node=note,
     ), _initial([p1, p2]))
 
-    # REASON phase drains the whole schedule, budget cuts over the accumulated
-    # directions, DISPATCH phase drains the worklist - then the graph reaches END.
+    # each pair runs hypothesise -> ratify -> note in order; the graph ENDs
+    # after the last pair's note phase (no dispatch node, no budget stage).
     assert visits == [
-        ("reason", "u-1"), ("reason", "u-2"),
-        ("budget", None),
-        ("dispatch", "u-1"), ("dispatch", "u-2"),
+        ("hypothesise", "u-1"), ("ratify", "u-1"), ("note", "u-1"),
+        ("hypothesise", "u-2"), ("ratify", "u-2"), ("note", "u-2"),
     ]
-    assert final["worklist"] == []  # the worklist drained -> the graph ended
-    assert final["current_direction"].unit_id == "u-2"  # last-write retains the last dispatch
-    assert [d.unit_id for d in final["directions"]] == ["u-1", "u-2"]
+    assert final["current_pair"].unit_id == "u-2"  # last-write keeps the last pair
+    assert final["loop_state"] == "NOTED"          # the pair loop ended at the note phase
 
 
-def test_empty_schedule_ends_after_budget_with_nothing_dispatched():
-    visits: list[str] = []
+def test_no_dispatch_or_budget_nodes():
+    """The dispatch node is REMOVED (G12) and the budget stage is REMOVED (G7):
+    the graph has EXACTLY the supervisor + the three phase nodes."""
+    g = build_hunting_graph(
+        hypothesise_node=lambda state: {}, ratify_node=lambda state: {},
+        note_node=lambda state: {},
+    )
+    assert set(g.nodes) == {"supervisor", "hypothesise", "ratify", "note"}
 
-    def budget(state):
-        visits.append("budget")
-        return {"worklist": list(state["directions"]), "phase": "dispatch", "trail": []}
 
-    def dispatch(state):
-        visits.append("dispatch")  # pragma: no cover - must never be reached
-        return {"trail": []}
+# --- Loop states: the phase machine transitions as the graph executes (G2/G5) --
+
+def test_loop_states_transition_hypothesised_ratified_noted():
+    """The harness loop states are tracked on the graph state as it executes:
+    the hypothesise node records HYPOTHESISED, the ratify node RATIFIED, the
+    note node NOTED - and each phase node observes the PREVIOUS phase's state
+    (the transition logic is embedded in the graph, never a harness variable)."""
+    p1 = _candidate("u-1", "f-1")
+    seen: list[tuple] = []
+
+    def hypothesise(state):
+        seen.append(("hypothesise", state["loop_state"]))
+        return {}
+
+    def ratify(state):
+        seen.append(("ratify", state["loop_state"]))
+        return {}
+
+    def note(state):
+        seen.append(("note", state["loop_state"]))
+        return {}
 
     final = _drive(build_hunting_graph(
-        budget_node=budget, dispatch_node=dispatch,
-    ), _initial([]))
+        hypothesise_node=hypothesise, ratify_node=ratify, note_node=note,
+    ), _initial([p1]))
 
-    assert visits == ["budget"]
-    assert final["worklist"] == []
+    assert seen == [
+        ("hypothesise", None),      # a fresh pair starts outside the machine
+        ("ratify", "HYPOTHESISED"), # the hypothesise node just ran
+        ("note", "RATIFIED"),       # the ratify node just ran
+    ]
+    assert final["loop_states"] == ["HYPOTHESISED", "RATIFIED", "NOTED"]
+    assert final["loop_state"] == "NOTED"
 
 
 # --- Routing: one authority, one Command (DP-5) ---------------------------------
 
-def test_supervisor_routes_with_a_single_command_never_both_paths():
+def test_supervisor_routes_a_pair_per_command_and_ends():
     head = _candidate("u-1", "f-1")
     tail = _candidate("u-2", "f-2")
+    schedule = _fault_grouped([head, tail])
 
-    cmd = _supervisor({"phase": "reason", "schedule": [head, tail]})
+    # the first pop seeds the fault's pair queue and routes to hypothesise
+    cmd = _supervisor({"schedule": schedule, "pairs": []})
     assert isinstance(cmd, Command)
-    assert cmd.goto == "reason"
-    assert cmd.update["current"].unit_id == "u-1"
-    assert cmd.update["schedule"] == [tail]
+    assert cmd.goto == _HYPOTHESISE
+    assert cmd.update["current"].fault_class == "f-1"
+    assert cmd.update["current_pair"].unit_id == "u-1"
+    assert cmd.update["pairs"] == []          # one pair popped, queue drained
+    assert cmd.update["schedule"] == schedule[1:]
 
-    cmd = _supervisor({"phase": "reason", "schedule": []})
+    # the next super-step pops the second fault's pair
+    cmd = _supervisor({"schedule": schedule[1:], "pairs": []})
     assert isinstance(cmd, Command)
-    assert cmd.goto == "budget"
+    assert cmd.goto == _HYPOTHESISE
+    assert cmd.update["current"].fault_class == "f-2"
+    assert cmd.update["current_pair"].unit_id == "u-2"
 
-    direction = _direction(_candidate("u-1", "f-1"))
-    cmd = _supervisor({"phase": "dispatch", "worklist": [direction]})
-    assert isinstance(cmd, Command)
-    assert cmd.goto == "dispatch"
-    assert cmd.update["current_direction"].unit_id == "u-1"
-    assert cmd.update["worklist"] == []
+    # a fault with two candidates: the supervisor pops the queue one pair at a
+    # time, and only pops the next fault once the queue is drained
+    pair_fault = FaultWorkItem(fault_class="f-3", candidates=[
+        _candidate("u-3", "f-3"), _candidate("u-4", "f-3")])
+    cmd = _supervisor({"schedule": [pair_fault], "pairs": []})
+    assert cmd.goto == _HYPOTHESISE
+    assert cmd.update["current_pair"].unit_id == "u-3"
+    assert [c.unit_id for c in cmd.update["pairs"]] == ["u-4"]
+    assert cmd.update["schedule"] == []
 
-    cmd = _supervisor({"phase": "dispatch", "worklist": []})
+    cmd = _supervisor({"schedule": [], "pairs": [pair_fault.candidates[1]]})
+    assert cmd.goto == _HYPOTHESISE
+    assert cmd.update["current_pair"].unit_id == "u-4"
+
+    # schedule AND queue exhausted -> END
+    cmd = _supervisor({"schedule": [], "pairs": []})
     assert isinstance(cmd, Command)
     assert cmd.goto == END
 
 
+def test_empty_schedule_ends_with_nothing():
+    visits: list[str] = []
+
+    def hypothesise(state):
+        visits.append("hypothesise")  # pragma: no cover - must never be reached
+        return {}
+
+    final = _drive(build_hunting_graph(hypothesise_node=hypothesise), _initial([]))
+
+    assert visits == []
+    assert final["loop_state"] is None
+    assert final["loop_states"] == []
+
+
 # --- Reducers: accumulate, never overwrite --------------------------------------
 
-def test_directions_and_trail_reduce_append_not_overwrite():
+def test_trail_and_loop_states_reduce_append_not_overwrite():
     p1, p2 = _candidate("u-1", "f-1"), _candidate("u-2", "f-2")
 
-    def reason(state):
-        current = state["current"]
-        return {"directions": [_direction(current)],
-                "trail": [{"kind": "gate", "revival_key": current.unit_id}]}
+    def hypothesise(state):
+        pair = state["current_pair"]
+        return {"trail": [{"kind": "hypothesised", "revival_key": pair.unit_id}]}
 
-    def budget(state):
-        return {"worklist": list(state["directions"]), "phase": "dispatch",
-                "trail": [{"kind": "budget"}]}
+    def ratify(state):
+        pair = state["current_pair"]
+        return {"trail": [{"kind": "ratified", "revival_key": pair.unit_id}]}
 
-    def dispatch(state):
-        direction = state["current_direction"]
-        return {"trail": [{"kind": "hunt", "revival_key": direction.unit_id}]}
+    def note(state):
+        pair = state["current_pair"]
+        return {"trail": [{"kind": "note", "revival_key": pair.unit_id}]}
 
     final = _drive(build_hunting_graph(
-        reason_node=reason, budget_node=budget, dispatch_node=dispatch,
+        hypothesise_node=hypothesise, ratify_node=ratify, note_node=note,
     ), _initial([p1, p2]))
 
-    assert [d.unit_id for d in final["directions"]] == ["u-1", "u-2"]
-    assert [t["kind"] for t in final["trail"]] == ["gate", "gate", "budget", "hunt", "hunt"]
+    assert [t["kind"] for t in final["trail"]] == [
+        "hypothesised", "ratified", "note",
+        "hypothesised", "ratified", "note",
+    ]
+    assert final["loop_states"] == [
+        "HYPOTHESISED", "RATIFIED", "NOTED",
+        "HYPOTHESISED", "RATIFIED", "NOTED",
+    ]
 
 
-# --- Fail-open: a raising stretch carries the pair, the pass still ENDs ---------
+# --- Fail-open: a raising seam skips the phase's side effect, the pass ENDs ----
 
-def test_raising_reason_stretch_carries_the_pair_and_reaches_end():
+def test_raising_hypothesise_skips_side_effect_and_keeps_the_pass_serving():
     p1 = _candidate("u-1", "f-1")
     visits: list[tuple] = []
 
-    def reason(state):
-        raise RuntimeError("gate reasoning failed (fixture)")
+    def hypothesise(state):
+        raise RuntimeError("hypothesise turn failed (fixture)")
 
-    def dispatch(state):
-        direction = state["current_direction"]
-        visits.append(("dispatch", direction.unit_id))
-        return {"trail": []}
+    def ratify(state):
+        visits.append(("ratify", state["current_pair"].unit_id))
+        return {}
+
+    def note(state):
+        visits.append(("note", state["current_pair"].unit_id))
+        return {}
 
     final = _drive(build_hunting_graph(
-        reason_node=reason, dispatch_node=dispatch,
+        hypothesise_node=hypothesise, ratify_node=ratify, note_node=note,
     ), _initial([p1]))
 
-    assert [d.unit_id for d in final["directions"]] == ["u-1"]
-    assert visits == [("dispatch", "u-1")]
-    assert final["worklist"] == []
+    # the failing hypothesise skipped its side effect, but the phase machine
+    # still advanced: ratify and note ran, the loop states transitioned, END.
+    assert visits == [("ratify", "u-1"), ("note", "u-1")]
+    assert final["loop_states"] == ["HYPOTHESISED", "RATIFIED", "NOTED"]
+    assert final["loop_state"] == "NOTED"
+    assert final["current_pair"].unit_id == "u-1"
+
+
+def test_missing_seams_skip_side_effects_but_keep_the_pass_serving():
+    """Every default node degrades fail-open (the canon's no-seam outcome): a
+    graph with NO injected closures still runs the phase machine (the loop
+    states transition) and reaches END without a dispatch node or budget stage."""
+    p1 = _candidate("u-1", "f-1")
+    final = _drive(build_hunting_graph(), _initial([p1]))
+    assert final["loop_states"] == ["HYPOTHESISED", "RATIFIED", "NOTED"]
+    assert final["loop_state"] == "NOTED"

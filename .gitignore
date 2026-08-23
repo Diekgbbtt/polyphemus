@@ -17,3 +17,9 @@ docs/.DS_Store
 # Recon run artifacts (multi-MB per-target graph dumps), reproducible by re-running.
 .recon-exports/
 tests/e2e/fixtures/eval-targets.yaml
+
+# Hunting run artifacts (per-project memory-store files), reproducible by
+# re-running. The store root is `data/`; each project gets
+# `data/<project_id>/orchestration/` (the legacy `data/hunts/` tree is gone).
+src/polymerhus/attack/hunting/data/*/orchestration/
+src/polymerhus/attack/hunting/data/hunts/

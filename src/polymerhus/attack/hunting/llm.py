@@ -49,6 +49,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     GateInput,
     MatchVerdict,
+    PhaseTurnInput,
 )
 from polymerhus.recon.control.targeted import TargetedReconResult
 
@@ -138,18 +139,43 @@ def validate_hunting_llm_config() -> None:
 # --- pure prompt/parse helpers ------------------------------------------------
 
 _GATE_SKILL_FALLBACK = (
-    "You are the hunt-orchestrator's gate: the single embedded reasoning turn (Q8) "
-    "that decides which delivered (testable-unit, fault-class) candidates become "
-    "carried hunt directions. For each candidate you receive its applies-witnesses "
-    "and three-valued match verdict, the symptom-technique KB evidence for its fault "
-    "class, and the read-only graph surface. Carry a direction when the fault "
-    "plausibly applies and seed it with a fault-matching rationale, the "
-    "adversarial-capability/environmental assumptions, the envisioned test "
-    "primitives, and the supposed payload vectors that stub the hunting agent's later "
-    "concrete hypothesis; prune a direction only on positive grounds (the fault "
-    "cannot apply). NEVER prune on degraded grounds: when the KB is unavailable "
-    "(kb_degraded), reason from the candidate and surface alone and carry rather than "
-    "prune. Return the directions, each marked carried or pruned."
+    "You are the hunt-orchestrator: the node-per-phase REASON body "
+    "(candidates-rewrite spec 3.2/3.3, amended by the memory + workflow-graph "
+    "rework) that takes ONE (unit, fault) pair through the hypothesise -> "
+    "ratify -> note phases. The phase-transition verbatims are injected in the "
+    "tool-call responses (never here); this skill carries the reasoning "
+    "discipline. "
+    "Hypothesise phase: read the unit's applies-witnesses and three-valued "
+    "match verdict, the fault's materialisation and fold family, the read-only "
+    "graph surface, and the rich typed projection (including cooperating "
+    "systems adjacency). Elicit one or more vulnerability classes - at the "
+    "grain of a web-vulnerability CLASS with a research-direction rationale "
+    "(e.g. CSRF, IDOR) - never narrowed to a surface locale, payload profile, "
+    "vector, or symptom; the narrowing belongs to the hunting agent at "
+    "spec-writing. Prune only on positive grounds; NEVER prune on degraded "
+    "grounds: when the KB is unavailable (kb_degraded), reason from the "
+    "candidate and surface alone and carry rather than prune. "
+    "Prior-hunt reflection (Q11): prior minted-config keys are listed in the "
+    "prompt; you NEVER write a config that duplicates a prior one; you MAY "
+    "call hunts_store(read) to inspect a prior key before writing. "
+    "Knowledge-sufficiency decision point (Q9): given this fault class and "
+    "unit type, do I have sufficient knowledge of the previous dispatched "
+    "hunts and all potentially useful insights collected? If not, loop "
+    "hunts_store(read) / notes(read). Target-knowledge loop (Q9): do I have "
+    "enough technical knowledge of this unit to concretise the abstract fault "
+    "at this locus? If not, query via graph_view iterating until sufficient. "
+    "Same-class merge (Q16): if multiple elicited vulnerability classes at one "
+    "locus are the same web-vulnerability class, merge them into one; only "
+    "fundamentally discriminable classes survive as distinct configs. Pure LLM "
+    "reflection - no module-side parsing. The hypothesise write: "
+    "hunts_store(write, config, status='hypothesised'), one draft per "
+    "surviving class with only rationale + research_direction filled - the "
+    "capabilities / assumptions / technique-primitives analysis is the "
+    "RATIFICATION phase's work. Consider cooperating systems when creating a "
+    "HuntConfig targeting a system. Tools are exactly three: hunts_store, "
+    "notes, graph_view (no back-edge-to-recon tool, no budget tool). Return "
+    "the directions, each marked carried or pruned; the deterministic mint "
+    "fans out N hypothesised drafts per distinct class at this phase."
 )
 
 _REMATCH_SKILL_FALLBACK = (
@@ -175,45 +201,378 @@ def _rematch_skill() -> str:
     return skill_for("hunting/hunt-orchestrator-rematch", fallback=_REMATCH_SKILL_FALLBACK)
 
 
+def _system_render(info) -> str:
+    """Deterministic one-line render of a SystemInfo (an unpacked edge target
+    or a D3 cooperating neighbour): the typed attributes (kind, discriminator,
+    exposure, description) plus the sorted raw non-identity props. An absent or
+    empty info renders a marker, never a raise."""
+    if info is None:
+        return "(absent)"
+    kind = getattr(info, "kind", None) or "UNKNOWN"
+    parts = [f"kind={kind}"]
+    for attr in ("discriminator", "exposure", "description"):
+        val = getattr(info, attr, None)
+        if val is not None:
+            parts.append(f"{attr}={val}")
+    props = getattr(info, "props", None) or {}
+    prop_items = sorted(f"{k}={v}" for k, v in props.items() if v is not None
+                        if k not in ("kind", "discriminator", "exposure",
+                                     "description"))
+    if prop_items:
+        parts.append("props={" + ", ".join(prop_items) + "}")
+    return "; ".join(parts)
+
+
+def _data_item_render(item) -> str:
+    """Deterministic one-line render of a DataItem (a data-flow edge's full
+    node): the named trust slots (name/type/sensitivity, fields, notes). An
+    absent or empty item renders a marker, never a raise."""
+    if item is None:
+        return "(absent)"
+    parts = []
+    for attr in ("name", "type", "sensitivity"):
+        val = getattr(item, attr, None)
+        if val is not None:
+            parts.append(f"{attr}={val}")
+    if getattr(item, "fields", None):
+        parts.append("fields=" + ",".join(sorted(map(str, item.fields))))
+    if getattr(item, "notes", None):
+        parts.append(f"notes={item.notes}")
+    return "; ".join(parts) or "(data item without typed slots)"
+
+
+def _render_projection(projection) -> str:
+    """Deterministic render of the unit's typed projection (spec 3.1/3.7): the
+    typed spine keys present, per-family outgoing Service->System edges (target
+    kind + role presence + the fully-unpacked target System), the data-edge
+    counts, the DataRelationship kinds among the unit's items - and, as of T5,
+    the RICH slots the T2 projection carries: the exploded DataItems (family ->
+    name/type/sensitivity), the DataRelationship kind chains, and the D3
+    cooperating-systems adjacency. The compat facets are never removed; each
+    slot is read via getattr and a missing facet degrades that slot only -
+    absence renders as UNKNOWN/(none) (never FALSE, never a prune signal -
+    C16)."""
+    if projection is None:
+        return "UNKNOWN (projection read failed or absent)"
+    kind = getattr(projection, "kind", None) or "UNKNOWN"
+    spine = getattr(projection, "spine", None) or {}
+    edges = getattr(projection, "edges", None) or {}
+    data_edges = getattr(projection, "data_edges", None) or {}
+    data_rel = getattr(projection, "data_rel_kinds", None) or frozenset()
+    data_items = getattr(projection, "data_items", None) or {}
+    data_relationships = getattr(projection, "data_relationships", None) or ()
+    cooperating_systems = getattr(projection, "cooperating_systems", None) or {}
+
+    out = [f"unit kind: {kind}"]
+    spine_keys = sorted(k for k in spine if k)
+    out.append(f"spine (present keys): {spine_keys or '(none present)'}")
+    if edges:
+        families = []
+        for family in sorted(edges):
+            infos = edges.get(family) or ()
+            rendered = []
+            for e in infos:
+                target = getattr(e, "target_kind", None) or "UNKNOWN"
+                role = getattr(e, "role", None)
+                line = f"{target}{' (role present)' if role is not None else ''}"
+                sys_info = getattr(e, "target", None)
+                if sys_info is not None and getattr(sys_info, "kind", None):
+                    line += f" -> {_system_render(sys_info)}"
+                rendered.append(line)
+            families.append(f"{family}: {sorted(rendered) or '(no edges)'}")
+        out.append("outgoing edges:")
+        out += [f"  - {line}" for line in families]
+    else:
+        out.append("outgoing edges: (none)")
+    if data_edges:
+        out.append("data edges: " + ", ".join(
+            f"{fam}={data_edges[fam]}" for fam in sorted(data_edges)))
+    else:
+        out.append("data edges: (none)")
+    out.append("data-relationship kinds: " +
+               ("; ".join(sorted(data_rel)) if data_rel else "(none)"))
+    if data_items:
+        out.append("data items:")
+        for family in sorted(data_items):
+            items = data_items.get(family) or ()
+            rendered = sorted(_data_item_render(i) for i in items)
+            out.append(f"  - {family}: {', '.join(rendered) or '(none)'}")
+    else:
+        out.append("data items: (none)")
+    if data_relationships:
+        out.append("data relationships:")
+        chains = []
+        for r in data_relationships:
+            family = getattr(r, "family", None) or "?"
+            from_key = getattr(r, "from_item_key", None)
+            to_key = getattr(r, "to_item_key", None)
+            line = f"{family}: {from_key or '?'} -> {to_key or '?'}"
+            predicate = getattr(r, "predicate", None)
+            if predicate:
+                line += f" (predicate: {predicate})"
+            chains.append(line)
+        out += [f"  - {line}" for line in sorted(chains)]
+    else:
+        out.append("data relationships: (none)")
+    if cooperating_systems:
+        out.append("cooperating systems:")
+        for family in sorted(cooperating_systems):
+            infos = cooperating_systems.get(family) or ()
+            rendered = sorted(_system_render(i) for i in infos)
+            out.append(f"  - {family}: {', '.join(rendered) or '(none)'}")
+    else:
+        out.append("cooperating systems: (none)")
+    return "\n".join(out)
+
+
+def _render_materialisation(entry) -> str:
+    """Deterministic render of a fault's materialisation-facet content (the CWE
+    NL evidence, spec 3.1): name, description, extended description, alternate
+    terms, related attack patterns, likelihood, common consequences,
+    potential mitigations, functional areas - each facet sorted where it is a
+    sequence; an absent entry renders UNKNOWN (never a prune signal - C16).
+    Accepts the `FaultMaterialisation` dataclass or a plain dict (both shapes
+    occur on the `GateInput` surface)."""
+    if entry is None:
+        return "UNKNOWN (materialisation unavailable for this fault_class)"
+
+    def _f(name):
+        if isinstance(entry, dict):
+            return entry.get(name)
+        return getattr(entry, name, None)
+
+    name = _f("name")
+    description = _f("description")
+    extended = _f("extended_description")
+    alt_terms = _f("alternate_terms") or []
+    patterns = _f("related_attack_patterns") or []
+    likelihood = _f("likelihood")
+    consequences = _f("common_consequences") or []
+    mitigations = _f("potential_mitigations") or []
+    areas = _f("functional_areas") or []
+
+    out = []
+    if name:
+        out.append(f"fault: {name}")
+    if description:
+        out.append(f"description: {description}")
+    if extended:
+        out.append(f"extended description: {extended}")
+    if alt_terms:
+        out.append("alternate terms: " + "; ".join(sorted(map(str, alt_terms))))
+    if patterns:
+        out.append("related attack patterns: " + "; ".join(sorted(map(str, patterns))))
+    if likelihood:
+        out.append(f"likelihood: {likelihood}")
+    if consequences:
+        out.append("common consequences: " + "; ".join(sorted(map(str, consequences))))
+    if mitigations:
+        out.append("potential mitigations: " + "; ".join(sorted(map(str, mitigations))))
+    if areas:
+        out.append("functional areas: " + "; ".join(sorted(map(str, areas))))
+    return "\n".join(out) or "(materialisation entry empty)"
+
+
+def _render_fold_family(ids) -> str:
+    """Deterministic render of the folded sub-fault family (spec 3.1): the
+    sorted tuple of folded fault_ids captured under the parent fault class -
+    consideration material, never a prune signal. An absent key renders
+    UNKNOWN (C16)."""
+    if not ids:
+        return "UNKNOWN (no sub-fault fold family captured under this fault)"
+    return ", ".join(sorted(map(str, ids)))
+
+
+def _render_unit_block(units, unit_projection, compat_projection, kb_evidences) -> str:
+    """Deterministic render of one matched-unit block (spec 3.7 Q4): each unit's
+    identity + witness line followed by ITS OWN rich projection render. The
+    projection resolves from the per-unit slot first; the single-unit compat
+    slot (`compat_projection`) is the fallback, so a legacy hand-built `GateInput`
+    still renders. Every facet degrades independently (C16)."""
+    out = []
+    for c in units:
+        w = c.applies_witnesses
+        proj = (unit_projection or {}).get(c.unit_id)
+        if proj is None:
+            proj = compat_projection
+        out.append(
+            f"- unit={c.unit_id} fault_class={c.fault_class} "
+            f"match_verdict={c.match_verdict} "
+            f"witness_deterministic={w.deterministic!r} "
+            f"witness_llm={w.llm!r} "
+            f"kb_evidence={(kb_evidences or {}).get(c.fault_class) or '(none)'}"
+        )
+        out += ["    Unit projection (typed facet surface):"]
+        out += [f"      {line}" for line in _render_projection(proj).split("\n")]
+    return "\n".join(out)
+
+
 def _compose_gate_prompt(inp: GateInput) -> str:
-    """Render the Q8 gate input (accepted candidates + KB evidence + graph surface)
-    into the reasoning turn's user prompt."""
+    """Render the HYPOTHESISE-phase input (spec 3.7, re-scoped by #167) into
+    the phase turn's user prompt. The pair is the unit of the turn: the header
+    renders the fault class, the KB-grounding line, the read-only graph
+    surface, the materialisation and the fold family; the matched units split
+    into a Services section and a Systems section, each with its own
+    adversarial-reasoning intro (Q4) and each unit's OWN rich projection
+    render; then the hypothesise-phase discipline block (Q11 prior-hunt
+    reflection on `prior_minted_keys`, Q9 knowledge-sufficiency +
+    target-knowledge loops, Q8 hypothesis elicitation, Q16 same-class merge,
+    and the hypothesise write). The phase-TRANSITION verbatims are NOT part of
+    this prompt - they ride the tool-call responses from the constants (G1/G3).
+    Deterministic sorted rendering throughout; every slot degrades
+    independently (never FALSE, never a prune signal - C16)."""
+    fault_class = inp.candidates[0].fault_class if inp.candidates else None
+
+    # The section split is on the kind-qualified identity, never on the
+    # projection kind: "Service:<slug>" lands in Services, "<kind>:<key>" in
+    # Systems - so a degraded projection still reaches the right section.
+    def _section(unit_id: str) -> str:
+        return "Service" if str(unit_id).startswith("Service:") else "System"
+
+    services = sorted((c for c in inp.candidates if _section(c.unit_id) == "Service"),
+                      key=lambda c: c.unit_id)
+    systems = sorted((c for c in inp.candidates if _section(c.unit_id) == "System"),
+                     key=lambda c: c.unit_id)
+
     lines = [
         f"KB grounding: {'DEGRADED (KB unavailable; do not prune on this)' if inp.kb_degraded else 'available'}",
-        "",
-        "Candidates:",
+        f"Read-only graph surface (index cards): {inp.surface or '(none)'}",
     ]
-    for c in inp.candidates:
-        w = c.applies_witnesses
-        lines.append(
-            f"- unit={c.unit_id} fault_class={c.fault_class} match_verdict={c.match_verdict} "
-            f"witness_deterministic={w.deterministic!r} witness_llm={w.llm!r} "
-            f"kb_evidence={inp.kb_evidences.get(c.fault_class) or '(none)'}"
-        )
-    if inp.prior_config_keys:
+    if fault_class is not None:
         lines += [
-            "",
-            "There is a budget to avoid overlapping research directions with past "
-            "hunts on this project.",
+            f"Fault class (schedule unit): {fault_class}",
+            f"Fault materialisation ({fault_class}):",
+            _render_materialisation((inp.materialisation or {}).get(fault_class)),
+            f"Sub-fault fold family (consideration material):",
+            _render_fold_family((inp.fold_family or {}).get(fault_class)),
         ]
+
+    unit_projection = inp.unit_projection or {}
+    lines += ["", "Services:"]
+    if services:
         lines += [
-            f"Prior hunt-config research-direction keys: {', '.join(inp.prior_config_keys)}",
-            "",
-            "If any of these prior directions is relevant to the current candidate, "
-            "you may call the note/config reading tool to retrieve its notes before "
-            "deciding. The tool filters by the parent (unit, fault) index, a keyword "
-            "over the note keys, and a keyword over the note body; note kinds are: "
-            "hypothesis_refusal (a refused direction with its reason and evidence), "
-            "implicit_test_primitive (a testing primitive on a carried config), "
-            "freeform (any forward-useful note).",
+            "Adversarial reasoning over each Service: spell its surface - its "
+            "edged DataItems and Systems - and where the fault could bite.",
+            _render_unit_block(services, unit_projection, inp.projection, inp.kb_evidences),
+        ]
+    else:
+        lines.append("(no matched Service units)")
+    lines += ["", "Systems:"]
+    if systems:
+        lines += [
+            "Adversarial reasoning over each System: outline the System "
+            "distinctly - its kind, exposure, and props - and where the fault "
+            "could bite it.",
+            _render_unit_block(systems, unit_projection, inp.projection, inp.kb_evidences),
+        ]
+    else:
+        lines.append("(no matched System units)")
+
+    prior_keys = sorted(str(k) for k in (inp.prior_minted_keys or []))
+    lines += [
+        "",
+        "Hypothesise-phase discipline (per pair):",
+        "  Prior-hunt reflection (Q11): Prior minted-config keys to reflect on: "
+        f"{', '.join(prior_keys) if prior_keys else '(none)'}",
+        "    - You NEVER write a config that duplicates a prior one. Before "
+        "writing you MAY call hunts_store(read) to inspect a prior key's config "
+        "and assess overlap; a config you assert as a duplicate is never written.",
+        "  Knowledge-sufficiency decision point (Q9): given this fault class and "
+        "unit type, decide whether you have sufficient knowledge of the previous "
+        "dispatched hunts and all potentially useful insights collected; if not, "
+        "loop the memory reads (hunts_store(read) / notes(read)).",
+        "  Target-knowledge loop (Q9): against the materialised unit (projection "
+        "+ surface), if you lack enough technical knowledge of this unit to "
+        "concretise the abstract fault at this locus, query the attack-surface / "
+        "L1 graph via graph_view, iterating until sufficient.",
+        "  Hypothesis elicitation (Q8): for each unit above, elicit one or more "
+        "vulnerability classes - at the grain of a web-vulnerability CLASS with "
+        "a research-direction rationale (e.g. CSRF, IDOR) - never narrowed to a "
+        "surface locale, payload profile, vector, or symptom; the narrowing "
+        "belongs to the hunting agent at spec-writing.",
+        "  Same-class merge (Q16): if multiple elicited vulnerability classes at "
+        "one locus are the SAME web-vulnerability class, merge them into one; "
+        "only fundamentally discriminable classes survive as distinct configs. "
+        "Pure LLM reflection - no module-side parsing.",
+        "  The hypothesise write (spec 3.3): call hunts_store(write, config, "
+        "status='hypothesised') with ONE draft per surviving class, carrying "
+        "rationale + research_direction ONLY. The capability/assumption/"
+        "technique-primitive analysis is the RATIFICATION phase's work (the next "
+        "phase) - never filled at this hypothesise turn.",
+        "",
+        "Return one direction per candidate: set carried true/false, and for a "
+        "carried direction fill rationale, research_direction, and "
+        "vulnerability_classes ONLY. The capabilities / assumptions / "
+        "technique-primitives are the RATIFICATION phase's work (a later "
+        "phase) - never a seed you fill at this hypothesise turn.",
+    ]
+    return "\n".join(lines)
+
+
+def _compose_ratify_prompt(inp: PhaseTurnInput) -> str:
+    """Render the RATIFY-phase input (spec 3.2, re-scoped by #167): the pair
+    and the hypothesised drafts it may update/delete/create. The phase
+    transitions ride the tool-call responses (NEXT_RATIFY_HINT on the
+    hypothesised write, ONLY NEXT_NOTE_HINT on the ratified write - G1), never
+    this prompt: the prompt carries the pair data and the ratification
+    contract (must END with a status='ratified' write carrying the filled
+    capabilities / assumptions / technique-primitives)."""
+    pair = inp.pair
+    lines = [
+        f"RATIFICATION phase (pair {pair.unit_id}::{pair.fault_class}):",
+        f"Hypothesised drafts to ratify: {len(inp.configs)}",
+    ]
+    for config in inp.configs:
+        template = config.prompt_template
+        lines += [
+            f"  - config {config.hunt_id} "
+            f"[vulnerability_class={config.vulnerability_class!r}, "
+            f"status={config.status!r}]",
+            f"    rationale: {template.rationale or '(none)'}",
+            f"    research_direction: {template.research_direction or '(none)'}",
         ]
     lines += [
         "",
-        f"Read-only graph surface (index cards): {inp.surface or '(none)'}",
+        "Ratification contract: you may call hunts_store(write, config) "
+        "multiple times to update/delete/create configs. End ratification by a "
+        "hunts_store write carrying status='ratified' and, very likely, the "
+        "filled adversarial_capabilities / assumptions / technique_primitives. "
+        "A config you delete during ratification is written status='dropped' "
+        "(it stays on disk, G6).",
         "",
-        "Return one direction per candidate: set carried true/false, and for a "
-        "carried direction fill rationale, assumptions, envisioned_test_primitives, "
-        "and supposed_payload_vectors.",
+        "Return the pair's configs at their final status.",
+    ]
+    return "\n".join(lines)
+
+
+def _compose_note_prompt(inp: PhaseTurnInput) -> str:
+    """Render the NOTE-phase input (spec 3.2/G8, re-scoped by #167): the pair
+    and its ratified configs. The note-taking verbatim rides the ratified
+    write's tool-call response (NEXT_NOTE_HINT, G1) and the pair-end verbatim
+    rides the notes tool's response (NEXT_PAIR_HINT + next pair) - this prompt
+    carries the pair data and the G8 note contract only."""
+    pair = inp.pair
+    lines = [
+        f"NOTE phase (pair {pair.unit_id}::{pair.fault_class}):",
+        f"Ratified configs to note: {len(inp.configs)}",
+    ]
+    for config in inp.configs:
+        template = config.prompt_template
+        lines += [
+            f"  - config {config.hunt_id} "
+            f"[vulnerability_class={config.vulnerability_class!r}]",
+            f"    rationale: {template.rationale or '(none)'}",
+            f"    research_direction: {template.research_direction or '(none)'}",
+        ]
+    lines += [
+        "",
+        "Note contract (G8): write ONE note per config covering ALL the "
+        "decisions that concern it - the observations drawn from your tool "
+        "calls (graph_view or memory reads) that drove the rationale on all "
+        "choices - more detailed than the config's rationale and walking the "
+        "reasoning that yielded it.",
+        "",
+        "Return the notes, each keyed to its config.",
     ]
     return "\n".join(lines)
 

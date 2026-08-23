@@ -12,7 +12,6 @@ import pytest
 from polymerhus.attack.hunting import runtime as hunting_runtime
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
-    DispatchResult,
     OrchestratorTools,
     ReadOnlyGraphView,
     Witness,
@@ -40,6 +39,40 @@ def _tools(store) -> OrchestratorTools:
     )
 
 
+def _phase_seams():
+    """The three fixture phase seams: hypothesise carries the pair with one
+    CSRF class, ratify amends the drafts to ratified, note writes one note."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        EnvisionedDirection,
+        GateDecision,
+        NoteDecision,
+        NoteRecord,
+        RatifyDecision,
+        revival_key,
+    )
+
+    def hypothesise(inp):
+        return GateDecision(directions=[EnvisionedDirection(
+            unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
+            rationale="r", research_direction="rd",
+            vulnerability_classes=["CSRF"]) for c in inp.candidates])
+
+    def ratify(inp):
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
+
+    def note(inp):
+        return NoteDecision(notes=[NoteRecord(
+            key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
+            note="fixture note")])
+
+    return hypothesise, ratify, note
+
+
 class _FakePg:
     """The fake pg accessors: mint a deterministic hunting_run_id, record every
     status write in order, and fail on demand (the seam's fail-open paths)."""
@@ -64,20 +97,15 @@ class _FakePg:
 
 def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
     """The entry point opens the run `running`, runs an orchestration pass
-    (here: one candidate, the fixture dispatch), and lands `complete`."""
+    (here: one candidate, the fixture phase seams), and lands `complete`."""
     fake = _FakePg()
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
 
-    def dispatch(config, routed=()):
-        return DispatchResult(
-            spec_ref="spec-1", pod_result_ref="pod-1",
-            hypothesis_verdict="successful", feedback="ok",
-        )
-
+    h, r, n = _phase_seams()
     hid = asyncio.run(hunting_runtime.start_hunting(
         "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
-        dispatch_fn=dispatch,
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
     ))
 
     assert hid == "rt-hunt-0001"
@@ -87,8 +115,8 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
 def test_default_tools_ground_on_the_fixed_store_root():
     """With no tools injected the entry point builds the seam defaults: the
     HuntStore at the FIXED seam root and the read-only graph view."""
-    assert HUNT_STORE_ROOT.name == "hunts"
-    assert HUNT_STORE_ROOT.parent.name == "data"
+    assert HUNT_STORE_ROOT.name == "data"
+    assert HUNT_STORE_ROOT.parent.name == "hunting"
     store = HuntStore()
     assert store._root == HUNT_STORE_ROOT
 
@@ -134,15 +162,10 @@ def test_pinned_run_id_keys_the_run(tmp_path, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
 
-    def dispatch(config, routed=()):
-        return DispatchResult(
-            spec_ref="spec-1", pod_result_ref="pod-1",
-            hypothesis_verdict="successful", feedback="ok",
-        )
-
+    h, r, n = _phase_seams()
     hid = asyncio.run(hunting_runtime.start_hunting(
         "rt-project", run_id="pinned-run", candidates=[_candidate()],
-        tools=_tools(HuntStore(tmp_path)), dispatch_fn=dispatch,
+        tools=_tools(HuntStore(tmp_path)), hypothesise_fn=h, ratify_fn=r, note_fn=n,
     ))
     assert hid == "pinned-run"
 
@@ -233,15 +256,10 @@ def test_hunting_pg_calls_offload_via_asyncio_to_thread(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hunting_runtime.asyncio, "to_thread", spied_to_thread)
 
-    def dispatch(config, routed=()):
-        return DispatchResult(
-            spec_ref="spec-1", pod_result_ref="pod-1",
-            hypothesis_verdict="successful", feedback="ok",
-        )
-
+    h, r, n = _phase_seams()
     hid = asyncio.run(hunting_runtime.start_hunting(
         "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
-        dispatch_fn=dispatch,
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
     ))
     asyncio.run(hunting_runtime.stop_hunting(hid))
 
@@ -326,12 +344,13 @@ def test_cancel_hunting_is_a_safe_no_op_with_no_active_run():
 # the run_orchestration sync lane still works through the module boundaries
 def test_explicit_root_store_trail_is_written(tmp_path):
     store = HuntStore(tmp_path)
+    h, r, n = _phase_seams()
     report = run_orchestration(
         "rt-project", "run-rt", [_candidate()], _tools(store),
-        dispatch_fn=lambda config, routed=(): DispatchResult(
-            spec_ref="s", pod_result_ref="p", hypothesis_verdict="successful",
-            feedback="ok",
-        ),
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
     )
-    assert report.hunts_dispatched == 1
-    assert len(store.list_records("run-rt", "hunt")) == 1
+    assert report.pairs_processed == 1
+    assert report.configs_ratified == 1
+    # the per-project topology: the ratified config lands in produced/
+    assert len(store.read_configs("rt-project")) == 1
+    assert len(store.read_notes("rt-project")) == 1

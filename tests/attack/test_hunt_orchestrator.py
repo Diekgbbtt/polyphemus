@@ -3,60 +3,89 @@ behaviours the catalogue pins only at the integration/e2e tiers.
 
 Pure mechanics: candidate intake (dedup by identity, malformed drop, the
 deterministic does-not-apply prune), the revival key, and the D3 HuntConfig
-minting. Seam behaviours: the park/resume positive path (H3), the store-read
-degradation (O4), the graph-view degradation (O5), the back-edge status
-vocabulary (IA-6), the gate fail-open (D67-11 spirit), and the rematch
-fail-open. The hunt store and the graph view are MOCKED (no live Neo4j, no
-live LLM - testing-strategy.md section 2); the catalogue predicates C1-C12 live
-in tests/integration/test_hunt_orchestrator_contracts.py and are never
-repeated in this tier's red/green loop.
+minting. Seam behaviours: the store-read degradation (O4), the graph-view
+degradation (O5), the hypothesise fail-open (a raising turn carries the pair
+bare), the ratify fail-open (a raising turn keeps the drafts hypothesised),
+the note fail-open (a raising turn skips the note), and the gate-pruned
+no-write path. The hunt store and the graph view are MOCKED (no live Neo4j, no
+live LLM - testing-strategy.md section 2); the catalogue predicates live in
+tests/integration and are never repeated in this tier's red/green loop.
 """
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
-    DispatchResult,
     EnvisionedDirection,
     GateDecision,
-    MatchVerdict,
+    NoteDecision,
+    NoteRecord,
     OrchestratorReport,
     OrchestratorTools,
+    RatifyDecision,
     ReadOnlyGraphView,
     Witness,
-    build_back_edge_request,
     mint_hunt_config,
     normalize_candidates,
     revival_key,
     run_orchestration,
 )
-from polymerhus.recon.control.targeted import TargetedReconResult
 
 SERVICE_A = "Service:slug:a"
 FAULT_X = "fault-x"
 
 
 class _MemoryStore:
-    """The mocked hunt store: in-memory, append-only, fail-open reads."""
+    """The mocked per-project memory store: in-memory configs + notes,
+    fail-open reads, mirroring the real store's surface (write_config /
+    update_config / append_note / read_configs_by_key / read_notes /
+    read_configs)."""
 
     def __init__(self, *, fail_reads: bool = False):
-        self._records: list[tuple[str, str, dict]] = []
-        self._seq = 0
+        self._configs: list[dict] = []
+        self._notes: list[dict] = []
         self.fail_reads = fail_reads
         self.read_attempts = 0
 
-    def append(self, run_id, kind, record):
-        self._seq += 1
-        stored = {"_seq": self._seq, "_ref": f"{run_id}/{kind}-{self._seq:03d}", **record}
-        self._records.append((run_id, kind, stored))
-        return stored["_ref"]
+    def write_config(self, project_id, config):
+        data = config.model_dump() if not isinstance(config, dict) else dict(config)
+        self._configs.append(data)
+        return f"{data.get('unit_id')}::{data.get('fault_class')}::{data.get('vulnerability_class')}"
 
-    def list_records(self, run_id, kind):
-        return [r for rid, k, r in self._records if rid == run_id and k == kind]
+    def update_config(self, project_id, config):
+        data = config.model_dump() if not isinstance(config, dict) else dict(config)
+        identity = (str(data.get("unit_id") or ""), str(data.get("fault_class") or ""),
+                    str(data.get("vulnerability_class") or ""))
+        for i, existing in enumerate(self._configs):
+            if (str(existing.get("unit_id") or ""), str(existing.get("fault_class") or ""),
+                    str(existing.get("vulnerability_class") or "")) == identity:
+                self._configs[i] = data
+                return "::".join(identity)
+        self._configs.append(data)
+        return "::".join(identity)
 
-    def read_memory(self, revival_key_):
+    def append_note(self, project_id, key, note):
+        self._notes.append({"revival_key": key, "note": note})
+        return {"note_id": f"n{len(self._notes)}", "revival_key": key, "note": note}
+
+    def read_configs_by_key(self, project_id, key):
         self.read_attempts += 1
         if self.fail_reads:
             raise OSError("store read failed (fixture)")
-        return [r for rid, k, r in self._records
-                if k == "memory" and r.get("revival_key") == revival_key_]
+        return [c for c in self._configs
+                if (str(c.get("unit_id") or "") + "::"
+                    + str(c.get("fault_class") or "")) == key
+                or (str(c.get("unit_id") or "") + "::"
+                    + str(c.get("fault_class") or "") + "::"
+                    + str(c.get("vulnerability_class") or "")) == key]
+
+    def read_notes(self, project_id, key=None):
+        self.read_attempts += 1
+        if self.fail_reads:
+            raise OSError("store read failed (fixture)")
+        if key is None:
+            return list(self._notes)
+        return [n for n in self._notes if n.get("revival_key") == key]
+
+    def read_configs(self, project_id):
+        return list(self._configs)
 
 
 def _candidate(unit_id: str = SERVICE_A, fault_class: str = FAULT_X, *,
@@ -74,31 +103,51 @@ def _carry(candidate: DeliveredCandidate) -> EnvisionedDirection:
     return EnvisionedDirection(
         unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=True,
         rationale="r", assumptions=["a"],
-        envisioned_test_primitives=["p"], supposed_payload_vectors=["v"],
+        envisioned_test_primitives=["p"],
     )
 
 
-def _tools(store, *, read_fn=None, back_edge=None) -> OrchestratorTools:
+def _ratify_drafts(inp) -> RatifyDecision:
+    """The default ratify seam: amend every draft to ratified with the filled
+    ratification fields (the fixture's ratification contract)."""
+    configs = []
+    for draft in inp.configs:
+        amended = draft.model_copy(deep=True)
+        amended.status = "ratified"
+        amended.adversarial_capabilities = ["forge a cross-origin request"]
+        amended.assumptions = ["the session is cookie-bound"]
+        amended.technique_primitives = ["token-missing probe"]
+        configs.append(amended)
+    return RatifyDecision(configs=configs)
+
+
+def _note_pair(inp) -> NoteDecision:
+    """The default note seam: one fixture note for the pair (the pair end)."""
+    return NoteDecision(notes=[NoteRecord(
+        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
+        note="fixture note: the reasoning that yielded the rationale",
+    )])
+
+
+def _tools(store, *, read_fn=None) -> OrchestratorTools:
     return OrchestratorTools(
-        back_edge=back_edge,
         store_reads=store,
         graph_view=ReadOnlyGraphView("project-1", read_fn=read_fn or (lambda cy, p: [])),
     )
 
 
-def _run(store, candidates, *, reason_fn=None, rematch=None, **kwargs) -> OrchestratorReport:
+def _run(store, candidates, *, hypothesise=None, ratify=None, note=None,
+         **kwargs) -> OrchestratorReport:
     tools = kwargs.pop("tools", None) or _tools(store)
     return run_orchestration(
         project_id="project-1",
         run_id="run-1",
         candidates=candidates,
         tools=tools,
-        dispatch_fn=lambda config, routed=(): DispatchResult(
-            spec_ref="spec-1", pod_result_ref="pod-1",
-            hypothesis_verdict="successful", feedback="ok",
-        ),
-        rematch_fn=rematch or (lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies")),
-        reason_fn=reason_fn or (lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates])),
+        hypothesise_fn=hypothesise or (
+            lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates])),
+        ratify_fn=ratify or _ratify_drafts,
+        note_fn=note or _note_pair,
         **kwargs,
     )
 
@@ -150,35 +199,43 @@ def test_does_not_apply_is_pruned_and_never_reaches_the_gate():
     gate_inputs: list = []
     cand = _candidate(verdict="does-not-apply", deterministic_witness="clause 3 FALSE")
 
-    def reason_fn(inp):
+    def hypothesise_fn(inp):
         gate_inputs.append(inp.candidates)
         return GateDecision(directions=[])
 
-    report = _run(store, [cand], reason_fn=reason_fn)
+    report = _run(store, [cand], hypothesise=hypothesise_fn)
     assert report.pruned_by_verdict == 1
-    assert report.hunts_dispatched == 0
-    assert gate_inputs == []  # a pruned-only pass never spends a gate turn
+    assert report.pairs_processed == 0
+    assert report.configs_hypothesised == 0
+    assert gate_inputs == []  # a pruned-only pass never spends a hypothesise turn
 
 
 # --- Pure mechanics: the D3 HuntConfig minting --------------------------------
 
-def test_mint_hunt_config_carries_the_five_part_parameter_set():
+def test_mint_hunt_config_mints_a_hypothesised_draft():
+    # the rework (spec 3.5): a direction with no elicited vulnerability classes
+    # degrades to ONE carried-bare draft - status="hypothesised", rationale +
+    # research_direction filled, the ratification-phase fields empty
     candidate = _candidate(deterministic_witness=None)
     config = mint_hunt_config(
         direction=_carry(candidate), candidate=candidate, hunt_id="hunt-1",
         surface_context={"card": {"kind": "Service", "spine": {}}},
         prior_hunt_insights=[{"insight": "form Z carries no CSRF token"}],
         tool_registry=[{"tool": "csrf-probe"}],
-    )
+    )[0]
     assert config.hunt_id == "hunt-1"
     assert config.unit_id == SERVICE_A
     assert config.fault_class == FAULT_X
+    assert config.status == "hypothesised"
+    assert config.vulnerability_class == ""
     template = config.prompt_template
     assert template.rationale == "r"
-    assert template.extension_points == ["p"]
-    assert template.assumptions == ["a"]
-    assert template.supposed_payload_vectors == ["v"]
+    assert template.research_direction == ""
     assert template.l0_evidence == ["llm: witness"]
+    # the ratification-phase fields are empty in the hypothesised draft
+    assert config.adversarial_capabilities == []
+    assert config.assumptions == []
+    assert config.technique_primitives == []
     assert config.surface_context["card"]["kind"] == "Service"
     assert config.target_caveats == []
     assert config.prior_hunt_insights == [{"insight": "form Z carries no CSRF token"}]
@@ -196,30 +253,219 @@ def test_hunt_config_carries_the_sub_fault_ids_slot():
         surface_context={},
         prior_hunt_insights=[],
         tool_registry=[],
-    )
+    )[0]
     config.sub_fault_ids = ["CWE-24", "CWE-35"]
     assert config.sub_fault_ids == ["CWE-24", "CWE-35"]
 
 
-# --- Seam behaviours: park/resume (H3) ----------------------------------------
+# --- The risk-descending schedule (the fault_risk policy) -----------------------
 
-def test_park_resume_positive_path_dispatches_after_rematch():
+def test_schedule_processes_the_riskiest_fault_first():
+    """The per-fault schedule is re-sorted RISK-DESCENDING (operator tiers,
+    `fault_risk.risk_tier`): an intake that first emitted a residual-tier
+    fault still reasons about the broken-access-control fault first - the
+    supervisor pops its pair before the residual tier's."""
     store = _MemoryStore()
-    seen: list = []
-    yellow = _candidate(verdict="insufficient-evidence")
+    reason_order: list[str] = []
 
-    def back_edge(request, run_id, project_id):
-        seen.append(request)
-        return TargetedReconResult(
-            correlation_id=request.correlation_id, requester_id=request.requester_id,
-            origin="hunting", status="success",
-        )
+    def hypothesise_fn(inp):
+        reason_order.append(inp.candidates[0].fault_class)
+        return GateDecision(directions=[_carry(c) for c in inp.candidates])
 
-    report = _run(store, [yellow], tools=_tools(store, back_edge=back_edge))
-    assert report.hunts_dispatched == 1
-    assert len(seen) == 1
-    assert len(store.list_records("run-1", "back_edge")) == 1
-    assert report.unresolved == ()
+    report = _run(
+        store,
+        [_candidate(SERVICE_A, "CWE-601"),   # open redirect, tier 4, FIRST
+         _candidate(SERVICE_A, "CWE-639")],  # IDOR, tier 0, SECOND
+        hypothesise=hypothesise_fn,
+    )
+    assert report.pairs_processed == 2
+    assert report.configs_ratified == 2
+    assert reason_order == ["CWE-639", "CWE-601"]
+
+
+def test_mint_fans_out_one_config_per_distinct_class():
+    # N HuntConfigs per distinct elicited vulnerability class (the emitted
+    # set): the class is the config's identity axis (spec 3.5 / ADR G5)
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.vulnerability_classes = ["csrf", "idor", "ssti"]
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+        sub_fault_ids=["CWE-520", "CWE-9"],
+    )
+    assert len(configs) == 3
+    # each config carries its own class as the identity axis
+    assert [c.vulnerability_class for c in configs] == ["csrf", "idor", "ssti"]
+    # every fan-out config is a hypothesised draft
+    assert all(c.status == "hypothesised" for c in configs)
+    assert all(c.prompt_template.rationale == "r" for c in configs)
+    # the seeding identity persists on every fan-out config
+    assert {c.unit_id for c in configs} == {SERVICE_A}
+    assert {c.fault_class for c in configs} == {FAULT_X}
+    # sub_fault_ids feeds EACH class-config (the fold family, #66 non-conflation)
+    assert all(c.sub_fault_ids == ["CWE-520", "CWE-9"] for c in configs)
+
+
+def test_mint_collapses_same_class_duplicates_deterministically():
+    # the (LLM-owned, Q16) same-class merge should already have removed
+    # duplicates; the mint still collapses same-class emissions into one
+    # config, keeping first-emission order
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.vulnerability_classes = ["csrf", "csrf", "idor"]
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+    )
+    assert len(configs) == 2
+    assert [c.vulnerability_class for c in configs] == ["csrf", "idor"]
+
+
+def test_mint_without_classes_is_the_carried_bare_fallback():
+    # a direction with no elicited class markers still mints ONE dispatchable
+    # hypothesised draft with research_direction (no class-specific identity)
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.research_direction = "csrf hygiene across state-changing flows"
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+    )
+    assert len(configs) == 1
+    config = configs[0]
+    assert config.hunt_id == "hunt-1"
+    assert config.vulnerability_class == ""
+    assert config.prompt_template.research_direction == \
+        "csrf hygiene across state-changing flows"
+    assert config.status == "hypothesised"
+
+
+def test_mint_with_only_empty_classes_is_the_carried_bare_fallback():
+    # class strings carrying no marker degrade the same way (fail-open)
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.vulnerability_classes = ["", ""]
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+    )
+    assert len(configs) == 1
+    assert configs[0].vulnerability_class == ""
+
+
+def test_mint_passes_research_direction_and_preserves_the_identity_slots():
+    # the reworked template mapping: research_direction passes through, the
+    # class identity rides each fan-out config, and the ratification-phase
+    # fields stay empty on the hypothesised draft
+    direction = _carry(_candidate(deterministic_witness=None))
+    direction.research_direction = "enumerating the receipts resource"
+    direction.vulnerability_classes = ["idor", "csrf"]
+    configs = mint_hunt_config(
+        direction=direction, candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+    )
+    assert [c.hunt_id for c in configs] == ["hunt-1", "hunt-1-1"]
+    assert [c.vulnerability_class for c in configs] == ["idor", "csrf"]
+    for config in configs:
+        template = config.prompt_template
+        assert template.rationale == "r"
+        assert template.l0_evidence == ["llm: witness"]
+        assert template.research_direction == "enumerating the receipts resource"
+        assert config.status == "hypothesised"
+        assert config.adversarial_capabilities == []
+        assert config.assumptions == []
+        assert config.technique_primitives == []
+
+
+def test_surface_context_replaces_edge_degree_with_connected_data_items():
+    """The config surface-context transform (ADR G5): a Service card's
+    edge_degree counts are replaced by the detailed connected DataItems
+    (name/type/sensitivity/fields/notes) from the unit's rich projection;
+    an absent projection, a non-matching card, or a malformed card degrades
+    unchanged (fail-open)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        _surface_cards_with_connected_data_items,
+    )
+    from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
+        DataItem,
+        UnitProjection,
+    )
+
+    card = {
+        "kind": "Service",
+        "key": {"business_function_slug": "a"},
+        "edge_degree": {"EXPOSED_VIA": 1, "CONSUMES": 1},
+        "spine": {"exposure": "public"},
+    }
+    proj = UnitProjection(
+        unit_id="Service:a", kind="Service", spine={}, edges={},
+        data_edges={"CONSUMES": 1}, data_rel_kinds=frozenset(),
+        data_items={
+            "CONSUMES": (
+                DataItem(item_key="session_token", name="session token", type="secret",
+                         sensitivity="high", fields=("sid",), notes="session-bound"),
+            ),
+            "PRODUCES": (
+                DataItem(item_key="order", name="order", type="record",
+                         sensitivity="medium", fields=("id",), notes="order record"),
+            ),
+        },
+    )
+    cards = _surface_cards_with_connected_data_items([card], proj)
+    transformed = cards[0]
+    assert "edge_degree" not in transformed
+    # families render sorted (render determinism, M1)
+    assert list(transformed["connected_data_items"]) == ["CONSUMES", "PRODUCES"]
+    assert transformed["connected_data_items"]["CONSUMES"] == [
+        {"name": "session token", "type": "secret", "sensitivity": "high",
+         "fields": ["sid"], "notes": "session-bound"},
+    ]
+    assert transformed["spine"] == {"exposure": "public"}  # rest of the card kept
+    # a non-matching card degrades to its counts card
+    other = {"kind": "System", "key": {"kind": "cache", "discriminator": "1"},
+             "edge_degree": {"DEPENDS_ON": 2}}
+    assert _surface_cards_with_connected_data_items([other], proj) == [other]
+    # an absent projection degrades to the counts card (fail-open)
+    assert _surface_cards_with_connected_data_items([card], None) == [card]
+    # a projection whose unit does not match the card degrades to the counts card
+    other_proj = UnitProjection(
+        unit_id="Service:slug:b", kind="Service", spine={}, edges={},
+        data_edges={}, data_rel_kinds=frozenset(),
+        data_items={"PRODUCES": (DataItem(item_key="k", name="x"),)},
+    )
+    assert _surface_cards_with_connected_data_items([card], other_proj) == [card]
+    # a malformed card (a non-dict element) degrades unchanged, never a raise
+    malformed = ["not-a-dict"]
+    assert _surface_cards_with_connected_data_items(malformed, proj) == malformed
+    # a Service card whose key is not a dict degrades unchanged, never a raise
+    broken_key = {"kind": "Service", "key": "not-a-dict",
+                  "edge_degree": {"EXPOSED_VIA": 1}}
+    assert _surface_cards_with_connected_data_items([broken_key], proj) == [broken_key]
+
+
+def test_fanned_out_direction_ratifies_each_config_and_notes_the_pair():
+    # the hypothesise fan-out lands one draft per distinct class; the ratify
+    # phase amends them to ratified; the note phase writes one note for the pair
+    store = _MemoryStore()
+
+    def hypothesise_fn(inp):
+        direction = _carry(inp.candidates[0])
+        direction.vulnerability_classes = ["csrf class", "idor class"]
+        return GateDecision(directions=[direction])
+
+    report = _run(store, [_candidate()], hypothesise=hypothesise_fn)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 2
+    assert report.configs_ratified == 2
+    assert report.notes_written == 1
+    # the memory topology: two ratified configs in produced/ (one per distinct
+    # class), one note in memory.yaml (one per pair)
+    configs = store.read_configs("project-1")
+    assert len(configs) == 2
+    assert all(c["status"] == "ratified" for c in configs)
+    assert len(store.read_notes("project-1")) == 1
 
 
 # --- Seam behaviours: fail-open degradations ----------------------------------
@@ -227,7 +473,7 @@ def test_park_resume_positive_path_dispatches_after_rematch():
 def test_store_read_failure_degrades_prior_insights(caplog):
     store = _MemoryStore(fail_reads=True)
     report = _run(store, [_candidate()])
-    assert report.hunts_dispatched == 1
+    assert report.pairs_processed == 1
     assert store.read_attempts >= 1
     assert "warning" in caplog.text.lower()
 
@@ -240,63 +486,64 @@ def test_graph_view_query_failure_degrades_the_gate(caplog):
 
     seen: dict = {}
 
-    def reason_fn(inp):
+    def hypothesise_fn(inp):
         seen["surface"] = inp.surface
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
     report = _run(store, [_candidate()], tools=_tools(store, read_fn=broken_read),
-                  reason_fn=reason_fn)
-    assert report.hunts_dispatched == 1
+                  hypothesise=hypothesise_fn)
+    assert report.pairs_processed == 1
+    assert report.configs_ratified == 1
     assert seen["surface"] == []
     assert "warning" in caplog.text.lower()
 
 
-def test_errored_back_edge_is_folded_into_the_evidence_trail():
-    store = _MemoryStore()
-    yellow = _candidate(verdict="insufficient-evidence")
-
-    def failing_back_edge(request, run_id, project_id):
-        return TargetedReconResult(
-            correlation_id=request.correlation_id, requester_id=request.requester_id,
-            origin="hunting", status="error", error="probe blew up",
-        )
-
-    report = _run(store, [yellow], tools=_tools(store, back_edge=failing_back_edge))
-    records = store.list_records("run-1", "back_edge")
-    assert len(records) == 1
-    assert records[0]["status"] == "error"
-    assert records[0]["error"] == "probe blew up"
-    assert report.unresolved == ()
-
-
-def test_reason_turn_failure_carries_all_directions(caplog):
+def test_hypothesise_turn_failure_carries_the_pair_bare(caplog):
     store = _MemoryStore()
 
     def boom(inp):
-        raise RuntimeError("reasoning turn exhausted")
+        raise RuntimeError("hypothesise turn exhausted")
 
-    report = _run(store, [_candidate()], reason_fn=boom)
-    assert report.hunts_dispatched == 1
+    report = _run(store, [_candidate()], hypothesise=boom)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 1     # the carried-bare draft
+    assert report.configs_ratified == 1
     assert "warning" in caplog.text.lower()
 
 
-def test_rematch_failure_degrades_to_unresolved(caplog):
+def test_ratify_turn_failure_keeps_the_drafts_hypothesised(caplog):
+    """The ratify phase degrades fail-open: a raising ratify turn skips the
+    phase's side effect - the hypothesised drafts stay on disk, never become
+    ratified - but the pair keeps serving (the note phase still runs)."""
     store = _MemoryStore()
-    yellow = _candidate(verdict="insufficient-evidence")
 
-    def boom(unit_id, fault_class, result):
-        raise RuntimeError("re-match exhausted")
+    def boom(inp):
+        raise RuntimeError("ratify turn exhausted")
 
-    report = _run(store, [yellow], rematch=boom,
-                  tools=_tools(store, back_edge=lambda req, r, p: TargetedReconResult(
-                      correlation_id=req.correlation_id, requester_id=req.requester_id,
-                      origin="hunting", status="success")))
-    assert report.hunts_dispatched == 0
-    assert report.unresolved == (revival_key(SERVICE_A, FAULT_X),)
+    report = _run(store, [_candidate()], ratify=boom)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 1
+    assert report.configs_ratified == 0
+    assert store.read_configs("project-1")[0]["status"] == "hypothesised"
     assert "warning" in caplog.text.lower()
 
 
-def test_gate_pruned_direction_is_not_dispatched():
+def test_note_turn_failure_skips_the_note(caplog):
+    """The note phase degrades fail-open: a raising note turn skips the note's
+    side effect (no note lands) but the pass still completes."""
+    store = _MemoryStore()
+
+    def boom(inp):
+        raise RuntimeError("note turn exhausted")
+
+    report = _run(store, [_candidate()], note=boom)
+    assert report.pairs_processed == 1
+    assert report.notes_written == 0
+    assert store.read_notes("project-1") == []
+    assert "warning" in caplog.text.lower()
+
+
+def test_gate_pruned_direction_writes_no_config():
     store = _MemoryStore()
     cand = _candidate()
 
@@ -306,23 +553,12 @@ def test_gate_pruned_direction_is_not_dispatched():
             EnvisionedDirection(unit_id=direction.unit_id, fault_class=direction.fault_class,
                                 carried=False)])
 
-    report = _run(store, [cand], reason_fn=pruning_gate)
-    assert report.hunts_dispatched == 0
+    report = _run(store, [cand], hypothesise=pruning_gate)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 0
+    assert report.notes_written == 0
     assert report.gate_pruned == (revival_key(SERVICE_A, FAULT_X),)
-
-
-# --- Seam behaviours: the back-edge request shape (IA-6) ----------------------
-
-def test_back_edge_request_builds_origin_hunting():
-    request = build_back_edge_request(
-        SERVICE_A, FAULT_X, requester_id="hunt-orchestrator-1",
-        note="yellow match: insufficient evidence of exposure",
-    )
-    assert request.origin == "hunting"
-    assert request.requester_id == "hunt-orchestrator-1"
-    assert request.scope.unit_id == SERVICE_A
-    assert request.correlation_id
-    assert "insufficient evidence" in request.scope.note
+    assert store.read_configs("project-1") == []
 
 
 # --- The async-native parent entry point (#94) --------------------------------
@@ -336,11 +572,10 @@ def _arun(store, candidates, **kwargs):
     return asyncio.run(arun_orchestration(
         project_id="project-1", run_id="run-1", candidates=candidates,
         tools=_tools(store),
-        dispatch_fn=lambda config, routed=(): DispatchResult(
-            spec_ref="spec-1", pod_result_ref="pod-1",
-            hypothesis_verdict="successful", feedback="ok"),
-        rematch_fn=lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies"),
-        reason_fn=lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        hypothesise_fn=lambda inp: GateDecision(
+            directions=[_carry(c) for c in inp.candidates]),
+        ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
         **kwargs,
     ))
 
@@ -351,13 +586,9 @@ def test_arun_orchestration_matches_the_sync_pass():
     running `run_orchestration` off the event loop, never re-implementing it."""
     sync_report = _run(_MemoryStore(), [_candidate()])
     async_report = _arun(_MemoryStore(), [_candidate()])
-    # `hunt_ids` are random uuids (one per dispatch), so compare everything else
-    # verbatim and the hunt_ids by COUNT - the pass shape must be identical.
-    drop = {"hunt_ids"}
-    assert ({k: v for k, v in async_report.model_dump().items() if k not in drop}
-            == {k: v for k, v in sync_report.model_dump().items() if k not in drop})
-    assert len(async_report.hunt_ids) == len(sync_report.hunt_ids) == 1
-    assert async_report.hunts_dispatched == 1
+    assert async_report.model_dump() == sync_report.model_dump()
+    assert async_report.pairs_processed == 1
+    assert async_report.configs_ratified == 1
 
 
 def test_arun_orchestration_does_not_block_the_event_loop():
@@ -382,15 +613,47 @@ def test_arun_orchestration_does_not_block_the_event_loop():
         report = await arun_orchestration(
             project_id="project-1", run_id="run-1", candidates=[_candidate()],
             tools=_tools(_MemoryStore()),
-            dispatch_fn=lambda config, routed=(): DispatchResult(
-                spec_ref="s", pod_result_ref="p",
-                hypothesis_verdict="successful", feedback="ok"),
-            rematch_fn=lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies"),
-            reason_fn=lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+            hypothesise_fn=lambda inp: GateDecision(
+                directions=[_carry(c) for c in inp.candidates]),
+            ratify_fn=_ratify_drafts,
+            note_fn=_note_pair,
         )
         await beat
         return report, ticks
 
     report, ticks = asyncio.run(_drive())
-    assert report.hunts_dispatched == 1
+    assert report.pairs_processed == 1
     assert ticks == 50  # the loop kept ticking while the pass ran off-loop
+
+
+# --- I3: prior_hunt_insights never embed nested configs (no snowball) ---------
+
+def test_prior_hunt_insights_never_embed_nested_configs():
+    """I3 - the recursive prior_hunt_insights snowball is broken: a minted
+    config's prior_hunt_insights carries a shallow PROJECTION of each prior
+    config (identity + hypothesise seeds), never the full dump - so a persisted
+    config never embeds another config's prior_hunt_insights (the nesting
+    would grow unbounded across passes)."""
+    store = _MemoryStore()
+    # pass N-1's persisted config carried ITS prior-hunt insights (the old
+    # full-dump merge); the projection must strip that baggage
+    store.write_config("project-1", {
+        "unit_id": SERVICE_A, "fault_class": FAULT_X,
+        "vulnerability_class": "CSRF", "status": "hypothesised",
+        "hunt_id": "prior",
+        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+        "prior_hunt_insights": [{"unit_id": "ancient"}],
+    })
+    report = _run(store, [_candidate()])
+    assert report.pairs_processed == 1
+    minted = [c for c in store.read_configs("project-1")
+              if c.get("hunt_id") != "prior"]
+    assert len(minted) == 1
+    insights = minted[0]["prior_hunt_insights"]
+    assert insights, "the second pass should have read the prior config as an insight"
+    # never a nested prior_hunt_insights key (the snowball is cut)
+    for insight in insights:
+        assert "prior_hunt_insights" not in insight
+    # the projection keeps the identity + hypothesise seeds for the Q11 read
+    assert any(i.get("unit_id") == SERVICE_A and i.get("fault_class") == FAULT_X
+               for i in insights)

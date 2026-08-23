@@ -1,4 +1,5 @@
-"""The sound unit-projection reader (#63, spec section 2.2).
+"""The sound unit-projection reader (#63, spec section 2.2; candidates-rewrite
+spec section 3.6).
 
 The unit projection is EXACTLY the unit's typed facets: the index-card spine
 (key presence), the one-hop typed neighbour surface (per-family outgoing
@@ -8,31 +9,36 @@ among the unit's items). Absence is not-yet-filled (the L1 convention): a
 family with no edges simply has no entry - never a zero marker - so the
 evaluation stage maps it to UNKNOWN (default-open), never FALSE (C12-b).
 
+The candidates-rewrite (3.6) rebuilds this from the thin facet surface to the
+RICH typed projection the L1 schema already supports: PRODUCES/CONSUMES edges
+explode to the full DataItem node list (every property, not counts), each
+outgoing Service->System edge unpacks its target System fully (kind,
+discriminator, exposure, and the raw non-identity props), connected DataItems
+resolve their relationship edges VERBATIM as kind chains (the edge type IS the
+kind, L1D-13), and System units surface the System-to-System adjacency (D3):
+their cooperating systems over the §6 System-edge families in both directions.
+The legacy facet names (`kind`, `spine`, `edges`, `data_edges`,
+`data_rel_kinds`) are unchanged so the predicate and consumers compile and pass
+unchanged; the rich slots are additive.
+
 The reader is pure mapping over the injectable raw read seam
 (`(cypher, params) -> list[dict]`, the `neo4j_client.read` contract), resolved
 lazily on first call like every read seam in this codebase (CODING_STANDARD
-section 6). The analysis read seams (`index_cards`, `dfs_down`,
-`index_card.py:86-115`) do NOT surface per-edge target kinds or rel props,
-which the grammar's `reachable-via(family, {kind}, role?)` facet ranges over
-(L1D-21 sub-granularity rides on edge props), so this reader is its own
-read-only hop in the hunting context - it never writes (section 4: the L1
-store's sole-writer is untouched).
-
-Traversal-then-fetch, one unit at a time: ONE read for the unit row plus its
-outgoing edges, ONE for the DataRelationship kinds among the unit's items
-(both endpoints restricted to the unit's items - "among the unit's items").
-The System-to-Services inverse hop (D3) does not exist yet; System units
-therefore surface no outgoing edges, which is the honest typed surface of the
-current L1 (spec section 3, D3).
+section 6). Traversal-then-fetch, one unit at a time: one read for the unit
+row + its outgoing edges, one for the DataRelationship kind chains among the
+unit's items, and (System units only) one for the D3 cooperating-systems
+adjacency. Every rich slot degrades independently to empty (never a raise,
+never a prune signal - the #63/135 fail-open discipline).
 """
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Mapping
 
 from polymerhus.analysis.index_card import _SPINE_KEYS
 from polymerhus.analysis.l1_curator import (
     DATA_RELATIONSHIP_KINDS,
+    SYSTEM_EDGE_RELS,
     _DATA_FLOW_RELS,
 )
 
@@ -40,6 +46,9 @@ from polymerhus.analysis.l1_curator import (
 # the kind, single-sourced per L1D-13/L1OP-2).
 _DATA_REL_EDGE_TYPES = frozenset(k.upper() for k, _d in DATA_RELATIONSHIP_KINDS)
 _DATA_EDGE_FAMILIES = frozenset(_DATA_FLOW_RELS.values())  # PRODUCES / CONSUMES
+# The §6 System-edge families (L1D-18/L1D-21) the D3 cooperating-systems
+# adjacency ranges over, both directions.
+_SYSTEM_EDGE_RELS = frozenset(SYSTEM_EDGE_RELS)
 
 
 def _resolve_read_fn(read_fn):
@@ -50,27 +59,85 @@ def _resolve_read_fn(read_fn):
 
 
 @dataclass(frozen=True)
+class DataItem:
+    """A logical DataItem resolved from a PRODUCES/CONSUMES edge, every property
+    carried (candidates-rewrite 3.6 defect 3): the semantic `item_key` plus the
+    named trust slots when present (name/type/sensitivity, `fields`, `notes`)
+    and the full raw non-identity props. Absent slots stay None/empty - absence
+    is not-yet-filled, never a prune signal."""
+
+    item_key: str | None = None
+    name: str | None = None
+    type: str | None = None
+    sensitivity: str | None = None
+    fields: tuple[str, ...] = ()
+    notes: str | None = None
+    props: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
+class SystemInfo:
+    """A System unpacked from its L1 node (candidates-rewrite 3.6 defect 3): the
+    typed attributes the L1 System actually carries - `kind`, `discriminator`,
+    `exposure`, the NL `description` - plus the full raw non-identity props
+    (rendering_model / navigation_model / any trust-boundary facet the schema
+    carries). Absent props stay None (not-yet-filled, fail-open). For a D3
+    cooperating neighbor that is a served Service, kind=""Service"" and
+    discriminator carries the business_function_slug."""
+
+    kind: str = ""
+    discriminator: str | None = None
+    exposure: str | None = None
+    description: str | None = None
+    props: Mapping[str, object] = field(default_factory=dict)
+
+
+@dataclass(frozen=True)
 class EdgeInfo:
     """One outgoing typed edge: the family (e.g. EXPOSED_VIA), the target
-    System's kind, and the edge's role attribute presence (L1D-21 rides
-    sub-granularity on props; role is presence-only, never value-equal)."""
+    System's kind, the edge's role attribute presence (L1D-21 rides
+    sub-granularity on props; role is presence-only, never value-equal), and the
+    full target-System unpack (`target`, absent when the hop fell short)."""
 
     family: str
     target_kind: str | None
     role: str | None = None
+    target: SystemInfo | None = None
+
+
+@dataclass(frozen=True)
+class DataRelationship:
+    """One functional-dependency edge between two of the unit's DataItems
+    (L1D-13), resolved VERBATIM as a kind chain: `family` IS the edge type (the
+    uppercased kind), with the ordered endpoints (when the walk saw them) and
+    the machine-checkable predicate/rationale. Absent endpoint info stays None -
+    absence is fail-open."""
+
+    family: str
+    from_item_key: str | None = None
+    to_item_key: str | None = None
+    from_item: DataItem | None = None
+    to_item: DataItem | None = None
+    predicate: str | None = None
+    rationale: str | None = None
 
 
 @dataclass(frozen=True)
 class UnitProjection:
-    """The unit's typed facet surface (spec 2.2).
+    """The unit's typed facet surface (spec 2.2; rich slots per 3.6).
 
     `kind` is "Service" or a validated System kind. `spine` carries the PRESENT
-    spine keys only. `edges` is family -> outgoing Service->System edges
-    (empty for a System unit: the inverse hop D3 is unlanded). `data_edges` is
-    family -> count for PRODUCES/CONSUMES. `data_rel_kinds` is the
-    DataRelationship edge types among the unit's items. `diagnostics` records
-    malformation found at read time; the stage treats a projection carrying
-    diagnostics as suspect and passes it (never prunes on a bug).
+    spine keys only. `edges` is family -> outgoing Service->System edges (empty
+    for a System unit). `data_edges` is family -> count, `data_rel_kinds` the
+    DataRelationship edge types among the unit's items. The rich slots are
+    additive: `data_items` (family -> the full DataItem list of a data-flow
+    edge), `data_relationships` (the ordered kind chains among the unit's
+    items), and `cooperating_systems` (System units only: family -> the D3
+    adjacency - the served Services + neighbouring Systems over the §6 System
+    families, both directions; empty for a Service unit or when absent).
+    `diagnostics` records malformation found at read time; the stage treats a
+    projection carrying diagnostics as suspect and passes it (never prunes on a
+    bug).
     """
 
     unit_id: str
@@ -79,6 +146,9 @@ class UnitProjection:
     edges: Mapping[str, tuple[EdgeInfo, ...]]
     data_edges: Mapping[str, int]
     data_rel_kinds: frozenset[str]
+    data_items: Mapping[str, tuple[DataItem, ...]] = field(default_factory=dict)
+    data_relationships: tuple[DataRelationship, ...] = ()
+    cooperating_systems: Mapping[str, tuple[SystemInfo, ...]] = field(default_factory=dict)
     diagnostics: tuple[str, ...] = ()
 
 
@@ -101,6 +171,48 @@ def _split_unit_id(unit_id: str) -> tuple[str, str]:
         raise ValueError(f"unit_projection: malformed unit id {unit_id!r} "
                          f"(expected '<kind>:<key>')")
     return kind, key
+
+
+def _data_item_from(tprops: dict) -> DataItem:
+    """Pure: one DataItem record from a PRODUCES/CONSUMES target's props."""
+    props = dict(tprops)
+    return DataItem(
+        item_key=props.get("item_key"),
+        name=props.get("name"),
+        type=props.get("type"),
+        sensitivity=props.get("sensitivity"),
+        fields=tuple(props.get("fields") or ()),
+        notes=props.get("notes"),
+        props=props,
+    )
+
+
+def _system_info_from(tprops: dict) -> SystemInfo:
+    """Pure: one System unpack from a System node's props."""
+    props = dict(tprops)
+    return SystemInfo(
+        kind=props.get("kind") or "",
+        discriminator=props.get("discriminator"),
+        exposure=props.get("exposure"),
+        description=props.get("description"),
+        props=props,
+    )
+
+
+def _neighbor_info(tlabels, tprops: dict) -> SystemInfo:
+    """Pure: one D3 cooperating neighbor from a System-edge hop's target node. A
+    neighbouring System unpacks via `_system_info_from`; a served Service (the
+    System is reached FROM it) is marked kind="Service" keyed by its slug."""
+    props = dict(tprops)
+    if "L1System" in (tlabels or []):
+        return _system_info_from(props)
+    return SystemInfo(
+        kind="Service",
+        discriminator=props.get("business_function_slug"),
+        exposure=props.get("exposure"),
+        description=props.get("service_contract"),
+        props=props,
+    )
 
 
 def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProjection | None:
@@ -139,6 +251,7 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
     diagnostics: list[str] = []
     edges: dict[str, list[EdgeInfo]] = {}
     data_edges: dict[str, int] = {}
+    data_items: dict[str, list[DataItem]] = {}
     for edge in row.get("edges") or []:
         family = edge.get("family") if isinstance(edge, dict) else None
         if not family:
@@ -146,28 +259,90 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
         tprops = dict(edge.get("tprops") or {})
         rprops = dict(edge.get("rprops") or {})
         if family in _DATA_EDGE_FAMILIES:
+            # defect 3: the data-flow edge resolves to the FULL DataItem node
+            # list (every property), never just a count - the count stays for
+            # the predicate's data-edge-exists clause.
             data_edges[family] = data_edges.get(family, 0) + 1
+            data_items.setdefault(family, []).append(_data_item_from(tprops))
             continue
         if "L1System" in (edge.get("tlabels") or []):
             edges.setdefault(family, []).append(EdgeInfo(
                 family=family,
                 target_kind=tprops.get("kind"),
                 role=rprops.get("role"),
+                target=_system_info_from(tprops),
             ))
 
+    # The DataRelationship kind chains among the unit's items, resolved
+    # VERBATIM (the edge type IS the kind, L1D-13) with the ordered endpoints.
+    # RETURN DISTINCT orders deterministically (family, from_key, to_key - all
+    # returned columns), so the kind chains render in stable order (T5).
     data_rel_rows = read_fn(
         "MATCH (u:L1TestableUnit) "
         f"WHERE u.project_id = $project_id AND {where} "
         "MATCH (u)-[:PRODUCES|CONSUMES]->(item:L1DataItem) "
         "MATCH (u)-[:PRODUCES|CONSUMES]->(other:L1DataItem) "
         "MATCH (item)-[dr]->(other) "
-        "RETURN DISTINCT type(dr) AS family",
+        "RETURN DISTINCT type(dr) AS family, item.item_key AS from_key, "
+        "other.item_key AS to_key, properties(dr) AS rprops "
+        "ORDER BY family, from_key, to_key",
         {"project_id": project_id, "kind": kind, "key": key},
     )
     data_rel_kinds = frozenset(
         r["family"] for r in data_rel_rows
         if r.get("family") in _DATA_REL_EDGE_TYPES
     )
+    data_relationships: list[DataRelationship] = []
+    for r in data_rel_rows:
+        family = r.get("family")
+        if family not in _DATA_REL_EDGE_TYPES:
+            continue
+        rprops = dict(r.get("rprops") or {})
+        from_key = r.get("from_key")
+        to_key = r.get("to_key")
+        data_relationships.append(DataRelationship(
+            family=family,
+            from_item_key=from_key,
+            to_item_key=to_key,
+            from_item=_lookup_item(from_key, data_items),
+            to_item=_lookup_item(to_key, data_items),
+            predicate=rprops.get("predicate"),
+            rationale=rprops.get("rationale"),
+        ))
+
+    # D3 (candidates-rewrite 3.6 Q3): the System-to-System adjacency, ONLY for
+    # a System unit - System-strict hunts see their cooperating systems over the
+    # §6 System-edge families in both directions. Absent/empty degrades to an
+    # empty slot, never a prune signal.
+    cooperating_systems: dict[str, list[SystemInfo]] = {}
+    if unit_kind != "Service":
+        adj_rows = read_fn(
+            "MATCH (u:L1TestableUnit) "
+            f"WHERE u.project_id = $project_id AND {where} "
+            "OPTIONAL MATCH (n)-[r]->(u) WHERE type(r) IN $sys_rels "
+            "WITH u, collect({family: type(r), nlabels: labels(n), "
+            "nprops: properties(n)}) AS ins "
+            "OPTIONAL MATCH (u)-[r2]->(m) WHERE type(r2) IN $sys_rels "
+            "RETURN collect({family: type(r2), nlabels: labels(m), "
+            "nprops: properties(m)}) AS cooperating_outs, ins",
+            {"project_id": project_id, "kind": kind, "key": key,
+             "sys_rels": sorted(_SYSTEM_EDGE_RELS)},
+        )
+        for row_ in adj_rows:
+            ins = row_.get("ins") or []
+            outs = row_.get("cooperating_outs") or []
+            for adj in [*ins, *outs]:
+                family = adj.get("family") if isinstance(adj, dict) else None
+                if not family:
+                    continue
+                nprops = dict(adj.get("nprops") or {})
+                nlabels = list(adj.get("nlabels") or [])
+                # a Service as the System's own identity is never a cooperator
+                if "L1System" in nlabels and nprops.get("kind") == unit_kind \
+                        and nprops.get("discriminator") == key:
+                    continue
+                cooperating_systems.setdefault(family, []).append(
+                    _neighbor_info(nlabels, nprops))
 
     return UnitProjection(
         unit_id=unit_id,
@@ -176,5 +351,21 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
         edges={f: tuple(e) for f, e in edges.items()},
         data_edges=dict(data_edges),
         data_rel_kinds=data_rel_kinds,
+        data_items={f: tuple(items) for f, items in data_items.items()},
+        data_relationships=tuple(data_relationships),
+        cooperating_systems={f: tuple(s) for f, s in cooperating_systems.items()},
         diagnostics=tuple(diagnostics),
     )
+
+
+def _lookup_item(item_key, data_items: dict) -> DataItem | None:
+    """Best-effort join of a relationship endpoint onto the unit's data items
+    (both endpoints are restricted to the unit's items, so a miss is unusual and
+    degrades that slot only - never a raise)."""
+    if item_key is None:
+        return None
+    for items in data_items.values():
+        for item in items:
+            if item.item_key == item_key:
+                return item
+    return None

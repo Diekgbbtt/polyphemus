@@ -9,7 +9,9 @@ a stub pod would substitute the very component the walkthrough exists to
 exercise, which the skill and the spec forbid). Each test therefore stands as
 a skip-marked skeleton whose docstring carries the exact input fixture, path,
 and terminal quantities from the spec; when #84 lands, the body wires the real
-pod and reads the terminal quantities back out of the hunt store.
+pod and reads the terminal quantities back off the DispatchResult (the durable
+`spec`/`evidence` store records are removed, #166 - the agent's durable trail
+is #164's own memory, G5).
 
 The ISOLATED e2e tier (spec section 6.3, `test_hunting_agent_isolated_e2e.py`)
 walks the REAL agent through its REAL infrastructure seams - store files,
@@ -76,24 +78,25 @@ def test_confirmed_hypothesis(session, project, tmp_path):
     Entry seam: the `HuntConfig` dispatch (IA-2).
     Input: a fixture `HuntConfig` with the five parts set to stated values -
       prompt template (rationale "fault-x applies to slug-a because ...",
-      assumptions [...], supposed payload vectors [...], L0 evidence [...]),
-      adapted index-card (spine + one-hop DFS of unit "kind:slug:a"), target
-      caveats [...], prior-hunt insights [], tool registry [].
+      research direction [...], L0 evidence [...]), vulnerability class
+      CSRF, adversarial capabilities / assumptions / technique primitives
+      [...], adapted index-card (spine + one-hop DFS of unit "kind:slug:a"),
+      target caveats [...], prior-hunt insights [], tool registry [].
     Live edge: none (self-contained; the pod is the real one).
     Path: agent queries the fixture KB on `(fault-x, slug-a-technological-
       axis)` -> authors the spec -> pod executes -> {successful,
-      symptom-confirmed} -> hypothesis-`successful` -> S7 persistence.
-    Terminal: the store holds the spec record with a full typed base, the
-      hypothesis verdict `successful`, and the feedback record; exactly one
-      pod execution recorded.
-    Observed: the hunt record read back from the store shows spec_ref,
-      hypothesis verdict, and the pod result ref.
+      symptom-confirmed} -> hypothesis-`successful`.
+    Terminal: the hypothesis verdict `successful` with feedback; exactly one
+      pod execution recorded (the durable spec/evidence store records are
+      removed, #166 - the agent's durable trail is #164's own memory, G5).
+    Observed: the DispatchResult carries the verdict and the feedback.
 
     When unblocked: build the agent with the real KB and the real pod over a
     HuntStore(tmp_path), dispatch the fixture config, then assert
-      len(store.list_records(run_id, "spec")) == 1
-      len(store.list_records(run_id, "evidence")) == 1
       result.hypothesis_verdict == "successful"
+      result.feedback
+    (the durable spec/evidence records are removed, #166 - the agent's refs
+    degrade fail-open to None and its durable trail is #164's own memory, G5).
     """
 
 
@@ -114,12 +117,12 @@ def test_inline_back_edge_revision(session, project, tmp_path):
       routes back -> revised verdict.
     Terminal: the hypothesis verdict is revised (not `insufficient-evidence`);
       the evidence trail contains the recon result.
-    Observed: the store's hunt record and the back-edge record on the
-      `correlation_id`.
+    Observed: the revised hypothesis verdict on the DispatchResult (the per-run
+      hunt/back-edge store records are removed, #166).
 
     When unblocked: drive the real dispatch with the real back-edge tool,
     then assert
-      store.list_records(run_id, "back_edge") has exactly one record
-      the evidence record carries the routed recon result
       the final hypothesis verdict is not "insufficient-evidence"
+    (the back-edge / evidence store records are removed, #166 - the agent's
+    durable trail is #164's own memory, G5).
     """
