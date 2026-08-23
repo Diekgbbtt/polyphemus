@@ -69,13 +69,14 @@ from db.neo4j.init_schema import init_schema
 from db.neo4j.l1_schema import init_l1_schema
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
-    DispatchResult,
     EnvisionedDirection,
     GateDecision,
     GateInput,
-    HuntConfig,
     MatchVerdict,
+    NoteDecision,
+    NoteRecord,
     OrchestratorTools,
+    RatifyDecision,
     ReadOnlyGraphView,
     Witness,
     revival_key,
@@ -235,6 +236,28 @@ def _carry(candidate: DeliveredCandidate, *, research_direction: str = "probe CS
     )
 
 
+def _ratify_drafts(inp) -> RatifyDecision:
+    """The fixture ratify turn: every draft ends ratified with the filled
+    ratification fields."""
+    configs = []
+    for draft in inp.configs:
+        amended = draft.model_copy(deep=True)
+        amended.status = "ratified"
+        amended.adversarial_capabilities = ["forge a cross-origin request"]
+        amended.assumptions = ["the session is cookie-bound"]
+        amended.technique_primitives = ["token-missing probe"]
+        configs.append(amended)
+    return RatifyDecision(configs=configs)
+
+
+def _note_pair(inp) -> NoteDecision:
+    """The fixture note turn: one note for the pair."""
+    return NoteDecision(notes=[NoteRecord(
+        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
+        note="fixture note walking the reasoning",
+    )])
+
+
 def _tools(store: HuntStore, project_id: str, *, graph_view=None) -> OrchestratorTools:
     return OrchestratorTools(
         store_reads=store,
@@ -242,21 +265,9 @@ def _tools(store: HuntStore, project_id: str, *, graph_view=None) -> Orchestrato
     )
 
 
-def _recording_dispatch(configs: list, *, feedback: str = "ok"):
-    def dispatch(config: HuntConfig, routed=()):
-        configs.append(config)
-        return DispatchResult(spec_ref="spec-1", pod_result_ref="pod-1", hypothesis_verdict="successful", feedback=feedback)
-    return dispatch
-
-
-def _ok_rematch(verdict: str = "applies"):
-    def rematch(unit_id: str, fault_class: str, result: TargetedReconResult) -> MatchVerdict:
-        return MatchVerdict(unit_id=unit_id, fault_class=fault_class, verdict=verdict)
-    return rematch
-
-
 def pipe_delivered_candidates(project_id: str, run_id: str, candidates: list[DeliveredCandidate], store: HuntStore, *,
-                             reason_fn=None, budget_fn=None, expected_counts: dict | None = None):
+                             hypothesise_fn=None, ratify_fn=None, note_fn=None,
+                             expected_counts: dict | None = None):
     """Pipe a DeliveredCandidate batch into the hunting pipeline without invoking
     recon or analysis. Uses ``run_orchestration`` (sync) with injected seams;
     when a RuntimeManager is active the same batch can be scheduled via
@@ -269,10 +280,9 @@ def pipe_delivered_candidates(project_id: str, run_id: str, candidates: list[Del
     return run_orchestration(
         project_id=project_id, run_id=run_id, candidates=candidates,
         tools=_tools(store, project_id),
-        dispatch_fn=_recording_dispatch([]),
-        rematch_fn=_ok_rematch(),
-        reason_fn=reason_fn,
-        budget_fn=budget_fn,
+        hypothesise_fn=hypothesise_fn,
+        ratify_fn=ratify_fn or _ratify_drafts,
+        note_fn=note_fn or _note_pair,
     )
 
 
@@ -322,17 +332,19 @@ def _fake_langfuse(calls: list):
 # --- E1: per-fault fan-out 2 units x 2 classes -> 3 configs ----------------
 
 def test_e2e_e1_per_fault_fanout(tmp_path):
-    """E1 - per-fault fan-out: one REASON per fault over all matched units,
-    rich projection rendered, N per class mint -> 3 configs.
+    """E1 - per-fault fan-out through the phase machine: the hypothesise phase
+    elicits per pair, the mint fans out N drafts per distinct class, the
+    ratify phase amends them, the note phase writes the notes -> 3 ratified
+    configs + 2 notes.
 
-    Input: proj-e1 run-e1, 2 Service units CWE-352 applies, stub reason returns
-    Service:slug:a -> 2 candidates (CSRF, IDOR), Service:slug:b -> 1 (CSRF).
-    Live edge: none (graph mocked, LLM stubbed). Asserts HuntStore counts via
-    list_records, ledger values, and hunt_ids base/base-1 pattern.
+    Input: proj-e1 run-e1, 2 Service units CWE-352 applies, stub hypothesise
+    returns Service:slug:a -> 2 candidates (CSRF, IDOR), Service:slug:b -> 1
+    (CSRF). Live edge: none (graph mocked, LLM stubbed). Asserts HuntStore
+    counts, ledger values, and hunt_ids base/base-1 pattern.
     """
     store = HuntStore(tmp_path)
 
-    def reason_fn(inp: GateInput) -> GateDecision:
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
         dirs = []
         for c in inp.candidates:
             if c.unit_id == SERVICE_A:
@@ -361,19 +373,20 @@ def test_e2e_e1_per_fault_fanout(tmp_path):
     tools = OrchestratorTools(store_reads=store, graph_view=ReadOnlyGraphView("proj-e1", read_fn=read_fn))
     report = run_orchestration(
         project_id="proj-e1", run_id="run-e1", candidates=[c_a, c_b],
-        tools=tools, dispatch_fn=_recording_dispatch([]), reason_fn=reason_fn,
+        tools=tools, hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
-    assert report.hunts_dispatched == 3
+    assert report.pairs_processed == 2
+    assert report.configs_hypothesised == 3
+    assert report.configs_ratified == 3
     assert len(store.read_configs("proj-e1")) == 3
     assert len(store.read_notes("proj-e1")) == 2
     assert report.ledger.units_done == 2
     assert report.ledger.notes_recorded == 2
     assert set(report.ledger.minted_config_keys) == {"Service:slug:a::CWE-352", "Service:slug:b::CWE-352"}
-    # ledger budget_remaining counts directions (units) not configs (2 not 3)
-    assert report.ledger.budget_remaining == 2
-    assert report.budget_cut == ()
     # read back via HuntStore.read_configs (the per-run kind files are gone)
     configs = store.read_configs("proj-e1")
+    assert all(c["status"] == "ratified" for c in configs)
     hunt_ids = [c["hunt_id"] for c in configs]
     assert len(set(hunt_ids)) == 3
     # base, base-1 pattern: same unit's two configs share base prefix
@@ -474,13 +487,15 @@ def test_e2e_e2_bootstrap_post_persists(session):
 # the crawl is not exercised. ---
 
 
-# --- E4: budget cut before dispatch (O9 deterministic) ---------------------
+# --- E4: the O9 budget stage is REMOVED (G7) ---------------------------------
 
-def test_e2e_e4_budget_cut_records(tmp_path):
-    """E4 - BUDGET batch cut 3->1, trail and cut.md record the 2 cut keys."""
+def test_e2e_e4_budget_stage_removed(tmp_path):
+    """E4 - re-scoped by #167/G7: the deterministic O9 BUDGET stage is gone.
+    A pass over two units ratifies ALL the configs (nothing is ever cut), the
+    report has no budget-cut field, and every config ends ratified."""
     store = HuntStore(tmp_path)
 
-    def reason_fn(inp: GateInput) -> GateDecision:
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
         # two units, first with 2 distinct classes (base/base-1), second with 1
         dirs = []
         for c in inp.candidates:
@@ -498,29 +513,21 @@ def test_e2e_e4_budget_cut_records(tmp_path):
                 ))
         return GateDecision(directions=dirs)
 
-    def budget_fn(directions):
-        return [directions[0]]
-
     c_a = _candidate(SERVICE_A, FAULT_352, llm_witness="a")
     c_b = _candidate(SERVICE_B, FAULT_352, llm_witness="b")
     report = run_orchestration(
         project_id="proj-e4", run_id="run-e4", candidates=[c_a, c_b],
         tools=_tools(store, "proj-e4"),
-        dispatch_fn=_recording_dispatch([]),
-        reason_fn=reason_fn, budget_fn=budget_fn,
+        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
-    # budget keeps first direction (Service:slug:a) which fans to 2 configs, so 2 hunts
-    assert report.hunts_dispatched == 2
-    # budget_cut length 1 for the dropped unit; the cut rides the report trail
-    # (the per-run cut.md kind file is removed, #166)
-    assert len(report.budget_cut) >= 1
-    # G10 budget-cut semantics: ALL configs are minted (and persisted to
-    # produced/) at the unit boundary BEFORE the budget stage, so the cut
-    # direction's hypothesised draft (Service:slug:b, 1 config) stays on disk
-    # alongside the kept direction's (Service:slug:a, 2 configs) - a budget
-    # cut is a dispatch-stage decision, never a config deletion. The notes
-    # still land one per unit (both were reasoned over).
+    assert report.pairs_processed == 2
+    assert report.configs_hypothesised == 3
+    assert report.configs_ratified == 3
+    assert not hasattr(report, "budget_cut")
+    # no direction was ever cut: every config landed and ended ratified (G7)
     assert len(store.read_configs("proj-e4")) == 3
+    assert all(c["status"] == "ratified" for c in store.read_configs("proj-e4"))
     assert len(store.read_notes("proj-e4")) == 2
 
 
@@ -534,13 +541,14 @@ def test_e2e_e5_empty_after_prunes_is_empty_pass(tmp_path):
         DeliveredCandidate(unit_id=SERVICE_A, fault_class=FAULT_352, applies_witnesses=Witness(llm="x"), match_verdict="applies"),  # duplicate of dropped key
         DeliveredCandidate(unit_id=SYSTEM_CACHE, fault_class=FAULT_639, applies_witnesses=Witness(llm="x"), match_verdict="does-not-apply"),  # pruned
     ]
-    # gate would see empty list -> empty pass, no BUDGET/DISPATCH
+    # gate would see empty list -> empty pass, no phase machine
     report = run_orchestration(
         project_id="proj-e5", run_id="run-e5", candidates=candidates,
         tools=_tools(store, "proj-e5"),
-        dispatch_fn=_recording_dispatch([]),
+        hypothesise_fn=lambda inp: GateDecision(directions=[]),
     )
-    assert report.hunts_dispatched == 0
+    assert report.pairs_processed == 0
+    assert report.configs_hypothesised == 0
     assert report.malformed_dropped == 1
     assert report.duplicates_dropped == 1
     assert report.pruned_by_verdict == 1
@@ -626,9 +634,12 @@ def test_e2e_e6_cooperating_systems_rendered(session, tmp_path):
     report = run_orchestration(
         project_id=pid, run_id="run-e6", candidates=[c],
         tools=_tools(store, pid, graph_view=view),
-        dispatch_fn=_recording_dispatch([]),
+        hypothesise_fn=lambda inp: GateDecision(
+            directions=[_carry(x, classes=["IDOR"]) for x in inp.candidates]),
+        ratify_fn=_ratify_drafts, note_fn=_note_pair,
     )
-    assert report.hunts_dispatched == 1
+    assert report.pairs_processed == 1
+    assert report.configs_ratified == 1
     assert len(store.read_notes(pid)) == 1
     session.run("MATCH (n) WHERE n.project_id=$p DETACH DELETE n", p=pid)
 
@@ -636,19 +647,19 @@ def test_e2e_e6_cooperating_systems_rendered(session, tmp_path):
 # --- E7: Q1 latency: fault-level batch < U * single-pair -------------------
 
 def test_e2e_e7_q1_latency_batch_beats_n_singles(tmp_path, monkeypatch):
-    """E7 - Q1 latency: fault-level batch cheaper than N singles (harness proof).
-
-    Blocked for real-model part; harness stub proves batch < 0.8*U*single at p50
-    and < U* p95. Uses orchestrator_gate_span trace duration.
-    """
+    """E7 - Q1 latency: a single per-fault turn over all matched units is
+    cheaper than N single-pair turns (harness proof). Re-scoped by #167: the
+    hypothesise phase still reasons over the FAULT's full unit set in ONE
+    turn's worth of seams - the stub sleeps 20ms per call, so the harness
+    proves the fixed-cost saving that motivated the fault-level schedule."""
     from polymerhus.attack.hunting.orchestrator_tracing import orchestrator_gate_span, trace_gate_step
 
-    # harness: stub reason_fn sleeping 20ms per turn; batch is one turn for U=4
-    async def stub_reason(inp: GateInput) -> GateDecision:
+    # harness: stub hypothesise seam sleeping 20ms per call; the fault-level
+    # call covers U=4 units, the single-pair baseline covers 1
+    async def stub_hypothesise(inp: GateInput) -> GateDecision:
         await asyncio.sleep(0.02)
         return GateDecision(directions=[EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class, carried=True) for c in inp.candidates])
 
-    store = HuntStore(tmp_path)
     candidates_4 = [_candidate(f"Service:slug:{chr(97+i)}", FAULT_352) for i in range(4)]
 
     # measure batch p50/p95 over 10 reps
@@ -656,8 +667,8 @@ def test_e2e_e7_q1_latency_batch_beats_n_singles(tmp_path, monkeypatch):
     for _ in range(10):
         t0 = time.perf_counter()
         with orchestrator_gate_span("run-e7-batch"):
-            # simulate single REASON turn for the fault over 4 units
-            asyncio.run(stub_reason(GateInput(candidates=candidates_4)))
+            # simulate the hypothesise turn for the fault over 4 units
+            asyncio.run(stub_hypothesise(GateInput(candidates=candidates_4)))
         batch_durations.append((time.perf_counter() - t0) * 1000)
         trace_gate_step("symbolic-render", input={"cooperating_systems": "ok"})
 
@@ -666,7 +677,7 @@ def test_e2e_e7_q1_latency_batch_beats_n_singles(tmp_path, monkeypatch):
     for _ in range(10):
         t0 = time.perf_counter()
         with orchestrator_gate_span("run-e7-single"):
-            asyncio.run(stub_reason(GateInput(candidates=candidates_4[:1])))
+            asyncio.run(stub_hypothesise(GateInput(candidates=candidates_4[:1])))
         single_durations.append((time.perf_counter() - t0) * 1000)
 
     batch_durations.sort()
@@ -688,7 +699,7 @@ def test_e2e_e8_q2_accuracy_coverage(tmp_path):
     units = [SERVICE_A, SERVICE_B, SYSTEM_CACHE]
     candidates = [_candidate(u, FAULT_352) for u in units]
 
-    def reason_fn(inp: GateInput) -> GateDecision:
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
         # carry all 3, distinct classes, one pruned direction carried=False not minted
         dirs = [EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                                     vulnerability_classes=[f"CSRF-{c.unit_id}"]) for c in inp.candidates]
@@ -698,9 +709,11 @@ def test_e2e_e8_q2_accuracy_coverage(tmp_path):
     report = run_orchestration(
         project_id="proj-e8", run_id="run-e8", candidates=candidates,
         tools=_tools(store, "proj-e8"),
-        dispatch_fn=_recording_dispatch([]),
-        reason_fn=reason_fn,
+        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
+    assert report.pairs_processed == 3
+    assert report.configs_ratified == 3
     configs = store.read_configs("proj-e8")
     assert len(configs) == 3
     revival_keys = [f"{c['unit_id']}::{c['fault_class']}" for c in configs]
@@ -712,12 +725,14 @@ def test_e2e_e8_q2_accuracy_coverage(tmp_path):
 # --- E9: Q3 detail depth: HuntConfig prompt_template sufficient --------------
 
 def test_e2e_e9_q3_detail_depth(tmp_path):
-    """E9 - Q3 detail depth: HuntConfig fields sufficient for DECOMPOSE blind judge."""
+    """E9 - Q3 detail depth: HuntConfig fields sufficient for DECOMPOSE blind
+    judge (the ratified configs carry the hypothesise seeds + the filled
+    ratification fields)."""
     store = HuntStore(tmp_path)
     c_a = _candidate(SERVICE_A, FAULT_352, llm_witness="form Z no token")
     c_b = _candidate(SERVICE_B, FAULT_352, llm_witness="form Y carries token, Z does not")
 
-    def reason_fn(inp: GateInput) -> GateDecision:
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
         dirs = []
         for c in inp.candidates:
             dirs.append(EnvisionedDirection(
@@ -729,64 +744,65 @@ def test_e2e_e9_q3_detail_depth(tmp_path):
             ))
         return GateDecision(directions=dirs)
 
-    # capture dispatched configs for field checks
-    dispatched: list[HuntConfig] = []
-    def dispatch(cfg: HuntConfig, routed=()):
-        dispatched.append(cfg)
-        return DispatchResult(spec_ref="s", pod_result_ref="p", hypothesis_verdict="successful", feedback="ok")
-
     report = run_orchestration(
         project_id="proj-e9", run_id="run-e9", candidates=[c_a, c_b],
         tools=_tools(store, "proj-e9"),
-        dispatch_fn=dispatch, reason_fn=reason_fn,
+        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
-    # harness field checks for dispatched configs (fan-out may create more than 2 configs due to distinct classes)
-    assert len(dispatched) >= 2
-    for cfg in dispatched:
-        tpl = cfg.prompt_template
-        assert len(tpl.research_direction) > 20
-        assert "CSRF" in tpl.research_direction
-        assert cfg.vulnerability_class == "CSRF"
-        assert cfg.status == "hypothesised"
-        assert len(tpl.rationale) > 0
-        assert all(len(s) > 0 for s in tpl.rationale.split())
-    # semantic: blind HuntingAgent dry-run would produce TestVariant - we simulate by asserting
-    # dispatched configs carry research_direction class-level (no locale leak check here, covered in E13)
+    # harness field checks for the ratified configs (fan-out may create more than 2 configs due to distinct classes)
+    assert report.pairs_processed == 2
+    assert report.configs_ratified >= 2
+    configs = store.read_configs("proj-e9")
+    assert len(configs) >= 2
+    for cfg in configs:
+        tpl = cfg["prompt_template"]
+        assert len(tpl["research_direction"]) > 20
+        assert "CSRF" in tpl["research_direction"]
+        assert cfg["vulnerability_class"] == "CSRF"
+        assert cfg["status"] == "ratified"
+        assert len(tpl["rationale"]) > 0
+        assert all(len(s) > 0 for s in tpl["rationale"].split())
+    # semantic: blind HuntingAgent dry-run would produce TestVariant - we
+    # simulate by asserting ratified configs carry the class-level seeds (no
+    # locale leak check here, covered in E13)
 
 
 # --- E10: Q4 trajectory soundness: graph envelope respected ------------------
 
 def test_e2e_e10_q4_trajectory_soundness(tmp_path, monkeypatch):
-    """E10 - Q4 trajectory: trace order symbolic-render -> gate-decision,
-    ledger re-inject only after record_note, supervisor phases respected.
-    The observation system is the Langfuse probe: ALL rows the orchestrator
-    emitted are re-read through the probe and judged - not a bespoke monkeypatch
-    (that would judge a different, harness-only trace)."""
+    """E10 - Q4 trajectory: trace order symbolic-render -> gate-decision, the
+    supervisor-only routing, and the node-per-phase machine (the graph ENDs at
+    the note phase - no dispatch node, no budget stage). The observation system
+    is the Langfuse probe: ALL rows the orchestrator emitted are re-read
+    through the probe and judged - not a bespoke monkeypatch."""
     store = HuntStore(tmp_path)
     probe, skip = probe_for_run("run-e10", store_root=store)
     if skip:
         pytest.skip(skip)
-    # Wire the run's LLM surface so the orchestrator genuinely enters the gate
-    # span + step spans for THIS run through the probe's client.
     judge = TraceJudge(probe)
+
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
+        return GateDecision(directions=[_carry(x, classes=["CSRF"]) for x in inp.candidates])
 
     c_a = _candidate(SERVICE_A, FAULT_352)
     c_b = _candidate(SERVICE_B, FAULT_352)
     report = run_orchestration(
         project_id="proj-e10", run_id="run-e10", candidates=[c_a, c_b],
         tools=_tools(store, "proj-e10"),
-        dispatch_fn=_recording_dispatch([]),
-        reason_fn=None,  # production path: the real hunt-orchestrator actor
+        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
     # judge Q4: the observed spans must obey the internal graph order.
     try:
         judge.assert_symbolic_then_gate()
     except AssertionError as exc:
         pytest.fail(f"Q4 trajectory evidence absent in observed traces: {exc}")
-    # graph envelope still 4 nodes, supervisor only router
-    g = build_hunting_graph(reason_node=lambda s: {}, budget_node=lambda s: {}, dispatch_node=lambda s: {})
-    assert set(g.nodes) == {"supervisor", "reason", "budget", "dispatch"}
+    # graph envelope is the three phase nodes + supervisor, supervisor only router
+    g = build_hunting_graph(hypothesise_node=lambda s: {}, ratify_node=lambda s: {}, note_node=lambda s: {})
+    assert set(g.nodes) == {"supervisor", "hypothesise", "ratify", "note"}
     assert report.ledger.units_done == 2
+    assert report.configs_ratified == 2
 
 
 # --- E11: Q5 mint+note consistency -----------------------------------------
@@ -801,7 +817,7 @@ def test_e2e_e11_q5_mint_note_consistency(tmp_path):
         pytest.skip(skip)
     judge = TraceJudge(probe)
 
-    def reason_fn(inp: GateInput) -> GateDecision:
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
         dirs = []
         for c in inp.candidates:
             if c.unit_id == SERVICE_A:
@@ -823,8 +839,8 @@ def test_e2e_e11_q5_mint_note_consistency(tmp_path):
     report = run_orchestration(
         project_id="proj-e11", run_id="run-e11", candidates=[c_a, c_b],
         tools=_tools(store, "proj-e11"),
-        dispatch_fn=_recording_dispatch([]),
-        reason_fn=reason_fn,
+        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
     # produced/ rows == distinct classes (3), memory.yaml notes == units_done (2)
     assert len(store.read_configs("proj-e11")) == 3
@@ -845,46 +861,41 @@ def test_e2e_e11_q5_mint_note_consistency(tmp_path):
 # --- E12: Q6 effective tool use --------------------------------------------
 
 def test_e2e_e12_q6_effective_tool_use(tmp_path):
-    """E12 - Q6 tool use: UNKNOWN projection triggers graph_view, prior keys trigger
-    read_memory_hunts before mint. Judge reads the observable call log from the
-    Langfuse probe's trace rows - not a bespoke monkeypatch."""
+    """E12 - Q6 tool use (re-scoped by #167/G3): the THREE-tool surface -
+    `graph_view` fires when the projection is UNKNOWN, `hunts_store(read)`
+    fires when prior keys are listed (the Q11 reflection), `notes(read)` for
+    the memory-read loop. Judge observes the seam call log through the store
+    tools' read_fn spy."""
     store = HuntStore(tmp_path)
-    probe, skip = probe_for_run("run-e12", store_root=store)
-    if skip:
-        pytest.skip(skip)
-    judge = TraceJudge(probe)
-    # seed a prior config for read_memory_hunts case b
+    # seed a prior config for the hunts_store(read) case
     store.write_config("proj-e12", {"unit_id": SERVICE_A, "fault_class": FAULT_352,
                                     "vulnerability_class": "CSRF", "hunt_id": "prior"})
-    # case a: UNKNOWN projection - stub hunt orchestrator tool surface spies
     read_calls: list[str] = []
+
     def read_fn(cypher, params):
         read_calls.append(cypher)
         return []
-    # case b: prior keys non-empty
-    gate_input_b = GateInput(
-        candidates=[_candidate(SERVICE_A, FAULT_352)],
-        prior_minted_keys=["Service:slug:a::CWE-352"],
-        unit_projection={SERVICE_A: UnitProjection(unit_id=SERVICE_A, kind="Service", spine={}, edges={}, data_edges={}, data_rel_kinds=frozenset())},
-        materialisation={FAULT_352: type("M", (), {"name": "CSRF"})()},
-        fold_family={FAULT_352: ()},
-    )
+
     from polymerhus.attack.hunting.actors import build_orchestrator_tool_surface
     tools = OrchestratorTools(store_reads=store, graph_view=ReadOnlyGraphView("proj-e12", read_fn=read_fn))
     surface = build_orchestrator_tool_surface(tools, run_id="run-e12", project_id="proj-e12")
     by_name = {t.name: t for t in surface}
-    # graph_view invoked >=1 when projection UNKNOWN before mint
+    assert set(by_name) == {"hunts_store", "notes", "graph_view"}
+    # graph_view invoked >=1 when the projection is UNKNOWN (target-knowledge loop)
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert "rows" in out
     assert len(read_calls) >= 1
-    # read_memory_hunts invoked >=1 before mint when prior keys non-empty
-    out2 = by_name["read_memory_hunts"].invoke({"revival_key": "Service:slug:a::CWE-352"})
+    # hunts_store(read) invoked >=1 before the mint when prior keys are listed
+    out2 = by_name["hunts_store"].invoke({"cmd": "read", "key": "Service:slug:a::CWE-352"})
     assert "configs" in out2
+    # notes(read) serves the knowledge-sufficiency loop (same data contract)
+    out3 = by_name["notes"].invoke({"cmd": "read", "key": "Service:slug:a::CWE-352"})
+    assert "notes" in out3
     # Q6 evidence is the injected seam call log (the tools the LLM would drive
     # are seam bodies; a stubbed-LLM harness observes their use through the
     # read_fn spy / store read counts, not through orchestrator spans). The
     # judge's tool-use path applies when the LLM turn itself drives the tools
-    # through a real actor; here we assert the seam was invoked when needed.
+    # through a real actor; here we assert the seams were invoked when needed.
     assert len(read_calls) >= 1
     # opposite sufficient case 0 calls still passes - sufficiency loops fire when needed
 
@@ -902,7 +913,7 @@ def test_e2e_e13_q7_reflection_strategy(tmp_path):
         pytest.skip(skip)
     judge = TraceJudge(probe)
 
-    def reason_fn(inp: GateInput) -> GateDecision:
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
         # stub emits class-level research_direction, same-class merge collapses 2 ->1
         return GateDecision(directions=[
             EnvisionedDirection(
@@ -929,8 +940,8 @@ def test_e2e_e13_q7_reflection_strategy(tmp_path):
     report = run_orchestration(
         project_id="proj-e13", run_id="run-e13", candidates=[c],
         tools=_tools(store, "proj-e13"),
-        dispatch_fn=_recording_dispatch([]),
-        reason_fn=reason_fn,
+        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
     # locale leak 0: research_direction contains class token CSRF and zero forbidden locale tokens
     configs = store.read_configs("proj-e13")
@@ -966,6 +977,9 @@ def test_e2e_e14_fail_open_store_kb_graph(tmp_path, caplog):
         def write_config(self, project_id, config, *, directory="produced"):
             self._write_guard()
             return super().write_config(project_id, config, directory=directory)
+        def update_config(self, project_id, config, *, directory="produced"):
+            self._write_guard()
+            return super().update_config(project_id, config, directory=directory)
         def append_note(self, project_id, key, note):
             self._write_guard()
             return super().append_note(project_id, key, note)
@@ -975,29 +989,33 @@ def test_e2e_e14_fail_open_store_kb_graph(tmp_path, caplog):
     def kb_retrieve(fault_class):
         raise RuntimeError("KB unavailable")
 
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
+        return GateDecision(directions=[_carry(x, classes=["CSRF"]) for x in inp.candidates])
+
     c = _candidate(SERVICE_A, FAULT_352, llm_witness="form Z")
     report = run_orchestration(
         project_id="proj-e14", run_id="run-e14", candidates=[c],
         tools=_tools(store, "proj-e14"),
-        dispatch_fn=_recording_dispatch([]),
-        kb_retrieve_fn=kb_retrieve,
+        hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
+        note_fn=_note_pair, kb_retrieve_fn=kb_retrieve,
     )
-    # the 1-candidate pass makes exactly two store writes (the config at the
-    # mint + the unit-boundary note); both fail, the pass still completes and
-    # dispatches (O3 - warned and counted, never a crash)
-    assert report.hunts_dispatched == 1
+    # the 1-candidate pass makes exactly three store writes (the hypothesise
+    # create, the ratify upsert, the note append); the first two fail (O3 -
+    # warned and counted, never a crash), the pass still completes and the
+    # third write (the note) lands
+    assert report.pairs_processed == 1
     assert report.store_write_failures == 2
     assert report.ledger.units_done == 1
-    assert store.read_configs("proj-e14") == []  # neither write landed
-    assert store.read_notes("proj-e14") == []
+    assert store.read_configs("proj-e14") == []  # neither config write landed
+    assert len(store.read_notes("proj-e14")) == 1  # the note write succeeded
 
 
 # --- E15: concurrency barrier, duplicate-idempotent, malformed LLM ---------
 
 def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
     """E15 - concurrency serialised via StateGraph last-write, duplicate reads
-    idempotent, malformed LLM output degrades to carry-bare."""
-    # a) concurrency: 2 faults as concurrent arun_orchestration gathers on same run_id
+    idempotent, malformed hypothesise output degrades to carry-bare."""
+    # a) concurrency: 2 pairs as concurrent arun_orchestration gathers on same run_id
     store = HuntStore(tmp_path)
 
     async def run_one(candidates):
@@ -1005,7 +1023,9 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
         return await arun_orchestration(
             project_id="proj-e15", run_id="run-e15", candidates=candidates,
             tools=_tools(store, "proj-e15"),
-            dispatch_fn=lambda cfg, routed=(): DispatchResult(spec_ref="s", pod_result_ref="p", hypothesis_verdict="successful", feedback="ok"),
+            hypothesise_fn=lambda inp: GateDecision(
+                directions=[_carry(x, classes=["CSRF"]) for x in inp.candidates]),
+            ratify_fn=_ratify_drafts, note_fn=_note_pair,
         )
 
     import asyncio as _asyncio
@@ -1016,8 +1036,7 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
 
     try:
         results = _asyncio.run(_gather())
-        # final ledger units_done ==2 with no corruption, 2 distinct revival keys
-        # run_orchestration's report ledger is per-call, so check HuntStore counts
+        # final store has 2 distinct revival keys with no corruption
         assert len(store.read_configs("proj-e15")) == 2
         keys = {f"{r['unit_id']}::{r['fault_class']}" for r in store.read_configs("proj-e15")}
         assert len(keys) == 2
@@ -1025,7 +1044,7 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
         # asyncio.gather mimics worker loop concurrency but real shared loop may queue serially - still pass
         assert len(store.read_configs("proj-e15")) >= 1
 
-    # b) duplicate-idempotent reads: second read_memory_hunts returns identical without side effect
+    # b) duplicate-idempotent reads: second hunts_store(read) returns identical without side effect
     store2 = HuntStore(tmp_path / "e15b")
     store2.write_config("project-e15b", {"unit_id": SERVICE_A, "fault_class": FAULT_352,
                                          "vulnerability_class": "CSRF", "hunt_id": "h1"})
@@ -1034,18 +1053,19 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
     assert first == second
     assert len(store2.read_configs("project-e15b")) == 1
 
-    # c) malformed LLM: GateDecision validation error degrades to carry fault bare with 1 HuntConfig
-    def bad_reason(inp: GateInput) -> GateDecision:
+    # c) malformed hypothesise output degrades to carry-bare with 1 HuntConfig
+    def bad_hypothesise(inp: GateInput) -> GateDecision:
         raise ValueError("unparseable GateDecision (fixture)")
 
     store3 = HuntStore(tmp_path / "e15c")
     report3 = run_orchestration(
         project_id="proj-e15c", run_id="run-e15c", candidates=[_candidate(SERVICE_A, FAULT_352)],
         tools=_tools(store3, "proj-e15c"),
-        dispatch_fn=_recording_dispatch([]),
-        reason_fn=bad_reason,
+        hypothesise_fn=bad_hypothesise, ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
-    assert report3.hunts_dispatched == 1
+    assert report3.pairs_processed == 1
+    assert report3.configs_hypothesised == 1
     configs3 = store3.read_configs("proj-e15c")
     assert len(configs3) == 1
 

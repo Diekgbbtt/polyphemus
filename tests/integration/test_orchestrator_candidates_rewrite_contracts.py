@@ -26,15 +26,17 @@ from polymerhus.attack.hunting.actors import (
 )
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
-    DispatchResult,
     EnvisionedDirection,
     GateDecision,
     GateInput,
     HuntConfig,
-    HuntPromptTemplate,
     LoopLedger,
     MatchVerdict,
+    NoteDecision,
+    NoteRecord,
+    OrchestratorReport,
     OrchestratorTools,
+    RatifyDecision,
     ReadOnlyGraphView,
     ReadOnlyGraphViewError,
     Witness,
@@ -44,7 +46,12 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
 )
 from polymerhus.attack.hunting.hunt_store import HUNT_STORE_ROOT, HuntStore
 from polymerhus.attack.hunting.llm import _compose_gate_prompt, _gate_skill
-from polymerhus.attack.hunting.orchestrator_graph import build_hunting_graph
+from polymerhus.attack.hunting.orchestrator_graph import (
+    _HYPOTHESISE,
+    _NOTE,
+    _RATIFY,
+    build_hunting_graph,
+)
 from polymerhus.attack.hunting.unit_projection import DataItem, SystemInfo, UnitProjection
 
 SERVICE_A = "Service:slug:a"
@@ -120,7 +127,7 @@ def test_integration_c1_bootstrap_schedules_on_shared_loop(tmp_path, monkeypatch
         captured["cp_module"] = C.get_session_checkpointer()._index.module
         captured["candidates_len"] = len(candidates)
         from polymerhus.attack.hunting.hunt_orchestrator import OrchestratorReport
-        return OrchestratorReport(hunts_dispatched=0, hunt_ids=[], ledger=LoopLedger())
+        return OrchestratorReport(pairs_processed=0, ledger=LoopLedger())
 
     monkeypatch.setattr("polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration", fake_arun)
 
@@ -298,7 +305,9 @@ def test_integration_c4_projection_degrade_unknown_never_false():
 # --- C5: Loop protocol verbatim (Q11/Q9/Q8/Q16) bound in prompt -------------
 
 def test_integration_c5_loop_protocol_verbatim():
-    """C5 - _compose_gate_prompt contains the verbatim Loop protocol strings."""
+    """C5 - _compose_gate_prompt contains the verbatim hypothesise-phase
+    discipline strings (re-scoped by #167: the phase-TRANSITION verbatims ride
+    the tool-call responses, never this prompt - they are NOT asserted here)."""
     gate_input = GateInput(
         candidates=[DeliveredCandidate(unit_id=SERVICE_B, fault_class=FAULT_352,
                                        applies_witnesses=Witness(llm="x"), match_verdict="applies")],
@@ -313,16 +322,23 @@ def test_integration_c5_loop_protocol_verbatim():
     assert "knowledge-sufficiency decision point (q9)" in low
     assert "target-knowledge loop (q9)" in low
     assert "same-class merge (q16)" in low
-    assert "unit boundary (spec 3.3): call mint_hunt_config once" in low
-    assert "state will be re-fed only after record_note" in low
+    assert "the hypothesise write (spec 3.3): call hunts_store(write, config," in low
+    assert "the ratification phase's work" in low
 
 
 # --- C6: supervisor is sole router via Command(goto=...) DP-5 ---------------
 
 def test_integration_c6_supervisor_only_router():
-    """C6 - supervisor is the single routing authority via Command(goto=...)."""
+    """C6 - supervisor is the single routing authority via Command(goto=...);
+    the graph has EXACTLY the supervisor + the three phase nodes (the dispatch
+    node - G12 - and the budget stage - G7 - are removed)."""
     from polymerhus.attack.hunting.hunt_orchestrator import FaultWorkItem
-    from polymerhus.attack.hunting.orchestrator_graph import _supervisor
+    from polymerhus.attack.hunting.orchestrator_graph import (
+        _make_hypothesise,
+        _make_note,
+        _make_ratify,
+        _supervisor,
+    )
     from langgraph.types import Command
     from langgraph.graph import END
 
@@ -333,68 +349,87 @@ def test_integration_c6_supervisor_only_router():
     c3 = DeliveredCandidate(unit_id=SERVICE_A, fault_class=FAULT_639,
                             applies_witnesses=Witness(llm="z"), match_verdict="applies")
 
-    # graph topology
+    # graph topology: supervisor + the three phase nodes, NO dispatch/budget
     g = build_hunting_graph(
-        reason_node=lambda s: {}, budget_node=lambda s: {}, dispatch_node=lambda s: {},
+        hypothesise_node=lambda s: {}, ratify_node=lambda s: {},
+        note_node=lambda s: {},
     )
-    assert set(g.nodes) == {"supervisor", "reason", "budget", "dispatch"}
-    # static edges: reason->supervisor, budget->supervisor, dispatch->supervisor, START->supervisor
-    # langgraph stores edges in private _edges dict; verify supervisor routes correctly instead
+    assert set(g.nodes) == {"supervisor", "hypothesise", "ratify", "note"}
 
-    # supervisor routing: while phase=reason and schedule non-empty -> reason
+    # supervisor routing: pops a pair into hypothesise; a fault's queue
+    # drains one pair per super-step; schedule AND queue exhausted -> END
     schedule = [FaultWorkItem(fault_class=FAULT_352, candidates=[c1, c2]),
                 FaultWorkItem(fault_class=FAULT_639, candidates=[c3])]
-    state = {"phase": "reason", "schedule": list(schedule), "worklist": []}
-    cmd = _supervisor(state)
+    cmd = _supervisor({"schedule": list(schedule), "pairs": []})
     assert isinstance(cmd, Command)
-    assert cmd.goto == "reason"
-    # schedule empty -> budget
-    state2 = {"phase": "reason", "schedule": [], "worklist": []}
-    cmd2 = _supervisor(state2)
-    assert cmd2.goto == "budget"
-    # worklist non-empty -> dispatch
-    state3 = {"phase": "dispatch", "worklist": [c1, c2]}
-    cmd3 = _supervisor(state3)
-    assert cmd3.goto == "dispatch"
-    # worklist empty -> END
-    state4 = {"phase": "dispatch", "worklist": []}
-    cmd4 = _supervisor(state4)
-    assert cmd4.goto == END
-    # reason/budget/dispatch never return Command - they return dicts (checked via _make_* wrappers)
-    from polymerhus.attack.hunting.orchestrator_graph import _make_reason, _make_budget, _make_dispatch
-    import asyncio, inspect
-    # these wrappers return dicts never Command even when body is None
-    reason_node = _make_reason(None)
-    budget_node = _make_budget(None)
-    dispatch_node = _make_dispatch(None)
-    # call them in async context
+    assert cmd.goto == _HYPOTHESISE
+    assert cmd.update["current"].fault_class == FAULT_352
+    assert cmd.update["current_pair"].unit_id == SERVICE_A
+    assert [c.unit_id for c in cmd.update["pairs"]] == [SERVICE_B]
+    # the queue drains before the next fault pops (current is NOT rewritten)
+    cmd = _supervisor({"schedule": [schedule[1]], "pairs": [c2]})
+    assert isinstance(cmd, Command)
+    assert cmd.goto == _HYPOTHESISE
+    assert cmd.update["current_pair"].unit_id == SERVICE_B
+    assert "current" not in cmd.update
+    # queue drained -> the next fault pops and seeds its queue
+    cmd = _supervisor({"schedule": [schedule[1]], "pairs": []})
+    assert cmd.goto == _HYPOTHESISE
+    assert cmd.update["current"].fault_class == FAULT_639
+    assert cmd.update["current_pair"].unit_id == SERVICE_A
+    # nothing left -> END
+    cmd = _supervisor({"schedule": [], "pairs": []})
+    assert cmd.goto == END
+    # the phase wrappers never return Command - they return dicts
+    import asyncio
+
+    hypothesise_node = _make_hypothesise(None)
+    ratify_node = _make_ratify(None)
+    note_node = _make_note(None)
+
     async def _check():
-        r = await reason_node({"current": schedule[0]})
+        r = await hypothesise_node({"current_pair": c1})
         assert not isinstance(r, Command)
-        b = await budget_node({"directions": []})
+        b = await ratify_node({"current_pair": c1})
         assert not isinstance(b, Command)
-        d = await dispatch_node({"current_direction": c1})
+        d = await note_node({"current_pair": c1})
         assert not isinstance(d, Command)
     asyncio.run(_check())
 
 
-# --- C7: ledger and minted_configs are last-write, per-fault accumulation -----
+# --- C7: ledger accumulates per pair across the faults ------------------------
 
-def test_integration_c7_ledger_last_write_per_fault(tmp_path):
-    """C7 - ledger and minted_configs accumulate per fault with last-write
-    semantics (units_done, minted keys, directions reducer)."""
+def _ratify_drafts(inp) -> RatifyDecision:
+    """The fixture ratify seam: every draft ends ratified."""
+    configs = []
+    for draft in inp.configs:
+        amended = draft.model_copy(deep=True)
+        amended.status = "ratified"
+        configs.append(amended)
+    return RatifyDecision(configs=configs)
+
+
+def _note_pair(inp) -> NoteDecision:
+    """The fixture note seam: one note for the pair."""
+    return NoteDecision(notes=[NoteRecord(
+        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
+        note="fixture note",
+    )])
+
+
+def test_integration_c7_ledger_last_write_per_pair(tmp_path):
+    """C7 - ledger accumulates per pair (units_done, minted keys, notes) with
+    last-write semantics, across the faults the supervisor pops."""
     store = HuntStore(tmp_path)
 
-    def reason_fn(inp: GateInput) -> GateDecision:
-        # one carried direction per unit, distinct vulnerability classes
-        dirs = []
-        for c in inp.candidates:
-            dirs.append(EnvisionedDirection(
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
+        # one carried direction per pair, distinct vulnerability classes
+        return GateDecision(directions=[
+            EnvisionedDirection(
                 unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                 rationale="r", assumptions=["a"],
                 vulnerability_classes=[f"CSRF-{c.unit_id}"],
-            ))
-        return GateDecision(directions=dirs)
+            ) for c in inp.candidates])
 
     c_a = _candidate(SERVICE_A, FAULT_352)
     c_b = _candidate(SERVICE_B, FAULT_352)
@@ -403,57 +438,51 @@ def test_integration_c7_ledger_last_write_per_fault(tmp_path):
         project_id="project-1", run_id="run-c7",
         candidates=[c_a, c_b, c_c],
         tools=_tools(store),
-        dispatch_fn=lambda cfg, routed=(): DispatchResult(spec_ref="s", pod_result_ref="p", hypothesis_verdict="successful", feedback="ok"),
-        reason_fn=reason_fn,
+        hypothesise_fn=hypothesise_fn,
+        ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
-    # after fault1 (CWE-352): 2 units, after fault2 (CWE-639): 1 more -> total 3
+    # after fault1 (CWE-352): 2 pairs, after fault2 (CWE-639): 1 more -> total 3
+    assert report.pairs_processed == 3
+    assert report.configs_ratified == 3
     assert report.ledger.units_done == 3
     assert report.ledger.notes_recorded == 3
     assert len(report.ledger.minted_config_keys) == 3
     assert set(report.ledger.minted_config_keys) == {
         "Service:slug:a::CWE-352", "Service:slug:b::CWE-352", "Service:slug:a::CWE-639",
     }
-    # minted_configs last-write: exactly 3 keys, second write to same key overwrites (not duplicated)
-    # run again with duplicate key to prove last-write
-    store2 = HuntStore(tmp_path / "c7b")
-    # fake duplicate: two candidates same revival key but different hypothesis - should collapse to one hunt_id base? Actually ledger keys duplicate -> last-write overwrites but ledger list appends. Test duplicate handling via direct dict.
-    from polymerhus.attack.hunting.hunt_orchestrator import revival_key
-    # dispatched count should be 3 HuntConfigs via fan-out 1 per direction (1 candidate each)
-    assert report.hunts_dispatched == 3
     assert len(store.read_configs("project-1")) == 3
 
 
-# --- C8: deterministic BUDGET cuts accumulated set (O9) ---------------------
+# --- C8: the O9 BUDGET stage is REMOVED (G7) ----------------------------------
 
-def test_integration_c8_budget_cut_batch(tmp_path):
-    """C8 - BUDGET deterministically cuts the accumulated directions; the cut
-    rides the report trail (the per-run `cut` kind file is removed, #166),
-    ledger budget_remaining set."""
+def test_integration_c8_budget_stage_removed(tmp_path):
+    """C8 - re-scoped by #167/G7: the deterministic BUDGET stage is gone - no
+    direction is ever cut (spending is the runtime plane's and the pod's), the
+    report has no budget-cut field, and the ledger has no budget-remaining."""
     store = HuntStore(tmp_path)
 
-    def reason_fn(inp: GateInput) -> GateDecision:
+    def hypothesise_fn(inp: GateInput) -> GateDecision:
         return GateDecision(directions=[
-            EnvisionedDirection(unit_id=SERVICE_A, fault_class=FAULT_352, carried=True, rationale="r"),
-            EnvisionedDirection(unit_id=SERVICE_B, fault_class=FAULT_352, carried=True, rationale="r"),
-            EnvisionedDirection(unit_id=SYSTEM_CACHE, fault_class=FAULT_639, carried=True, rationale="r"),
-        ])
-
-    def budget_fn(directions):
-        return directions[:1]
+            EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class,
+                                carried=True, rationale="r")
+            for c in inp.candidates])
 
     report = run_orchestration(
         project_id="project-1", run_id="run-c8",
         candidates=[_candidate(SERVICE_A, FAULT_352), _candidate(SERVICE_B, FAULT_352), _candidate(SYSTEM_CACHE, FAULT_639)],
         tools=_tools(store),
-        dispatch_fn=lambda cfg, routed=(): DispatchResult(spec_ref="s", pod_result_ref="p", hypothesis_verdict="successful", feedback="ok"),
-        reason_fn=reason_fn,
-        budget_fn=budget_fn,
+        hypothesise_fn=hypothesise_fn,
+        ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
-    assert report.hunts_dispatched == 1
-    assert len(report.budget_cut) >= 2
-    assert set(report.budget_cut).issuperset({"Service:slug:b::CWE-352", "System:cache:1::CWE-639"})
-    # ledger budget_remaining == 1
-    assert report.ledger.budget_remaining == 1
+    assert report.pairs_processed == 3
+    assert report.configs_ratified == 3
+    assert not hasattr(report, "budget_cut")
+    assert not hasattr(report.ledger, "budget_remaining")
+    configs = store.read_configs("project-1")
+    assert len(configs) == 3
+    assert all(c["status"] == "ratified" for c in configs)
 
 
 # --- C9: per-project HuntStore topology, config + notes split ----------------
@@ -507,9 +536,16 @@ def test_integration_c10_store_read_degrades_empty(tmp_path, caplog):
         project_id="project-1", run_id="run-c10",
         candidates=[_candidate(SERVICE_A, FAULT_352)],
         tools=_tools(store),
-        dispatch_fn=lambda cfg, routed=(): DispatchResult(spec_ref="s", pod_result_ref="p", hypothesis_verdict="successful", feedback="ok"),
+        hypothesise_fn=lambda inp: GateDecision(
+            directions=[EnvisionedDirection(
+                unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
+                rationale="r", research_direction="rd",
+                vulnerability_classes=["CSRF"]) for c in inp.candidates]),
+        ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
-    assert report.hunts_dispatched == 1
+    assert report.pairs_processed == 1
+    assert report.configs_ratified == 1
     # the minted config's prior_hunt_insights are empty (the read degraded)
     configs = store.read_configs("project-1")
     assert len(configs) == 1
@@ -662,9 +698,12 @@ def test_integration_c12b_surface_context_shows_connected_data_items(tmp_path):
             store_reads=store,
             graph_view=ReadOnlyGraphView("project-1", read_fn=read_fn),
         ),
-        reason_fn=reason_fn,
+        hypothesise_fn=reason_fn,
+        ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
     )
-    assert report.hunts_dispatched == 1
+    assert report.pairs_processed == 1
+    assert report.configs_ratified == 1
     configs = store.read_configs("project-1")
     assert len(configs) == 1
     cards = configs[0]["surface_context"]["cards"]

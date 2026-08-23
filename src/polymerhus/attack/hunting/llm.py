@@ -49,6 +49,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     GateInput,
     MatchVerdict,
+    PhaseTurnInput,
 )
 from polymerhus.recon.control.targeted import TargetedReconResult
 
@@ -130,37 +131,43 @@ def validate_hunting_llm_config() -> None:
 # --- pure prompt/parse helpers ------------------------------------------------
 
 _GATE_SKILL_FALLBACK = (
-    "You are the hunt-orchestrator's gate: the per-fault multi-unit Loop protocol "
-    "(candidates-rewrite, spec 3.2/3.3) that decides, per fault over all its matched "
-    "units, which units become carried directions. For each matched unit you receive "
-    "its applies-witnesses and three-valued match verdict, the fault's "
-    "materialisation and fold family, the read-only graph surface, and the rich "
-    "typed projection (including cooperating systems adjacency). Carry a direction "
-    "when the fault plausibly applies and seed it with rationale, "
-    "research_direction, and vulnerability_classes; "
-    "prune only on positive grounds. NEVER prune on "
-    "degraded grounds: when the KB is unavailable (kb_degraded), reason from the "
+    "You are the hunt-orchestrator: the node-per-phase REASON body "
+    "(candidates-rewrite spec 3.2/3.3, amended by the memory + workflow-graph "
+    "rework) that takes ONE (unit, fault) pair through the hypothesise -> "
+    "ratify -> note phases. The phase-transition verbatims are injected in the "
+    "tool-call responses (never here); this skill carries the reasoning "
+    "discipline. "
+    "Hypothesise phase: read the unit's applies-witnesses and three-valued "
+    "match verdict, the fault's materialisation and fold family, the read-only "
+    "graph surface, and the rich typed projection (including cooperating "
+    "systems adjacency). Elicit one or more vulnerability classes - at the "
+    "grain of a web-vulnerability CLASS with a research-direction rationale "
+    "(e.g. CSRF, IDOR) - never narrowed to a surface locale, payload profile, "
+    "vector, or symptom; the narrowing belongs to the hunting agent at "
+    "spec-writing. Prune only on positive grounds; NEVER prune on degraded "
+    "grounds: when the KB is unavailable (kb_degraded), reason from the "
     "candidate and surface alone and carry rather than prune. "
-    "Loop protocol: Prior minted-config keys to reflect on: listed in the prompt; "
-    "You NEVER mint a config that duplicates a prior one; you MAY call "
-    "read_memory_hunts to inspect a prior key before minting. Knowledge-sufficiency "
-    "decision point (Q9): Given this fault class and unit type, do I have sufficient "
-    "knowledge of the previous dispatched hunts and all potentially useful insights "
-    "collected? If not, loop read_memory_hunts / read_memory_notes. Target-knowledge "
-    "loop (Q9): do I have enough technical knowledge of this unit to concretise the "
-    "abstract fault at this locus? If not, query via graph_view iterating until "
-    "sufficient. Same-class merge (Q16): if multiple concrete-fault candidates at "
-    "one locus are the same web-vulnerability class, merge them into one; only "
+    "Prior-hunt reflection (Q11): prior minted-config keys are listed in the "
+    "prompt; you NEVER write a config that duplicates a prior one; you MAY "
+    "call hunts_store(read) to inspect a prior key before writing. "
+    "Knowledge-sufficiency decision point (Q9): given this fault class and "
+    "unit type, do I have sufficient knowledge of the previous dispatched "
+    "hunts and all potentially useful insights collected? If not, loop "
+    "hunts_store(read) / notes(read). Target-knowledge loop (Q9): do I have "
+    "enough technical knowledge of this unit to concretise the abstract fault "
+    "at this locus? If not, query via graph_view iterating until sufficient. "
+    "Same-class merge (Q16): if multiple elicited vulnerability classes at one "
+    "locus are the same web-vulnerability class, merge them into one; only "
     "fundamentally discriminable classes survive as distinct configs. Pure LLM "
-    "reflection - no module-side parsing. Unit boundary: call mint_hunt_config ONCE "
-    "at the end of each unit's analysis; record_note then follows deterministically. "
-    "State will be re-fed only after record_note - the only reinjection point. "
-    "Consider cooperating systems when creating a HuntConfig targeting a system. "
-    "Tools are exactly five: read_memory_hunts, read_memory_notes, graph_view, "
-    "mint_hunt_config, record_note (no back-edge-to-recon tool, no "
-    "HuntConfig-writing tool, no budget_consume). Return the directions, each "
-    "marked carried or pruned; the deterministic mint fans out N HuntConfigs per "
-    "distinct class."
+    "reflection - no module-side parsing. The hypothesise write: "
+    "hunts_store(write, config, status='hypothesised'), one draft per "
+    "surviving class with only rationale + research_direction filled - the "
+    "capabilities / assumptions / technique-primitives analysis is the "
+    "RATIFICATION phase's work. Consider cooperating systems when creating a "
+    "HuntConfig targeting a system. Tools are exactly three: hunts_store, "
+    "notes, graph_view (no back-edge-to-recon tool, no budget tool). Return "
+    "the directions, each marked carried or pruned; the deterministic mint "
+    "fans out N hypothesised drafts per distinct class at this phase."
 )
 
 _REMATCH_SKILL_FALLBACK = (
@@ -393,18 +400,19 @@ def _render_unit_block(units, unit_projection, compat_projection, kb_evidences) 
 
 
 def _compose_gate_prompt(inp: GateInput) -> str:
-    """Render the per-fault Q8 gate input (spec 3.7) into the reasoning turn's
-    user prompt. The FAULT is the schedule unit: the header renders the fault
-    class, the KB-grounding line, the read-only graph surface, the
-    materialisation and the fold family ONCE; the matched units split into a
-    Services section and a Systems section, each with its own adversarial-
-    reasoning intro (Q4) and each unit's OWN rich projection render; then the
-    verbatim Loop protocol block (Q11 prior-hunt reflection on
-    `prior_minted_keys`, Q9 knowledge-sufficiency + target-knowledge loops, Q8
-    per-unit hypothesis elicitation, Q16 same-class merge, the mint-then-note
-    unit boundary, and the re-feed warning). Deterministic sorted rendering
-    throughout; every slot degrades independently (never FALSE, never a prune
-    signal - C16)."""
+    """Render the HYPOTHESISE-phase input (spec 3.7, re-scoped by #167) into
+    the phase turn's user prompt. The pair is the unit of the turn: the header
+    renders the fault class, the KB-grounding line, the read-only graph
+    surface, the materialisation and the fold family; the matched units split
+    into a Services section and a Systems section, each with its own
+    adversarial-reasoning intro (Q4) and each unit's OWN rich projection
+    render; then the hypothesise-phase discipline block (Q11 prior-hunt
+    reflection on `prior_minted_keys`, Q9 knowledge-sufficiency +
+    target-knowledge loops, Q8 hypothesis elicitation, Q16 same-class merge,
+    and the hypothesise write). The phase-TRANSITION verbatims are NOT part of
+    this prompt - they ride the tool-call responses from the constants (G1/G3).
+    Deterministic sorted rendering throughout; every slot degrades
+    independently (never FALSE, never a prune signal - C16)."""
     fault_class = inp.candidates[0].fault_class if inp.candidates else None
 
     # The section split is on the kind-qualified identity, never on the
@@ -455,46 +463,108 @@ def _compose_gate_prompt(inp: GateInput) -> str:
     prior_keys = sorted(str(k) for k in (inp.prior_minted_keys or []))
     lines += [
         "",
-        "Loop protocol:",
+        "Hypothesise-phase discipline (per pair):",
         "  Prior-hunt reflection (Q11): Prior minted-config keys to reflect on: "
         f"{', '.join(prior_keys) if prior_keys else '(none)'}",
-        "    - You NEVER mint a config that duplicates a prior one. Before "
-        "minting you MAY call read_memory_hunts to inspect a prior key's config "
-        "and assess overlap; a config you assert as a duplicate is never minted.",
+        "    - You NEVER write a config that duplicates a prior one. Before "
+        "writing you MAY call hunts_store(read) to inspect a prior key's config "
+        "and assess overlap; a config you assert as a duplicate is never written.",
         "  Knowledge-sufficiency decision point (Q9): given this fault class and "
         "unit type, decide whether you have sufficient knowledge of the previous "
         "dispatched hunts and all potentially useful insights collected; if not, "
-        "loop the memory reads (read_memory_hunts / read_memory_notes).",
+        "loop the memory reads (hunts_store(read) / notes(read)).",
         "  Target-knowledge loop (Q9): against the materialised unit (projection "
         "+ surface), if you lack enough technical knowledge of this unit to "
         "concretise the abstract fault at this locus, query the attack-surface / "
         "L1 graph via graph_view, iterating until sufficient.",
-        "  Per-unit work-items + hypothesis elicitation (Q8): for each unit "
-        "above, elicit one or more vulnerability classes - at the grain of a "
-        "web-vulnerability CLASS with a research-direction rationale (e.g. CSRF, "
-        "IDOR) - never narrowed to a surface locale, payload profile, vector, or "
-        "symptom; the narrowing belongs to the hunting agent at spec-writing.",
-        "  Testing-primitive / capability / blocker analysis (Q9, RATIFICATION "
-        "phase): reason on the required testing primitives and what could block "
-        "their usage (auth level, interaction method, target state, request "
-        "context); that yields the adversarial capabilities and assumptions the "
-        "fault hypothesis relies on. NOT seeds you fill at this hypothesise turn - "
-        "the draft carries only rationale, research_direction, and "
-        "vulnerability_classes.",
+        "  Hypothesis elicitation (Q8): for each unit above, elicit one or more "
+        "vulnerability classes - at the grain of a web-vulnerability CLASS with "
+        "a research-direction rationale (e.g. CSRF, IDOR) - never narrowed to a "
+        "surface locale, payload profile, vector, or symptom; the narrowing "
+        "belongs to the hunting agent at spec-writing.",
         "  Same-class merge (Q16): if multiple elicited vulnerability classes at "
-        "one unit are the SAME web-vulnerability class, merge them into one; only "
-        "fundamentally discriminable classes survive as distinct configs. Pure "
-        "LLM reflection - no module-side parsing.",
-        "  Unit boundary (spec 3.3): call mint_hunt_config ONCE at the end of "
-        "each unit's analysis; record_note then follows deterministically. State "
-        "will be re-fed only after record_note - the only reinjection point in "
-        "the pass.",
+        "one locus are the SAME web-vulnerability class, merge them into one; "
+        "only fundamentally discriminable classes survive as distinct configs. "
+        "Pure LLM reflection - no module-side parsing.",
+        "  The hypothesise write (spec 3.3): call hunts_store(write, config, "
+        "status='hypothesised') with ONE draft per surviving class, carrying "
+        "rationale + research_direction ONLY. The capability/assumption/"
+        "technique-primitive analysis is the RATIFICATION phase's work (the next "
+        "phase) - never filled at this hypothesise turn.",
         "",
         "Return one direction per candidate: set carried true/false, and for a "
         "carried direction fill rationale, research_direction, and "
-        "vulnerability_classes ONLY. The capability/assumption/"
-        "technique-primitive analysis is the RATIFICATION phase's work (a later "
-        "turn) - never a seed you fill at this hypothesise turn.",
+        "vulnerability_classes ONLY. The capabilities / assumptions / "
+        "technique-primitives are the RATIFICATION phase's work (a later "
+        "phase) - never a seed you fill at this hypothesise turn.",
+    ]
+    return "\n".join(lines)
+
+
+def _compose_ratify_prompt(inp: PhaseTurnInput) -> str:
+    """Render the RATIFY-phase input (spec 3.2, re-scoped by #167): the pair
+    and the hypothesised drafts it may update/delete/create. The phase
+    transitions ride the tool-call responses (NEXT_RATIFY_HINT on the
+    hypothesised write, ONLY NEXT_NOTE_HINT on the ratified write - G1), never
+    this prompt: the prompt carries the pair data and the ratification
+    contract (must END with a status='ratified' write carrying the filled
+    capabilities / assumptions / technique-primitives)."""
+    pair = inp.pair
+    lines = [
+        f"RATIFICATION phase (pair {pair.unit_id}::{pair.fault_class}):",
+        f"Hypothesised drafts to ratify: {len(inp.configs)}",
+    ]
+    for config in inp.configs:
+        template = config.prompt_template
+        lines += [
+            f"  - config {config.hunt_id} "
+            f"[vulnerability_class={config.vulnerability_class!r}, "
+            f"status={config.status!r}]",
+            f"    rationale: {template.rationale or '(none)'}",
+            f"    research_direction: {template.research_direction or '(none)'}",
+        ]
+    lines += [
+        "",
+        "Ratification contract: you may call hunts_store(write, config) "
+        "multiple times to update/delete/create configs. End ratification by a "
+        "hunts_store write carrying status='ratified' and, very likely, the "
+        "filled adversarial_capabilities / assumptions / technique_primitives. "
+        "A config you delete during ratification is written status='dropped' "
+        "(it stays on disk, G6).",
+        "",
+        "Return the pair's configs at their final status.",
+    ]
+    return "\n".join(lines)
+
+
+def _compose_note_prompt(inp: PhaseTurnInput) -> str:
+    """Render the NOTE-phase input (spec 3.2/G8, re-scoped by #167): the pair
+    and its ratified configs. The note-taking verbatim rides the ratified
+    write's tool-call response (NEXT_NOTE_HINT, G1) and the pair-end verbatim
+    rides the notes tool's response (NEXT_PAIR_HINT + next pair) - this prompt
+    carries the pair data and the G8 note contract only."""
+    pair = inp.pair
+    lines = [
+        f"NOTE phase (pair {pair.unit_id}::{pair.fault_class}):",
+        f"Ratified configs to note: {len(inp.configs)}",
+    ]
+    for config in inp.configs:
+        template = config.prompt_template
+        lines += [
+            f"  - config {config.hunt_id} "
+            f"[vulnerability_class={config.vulnerability_class!r}]",
+            f"    rationale: {template.rationale or '(none)'}",
+            f"    research_direction: {template.research_direction or '(none)'}",
+        ]
+    lines += [
+        "",
+        "Note contract (G8): write ONE note per config covering ALL the "
+        "decisions that concern it - the observations drawn from your tool "
+        "calls (graph_view or memory reads) that drove the rationale on all "
+        "choices - more detailed than the config's rationale and walking the "
+        "reasoning that yielded it.",
+        "",
+        "Return the notes, each keyed to its config.",
     ]
     return "\n".join(lines)
 

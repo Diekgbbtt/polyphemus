@@ -3,22 +3,23 @@ behaviours the catalogue pins only at the integration/e2e tiers.
 
 Pure mechanics: candidate intake (dedup by identity, malformed drop, the
 deterministic does-not-apply prune), the revival key, and the D3 HuntConfig
-minting. Seam behaviours: the park/resume positive path (H3), the store-read
-degradation (O4), the graph-view degradation (O5), the back-edge status
-vocabulary (IA-6), the gate fail-open (D67-11 spirit), and the rematch
-fail-open. The hunt store and the graph view are MOCKED (no live Neo4j, no
-live LLM - testing-strategy.md section 2); the catalogue predicates C1-C12 live
-in tests/integration/test_hunt_orchestrator_contracts.py and are never
-repeated in this tier's red/green loop.
+minting. Seam behaviours: the store-read degradation (O4), the graph-view
+degradation (O5), the hypothesise fail-open (a raising turn carries the pair
+bare), the ratify fail-open (a raising turn keeps the drafts hypothesised),
+the note fail-open (a raising turn skips the note), and the gate-pruned
+no-write path. The hunt store and the graph view are MOCKED (no live Neo4j, no
+live LLM - testing-strategy.md section 2); the catalogue predicates live in
+tests/integration and are never repeated in this tier's red/green loop.
 """
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
-    DispatchResult,
     EnvisionedDirection,
     GateDecision,
-    MatchVerdict,
+    NoteDecision,
+    NoteRecord,
     OrchestratorReport,
     OrchestratorTools,
+    RatifyDecision,
     ReadOnlyGraphView,
     Witness,
     mint_hunt_config,
@@ -34,7 +35,8 @@ FAULT_X = "fault-x"
 class _MemoryStore:
     """The mocked per-project memory store: in-memory configs + notes,
     fail-open reads, mirroring the real store's surface (write_config /
-    append_note / read_configs_by_key / read_notes / read_configs)."""
+    update_config / append_note / read_configs_by_key / read_notes /
+    read_configs)."""
 
     def __init__(self, *, fail_reads: bool = False):
         self._configs: list[dict] = []
@@ -47,8 +49,21 @@ class _MemoryStore:
         self._configs.append(data)
         return f"{data.get('unit_id')}::{data.get('fault_class')}::{data.get('vulnerability_class')}"
 
+    def update_config(self, project_id, config):
+        data = config.model_dump() if not isinstance(config, dict) else dict(config)
+        identity = (str(data.get("unit_id") or ""), str(data.get("fault_class") or ""),
+                    str(data.get("vulnerability_class") or ""))
+        for i, existing in enumerate(self._configs):
+            if (str(existing.get("unit_id") or ""), str(existing.get("fault_class") or ""),
+                    str(existing.get("vulnerability_class") or "")) == identity:
+                self._configs[i] = data
+                return "::".join(identity)
+        self._configs.append(data)
+        return "::".join(identity)
+
     def append_note(self, project_id, key, note):
         self._notes.append({"revival_key": key, "note": note})
+        return {"note_id": f"n{len(self._notes)}", "revival_key": key, "note": note}
 
     def read_configs_by_key(self, project_id, key):
         self.read_attempts += 1
@@ -56,7 +71,10 @@ class _MemoryStore:
             raise OSError("store read failed (fixture)")
         return [c for c in self._configs
                 if (str(c.get("unit_id") or "") + "::"
-                    + str(c.get("fault_class") or "")) == key]
+                    + str(c.get("fault_class") or "")) == key
+                or (str(c.get("unit_id") or "") + "::"
+                    + str(c.get("fault_class") or "") + "::"
+                    + str(c.get("vulnerability_class") or "")) == key]
 
     def read_notes(self, project_id, key=None):
         self.read_attempts += 1
@@ -89,6 +107,28 @@ def _carry(candidate: DeliveredCandidate) -> EnvisionedDirection:
     )
 
 
+def _ratify_drafts(inp) -> RatifyDecision:
+    """The default ratify seam: amend every draft to ratified with the filled
+    ratification fields (the fixture's ratification contract)."""
+    configs = []
+    for draft in inp.configs:
+        amended = draft.model_copy(deep=True)
+        amended.status = "ratified"
+        amended.adversarial_capabilities = ["forge a cross-origin request"]
+        amended.assumptions = ["the session is cookie-bound"]
+        amended.technique_primitives = ["token-missing probe"]
+        configs.append(amended)
+    return RatifyDecision(configs=configs)
+
+
+def _note_pair(inp) -> NoteDecision:
+    """The default note seam: one fixture note for the pair (the pair end)."""
+    return NoteDecision(notes=[NoteRecord(
+        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
+        note="fixture note: the reasoning that yielded the rationale",
+    )])
+
+
 def _tools(store, *, read_fn=None) -> OrchestratorTools:
     return OrchestratorTools(
         store_reads=store,
@@ -96,19 +136,18 @@ def _tools(store, *, read_fn=None) -> OrchestratorTools:
     )
 
 
-def _run(store, candidates, *, reason_fn=None, rematch=None, **kwargs) -> OrchestratorReport:
+def _run(store, candidates, *, hypothesise=None, ratify=None, note=None,
+         **kwargs) -> OrchestratorReport:
     tools = kwargs.pop("tools", None) or _tools(store)
     return run_orchestration(
         project_id="project-1",
         run_id="run-1",
         candidates=candidates,
         tools=tools,
-        dispatch_fn=lambda config, routed=(): DispatchResult(
-            spec_ref="spec-1", pod_result_ref="pod-1",
-            hypothesis_verdict="successful", feedback="ok",
-        ),
-        rematch_fn=rematch or (lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies")),
-        reason_fn=reason_fn or (lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates])),
+        hypothesise_fn=hypothesise or (
+            lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates])),
+        ratify_fn=ratify or _ratify_drafts,
+        note_fn=note or _note_pair,
         **kwargs,
     )
 
@@ -160,14 +199,15 @@ def test_does_not_apply_is_pruned_and_never_reaches_the_gate():
     gate_inputs: list = []
     cand = _candidate(verdict="does-not-apply", deterministic_witness="clause 3 FALSE")
 
-    def reason_fn(inp):
+    def hypothesise_fn(inp):
         gate_inputs.append(inp.candidates)
         return GateDecision(directions=[])
 
-    report = _run(store, [cand], reason_fn=reason_fn)
+    report = _run(store, [cand], hypothesise=hypothesise_fn)
     assert report.pruned_by_verdict == 1
-    assert report.hunts_dispatched == 0
-    assert gate_inputs == []  # a pruned-only pass never spends a gate turn
+    assert report.pairs_processed == 0
+    assert report.configs_hypothesised == 0
+    assert gate_inputs == []  # a pruned-only pass never spends a hypothesise turn
 
 
 # --- Pure mechanics: the D3 HuntConfig minting --------------------------------
@@ -223,12 +263,12 @@ def test_hunt_config_carries_the_sub_fault_ids_slot():
 def test_schedule_processes_the_riskiest_fault_first():
     """The per-fault schedule is re-sorted RISK-DESCENDING (operator tiers,
     `fault_risk.risk_tier`): an intake that first emitted a residual-tier
-    fault still reasons about the broken-access-control fault first - a
-    budget-capped pass spends on the riskiest."""
+    fault still reasons about the broken-access-control fault first - the
+    supervisor pops its pair before the residual tier's."""
     store = _MemoryStore()
     reason_order: list[str] = []
 
-    def reason_fn(inp):
+    def hypothesise_fn(inp):
         reason_order.append(inp.candidates[0].fault_class)
         return GateDecision(directions=[_carry(c) for c in inp.candidates])
 
@@ -236,9 +276,10 @@ def test_schedule_processes_the_riskiest_fault_first():
         store,
         [_candidate(SERVICE_A, "CWE-601"),   # open redirect, tier 4, FIRST
          _candidate(SERVICE_A, "CWE-639")],  # IDOR, tier 0, SECOND
-        reason_fn=reason_fn,
+        hypothesise=hypothesise_fn,
     )
-    assert report.hunts_dispatched == 2
+    assert report.pairs_processed == 2
+    assert report.configs_ratified == 2
     assert reason_order == ["CWE-639", "CWE-601"]
 
 
@@ -404,35 +445,35 @@ def test_surface_context_replaces_edge_degree_with_connected_data_items():
     assert _surface_cards_with_connected_data_items([broken_key], proj) == [broken_key]
 
 
-def test_fanned_out_direction_dispatches_each_config():
-    # the dispatch stretch consumes the entire fan-out set: one hunt per
-    # distinct class, each with its own config record and hunt_id
+def test_fanned_out_direction_ratifies_each_config_and_notes_the_pair():
+    # the hypothesise fan-out lands one draft per distinct class; the ratify
+    # phase amends them to ratified; the note phase writes one note for the pair
     store = _MemoryStore()
 
-    def reason_fn(inp):
+    def hypothesise_fn(inp):
         direction = _carry(inp.candidates[0])
         direction.vulnerability_classes = ["csrf class", "idor class"]
         return GateDecision(directions=[direction])
 
-    report = _run(store, [_candidate()], reason_fn=reason_fn)
-    assert report.hunts_dispatched == 2
-    assert len(report.hunt_ids) == 2
-    assert len(set(report.hunt_ids)) == 2
-    # the memory topology: two hypothesised configs in produced/ (one per
-    # distinct class), one note in memory.yaml (one per unit) - the per-run
-    # hunt/memory kind records are removed (#166)
-    assert len(store.read_configs("project-1")) == 2
+    report = _run(store, [_candidate()], hypothesise=hypothesise_fn)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 2
+    assert report.configs_ratified == 2
+    assert report.notes_written == 1
+    # the memory topology: two ratified configs in produced/ (one per distinct
+    # class), one note in memory.yaml (one per pair)
+    configs = store.read_configs("project-1")
+    assert len(configs) == 2
+    assert all(c["status"] == "ratified" for c in configs)
     assert len(store.read_notes("project-1")) == 1
 
-
-# --- Seam behaviours: park/resume (H3) ----------------------------------------
 
 # --- Seam behaviours: fail-open degradations ----------------------------------
 
 def test_store_read_failure_degrades_prior_insights(caplog):
     store = _MemoryStore(fail_reads=True)
     report = _run(store, [_candidate()])
-    assert report.hunts_dispatched == 1
+    assert report.pairs_processed == 1
     assert store.read_attempts >= 1
     assert "warning" in caplog.text.lower()
 
@@ -445,42 +486,64 @@ def test_graph_view_query_failure_degrades_the_gate(caplog):
 
     seen: dict = {}
 
-    def reason_fn(inp):
+    def hypothesise_fn(inp):
         seen["surface"] = inp.surface
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
     report = _run(store, [_candidate()], tools=_tools(store, read_fn=broken_read),
-                  reason_fn=reason_fn)
-    assert report.hunts_dispatched == 1
+                  hypothesise=hypothesise_fn)
+    assert report.pairs_processed == 1
+    assert report.configs_ratified == 1
     assert seen["surface"] == []
     assert "warning" in caplog.text.lower()
 
 
-def test_reason_turn_failure_carries_all_directions(caplog):
+def test_hypothesise_turn_failure_carries_the_pair_bare(caplog):
     store = _MemoryStore()
 
     def boom(inp):
-        raise RuntimeError("reasoning turn exhausted")
+        raise RuntimeError("hypothesise turn exhausted")
 
-    report = _run(store, [_candidate()], reason_fn=boom)
-    assert report.hunts_dispatched == 1
+    report = _run(store, [_candidate()], hypothesise=boom)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 1     # the carried-bare draft
+    assert report.configs_ratified == 1
     assert "warning" in caplog.text.lower()
 
 
-def test_rematch_failure_degrades_to_unresolved(caplog):
+def test_ratify_turn_failure_keeps_the_drafts_hypothesised(caplog):
+    """The ratify phase degrades fail-open: a raising ratify turn skips the
+    phase's side effect - the hypothesised drafts stay on disk, never become
+    ratified - but the pair keeps serving (the note phase still runs)."""
     store = _MemoryStore()
-    yellow = _candidate(verdict="insufficient-evidence")
 
-    def boom(unit_id, fault_class, result):
-        raise RuntimeError("re-match exhausted")
+    def boom(inp):
+        raise RuntimeError("ratify turn exhausted")
 
-    report = _run(store, [yellow], rematch=boom)
-    assert report.hunts_dispatched == 0
-    assert report.unresolved == (revival_key(SERVICE_A, FAULT_X),)
+    report = _run(store, [_candidate()], ratify=boom)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 1
+    assert report.configs_ratified == 0
+    assert store.read_configs("project-1")[0]["status"] == "hypothesised"
     assert "warning" in caplog.text.lower()
 
 
-def test_gate_pruned_direction_is_not_dispatched():
+def test_note_turn_failure_skips_the_note(caplog):
+    """The note phase degrades fail-open: a raising note turn skips the note's
+    side effect (no note lands) but the pass still completes."""
+    store = _MemoryStore()
+
+    def boom(inp):
+        raise RuntimeError("note turn exhausted")
+
+    report = _run(store, [_candidate()], note=boom)
+    assert report.pairs_processed == 1
+    assert report.notes_written == 0
+    assert store.read_notes("project-1") == []
+    assert "warning" in caplog.text.lower()
+
+
+def test_gate_pruned_direction_writes_no_config():
     store = _MemoryStore()
     cand = _candidate()
 
@@ -490,9 +553,12 @@ def test_gate_pruned_direction_is_not_dispatched():
             EnvisionedDirection(unit_id=direction.unit_id, fault_class=direction.fault_class,
                                 carried=False)])
 
-    report = _run(store, [cand], reason_fn=pruning_gate)
-    assert report.hunts_dispatched == 0
+    report = _run(store, [cand], hypothesise=pruning_gate)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 0
+    assert report.notes_written == 0
     assert report.gate_pruned == (revival_key(SERVICE_A, FAULT_X),)
+    assert store.read_configs("project-1") == []
 
 
 # --- The async-native parent entry point (#94) --------------------------------
@@ -506,11 +572,10 @@ def _arun(store, candidates, **kwargs):
     return asyncio.run(arun_orchestration(
         project_id="project-1", run_id="run-1", candidates=candidates,
         tools=_tools(store),
-        dispatch_fn=lambda config, routed=(): DispatchResult(
-            spec_ref="spec-1", pod_result_ref="pod-1",
-            hypothesis_verdict="successful", feedback="ok"),
-        rematch_fn=lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies"),
-        reason_fn=lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+        hypothesise_fn=lambda inp: GateDecision(
+            directions=[_carry(c) for c in inp.candidates]),
+        ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
         **kwargs,
     ))
 
@@ -521,13 +586,9 @@ def test_arun_orchestration_matches_the_sync_pass():
     running `run_orchestration` off the event loop, never re-implementing it."""
     sync_report = _run(_MemoryStore(), [_candidate()])
     async_report = _arun(_MemoryStore(), [_candidate()])
-    # `hunt_ids` are random uuids (one per dispatch), so compare everything else
-    # verbatim and the hunt_ids by COUNT - the pass shape must be identical.
-    drop = {"hunt_ids"}
-    assert ({k: v for k, v in async_report.model_dump().items() if k not in drop}
-            == {k: v for k, v in sync_report.model_dump().items() if k not in drop})
-    assert len(async_report.hunt_ids) == len(sync_report.hunt_ids) == 1
-    assert async_report.hunts_dispatched == 1
+    assert async_report.model_dump() == sync_report.model_dump()
+    assert async_report.pairs_processed == 1
+    assert async_report.configs_ratified == 1
 
 
 def test_arun_orchestration_does_not_block_the_event_loop():
@@ -552,17 +613,16 @@ def test_arun_orchestration_does_not_block_the_event_loop():
         report = await arun_orchestration(
             project_id="project-1", run_id="run-1", candidates=[_candidate()],
             tools=_tools(_MemoryStore()),
-            dispatch_fn=lambda config, routed=(): DispatchResult(
-                spec_ref="s", pod_result_ref="p",
-                hypothesis_verdict="successful", feedback="ok"),
-            rematch_fn=lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies"),
-            reason_fn=lambda inp: GateDecision(directions=[_carry(c) for c in inp.candidates]),
+            hypothesise_fn=lambda inp: GateDecision(
+                directions=[_carry(c) for c in inp.candidates]),
+            ratify_fn=_ratify_drafts,
+            note_fn=_note_pair,
         )
         await beat
         return report, ticks
 
     report, ticks = asyncio.run(_drive())
-    assert report.hunts_dispatched == 1
+    assert report.pairs_processed == 1
     assert ticks == 50  # the loop kept ticking while the pass ran off-loop
 
 
@@ -585,7 +645,7 @@ def test_prior_hunt_insights_never_embed_nested_configs():
         "prior_hunt_insights": [{"unit_id": "ancient"}],
     })
     report = _run(store, [_candidate()])
-    assert report.hunts_dispatched == 1
+    assert report.pairs_processed == 1
     minted = [c for c in store.read_configs("project-1")
               if c.get("hunt_id") != "prior"]
     assert len(minted) == 1

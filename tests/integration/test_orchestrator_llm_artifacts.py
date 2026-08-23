@@ -35,14 +35,16 @@ from polymerhus.attack.hunting.actors import (
 from polymerhus.attack.hunting.fault_kb import load_fold_families, load_materialisation
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
-    DispatchResult,
     EnvisionedDirection,
     GateDecision,
     GateInput,
     HuntConfig,
     MatchVerdict,
+    NoteDecision,
+    NoteRecord,
     OrchestratorReport,
     OrchestratorTools,
+    RatifyDecision,
     ReadOnlyGraphView,
     ReadOnlyGraphViewError,
     TOOL_SURFACE,
@@ -100,22 +102,6 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True) -> Envisioned
     )
 
 
-def _ok_dispatch(calls: list | None = None):
-    """The fixture hunting agent (IA-2): returns a successful result each call."""
-    record = calls if calls is not None else []
-
-    def dispatch(config: HuntConfig, routed=()):
-        record.append((config, tuple(routed)))
-        return DispatchResult(
-            spec_ref=f"spec-{len(record)}",
-            pod_result_ref=f"pod-{len(record)}",
-            hypothesis_verdict="successful",
-            feedback="fixture feedback",
-        )
-
-    return dispatch
-
-
 def _tools(store: HuntStore, *, read_fn=None) -> OrchestratorTools:
     return OrchestratorTools(
         store_reads=store,
@@ -123,16 +109,42 @@ def _tools(store: HuntStore, *, read_fn=None) -> OrchestratorTools:
     )
 
 
-def _run(store: HuntStore, candidates, *, dispatch=None, tools=None,
-         **kwargs) -> OrchestratorReport:
+def _run(store: HuntStore, candidates, *, tools=None, **kwargs) -> OrchestratorReport:
     return run_orchestration(
         project_id="project-1",
         run_id=RUN_ID,
         candidates=candidates,
         tools=tools or _tools(store),
-        dispatch_fn=dispatch or _ok_dispatch(),
+        hypothesise_fn=kwargs.pop("hypothesise_fn", _carry_hypothesise),
+        ratify_fn=kwargs.pop("ratify_fn", _ratify_drafts),
+        note_fn=kwargs.pop("note_fn", _note_pair),
         **kwargs,
     )
+
+
+def _carry_hypothesise(inp) -> GateDecision:
+    """The fixture hypothesise turn: carries every candidate as a direction."""
+    return GateDecision(directions=[
+        EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class,
+                            carried=True) for c in inp.candidates])
+
+
+def _ratify_drafts(inp) -> RatifyDecision:
+    """The fixture ratify turn: every draft ends ratified."""
+    configs = []
+    for draft in inp.configs:
+        amended = draft.model_copy(deep=True)
+        amended.status = "ratified"
+        configs.append(amended)
+    return RatifyDecision(configs=configs)
+
+
+def _note_pair(inp) -> NoteDecision:
+    """The fixture note turn: one note for the pair."""
+    return NoteDecision(notes=[NoteRecord(
+        key=revival_key(inp.pair.unit_id, inp.pair.fault_class),
+        note="fixture note",
+    )])
 
 
 def _service_a_row() -> dict:
@@ -182,17 +194,21 @@ def _gate_input() -> GateInput:
 
 def test_gate_skill_mount_serves_the_cognitive_architecture():
     """`_gate_skill()` serves the mounted SKILL.md (frontmatter stripped), not
-    the fallback, and the body carries the spec 3.2 cognitive-architecture
-    markers: backward-from-end, the four consecutive sub-problems,
-    hypothesise-and-verify, prune-only-on-positive, the emit contract."""
+    the fallback, and the body carries the node-per-phase cognitive-architecture
+    markers: backward-from-end, the three phases, hypothesise-and-verify,
+    prune-only-on-positive, the per-phase structured output."""
     body = _gate_skill()
     assert not body.startswith("---")                      # frontmatter stripped
     assert len(body) > len(_GATE_SKILL_FALLBACK)           # the mount, not the fallback
-    assert "work backward" in body                         # 3.2.1 orient from the end
-    assert "four consecutive sub-problems" in body         # 3.2.2 fixed decomposition
-    assert "Hypothesise, then verify" in body              # 3.2.3 hypothesise-and-verify
-    assert "Prune ONLY on positive grounds" in body        # 3.2.5 prune-only-on-positive
-    assert "Emit the structured GateDecision" in body      # 3.2.6 the emit contract
+    assert "work backward" in body                         # orient from the end
+    assert "The three phases" in body                      # hypothesise -> ratify -> note
+    assert "Hypothesise, then verify" in body              # hypothesise-and-verify
+    assert "Prune ONLY on positive grounds" in body        # prune-only-on-positive
+    assert "Emit the structured output per phase" in body  # the emit contract
+    # the phase-TRANSITION verbatims are NEVER part of the skill (they ride the
+    # tool-call responses from the constants, G1/G3)
+    assert "strongly take notes" not in body.lower()
+    assert "start the next iteration" not in body.lower()
 
 
 # --- C14: the rematch skill mount resolves (success) ---------------------------
@@ -252,8 +268,8 @@ def test_reason_stretch_render_carries_projection_materialisation_fold_family(tm
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
     report = _run(store, [_candidate(SERVICE_A, "CWE-266")],
-                  reason_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
-    assert report.hunts_dispatched == 1
+                  hypothesise_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
+    assert report.pairs_processed == 1
 
     # the real catalogue is the grounding (170 entries, real CWE ids)
     materialisations = load_materialisation()
@@ -305,8 +321,8 @@ def test_absent_projection_degrades_to_unknown(tmp_path):
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
     report = _run(store, [_candidate(SERVICE_A, "CWE-266")],
-                  reason_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
-    assert report.hunts_dispatched == 1
+                  hypothesise_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
+    assert report.pairs_processed == 1
     inp = seen["input"]
     assert inp.projection is None
     assert inp.materialisation["CWE-266"] is not None      # surviving slots
@@ -334,8 +350,8 @@ def test_materialisation_failure_degrades_to_unknown(tmp_path, monkeypatch):
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
     report = _run(store, [_candidate(SERVICE_A, "fault-x")],
-                  reason_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
-    assert report.hunts_dispatched == 1
+                  hypothesise_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
+    assert report.pairs_processed == 1
     inp = seen["input"]
     assert inp.materialisation == {"fault-x": None}        # absent -> degraded slot
     assert inp.fold_family == {"fault-x": ("sub-a", "sub-b")}  # surviving slot
@@ -358,8 +374,8 @@ def test_fold_family_failure_degrades_to_unknown(tmp_path):
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
     report = _run(store, [_candidate(SERVICE_A, "CWE-647")],
-                  reason_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
-    assert report.hunts_dispatched == 1
+                  hypothesise_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
+    assert report.pairs_processed == 1
     inp = seen["input"]
     assert inp.materialisation["CWE-647"] is not None      # surviving slot
     assert inp.fold_family == {"CWE-647": None}            # absent key -> degraded
@@ -380,19 +396,20 @@ def test_all_slots_degraded_still_runs(tmp_path):
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
     report = _run(store, [_candidate(SERVICE_A, "fault-x")],
-                  reason_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
-    assert report.hunts_dispatched == 1
+                  hypothesise_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
+    assert report.pairs_processed == 1
     assert "UNKNOWN (projection read failed or absent)" in seen["text"]
     assert "UNKNOWN (materialisation unavailable for this fault_class)" in seen["text"]
     assert "UNKNOWN (no sub-fault fold family captured under this fault)" in seen["text"]
     assert "FALSE" not in seen["text"]
 
 
-# --- C17: exactly five tools bound; no HuntConfig writer ----------------------
+# --- C17: exactly three tools bound; no HuntConfig writer ----------------------
 
-def test_actor_binds_exactly_the_five_tools(tmp_path, monkeypatch):
-    """The agent the actor builds binds EXACTLY the five tool names of
-    `TOOL_SURFACE` - never a sixth HuntConfig-writing tool."""
+def test_actor_binds_exactly_the_three_tools(tmp_path, monkeypatch):
+    """The agent the actor builds binds EXACTLY the three tool names of
+    `TOOL_SURFACE` - `hunts_store`, `notes`, `graph_view` (G3) - never a sixth
+    HuntConfig-writing or budget tool."""
     store = HuntStore(tmp_path)
     seen = {}
 
@@ -414,17 +431,16 @@ def test_actor_binds_exactly_the_five_tools(tmp_path, monkeypatch):
 
     asyncio.run(_drive())
     names = {t.name for t in seen["tools"]}
-    assert names == set(TOOL_SURFACE)                      # exactly the five, no sixth
-    assert len(seen["tools"]) == 5
+    assert names == set(TOOL_SURFACE)                      # exactly the three
+    assert len(seen["tools"]) == 3
     assert all(hasattr(t, "invoke") for t in seen["tools"])  # real tool callables
 
 
 def test_no_hunt_config_writing_tool_on_the_surface(tmp_path):
-    """The built surface is exactly `TOOL_SURFACE`: every tool's reply shape is
-    a recon / store / graph / acknowledgment object, never a `HuntConfig`
-    dump - no tool writes or fabricates a `HuntConfig` (the mint stays
-    deterministic at dispatch, downstream of the `mint_hunt_config` tool, which
-    only carries the model's emission)."""
+    """The built surface is exactly `TOOL_SURFACE`: the store tools carry the
+    config object through `hunts_store(write)` (the status attribute rides the
+    config), and the responses inject the phase verbatims from the constants -
+    never a harness-fabricated `HuntConfig`."""
     store = HuntStore(tmp_path)
     fake = _FakeGraph(_service_a_row())
     tools = _tools(store, read_fn=fake.read)
@@ -432,19 +448,13 @@ def test_no_hunt_config_writing_tool_on_the_surface(tmp_path):
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
     assert set(by_name) == set(TOOL_SURFACE)
-    # each tool's reply is a store/graph/acknowledgment shape, never a HuntConfig
-    out = by_name["read_memory_hunts"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    # each tool's reply is a store/graph/acknowledgment shape
+    out = by_name["hunts_store"].invoke(
+        {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-352")})
     assert "configs" in out
-    out = by_name["read_memory_notes"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    out = by_name["notes"].invoke(
+        {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-352")})
     assert "notes" in out
-    out = by_name["record_note"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352"), "note": "n"})
-    assert out["recorded"] is True
-    out = by_name["mint_hunt_config"].invoke(
-        {"unit_id": SERVICE_A, "vulnerability_classes": [], "research_direction": "csrf"})
-    assert out["acknowledged"] is True
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert "rows" in out
 
@@ -453,8 +463,7 @@ def test_no_hunt_config_writing_tool_on_the_surface(tmp_path):
 
 def test_absent_graph_view_degrades_the_surface():
     """With the graph-view seam absent the graph_view tool returns a denoted
-    error instead of raising; the memory-read and note tools keep real bodies,
-    and the actor turn still yields a GateDecision."""
+    error instead of raising; the store tools keep real bodies."""
     store = HuntStore("/tmp/irrelevant")
     tools = OrchestratorTools(
         store_reads=store, graph_view=None)
@@ -464,15 +473,14 @@ def test_absent_graph_view_degrades_the_surface():
     assert set(by_name) == set(TOOL_SURFACE)
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert out["error"] == "no graph view configured; reading degraded"
-    out = by_name["read_memory_hunts"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    out = by_name["hunts_store"].invoke(
+        {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-352")})
     assert out["configs"] == []
 
 
 def test_absent_hunt_store_degrades_the_surface(tmp_path):
-    """With the hunt-store seam absent the memory-read and note tools all
-    return denoted errors instead of raising; the graph-view tool keeps its real
-    body."""
+    """With the hunt-store seam absent the store tools all return denoted
+    errors instead of raising; the graph-view tool keeps its real body."""
     fake = _FakeGraph(_service_a_row())
     tools = OrchestratorTools(
         store_reads=None,
@@ -481,59 +489,151 @@ def test_absent_hunt_store_degrades_the_surface(tmp_path):
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
     assert set(by_name) == set(TOOL_SURFACE)
-    out = by_name["read_memory_hunts"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
-    assert out["error"] == "no hunt store configured; prior configs unavailable"
-    assert out["revival_key"] == revival_key(SERVICE_A, "CWE-352")
-    out = by_name["read_memory_notes"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
+    out = by_name["hunts_store"].invoke(
+        {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-352")})
+    assert out["error"] == "no hunt store configured; configs unavailable"
+    assert out["key"] == revival_key(SERVICE_A, "CWE-352")
+    out = by_name["hunts_store"].invoke(
+        {"cmd": "write", "hunt_config": {"unit_id": SERVICE_A, "fault_class": "CWE-352"}})
+    assert out["error"] == "no hunt store configured; config not written"
+    out = by_name["notes"].invoke(
+        {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-352")})
     assert out["error"] == "no notes seam configured; notes unavailable"
-    out = by_name["record_note"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352"), "note": "n"})
-    assert out["error"] == "no notes seam configured; note not recorded"
+    out = by_name["notes"].invoke(
+        {"cmd": "write", "option": "append", "key": revival_key(SERVICE_A, "CWE-352"),
+         "note": "n"})
+    assert out["error"] == "no notes seam configured; note not written"
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert "rows" in out
 
 
-# --- C18b: the split memory reads, the mint, and the note tool -----------------
+# --- C18b: the hunts_store tool contract (G3) ----------------------------------
 
-def test_read_memory_hunts_returns_prior_dispatched_configs(tmp_path):
-    """`read_memory_hunts` returns the prior configs for the key from the
-    project's produced/ + consumed/, rebuilt from the config's identity slots;
-    an absent store degrades to the denoted error."""
+def test_hunts_store_read_returns_service_keys_only(tmp_path):
+    """`hunts_store(read)` returns the service keys by default; the projected
+    surface context is NEVER readable through it (G3) - `surface_context` is
+    stripped even when explicitly requested, and defers to `graph_view`."""
     store = HuntStore(tmp_path)
-    key = revival_key(SERVICE_A, "CWE-352")
     store.write_config("project-1", {
         "unit_id": SERVICE_A, "fault_class": "CWE-352",
         "vulnerability_class": "CSRF", "hunt_id": "h1",
+        "surface_context": {"cards": [{"secret": True}]},
     })
     tools = _tools(store)
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
-    out = by_name["read_memory_hunts"].invoke({"revival_key": key})
-    assert out["revival_key"] == key
+    out = by_name["hunts_store"].invoke(
+        {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-352")})
+    assert out["key"] == revival_key(SERVICE_A, "CWE-352")
     assert [r["hunt_id"] for r in out["configs"]] == ["h1"]
+    assert all("surface_context" not in r for r in out["configs"])
+    # specific attributes ride the projection, surface_context never does
+    out2 = by_name["hunts_store"].invoke(
+        {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-352"),
+         "attributes": ["rationale", "surface_context"]})
+    assert all("surface_context" not in r for r in out2["configs"])
     # a different key reads nothing on the same store
-    other = by_name["read_memory_hunts"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-9")})
+    other = by_name["hunts_store"].invoke(
+        {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-9")})
     assert other["configs"] == []
 
 
-def test_read_memory_hunts_fails_open_when_store_absent():
-    """Without the hunt store the `read_memory_hunts` tool returns the denoted
-    error instead of raising."""
-    tools = OrchestratorTools(back_edge=None, store_reads=None, graph_view=None)
+def test_hunts_store_write_hypothesised_creates_and_carries_the_ratify_hint(tmp_path):
+    """`hunts_store(write)` with status='hypothesised' creates the draft and
+    its response carries the NEXT_RATIFY_HINT constant (G1/G3); a duplicate
+    identity write FAILS with the G4 deduplication signal."""
+    from polymerhus.attack.hunting.hunt_orchestrator import NEXT_RATIFY_HINT
+    store = HuntStore(tmp_path)
+    tools = _tools(store)
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
-    out = by_name["read_memory_hunts"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
-    assert out["error"] == "no hunt store configured; prior configs unavailable"
+    config = {
+        "unit_id": SERVICE_A, "fault_class": "CWE-352",
+        "vulnerability_class": "CSRF", "status": "hypothesised",
+        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+    }
+    out = by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": config})
+    assert out["acknowledged"] is True
+    assert out["status"] == "hypothesised"
+    assert out["hint"] == NEXT_RATIFY_HINT
+    assert len(store.read_configs("project-1")) == 1
+    # G4: the same identity cannot be created twice
+    dup = by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": config})
+    assert dup.get("duplicate") is True
+    assert len(store.read_configs("project-1")) == 1
 
 
-def test_read_memory_notes_returns_keyed_notes(tmp_path):
-    """`read_memory_notes` returns the notes on the same key from the project's
+def test_hunts_store_write_ratified_upserts_and_carries_only_the_note_hint(tmp_path):
+    """`hunts_store(write)` with status='ratified' upserts the config in place
+    and its response carries ONLY the NEXT_NOTE_HINT constant (G1 correction:
+    the next pair is NOT fed here)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import NEXT_NOTE_HINT
+    store = HuntStore(tmp_path)
+    tools = _tools(store)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    draft = {
+        "unit_id": SERVICE_A, "fault_class": "CWE-352",
+        "vulnerability_class": "CSRF", "status": "hypothesised",
+        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+    }
+    by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": draft})
+    ratified = {**draft, "status": "ratified",
+                "adversarial_capabilities": ["forge a request"]}
+    out = by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": ratified})
+    assert out["acknowledged"] is True
+    assert out["status"] == "ratified"
+    assert out["hint"] == NEXT_NOTE_HINT
+    assert "next_pair" not in out          # ONLY the verbatim (G1)
+    configs = store.read_configs("project-1")
+    assert len(configs) == 1               # upserted in place, not a second file
+    assert configs[0]["status"] == "ratified"
+    assert configs[0]["adversarial_capabilities"] == ["forge a request"]
+
+
+def test_hunts_store_write_dropped_marks_the_orphan_on_disk(tmp_path):
+    """`hunts_store(write)` with status='dropped' marks the config as an orphan
+    on disk (G6: stays, never deleted) and the ratification continues."""
+    from polymerhus.attack.hunting.hunt_orchestrator import NEXT_RATIFY_HINT
+    store = HuntStore(tmp_path)
+    tools = _tools(store)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    draft = {
+        "unit_id": SERVICE_A, "fault_class": "CWE-352",
+        "vulnerability_class": "CSRF", "status": "hypothesised",
+        "prompt_template": {"rationale": "r", "research_direction": "rd"},
+    }
+    by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": draft})
+    out = by_name["hunts_store"].invoke(
+        {"cmd": "write", "hunt_config": {**draft, "status": "dropped"}})
+    assert out["acknowledged"] is True
+    assert out["hint"] == NEXT_RATIFY_HINT    # ratification continues
+    configs = store.read_configs("project-1")
+    assert len(configs) == 1                   # never deleted (G6)
+    assert configs[0]["status"] == "dropped"
+
+
+def test_hunts_store_rejects_an_unknown_status(tmp_path):
+    store = HuntStore(tmp_path)
+    tools = _tools(store)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    out = by_name["hunts_store"].invoke(
+        {"cmd": "write", "hunt_config": {"unit_id": SERVICE_A, "status": "dispatched"}})
+    assert "error" in out
+    assert store.read_configs("project-1") == []
+
+
+# --- C18c: the notes tool contract (G3) ----------------------------------------
+
+def test_notes_read_returns_keyed_notes(tmp_path):
+    """`notes(read)` returns the notes on the same key from the project's
     `memory.yaml`; an absent store fails open to the denoted error."""
     store = HuntStore(tmp_path)
     key = revival_key(SERVICE_A, "CWE-352")
@@ -542,93 +642,66 @@ def test_read_memory_notes_returns_keyed_notes(tmp_path):
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
-    out = by_name["read_memory_notes"].invoke({"revival_key": key})
-    assert out["revival_key"] == key
+    out = by_name["notes"].invoke({"cmd": "read", "key": key})
+    assert out["key"] == key
     assert [r["note"] for r in out["notes"]] == ["track it"]
-    other = by_name["read_memory_notes"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-9")})
+    other = by_name["notes"].invoke(
+        {"cmd": "read", "key": revival_key(SERVICE_A, "CWE-9")})
     assert other["notes"] == []
 
 
-def test_read_memory_notes_fails_open_when_store_absent():
-    """Without the hunt store the `read_memory_notes` tool returns the denoted
-    error instead of raising."""
-    tools = OrchestratorTools(back_edge=None, store_reads=None, graph_view=None)
-    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
-                                              project_id="project-1")
-    by_name = {t.name: t for t in surface}
-    out = by_name["read_memory_notes"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
-    assert out["error"] == "no notes seam configured; notes unavailable"
-
-
-def test_mint_hunt_config_records_an_emission_not_a_config(tmp_path):
-    """`mint_hunt_config` records the model's emission onto the run-local
-    `mint_emissions` bucket (unit_id + research_direction + vulnerability_classes)
-    and returns the acknowledgment - it never writes a `HuntConfig` object (the
-    deterministic module mint stays downstream)."""
+def test_notes_write_append_carries_the_next_pair_and_restart_verbatim(tmp_path):
+    """`notes(write, option='append')` appends a note and its response carries
+    the NEXT pair's data plus the NEXT_PAIR_HINT constant (G1: the pair end)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import NEXT_PAIR_HINT
     store = HuntStore(tmp_path)
     tools = _tools(store)
-    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
-                                              project_id="project-1")
-    by_name = {t.name: t for t in surface}
-    out = by_name["mint_hunt_config"].invoke({
-        "unit_id": SERVICE_A,
-        "vulnerability_classes": ["CSRF", "IDOR"],
-        "research_direction": "csrf on all authed POSTs",
-    })
-    assert out["acknowledged"] is True
-    assert out["recorded_classes"] == 2
-    assert len(tools.mint_emissions) == 1
-    emission = tools.mint_emissions[0]
-    assert emission["unit_id"] == SERVICE_A
-    assert emission["research_direction"] == "csrf on all authed POSTs"
-    assert emission["vulnerability_classes"] == ["CSRF", "IDOR"]
-    # no HuntConfig ever landed in the store from the tool
-    assert store.read_configs("project-1") == []
-
-
-def test_mint_hunt_config_fails_open_without_the_emission_seam():
-    """With `mint_emissions=None` the `mint_hunt_config` tool returns the
-    denoted error instead of raising."""
-    tools = OrchestratorTools(back_edge=None, store_reads=None, graph_view=None,
-                              mint_emissions=None)
-    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
-                                              project_id="project-1")
-    by_name = {t.name: t for t in surface}
-    out = by_name["mint_hunt_config"].invoke(
-        {"unit_id": SERVICE_A, "vulnerability_classes": [], "research_direction": "csrf"})
-    assert out["error"] == "no mint emissions seam configured; emission not recorded"
-
-
-def test_record_note_appends_to_the_keyed_notes_kind(tmp_path):
-    """`record_note` appends a note into the project's `memory.yaml` keyed by
-    the revival key; an absent store degrades to the denoted error."""
-    store = HuntStore(tmp_path)
-    tools = _tools(store)
+    tools.phase_context.next_pair = {"unit_id": SERVICE_A, "fault_class": "CWE-9"}
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
     key = revival_key(SERVICE_A, "CWE-352")
-    out = by_name["record_note"].invoke({"revival_key": key, "note": "first"})
+    out = by_name["notes"].invoke(
+        {"cmd": "write", "option": "append", "key": key, "note": "first"})
     assert out["recorded"] is True
-    assert out["revival_key"] == key
+    assert out["next_pair"] == {"unit_id": SERVICE_A, "fault_class": "CWE-9"}
+    assert out["hint"] == NEXT_PAIR_HINT
     notes = store.read_notes("project-1", key)
     assert len(notes) == 1
     assert notes[0]["revival_key"] == key
     assert notes[0]["note"] == "first"
 
 
-def test_record_note_fails_open_when_store_absent():
-    """Without the hunt store the `record_note` tool returns the denoted error
-    instead of raising."""
-    tools = OrchestratorTools(back_edge=None, store_reads=None, graph_view=None)
+def test_notes_write_update_and_delete(tmp_path):
+    """`notes(write)` supports update and delete options by note_id."""
+    store = HuntStore(tmp_path)
+    key = revival_key(SERVICE_A, "CWE-352")
+    record = store.append_note("project-1", key, "first")
+    tools = _tools(store)
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
-    out = by_name["record_note"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352"), "note": "n"})
-    assert out["error"] == "no notes seam configured; note not recorded"
+    out = by_name["notes"].invoke(
+        {"cmd": "write", "option": "update", "note_id": record["note_id"],
+         "note": "first amended"})
+    assert out["updated"] is True
+    assert store.read_notes("project-1", key)[0]["note"] == "first amended"
+    out = by_name["notes"].invoke(
+        {"cmd": "write", "option": "delete", "note_id": record["note_id"]})
+    assert out["deleted"] is True
+    assert store.read_notes("project-1", key) == []
+
+
+def test_notes_write_rejects_an_unknown_option(tmp_path):
+    store = HuntStore(tmp_path)
+    tools = _tools(store)
+    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
+                                              project_id="project-1")
+    by_name = {t.name: t for t in surface}
+    out = by_name["notes"].invoke(
+        {"cmd": "write", "option": "append2", "key": "k", "note": "n"})
+    assert "error" in out
+    assert store.read_notes("project-1") == []
 
 
 # --- C19: the read-only graph view rejects writes through the bound tool -------
@@ -682,8 +755,8 @@ def test_render_precedes_the_gate_turn(tmp_path):
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
     report = _run(store, [_candidate(SERVICE_A, "CWE-266")],
-                  reason_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
-    assert report.hunts_dispatched == 1
+                  hypothesise_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
+    assert report.pairs_processed == 1
     assert len(calls) == 1
     inp = calls[0]
     assert inp.projection is not None
@@ -696,8 +769,9 @@ def test_render_precedes_the_gate_turn(tmp_path):
 
 def test_degenerate_pass_renders_without_firing_the_gate(tmp_path):
     """A degenerate pass that assembles the symbolic render but never reasons
-    does not fire the gate seam: the render is pure mapping, and a degraded
-    `kb_degraded` state still rides the render while no gate turn happens."""
+    does not fire the hypothesise seam: the render is pure mapping, and a
+    degraded `kb_degraded` state still rides the render while no gate turn
+    happens - the phase machine still advances (G2)."""
     from polymerhus.attack.hunting.orchestrator_graph import build_hunting_graph as _build
 
     store = HuntStore(tmp_path)
@@ -707,56 +781,59 @@ def test_degenerate_pass_renders_without_firing_the_gate(tmp_path):
     materials = load_materialisation()
     families = load_fold_families()
 
-    def reason_node(state):
-        current = state["current"]
-        projection = build_projection("project-1", current.unit_id, read_fn=fake.read)
+    def hypothesise_node(state):
+        pair = state["current_pair"]
+        projection = build_projection("project-1", pair.unit_id, read_fn=fake.read)
         gate_input = GateInput(
-            candidates=[current],
+            candidates=[pair],
             kb_degraded=state.get("kb_degraded", False),
             kb_evidences=state.get("kb_evidences") or {},
             surface=state.get("surface") or [],
             projection=projection,
-            materialisation={current.fault_class: materials.get(current.fault_class)},
-            fold_family={current.fault_class: families.get(current.fault_class)},
+            materialisation={pair.fault_class: materials.get(pair.fault_class)},
+            fold_family={pair.fault_class: families.get(pair.fault_class)},
         )
         renders.append(_compose_gate_prompt(gate_input))
-        # degenerate: the render is assembled, the gate seam is never invoked
-        return {"directions": [
-            EnvisionedDirection(unit_id=current.unit_id, fault_class=current.fault_class)],
-            "trail": []}
+        # degenerate: the render is assembled but no GateDecision is emitted -
+        # the hypothesise seam never fires (gate_fired stays []), and the
+        # harness mint never writes a config.
+        return {"trail": []}
 
-    def budget_node(state):
-        return {"worklist": list(state["directions"]), "phase": "dispatch", "trail": []}
+    def ratify_node(state):
+        return {"trail": []}
 
-    def dispatch_node(state):
-        direction = state["current_direction"]
-        return {"trail": [{"kind": "hunt", "revival_key": revival_key(
-            direction.unit_id, direction.fault_class)}]}
+    def note_node(state):
+        return {"trail": []}
+
+    from polymerhus.attack.hunting.hunt_orchestrator import FaultWorkItem
 
     initial = {
         "project_id": "project-1",
         "run_id": RUN_ID,
-        "phase": "reason",
-        "schedule": [_candidate(SERVICE_A, "CWE-266")],
+        "schedule": [FaultWorkItem(fault_class="CWE-266",
+                                   candidates=[_candidate(SERVICE_A, "CWE-266")])],
         "current": None,
-        "worklist": [],
-        "current_direction": None,
-        "directions": [],
+        "pairs": [],
+        "current_pair": None,
+        "loop_state": None,
+        "loop_states": [],
         "trail": [],
         "kb_evidences": {},
         "kb_degraded": True,
         "surface": [],
         "exhausted_faults": (),
-        "gate_fired": gate_fired,
     }
     final = asyncio.run(_build(
-        reason_node=reason_node, budget_node=budget_node, dispatch_node=dispatch_node,
+        hypothesise_node=hypothesise_node, ratify_node=ratify_node,
+        note_node=note_node,
     ).compile().ainvoke(initial, {"configurable": {"thread_id": RUN_ID}}))
-    assert gate_fired == []                                 # the gate never fired
-    assert [t["kind"] for t in final["trail"]] == ["hunt"]  # the pass still completes
+    # the render was assembled but no decision was emitted - the phase machine
+    # still advanced (HYPOTHESISED -> RATIFIED -> NOTED) and the graph ENDed
+    assert gate_fired == []
     assert len(renders) == 1
     assert "KB grounding: DEGRADED" in renders[0]           # the degraded state rides the render
     assert "CWE-520, CWE-9" in renders[0]
+    assert final["loop_states"] == ["HYPOTHESISED", "RATIFIED", "NOTED"]
 
 
 # --- C21: one span per gate turn, session=run_id, fail-open --------------------
@@ -871,30 +948,31 @@ def test_orchestrator_tracing_fails_open_when_langfuse_absent(monkeypatch, tmp_p
         return GateDecision(directions=[_carry(inp.candidates[0])])
 
     report = _run(store, [_candidate(SERVICE_A, "CWE-266")],
-                  reason_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
-    assert report.hunts_dispatched == 1
+                  hypothesise_fn=reason_fn, tools=_tools(store, read_fn=fake.read))
+    assert report.pairs_processed == 1
     assert "unit kind: Service" in seen["text"]
 
 
 # --- C22: no new graph nodes, no schema change ---------------------------------
 
 def test_no_new_graph_nodes():
-    """The graph topology stays exactly {supervisor, reason, budget, dispatch}:
-    the render lives INSIDE the reason stretch, never as its own node."""
+    """The graph topology is EXACTLY {supervisor, hypothesise, ratify, note}:
+    the phase machine lives in the graph (G2); there is no dispatch node (G12)
+    and no budget stage (G7)."""
     g = build_hunting_graph(
-        reason_node=lambda state: {}, budget_node=lambda state: {},
-        dispatch_node=lambda state: {},
+        hypothesise_node=lambda state: {}, ratify_node=lambda state: {},
+        note_node=lambda state: {},
     )
-    assert set(g.nodes) == {"supervisor", "reason", "budget", "dispatch"}
+    assert set(g.nodes) == {"supervisor", "hypothesise", "ratify", "note"}
 
 
-def test_reason_node_seeds_prior_minted_keys_from_the_ledger(tmp_path):
-    """T5 (spec 3.2/3.3 Q11): `_reason_node` seeds each fault's `GateInput` with
-    the CURRENT `LoopLedger.minted_config_keys` - a pass whose first fault has
-    minted nothing yet fails open to [], and once the first fault's mint lands
-    at its unit boundary (strictly after `record_note`), the second distinct
-    fault's gate input carries that revival key as the prior minted-config list
-    the Loop protocol reflects on. The rendered prompt carries the list."""
+def test_hypothesise_node_seeds_prior_minted_keys_from_the_ledger(tmp_path):
+    """T5 (spec 3.2/3.3 Q11, re-scoped by #167): the hypothesise phase seeds
+    each pair's `GateInput` with the CURRENT `LoopLedger.minted_config_keys` -
+    a pass whose first pair has minted nothing yet fails open to [], and once
+    the first pair's hypothesise write lands, the next pair's hypothesise input
+    carries that revival key as the prior minted-config list the discipline
+    reflects on. The rendered prompt carries the list."""
     store = HuntStore(tmp_path)
     gate_inputs: list = []
     a = _candidate(SERVICE_A, "CWE-352")
@@ -904,11 +982,11 @@ def test_reason_node_seeds_prior_minted_keys_from_the_ledger(tmp_path):
         gate_inputs.append(inp)
         return GateDecision(directions=[_carry(x) for x in inp.candidates])
 
-    report = _run(store, [a, c], reason_fn=reason_fn)
+    report = _run(store, [a, c], hypothesise_fn=reason_fn)
 
     assert len(gate_inputs) == 2
     assert gate_inputs[0].prior_minted_keys == []           # fresh ledger -> fail-open
-    # the second-called fault carries the first fault's minted key as its prior
+    # the second-called pair carries the first pair's minted key as its prior
     # list. The schedule is risk-descending (fault_risk, f8b5203): CWE-639
     # (IDOR) always precedes CWE-352 (CSRF), so the first gate is 639 and the
     # second is 352 - assert the RELATIONSHIP, never the specific key.
@@ -925,14 +1003,12 @@ def test_reason_node_seeds_prior_minted_keys_from_the_ledger(tmp_path):
 
 def test_structured_schemas_and_tool_surface_unchanged():
     """The structural-output schemas and the tool surface compile unchanged
-    (the 110-vs-135 regression guard), the reworked `EnvisionedDirection` /
-    `HuntConfig` carry the vulnerability-class identity and the hypothesised
-    status, and the deterministic mint still attaches the folded sub-fault ids
-    to the HuntConfig."""
-    assert TOOL_SURFACE == frozenset({
-        "read_memory_hunts", "read_memory_notes", "graph_view",
-        "mint_hunt_config", "record_note",
-    })
+    (the 110-vs-135 regression guard): the surface is the THREE tools
+    `hunts_store` / `notes` / `graph_view` (G3), the reworked
+    `EnvisionedDirection` / `HuntConfig` carry the vulnerability-class identity
+    and the hypothesised status, and the deterministic mint still attaches the
+    folded sub-fault ids to the HuntConfig."""
+    assert TOOL_SURFACE == frozenset({"hunts_store", "notes", "graph_view"})
 
     direction = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class="CWE-352", carried=True,

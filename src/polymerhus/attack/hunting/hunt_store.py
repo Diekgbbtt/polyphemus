@@ -230,6 +230,35 @@ class HuntStore:
             self._dump_yaml_atomic(target, data)
             return semantic_key(unit_id, fault_class, vulnerability_class)
 
+    def update_config(self, project_id: str, config, *, directory: str = "produced") -> str:
+        """Persist one hunt config's YAML serialisation, UPSERTING at its
+        identity (the ratify-phase write; `status` rides the config object): an
+        existing file at the identity is OVERWRITTEN in place - the ratification
+        amends the hypothesised draft, and a `dropped` config is marked by
+        rewriting its file statused `dropped` (G6: it stays on disk, never
+        deleted) - and an absent identity CREATES the file (the ratify phase may
+        create additional configs). The G4 novelty gate does NOT apply here: the
+        write is an explicit in-place amendment of a known identity, not a
+        re-elicitation. Returns the config's semantic key. Raises on write
+        failure - the caller warns and counts (O3). The whole write runs under
+        the project's lock (I2)."""
+        if directory not in _CONFIG_DIRECTORIES:
+            raise ValueError(
+                f"unknown config directory {directory!r}; known: {_CONFIG_DIRECTORIES}")
+        with _lock_for(project_id):
+            data = config.model_dump() if not isinstance(config, dict) else dict(config)
+            unit_id = str(data.get("unit_id") or "")
+            fault_class = str(data.get("fault_class") or "")
+            vulnerability_class = str(data.get("vulnerability_class") or "")
+            name = config_file_name(unit_id, fault_class, vulnerability_class)
+            produced = self._produced_dir(project_id)
+            consumed = self._consumed_dir(project_id)
+            produced.parent.mkdir(parents=True, exist_ok=True)
+            consumed.parent.mkdir(parents=True, exist_ok=True)
+            target = produced if directory == "produced" else consumed
+            self._dump_yaml_atomic(target / name, data)
+            return semantic_key(unit_id, fault_class, vulnerability_class)
+
     @staticmethod
     def _read_yaml(path: Path) -> dict | None:
         """One config file's dict, fail-open per record: a read/YAML error or

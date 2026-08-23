@@ -117,6 +117,64 @@ def test_duplicate_config_write_fails(tmp_path):
                            directory="produced")
 
 
+# --- ratify-phase upsert (update_config) --------------------------------------
+
+def test_update_config_overwrites_the_existing_identity_in_place(tmp_path):
+    """The ratify write amends the hypothesised draft at its identity: the
+    file is overwritten in place (no second file, no novelty-gate failure) and
+    reads back with the ratified status + the filled ratification fields."""
+    store = HuntStore(tmp_path)
+    store.write_config(PROJECT, _config())
+    store.update_config(PROJECT, _config(
+        status="ratified",
+        adversarial_capabilities=["forge a cross-origin request"],
+        assumptions=["the session is cookie-bound"],
+        technique_primitives=["token-missing probe"],
+    ))
+    configs = store.read_configs(PROJECT)
+    assert len(configs) == 1                       # still ONE file at the identity
+    assert configs[0]["status"] == "ratified"
+    assert configs[0]["adversarial_capabilities"] == ["forge a cross-origin request"]
+    assert configs[0]["assumptions"] == ["the session is cookie-bound"]
+    assert configs[0]["technique_primitives"] == ["token-missing probe"]
+
+
+def test_update_config_marks_dropped_and_stays_on_disk(tmp_path):
+    """A config deleted during ratification is marked status='dropped' and
+    stays on disk (G6) - never deleted, never a second file."""
+    store = HuntStore(tmp_path)
+    store.write_config(PROJECT, _config())
+    store.update_config(PROJECT, _config(status="dropped"))
+    configs = store.read_configs(PROJECT)
+    assert len(configs) == 1
+    assert configs[0]["status"] == "dropped"
+    assert (tmp_path / PROJECT / "orchestration" / "hunt_configs" / "produced"
+            / f"{UNIT}_{CWE}_{CLASS}.yaml").exists()
+
+
+def test_update_config_creates_when_the_identity_is_absent(tmp_path):
+    """The ratify phase may CREATE additional configs: an upsert write for an
+    absent identity lands a new produced/ file (no novelty gate - the write is
+    an explicit amendment, not a re-elicitation)."""
+    store = HuntStore(tmp_path)
+    key = store.update_config(PROJECT, _config(status="ratified"))
+    assert key == semantic_key(UNIT, CWE, CLASS)
+    configs = store.read_configs(PROJECT)
+    assert len(configs) == 1
+    assert configs[0]["status"] == "ratified"
+
+
+def test_update_config_never_triggers_the_novelty_gate(tmp_path):
+    """The G4 duplicate-write gate applies to CREATE writes (write_config),
+    never to the ratify-phase upsert: amending the same identity repeatedly is
+    legal."""
+    store = HuntStore(tmp_path)
+    store.write_config(PROJECT, _config())
+    for _ in range(2):
+        store.update_config(PROJECT, _config(status="ratified"))
+    assert len(store.read_configs(PROJECT)) == 1
+
+
 # --- dropped configs stay on disk, never deleted (G6) -----------------------
 
 def test_dropped_config_stays_on_disk(tmp_path):

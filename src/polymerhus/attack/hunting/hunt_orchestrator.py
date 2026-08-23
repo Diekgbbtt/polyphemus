@@ -1,46 +1,50 @@
 """The hunt-orchestrator (#82): the central memory of the hunting effort.
 
-Consumes the FaultSource candidate set (IA-1, spec 4.1), runs the per-FAULT
-tool-augmented gate-reasoning turn (Q8, one turn per fault over all its matched
-units), mints the deterministically fan-out `HuntConfig` set (D3, one per
-distinct elicited vulnerability-class the direction carries, each a
-status="hypothesised" draft) at the unit boundary, writes the configs into the
-per-project memory store's `produced/` (memory-system spec #166), dispatches
-one hunting agent per hunt (IA-2, synchronous in-process), and records the
-per-unit note into the store's `memory.yaml`. It is the planner: it selects,
-configures, dispatches, and holds memory; the D8 hunt records and the
-per-run kind files are REMOVED - the persisted configs express which faults
-are done / in-progress / left (G10). It never writes L0/L1 (its graph access
-is the read-only view, D67-04); the hunting agent (#83), not this module, is
-the test-DESIGN actor.
+Consumes the FaultSource candidate set (IA-1, spec 4.1) and runs the REASON
+stretch as a NODE-PER-PHASE workflow graph (the #167 rework of #110's graph
+engine): the supervisor pops FAULT work items (the fault stays the schedule
+unit, spec 3.1) and iterates each fault's candidate queue as the pairs the
+phase nodes operate on; every (unit, fault) pair runs `hypothesise -> ratify
+-> note` as graph nodes with the transition logic embedded in the graph (G2)
+and the phase-transition verbatims injected on-the-fly in the specific
+tool-call responses (constants, never the system prompt - G1/G3). The
+hypothesise phase elicits one or more vulnerability classes and WRITES the
+status="hypothesised" draft (the deterministic mint from #165 is called at
+this phase, via the `hunts_store` tool); the ratify phase may update/delete/
+create configs and MUST end with a status="ratified" write carrying the filled
+capabilities/assumptions/technique-primitives; the note phase writes the notes
+and the pair's loop ENDs at the note tool's response (the next pair + the
+restart verbatim). The dispatch node is REMOVED (G12) and the O9 budget stage
+is REMOVED (G7): the graph ENDs at the REASON stretch - dispatch state and
+spending are the runtime plane's and the pod's ownership. It never writes
+L0/L1 (its graph access is the read-only view, D67-04); the hunting agent
+(#83), not this module, is the test-DESIGN actor.
 
 The pass runs NATIVE-ASYNC (feat/async-actor-agents) on the #110 GRAPH engine:
 `arun_orchestration` is the single O1-O10 canon and its body IS a
 supervisor-state schedule loop (the ONE flexible StateGraph in
-`orchestrator_graph.py`) - per fault (the schedule unit is a fault, spec 3.1),
-a stateful REASON turn covers ALL of the fault's matched units on the run's
-`HuntOrchestratorActor` thread (`hunting_orchestrator` session, monotonic
-across ALL faults), the deterministic unit-boundary stage mints the configs,
-writes them to the store's `produced/`, and fires the note into `memory.yaml`,
-then a deterministic budget stage cuts the accumulated directions, then each
-allowed direction is DISPATCHED. Each node closure delegates to the canon
-helpers in THIS module; the O1-O10 seam shapes stay single-sourced here.
-`run_orchestration` is its thin sync wrapper.
+`orchestrator_graph.py`) - per fault, the stateful phase turns run on the
+run's `HuntOrchestratorActor` thread (`hunting_orchestrator` session,
+monotonic across ALL faults and pairs), and the harness persists the configs
+into the store's `produced/` and the notes into `memory.yaml`. Each node
+closure delegates to the canon helpers in THIS module; the O1-O10 seam shapes
+stay single-sourced here. `run_orchestration` is its thin sync wrapper.
 
 The actor is the PURELY STATEFUL parent, exactly like the recon-orchestrator -
 but it now LIVES in a per-run registry (`_ORCHESTRATOR_ACTORS`) instead of being
 reaped in a pass's `finally` (#110): the SAME `HuntOrchestratorActor` (same
-thread) serves every fault of a pass and stays live listening between passes;
+thread) serves every pair of a pass and stays live listening between passes;
 the module's runtime stop path (Task 6) reaps it.
 
 Degradations are the spec's failure canon: KB unavailable -> the gate reasons
-degraded, never prunes (D67-11); dispatch failure -> degraded hunt record
-(O6); store write failure -> warning and a count (O3, a duplicate-config write
-is the deduplication signal and lands the same O3 path - G4); store read
-failure -> empty prior insights (O4); a yellow candidate raises a hunt
-back-edge (IA-6/D67-14) and re-matches, with a hard depth-1 cap -> `unresolved`
-on the revival key (O8); a malformed candidate is dropped and counted (O10).
-Fail-open throughout: one bad collaborator never aborts the pass.
+degraded, never prunes (D67-11); a raising hypothesise turn carries the pair
+bare (fail-open, the old gate-carry); a raising ratify/note turn skips that
+phase's side effect but the pair keeps serving (the phase machine degrades
+gracefully); store write failure -> warning and a count (O3, a duplicate-config
+write is the deduplication signal and lands the same O3 path - G4); store read
+failure -> empty prior insights (O4); a malformed candidate is dropped and
+counted (O10). Fail-open throughout: one bad collaborator never aborts the
+pass.
 
 This module imports no driver and performs no I/O at import; the graph read
 seam resolves lazily on first call (CODING_STANDARD section 6).
@@ -63,6 +67,7 @@ from polymerhus.attack.hunting.fault_risk import risk_tier
 from polymerhus.attack.hunting.hunt_store import (
     DuplicateConfigError,
     KEY_SEPARATOR,
+    semantic_key,
 )
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
@@ -72,20 +77,48 @@ from polymerhus.recon.control.targeted import (
 
 logger = logging.getLogger(__name__)
 
-# The orchestrator's tool surface (spec 3.4, the candidates-rewrite Q14/Q15
-# correction): the split memory reads, the mint, the note, and the read-only
-# graph view - exactly these, nothing more. No back-edge-to-recon tool (the
-# back_edge request to recon is out of the agent's surface; operator ruling
-# 2026-08-22 - the target-knowledge loop rides `graph_view`, never a recon
-# request), no HuntConfig-writing tool (the deterministic mint writes the
-# hypothesised drafts at the unit boundary) and no budget_consume tool (Q7:
-# token budget is a global harness concern, not a hunting-local check). The
-# `hunts_store` / `notes` store TOOLS are the next workstream's rework (#167);
-# this ticket keeps the five-tool surface working against the new store.
+# The orchestrator's tool surface (spec 3.4, amended by #167/G3): the two store
+# tools `hunts_store` / `notes` plus the read-only graph view - exactly these,
+# nothing more. The old five-tool surface (`read_memory_hunts` /
+# `read_memory_notes` / `mint_hunt_config` / `record_note`) is REPLACED. No
+# back-edge-to-recon tool (the back_edge request to recon is out of the agent's
+# surface; operator ruling 2026-08-22 - the target-knowledge loop rides
+# `graph_view`, never a recon request) and no budget tool (G7: spending is the
+# runtime plane's and the pod's ownership).
 TOOL_SURFACE = frozenset({
-    "read_memory_hunts", "read_memory_notes", "graph_view",
-    "mint_hunt_config", "record_note",
+    "hunts_store", "notes", "graph_view",
 })
+
+# The phase-transition verbatims (memory-system spec 7, G1/G3): CONSTANTS
+# injected on-the-fly in the SPECIFIC tool-call responses, never embedded in
+# the agent system prompt (D3). NEXT_RATIFY_HINT rides the hypothesise (and
+# any in-progress ratification) write's response; NEXT_NOTE_HINT rides the
+# ratified write's response - ONLY this, the next pair is NOT fed there (G1
+# correction); NEXT_PAIR_HINT rides the note write's response together with
+# the next pair's frame (the pair end, G1).
+NEXT_RATIFY_HINT = (
+    "Ratification in progress: reason on proximity and too-near same-class "
+    "merging, then run the capabilities / assumptions / technique-primitives "
+    "analysis. End ratification with a hunts_store write carrying "
+    "status='ratified'."
+)
+NEXT_NOTE_HINT = (
+    "Ratification complete. Strongly take notes: write ONE note per config "
+    "covering ALL the decisions that concern it - the observations drawn from "
+    "your tool calls (graph_view or memory reads) that drove the rationale - "
+    "more detailed than the config's rationale and walking the reasoning that "
+    "yielded it."
+)
+NEXT_PAIR_HINT = (
+    "Pair complete. Start the next iteration: reason the next pair below "
+    "through the same hypothesise -> ratify -> note phases."
+)
+
+
+def pair_frame(unit_id: str, fault_class: str) -> dict:
+    """The next pair's frame the notes tool's response carries at the pair end
+    (G1): the (unit, fault) identity the iteration restarts on."""
+    return {"unit_id": unit_id, "fault_class": fault_class}
 
 # The per-run orchestration actor registry (#110): ONE `HuntOrchestratorActor`
 # per run_id, lazily resolved on the pass's first LLM turn and HELD after the
@@ -104,6 +137,11 @@ _DEFAULT_BACK_EDGE_JOB = "httpx_reprofile"
 # the produced/consumed memory topology, never a status enum member. Single-
 # sourced so the config model and the mint share one vocabulary (C_STD §7).
 ConfigStatus = Literal["hypothesised", "ratified", "dropped"]
+
+# The harness's loop-state machine (G2/G5), single-sourced here so the graph's
+# `loop_state` channel and the canon phase nodes share one vocabulary. `NOTED`
+# is a LOOP state, never a config status.
+LoopState = Literal["HYPOTHESISED", "RATIFIED", "NOTED"]
 
 
 class Witness(BaseModel):
@@ -179,9 +217,60 @@ class GateInput(BaseModel):
 
 
 class GateDecision(BaseModel):
-    """The gate's output: the directions, each marked carried or pruned in-turn."""
+    """The hypothesise phase's output: the directions, each marked carried or
+    pruned in-turn. The deterministic mint fans the carried directions out into
+    the status="hypothesised" drafts (one per distinct elicited class) at this
+    phase."""
 
     directions: list[EnvisionedDirection] = Field(default_factory=list)
+
+
+class PhaseTurnInput(BaseModel):
+    """One ratify/note phase turn's input (the hypothesise turn keeps the
+    `GateInput` shape): the (unit, fault) pair plus the pair's CURRENT configs
+    - the hypothesise drafts the ratify phase may update/delete/create, and
+    the ratified configs the note phase reasons over. The pair's symbolic
+    render slots are carried too, so the phase turns ground identically to the
+    hypothesise turn. Every slot degrades independently (fail-open)."""
+
+    pair: DeliveredCandidate
+    configs: list["HuntConfig"] = Field(default_factory=list)
+    kb_degraded: bool = False
+    kb_evidences: dict = Field(default_factory=dict)
+    surface: list[dict] = Field(default_factory=list)
+    projection: object | None = None
+    unit_projection: dict[str, object | None] = Field(default_factory=dict)
+    materialisation: dict = Field(default_factory=dict)
+    fold_family: dict = Field(default_factory=dict)
+    prior_minted_keys: list[str] = Field(default_factory=list)
+
+
+class NoteRecord(BaseModel):
+    """One note the note phase writes (G8): keyed by the config's identity and
+    carrying the reasoning content - mostly the observations drawn from tool
+    calls (graph_view or memory reads) that drove the rationale, more detailed
+    than the config's `rationale` and walking the reasoning that yielded it."""
+
+    key: str
+    note: str
+
+
+class RatifyDecision(BaseModel):
+    """The ratify phase's outcome: the pair's configs after the ratification
+    turn, each carrying its final status (`ratified` or `dropped`) and the
+    filled ratification fields. The harness persists them (update in place /
+    dropped-on-disk, G6); the model-facing writes ride the `hunts_store`
+    tool's `write` cmd."""
+
+    configs: list["HuntConfig"] = Field(default_factory=list)
+
+
+class NoteDecision(BaseModel):
+    """The note phase's outcome: the notes the pair writes. The harness
+    appends them idempotently; the model-facing write rides the `notes` tool,
+    whose response carries the next pair + the NEXT_PAIR_HINT constant (G1)."""
+
+    notes: list[NoteRecord] = Field(default_factory=list)
 
 
 class HuntPromptTemplate(BaseModel):
@@ -276,37 +365,38 @@ class FaultWorkItem(BaseModel):
 class LoopLedger(BaseModel):
     """The harness-owned loop-state ledger (spec 3.3, provisional term): units
     done/skipped, the minted config keys (REVIVAL keys - the Q11 novelty
-    reflection lists exactly these), notes recorded, and the budget remaining,
-    carried on the graph state and updated deterministically at the unit
-    boundary (after `record_note`). Re-injected into the prompt ONLY there -
-    never after an intra-unit tool call. The verbatim render of this state is
-    T5's Loop-protocol concern; this module owns the ledger STATE + the
-    boundary update point."""
+    reflection lists exactly these) and the notes recorded, carried on the
+    graph state and updated at the pair boundary. As of the workflow-graph
+    rework the per-pair phase position lives on the graph's `loop_state`
+    channel (`HYPOTHESISED -> RATIFIED -> NOTED`, G2/G5); this ledger holds the
+    accumulated pass counts. The budget-remaining slot is REMOVED (G7): the O9
+    budget stage is gone - spending is the runtime plane's and the pod's."""
 
     units_done: int = 0
     units_skipped: int = 0
     minted_config_keys: list[str] = Field(default_factory=list)
     notes_recorded: int = 0
-    budget_remaining: int = 0
 
 
 class OrchestratorReport(BaseModel):
-    """The pass summary (spec O1-O10): what was dispatched, dropped, pruned,
-    cut, left unresolved, and how often the store writes failed. `ledger` is the
-    harness-owned `LoopLedger` as of the candidates-rewrite, surfaced for
-    observability (the canonical O1-O10 fields are unchanged).
+    """The pass summary (spec O1-O10, amended by the memory + workflow-graph
+    rework): the graph ENDs at the REASON stretch - there is no dispatch node
+    (G12) and no budget stage (G7) - so the report carries what the graph did:
+    the pairs processed through the phase machine, the configs hypothesised /
+    ratified / dropped, the notes written, the ledger, and the failure counts.
     `duplicate_config_writes` is the G4 deduplication-signal count, kept
     separate from (but additive with) the O3 `store_write_failures` counter."""
 
-    hunts_dispatched: int = 0
-    hunt_ids: list[str] = Field(default_factory=list)
+    pairs_processed: int = 0
+    configs_hypothesised: int = 0
+    configs_ratified: int = 0
+    configs_dropped: int = 0
+    notes_written: int = 0
     duplicates_dropped: int = 0
     malformed_dropped: int = 0
     pruned_by_verdict: int = 0
     gate_pruned: tuple[str, ...] = ()
     exhausted_faults: tuple[str, ...] = ()
-    unresolved: tuple[str, ...] = ()
-    budget_cut: tuple[str, ...] = ()
     store_write_failures: int = 0
     duplicate_config_writes: int = 0
     ledger: LoopLedger = Field(default_factory=LoopLedger)
@@ -357,28 +447,34 @@ class ReadOnlyGraphView:
 
 
 @dataclass
-class OrchestratorTools:
-    """The orchestrator's tool seams (spec 3.4, the candidates-rewrite Q14/Q15
-    correction): the hunt back-edge (IA-6), the per-project memory store
-    (`store_reads`, the harness WRITE path - the deterministic mint writes the
-    hypothesised configs into `produced/` and the unit-boundary note into
-    `memory.yaml` - plus the prior-config/notes reads both memory tools share),
-    the read-only graph view, and the run-local mint-emission bucket
-    (`mint_hunt_config` records the model's emission onto it for the
-    deterministic mint to fan out from; T4 consumes it).
+class PhaseContext:
+    """The harness-owned per-pair phase cursor the tool seams read to inject
+    the phase-transition verbatims (G1/G3): `phase` (the current phase node)
+    and `next_pair` (the NEXT pair's frame the notes tool's response carries
+    at the pair end - the note phase's canon body sets it before the turn).
+    The verbatims themselves are module constants, never the system prompt
+    (D3)."""
 
-    The harness write path rides `store_reads.write_config` /
-    `store_reads.append_note` (per project); the two READ surfaces
-    (`read_memory_hunts`, `read_memory_notes`) thread through the same store's
-    `read_configs_by_key` / `read_notes`, keyed identically by revival key.
-    `mint_emissions` is a run-local mutable bucket so a bare
-    `OrchestratorTools` gets a working seam; the mint tool is still testable
-    fail-open by passing `mint_emissions=None`."""
+    phase: str | None = None
+    next_pair: dict | None = None
+
+
+@dataclass
+class OrchestratorTools:
+    """The orchestrator's tool seams (spec 3.4, amended by #167/G3): the
+    per-project memory store (`store_reads` - the read/write surface both
+    `hunts_store` and `notes` bind to, plus the prior-config/notes reads), the
+    read-only graph view (`graph_view` - the surface `graph_view` defers to
+    for the projected context: the store tools only ever read service keys),
+    and the run-local `phase_context` the canon phase nodes set so the
+    tool-call responses carry the phase verbatims. `back_edge` is retained for
+    the runtime plane's dispatch ownership (G12) but is NOT part of the model
+    surface anymore."""
 
     back_edge: Callable[[AnalyserReconRequest, str, str], TargetedReconResult] | None = None
     store_reads: Any = None
     graph_view: ReadOnlyGraphView | None = None
-    mint_emissions: list | None = field(default_factory=list)
+    phase_context: PhaseContext = field(default_factory=PhaseContext)
 
 
 def revival_key(unit_id: str, fault_class: str) -> str:
@@ -638,40 +734,44 @@ async def arun_orchestration(
     candidates: Sequence[DeliveredCandidate],
     tools: OrchestratorTools,
     *,
-    dispatch_fn: Callable[[HuntConfig, tuple], DispatchResult] | None = None,
-    rematch_fn: Callable[[str, str, TargetedReconResult], MatchVerdict] | None = None,
-    reason_fn: Callable[[GateInput], GateDecision] | None = None,
+    hypothesise_fn: Callable[[GateInput], GateDecision] | None = None,
+    ratify_fn: Callable[[PhaseTurnInput], RatifyDecision] | None = None,
+    note_fn: Callable[[PhaseTurnInput], NoteDecision] | None = None,
     kb_retrieve_fn: Callable[[str], dict] | None = None,
     known_faults: Sequence[str] | None = None,
     exhausted_faults: Sequence[str] = (),
-    budget_fn: Callable[[Sequence[EnvisionedDirection]], Sequence[EnvisionedDirection]] | None = None,
     orchestrator_factory: Callable[[str], "HuntOrchestratorActor"] | None = None,
 ) -> OrchestratorReport:
     """One orchestration pass, NATIVE-ASYNC (spec 4.1), driven by the #110 graph
-    engine: intake -> KB evidence -> surface read -> ONE supervisor-state
-    schedule loop over the accepted FAULTS (a stateful REASON turn per fault
-    over ALL its matched units, minting the configs and firing the notes at the
-    unit boundary -> a deterministic budget stage -> a DISPATCH turn per allowed
-    direction), persisting the minted configs (produced/) and the unit-boundary
-    note (memory.yaml) into the project's memory store. Fail-open on every
-    collaborator.
+    engine as reworked by #167: intake -> KB evidence -> surface read -> ONE
+    supervisor-state schedule loop over the accepted FAULTS where every (unit,
+    fault) pair runs the node-per-phase REASON stretch (`hypothesise -> ratify
+    -> note`, G2). The hypothesise phase elicits the vulnerability classes and
+    WRITES the status="hypothesised" drafts (the deterministic mint is called
+    at this phase, via the `hunts_store` tool); the ratify phase persists the
+    configs at their final status (ratified or dropped - G6, dropped stays on
+    disk); the note phase appends the notes. The graph ENDs at the REASON
+    stretch - the dispatch node is REMOVED (G12) and the O9 budget stage is
+    REMOVED (G7). Fail-open on every collaborator.
 
     The hunt-orchestrator is the async-native parent of the hunting effort
-    (feat/async-actor-agents): when `reason_fn`/`rematch_fn` are None (the
-    production default) ONE `HuntOrchestratorActor` per run drives both LLM
-    turns, serving EVERY fault of this pass (and of later passes on the same
-    run) as inbox-request turns on the SAME `hunting_orchestrator` thread, so
-    its checkpointed memory carries the pass's reasoning - PURELY stateful,
-    exactly like the recon-orchestrator. The actor is held in the per-run
-    registry and reaped only by the module's stop path.
+    (feat/async-actor-agents): when the phase seams are None (the production
+    default) ONE `HuntOrchestratorActor` per run drives all three phase turns
+    (hypothesise / ratify / note), serving EVERY pair of this pass (and of
+    later passes on the same run) as inbox-request turns on the SAME
+    `hunting_orchestrator` thread, so its checkpointed memory carries the
+    pass's reasoning - PURELY stateful, exactly like the recon-orchestrator.
+    The actor is held in the per-run registry and reaped only by the module's
+    stop path.
 
     Every injected collaborator is called through `_await_seam` (an async seam
     is awaited; a sync seam is offloaded via `asyncio.to_thread`), so the pass
     never stalls the caller's event loop and sync fakes stay injectable.
-    `dispatch_fn`/`rematch_fn`/`reason_fn`/`kb_retrieve_fn` are injected (the
-    real hunting agent is #83, the real LLM match #71/#64); `tools` carries the
-    store, the back-edge, and the read-only graph view. The O1-O10 canon is
-    single-sourced HERE; `run_orchestration` is its thin sync wrapper.
+    `hypothesise_fn`/`ratify_fn`/`note_fn`/`kb_retrieve_fn` are injected (the
+    production defaults are the actor turns); `tools` carries the store, the
+    back-edge (retained for the runtime plane's dispatch ownership, G12), and
+    the read-only graph view. The O1-O10 canon is single-sourced HERE;
+    `run_orchestration` is its thin sync wrapper.
     """
     import asyncio
     import inspect
@@ -694,7 +794,7 @@ async def arun_orchestration(
                     orchestrator = actor
         # Arm the run's actor with THIS pass's tool seam bodies and project
         # root (#135): the actor binds them onto its session agent lazily on
-        # first use, so the gate turn gets the run's real seam bodies (and a
+        # first use, so the phase turns get the run's real seam bodies (and a
         # later pass on the same run re-arms its own).
         orchestrator.tools = tools
         orchestrator.project_id = project_id
@@ -710,37 +810,45 @@ async def arun_orchestration(
             return await out
         return out
 
-    if reason_fn is None:
-        # The gate turn rides the run's orchestration thread, per fault. The
-        # actor's `reason` is `async def`, so the default seam must be an async
-        # lambda - a sync lambda would return the coroutine un-awaited and
+    if hypothesise_fn is None:
+        # The hypothesise turn rides the run's orchestration thread. The
+        # actor's `hypothesise` is `async def`, so the default seam must be an
+        # async lambda - a sync lambda would return the coroutine un-awaited and
         # `_await_seam` would hand it to to_thread (the un-awaited-coroutine
         # defect the live tier caught).
-        reason_fn = lambda inp: _resolve_orchestrator().reason(inp)  # noqa: E731
-    if rematch_fn is None:
-        # The re-match judge rides the SAME orchestration thread.
-        rematch_fn = lambda u, f, r: _resolve_orchestrator().rematch(u, f, r)  # noqa: E731
+        hypothesise_fn = lambda inp: _resolve_orchestrator().hypothesise(inp)  # noqa: E731
+    if ratify_fn is None:
+        ratify_fn = lambda inp: _resolve_orchestrator().ratify(inp)  # noqa: E731
+    if note_fn is None:
+        note_fn = lambda inp: _resolve_orchestrator().note(inp)  # noqa: E731
 
     write_failures = 0
     duplicate_config_writes = 0
 
     def _write_config(config) -> str | None:
-        """Persist one minted `HuntConfig` into the project's `produced/`
-        (the hypothesise write, memory-system spec 3.2). Fail-open (O3): a
-        raising write - including `DuplicateConfigError`, the storage-layer
-        deduplication signal (G4) - warns and counts; the pass keeps serving
-        with the in-memory config.
-
-        G4 gap (documented, owned by #167): a duplicate config is NOT dropped
-        here - the in-memory config still proceeds to dispatch, because the
-        deterministic orchestrator has no model-facing surface to interpret
-        the deduplication signal. #167's `hunts_store` TOOL surfaces it to
-        the model (which then merges/refreshes instead of duplicating); this
-        ticket only enforces the storage-layer gate and counts the event."""
+        """Persist one hypothesised draft into the project's `produced/` (the
+        hypothesise write, memory-system spec 3.2). IDEMPOTENT against the
+        model's own `hunts_store(write)` call during the same turn: when the
+        config's identity is already on disk, the harness records only (the
+        tool already persisted it) - never a second file, never a spurious
+        duplicate count. A FAILING identity read never blocks the write (a
+        degraded store still persists - the read is only the deduplication
+        optimisation, O4). A genuine `DuplicateConfigError` (a re-elicitation
+        the tool itself surfaced as the deduplication signal, G4) warns and
+        counts; the pass keeps serving with the in-memory config (O3)."""
         nonlocal write_failures, duplicate_config_writes
         try:
             if tools.store_reads is None:
                 raise OSError("no hunt store configured")
+            identity = semantic_key(config.unit_id, config.fault_class,
+                                    config.vulnerability_class)
+            try:
+                already = bool(tools.store_reads.read_configs_by_key(
+                    project_id, identity))
+            except Exception:  # noqa: BLE001 - a failing read never blocks the write
+                already = False
+            if already:
+                return None  # the tool already persisted it this turn
             return tools.store_reads.write_config(project_id, config)
         except DuplicateConfigError:
             # The G4 deduplication signal is deliberately CONFLATED into the
@@ -758,61 +866,60 @@ async def arun_orchestration(
             logger.warning("hunt store: config write failed (%s)", exc)
             return None
 
-    def _append_note(key: str, note: str) -> None:
-        """Append the unit-boundary note into the project's `memory.yaml`
-        (natural append order, no `_seq`). Fail-open (O3): a raising write
-        warns and counts; the pass keeps serving."""
+    def _update_config(config) -> str | None:
+        """Persist one ratification write (the ratify upsert): overwrites the
+        config at its identity in place - a ratified config amends the draft,
+        a dropped config is marked on disk and NEVER deleted (G6). Fail-open
+        (O3): a raising write warns and counts; the pass keeps serving."""
         nonlocal write_failures
         try:
             if tools.store_reads is None:
                 raise OSError("no hunt store configured")
+            return tools.store_reads.update_config(project_id, config)
+        except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
+            write_failures += 1
+            logger.warning("hunt store: config update failed (%s)", exc)
+            return None
+
+    def _append_note(key: str, note: str) -> None:
+        """Append one pair-end note into the project's `memory.yaml` (natural
+        append order, no `_seq`). IDEMPOTENT against the model's own
+        `notes(write, option='append')` call during the same turn: an identical
+        note for the key already on disk is not duplicated by the harness.
+        Fail-open (O3): a raising write warns and counts; the pass keeps
+        serving."""
+        nonlocal write_failures
+        try:
+            if tools.store_reads is None:
+                raise OSError("no hunt store configured")
+            try:
+                existing = tools.store_reads.read_notes(project_id, key)
+                already = any(n.get("note") == note for n in existing)
+            except Exception:  # noqa: BLE001 - a failing read never blocks the write
+                already = False
+            if already:
+                return
             tools.store_reads.append_note(project_id, key, note)
         except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
             write_failures += 1
             logger.warning("hunt store: note write failed (%s)", exc)
-
-    async def _record_back_edge(request: AnalyserReconRequest) -> TargetedReconResult:
-        if tools.back_edge is None:
-            result = TargetedReconResult(
-                correlation_id=request.correlation_id,
-                requester_id=request.requester_id,
-                origin="hunting",
-                status="error",
-                error="no back-edge tool configured",
-            )
-        else:
-            try:
-                result = await _await_seam(tools.back_edge, request, run_id, project_id)
-            except Exception as exc:  # noqa: BLE001 - IA-6 fail-open
-                logger.warning("hunt back-edge failed for cid=%s (%s)",
-                               request.correlation_id, exc)
-                result = TargetedReconResult(
-                    correlation_id=request.correlation_id,
-                    requester_id=request.requester_id,
-                    origin="hunting",
-                    status="error",
-                    error=str(exc),
-                )
-        # The back-edge's durable evidence-trail record is gone with the
-        # per-run kind files (memory-system spec 3); the routed outcome flows
-        # back in-memory for the re-match.
-        return result
 
     intake = normalize_candidates(candidates, known_faults=known_faults)
     if intake.malformed_dropped:
         logger.warning("%s malformed candidate(s) dropped (counted)", intake.malformed_dropped)
 
     if not intake.accepted:
-        # Empty pass (O1): nothing for the gate, budget, or dispatch stages.
+        # Empty pass (O1): nothing for the phase machine to reason over.
         return OrchestratorReport(
-            hunts_dispatched=0,
-            hunt_ids=[],
+            pairs_processed=0,
+            configs_hypothesised=0,
+            configs_ratified=0,
+            configs_dropped=0,
+            notes_written=0,
             duplicates_dropped=intake.duplicates_dropped,
             malformed_dropped=intake.malformed_dropped,
             pruned_by_verdict=intake.pruned_by_verdict,
             exhausted_faults=tuple(exhausted_faults),
-            unresolved=(),
-            budget_cut=(),
             store_write_failures=write_failures,
             duplicate_config_writes=duplicate_config_writes,
         )
@@ -831,7 +938,7 @@ async def arun_orchestration(
                 logger.warning("KB retrieval degraded for %s (%s)",
                                candidate.fault_class, exc)
 
-    # The read-only graph surface (D67-04): grounding for the gate's turns.
+    # The read-only graph surface (D67-04): grounding for the phase turns.
     surface: list[dict] = []
     if tools.graph_view is not None:
         try:
@@ -872,6 +979,8 @@ async def arun_orchestration(
     # `fault_risk.risk_tier` - broken access control first, then weak
     # validation, then sophisticated-system targets), stable within a tier so
     # equal-risk faults keep the deterministic first-emission intake order.
+    # The pair-iteration decision (#167): the supervisor pops the fault and the
+    # phase nodes iterate its candidate queue as the pairs they operate on.
     def _fault_schedule() -> list[FaultWorkItem]:
         grouped: dict[str, list[DeliveredCandidate]] = {}
         for c in intake.accepted:
@@ -910,12 +1019,13 @@ async def arun_orchestration(
         """The deterministic fan-out mint (D3/spec 3.5): ONE hypothesised
         `HuntConfig` draft per distinct elicited `vulnerability_class` (a
         class-less direction degrades to a single carried-bare draft), each
-        config's hunt_id derived from one base. Runs at the unit boundary (in
-        the REASON body) - the emitted set is the model's authoritative
-        submission. The surface context is transformed at the mint: a Service
-        card's edge_degree counts become the detailed connected DataItems from
-        the unit's rich projection when the projection resolved them; an absent
-        projection degrades to the counts card (fail-open)."""
+        config's hunt_id derived from one base. Runs at the HYPOTHESISE phase
+        (the mint is called here, via the `hunts_store` tool) - the emitted set
+        is the model's authoritative submission. The surface context is
+        transformed at the mint: a Service card's edge_degree counts become the
+        detailed connected DataItems from the unit's rich projection when the
+        projection resolved them; an absent projection degrades to the counts
+        card (fail-open)."""
         caveats: list[str] = []
         if candidate.match_verdict != "applies":
             caveats.append("yellow match re-matched after back-edge")
@@ -933,83 +1043,78 @@ async def arun_orchestration(
             status="hypothesised",
         )
 
-    def _note_for_unit(direction: EnvisionedDirection, key: str,
-                       configs: Sequence[HuntConfig]) -> str:
-        """The deterministic `record_note` content (the dual-source emission
-        seam, A2): PREFER the structured `EnvisionedDirection.research_direction`
-        (always the carried direction's own, so it names the RIGHT fault even
-        when one unit sits under two faults); THEN the run-local `mint_emissions`
-        bucket, now keyed on the revival key (unit_id matched within the fault
-        context) rather than on `unit_id` alone; else a deterministic synthetic
-        note. Fires at the unit boundary, never after an intra-unit tool call."""
-        if direction.research_direction:
-            return direction.research_direction
-        match = revival_key(direction.unit_id, direction.fault_class)
-        for emission in (tools.mint_emissions or ()):
-            if not (isinstance(emission, dict) and emission.get("research_direction")):
-                continue
-            if revival_key(emission.get("unit_id") or "",
-                           direction.fault_class) != match:
-                continue
-            return emission["research_direction"]
-        return f"minted {len(configs)} config(s) for {key}"
+    def _phase_input(pair: DeliveredCandidate, configs: Sequence[HuntConfig],
+                     state) -> PhaseTurnInput:
+        """One ratify/note turn's input for the pair: the pair, its current
+        configs, and the shared symbolic render slots (fail-open per slot)."""
+        fault_class = pair.fault_class
+        return PhaseTurnInput(
+            pair=pair,
+            configs=list(configs),
+            kb_degraded=kb_degraded,
+            kb_evidences=kb_evidences,
+            surface=surface,
+            materialisation={fault_class: materialisations.get(fault_class)},
+            fold_family={fault_class: fold_families.get(fault_class)},
+            prior_minted_keys=list(_ledger(state).minted_config_keys),
+        )
 
-    async def _reason_node(state) -> dict:
-        """The per-FAULT stateful REASON stretch (candidates-rewrite): the #135
-        symbolic render builds ONE `GateInput` per fault whose `candidates` is
-        the fault's FULL matched-unit list (each unit's projection slot degrades
-        independently fail-open), ONE gate turn reasons over all of them on the
-        run's orchestration thread, then the deterministic unit-boundary stage
-        runs per emitted unit: the mint fan-out (N `HuntConfig`s per distinct
-        class), the harness-fired `record_note`, and the `LoopLedger` update -
-        the ONLY ledger reinjection point. Fail-open: a raising/empty turn
-        carries every unit of the fault bare."""
-        current = state.get("current")
-        if current is None:
-            return {"directions": [], "trail": []}
-        fault_class = current.fault_class
-        units = list(current.candidates)
+    def _ledger(state) -> LoopLedger:
+        prior = state.get("ledger")
+        return prior.model_copy(deep=True) if isinstance(prior, LoopLedger) \
+            else LoopLedger()
 
-        # --- the per-unit symbolic render (#135, spec 3.2) --------------------
-        # Each unit's typed projection builds independently (fail-open per slot:
-        # a raise/None degrades that unit's slot to None, never a prune - C16);
-        # materialisation + fold family are per-FAULT and shared. `projection`
-        # reflects the single-unit slot for backward compatibility.
-        unit_projection: dict[str, object | None] = {}
+    def _pair_frame_for(pair: DeliveredCandidate) -> dict:
+        """The pair's frame for the tool-call responses (G1): the (unit,
+        fault) identity."""
+        return pair_frame(pair.unit_id, pair.fault_class)
+
+    async def _hypothesise_node(state) -> dict:
+        """The HYPOTHESISE phase (Q8/spec 3.2): the pair's elicitation turn on
+        the run's orchestration thread, then the mint fan-out (called at this
+        phase) writes the status="hypothesised" drafts into produced/. The
+        `hunts_store` tool's write response carried the NEXT_RATIFY_HINT
+        constant (G1/G3); the loop state HYPOTHESISED is the graph's own (the
+        wrapper sets it, G2). Fail-open: a raising/empty turn carries the pair
+        bare (a class-less draft) - the old gate-carry."""
+        pair = state.get("current_pair")
+        if pair is None:
+            return {"trail": []}
+        fault_class = pair.fault_class
+        key = revival_key(pair.unit_id, fault_class)
+
+        # The pair's own symbolic render (fail-open per slot: a raise/None
+        # degrades that slot to None, never a prune - C16); materialisation +
+        # fold family are per-FAULT and shared.
+        projection: object | None = None
         if tools.graph_view is not None:
             from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
                 build_projection,
             )
-            for c in units:
-                proj: object | None = None
-                try:
-                    proj = build_projection(
-                        project_id, c.unit_id, read_fn=tools.graph_view.read)
-                except Exception as exc:  # noqa: BLE001 - per-unit degrade
-                    logger.warning("unit projection degraded for %s (%s)",
-                                   revival_key(c.unit_id, fault_class), exc)
-                unit_projection[c.unit_id] = proj
+            try:
+                projection = build_projection(
+                    project_id, pair.unit_id, read_fn=tools.graph_view.read)
+            except Exception as exc:  # noqa: BLE001 - per-pair degrade
+                logger.warning("unit projection degraded for %s (%s)", key, exc)
         materialisation = materialisations.get(fault_class)
         fold_ids = fold_families.get(fault_class)
         # The Q11 novelty-reflection list: the CURRENT ledger's minted config
-        # keys (read exactly like the unit-boundary stage below - fail-open to
-        # [] when the ledger slot is absent or not a LoopLedger). Re-injected
-        # into the prompt ONLY at this per-fault turn boundary, never after an
-        # intra-unit tool call (spec 3.3).
-        prior_ledger = state.get("ledger")
-        prior_ledger = prior_ledger.model_copy(deep=True) \
-            if isinstance(prior_ledger, LoopLedger) else LoopLedger()
+        # keys (fail-open to [] when the ledger slot is absent or not a
+        # LoopLedger).
+        prior_ledger = _ledger(state)
         gate_input = GateInput(
-            candidates=units,
+            candidates=[pair],
             kb_degraded=kb_degraded,
             kb_evidences=kb_evidences,
             surface=surface,
-            projection=unit_projection.get(units[0].unit_id) if units else None,
-            unit_projection=unit_projection,
+            projection=projection,
+            unit_projection={pair.unit_id: projection},
             materialisation={fault_class: materialisation},
             fold_family={fault_class: fold_ids},
             prior_minted_keys=list(prior_ledger.minted_config_keys),
         )
+        if getattr(tools, "phase_context", None) is not None:
+            tools.phase_context.phase = "hypothesise"
 
         directions: list[EnvisionedDirection] = []
         from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
@@ -1018,16 +1123,15 @@ async def arun_orchestration(
         )
         with orchestrator_gate_span(run_id):
             trace_gate_step("symbolic-render", input={
-                "fault": fault_class,
-                "unit_count": len(units),
-                "projection": "ok" if any(unit_projection.values()) else "UNKNOWN",
+                "pair": key,
+                "projection": "ok" if projection is not None else "UNKNOWN",
                 "materialisation": "ok" if materialisation is not None else "UNKNOWN",
                 "fold_family": "ok" if fold_ids is not None else "UNKNOWN",
                 "kb_degraded": kb_degraded,
             })
-            if reason_fn is not None:
+            if hypothesise_fn is not None:
                 try:
-                    decision = await _await_seam(reason_fn, gate_input)
+                    decision = await _await_seam(hypothesise_fn, gate_input)
                     directions = list(getattr(decision, "directions", None) or [])
                     trace_gate_step("gate-decision", output={
                         "directions": [{
@@ -1043,42 +1147,32 @@ async def arun_orchestration(
                         } for d in directions],
                         "prior_minted_keys": list(gate_input.prior_minted_keys),
                     })
-                except Exception as exc:  # noqa: BLE001 - fail-open: carry the fault
-                    logger.warning("gate reasoning failed for %s, carrying (%s)",
-                                   fault_class, exc)
+                except Exception as exc:  # noqa: BLE001 - fail-open: carry bare
+                    logger.warning("hypothesise turn failed for %s, carrying (%s)",
+                                   key, exc)
         if not directions:
             directions = [
-                EnvisionedDirection(unit_id=c.unit_id, fault_class=fault_class)
-                for c in units
+                EnvisionedDirection(unit_id=pair.unit_id, fault_class=fault_class)
             ]
+
+        # --- the hypothesise write (spec 3.3, the mint called at this phase) --
         carried = [d for d in directions if d.carried]
         trail = [
             {"kind": "gate_pruned",
              "revival_key": revival_key(d.unit_id, d.fault_class)}
             for d in directions if not d.carried
         ]
-
-        # --- the deterministic unit-boundary stage (spec 3.3) -----------------
-        # AFTER the reason turn returns: per emitted unit, read the prior
-        # insights, mint the N configs from the emitted direction, write the
-        # hypothesised configs into produced/ (the hypothesise write, memory
-        # spec 3.2), fire the harness-owned note into memory.yaml, update the
-        # `LoopLedger`. The ledger is re-injected ONLY here - never after an
-        # intra-unit tool call.
-        ledger = state.get("ledger")
-        ledger = ledger.model_copy(deep=True) if isinstance(ledger, LoopLedger) \
-            else LoopLedger()
+        ledger = prior_ledger
         minted = dict(state.get("minted_configs") or {})
+        configs_written = 0
+        if not carried:
+            ledger.units_skipped += 1
+            return {"ledger": ledger, "minted_configs": minted, "trail": trail}
+        candidate = by_identity.get((pair.unit_id, fault_class)) or pair
         for direction in carried:
-            key = revival_key(direction.unit_id, direction.fault_class)
-            candidate = by_identity.get((direction.unit_id, direction.fault_class))
-            if candidate is None:
-                ledger.units_skipped += 1
-                continue
             prior_insights = await _read_prior_insights(key)
             configs = _mint_for_direction(
-                direction, candidate, prior_insights,
-                projection=unit_projection.get(direction.unit_id))
+                direction, candidate, prior_insights, projection=projection)
             minted[key] = list(configs)
             ledger.minted_config_keys.append(key)
             trace_gate_step("emit-mint", input={
@@ -1087,178 +1181,122 @@ async def arun_orchestration(
                 "classes": sorted(cfg.vulnerability_class for cfg in configs),
             })
             for config in configs:
-                # G4 note: a duplicate write (the deduplication signal) is
-                # counted and the in-memory config still dispatches - the
-                # model-facing interpretation of the signal is #167's
-                # `hunts_store` TOOL (see _write_config's docstring).
+                # G4: a duplicate write (the deduplication signal) is counted
+                # and the in-memory config keeps serving - the model-facing
+                # interpretation of the signal is the `hunts_store` TOOL.
                 _write_config(config)
-            _append_note(key, _note_for_unit(direction, key, configs))
-            trace_gate_step("note-written", input={"revival_key": key})
-            ledger.notes_recorded += 1
+                configs_written += 1
             ledger.units_done += 1
-        return {
-            "directions": carried,
-            "trail": trail,
-            "ledger": ledger,
-            "minted_configs": minted,
-        }
+        trail.append({"kind": "hypothesised", "revival_key": key,
+                      "configs": configs_written})
+        return {"ledger": ledger, "minted_configs": minted, "trail": trail}
 
-    async def _budget_node(state) -> dict:
-        """The deterministic budget stage (O9): a batch cut over the whole
-        accumulated carried set; the cut directions ride the report trail only
-        (the per-run `cut` kind file is removed, memory spec 3). Fail-open: a
-        raising `budget_fn` cuts nothing."""
-        carried = list(state.get("directions") or [])
-        allowed: Sequence[EnvisionedDirection] = carried
-        if budget_fn is not None:
+    async def _ratify_node(state) -> dict:
+        """The RATIFY phase (spec 3.2): the pair's ratification turn on the run's
+        orchestration thread. The model may update/delete/create configs and
+        MUST end with a status="ratified" write carrying the filled
+        capabilities/assumptions/technique-primitives; the harness persists
+        each decision config at its final status (upsert; dropped stays on
+        disk - G6). The `hunts_store` tool's ratified-write response carried
+        ONLY the NEXT_NOTE_HINT constant (G1); the loop state RATIFIED is the
+        graph's own. Fail-open: a raising/empty turn skips the phase's side
+        effect (the drafts stay hypothesised) but the pair keeps serving."""
+        pair = state.get("current_pair")
+        if pair is None:
+            return {"trail": []}
+        key = revival_key(pair.unit_id, pair.fault_class)
+        drafts = list((state.get("minted_configs") or {}).get(key) or [])
+        if getattr(tools, "phase_context", None) is not None:
+            tools.phase_context.phase = "ratify"
+
+        decision = RatifyDecision()
+        if ratify_fn is not None:
             try:
-                allowed = await _await_seam(budget_fn, carried)
-            except Exception as exc:  # noqa: BLE001 - fail-open: no cut
-                logger.warning("budget call failed, no directions cut (%s)", exc)
-                allowed = carried
+                out = await _await_seam(ratify_fn, _phase_input(pair, drafts, state))
+                decision = out if isinstance(out, RatifyDecision) else RatifyDecision()
+            except Exception as exc:  # noqa: BLE001 - fail-open: keep serving
+                logger.warning("ratify turn failed for %s (%s)", key, exc)
+
         trail: list[dict] = []
-        for direction in carried:
-            if direction not in allowed:
-                key = revival_key(direction.unit_id, direction.fault_class)
-                trail.append({"kind": "cut", "revival_key": key})
-        ledger = state.get("ledger")
-        ledger = ledger.model_copy(deep=True) if isinstance(ledger, LoopLedger) \
-            else LoopLedger()
-        ledger.budget_remaining = len(allowed)
-        return {"worklist": list(allowed), "phase": "dispatch",
-                "trail": trail, "ledger": ledger}
+        ratified_configs: list[HuntConfig] = []
+        ratified = dropped = 0
+        for config in decision.configs:
+            _update_config(config)
+            if config.status == "dropped":
+                dropped += 1
+                trail.append({"kind": "dropped", "revival_key": key})
+            else:
+                ratified += 1
+                ratified_configs.append(config)
+                trail.append({"kind": "ratified", "revival_key": key})
+        if decision.configs:
+            trail.append({"kind": "ratify-ended", "revival_key": key,
+                          "ratified": ratified, "dropped": dropped})
+            minted = dict(state.get("minted_configs") or {})
+            minted[key] = ratified_configs
+            return {"trail": trail, "minted_configs": minted}
+        return {"trail": trail}
 
-    async def _dispatch_node(state) -> dict:
-        """The DISPATCH stretch: park/resume + rematch for a yellow candidate,
-        then the per-config dispatch (IA-2) of the configs the per-fault REASON
-        body minted at the unit boundary (spec 3.3/3.5) with the inline back-edge
-        rounds (S5/S6, D67-14). Falls back to a deterministic mint when the
-        direction has no pre-minted configs (the graph-default fail-open path).
-        Fail-open at every step."""
-        from polymerhus.recon.control.targeted import (  # noqa: PLC0415
-            TargetedReconResult,
-        )
-        direction = state.get("current_direction")
-        if direction is None:
+    async def _note_node(state) -> dict:
+        """The NOTE phase (spec 3.2/G8): the pair's note-taking turn on the
+        run's orchestration thread; the harness appends the decision's notes
+        (idempotently). The `notes` tool's append response carried the NEXT
+        pair's data + the NEXT_PAIR_HINT constant - the pair's loop ENDS there
+        (G1); the loop state NOTED is the graph's own (a LOOP state, never a
+        config status - G5). Fail-open: a raising/empty turn skips the phase's
+        side effect but the pair keeps serving."""
+        pair = state.get("current_pair")
+        if pair is None:
             return {"trail": []}
-        key = revival_key(direction.unit_id, direction.fault_class)
-        candidate = by_identity.get((direction.unit_id, direction.fault_class))
-        if candidate is None:
-            logger.warning("direction %s has no candidate in the intake", key)
+        key = revival_key(pair.unit_id, pair.fault_class)
+        ratified = list((state.get("minted_configs") or {}).get(key) or [])
+        if not ratified:
+            # a pair with no configs (pruned at hypothesise, or every config
+            # dropped during ratification) has nothing to note: the phase skips
+            # its side effect but the loop state NOTED still advances (G5).
             return {"trail": []}
+        if getattr(tools, "phase_context", None) is not None:
+            tools.phase_context.phase = "note"
+            # The pair end: the notes tool's response carries the next pair's
+            # frame + NEXT_PAIR_HINT (G1). The next pair is the queue head the
+            # supervisor will pop next (or None - the pass is done).
+            next_pairs = list(state.get("pairs") or [])
+            tools.phase_context.next_pair = _pair_frame_for(next_pairs[0]) \
+                if next_pairs else None
 
-        routed: list[TargetedReconResult] = []
-        if candidate.match_verdict != "applies":
-            # Park/resume (S3/O8): raise the hunt back-edge, re-match on the
-            # returned recon evidence, hard depth-1 cap.
-            request = build_back_edge_request(
-                direction.unit_id,
-                direction.fault_class,
-                requester_id=f"hunt-orchestrator-{run_id}",
-                note=f"yellow match for {direction.fault_class}: "
-                     f"{candidate.applies_witnesses.llm or ''}",
-            )
-            routed.append(await _record_back_edge(request))
-            if rematch_fn is None:
-                logger.warning("re-match unavailable for %s; unresolved", key)
-                return {"trail": [{"kind": "unresolved", "revival_key": key}]}
+        decision = NoteDecision()
+        if note_fn is not None:
             try:
-                verdict = await _await_seam(
-                    rematch_fn, direction.unit_id, direction.fault_class, routed[-1])
-            except Exception as exc:  # noqa: BLE001 - IA-1 fail-open
-                logger.warning("re-match exhausted for %s; unresolved (%s)", key, exc)
-                return {"trail": [{"kind": "unresolved", "revival_key": key}]}
-            if verdict.verdict == "insufficient-evidence":
-                logger.info("re-match still yellow at the depth cap; %s unresolved", key)
-                return {"trail": [{"kind": "unresolved", "revival_key": key}]}
-            if verdict.verdict != "applies":
-                logger.info("re-match refutes %s; no hunt", key)
-                return {"trail": []}
+                out = await _await_seam(note_fn, _phase_input(pair, ratified, state))
+                decision = out if isinstance(out, NoteDecision) else NoteDecision()
+            except Exception as exc:  # noqa: BLE001 - fail-open: keep serving
+                logger.warning("note turn failed for %s (%s)", key, exc)
 
-        # The configs the per-fault REASON body minted and PERSISTED at the
-        # unit boundary (produced/). A missing entry (the graph-default
-        # fail-open carry path) degrades to a deterministic mint here, exactly
-        # the canon's D3 fan-out - writing the configs + note exactly like the
-        # unit-boundary stage, so the fail-open path never reads
-        # `units_done=0` while dispatching N. The normal path never reaches
-        # this branch, so nothing double-books.
-        configs = list((state.get("minted_configs") or {}).get(key) or [])
-        fallback_ledger: LoopLedger | None = None
-        fallback_minted: dict | None = None
-        if not configs:
-            prior_insights = await _read_prior_insights(key)
-            configs = _mint_for_direction(direction, candidate, prior_insights)
-            ledger = state.get("ledger")
-            fallback_ledger = ledger.model_copy(deep=True) \
-                if isinstance(ledger, LoopLedger) else LoopLedger()
-            for config in configs:
-                # G4 note: same as the unit-boundary write - the duplicate
-                # signal is counted, the config still dispatches (see
-                # _write_config's docstring; the model-facing signal is #167's).
-                _write_config(config)
-            _append_note(key, _note_for_unit(direction, key, configs))
-            fallback_ledger.minted_config_keys.append(key)
-            fallback_ledger.notes_recorded += 1
-            fallback_ledger.units_done += 1
-            fallback_minted = dict(state.get("minted_configs") or {})
-            fallback_minted[key] = list(configs)
-
-        hunt_trails: list[dict] = []
-        for config in configs:
-            hunt_id = config.hunt_id
-
-            hunt: dict[str, Any] = {
-                "hunt_id": hunt_id,
-                "revival_key": key,
-                "degraded": False,
-                "error": None,
-            }
-            round_no = 1
-            while True:
-                if dispatch_fn is None:
-                    hunt.update({"degraded": True, "error": "hunting agent unavailable"})
-                    break
-                try:
-                    result = await _await_seam(dispatch_fn, config, tuple(routed))
-                except Exception as exc:  # noqa: BLE001 - O6: degrade the hunt
-                    logger.warning("hunt %s dispatch failed (%s)", hunt_id, exc)
-                    hunt.update({"degraded": True, "error": str(exc)})
-                    break
-                if result.back_edge_needs:
-                    # Inline request-response (S5/S6, D67-14): each returned
-                    # back-edge result re-evaluates the hypothesis verdict, and
-                    # the evaluation continues unbounded while needs keep
-                    # surfacing - the agent ends it by returning a result
-                    # without needs.
-                    for need in result.back_edge_needs:
-                        routed.append(await _record_back_edge(need))
-                    round_no += 1
-                    continue
-                hunt.update({
-                    "spec_ref": result.spec_ref,
-                    "pod_result_ref": result.pod_result_ref,
-                    "hypothesis_verdict": result.hypothesis_verdict,
-                })
-                break
-            hunt_trails.append({
-                "kind": "hunt", "revival_key": key, "hunt_id": hunt_id,
-                "degraded": bool(hunt.get("degraded")),
-            })
-        dispatch_ret: dict = {"trail": hunt_trails}
-        if fallback_ledger is not None:
-            dispatch_ret["ledger"] = fallback_ledger
-            dispatch_ret["minted_configs"] = fallback_minted
-        return dispatch_ret
+        ledger = _ledger(state)
+        trail: list[dict] = []
+        notes_written = 0
+        for record in decision.notes:
+            _append_note(key, record.note)
+            notes_written += 1
+        if decision.notes:
+            from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
+                trace_gate_step,
+            )
+            ledger.notes_recorded += 1
+            trace_gate_step("note-written", input={"revival_key": key})
+            trail.append({"kind": "note", "revival_key": key,
+                          "notes": notes_written})
+        return {"ledger": ledger, "trail": trail}
 
     initial = {
         "project_id": project_id,
         "run_id": run_id,
-        "phase": "reason",
         "schedule": _fault_schedule(),
         "current": None,
-        "worklist": [],
-        "current_direction": None,
-        "directions": [],
+        "pairs": [],
+        "current_pair": None,
+        "loop_state": None,
+        "loop_states": [],
         "trail": [],
         "ledger": LoopLedger(),
         "minted_configs": {},
@@ -1267,33 +1305,38 @@ async def arun_orchestration(
         "surface": surface,
         "tools": tools,
         "store_reads": tools.store_reads,
-        "reason_fn": reason_fn,
-        "budget_fn": budget_fn,
-        "dispatch_fn": dispatch_fn,
-        "rematch_fn": rematch_fn,
+        "hypothesise_fn": hypothesise_fn,
+        "ratify_fn": ratify_fn,
+        "note_fn": note_fn,
         "exhausted_faults": tuple(exhausted_faults),
     }
     graph = build_hunting_graph(
-        reason_node=_reason_node, budget_node=_budget_node, dispatch_node=_dispatch_node,
+        hypothesise_node=_hypothesise_node,
+        ratify_node=_ratify_node,
+        note_node=_note_node,
     )
     terminal = await graph.compile().ainvoke(
         initial, {"configurable": {"thread_id": run_id}},
     )
     trail = list(terminal.get("trail") or [])
-    hunts = [t for t in trail if t.get("kind") == "hunt"]
+    ledger = terminal.get("ledger") or LoopLedger()
+    ratified_events = [t for t in trail if t.get("kind") == "ratify-ended"]
     return OrchestratorReport(
-        hunts_dispatched=len(hunts),
-        hunt_ids=[t["hunt_id"] for t in hunts],
+        pairs_processed=ledger.units_done + ledger.units_skipped,
+        configs_hypothesised=sum(t.get("configs", 0) for t in trail
+                                 if t.get("kind") == "hypothesised"),
+        configs_ratified=sum(t.get("ratified", 0) for t in ratified_events),
+        configs_dropped=sum(t.get("dropped", 0) for t in ratified_events),
+        notes_written=sum(t.get("notes", 0) for t in trail
+                          if t.get("kind") == "note"),
         duplicates_dropped=intake.duplicates_dropped,
         malformed_dropped=intake.malformed_dropped,
         pruned_by_verdict=intake.pruned_by_verdict,
         gate_pruned=tuple(t["revival_key"] for t in trail if t.get("kind") == "gate_pruned"),
         exhausted_faults=tuple(exhausted_faults),
-        unresolved=tuple(t["revival_key"] for t in trail if t.get("kind") == "unresolved"),
-        budget_cut=tuple(t["revival_key"] for t in trail if t.get("kind") == "cut"),
         store_write_failures=write_failures,
         duplicate_config_writes=duplicate_config_writes,
-        ledger=terminal.get("ledger") or LoopLedger(),
+        ledger=ledger,
     )
 
 
@@ -1303,13 +1346,12 @@ def run_orchestration(
     candidates: Sequence[DeliveredCandidate],
     tools: OrchestratorTools,
     *,
-    dispatch_fn: Callable[[HuntConfig, tuple], DispatchResult] | None = None,
-    rematch_fn: Callable[[str, str, TargetedReconResult], MatchVerdict] | None = None,
-    reason_fn: Callable[[GateInput], GateDecision] | None = None,
+    hypothesise_fn: Callable[[GateInput], GateDecision] | None = None,
+    ratify_fn: Callable[[PhaseTurnInput], RatifyDecision] | None = None,
+    note_fn: Callable[[PhaseTurnInput], NoteDecision] | None = None,
     kb_retrieve_fn: Callable[[str], dict] | None = None,
     known_faults: Sequence[str] | None = None,
     exhausted_faults: Sequence[str] = (),
-    budget_fn: Callable[[Sequence[EnvisionedDirection]], Sequence[EnvisionedDirection]] | None = None,
     orchestrator_factory: Callable[[str], "HuntOrchestratorActor"] | None = None,
 ) -> OrchestratorReport:
     """The SYNC lane to one orchestration pass: a thin wrapper that runs the
@@ -1330,12 +1372,11 @@ def run_orchestration(
         run_id,
         candidates,
         tools,
-        dispatch_fn=dispatch_fn,
-        rematch_fn=rematch_fn,
-        reason_fn=reason_fn,
+        hypothesise_fn=hypothesise_fn,
+        ratify_fn=ratify_fn,
+        note_fn=note_fn,
         kb_retrieve_fn=kb_retrieve_fn,
         known_faults=known_faults,
         exhausted_faults=exhausted_faults,
-        budget_fn=budget_fn,
         orchestrator_factory=orchestrator_factory,
     ))

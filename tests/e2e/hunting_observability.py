@@ -283,7 +283,7 @@ class TraceJudge:
 
 
 _ALL_TOOL_NAMES = {
-    "read_memory_hunts", "read_memory_notes", "graph_view",
+    "hunts_store", "notes", "graph_view",
 }
 
 
