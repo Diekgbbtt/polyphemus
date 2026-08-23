@@ -3,8 +3,10 @@
 The hunt-orchestrator (#82) feeds this module one declarative `HuntConfig` per
 hunt (IA-2); the harness drives the model through the ratified tool surface
 (`hunts_store` / `notes` / `graph_view` / `kb_query` / `exec`, R3/R1/R2) as a
-turn-by-turn ReAct loop OVER the state-graph hunter (`hunter_graph.py`), and
-writes exactly the record kinds the model's tool calls signal.
+turn-by-turn ReAct loop OVER the state-graph hunter (`hunter_graph.py`).
+Persistence rides the per-project hunter memory store (spec 6) - the harness
+writes no hunt-store records - and the harness derives no verdict: the hunt
+idles at END (spec 2.4, R4/GP2-b).
 
 The harness is the TURN-BY-TURN DRIVER (ADR R4): per LLM step it runs ONE
 `arun_session_turn` on the per-hunt `HuntSession(run_id, hunt_id)` thread, so
@@ -64,7 +66,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
 )
 from polymerhus.attack.hunting.hunter_graph import build_hunter_graph
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
-from polymerhus.attack.hunting.hunter_state import FAULT_STATUSES
+from polymerhus.attack.hunting.hunter_state import D3_HINT, FAULT_STATUSES
 from polymerhus.attack.hunting.hunter_tools import (
     ExecFn,
     GraphViewFn,
@@ -253,39 +255,14 @@ _STEP_PROTOCOL = (
     "reasoning."
 )
 
-# The tool surface the model requests against (Template reuse): the same five
-# tools `build_hunter_tools` binds, described verbatim from their contracts
-# (`hunter_tools.py`). The model sees the surface here - the tools are executed
-# by the harness between steps, never by the agent itself.
-_TOOL_SURFACE = (
-    "Tool surface - you request exactly ONE tool call per step:\n"
-    "- hunts_store: the status-bearing memory seam. read / write. write takes "
-    "the fault/spec object carrying the status verbatim (hypothesised | "
-    "verified | dropped | specified) plus the fault_key and the fault_keyword / "
-    "strategy_keyword naming the produced spec file; mode=create FAILS on a "
-    "duplicate spec (reflect and merge or refresh, never duplicate), "
-    "mode=update re-authors in place. read is by fault_key plus optional "
-    "statuses / attributes filters.\n"
-    "- notes: one note per fault covering all decisions that concern it. "
-    "read / write; write options append | update | delete; the read is the "
-    "grep-match read, latest-first.\n"
-    "- graph_view: the read-only L0/L1 target-knowledge view. Takes a "
-    "read-only Cypher query plus optional params; write-shaped calls are "
-    "rejected.\n"
-    "- kb_query: query the fault knowledge base (LightRAG) to ground your "
-    "reasoning: the scenario's attack_goal and concern, the technology stack, "
-    "target references, input vectors, known facts, the acceptable technique "
-    "families, unsupported claims, observed evidence, and the retrieval "
-    "config. Returns an AnswerBundleV1-shaped bundle: a summary, per-entity "
-    "explanations with provenance references, and knowledge gaps. Consume it "
-    "directly in your reasoning; an empty or degraded result means the KB has "
-    "nothing further - degrade to your HuntConfig grounding and continue.\n"
-    "- exec: run a command on the target's Kali execution surface: cheap "
-    "claim-verification probes inside the loop. Each call is bounded by "
-    "EXEC_TIMEOUT_S (an optional shorter timeout_s is accepted); the probe "
-    "frequency is unbounded - you decide when to probe. PARTITION GUARD: exec "
-    "never produces the hypothesis verdict."
-)
+# The tool surface the model requests against (Template reuse): derived from the
+# actual bound tools' own contracts (`hunter_tools.py`), name + description -
+# never a hand-written parallel copy (the tool contracts are the single source).
+# The model sees the surface here - the tools are executed by the harness
+# between steps, never by the agent itself.
+def _tool_surface(tools) -> str:
+    lines = "\n".join(f"- {t.name}: {t.description}" for t in tools)
+    return f"Tool surface - you request exactly ONE tool call per step:\n{lines}"
 
 
 def _compose_grounding(config: HuntConfig) -> str:
@@ -332,7 +309,7 @@ def _state_summary(state: dict) -> str:
     return "\n".join(lines)
 
 
-def _compose_first_step(config: HuntConfig, state: dict) -> str:
+def _compose_first_step(config: HuntConfig, state: dict, tool_surface: str) -> str:
     """The first step's input: the stable skill ahead of the hunt grounding, the
     tool surface, the current state, and the step protocol. Later steps resume
     the thread from the checkpoint, so the skill/surface/grounding are never
@@ -340,7 +317,7 @@ def _compose_first_step(config: HuntConfig, state: dict) -> str:
     return "\n\n".join([
         _load_hunting_agent_skill(),
         _compose_grounding(config),
-        _TOOL_SURFACE,
+        tool_surface,
         _state_summary(state),
         _STEP_PROTOCOL,
     ])
@@ -446,12 +423,11 @@ def build_hunting_agent(
     ) -> DispatchResult:
         hunt_id = config.hunt_id
         compiled = build_hunter_graph().compile()
-        tools_by_name = {
-            tool.name: tool for tool in build_hunter_tools(
-                store=memory_store, project_id=project_id,
-                graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
-            )
-        }
+        tools = build_hunter_tools(
+            store=memory_store, project_id=project_id,
+            graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
+        )
+        tools_by_name = {tool.name: tool for tool in tools}
         state: dict = {"phase": "grounding", "trail": []}
 
         from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
@@ -460,7 +436,8 @@ def build_hunting_agent(
         from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415
 
         thread_id = HuntSession(run_id, hunt_id).thread_id
-        new_messages = [HumanMessage(content=_compose_first_step(config, state))]
+        new_messages = [HumanMessage(
+            content=_compose_first_step(config, state, _tool_surface(tools)))]
 
         for _step in range(_MAX_STEPS):
             # Capability (#99) attaches NATIVELY via the session seam, not as an
@@ -531,15 +508,22 @@ def build_hunting_agent(
                 except Exception as exc:  # noqa: BLE001 - fail-open, keep serving
                     logger.warning("hunt %s state tracking degraded (%s)", hunt_id, exc)
                     feedback.append(f"state tracking degraded ({exc})")
-                # The constant rides THIS tool-call response and is consumed:
-                # it must never leak onto a later, unrelated tool result.
-                hint = state.get("injected_constant")
-                if hint:
-                    result = (
-                        f"{result}\n\n<phase-transition-hint>\n{hint}\n"
-                        f"</phase-transition-hint>"
-                    )
-                    state["injected_constant"] = None
+            elif step.tool == "kb_query" and state.get("phase") == "grounding":
+                # The grounding-phase D3 prompt (spec 2.3): a kb_query call
+                # while the harness is still grounded prompts the D3
+                # retrieval-gap check - first and subsequent kb_query calls
+                # ride the grounding phase. Not a transition (no status
+                # write), so it injects here, never through the graph.
+                state["injected_constant"] = D3_HINT
+            # The constant rides THIS tool-call response and is consumed:
+            # it must never leak onto a later, unrelated tool result.
+            hint = state.get("injected_constant")
+            if hint:
+                result = (
+                    f"{result}\n\n<phase-transition-hint>\n{hint}\n"
+                    f"</phase-transition-hint>"
+                )
+                state["injected_constant"] = None
             trace_span("hunter-tool", input={"tool": step.tool, "args": step.args},
                        output=result[:500])
             new_messages = [ToolMessage(tool_call_id=call_id, content=result)]

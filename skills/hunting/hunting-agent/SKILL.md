@@ -25,7 +25,7 @@ You do not walk a linear pipeline.
 You navigate a DECISION TREE: the passes below are visited in any order the evidence justifies, decision points can be revisited whenever new evidence lands, and moving back to an earlier pass is normal re-entry, not a mistake.
 A pass is a single-problem pass: it solves exactly one small problem and exits when its done-when holds.
 
-At D1 and D2, the near-universal default is the KB retrieval; the back-edge fires only for target-knowledge gaps the surface context and the KB cannot answer.
+At D1 and D2, the near-universal default is the KB retrieval; target-knowledge gaps the surface context and the KB cannot answer are resolved with the `kb_query` / `exec` / `graph_view` tools inside the loop.
 
 ## The tree
 
@@ -40,9 +40,6 @@ At D1 and D2, the near-universal default is the KB retrieval; the back-edge fire
                     no +----+----+ yes
                        v           |
                    QUERY (KB)      |
-                   back-edge       |
-                   (rare: only     |
-                   target-knowledge gaps)
                        |           |
                        v           |
                absorbed into      |
@@ -95,14 +92,9 @@ At D1 and D2, the near-universal default is the KB retrieval; the back-edge fire
         |  [D5] meaningful insight?                             |
         |      | no -> close the candidate -> next -------------+
         |      v yes                                            |
-        |  next_step: end | back_edge (rare)                    |
-        |      |                                                |
-        |      | back_edge -> orchestrator -> re-enter          |
-        |      |   VERIFY-CLAIMS for the SAME candidate         |
-        |      |   (the verdict may revise per D67-14)          |
-        |      | end -> verdict (harness-derived):              |
-        |      |   successful -> land successful                |
-        |      |   refuted -> close candidate -> next           |
+        |  end -> verdict (harness-derived):                    |
+        |    successful -> land successful                      |
+        |    refuted -> close candidate -> next                 |
         +-------------------------------------------------------+
                             | all candidates closed
                             v
@@ -122,7 +114,7 @@ Prior-hunt insights are read here and carried as evidence.
 *Done when the useful frame, hard constraints, and important assumptions are clear.*
 
 **[D1]** - *"Do I have sufficiently detailed target knowledge, and can I cover exhaustively the space of specific faults belonging to this class that likely apply to this system?"*
-No -> the fault-space gap is answered by QUERY (KB); a target-knowledge gap is answered by a back-edge, which is rare.
+No -> the fault-space gap is answered by QUERY (KB); a target-knowledge gap is resolved with the `kb_query` / `exec` / `graph_view` tools inside the loop.
 Yes -> DECOMPOSE.
 Revisitable: you may answer yes and still come back here after the coverage check fails.
 
@@ -156,7 +148,7 @@ One theory is a favourite, not a hypothesis set.
 
 **[D2]** - *is the candidate set exhaustive over the specific faults of this class likely to apply to this system?*
 The fixed-point criterion: coverage is met when a further QUERY yields no new specific faults and no new candidate mechanisms.
-No -> QUERY for more specific faults, then re-DECOMPOSE with the new knowledge (a KB re-entry; a back-edge here is rare).
+No -> QUERY for more specific faults, then re-DECOMPOSE with the new knowledge (a KB re-entry).
 Yes -> DISCRIMINATE.
 This is where you can discover that your earlier D1 answer was wrong - re-entry is the designed response, not a failure.
 
@@ -169,7 +161,7 @@ Watch the failure checks: explaining the symptom with a renamed symptom, anchori
 A support resting on an unverified claim is not support: self-critique is not proof, and rereading the same unsupported answer is weak verification.
 A fingerprint alone is never sufficient.
 For each load-bearing claim: is it verified by the surface context, the L0 evidences, the KB retrieval, or a prior-hunt insight?
-If the evidence is obtainable and missing, obtain it - from the KB; a back-edge for narrow recon only when the gap is target knowledge (rare).
+If the evidence is obtainable and missing, obtain it - from the KB, or with a cheap `exec` probe inside the loop.
 If unobtainable, mark it as visible uncertainty - it lowers the candidate's rank, it does not vanish.
 *Done when load-bearing claims are verified, revised, or labeled with visible uncertainty.*
 
@@ -202,11 +194,12 @@ Your job is the next step.
 
 **[D5]** - the continuation judgment: does the returned evidence carry meaningful insight?
 No -> close the candidate, next candidate.
-Yes -> `end` (close the candidate; the harness derives the verdict and closes the candidate as successful or refuted) or `back_edge` (rare; surface the inline need, the orchestrator routes the result back, and you re-enter VERIFY-CLAIMS for the SAME candidate - the verdict may revise per D67-14 with each returned result).
+Yes -> close the candidate and move to the next (or conclude); the harness derives the verdict.
+Target-knowledge gaps are resolved with the `kb_query` / `exec` / `graph_view` tools inside the loop, never a back-edge.
 
 **CONCLUDE** - all candidates closed.
 If no candidate landed successful: the hunt lands unsuccessful with the attempted hypotheses' evidence trail; the feedback carries the insights (the blocking assertions, why each hypothesis was unverifiable), never empty.
-The failure state is the worst case of this: no candidate verifiable AND no meaningful back-edge insights.
+The failure state is the worst case of this: no candidate verifiable AND no meaningful insight in any returned evidence.
 
 ## Loop discipline
 
@@ -228,7 +221,7 @@ The failure state is the worst case of this: no candidate verifiable AND no mean
   Degraded grounding (empty or raising KB, missing config parts, raising pod) degrades the run, never raises; flag the gap in the feedback.
 - Graceful degradation.
   Candidates that end technically unfeasible or strongly blocked are normal outcomes: they close with their evidence, and the hunt lands unsuccessful with the insights.
-  The failure state is no candidate verifiable AND no meaningful back-edge insights.
+  The failure state is no candidate verifiable AND no meaningful insight in any returned evidence.
 
 ## Working set (semi-stateful memory)
 
@@ -297,12 +290,13 @@ experiment. SPEC-WRITE:
 }
 EVALUATE: pod runs its variant loop (payload encodings, HTTP methods);
 returns {successful, symptom-confirmed} with the log.
-[D5]: meaningful insight - yes. next_step: end.
+[D5]: meaningful insight - yes. Close the candidate and move to the next
+(or conclude); the harness derives the verdict.
 Verdict (harness): successful. Hunt lands successful with the spec and
 trail in the store.
 ```
 
-### Example 2 - backward edge, then a back-edge
+### Example 2 - coverage re-entry, then an exec probe
 
 ```
 GROUND: same pair, but the surface shows a JS-driven state-changing
@@ -330,14 +324,14 @@ EVALUATE: pod returns {unsuccessful, technical-infeasibility}: the HTTP
 tool cannot drive the JS flow; the trail carries the infeasibility
 assertion, not a clean symptom-absent.
 [D5]: meaningful insight - yes, a tool-reach gap, not a refutation.
-next_step: back_edge. Request: narrow recon of the client-side flow
-(the form's real submit target, the token source).
-Result routes back: the form submits to a second endpoint with no CSRF
-token. Re-enter VERIFY-CLAIMS with the new evidence; RANK/COMMIT
-unchanged.
+Target-knowledge gaps are resolved inside the loop: exec probes the
+client-side flow (the form's real submit target, the token source) and
+returns a second endpoint carrying no CSRF token. Re-enter
+VERIFY-CLAIMS with the probe evidence; RANK/COMMIT unchanged.
 EVALUATE (revised dispatch): symptom confirmed.
-[D5]: meaningful insight - yes. next_step: end.
-Verdict (harness): successful; the recon result is in the trail.
+[D5]: meaningful insight - yes. Close the candidate and move to the
+next (or conclude); the harness derives the verdict.
+Verdict (harness): successful; the probe result is in the trail.
 ```
 
 ### Example 3 - INIT rejection, re-authoring (the one re-authoring pass)
@@ -368,7 +362,7 @@ unfeasible (all paths WAF-blocked).
 D1/D2: coverage reached; DISCRIMINATE..RANK order the candidates.
 Sub-loop:
   H1: dispatched; every pod variant lands unfeasible or strongly
-  blocked; [D5] no meaningful insight in the back-edge return -> close
+  blocked; [D5] no meaningful insight in the returned evidence -> close
   H1 with its trail.
   H2: [G] passes; dispatched; clean symptom-absent -> refuted -> close.
   H3: [G] dropped - the distinguishing evidence against H1 was

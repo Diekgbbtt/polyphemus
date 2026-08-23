@@ -82,10 +82,10 @@ _NOTE_ACTIONS = ("append", "update", "delete")
 NOTE_KINDS = ProjectMemoryStore.NOTE_KINDS
 
 # The filename-keyword sanitisation banned set (G3): `_` is the separator, so
-# a keyword may not contain it; `:`/`-` are poisoned (they appear inside unit
-# ids); `/`/`\` are path separators. Each banned char (plus control/NUL chars)
-# is replaced with `-`, a safe, non-separator keyword char the pattern's own
-# names use freely.
+# a keyword may not contain it; `:` is poisoned (it appears inside unit ids);
+# `/`/`\` are path separators. Each banned char (plus control/NUL chars) is
+# replaced with `-`, a safe, non-separator keyword char the pattern's own
+# names use freely (`-` itself is never banned - it is the replacement char).
 _UNSAFE_KEYWORD_CHARS = frozenset("_:/\\")
 
 
@@ -172,8 +172,9 @@ class HunterMemoryStore:
     def _sanitise_keyword(cls, keyword: str) -> str:
         """Sanitise a `<fault>`/`<strategy>` filename keyword (G3).
 
-        Each char in the banned set (`_` the separator, `:`/`-` poisoned,
-        path separators) and every control char is replaced with `-`. A
+        Each char in the banned set (`_` the separator, `:` poisoned, path
+        separators) and every control char is replaced with `-` (a safe,
+        non-separator keyword char; `-` itself is never banned). A
         keyword that sanitises to an empty/dot component is a pathological
         authoring input and is rejected, never silently mangled."""
         out = "".join(
@@ -208,7 +209,7 @@ class HunterMemoryStore:
         try:
             loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
         except yaml.YAMLError as exc:
-            raise OSError(f"hunter store: unreadable memory file {path}: {exc}") from exc
+            raise OSError(f"hunter memory: unreadable memory file {path}: {exc}") from exc
         if isinstance(loaded, list):
             return [r for r in loaded if isinstance(r, dict)]
         if isinstance(loaded, dict):

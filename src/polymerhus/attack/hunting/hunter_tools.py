@@ -30,10 +30,11 @@ Contract + degradation (spec 5, spec 9):
   for the real types when the simultaneous LightRAG integration lands. It calls an
   injected `kb_query` seam; empty/raising -> a denoted degraded bundle (C2/C3).
   This module does NOT import `polymerhus.lightrag` (not on this branch/dev).
-- `exec` - the Kali-container exec tool (R2): `EXEC_TIMEOUT_S` per call (the pod's
-  constant, copied), args `command` + optional `timeout_s`; calls an injected
-  `exec_fn(command, timeout_s) -> ExecResult` seam (absent -> a denoted fail-open
-  error). UNBOUNDED at the harness level - the model decides when to probe (R2b).
+- `exec` - the Kali-container exec tool (R2): `EXEC_TIMEOUT_S` per call (the
+  shared `recon.config.EXEC_TIMEOUT_S`, default 300), args `command` + optional
+  `timeout_s`; calls an injected `exec_fn(command, timeout_s) -> ExecResult`
+  seam (absent -> a denoted fail-open error). UNBOUNDED at the harness level -
+  the model decides when to probe (R2b).
   The PARTITION GUARD (Q8): exec never produces the hypothesis verdict; the pod
   remains the only source of experimental evidence for the committed hypothesis.
 
@@ -53,13 +54,14 @@ from pydantic import BaseModel, ConfigDict, Field
 
 from .hunter_memory import DuplicateSpecError, HunterMemoryStore
 from .hunter_state import FAULT_STATUSES
+from polymerhus.recon.config import EXEC_TIMEOUT_S
 from polymerhus.recon.domain.types import ExecResult
 
-# The per-call exec cap (R2), copied from the pod's constant (`pod/config.py`
-# re-exports `recon.config.EXEC_TIMEOUT_S`, default 300). The pod's caps are
-# pod-internal (D67-09); the hunter exposes an optional per-call `timeout_s`
-# defaulting here, while the HARNESS-level probe frequency stays unbounded (R2b).
-EXEC_TIMEOUT_S = 300
+# The per-call exec cap (R2), derived from the shared canonical constant
+# (`recon.config.EXEC_TIMEOUT_S`, default 300) - never a local literal, so the
+# hunter never drifts from the pod's cap. The pod's caps are pod-internal
+# (D67-09); the hunter exposes an optional per-call `timeout_s` defaulting
+# here, while the HARNESS-level probe frequency stays unbounded (R2b).
 
 # The write-shaped tokens the read-only `graph_view` refuses to pass through,
 # replicated from the orchestrator's `ReadOnlyGraphView` guard (D67-04).

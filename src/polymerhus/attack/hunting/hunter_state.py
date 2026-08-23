@@ -285,6 +285,16 @@ NEXT_ITERATION_HINT = (
 )
 """The injected hint after `specified` (the next-iteration hint, spec 2.3 / G9)."""
 
+D3_HINT = (
+    "The kb_query retrieval is folded in. Did it close the gap that "
+    "triggered it? Yes -> proceed to DECOMPOSE / GENERATE; no -> mark the "
+    "residual uncertainty and proceed on weaker grounding."
+)
+"""The injected hint after a `kb_query` call in the grounding phase (the D3
+hint, spec 2.3 / G9): the retrieval-gap check, prompted while the harness is
+still grounded. It is not a transition - it rides a tool call, never a status
+write, so it is not part of TRANSITION_HINTS."""
+
 TRANSITION_HINTS: dict[TransitionName, str] = {
     "hypothesise": D2_HINT,
     "verify": COMMIT_SPECIFICATION_HINT,
@@ -311,6 +321,7 @@ __all__ = [
     "COMMIT_SPECIFICATION_HINT",
     "NEXT_FAULT_HINT",
     "NEXT_ITERATION_HINT",
+    "D3_HINT",
     "TRANSITION_HINTS",
     "detect_transition",
     "push_transition",
