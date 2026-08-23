@@ -34,7 +34,6 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
-    ReconScope,
     TargetedReconResult,
 )
 
@@ -69,15 +68,14 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True) -> Envisioned
     )
 
 
-def _ok_dispatch(calls: list | None = None, *, needs: list[AnalyserReconRequest] | None = None):
-    """The fixture hunting agent (IA-2): returns a successful result, optionally
-    surfacing an inline back-edge need on the first call (IA-5 -> IA-6)."""
+def _ok_dispatch(calls: list | None = None):
+    """The fixture hunting agent (IA-2): returns a successful result. A
+    dispatch result is consumed once (the inline back-edge round loop is cut
+    as of #164)."""
     record = calls if calls is not None else []
 
-    def dispatch(config: HuntConfig, routed=()):
-        record.append((config, tuple(routed)))
-        if needs and not routed:
-            return DispatchResult(back_edge_needs=needs)
+    def dispatch(config: HuntConfig):
+        record.append(config)
         return DispatchResult(
             spec_ref=f"spec-{len(record)}",
             pod_result_ref=f"pod-{len(record)}",
@@ -203,7 +201,7 @@ def test_graph_view_rejects_writes():
 def test_dispatch_target_failure_degrades_the_hunt(tmp_path, caplog):
     store = HuntStore(tmp_path)
 
-    def boom(config: HuntConfig, routed=()):
+    def boom(config: HuntConfig):
         raise RuntimeError("agent turn exhausted")
 
     report = _run(store, [_candidate(SERVICE_A, FAULT_X)], dispatch=boom)
@@ -251,27 +249,6 @@ def test_park_resume_depth_one_cap(tmp_path):
     unresolved = store.list_records(RUN_ID, "unresolved")
     assert len(unresolved) == 1
     assert unresolved[0]["revival_key"] == revival_key(SERVICE_A, FAULT_X)
-
-
-# --- C9: inline back-edge routes on the correlation_id (IA-6, D67-14) ---------
-
-def test_inline_back_edge_routes_on_correlation_id(tmp_path):
-    store = HuntStore(tmp_path)
-    routed: list = []
-    need = AnalyserReconRequest(
-        job="graphql-cop",
-        requester_id="hunting-agent-1",
-        origin="hunting",
-        correlation_id="cid-inline-1",
-        scope=ReconScope(unit_id=SERVICE_A, targets=["https://a/graphql"]),
-    )
-    report = _run(store, [_candidate(SERVICE_A, FAULT_X)],
-                  dispatch=_ok_dispatch(needs=[need]),
-                  back_edge=_ok_back_edge(routed))
-    assert report.hunts_dispatched == 1
-    assert len(routed) == 1
-    assert routed[0].origin == "hunting"
-    assert routed[0].correlation_id == "cid-inline-1"
 
 
 # --- C10: store write failure degrades to a warning (O3, IA-7) ----------------

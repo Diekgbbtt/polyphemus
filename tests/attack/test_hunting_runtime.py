@@ -69,7 +69,7 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
 
-    def dispatch(config, routed=()):
+    def dispatch(config):
         return DispatchResult(
             spec_ref="spec-1", pod_result_ref="pod-1",
             hypothesis_verdict="successful", feedback="ok",
@@ -134,7 +134,7 @@ def test_pinned_run_id_keys_the_run(tmp_path, monkeypatch):
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
 
-    def dispatch(config, routed=()):
+    def dispatch(config):
         return DispatchResult(
             spec_ref="spec-1", pod_result_ref="pod-1",
             hypothesis_verdict="successful", feedback="ok",
@@ -233,7 +233,7 @@ def test_hunting_pg_calls_offload_via_asyncio_to_thread(tmp_path, monkeypatch):
 
     monkeypatch.setattr(hunting_runtime.asyncio, "to_thread", spied_to_thread)
 
-    def dispatch(config, routed=()):
+    def dispatch(config):
         return DispatchResult(
             spec_ref="spec-1", pod_result_ref="pod-1",
             hypothesis_verdict="successful", feedback="ok",
@@ -328,7 +328,7 @@ def test_explicit_root_store_trail_is_written(tmp_path):
     store = HuntStore(tmp_path)
     report = run_orchestration(
         "rt-project", "run-rt", [_candidate()], _tools(store),
-        dispatch_fn=lambda config, routed=(): DispatchResult(
+        dispatch_fn=lambda config: DispatchResult(
             spec_ref="s", pod_result_ref="p", hypothesis_verdict="successful",
             feedback="ok",
         ),

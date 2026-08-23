@@ -303,10 +303,9 @@ class HuntingHunterActor(_TurnActor):
     hunt_id)` thread), spawned lazily by the first author/judge turn. The harness
     (`hunting_agent`) is the client: it posts the composed D4 authoring prompt
     (stable skill already embedded) and awaits the parsed spec, and posts the D5
-    judgment prompt and awaits the parsed judgment; re-entries after a routed
-    back-edge resume the SAME thread, so the judge sees the author's reasoning
-    (replacing the `hunt_session` ContextVar + `stateful_turn` seam, which
-    remains the sync rollback lane).
+    judgment prompt and awaits the parsed judgment; the judge resumes the SAME
+    thread, so it sees the author's reasoning (replacing the `hunt_session`
+    ContextVar + `stateful_turn` seam, which remains the sync rollback lane).
 
     Turns are free-text-then-parse (the D4 typed base is #83/#84's to ratify), so
     no `response_format` is bound; a None reply is the degraded signal the

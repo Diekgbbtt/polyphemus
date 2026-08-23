@@ -231,15 +231,13 @@ def _nonempty(parts: list[str]) -> list[str]:
     return [p for p in parts if p]
 
 
-def _result(verdict: str, feedback: list[str], *, spec_ref=None, pod_result_ref=None,
-            back_edge_needs=()):
+def _result(verdict: str, feedback: list[str], *, spec_ref=None, pod_result_ref=None):
     """The one DispatchResult assembly (IA-2/D11): the joined non-empty
-    feedback and the optional delivered refs / inline back-edge needs."""
+    feedback and the optional delivered refs."""
     return DispatchResult(
         spec_ref=spec_ref, pod_result_ref=pod_result_ref,
         hypothesis_verdict=verdict,
         feedback=" ".join(_nonempty(feedback)),
-        back_edge_needs=list(back_edge_needs),
     )
 
 
@@ -341,13 +339,10 @@ def compose_reauthoring_prompt(config: HuntConfig, init_validation: list[str]) -
 
 
 def compose_judgment_prompt(
-    config: HuntConfig, evidence: dict | None, routed: tuple = (),
+    config: HuntConfig, evidence: dict | None,
 ) -> str:
-    """The D5 continuation-judgment user prompt (verbatim 4.9): the pod outcome,
-    the evidence trail, and any routed back-edge results."""
-    routed_note = ", ".join(
-        f"{r.status} (correlation_id={r.correlation_id})" for r in routed
-    ) or "(none)"
+    """The D5 continuation-judgment user prompt (verbatim 4.9): the pod outcome
+    and the evidence trail."""
     evidence = evidence or {}
     return (
         f"The pod returned for the dispatched spec (hunt {config.hunt_id}, "
@@ -355,16 +350,12 @@ def compose_judgment_prompt(
         f"verdict: {evidence.get('pod_verdict')}\n"
         f"terminal reason: {evidence.get('terminal_reason')}\n"
         f"interpretations: {_fmt_list(_evidence_notes(evidence))}\n\n"
-        f"Routed back-edge results: {routed_note}\n\n"
         'Decide the next step as JSON: {"meaningful_insight": bool, '
-        '"next_step": "end"|"back_edge", "rationale": str, '
-        '"back_edge_requests": [AnalyserReconRequest]}. '
+        '"next_step": "end", "rationale": str}. '
         "meaningful_insight is false when the evidence carries no new "
         "information about the hypothesis: an empty trail, a bare repeat of a "
         "prior infeasibility, or a result unrelated to the hypothesis - a "
-        "no-meaningful-insight response closes the candidate. back_edge is "
-        "rare, only for target-knowledge gaps the surface context and KB "
-        "cannot answer; the returned result re-enters the same candidate."
+        "no-meaningful-insight response closes the candidate."
     )
 
 
@@ -376,13 +367,12 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
     `store`, `run_id`, `kb`, `pod`, `author`, `judge` follow the integration
     contract (tests/integration/test_hunting_agent_contracts.py); `axis`
     overrides the deterministic technological-axis derivation for the KB join
-    key. Returns `async dispatch_fn(config: HuntConfig, routed=()) -> DispatchResult`
+    key. Returns `async dispatch_fn(config: HuntConfig) -> DispatchResult`
     (the async-native harness; callers with a running loop `await` it, sync
     callers use `asyncio.run`/`run_coro_blocking`). Every collaborator is
     awaited when async and offloaded via `asyncio.to_thread` when sync.
     The closure holds the per-hunt working set (Q5's in-memory experiment log),
-    so a re-entry after a routed back-edge resumes the SAME candidate instead
-    of re-dispatching it (D67-14, C9)."""
+    so an identical spec is never authored twice."""
     import asyncio
     import inspect
 
@@ -407,7 +397,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                            run_id, kind, exc)
             return None
 
-    async def dispatch_fn(config: HuntConfig, routed: tuple = ()) -> DispatchResult:
+    async def dispatch_fn(config: HuntConfig) -> DispatchResult:
         hunt_id = config.hunt_id
         ws = working_sets.setdefault(hunt_id, {"kb_grounded": False, "log": {}})
         # #94: bind the per-hunt session so a SYNC-lane author/judge (the legacy
@@ -418,7 +408,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         from polymerhus.attack.hunting.llm import hunt_session
         try:
             with hunting_span(run_id, hunt_id), hunt_session(run_id, hunt_id):
-                return await _dispatch(config, tuple(routed), ws)
+                return await _dispatch(config, ws)
         except Exception as exc:  # noqa: BLE001 - never raise out of dispatch_fn
             logger.warning("hunt %s degraded (%s)", hunt_id, exc, exc_info=True)
             return _result("unsuccessful",
@@ -426,7 +416,7 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         finally:
             flush_hunting_traces()
 
-    async def _dispatch(config: HuntConfig, routed: tuple, ws: dict) -> DispatchResult:
+    async def _dispatch(config: HuntConfig, ws: dict) -> DispatchResult:
         hunt_id = config.hunt_id
         feedback: list[str] = list(_config_gaps(config))
 
@@ -450,11 +440,6 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
                 feedback.append("symptom-technique KB unavailable; "
                                 "grounded on the HuntConfig alone")
             ws["kb_grounded"] = True
-
-        # Re-entry after a routed back-edge (D67-14): the candidate is
-        # dispatched; the verdict may revise with each returned result.
-        if routed:
-            return await _reenter(config, routed, ws, feedback)
 
         if not ws["log"]:
             # SPEC-WRITE for the committed candidate slot (one per hunt in this
@@ -562,42 +547,20 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
 
             feedback.append(_verdict_line(derived, snapshot))
             if derived == "insufficient-evidence":
-                # D67-14: the meaningfulness guard is LLM-judged and consulted
-                # only here; it may surface an inline need or end the evaluation.
+                # The D5 meaningfulness guard is LLM-judged and consulted only
+                # here; it decides whether the evaluation keeps the
+                # insufficient-evidence verdict or closes the candidate.
                 return await _judge_and_finish(config, spec_ref, entry["pod_result_ref"],
-                                               snapshot, (), feedback)
+                                               snapshot, feedback)
             return _result(derived, feedback, spec_ref=spec_ref,
                            pod_result_ref=entry["pod_result_ref"])
 
-    async def _reenter(config: HuntConfig, routed: tuple, ws: dict,
-                 feedback: list[str]) -> DispatchResult:
-        """Re-enter the evaluation for the SAME dispatched candidate (D67-14):
-        the routed back-edge result may revise the verdict with each returned
-        result. The experiment log short-circuits any re-dispatch of an
-        identical spec (Q5/C9): the committed refs stand, the judge consumes the
-        routed evidence, never a second pod run."""
-        if not ws["log"]:
-            feedback.append("no committed experiment to re-evaluate; hunt degraded")
-            return _result("unsuccessful", feedback)
-        # The CURRENTLY committed spec is the LAST log entry: a re-authoring
-        # pass inserts the derived variant and the pod loop continues on it
-        # (Q5), so a routed re-entry must judge against THAT spec's evidence,
-        # never the superseded original (D67-08 lineage).
-        entry = list(ws["log"].values())[-1]
-        snapshot = entry.get("evidence") or {}
-        feedback.append("re-entered the evaluation with the routed back-edge result")
-        feedback.extend(_evidence_notes(snapshot))
-        return await _judge_and_finish(config, entry.get("spec_ref"),
-                                       entry.get("pod_result_ref"), snapshot,
-                                       routed, feedback)
-
     async def _judge_and_finish(config: HuntConfig, spec_ref, pod_result_ref,
-                          snapshot: dict, routed: tuple,
-                          feedback: list[str]) -> DispatchResult:
+                          snapshot: dict, feedback: list[str]) -> DispatchResult:
         """The shared D5 continuation judgment: consult the guard (fail-open),
-        surface the inline needs, or close the candidate - a no-meaningful-
-        insight response that ends the evaluation degrades an
-        insufficient-evidence verdict to unsuccessful (D67-12, C10/C9)."""
+        then close the candidate - a no-meaningful-insight response ends the
+        evaluation and degrades an insufficient-evidence verdict to unsuccessful
+        (D67-12, C10)."""
         derived = derive_verdict(
             (snapshot or {}).get("terminal_reason", ""),
             clean=bool((snapshot or {}).get("clean", False)),
@@ -605,18 +568,12 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         )
         try:
             judgment = await _await_seam(judge, _with_stable_skill(
-                compose_judgment_prompt(config, snapshot, routed))) or {}
+                compose_judgment_prompt(config, snapshot))) or {}
         except Exception as exc:  # noqa: BLE001 - fail-open
             judgment = {}
             feedback.append(f"continuation judgment unavailable ({exc})")
         if not isinstance(judgment, dict):
             judgment = {}
-        if judgment.get("next_step") == "back_edge" and judgment.get("back_edge_requests"):
-            needs = list(judgment["back_edge_requests"])
-            feedback.append(judgment.get("rationale") or
-                            "back-edge surfaced for the residual gap")
-            return _result(derived, feedback, spec_ref=spec_ref,
-                           pod_result_ref=pod_result_ref, back_edge_needs=needs)
         if not judgment.get("meaningful_insight", False):
             derived = "unsuccessful"  # D67-12: the guard ended the evaluation
         feedback.append(judgment.get("rationale") or _verdict_line(derived, snapshot))
@@ -643,7 +600,7 @@ def build_sync_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None
         author=author, judge=judge, axis=axis,
     )
 
-    def dispatch(config: HuntConfig, routed: tuple = ()) -> DispatchResult:
-        return run_coro_blocking(dispatch_fn(config, tuple(routed)))
+    def dispatch(config: HuntConfig) -> DispatchResult:
+        return run_coro_blocking(dispatch_fn(config))
 
     return dispatch

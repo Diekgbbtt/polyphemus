@@ -51,11 +51,9 @@ from tests.hunting_fixtures import (
     _author,
     _judge,
     _kb,
-    _need,
     _no_judge,
     _outcome,
     _pod,
-    _route,
 )
 
 SERVICE_A = "Service:slug:a"
@@ -136,7 +134,7 @@ def test_E3_real_skill_reaches_authoring_and_judgment_turns(tmp_path):
         author=_author([SPEC, SPEC_REAUTHORED], calls=author_calls),
         judge=_judge([
             {"meaningful_insight": False, "next_step": "end",
-             "rationale": "no insight in the routed recon"},
+             "rationale": "no insight in the blocked trail"},
         ], calls=judge_calls),
     )
 
@@ -275,54 +273,6 @@ def test_E6_kb_raise_degrades_and_still_persists(tmp_path):
     assert (tmp_path / run_id / "spec.md").is_file()
 
 
-# --- E7: inline re-entry dedups over the REAL files ---------------------------
-# D67-14/C9: a routed back-edge re-enters the SAME candidate - the committed
-# spec stands, the judge consumes the routed evidence, and the real files hold
-# exactly one spec and one evidence record (no re-dispatch of an identical
-# spec).
-
-def test_E7_reentry_dedup_over_real_files(tmp_path):
-    store = HuntStore(tmp_path)
-    pod_calls: list = []
-    judge_calls: list = []
-    run_id = "run-e7"
-    agent = _agent(
-        store, run_id,
-        kb=_kb(),
-        pod=_pod(pod_calls, outcomes=[_outcome(
-            "no-symptom-evidence",
-            evidence={"clean": False, "interpretations": [
-                {"variant": "v1", "note": "observations unreachable"},
-            ]},
-        )]),
-        author=_author([SPEC, SPEC]),
-        judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the reachable surface", "back_edge_requests": [_need()]},
-            {"meaningful_insight": False, "next_step": "end",
-             "rationale": "still no reachable surface"},
-        ], calls=judge_calls),
-    )
-    config = _config(SERVICE_A, FAULT_X, card=CARD_SERVICE)
-
-    first = agent(config)
-    assert first.back_edge_needs
-    second = agent(config, routed=(_route(first.back_edge_needs[0]),))
-
-    assert len(pod_calls) == 1  # no second dispatch for the identical spec
-    specs = store.list_records(run_id, "spec")
-    evidence = store.list_records(run_id, "evidence")
-    assert len(specs) == 1 and len(evidence) == 1
-    assert second.spec_ref == first.spec_ref
-    assert second.pod_result_ref == first.pod_result_ref
-    assert len(judge_calls) == 2
-    # The routed result reached the judgment turn (correlation_id on the wire).
-    assert "correlation_id=" in judge_calls[1]
-    # The guard ended the evaluation into the D67-12 failure state.
-    assert second.hypothesis_verdict == "unsuccessful"
-    assert second.back_edge_needs == []
-
-
 # --- E8: INIT-rejection lineage over the REAL files ---------------------------
 # Q3/Q5: one re-authoring pass, parent lineage on the second spec record, and
 # the second rejection lands underspecified-spec with the validation evidence
@@ -427,13 +377,14 @@ def test_E9_tracing_seam_live_and_fail_open(tmp_path, monkeypatch):
     assert ok.feedback == degraded.feedback  # tracing perturbed nothing
 
 
-# --- E10: re-entry after an INIT re-author judges the LATEST spec -------------
-# D67-08: a routed re-entry after a re-authoring pass must evaluate the CURRENT
-# committed spec (the last experiment-log entry), never the superseded
-# original. The judgment consumes the latest snapshot; asserted through the
-# interpretation the re-authored run uniquely carries.
+# --- E10: the judgment reads the LATEST (re-authored) spec's evidence ----------
+# D67-08: after an INIT re-authoring pass the pod loop continues on the
+# re-authored spec, so a subsequent insufficient-evidence derivation is judged
+# against THAT spec's evidence - the re-authored run's terminal reason and
+# interpretation note reach the turn, never the superseded original's INIT
+# rejection.
 
-def test_E10_reentry_after_reauth_uses_latest_spec(tmp_path):
+def test_E10_judge_reads_the_latest_spec_after_reauth(tmp_path):
     store = HuntStore(tmp_path)
     pod_calls: list = []
     judge_calls: list = []
@@ -457,29 +408,24 @@ def test_E10_reentry_after_reauth_uses_latest_spec(tmp_path):
         ]),
         author=_author([SPEC, SPEC_REAUTHORED]),
         judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the re-authored surface",
-             "back_edge_requests": [_need()]},
-            {"meaningful_insight": False, "next_step": "end",
-             "rationale": "still no reachable surface"},
+            {"meaningful_insight": True, "next_step": "end",
+             "rationale": "the re-authored surface gap is worth keeping"},
         ], calls=judge_calls),
     )
-    config = _config(SERVICE_A, FAULT_X, card=CARD_SERVICE)
 
-    first = agent(config)
-    assert first.back_edge_needs  # the dispatch returned an inline need
-    second = agent(config, routed=(_route(first.back_edge_needs[0]),))
+    result = agent(_config(SERVICE_A, FAULT_X, card=CARD_SERVICE))
 
     # Exactly two pod dispatches in total (init-reject + re-authored run); the
-    # re-entry triggered no third dispatch.
+    # judgment lands on the second run's evaluation.
     assert len(pod_calls) == 2
-    # The judgment on re-entry read the RE-AUTHORED evidence trail: the
-    # re-authored run's terminal reason and unique interpretation note reached
-    # the turn - not the superseded original's INIT rejection. (The skill the
-    # judge embeds itself quotes the INIT-validation trigger, so the terminal
-    # reason, not phrase presence, is the discriminator.)
-    assert len(judge_calls) == 2
-    assert "terminal reason: no-symptom-evidence" in judge_calls[1]
-    assert "terminal reason: technical-infeasibility" not in judge_calls[1]
-    assert "re-authored surface still blocked" in judge_calls[1]
-    assert second.hypothesis_verdict == "unsuccessful"  # the guard ended it
+    assert len(judge_calls) == 1
+    # The judgment read the RE-AUTHORED evidence trail: the re-authored run's
+    # terminal reason and unique interpretation note reached the turn - not the
+    # superseded original's INIT rejection. (The skill the judge embeds itself
+    # quotes the INIT-validation trigger, so the terminal reason, not phrase
+    # presence, is the discriminator.)
+    assert "terminal reason: no-symptom-evidence" in judge_calls[0]
+    assert "terminal reason: technical-infeasibility" not in judge_calls[0]
+    assert "re-authored surface still blocked" in judge_calls[0]
+    # The meaningfulness guard kept the verdict (no D67-12 degradation).
+    assert result.hypothesis_verdict == "insufficient-evidence"

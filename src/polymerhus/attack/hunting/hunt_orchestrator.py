@@ -29,7 +29,7 @@ Degradations are the spec's failure canon: KB unavailable -> the gate reasons
 degraded, never prunes (D67-11); dispatch failure -> degraded hunt record
 (O6); store write failure -> warning and a count (O3); store read failure ->
 empty prior insights (O4); a yellow candidate raises a hunt back-edge
-(IA-6/D67-14) and re-matches, with a hard depth-1 cap -> `unresolved` on the
+(IA-6) and re-matches, with a hard depth-1 cap -> `unresolved` on the
 revival key (O8); a malformed candidate is dropped and counted (O10); a
 budget cut records the un-dispatched direction (O9). Fail-open throughout:
 one bad collaborator never aborts the pass.
@@ -72,7 +72,7 @@ _ORCHESTRATOR_ACTORS: dict[str, "HuntOrchestratorActor"] = {}
 _ORCHESTRATOR_LOCK = threading.Lock()
 
 # The default targeted job a park/resume back-edge runs (a re-witness of the
-# unit's surface); the agent's inline needs carry their own job.
+# unit's surface).
 _DEFAULT_BACK_EDGE_JOB = "httpx_reprofile"
 
 
@@ -180,13 +180,12 @@ class HuntConfig(BaseModel):
 
 class DispatchResult(BaseModel):
     """One hunting-agent dispatch outcome (IA-2): the delivered refs plus the
-    hypothesis verdict and NL feedback (D11), or the inline back-edge needs."""
+    hypothesis verdict and NL feedback (D11)."""
 
     spec_ref: str | None = None
     pod_result_ref: str | None = None
     hypothesis_verdict: str | None = None
     feedback: str | None = None
-    back_edge_needs: list[AnalyserReconRequest] = Field(default_factory=list)
 
 
 class MatchVerdict(BaseModel):
@@ -688,9 +687,11 @@ async def arun_orchestration(
 
     async def _dispatch_node(state) -> dict:
         """The DISPATCH stretch: park/resume + rematch for a yellow candidate,
-        the deterministic mint (D3), then the per-config dispatch (IA-2) with
-        the inline back-edge rounds (S5/S6, D67-14) - the current canon's
-        per-direction loop body, in graph form. Fail-open at every step."""
+        the deterministic mint (D3), then the per-config dispatch (IA-2) - the
+        current canon's per-direction loop body, in graph form. A dispatch
+        result is consumed once: the inline back-edge rounds (S5/S6, D67-14)
+        are cut as of #164 and replaced by the hunter's exec tool. Fail-open
+        at every step."""
         from polymerhus.recon.control.targeted import (  # noqa: PLC0415
             TargetedReconResult,
         )
@@ -783,63 +784,48 @@ async def arun_orchestration(
             "error": None,
         }
         round_no = 1
-        while True:
-            if dispatch_fn is None:
-                hunt.update({"degraded": True, "error": "hunting agent unavailable"})
-                _write("dispatch", {
-                    "hunt_id": hunt_id, "round": round_no,
-                    "error": "hunting agent unavailable",
-                })
-                break
+        if dispatch_fn is None:
+            hunt.update({"degraded": True, "error": "hunting agent unavailable"})
+            _write("dispatch", {
+                "hunt_id": hunt_id, "round": round_no,
+                "error": "hunting agent unavailable",
+            })
+        else:
             try:
-                result = await _await_seam(dispatch_fn, config, tuple(routed))
+                result = await _await_seam(dispatch_fn, config)
             except Exception as exc:  # noqa: BLE001 - O6: degrade the hunt
                 logger.warning("hunt %s dispatch failed (%s)", hunt_id, exc)
                 hunt.update({"degraded": True, "error": str(exc)})
                 _write("dispatch", {
                     "hunt_id": hunt_id, "round": round_no, "error": str(exc),
                 })
-                break
-            if result.back_edge_needs:
-                # Inline request-response (S5/S6, D67-14): each returned
-                # back-edge result re-evaluates the hypothesis verdict, and the
-                # evaluation continues unbounded while needs keep surfacing -
-                # the agent ends it by returning a result without needs.
+            else:
                 _write("dispatch", {
                     "hunt_id": hunt_id, "round": round_no,
-                    "back_edge_needs": [n.correlation_id for n in result.back_edge_needs],
+                    "spec_ref": result.spec_ref,
+                    "pod_result_ref": result.pod_result_ref,
+                    "hypothesis_verdict": result.hypothesis_verdict,
+                    "feedback": result.feedback,
                 })
-                for need in result.back_edge_needs:
-                    routed.append(await _record_back_edge(need))
-                round_no += 1
-                continue
-            _write("dispatch", {
-                "hunt_id": hunt_id, "round": round_no,
-                "spec_ref": result.spec_ref,
-                "pod_result_ref": result.pod_result_ref,
-                "hypothesis_verdict": result.hypothesis_verdict,
-                "feedback": result.feedback,
-            })
-            _write("result", {
-                "hunt_id": hunt_id,
-                "spec_ref": result.spec_ref,
-                "pod_result_ref": result.pod_result_ref,
-                "hypothesis_verdict": result.hypothesis_verdict,
-                "feedback": result.feedback,
-            })
-            hunt.update({
-                "spec_ref": result.spec_ref,
-                "pod_result_ref": result.pod_result_ref,
-                "hypothesis_verdict": result.hypothesis_verdict,
-            })
-            # The revive-keyed memory (#70): the feedback becomes the
-            # prior-hunt insight the next pass on this key retrieves.
-            _write("memory", {
-                "revival_key": key,
-                "hunt_id": hunt_id,
-                "insight": result.feedback,
-            })
-            break
+                _write("result", {
+                    "hunt_id": hunt_id,
+                    "spec_ref": result.spec_ref,
+                    "pod_result_ref": result.pod_result_ref,
+                    "hypothesis_verdict": result.hypothesis_verdict,
+                    "feedback": result.feedback,
+                })
+                hunt.update({
+                    "spec_ref": result.spec_ref,
+                    "pod_result_ref": result.pod_result_ref,
+                    "hypothesis_verdict": result.hypothesis_verdict,
+                })
+                # The revive-keyed memory (#70): the feedback becomes the
+                # prior-hunt insight the next pass on this key retrieves.
+                _write("memory", {
+                    "revival_key": key,
+                    "hunt_id": hunt_id,
+                    "insight": result.feedback,
+                })
         _write("hunt", hunt)
         return {"trail": [{
             "kind": "hunt", "revival_key": key, "hunt_id": hunt_id,
