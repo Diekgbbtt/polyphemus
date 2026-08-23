@@ -420,14 +420,15 @@ def test_integration_c7_ledger_last_write_per_fault(tmp_path):
     from polymerhus.attack.hunting.hunt_orchestrator import revival_key
     # dispatched count should be 3 HuntConfigs via fan-out 1 per direction (1 candidate each)
     assert report.hunts_dispatched == 3
-    assert len(store.list_records("run-c7", "config")) == 3
+    assert len(store.read_configs("project-1")) == 3
 
 
 # --- C8: deterministic BUDGET cuts accumulated set (O9) ---------------------
 
 def test_integration_c8_budget_cut_batch(tmp_path):
-    """C8 - BUDGET deterministically cuts the accumulated directions; trail and
-    HuntStore cut.md record the cut revival keys, ledger budget_remaining set."""
+    """C8 - BUDGET deterministically cuts the accumulated directions; the cut
+    rides the report trail (the per-run `cut` kind file is removed, #166),
+    ledger budget_remaining set."""
     store = HuntStore(tmp_path)
 
     def reason_fn(inp: GateInput) -> GateDecision:
@@ -449,64 +450,59 @@ def test_integration_c8_budget_cut_batch(tmp_path):
         budget_fn=budget_fn,
     )
     assert report.hunts_dispatched == 1
-    # cuts: at least 2 distinct keys for the dropped directions (may be 4 due to per-config fan-out bookkeeping)
-    cuts = store.list_records("run-c8", "cut")
-    cut_keys = {c["direction"] for c in cuts}
-    assert {"Service:slug:b::CWE-352", "System:cache:1::CWE-639"}.issubset(cut_keys)
     assert len(report.budget_cut) >= 2
     assert set(report.budget_cut).issuperset({"Service:slug:b::CWE-352", "System:cache:1::CWE-639"})
     # ledger budget_remaining == 1
     assert report.ledger.budget_remaining == 1
 
 
-# --- C9: HuntStore append-only at fixed root, store_reads split --------------
+# --- C9: per-project HuntStore topology, config + notes split ----------------
 
 def test_integration_c9_store_append_and_split_reads(tmp_path):
-    """C9 - HuntStore append-only at fixed root; read_configs_by_key and
-    read_notes split the two read surfaces; seq and ref stable."""
+    """C9 - HuntStore per-project topology at the fixed root: one YAML file per
+    config in produced/, memory.yaml for notes; read_configs_by_key and
+    read_notes split the two read surfaces; the semantic key round-trips."""
     store = HuntStore(tmp_path)
-    store.append("run-c9", "config", {"unit_id": SERVICE_A, "fault_class": FAULT_352, "hunt_id": "h1"})
-    store.append("run-c9", "notes", {"revival_key": "Service:slug:a::CWE-352", "note": "track it"})
+    key = store.write_config("project-1", {
+        "unit_id": SERVICE_A, "fault_class": FAULT_352,
+        "vulnerability_class": "CSRF", "hunt_id": "h1",
+    })
+    store.append_note("project-1", "Service:slug:a::CWE-352", "track it")
 
     # files
-    config_path = tmp_path / "run-c9" / "config.md"
-    notes_path = tmp_path / "run-c9" / "notes.md"
+    config_path = tmp_path / "project-1" / "orchestration" / "hunt_configs" \
+        / "produced" / "Service:slug:a_CWE-352_CSRF.yaml"
+    notes_path = tmp_path / "project-1" / "orchestration" / "memory.yaml"
     assert config_path.exists()
     assert notes_path.exists()
     config_text = config_path.read_text(encoding="utf-8")
-    notes_text = notes_path.read_text(encoding="utf-8")
-    assert "## 0001" in config_text
-    assert "_seq: 1" in config_text
-    assert '_ref: run-c9/config-0001' in config_text or "run-c9/config-0001" in config_text
-    assert "## 0002" in notes_text
-    assert "_seq: 2" in notes_text
+    assert "unit_id: Service:slug:a" in config_text
+    assert "status: hypothesised" not in config_text  # status absent when unset
+    assert "_seq" not in config_text and "_ref" not in config_text
+    assert "Service:slug:a::CWE-352::CSRF" == key
 
-    assert store.read_configs_by_key("run-c9", "Service:slug:a::CWE-352") == [{"_seq": 1, "_ref": "run-c9/config-0001", "unit_id": SERVICE_A, "fault_class": FAULT_352, "hunt_id": "h1"}] or len(store.read_configs_by_key("run-c9", "Service:slug:a::CWE-352")) == 1
-    assert store.read_notes("run-c9", "Service:slug:a::CWE-352")[0]["note"] == "track it"
+    configs = store.read_configs_by_key("project-1", "Service:slug:a::CWE-352")
+    assert len(configs) == 1 and configs[0]["hunt_id"] == "h1"
+    assert store.read_notes("project-1", "Service:slug:a::CWE-352")[0]["note"] == "track it"
     # default root is fixed, no env var
-    assert HUNT_STORE_ROOT == Path(__file__).resolve().parents[2] / "src" / "polymerhus" / "attack" / "hunting" / "data" / "hunts"
-    assert str(HUNT_STORE_ROOT).endswith("src/polymerhus/attack/hunting/data/hunts")
-    # cross-run memory.md unchanged (no memory writes in this test)
-    assert not (tmp_path / "memory.md").exists() or len(HuntStore(tmp_path).list_records("memory", "memory")) == 0
+    assert HUNT_STORE_ROOT == Path(__file__).resolve().parents[2] / "src" / "polymerhus" / "attack" / "hunting" / "data"
+    assert str(HUNT_STORE_ROOT).endswith("src/polymerhus/attack/hunting/data")
+    # no memory.md, no kind files anywhere in the topology
+    assert not (tmp_path / "memory.md").exists()
+    assert list((tmp_path / "project-1" / "orchestration").glob("*.md")) == []
 
 
 # --- C10: store read failure degrades to empty prior insights (O4) -----------
 
 def test_integration_c10_store_read_degrades_empty(tmp_path, caplog):
-    """C10 - HuntStore read_memory failure degrades to empty prior insights."""
+    """C10 - a raising prior-insight read degrades to empty prior insights."""
     class _RaisingStore(HuntStore):
-        def read_memory(self, revival_key: str):
+        def read_configs_by_key(self, project_id, key):
             raise OSError("disk (fixture)")
-        def list_records(self, run_id, kind):
-            # delegate to real but keep failing read_memory path
-            return super().list_records(run_id, kind)
-        # also need read_configs_by_key / read_notes to raise via read_memory? The orchestrator uses read_memory() via _read_prior_insights
-        # which calls store_reads.read_memory(key) - so raising there covers it.
+        def read_notes(self, project_id, key=None):
+            raise OSError("disk (fixture)")
 
     store = _RaisingStore(tmp_path)
-    # also make the tool surface use this store's read_memory raising path: the orchestrator calls _read_prior_insights which does await _await_seam(store.read_memory, key)
-    # need to ensure store has read_memory raising
-    # run_orchestration will call _read_prior_insights and log warning
     report = run_orchestration(
         project_id="project-1", run_id="run-c10",
         candidates=[_candidate(SERVICE_A, FAULT_352)],
@@ -514,9 +510,10 @@ def test_integration_c10_store_read_degrades_empty(tmp_path, caplog):
         dispatch_fn=lambda cfg, routed=(): DispatchResult(spec_ref="s", pod_result_ref="p", hypothesis_verdict="successful", feedback="ok"),
     )
     assert report.hunts_dispatched == 1
-    # prior_hunt_insights on minted config should be empty
-    configs = store.list_records("run-c10", "config")
+    # the minted config's prior_hunt_insights are empty (the read degraded)
+    configs = store.read_configs("project-1")
     assert len(configs) == 1
+    assert configs[0]["prior_hunt_insights"] == []
     # the warning was logged
     assert "hunt store read degraded" in caplog.text.lower() or "degraded" in caplog.text.lower()
 
@@ -668,7 +665,7 @@ def test_integration_c12b_surface_context_shows_connected_data_items(tmp_path):
         reason_fn=reason_fn,
     )
     assert report.hunts_dispatched == 1
-    configs = store.list_records("run-c12b", "config")
+    configs = store.read_configs("project-1")
     assert len(configs) == 1
     cards = configs[0]["surface_context"]["cards"]
     service = next(c for c in cards if c["kind"] == "Service")
@@ -748,27 +745,34 @@ def test_integration_c14_actor_thread_reused(tmp_path):
     assert _ORCHESTRATOR_ACTORS.get(run_id) is None
 
 
-# --- C15: cross-run memory.md via fixed HUNT_STORE_ROOT ---------------------
+# --- C15: cross-pass config visibility via the fixed HUNT_STORE_ROOT ----------
 
 def test_integration_c15_cross_run_memory_fixed_root(tmp_path):
-    """C15 - HuntStore default HUNT_STORE_ROOT fixed, and cross-run memory.md
-    carries revival-keyed insight from one run into the next."""
+    """C15 - HuntStore default HUNT_STORE_ROOT fixed, and the per-project
+    store carries the prior pass's produced/ configs and memory.yaml notes
+    into the next pass (the cross-run `memory.md` is gone, #166)."""
     # default root string equality, no env var
-    assert HUNT_STORE_ROOT == Path(__file__).resolve().parents[2] / "src" / "polymerhus" / "attack" / "hunting" / "data" / "hunts"
-    assert str(HUNT_STORE_ROOT).endswith("src/polymerhus/attack/hunting/data/hunts")
+    assert HUNT_STORE_ROOT == Path(__file__).resolve().parents[2] / "src" / "polymerhus" / "attack" / "hunting" / "data"
+    assert str(HUNT_STORE_ROOT).endswith("src/polymerhus/attack/hunting/data")
     assert "HUNT_STORE" not in str(HUNT_STORE_ROOT).lower() or True  # no env var indirection
-    # cross-run behavior via tmp_path simulation of the fixed-root seam
+    # cross-pass behavior via tmp_path simulation of the fixed-root seam
     store = HuntStore(tmp_path)
-    # simulate run-a: dispatch writes memory.md (the #70 seam) via direct append
-    store.append("memory", "memory", {"revival_key": "Service:slug:a::CWE-352", "hunt_id": "h1", "insight": "form Z no token"})
-    # new store at same root reads it
+    # simulate pass-a: the mint writes a hypothesised config + a note
+    store.write_config("project-1", {
+        "unit_id": SERVICE_A, "fault_class": FAULT_352,
+        "vulnerability_class": "CSRF", "hunt_id": "h1",
+    })
+    store.append_note("project-1", "Service:slug:a::CWE-352", "track the CSRF surface")
+    # a new store at the same root reads the prior pass's state
     storeB = HuntStore(tmp_path)
-    results = storeB.read_memory("Service:slug:a::CWE-352")
-    assert len(results) == 1
-    assert results[0]["hunt_id"] == "h1"
-    # memory.md file exists with cross-run index entry
-    assert (tmp_path / "memory.md").exists()
-    assert "Service:slug:a::CWE-352" in (tmp_path / "memory.md").read_text(encoding="utf-8")
+    configs = storeB.read_configs_by_key("project-1", "Service:slug:a::CWE-352")
+    assert len(configs) == 1
+    assert configs[0]["hunt_id"] == "h1"
+    notes = storeB.read_notes("project-1", "Service:slug:a::CWE-352")
+    assert [n["note"] for n in notes] == ["track the CSRF surface"]
+    # no memory.md; the topology is produced/ + consumed/ + memory.yaml
+    assert not (tmp_path / "memory.md").exists()
+    assert (tmp_path / "project-1" / "orchestration" / "memory.yaml").exists()
 
 
 # --- C16: HuntingAgent dispatch harness per-hunt thread via HuntingActorRegistry

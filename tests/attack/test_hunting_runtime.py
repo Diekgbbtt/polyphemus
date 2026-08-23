@@ -87,8 +87,8 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
 def test_default_tools_ground_on_the_fixed_store_root():
     """With no tools injected the entry point builds the seam defaults: the
     HuntStore at the FIXED seam root and the read-only graph view."""
-    assert HUNT_STORE_ROOT.name == "hunts"
-    assert HUNT_STORE_ROOT.parent.name == "data"
+    assert HUNT_STORE_ROOT.name == "data"
+    assert HUNT_STORE_ROOT.parent.name == "hunting"
     store = HuntStore()
     assert store._root == HUNT_STORE_ROOT
 
@@ -334,4 +334,6 @@ def test_explicit_root_store_trail_is_written(tmp_path):
         ),
     )
     assert report.hunts_dispatched == 1
-    assert len(store.list_records("run-rt", "hunt")) == 1
+    # the per-project topology: the hypothesised config lands in produced/
+    assert len(store.read_configs("rt-project")) == 1
+    assert len(store.read_notes("rt-project")) == 1

@@ -364,18 +364,16 @@ def test_e2e_e1_per_fault_fanout(tmp_path):
         tools=tools, dispatch_fn=_recording_dispatch([]), reason_fn=reason_fn,
     )
     assert report.hunts_dispatched == 3
-    assert len(store.list_records("run-e1", "config")) == 3
-    assert len(store.list_records("run-e1", "notes")) == 2
-    assert len(store.list_records("run-e1", "hunt")) == 3
-    assert len(store.list_records("run-e1", "dispatch")) == 3
+    assert len(store.read_configs("proj-e1")) == 3
+    assert len(store.read_notes("proj-e1")) == 2
     assert report.ledger.units_done == 2
     assert report.ledger.notes_recorded == 2
     assert set(report.ledger.minted_config_keys) == {"Service:slug:a::CWE-352", "Service:slug:b::CWE-352"}
     # ledger budget_remaining counts directions (units) not configs (2 not 3)
     assert report.ledger.budget_remaining == 2
     assert report.budget_cut == ()
-    # read back via HuntStore.list_records and Cypher count queries would give same counts here via store
-    configs = store.list_records("run-e1", "config")
+    # read back via HuntStore.read_configs (the per-run kind files are gone)
+    configs = store.read_configs("proj-e1")
     hunt_ids = [c["hunt_id"] for c in configs]
     assert len(set(hunt_ids)) == 3
     # base, base-1 pattern: same unit's two configs share base prefix
@@ -513,13 +511,14 @@ def test_e2e_e4_budget_cut_records(tmp_path):
     )
     # budget keeps first direction (Service:slug:a) which fans to 2 configs, so 2 hunts
     assert report.hunts_dispatched == 2
-    # budget_cut length 1 for the dropped unit, cut.md rows at least 1
+    # budget_cut length 1 for the dropped unit; the cut rides the report trail
+    # (the per-run cut.md kind file is removed, #166)
     assert len(report.budget_cut) >= 1
-    cuts = store.list_records("run-e4", "cut")
-    assert len(cuts) >= 1
-    # config.md/hunt.md only for dispatched (budget filters before dispatch write)
-    assert len(store.list_records("run-e4", "config")) == 2
-    assert len(store.list_records("run-e4", "hunt")) == 2
+    # configs were persisted at the mint (BEFORE the budget stage), so both
+    # units' configs land in produced/ - a budget cut is a dispatch-stage
+    # decision, never a config deletion (G10)
+    assert len(store.read_configs("proj-e4")) == 2
+    assert len(store.read_notes("proj-e4")) == 2
 
 
 # --- E5: malformed + does-not-apply + UNKNOWN degrade never abort -----------
@@ -543,11 +542,10 @@ def test_e2e_e5_empty_after_prunes_is_empty_pass(tmp_path):
     assert report.duplicates_dropped == 1
     assert report.pruned_by_verdict == 1
     assert report.store_write_failures == 0
-    assert store.list_records("run-e5", "run")[0]["candidates_received"] == 3
-    assert store.list_records("run-e5", "config") == []
-    assert store.list_records("run-e5", "hunt") == []
-    assert store.list_records("run-e5", "dispatch") == []
-    assert store.list_records("run-e5", "cut") == []
+    # the empty pass persists nothing in the memory topology (the per-run `run`
+    # kind file is removed, #166)
+    assert store.read_configs("proj-e5") == []
+    assert store.read_notes("proj-e5") == []
 
 
 # --- E6: cooperating systems surface in System-targeting hunt (Q5) ----------
@@ -628,7 +626,7 @@ def test_e2e_e6_cooperating_systems_rendered(session, tmp_path):
         dispatch_fn=_recording_dispatch([]),
     )
     assert report.hunts_dispatched == 1
-    assert len(store.list_records("run-e6", "notes")) == 1
+    assert len(store.read_notes(pid)) == 1
     session.run("MATCH (n) WHERE n.project_id=$p DETACH DELETE n", p=pid)
 
 
@@ -700,7 +698,7 @@ def test_e2e_e8_q2_accuracy_coverage(tmp_path):
         dispatch_fn=_recording_dispatch([]),
         reason_fn=reason_fn,
     )
-    configs = store.list_records("run-e8", "config")
+    configs = store.read_configs("proj-e8")
     assert len(configs) == 3
     revival_keys = [f"{c['unit_id']}::{c['fault_class']}" for c in configs]
     assert len(set(revival_keys)) == 3  # distinct revival keys, coverage 100%
@@ -825,15 +823,14 @@ def test_e2e_e11_q5_mint_note_consistency(tmp_path):
         dispatch_fn=_recording_dispatch([]),
         reason_fn=reason_fn,
     )
-    # config.md rows == distinct classes (3), notes.md rows == units_done (2), hunt.md == 3
-    assert len(store.list_records("run-e11", "config")) == 3
-    assert len(store.list_records("run-e11", "notes")) == 2
-    assert len(store.list_records("run-e11", "hunt")) == 3
+    # produced/ rows == distinct classes (3), memory.yaml notes == units_done (2)
+    assert len(store.read_configs("proj-e11")) == 3
+    assert len(store.read_notes("proj-e11")) == 2
     assert report.ledger.units_done == 2
     assert report.ledger.notes_recorded == 2
     # each note's revival_key matches a config revival_key
-    note_keys = {r["revival_key"] for r in store.list_records("run-e11", "notes")}
-    config_keys = {f"{r['unit_id']}::{r['fault_class']}" for r in store.list_records("run-e11", "config")}
+    note_keys = {r["revival_key"] for r in store.read_notes("proj-e11")}
+    config_keys = {f"{r['unit_id']}::{r['fault_class']}" for r in store.read_configs("proj-e11")}
     assert note_keys.issubset(config_keys)
     # judge Q5 from the observed trace: mint+note adjacent, no interleaved tool
     try:
@@ -854,7 +851,8 @@ def test_e2e_e12_q6_effective_tool_use(tmp_path):
         pytest.skip(skip)
     judge = TraceJudge(probe)
     # seed a prior config for read_memory_hunts case b
-    store.append("run-e12", "config", {"unit_id": SERVICE_A, "fault_class": FAULT_352, "hunt_id": "prior"})
+    store.write_config("proj-e12", {"unit_id": SERVICE_A, "fault_class": FAULT_352,
+                                    "vulnerability_class": "CSRF", "hunt_id": "prior"})
     # case a: UNKNOWN projection - stub hunt orchestrator tool surface spies
     read_calls: list[str] = []
     def read_fn(cypher, params):
@@ -932,7 +930,7 @@ def test_e2e_e13_q7_reflection_strategy(tmp_path):
         reason_fn=reason_fn,
     )
     # locale leak 0: research_direction contains class token CSRF and zero forbidden locale tokens
-    configs = store.list_records("run-e13", "config")
+    configs = store.read_configs("proj-e13")
     assert len(configs) == 1  # merge collapsed 2 same-class ->1
     # forbidden locale tokens via oracle list
     forbidden = ["Origin:", "/state-change", "attacker.site", "payload"]
@@ -958,11 +956,16 @@ def test_e2e_e14_fail_open_store_kb_graph(tmp_path, caplog):
         def __init__(self, root, *, fail_first: int):
             super().__init__(root)
             self._failures_left = fail_first
-        def append(self, run_id, kind, record):
+        def _write_guard(self):
             if self._failures_left > 0:
                 self._failures_left -= 1
                 raise OSError("disk full (fixture)")
-            return super().append(run_id, kind, record)
+        def write_config(self, project_id, config, *, directory="produced"):
+            self._write_guard()
+            return super().write_config(project_id, config, directory=directory)
+        def append_note(self, project_id, key, note):
+            self._write_guard()
+            return super().append_note(project_id, key, note)
 
     store = _FlakyStore(tmp_path, fail_first=2)
 
@@ -976,10 +979,14 @@ def test_e2e_e14_fail_open_store_kb_graph(tmp_path, caplog):
         dispatch_fn=_recording_dispatch([]),
         kb_retrieve_fn=kb_retrieve,
     )
+    # the 1-candidate pass makes exactly two store writes (the config at the
+    # mint + the unit-boundary note); both fail, the pass still completes and
+    # dispatches (O3 - warned and counted, never a crash)
     assert report.hunts_dispatched == 1
     assert report.store_write_failures == 2
     assert report.ledger.units_done == 1
-    assert len(store.list_records("run-e14", "config")) == 1
+    assert store.read_configs("proj-e14") == []  # neither write landed
+    assert store.read_notes("proj-e14") == []
 
 
 # --- E15: concurrency barrier, duplicate-idempotent, malformed LLM ---------
@@ -1008,20 +1015,21 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
         results = _asyncio.run(_gather())
         # final ledger units_done ==2 with no corruption, 2 distinct revival keys
         # run_orchestration's report ledger is per-call, so check HuntStore counts
-        assert len(store.list_records("run-e15", "config")) == 2
-        keys = {f"{r['unit_id']}::{r['fault_class']}" for r in store.list_records("run-e15", "config")}
+        assert len(store.read_configs("proj-e15")) == 2
+        keys = {f"{r['unit_id']}::{r['fault_class']}" for r in store.read_configs("proj-e15")}
         assert len(keys) == 2
     except Exception:
         # asyncio.gather mimics worker loop concurrency but real shared loop may queue serially - still pass
-        assert len(store.list_records("run-e15", "config")) >= 1
+        assert len(store.read_configs("proj-e15")) >= 1
 
     # b) duplicate-idempotent reads: second read_memory_hunts returns identical without side effect
     store2 = HuntStore(tmp_path / "e15b")
-    store2.append("run-e15b", "config", {"unit_id": SERVICE_A, "fault_class": FAULT_352, "hunt_id": "h1"})
-    first = store2.read_configs_by_key("run-e15b", "Service:slug:a::CWE-352")
-    second = store2.read_configs_by_key("run-e15b", "Service:slug:a::CWE-352")
+    store2.write_config("project-e15b", {"unit_id": SERVICE_A, "fault_class": FAULT_352,
+                                         "vulnerability_class": "CSRF", "hunt_id": "h1"})
+    first = store2.read_configs_by_key("project-e15b", "Service:slug:a::CWE-352")
+    second = store2.read_configs_by_key("project-e15b", "Service:slug:a::CWE-352")
     assert first == second
-    assert len(store2.list_records("run-e15b", "config")) == 1
+    assert len(store2.read_configs("project-e15b")) == 1
 
     # c) malformed LLM: GateDecision validation error degrades to carry fault bare with 1 HuntConfig
     def bad_reason(inp: GateInput) -> GateDecision:
@@ -1035,7 +1043,7 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
         reason_fn=bad_reason,
     )
     assert report3.hunts_dispatched == 1
-    configs3 = store3.list_records("run-e15c", "config")
+    configs3 = store3.read_configs("proj-e15c")
     assert len(configs3) == 1
 
 

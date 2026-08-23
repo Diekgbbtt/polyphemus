@@ -4,12 +4,15 @@ Consumes the FaultSource candidate set (IA-1, spec 4.1), runs the per-FAULT
 tool-augmented gate-reasoning turn (Q8, one turn per fault over all its matched
 units), mints the deterministically fan-out `HuntConfig` set (D3, one per
 distinct elicited vulnerability-class the direction carries, each a
-status="hypothesised" draft) at the unit boundary, dispatches one hunting
-agent per hunt (IA-2, synchronous in-process), and writes every event to the
-append-only hunt store (#68, O12). It is the planner: it selects, configures,
-dispatches, holds memory and budget, and writes the D8 hunt records. It never
-writes L0/L1 (its graph access is the read-only view, D67-04); the hunting
-agent (#83), not this module, is the test-DESIGN actor.
+status="hypothesised" draft) at the unit boundary, writes the configs into the
+per-project memory store's `produced/` (memory-system spec #166), dispatches
+one hunting agent per hunt (IA-2, synchronous in-process), and records the
+per-unit note into the store's `memory.yaml`. It is the planner: it selects,
+configures, dispatches, and holds memory; the D8 hunt records and the
+per-run kind files are REMOVED - the persisted configs express which faults
+are done / in-progress / left (G10). It never writes L0/L1 (its graph access
+is the read-only view, D67-04); the hunting agent (#83), not this module, is
+the test-DESIGN actor.
 
 The pass runs NATIVE-ASYNC (feat/async-actor-agents) on the #110 GRAPH engine:
 `arun_orchestration` is the single O1-O10 canon and its body IS a
@@ -17,11 +20,12 @@ supervisor-state schedule loop (the ONE flexible StateGraph in
 `orchestrator_graph.py`) - per fault (the schedule unit is a fault, spec 3.1),
 a stateful REASON turn covers ALL of the fault's matched units on the run's
 `HuntOrchestratorActor` thread (`hunting_orchestrator` session, monotonic
-across ALL faults), the deterministic unit-boundary stage mints the configs and
-fires `record_note`, then a deterministic budget stage cuts the accumulated
-directions, then each allowed direction is DISPATCHED. Each node closure
-delegates to the canon helpers in THIS module; the O1-O10 seam shapes stay
-single-sourced here. `run_orchestration` is its thin sync wrapper.
+across ALL faults), the deterministic unit-boundary stage mints the configs,
+writes them to the store's `produced/`, and fires the note into `memory.yaml`,
+then a deterministic budget stage cuts the accumulated directions, then each
+allowed direction is DISPATCHED. Each node closure delegates to the canon
+helpers in THIS module; the O1-O10 seam shapes stay single-sourced here.
+`run_orchestration` is its thin sync wrapper.
 
 The actor is the PURELY STATEFUL parent, exactly like the recon-orchestrator -
 but it now LIVES in a per-run registry (`_ORCHESTRATOR_ACTORS`) instead of being
@@ -31,12 +35,12 @@ the module's runtime stop path (Task 6) reaps it.
 
 Degradations are the spec's failure canon: KB unavailable -> the gate reasons
 degraded, never prunes (D67-11); dispatch failure -> degraded hunt record
-(O6); store write failure -> warning and a count (O3); store read failure ->
-empty prior insights (O4); a yellow candidate raises a hunt back-edge
-(IA-6/D67-14) and re-matches, with a hard depth-1 cap -> `unresolved` on the
-revival key (O8); a malformed candidate is dropped and counted (O10); a
-budget cut records the un-dispatched direction (O9). Fail-open throughout:
-one bad collaborator never aborts the pass.
+(O6); store write failure -> warning and a count (O3, a duplicate-config write
+is the deduplication signal and lands the same O3 path - G4); store read
+failure -> empty prior insights (O4); a yellow candidate raises a hunt
+back-edge (IA-6/D67-14) and re-matches, with a hard depth-1 cap -> `unresolved`
+on the revival key (O8); a malformed candidate is dropped and counted (O10).
+Fail-open throughout: one bad collaborator never aborts the pass.
 
 This module imports no driver and performs no I/O at import; the graph read
 seam resolves lazily on first call (CODING_STANDARD section 6).
@@ -69,9 +73,11 @@ logger = logging.getLogger(__name__)
 # graph view - exactly these, nothing more. No back-edge-to-recon tool (the
 # back_edge request to recon is out of the agent's surface; operator ruling
 # 2026-08-22 - the target-knowledge loop rides `graph_view`, never a recon
-# request), no HuntConfig-writing tool (the mint stays deterministic at
-# dispatch) and no budget_consume tool (Q7: token budget is a global harness
-# concern, not a hunting-local check).
+# request), no HuntConfig-writing tool (the deterministic mint writes the
+# hypothesised drafts at the unit boundary) and no budget_consume tool (Q7:
+# token budget is a global harness concern, not a hunting-local check). The
+# `hunts_store` / `notes` store TOOLS are the next workstream's rework (#167);
+# this ticket keeps the five-tool surface working against the new store.
 TOOL_SURFACE = frozenset({
     "read_memory_hunts", "read_memory_notes", "graph_view",
     "mint_hunt_config", "record_note",
@@ -346,17 +352,19 @@ class ReadOnlyGraphView:
 @dataclass
 class OrchestratorTools:
     """The orchestrator's tool seams (spec 3.4, the candidates-rewrite Q14/Q15
-    correction): the hunt back-edge (IA-6), the hunt store (`store_reads`, the
-    harness WRITE path - the append surface the `_write` helper and both memory
-    reads share), the read-only graph view, and the run-local mint-emission
-    bucket (`mint_hunt_config` records the model's emission onto it for the
+    correction): the hunt back-edge (IA-6), the per-project memory store
+    (`store_reads`, the harness WRITE path - the deterministic mint writes the
+    hypothesised configs into `produced/` and the unit-boundary note into
+    `memory.yaml` - plus the prior-config/notes reads both memory tools share),
+    the read-only graph view, and the run-local mint-emission bucket
+    (`mint_hunt_config` records the model's emission onto it for the
     deterministic mint to fan out from; T4 consumes it).
 
-    The harness write path rides `store_reads` unchanged (`_write` calls
-    `store_reads.append(...)`); the two READ surfaces (`read_memory_hunts`,
-    `read_memory_notes`) and the note write (`record_note`) each thread through
-    the same store's `config` / `notes` kinds, keyed identically by revival
-    key. `mint_emissions` is a run-local mutable bucket so a bare
+    The harness write path rides `store_reads.write_config` /
+    `store_reads.append_note` (per project); the two READ surfaces
+    (`read_memory_hunts`, `read_memory_notes`) thread through the same store's
+    `read_configs_by_key` / `read_notes`, keyed identically by revival key.
+    `mint_emissions` is a run-local mutable bucket so a bare
     `OrchestratorTools` gets a working seam; the mint tool is still testable
     fail-open by passing `mint_emissions=None`."""
 
@@ -611,7 +619,8 @@ async def arun_orchestration(
     schedule loop over the accepted FAULTS (a stateful REASON turn per fault
     over ALL its matched units, minting the configs and firing the notes at the
     unit boundary -> a deterministic budget stage -> a DISPATCH turn per allowed
-    direction), every event appended to the hunt store. Fail-open on every
+    direction), persisting the minted configs (produced/) and the unit-boundary
+    note (memory.yaml) into the project's memory store. Fail-open on every
     collaborator.
 
     The hunt-orchestrator is the async-native parent of the hunting effort
@@ -681,16 +690,34 @@ async def arun_orchestration(
 
     write_failures = 0
 
-    def _write(kind: str, record: dict) -> str | None:
+    def _write_config(config) -> str | None:
+        """Persist one minted `HuntConfig` into the project's `produced/`
+        (the hypothesise write, memory-system spec 3.2). Fail-open (O3): a
+        raising write - including `DuplicateConfigError`, the storage-layer
+        deduplication signal (G4) - warns and counts; the pass keeps serving
+        with the in-memory config."""
         nonlocal write_failures
         try:
             if tools.store_reads is None:
                 raise OSError("no hunt store configured")
-            return tools.store_reads.append(run_id, kind, record)
+            return tools.store_reads.write_config(project_id, config)
         except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
             write_failures += 1
-            logger.warning("hunt store: %s record write failed (%s)", kind, exc)
+            logger.warning("hunt store: config write failed (%s)", exc)
             return None
+
+    def _append_note(key: str, note: str) -> None:
+        """Append the unit-boundary note into the project's `memory.yaml`
+        (natural append order, no `_seq`). Fail-open (O3): a raising write
+        warns and counts; the pass keeps serving."""
+        nonlocal write_failures
+        try:
+            if tools.store_reads is None:
+                raise OSError("no hunt store configured")
+            tools.store_reads.append_note(project_id, key, note)
+        except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
+            write_failures += 1
+            logger.warning("hunt store: note write failed (%s)", exc)
 
     async def _record_back_edge(request: AnalyserReconRequest) -> TargetedReconResult:
         if tools.back_edge is None:
@@ -714,29 +741,10 @@ async def arun_orchestration(
                     status="error",
                     error=str(exc),
                 )
-        # One evidence-trail record per back-edge: the request's identity and
-        # the routed outcome (the fault joins via the correlation_id, D9).
-        _write("back_edge", {
-            "correlation_id": result.correlation_id,
-            "unit_id": request.scope.unit_id or "",
-            "origin": request.origin,
-            "status": result.status,
-            "error": result.error,
-        })
+        # The back-edge's durable evidence-trail record is gone with the
+        # per-run kind files (memory-system spec 3); the routed outcome flows
+        # back in-memory for the re-match.
         return result
-
-    def _unresolved(key: str, unit_id: str, fault_class: str) -> None:
-        _write("unresolved", {
-            "revival_key": key,
-            "unit_id": unit_id,
-            "fault_class": fault_class,
-        })
-
-    _write("run", {
-        "project_id": project_id,
-        "run_id": run_id,
-        "candidates_received": len(candidates),
-    })
 
     intake = normalize_candidates(candidates, known_faults=known_faults)
     if intake.malformed_dropped:
@@ -820,13 +828,19 @@ async def arun_orchestration(
         return sorted(items, key=lambda item: risk_tier(item.fault_class))
 
     async def _read_prior_insights(key: str) -> list[dict]:
-        """Prior-hunt insights by revival key (O4: a read failure degrades to an
-        empty insight set, never aborts the hunt)."""
+        """Prior configs + notes by revival key (O4: a read failure degrades
+        to an empty insight set, never aborts the hunt). The store's
+        `read_configs_by_key` (produced/ + consumed/) and `read_notes`
+        (memory.yaml) both key on the revival key; the merged list feeds the
+        minted configs' `prior_hunt_insights` slot."""
+        if tools.store_reads is None:
+            return []
         try:
-            return (
-                await _await_seam(tools.store_reads.read_memory, key)
-                if tools.store_reads else []
-            )
+            configs = await _await_seam(
+                tools.store_reads.read_configs_by_key, project_id, key)
+            notes = await _await_seam(
+                tools.store_reads.read_notes, project_id, key)
+            return list(configs) + list(notes)
         except Exception as exc:  # noqa: BLE001
             logger.warning("hunt store read degraded for %s (%s)", key, exc)
             return []
@@ -990,9 +1004,11 @@ async def arun_orchestration(
 
         # --- the deterministic unit-boundary stage (spec 3.3) -----------------
         # AFTER the reason turn returns: per emitted unit, read the prior
-        # insights, mint the N configs from the emitted direction, fire the
-        # harness-owned `record_note`, update the `LoopLedger`. The ledger is
-        # re-injected ONLY here - never after an intra-unit tool call.
+        # insights, mint the N configs from the emitted direction, write the
+        # hypothesised configs into produced/ (the hypothesise write, memory
+        # spec 3.2), fire the harness-owned note into memory.yaml, update the
+        # `LoopLedger`. The ledger is re-injected ONLY here - never after an
+        # intra-unit tool call.
         ledger = state.get("ledger")
         ledger = ledger.model_copy(deep=True) if isinstance(ledger, LoopLedger) \
             else LoopLedger()
@@ -1014,10 +1030,9 @@ async def arun_orchestration(
                 "configs": len(configs),
                 "classes": sorted(cfg.vulnerability_class for cfg in configs),
             })
-            _write("notes", {
-                "revival_key": key,
-                "note": _note_for_unit(direction, key, configs),
-            })
+            for config in configs:
+                _write_config(config)
+            _append_note(key, _note_for_unit(direction, key, configs))
             trace_gate_step("note-written", input={"revival_key": key})
             ledger.notes_recorded += 1
             ledger.units_done += 1
@@ -1030,8 +1045,9 @@ async def arun_orchestration(
 
     async def _budget_node(state) -> dict:
         """The deterministic budget stage (O9): a batch cut over the whole
-        accumulated carried set, recording the cut directions, never dispatching
-        them. Fail-open: a raising `budget_fn` cuts nothing."""
+        accumulated carried set; the cut directions ride the report trail only
+        (the per-run `cut` kind file is removed, memory spec 3). Fail-open: a
+        raising `budget_fn` cuts nothing."""
         carried = list(state.get("directions") or [])
         allowed: Sequence[EnvisionedDirection] = carried
         if budget_fn is not None:
@@ -1045,7 +1061,6 @@ async def arun_orchestration(
             if direction not in allowed:
                 key = revival_key(direction.unit_id, direction.fault_class)
                 trail.append({"kind": "cut", "revival_key": key})
-                _write("cut", {"direction": key})
         ledger = state.get("ledger")
         ledger = ledger.model_copy(deep=True) if isinstance(ledger, LoopLedger) \
             else LoopLedger()
@@ -1086,29 +1101,27 @@ async def arun_orchestration(
             routed.append(await _record_back_edge(request))
             if rematch_fn is None:
                 logger.warning("re-match unavailable for %s; unresolved", key)
-                _unresolved(key, direction.unit_id, direction.fault_class)
                 return {"trail": [{"kind": "unresolved", "revival_key": key}]}
             try:
                 verdict = await _await_seam(
                     rematch_fn, direction.unit_id, direction.fault_class, routed[-1])
             except Exception as exc:  # noqa: BLE001 - IA-1 fail-open
                 logger.warning("re-match exhausted for %s; unresolved (%s)", key, exc)
-                _unresolved(key, direction.unit_id, direction.fault_class)
                 return {"trail": [{"kind": "unresolved", "revival_key": key}]}
             if verdict.verdict == "insufficient-evidence":
                 logger.info("re-match still yellow at the depth cap; %s unresolved", key)
-                _unresolved(key, direction.unit_id, direction.fault_class)
                 return {"trail": [{"kind": "unresolved", "revival_key": key}]}
             if verdict.verdict != "applies":
                 logger.info("re-match refutes %s; no hunt", key)
                 return {"trail": []}
 
-        # The configs the per-fault REASON body minted at the unit boundary. A
-        # missing entry (the graph-default fail-open carry path) degrades to a
-        # deterministic mint here, exactly the canon's D3 fan-out - and books
-        # the note + `LoopLedger` (A3) exactly like the unit-boundary stage, so
-        # the fail-open path never reads `units_done=0` while dispatching N.
-        # The normal path never reaches this branch, so nothing double-books.
+        # The configs the per-fault REASON body minted and PERSISTED at the
+        # unit boundary (produced/). A missing entry (the graph-default
+        # fail-open carry path) degrades to a deterministic mint here, exactly
+        # the canon's D3 fan-out - writing the configs + note exactly like the
+        # unit-boundary stage, so the fail-open path never reads
+        # `units_done=0` while dispatching N. The normal path never reaches
+        # this branch, so nothing double-books.
         configs = list((state.get("minted_configs") or {}).get(key) or [])
         fallback_ledger: LoopLedger | None = None
         fallback_minted: dict | None = None
@@ -1118,10 +1131,9 @@ async def arun_orchestration(
             ledger = state.get("ledger")
             fallback_ledger = ledger.model_copy(deep=True) \
                 if isinstance(ledger, LoopLedger) else LoopLedger()
-            _write("notes", {
-                "revival_key": key,
-                "note": _note_for_unit(direction, key, configs),
-            })
+            for config in configs:
+                _write_config(config)
+            _append_note(key, _note_for_unit(direction, key, configs))
             fallback_ledger.minted_config_keys.append(key)
             fallback_ledger.notes_recorded += 1
             fallback_ledger.units_done += 1
@@ -1131,12 +1143,10 @@ async def arun_orchestration(
         hunt_trails: list[dict] = []
         for config in configs:
             hunt_id = config.hunt_id
-            config_ref = _write("config", config.model_dump())
 
             hunt: dict[str, Any] = {
                 "hunt_id": hunt_id,
                 "revival_key": key,
-                "config_ref": config_ref,
                 "degraded": False,
                 "error": None,
             }
@@ -1144,19 +1154,12 @@ async def arun_orchestration(
             while True:
                 if dispatch_fn is None:
                     hunt.update({"degraded": True, "error": "hunting agent unavailable"})
-                    _write("dispatch", {
-                        "hunt_id": hunt_id, "round": round_no,
-                        "error": "hunting agent unavailable",
-                    })
                     break
                 try:
                     result = await _await_seam(dispatch_fn, config, tuple(routed))
                 except Exception as exc:  # noqa: BLE001 - O6: degrade the hunt
                     logger.warning("hunt %s dispatch failed (%s)", hunt_id, exc)
                     hunt.update({"degraded": True, "error": str(exc)})
-                    _write("dispatch", {
-                        "hunt_id": hunt_id, "round": round_no, "error": str(exc),
-                    })
                     break
                 if result.back_edge_needs:
                     # Inline request-response (S5/S6, D67-14): each returned
@@ -1164,42 +1167,16 @@ async def arun_orchestration(
                     # the evaluation continues unbounded while needs keep
                     # surfacing - the agent ends it by returning a result
                     # without needs.
-                    _write("dispatch", {
-                        "hunt_id": hunt_id, "round": round_no,
-                        "back_edge_needs": [n.correlation_id for n in result.back_edge_needs],
-                    })
                     for need in result.back_edge_needs:
                         routed.append(await _record_back_edge(need))
                     round_no += 1
                     continue
-                _write("dispatch", {
-                    "hunt_id": hunt_id, "round": round_no,
-                    "spec_ref": result.spec_ref,
-                    "pod_result_ref": result.pod_result_ref,
-                    "hypothesis_verdict": result.hypothesis_verdict,
-                    "feedback": result.feedback,
-                })
-                _write("result", {
-                    "hunt_id": hunt_id,
-                    "spec_ref": result.spec_ref,
-                    "pod_result_ref": result.pod_result_ref,
-                    "hypothesis_verdict": result.hypothesis_verdict,
-                    "feedback": result.feedback,
-                })
                 hunt.update({
                     "spec_ref": result.spec_ref,
                     "pod_result_ref": result.pod_result_ref,
                     "hypothesis_verdict": result.hypothesis_verdict,
                 })
-                # The revive-keyed memory (#70): the feedback becomes the
-                # prior-hunt insight the next pass on this key retrieves.
-                _write("memory", {
-                    "revival_key": key,
-                    "hunt_id": hunt_id,
-                    "insight": result.feedback,
-                })
                 break
-            _write("hunt", hunt)
             hunt_trails.append({
                 "kind": "hunt", "revival_key": key, "hunt_id": hunt_id,
                 "degraded": bool(hunt.get("degraded")),

@@ -498,13 +498,15 @@ def test_absent_hunt_store_degrades_the_surface(tmp_path):
 # --- C18b: the split memory reads, the mint, and the note tool -----------------
 
 def test_read_memory_hunts_returns_prior_dispatched_configs(tmp_path):
-    """`read_memory_hunts` returns the prior dispatched `config` records for the
-    revival key, rebuilt from the record's `unit_id` / `fault_class`; an absent
-    store degrades to the denoted error."""
+    """`read_memory_hunts` returns the prior configs for the key from the
+    project's produced/ + consumed/, rebuilt from the config's identity slots;
+    an absent store degrades to the denoted error."""
     store = HuntStore(tmp_path)
     key = revival_key(SERVICE_A, "CWE-352")
-    store.append(RUN_ID, "config", {"unit_id": SERVICE_A, "fault_class": "CWE-352",
-                                    "hunt_id": "h1"})
+    store.write_config("project-1", {
+        "unit_id": SERVICE_A, "fault_class": "CWE-352",
+        "vulnerability_class": "CSRF", "hunt_id": "h1",
+    })
     tools = _tools(store)
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
@@ -531,11 +533,11 @@ def test_read_memory_hunts_fails_open_when_store_absent():
 
 
 def test_read_memory_notes_returns_keyed_notes(tmp_path):
-    """`read_memory_notes` returns the `notes` records on the same revival key;
-    an absent store fails open to the denoted error."""
+    """`read_memory_notes` returns the notes on the same key from the project's
+    `memory.yaml`; an absent store fails open to the denoted error."""
     store = HuntStore(tmp_path)
     key = revival_key(SERVICE_A, "CWE-352")
-    store.append(RUN_ID, "notes", {"revival_key": key, "note": "track it"})
+    store.append_note("project-1", key, "track it")
     tools = _tools(store)
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
@@ -583,7 +585,7 @@ def test_mint_hunt_config_records_an_emission_not_a_config(tmp_path):
     assert emission["research_direction"] == "csrf on all authed POSTs"
     assert emission["vulnerability_classes"] == ["CSRF", "IDOR"]
     # no HuntConfig ever landed in the store from the tool
-    assert store.list_records(RUN_ID, "config") == []
+    assert store.read_configs("project-1") == []
 
 
 def test_mint_hunt_config_fails_open_without_the_emission_seam():
@@ -600,8 +602,8 @@ def test_mint_hunt_config_fails_open_without_the_emission_seam():
 
 
 def test_record_note_appends_to_the_keyed_notes_kind(tmp_path):
-    """`record_note` persists a note to the store's `notes` kind keyed by the
-    revival key; an absent store degrades to the denoted error."""
+    """`record_note` appends a note into the project's `memory.yaml` keyed by
+    the revival key; an absent store degrades to the denoted error."""
     store = HuntStore(tmp_path)
     tools = _tools(store)
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
@@ -611,7 +613,7 @@ def test_record_note_appends_to_the_keyed_notes_kind(tmp_path):
     out = by_name["record_note"].invoke({"revival_key": key, "note": "first"})
     assert out["recorded"] is True
     assert out["revival_key"] == key
-    notes = store.list_records(RUN_ID, "notes")
+    notes = store.read_notes("project-1", key)
     assert len(notes) == 1
     assert notes[0]["revival_key"] == key
     assert notes[0]["note"] == "first"

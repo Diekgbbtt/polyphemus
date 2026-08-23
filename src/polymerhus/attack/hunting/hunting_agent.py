@@ -4,9 +4,11 @@ The hunt-orchestrator (#82) feeds this module one declarative `HuntConfig` per
 hunt (IA-2); the harness navigates the ratified decision-tree architecture
 (implementation doc section 3) into goal-directed reasoning turns - ground and
 query the symptom-technique KB, author the spec, dispatch the pod, derive the
-four-valued hypothesis verdict, and judge the meaningful continuation - then
-writes exactly the two record kinds Q6 declares (`spec` and `evidence`) into
-the append-only hunt store.
+four-valued hypothesis verdict, and judge the meaningful continuation. The
+agent's durable `spec` / `evidence` record writes rode the old per-run hunt
+store, which is now the per-project config+notes memory store (memory-system
+spec, #166); the writes degrade fail-open to a None ref - the hunter's durable
+record trail is #164's own memory (G5).
 
 The harness is the async-native client (feat/async-actor-agents):
 `build_hunting_agent` returns an `async dispatch_fn`, and the production
@@ -399,10 +401,22 @@ def build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None):
         return await asyncio.to_thread(fn, *args)
 
     def _append(kind: str, record: dict) -> str | None:
-        """Fail-open store write (O3): a failure warns and the agent keeps
-        serving with a None ref; it never raises out of the dispatch."""
+        """Fail-open store write (O3): a failure - or an absent append surface
+        (the per-project memory store holds hunt configs + notes only; the
+        `spec` / `evidence` per-run kinds are removed, memory-system spec 3,
+        and the hunter's durable record trail is #164's own memory) - warns and
+        the agent keeps serving with a None ref; it never raises out of the
+        dispatch."""
+        append = getattr(store, "append", None)
+        if not callable(append):
+            logger.warning(
+                "hunt store (%s): %s record write unavailable (the per-project "
+                "store holds configs + notes only); the hunt degrades with a "
+                "None ref", run_id, kind)
+            return None
         try:
-            return store.append(run_id, kind, record)
+            ref = append(run_id, kind, record)
+            return ref if isinstance(ref, str) else None
         except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
             logger.warning("hunt store (%s): %s record write failed (%s)",
                            run_id, kind, exc)

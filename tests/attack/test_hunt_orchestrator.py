@@ -32,29 +32,42 @@ FAULT_X = "fault-x"
 
 
 class _MemoryStore:
-    """The mocked hunt store: in-memory, append-only, fail-open reads."""
+    """The mocked per-project memory store: in-memory configs + notes,
+    fail-open reads, mirroring the real store's surface (write_config /
+    append_note / read_configs_by_key / read_notes / read_configs)."""
 
     def __init__(self, *, fail_reads: bool = False):
-        self._records: list[tuple[str, str, dict]] = []
-        self._seq = 0
+        self._configs: list[dict] = []
+        self._notes: list[dict] = []
         self.fail_reads = fail_reads
         self.read_attempts = 0
 
-    def append(self, run_id, kind, record):
-        self._seq += 1
-        stored = {"_seq": self._seq, "_ref": f"{run_id}/{kind}-{self._seq:03d}", **record}
-        self._records.append((run_id, kind, stored))
-        return stored["_ref"]
+    def write_config(self, project_id, config):
+        data = config.model_dump() if not isinstance(config, dict) else dict(config)
+        self._configs.append(data)
+        return f"{data.get('unit_id')}::{data.get('fault_class')}::{data.get('vulnerability_class')}"
 
-    def list_records(self, run_id, kind):
-        return [r for rid, k, r in self._records if rid == run_id and k == kind]
+    def append_note(self, project_id, key, note):
+        self._notes.append({"revival_key": key, "note": note})
 
-    def read_memory(self, revival_key_):
+    def read_configs_by_key(self, project_id, key):
         self.read_attempts += 1
         if self.fail_reads:
             raise OSError("store read failed (fixture)")
-        return [r for rid, k, r in self._records
-                if k == "memory" and r.get("revival_key") == revival_key_]
+        return [c for c in self._configs
+                if (str(c.get("unit_id") or "") + "::"
+                    + str(c.get("fault_class") or "")) == key]
+
+    def read_notes(self, project_id, key=None):
+        self.read_attempts += 1
+        if self.fail_reads:
+            raise OSError("store read failed (fixture)")
+        if key is None:
+            return list(self._notes)
+        return [n for n in self._notes if n.get("revival_key") == key]
+
+    def read_configs(self, project_id):
+        return list(self._configs)
 
 
 def _candidate(unit_id: str = SERVICE_A, fault_class: str = FAULT_X, *,
@@ -405,9 +418,11 @@ def test_fanned_out_direction_dispatches_each_config():
     assert report.hunts_dispatched == 2
     assert len(report.hunt_ids) == 2
     assert len(set(report.hunt_ids)) == 2
-    assert len(store.list_records("run-1", "config")) == 2
-    assert len(store.list_records("run-1", "hunt")) == 2
-    assert len(store.list_records("run-1", "memory")) == 2
+    # the memory topology: two hypothesised configs in produced/ (one per
+    # distinct class), one note in memory.yaml (one per unit) - the per-run
+    # hunt/memory kind records are removed (#166)
+    assert len(store.read_configs("project-1")) == 2
+    assert len(store.read_notes("project-1")) == 1
 
 
 # --- Seam behaviours: park/resume (H3) ----------------------------------------

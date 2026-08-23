@@ -113,8 +113,8 @@ def test_two_units_one_fault_reason_once_with_both_candidates(tmp_path):
     assert len(set(report.hunt_ids)) == 2
     assert {c.unit_id for c, _ in dispatched} == {SERVICE_A, SERVICE_B}
 
-    # point 3: the harness lands a notes record per unit and the ledger accumulates
-    notes = store.list_records(RUN_ID, "notes")
+    # point 3: the harness lands a note per unit in memory.yaml and the ledger accumulates
+    notes = store.read_notes("project-1")
     assert {n["revival_key"].split("::")[0] for n in notes} == {SERVICE_A, SERVICE_B}
     ledger = report.ledger
     assert ledger.units_done == 2

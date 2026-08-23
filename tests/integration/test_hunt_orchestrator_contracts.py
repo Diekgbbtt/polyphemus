@@ -114,9 +114,10 @@ def test_empty_candidate_set_is_an_empty_pass(tmp_path):
     store = HuntStore(tmp_path)
     report = _run(store, [])
     assert report.hunts_dispatched == 0
-    passes = store.list_records(RUN_ID, "run")
-    assert len(passes) == 1
-    assert passes[0]["candidates_received"] == 0
+    # the empty pass persists nothing: no configs, no notes (the per-run `run`
+    # kind file is removed with the memory topology, #166)
+    assert store.read_configs("project-1") == []
+    assert store.read_notes("project-1") == []
 
 
 # --- C2: partial match exhaustion degrades per fault (O2, IA-1) ---------------
@@ -128,7 +129,7 @@ def test_partial_match_exhaustion_degrades_per_fault(tmp_path):
                   dispatch=_ok_dispatch(calls), exhausted_faults=["fault-a"])
     assert report.exhausted_faults == ("fault-a",)
     assert report.hunts_dispatched == 1
-    assert len(store.list_records(RUN_ID, "hunt")) == 1
+    assert len(store.read_configs("project-1")) == 1
     assert len(calls) == 1
 
 
@@ -142,7 +143,7 @@ def test_duplicate_candidate_mints_one_hunt(tmp_path):
                   dispatch=_ok_dispatch(calls))
     assert report.duplicates_dropped == 1
     assert report.hunts_dispatched == 1
-    assert len(store.list_records(RUN_ID, "hunt")) == 1
+    assert len(store.read_configs("project-1")) == 1
     assert len(calls) == 1
 
 
@@ -185,10 +186,8 @@ def test_dispatch_target_failure_degrades_the_hunt(tmp_path, caplog):
 
     report = _run(store, [_candidate(SERVICE_A, FAULT_X)], dispatch=boom)
     assert report.hunts_dispatched == 1
-    hunts = store.list_records(RUN_ID, "hunt")
-    assert len(hunts) == 1
-    assert hunts[0]["degraded"] is True
-    assert "exhausted" in hunts[0]["error"]
+    assert report.hunt_ids[0]  # the degraded hunt still counts as dispatched
+    assert len(store.read_configs("project-1")) == 1  # the config persisted at the mint
 
 
 # --- C7: KB failure degrades the gate, never prunes (D67-11) ------------------
@@ -229,44 +228,58 @@ class _FlakyStore(HuntStore):
         super().__init__(root)
         self._failures_left = fail_first
 
-    def append(self, run_id, kind, record):
+    def _write_guard(self):
         if self._failures_left > 0:
             self._failures_left -= 1
             raise OSError("disk full (fixture)")
-        return super().append(run_id, kind, record)
+
+    def write_config(self, project_id, config, *, directory="produced"):
+        self._write_guard()
+        return super().write_config(project_id, config, directory=directory)
+
+    def append_note(self, project_id, key, note):
+        self._write_guard()
+        return super().append_note(project_id, key, note)
 
 
 def test_store_write_failure_degrades_to_warning(tmp_path, caplog):
     real = HuntStore(tmp_path)
     flaky = _FlakyStore(tmp_path, fail_first=2)
     report = _run(flaky, [_candidate(SERVICE_A, FAULT_X)], tools=_tools(flaky))
+    # a 1-candidate pass makes exactly two store writes - the config at the
+    # mint and the unit-boundary note - so both fail (O3: warned + counted)
     assert report.store_write_failures == 2
-    assert report.hunts_dispatched == 1
-    assert len(real.list_records(RUN_ID, "hunt")) == 1
+    assert report.hunts_dispatched == 1  # the pass keeps serving (fail-open)
+    assert real.read_configs("project-1") == []  # neither write landed
     assert "warning" in caplog.text.lower()
 
 
-# --- C11: record ordering at IA-7 (config -> dispatch -> result) --------------
+# --- C11: the pass persists config + note in the memory topology ---------------
 
 def test_hunt_record_ordering(tmp_path):
+    """C11 - re-scoped to the memory topology (#166): the hypothesised config
+    lands in produced/ and the unit-boundary note in memory.yaml; there is no
+    dispatch/result/hunt ordering anymore (_seq/_ref removed, G11)."""
     store = HuntStore(tmp_path)
     report = _run(store, [_candidate(SERVICE_A, FAULT_X)])
-    configs = store.list_records(RUN_ID, "config")
-    dispatches = store.list_records(RUN_ID, "dispatch")
-    results = store.list_records(RUN_ID, "result")
-    assert len(configs) == len(dispatches) == len(results) == 1
-    assert configs[0]["_seq"] < dispatches[0]["_seq"] < results[0]["_seq"]
-    hunts = store.list_records(RUN_ID, "hunt")
-    assert len(hunts) == 1
-    assert hunts[0]["hunt_id"] == report.hunt_ids[0]
-    assert hunts[0]["config_ref"] == configs[0]["_ref"]
-    assert hunts[0]["spec_ref"] == "spec-1"
-    assert hunts[0]["pod_result_ref"] == "pod-1"
-    assert hunts[0]["hypothesis_verdict"] == "successful"
-    assert hunts[0]["revival_key"] == revival_key(SERVICE_A, FAULT_X)
+    configs = store.read_configs("project-1")
+    notes = store.read_notes("project-1")
+    assert len(configs) == 1
+    assert configs[0]["status"] == "hypothesised"
+    assert configs[0]["unit_id"] == SERVICE_A
+    assert configs[0]["fault_class"] == FAULT_X
+    assert report.hunt_ids[0]
+    assert len(notes) == 1
+    assert notes[0]["revival_key"] == revival_key(SERVICE_A, FAULT_X)
+    assert notes[0]["note"]
+    produced = (tmp_path / "project-1" / "orchestration" / "hunt_configs"
+                / "produced")
+    assert produced.exists()
+    # the per-run kinds are gone: no dispatch/result/hunt files anywhere
+    assert list((tmp_path / "project-1" / "orchestration").glob("*.md")) == []
 
 
-# --- C12: budget cut records the un-dispatched direction (O9) -----------------
+# --- C12: budget cut rides the report trail (O9) ------------------------------
 
 def test_budget_cut_records_undispatched_direction(tmp_path):
     store = HuntStore(tmp_path)
@@ -281,10 +294,12 @@ def test_budget_cut_records_undispatched_direction(tmp_path):
     )
     assert report.hunts_dispatched == 1
     assert report.budget_cut == (revival_key(SYSTEM_B, FAULT_Y),)
-    cuts = store.list_records(RUN_ID, "cut")
-    assert len(cuts) == 1
-    assert cuts[0]["direction"] == revival_key(SYSTEM_B, FAULT_Y)
-    assert len(store.list_records(RUN_ID, "config")) == 1
+    # the cut rides the report trail; the per-run `cut` kind file is removed.
+    # Both configs were minted (and persisted to produced/) at the unit
+    # boundary BEFORE the budget stage, so the cut direction's hypothesised
+    # config stays on disk - a budget cut is a dispatch-stage decision, not a
+    # config deletion (G10: the configs express the fault-processing state).
+    assert len(store.read_configs("project-1")) == 2
 
 
 # --- NEW (#110): the gate turn runs per pair, one candidate at a time ----------
@@ -308,7 +323,7 @@ def test_gate_turn_is_invoked_per_pair_with_one_candidate(tmp_path):
     )
     assert seen == [[(SERVICE_A, FAULT_X)], [(SYSTEM_B, FAULT_Y)]]
     assert report.hunts_dispatched == 2
-    assert len(store.list_records(RUN_ID, "config")) == 2
+    assert len(store.read_configs("project-1")) == 2
 
 
 # --- NEW (#110): the orchestration actor lives per run, never reaped in-pass ---

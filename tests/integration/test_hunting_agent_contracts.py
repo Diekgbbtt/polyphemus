@@ -3,14 +3,16 @@
 
 The contract predicates exercise the agent's EXTERNAL behaviour through the
 seams - dispatch (IA-2) -> KB query (IA-8) -> spec authoring (D4) -> pod
-handoff (IA-3) -> verdict derivation (D67-02) -> store (S7) - never the
-internals of a single pass. Every out-of-tree collaborator is injected: the
+handoff (IA-3) -> verdict derivation (D67-02) - never the internals of a
+single pass. Every out-of-tree collaborator is injected: the
 symptom-technique KB, the pod, the spec-authoring turn, and the D5
 continuation judgment all arrive as fixtures; the real KB and the real pod
 (#84) are sibling tickets, and the real chain is walked in the e2e tier
-(E1-E2, blocked). The hunt store is the REAL append-only markdown stub, and
-the agent writes exactly the two record kinds Q6 declares (`spec` and
-`evidence`) through it.
+(E1-E2, blocked). The agent's durable `spec` / `evidence` record writes rode
+the old per-run hunt store, which is now the per-project config+notes memory
+store (memory-system spec, #166): the writes degrade fail-open to a None ref
+and the derived verdict rides the `DispatchResult` - the hunter's durable
+record trail is #164's own memory (G5).
 
 The seam contract (what the harness must expose):
   build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None)
@@ -143,18 +145,17 @@ def test_spec_validates_against_typed_base(tmp_path):
     assert len(queries) == 1
     assert queries[0].fault_class == FAULT_X
     assert isinstance(queries[0].axis, str) and queries[0].axis
-    # The spec record (D4) carries the full typed base and both NL fields.
-    specs = store.list_records(RUN_ID, "spec")
-    assert len(specs) == 1
-    spec = specs[0]
+    # The D4 spec (as the pod received it) carries the full typed base and
+    # both NL fields.
+    spec = pod_calls[0]
     for field in ("target_identity", "verification_symptoms", "testing_pattern",
                   "assumptions", "payload_vector_space"):
         assert spec[field], f"typed base field {field} is empty"
     assert spec["rationale"] and spec["interpretation_guidance"]
-    # The evidence record (Q6) carries the derived verdict.
-    evidence = store.list_records(RUN_ID, "evidence")
-    assert len(evidence) == 1
-    assert evidence[0]["derived_verdict"] == "successful"
+    # The durable spec/evidence records are gone with the per-run kinds
+    # (#166, memory-system spec 3); the harness degrades fail-open to None
+    # refs and the derived verdict rides the DispatchResult.
+    assert result.spec_ref is None and result.pod_result_ref is None
 
 
 # --- C2: empty KB degrades to HuntConfig-alone grounding (O1) -------------------
@@ -174,7 +175,7 @@ def test_empty_kb_degrades_to_config_grounding(tmp_path):
 
     assert result.hypothesis_verdict == "successful"
     assert len(pod_calls) == 1
-    assert len(store.list_records(RUN_ID, "spec")) == 1
+    assert result.spec_ref is None  # the store has no spec kind (#166)
 
 
 # --- C3: KB raise degrades the same way; nothing raises (O2) --------------------
@@ -194,7 +195,7 @@ def test_kb_unavailable_degrades(tmp_path):
 
     assert result.hypothesis_verdict == "successful"
     assert len(pod_calls) == 1
-    assert len(store.list_records(RUN_ID, "spec")) == 1
+    assert result.spec_ref is None  # fail-open degrade, never a raise
 
 
 # --- C4: malformed config authors from the present parts, gap flagged (O3) ------
@@ -214,7 +215,7 @@ def test_malformed_huntconfig_flags_gap(tmp_path):
     result = agent(_config(surface_context={}))
 
     assert result.hypothesis_verdict == "successful"
-    assert result.spec_ref  # still authored from the present parts
+    assert result.spec_ref is None  # the durable spec record is gone (#166)
     assert result.feedback and "surface context" in result.feedback.lower()
     assert len(pod_calls) == 1
 
@@ -235,7 +236,7 @@ def test_pod_success_maps_to_hypothesis_success(tmp_path):
     result = agent(_config())
 
     assert result.hypothesis_verdict == "successful"
-    assert result.spec_ref and result.pod_result_ref
+    assert result.spec_ref is None and result.pod_result_ref is None  # #166
     assert result.back_edge_needs == []
     assert len(pod_calls) == 1
 
@@ -262,9 +263,8 @@ def test_clean_absent_maps_to_hypothesis_unsuccessful(tmp_path):
 
     assert result.hypothesis_verdict == "unsuccessful"
     assert len(pod_calls) == 1
-    evidence = store.list_records(RUN_ID, "evidence")
-    assert len(evidence) == 1
-    assert evidence[0]["derived_verdict"] == "unsuccessful"
+    # the derived verdict rides the DispatchResult; the durable evidence
+    # record is gone with the per-run kinds (#166)
 
 
 # --- C7: {unsuccessful, technical-infeasibility} -> unsuccessful (Q3) -----------
@@ -324,15 +324,10 @@ def test_pod_init_rejection_lands_underspecified_spec(tmp_path):
 
     assert result.hypothesis_verdict == "underspecified-spec"
     assert len(pod_calls) == 2  # exactly two dispatches, no third attempt (Q5)
-    specs = store.list_records(RUN_ID, "spec")
-    assert len(specs) == 2
-    # D67-03/D67-08 lineage: the re-authored spec records its parent.
-    assert specs[1]["parent_spec_ref"] == specs[0]["_ref"]
-    # The validation evidence rides the evidence record (Q6).
-    evidence = store.list_records(RUN_ID, "evidence")
-    assert len(evidence) == 2
-    assert evidence[1]["derived_verdict"] == "underspecified-spec"
-    assert evidence[1]["init_validation"]
+    # The re-authored spec was dispatched and the pod received both specs; the
+    # D67-03/D67-08 parent lineage and the validation evidence ride the
+    # in-memory working set now (#166 removed the durable spec/evidence kinds;
+    # the hunter's record trail is #164's own memory).
 
 
 # --- C9: identical spec already dispatched -> no second dispatch (O7) -----------
@@ -371,7 +366,6 @@ def test_duplicate_hypothesis_not_redispatched(tmp_path):
     second = agent(config, routed=(_route(first.back_edge_needs[0]),))
 
     assert len(pod_calls) == 1  # no second dispatch for the identical spec
-    assert len(store.list_records(RUN_ID, "spec")) == 1
     assert second.spec_ref == first.spec_ref
     assert second.pod_result_ref == first.pod_result_ref
     assert len(judge_calls) == 2
@@ -430,9 +424,7 @@ def test_raising_pod_degrades(tmp_path):
 
     assert result.hypothesis_verdict == "unsuccessful"
     assert result.feedback and "pod turn exhausted" in result.feedback
-    evidence = store.list_records(RUN_ID, "evidence")
-    assert len(evidence) == 1
-    assert "pod turn exhausted" in evidence[0].get("error", "")
+    # the error rides the feedback; the durable evidence record is gone (#166)
 
 
 # --- C12: worst case - technically unfeasible, feedback never empty (D67-12) ----
@@ -513,9 +505,7 @@ def test_no_symptom_evidence_blocked_maps_to_insufficient_evidence(tmp_path):
     assert len(result.back_edge_needs) == 1
     assert result.back_edge_needs[0].origin == "hunting"
     assert result.back_edge_needs[0].scope.unit_id == SERVICE_A
-    evidence = store.list_records(RUN_ID, "evidence")
-    assert len(evidence) == 1
-    assert evidence[0]["derived_verdict"] == "insufficient-evidence"
+    assert result.hypothesis_verdict == "insufficient-evidence"
     assert len(pod_calls) == 1
 
 
@@ -568,9 +558,7 @@ def test_budget_timeout_partial_maps_to_insufficient_evidence(tmp_path):
     result = agent(_config())
 
     assert result.back_edge_needs
-    evidence = store.list_records(RUN_ID, "evidence")
-    assert len(evidence) == 1
-    assert evidence[0]["derived_verdict"] == "insufficient-evidence"
+    assert result.hypothesis_verdict == "insufficient-evidence"
     assert len(pod_calls) == 1
 
 

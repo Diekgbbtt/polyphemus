@@ -57,20 +57,20 @@
 - **seam:** `attack/hunting/hunt_orchestrator.py::_budget_node` <-> `attack/hunting/orchestrator_graph.py::budget`
 - **delivery semantic:** success (batch cut)
 - **input:** `state["directions"]=[EnvisionedDirection("Service:slug:a","CWE-352",carried=True), EnvisionedDirection("Service:slug:b","CWE-352",carried=True), EnvisionedDirection("System:cache:1","CWE-639",carried=True)]`, `budget_fn=lambda ds: ds[:1]` keeps first
-- **observable:** `state["worklist"]` length 1 containing exactly `Service:slug:a::CWE-352`; trail has exactly 2 `{"kind":"cut","revival_key":...}` for the cut keys; HuntStore `cut.md` has 2 rows matching those keys; ledger `budget_remaining==1`
+- **observable:** `state["worklist"]` length 1 containing exactly `Service:slug:a::CWE-352`; trail has exactly 2 `{"kind":"cut","revival_key":...}` for the cut keys (the per-run `cut.md` is removed, #166); ledger `budget_remaining==1`
 - **yields:** `test_integration_c8_budget_cut_batch`
 
-### C9 - HuntStore append-only at fixed root, store_reads split
+### C9 - HuntStore per-project topology, config + notes split (re-scoped #166)
 - **seam:** `attack/hunting/hunt_store.py::HuntStore` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface{read_memory_hunts,read_memory_notes}`
 - **delivery semantic:** success
-- **input:** `HuntStore(tmp_path).append("run-c9","config",{"unit_id":"Service:slug:a","fault_class":"CWE-352","hunt_id":"h1"})` then `append("run-c9","notes",{"revival_key":"Service:slug:a::CWE-352","note":"track it"})`
-- **observable:** file `run-c9/config.md` has `## 0001` then YAML with `_seq=1 _ref="run-c9/config-0001"`; file `run-c9/notes.md` has `## 0002`; `read_configs_by_key("run-c9","Service:slug:a::CWE-352")==[{"hunt_id":"h1"}]`; `read_notes("run-c9","Service:slug:a::CWE-352")==[{"note":"track it"}]`; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data/hunts`; cross-run `memory.md` unchanged
+- **input:** `HuntStore(tmp_path).write_config("project-1", {unit_id, fault_class="CWE-352", vulnerability_class="CSRF", hunt_id="h1"})` then `append_note("project-1", "Service:slug:a::CWE-352", "track it")`
+- **observable:** file `project-1/orchestration/hunt_configs/produced/Service:slug:a_CWE-352_CSRF.yaml` carries the config YAML (no `_seq`/`_ref`); file `project-1/orchestration/memory.yaml` holds the notes; `read_configs_by_key("project-1","Service:slug:a::CWE-352")==[{"hunt_id":"h1"}]`; `read_notes("project-1","Service:slug:a::CWE-352")==[{"note":"track it"}]`; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data` (no env var); the per-run kind files and `memory.md` are gone
 - **yields:** `test_integration_c9_store_append_and_split_reads`
 
 ### C10 - store read failure degrades to empty prior insights (O4)
-- **seam:** `attack/hunting/hunt_orchestrator.py::_read_prior_insights` <-> `attack/hunting/hunt_store.py::read_memory`
+- **seam:** `attack/hunting/hunt_orchestrator.py::_read_prior_insights` <-> `attack/hunting/hunt_store.py::read_configs_by_key`/`read_notes`
 - **delivery semantic:** degradation
-- **input:** `tools.store_reads.read_memory` raises `OSError("disk")` for key `Service:slug:a::CWE-352`; 1 candidate CWE-352
+- **input:** `tools.store_reads.read_configs_by_key`/`read_notes` raise `OSError("disk")` for key `Service:slug:a::CWE-352`; 1 candidate CWE-352
 - **observable:** `arun_orchestration` completes with `hunts_dispatched==1`, `prior_hunt_insights==[]` on minted config, 1 warning logged `hunt store read degraded`, no exception
 - **yields:** `test_integration_c10_store_read_degrades_empty`
 
@@ -102,11 +102,11 @@
 - **observable:** `registry[run_id]` is same object identity across both faults, `len(registry)==1`, actor `run_id` thread name `hunting_orchestrator:run-c14` reused, reaped only via `await _reap_orchestrator(run_id)` not via pass finally, after reap `registry.get(run_id) is None`
 - **yields:** `test_integration_c14_actor_thread_reused`
 
-### C15 - cross-run memory.md via fixed HUNT_STORE_ROOT
+### C15 - cross-pass config visibility via the fixed HUNT_STORE_ROOT (re-scoped #166)
 - **seam:** `attack/hunting/hunt_store.py::HUNT_STORE_ROOT` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface{read_memory_hunts}`
-- **delivery semantic:** success (cross-run) + ordering
-- **input:** `storeA = HuntStore()` at default `src/polymerhus/attack/hunting/data/hunts` appends `run-a/config.md` revival `Service:slug:a::CWE-352`; `storeB = HuntStore()` same default reads `read_memory_hunts("Service:slug:a::CWE-352")` in new run
-- **observable:** `storeB.read_memory("Service:slug:a::CWE-352")` returns 1 config with `hunt_id` from run-a; file `data/hunts/memory.md` has cross-run index entry; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data/hunts` string equality, no env var
+- **delivery semantic:** success (cross-pass) + ordering
+- **input:** `storeA = HuntStore()` at default `src/polymerhus/attack/hunting/data` writes a config `Service:slug:a::CWE-352::CSRF` and a note; `storeB = HuntStore()` same default reads the same project
+- **observable:** `storeB.read_configs_by_key("project-1","Service:slug:a::CWE-352")` returns the config from pass-a; the note reads back from `memory.yaml`; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data` string equality, no env var; no `memory.md` anywhere
 - **yields:** `test_integration_c15_cross_run_memory_fixed_root`
 
 ### C16 - HuntingAgent dispatch harness per-hunt thread via HuntingActorRegistry
@@ -124,8 +124,8 @@
 - **input:** `project_id="proj-e1"`, `run_id="run-e1"`, `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z no token"),"applies"), DeliveredCandidate("Service:slug:b","CWE-352",Witness(llm="form Y carries token, Z does not"),"applies")]`; stub `reason_fn` returns per-unit: Service:slug:a -> 2 candidates (CSRF, IDOR), Service:slug:b -> 1 (CSRF)
 - **live edge:** none (all in-process, graph seam mocked `read_fn=lambda cy,p: []`, LLM stubbed)
 - **path:** candidate intake normalizes 2 accepted, 0 dropped -> supervisor pops FaultWorkItem(CWE-352, [a,b]) -> REASON renders rich projection per unit (data_items, cooperating_systems slots) in single GateInput with prior_minted_keys=[] -> stub returns 3 directions -> deterministic unit-boundary mint+note runs twice -> BUDGET passes all 3 -> DISPATCH pops 3 HuntConfigs via dispatch_fn
-- **terminal:** `hunts_dispatched==3`; HuntStore `run-e1/config.md` has 3 rows, `run-e1/notes.md` has 2 rows (one per unit), `run-e1/hunt.md` has 3 rows, `run-e1/dispatch.md` has 3 rows; `ledger==LoopLedger(units_done=2, notes_recorded=2, minted_config_keys=["Service:slug:a::CWE-352","Service:slug:b::CWE-352"], budget_remaining=3)`, report `budget_cut==()`
-- **observed:** `python -c "HuntStore(tmp).list_records('run-e1','config')"` returns 3 dicts with hunt_ids `base, base-1` pattern; `read_md run-e1/notes.md` shows 2 notes keyed correctly
+- **terminal:** `hunts_dispatched==3`; HuntStore produced/ has 3 config YAML files (one per class), `memory.yaml` has 2 notes (one per unit) - the per-run `config.md`/`notes.md`/`hunt.md`/`dispatch.md` kind files are removed (#166); `ledger==LoopLedger(units_done=2, notes_recorded=2, minted_config_keys=["Service:slug:a::CWE-352","Service:slug:b::CWE-352"], budget_remaining=3)`, report `budget_cut==()`
+- **observed:** `HuntStore(tmp).read_configs("proj-e1")` returns 3 dicts with hunt_ids `base, base-1` pattern; `read_notes("proj-e1")` shows 2 notes keyed correctly
 - **yields:** `test_e2e_e1_per_fault_fanout`
 
 ### E2 - runtime bootstrap via POST completes and persists
@@ -133,8 +133,8 @@
 - **entry seam:** `POST /projects/proj-e2/hunting`
 - **input:** `project_id="proj-e2"`, HTTP body `{candidates:[Service:slug:a CWE-352 applies]}` with real `hunting_runs` table
 - **live edge:** none (worker loop seeded, neo4j not required)
-- **path:** API handler calls `pg.create_hunting_run` sync then `runtime.schedule("hunting", start_hunting(...))` on shared worker loop -> `start_hunting` sets `hunting_module_context("hunting")` -> runs `arun_orchestration` with 1 fault -> writes hunt store -> `set_hunting_run_status("complete")` via `asyncio.to_thread`
-- **terminal:** `hunting_runs` row `hunting_run_id` status `complete`; HuntStore `run-e2/run.md` count 1, `config.md` count 1; HTTP response 201 with `{"hunting_run_id": "<id>"}`
+- **path:** API handler calls `pg.create_hunting_run` sync then `runtime.schedule("hunting", start_hunting(...))` on shared worker loop -> `start_hunting` sets `hunting_module_context("hunting")` -> runs `arun_orchestration` with 1 fault -> writes the hypothesised config into produced/ + the note into memory.yaml -> `set_hunting_run_status("complete")` via `asyncio.to_thread`
+- **terminal:** `hunting_runs` row `hunting_run_id` status `complete`; HuntStore produced/ has 1 config YAML, `memory.yaml` 1 note (the per-run `run.md` is removed, #166); HTTP response 201 with `{"hunting_run_id": "<id>"}`
 - **observed:** `SELECT status FROM hunting_runs WHERE hunting_run_id='run-e2'` returns `complete`; `GET /projects/proj-e2/hunting/run-e2` returns 200 with same row
 - **yields:** `test_e2e_e2_bootstrap_post_persists`
 
@@ -147,7 +147,7 @@
 - **input:** `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="a"),"applies"), DeliveredCandidate("Service:slug:b","CWE-352",Witness(llm="b"),"applies")]` in order a then b, stub reason returns 3 configs (2 for a with hunt_ids base/base-1, 1 for b), `budget_fn=lambda ds: [ds[0]]` keeps exactly `Service:slug:a::CWE-352` base
 - **live edge:** none
 - **path:** REASON mints 3 configs across 2 units -> BUDGET receives 3 in order [a-base, a-base-1, b], returns [a-base] -> DISPATCH pops 1
-- **terminal:** `hunts_dispatched==1`; `report.budget_cut==("Service:slug:a::CWE-352-1","Service:slug:b::CWE-352")` length exactly 2 in order; `HuntStore.list_records("run-e4","cut")` length 2 matching those keys; `config.md` has 3 rows (mint before cut), `hunt.md` has 1 row with hunt_id base
+- **terminal:** `hunts_dispatched==1`; `report.budget_cut==("Service:slug:a::CWE-352-1","Service:slug:b::CWE-352")` length exactly 2 in order; the cut rides the report trail only (the per-run `cut.md` is removed, #166); `produced/` has 3 configs (minted at the unit boundary BEFORE the budget stage - a cut is a dispatch-stage decision, never a config deletion, G10); dispatched hunt_id equals `base` not base-1
 - **observed:** `cut.md` rows exact keys and count 2; dispatched hunt_id equals `base` not base-1
 - **yields:** `test_e2e_e4_budget_cut_records`
 
@@ -157,8 +157,8 @@
 - **input:** `candidates` in fixed order [0] `DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm=None), "applies")` malformed, [1] `DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="x"),"applies")` duplicate key of [0], [2] `DeliveredCandidate("System:cache:1","CWE-639",Witness(llm="x"),"does-not-apply")` plus `read_fn` that raises for System slot but gated after prune
 - **live edge:** none
 - **path:** `normalize_candidates` processes in order: [0] malformed `malformed_dropped=1`, [1] duplicate of dropped key still counts as duplicate `duplicates_dropped=1`, [2] pruned `pruned_by_verdict=1` before gate -> gate receives empty list -> O1 empty pass, no BUDGET/DISPATCH
-- **terminal:** `hunts_dispatched==0`; `report.malformed_dropped==1`; `report.duplicates_dropped==1`; `report.pruned_by_verdict==1`; `report.store_write_failures==0`; HuntStore `run.md` `candidates_received==3`; zero rows in `config/hunt/dispatch/cut` tables
-- **observed:** `HuntStore.list_records("run-e5","run")[0]["candidates_received"]==3` and report fields exact as above
+- **terminal:** `hunts_dispatched==0`; `report.malformed_dropped==1`; `report.duplicates_dropped==1`; `report.pruned_by_verdict==1`; `report.store_write_failures==0`; the empty pass persists nothing in the memory topology - `read_configs("proj-e5")==[]` and `read_notes("proj-e5")==[]` (the per-run `run.md` with `candidates_received` is removed, #166)
+- **observed:** report fields exact as above
 - **yields:** `test_e2e_e5_empty_after_prunes_is_empty_pass`
 
 ### E6 - cooperating systems surface in System-targeting hunt (Q5)
@@ -190,8 +190,8 @@
 - **live edge:** none
 - **criterion/metric:** coverage = `minted_config_units / units_where_not_FALSE_and_carried` must be 100%; duplicate_rate = `duplicate_revival_keys / total_configs` must be 0; filtered = pruned directions mint 0 configs. Metric: HuntStore config revival keys distinct count.
 - **critical examination:** core claim every plausible locus gets >=1 config without dupes; evidence needs ground truth of which units truly not-FALSE - seeded fixture defines it. Hidden assumption: stub LLM carries correctly - real LLM may miss subtle unit (exhaustiveness failure). Flawed (fixable by prompt tuning) vs wrong (model cannot discriminate faults) - latter fundamental.
-- **terminal:** `config.md` has 3 rows with distinct `revival_key`; 0 duplicate hunt_ids; pruned key absent from `config.md`
-- **observed:** `HuntStore.list_records("run-e8","config")` grouped by revival_key coverage 100% duplicate 0
+- **terminal:** `produced/` has 3 configs with distinct `revival_key`; 0 duplicate hunt_ids; pruned key absent
+- **observed:** `HuntStore.read_configs("proj-e8")` grouped by revival_key coverage 100% duplicate 0
 - **yields:** `test_e2e_e8_q2_accuracy_coverage`
 
 ### E9 - Q3 detail depth: HuntConfig prompt_template sufficient for DECOMPOSE
@@ -223,10 +223,10 @@
 - **entry seam:** `arun_orchestration` with spy on `build_orchestrator_tool_surface` mint_emissions bucket and graph_view interleaving guard
 - **input:** 2 units CWE-352 each with N=1 and N=2 distinct classes respectively (total 3 configs) as E1, with graph_view calls interleaved before first mint
 - **live edge:** none
-- **criterion/metric:** `mint_hunt_config` call count == units_done (2), each precedes exactly one `record_note` with same revival_key within 1 trace step and no graph_view between mint and its note (interleaving guard); `HuntStore notes.md` rows == units_done (2); `config.md` rows == distinct classes (3); each note's revival_key matches a config revival_key; call order must be `mint a -> note a -> mint b -> note b` not `mint a -> graph_view -> note a`. Metric: counts equality + order index + interleaving zero, Pydantic HuntConfig validation passes.
+- **criterion/metric:** `mint_hunt_config` call count == units_done (2), each precedes exactly one `record_note` with same revival_key within 1 trace step and no graph_view between mint and its note (interleaving guard); `memory.yaml` notes == units_done (2); produced/ configs == distinct classes (3); each note's revival_key matches a config revival_key; call order must be `mint a -> note a -> mint b -> note b` not `mint a -> graph_view -> note a`. Metric: counts equality + order index + interleaving zero, Pydantic HuntConfig validation passes.
 - **critical examination:** counts alone prove boundary but not that harness never interleaves tool after mint before note - stub mimics discipline, real LLM may double-mint or interleave graph_view. Flawed (retry logic) fixable vs wrong (prompt ambiguous) fundamental - needs tool guard if double-mint.
-- **terminal:** `mint_emissions` length 2; `notes.md` length 2; `config.md` length 3; sequential log `mint a -> note a -> mint b -> note b` with zero interleaving
-- **observed:** `HuntStore.list_records` counts + `mint_emissions` bucket inspection + spy call order with interleaving check
+- **terminal:** `mint_emissions` length 2; `memory.yaml` notes length 2; produced/ configs length 3; sequential log `mint a -> note a -> mint b -> note b` with zero interleaving
+- **observed:** `HuntStore.read_configs` / `read_notes` counts + `mint_emissions` bucket inspection + spy call order with interleaving check
 - **yields:** `test_e2e_e11_q5_mint_note_consistency`
 - **verdict:** flawed if counts off by harness - fixable; wrong if model double-mints or interleaves - needs tool guard fundamental
 
@@ -257,11 +257,11 @@
 ### E14 - store write failure + KB degraded still completes (fail-open O3/O4/O5)
 - **grounds:** spec 5 O3/O4/O5 + 3.6 fail-open discipline
 - **entry seam:** `arun_orchestration` with flaky HuntStore and raising kb_retrieve_fn
-- **input:** `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z"),"applies")]`, `kb_retrieve_fn` raises `RuntimeError("KB unavailable")`, `HuntStore.append` fails first 2 writes then succeeds
+- **input:** `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z"),"applies")]`, `kb_retrieve_fn` raises `RuntimeError("KB unavailable")`, `HuntStore.write_config`/`append_note` fail the first 2 writes then succeed
 - **live edge:** none
-- **path:** KB degraded -> gate prompt shows `KB grounding: DEGRADED` -> flaky store fails first writes `store_write_failures==2` -> gate still carries -> mint succeeds on retry
-- **terminal:** `hunts_dispatched==1`; `report.store_write_failures==2`; `report.ledger.units_done==1`; `HuntStore config.md` has 1 row despite earlier failures; `kb_degraded==True` in GateInput
-- **observed:** `HuntStore.list_records("run-e14","config")` length 1; GateInput kb_degraded flag
+- **path:** KB degraded -> gate prompt shows `KB grounding: DEGRADED` -> flaky store fails both of the pass's store writes (the config at the mint + the unit-boundary note) `store_write_failures==2` -> gate still carries -> the pass completes and dispatches (O3 - warned + counted, never a crash)
+- **terminal:** `hunts_dispatched==1`; `report.store_write_failures==2`; `report.ledger.units_done==1`; the failed writes landed nothing - `read_configs("proj-e14")==[]`; `kb_degraded==True` in GateInput
+- **observed:** GateInput kb_degraded flag; the pass's write-failure count
 - **yields:** `test_e2e_e14_fail_open_store_kb_graph`
 
 ### E15 - concurrency barrier, duplicate-idempotent reads, malformed LLM output degrades to carry-bare
@@ -269,9 +269,9 @@
 - **entry seam:** `arun_orchestration` with concurrent fault schedule + `read_memory_hunts` spy + stub LLM returning unparseable GateDecision
 - **input:** a) concurrency: 2 faults `CWE-352` and `CWE-639` each with 1 unit dispatched concurrently via `asyncio.gather` over two `arun_orchestration` calls on same `run_id` with shared HuntStore; b) duplicate-idempotent: same `read_memory_hunts("Service:slug:a::CWE-352")` called twice in same REASON turn; c) malformed: `reason_fn` returns `GateDecision` with `__pydantic_validation_error__` or raises `JSONDecodeError` on parsing LLM output
 - **live edge:** none (concurrency via in-process gather, blocked when real worker loop required)
-- **criterion/metric:** a) ledger writes serialised: `final ledger.units_done ==2` with no interleaved `minted_config_keys` corruption, `HuntStore config.md` rows 2 distinct revival keys, not 1 lost update; b) duplicate reads: second `read_memory_hunts` returns identical list without extra HuntStore side effect, count stays 1 config per key; c) malformed LLM: harness degrades to carry fault bare with 1 HuntConfig per unit (not crash), `report.store_write_failures` counts only store failures not parse failures
+- **criterion/metric:** a) ledger writes serialised: `final ledger.units_done ==2` with no interleaved `minted_config_keys` corruption, `HuntStore produced/` rows 2 distinct revival keys, not 1 lost update; b) duplicate reads: second `read_memory_hunts` returns identical list without extra HuntStore side effect, count stays 1 config per key; c) malformed LLM: harness degrades to carry fault bare with 1 HuntConfig per unit (not crash), `report.store_write_failures` counts only store failures not parse failures
 - **critical examination:** core claim StateGraph last-write channels provide serialisation not optimistic concurrency; evidence is ledger final state not intermediate interleaving. Hidden assumption: asyncio.gather mimics worker loop concurrency - real shared worker loop may queue serially anyway. Flawed (missing lock) fixable via reducer, fundamental if StateGraph cannot serialise ledger.
-- **terminal:** a) `ledger.units_done==2`, `minted_config_keys` length 2 distinct, `config.md` 2 rows; b) `read_memory` spy call count 2 but HuntStore rows unchanged 1; c) `hunts_dispatched==1` per fault with `research_direction==""` bare
+- **terminal:** a) `ledger.units_done==2`, `minted_config_keys` length 2 distinct, produced/ configs 2 rows; b) `read_memory_hunts` spy call count 2 but HuntStore rows unchanged 1; c) `hunts_dispatched==1` per fault with `research_direction==""` bare
 - **observed:** ledger final read, HuntStore counts, spy call logs, GateDecision validation error caught and logged `gate reasoning failed for CWE-352, carrying`
 - **yields:** `test_e2e_e15_concurrency_duplicate_malformed`
 
@@ -289,7 +289,7 @@ Each walkthrough is self-contained except the fixtures it cannot invent. A walkt
 - **E8 (Q2 accuracy):** Q: ground truth - for the 3-unit fixture, which units are not-FALSE by predicate so coverage denominator is known?
 - **E9 (Q3 detail):** Q: HuntingAgent DECOMPOSE - which agent version judges research_direction sufficient, and what length threshold (>20) is ratified?
 - **E10 (Q4 trajectory):** Q: trace backend - which Langfuse/span table holds `orchestrator_gate_span` durations and is it writable in CI?
-- **E11 (Q5 mint+note):** Q: store path - confirm `data/hunts` root is writable for count assertions, or is HuntStore tmp_path acceptable?
+- **E11 (Q5 mint+note):** Q: store path - confirm `data/` root is writable for count assertions, or is HuntStore tmp_path acceptable?
 - **E12 (Q6 tool use):** Q: read seam - which `graph_view` spy and prior `read_memory_hunts` store fixture define the UNKNOWN/keys cases?
 - **E13 (Q7 reflection):** Q: locale leak oracle - which forbidden locale tokens (`Origin:`, `/state-change`, payload strings) define class-level vs narrowed?
 - **E14 (fail-open):** Q: fault injection - which store failure mode (first 2 appends raise) and KB unavailability stub are used to assert fail-open counts?

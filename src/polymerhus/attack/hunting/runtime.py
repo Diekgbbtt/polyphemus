@@ -18,8 +18,8 @@ plane drives and the tear-down hooks it calls:
                              `asyncio.to_thread` onto the shared executor, never
                              the worker loop.
   stop_hunting             - the phase-1 hard stop: cancels the run's task, reaps
-                             the run's actor, persists `stopped` (the append-only
-                             store already preserves the partial trail).
+                             the run's actor, persists `stopped` (the per-project
+                             store already preserves the partial config/notes trail).
   flush_hunting_checkpointer - the tear-down flush hook (#123): archive the
                              hunting module in-memory checkpointer index into the
                              still-open pooled saver via the shared
@@ -150,7 +150,7 @@ async def start_hunting(
     re-raised after teardown so `stop_hunting` can stamp `stopped`.
 
     Returns the `hunting_run_id` - the run's identity, keying both the
-    `hunting_runs` row and the hunt store's append-only trail."""
+    `hunting_runs` row and the project's memory-store folder."""
     async with hunting_module_context():
         from polymerhus.app.clients import pg  # noqa: PLC0415
         from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
@@ -228,8 +228,8 @@ async def start_hunting(
 
 async def stop_hunting(hunting_run_id: str) -> None:
     """Phase-1 hard stop (seam 3.1): cancel the run's task on the hunting loop,
-    reap the run's actor, and persist `stopped`. The append-only store preserves
-    the partial trail. Fail-open: never raises through the control plane."""
+    reap the run's actor, and persist `stopped`. The per-project store preserves
+    the partial config/notes trail. Fail-open: never raises through the control plane."""
     async with hunting_module_context():
         from polymerhus.app.clients import pg  # noqa: PLC0415
         from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
