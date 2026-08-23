@@ -9,8 +9,20 @@ def test_postgres_schema():
     with psycopg.connect(DSN) as conn, conn.cursor() as cur:
         cur.execute("SELECT extname FROM pg_extension WHERE extname='vector'")
         assert cur.fetchone() is not None
-        for t in ("projects", "settings", "recon_runs", "recon_jobs", "ingest_runs", "doc_chunks"):
+        for t in (
+            "projects",
+            "settings",
+            "recon_runs",
+            "recon_jobs",
+            "ingest_runs",
+            "doc_chunks",
+            "methodology_bundles",
+        ):
             cur.execute("SELECT to_regclass(%s)", (f"public.{t}",))
             assert cur.fetchone()[0] == t, f"missing {t}"
         cur.execute("SELECT indexname FROM pg_indexes WHERE indexname='doc_chunks_hnsw'")
+        assert cur.fetchone() is not None
+        cur.execute(
+            "SELECT indexname FROM pg_indexes WHERE indexname='methodology_bundles_run_id_idx'"
+        )
         assert cur.fetchone() is not None

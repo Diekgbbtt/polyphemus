@@ -33,6 +33,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+from collections.abc import Sequence
 
 logger = logging.getLogger(__name__)
 
@@ -58,10 +59,12 @@ class _TurnActor:
     _base_kind = ""
     _role_id = ""
 
-    def __init__(self, checkpointer=None, model_factory=None, observe: bool = True):
+    def __init__(self, checkpointer=None, model_factory=None, observe: bool = True,
+                 tools: Sequence = ()):
         self._checkpointer = checkpointer
         self._model_factory = model_factory
         self._observe = observe
+        self._tools = list(tools)
         self._address = None
         self._inbox = None
         self._replies = None
@@ -120,6 +123,8 @@ class _TurnActor:
             kwargs["response_format"] = response_format
         if system_prompt is not None:
             kwargs["system_prompt"] = system_prompt
+        if self._tools:
+            kwargs["tools"] = self._tools
         self._task = asyncio.ensure_future(
             run_session_agent(
                 self._address.role_id,
@@ -659,9 +664,10 @@ class HuntingHunterActor(_TurnActor):
     _role_id = "hunting_hunter"
 
     def __init__(self, run_id: str, hunt_id: str, *, checkpointer=None,
-                 model_factory=None, observe: bool = True, compaction=None):
+                 model_factory=None, observe: bool = True, compaction=None,
+                 author_tools: Sequence = ()):
         super().__init__(checkpointer=checkpointer, model_factory=model_factory,
-                         observe=observe)
+                         observe=observe, tools=author_tools)
         self._run_id = run_id
         self._hunt_id = hunt_id
         self._compaction = compaction
@@ -721,6 +727,16 @@ class HuntingHunterActor(_TurnActor):
         await self._stop()
 
 
+def _lightrag_author_tools() -> list:
+    """Build the optional LightRAG query tool list for the author lane (lazy)."""
+    from polymerhus.app.config import config
+    from polymerhus.lightrag.tool import build_lightrag_tool
+
+    if not config.HUNTING_LIGHTRAG_TOOL:
+        return []
+    return [build_lightrag_tool()]
+
+
 class HuntingActorRegistry:
     """Per-run registry of `HuntingHunterActor`s, keyed by hunt_id.
 
@@ -732,11 +748,14 @@ class HuntingActorRegistry:
     per-hunt thread. `stop_all` reaps every spawned actor (idempotent)."""
 
     def __init__(self, run_id: str, *, checkpointer=None, model_factory=None,
-                 observe: bool = True):
+                 observe: bool = True, author_tools: Sequence = ()):
         self._run_id = run_id
         self._checkpointer = checkpointer
         self._model_factory = model_factory
         self._observe = observe
+        self._author_tools = (
+            list(author_tools) if author_tools else _lightrag_author_tools()
+        )
         self._actors: dict[str, HuntingHunterActor] = {}
 
     def actor_for(self, hunt_id: str) -> HuntingHunterActor:
@@ -747,6 +766,7 @@ class HuntingActorRegistry:
                 checkpointer=self._checkpointer,
                 model_factory=self._model_factory,
                 observe=self._observe,
+                author_tools=self._author_tools,
             )
             self._actors[hunt_id] = actor
         return actor

@@ -590,8 +590,10 @@ def _compose_rematch_prompt(unit_id: str, fault_class: str, result: TargetedReco
 
 def _parse_json_object(text) -> dict | None:
     """Best-effort parse of a free-text LLM reply into a JSON object, tolerating a
-    ```json fenced block. Returns None on anything unparseable (the hunting agent's
-    authoring/judging seams already treat None as a degraded turn, fail-open)."""
+    ```json fenced block anywhere in the reply (a live D4 reply may open with
+    prose and then carry the fenced spec). Returns None on anything unparseable
+    (the hunting agent's authoring/judging seams already treat None as a
+    degraded turn, fail-open)."""
     if isinstance(text, dict):
         return text
     if not isinstance(text, str) or not text.strip():
@@ -601,6 +603,17 @@ def _parse_json_object(text) -> dict | None:
         body = body.split("```", 2)[1] if "```" in body[3:] else body[3:]
         if body.lstrip().lower().startswith("json"):
             body = body.lstrip()[4:]
+    elif not body.startswith("{"):
+        marker = "```"
+        fence_start = body.find(marker)
+        if fence_start != -1:
+            fenced = body[fence_start + len(marker):]
+            fenced = fenced.split(marker, 1)[0] if marker in fenced else fenced
+            fenced = fenced.strip()
+            if fenced.lower().startswith("json"):
+                fenced = fenced[4:].lstrip()
+            if fenced.startswith("{"):
+                body = fenced
     try:
         obj = json.loads(body)
     except (ValueError, TypeError):
@@ -751,4 +764,3 @@ def build_hunter_compaction_middleware(*, window=None, threshold=None, store=Non
 
     return C.build_role_compaction_middleware(
         HUNTER_ROLE, window=window, threshold=threshold, store=store)
-

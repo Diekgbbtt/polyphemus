@@ -5,8 +5,36 @@ __pycache__/
 *.pyc
 .pytest_cache/
 .superpowers/
+.worktrees/
 .DS_Store
 .venv/
+data/lightrag/rag_storage.bak.*/
+data/lightrag/benchmarks/*.sqlite3
+data/lightrag/benchmarks/ontology_query_benchmark*.json
+data/lightrag/inputs/*
+!data/lightrag/inputs/.gitkeep
+data/lightrag/prompts/*
+!data/lightrag/prompts/.gitkeep
+!data/lightrag/prompts/entity_type/
+!data/lightrag/prompts/entity_type/*.yml
+data/lightrag/preprocessing_pipeline/docs_to_process/
+data/lightrag/preprocessing_pipeline/normalized/
+data/lightrag/preprocessing_pipeline/preprocessed_docs/
+data/lightrag/preprocessing_pipeline/src/lightrag_docprep.egg-info/
+data/ingestion/*
+!data/ingestion/.gitkeep
+!data/ingestion/inbox/
+data/ingestion/inbox/*
+!data/ingestion/inbox/.gitkeep
+!data/ingestion/processed/
+data/ingestion/processed/*
+!data/ingestion/processed/.gitkeep
+!data/ingestion/failed/
+data/ingestion/failed/*
+!data/ingestion/failed/.gitkeep
+!data/ingestion/normalized/
+data/ingestion/normalized/*
+!data/ingestion/normalized/.gitkeep
 docs/.DS_Store
 
 # Agent-harness working state, not source. `.claude/worktrees/` holds live git

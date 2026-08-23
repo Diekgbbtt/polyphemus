@@ -8,6 +8,8 @@ from polymerhus.app.config import config
 from polymerhus.app.llm import validate_llm_config
 from polymerhus.app.observability import disabled_reason, get_langfuse_callbacks
 from polymerhus.project_management.api import router as recon_router
+from polymerhus.ingestion.routes import router as ingestion_router
+from polymerhus.lightrag.api import router as lightrag_router
 
 # Before anything else: uvicorn configures only its own loggers, so without this
 # every application log line in this process is discarded. See logging_config.
@@ -17,6 +19,8 @@ logger = logging.getLogger(__name__)
 
 app = FastAPI(title="polymerhus-agent")
 app.include_router(recon_router)
+app.include_router(ingestion_router)
+app.include_router(lightrag_router)
 
 
 def log_tracing_status() -> None:
