@@ -65,12 +65,15 @@ from polymerhus.recon.control.targeted import (
 logger = logging.getLogger(__name__)
 
 # The orchestrator's tool surface (spec 3.4, the candidates-rewrite Q14/Q15
-# correction): the split memory reads, the mint, the note, the back-edge, and
-# the read-only graph view - exactly these, nothing more. No HuntConfig-writing
-# tool (the mint stays deterministic at dispatch) and no budget_consume tool
-# (Q7: token budget is a global harness concern, not a hunting-local check).
+# correction): the split memory reads, the mint, the note, and the read-only
+# graph view - exactly these, nothing more. No back-edge-to-recon tool (the
+# back_edge request to recon is out of the agent's surface; operator ruling
+# 2026-08-22 - the target-knowledge loop rides `graph_view`, never a recon
+# request), no HuntConfig-writing tool (the mint stays deterministic at
+# dispatch) and no budget_consume tool (Q7: token budget is a global harness
+# concern, not a hunting-local check).
 TOOL_SURFACE = frozenset({
-    "read_memory_hunts", "read_memory_notes", "graph_view", "back_edge",
+    "read_memory_hunts", "read_memory_notes", "graph_view",
     "mint_hunt_config", "record_note",
 })
 

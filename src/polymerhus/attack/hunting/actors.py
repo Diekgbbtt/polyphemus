@@ -179,8 +179,10 @@ class _TurnActor:
 def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | None):
     """The model-facing tool surface bound onto the orchestrator's session
     agent (spec 3.4, the candidates-rewrite Q14/Q15 correction): EXACTLY the
-    six tools `read_memory_hunts`, `read_memory_notes`, `graph_view`,
-    `back_edge`, `mint_hunt_config`, `record_note` - no HuntConfig-writing tool
+    five tools `read_memory_hunts`, `read_memory_notes`, `graph_view`,
+    `mint_hunt_config`, `record_note` - no back-edge-to-recon tool (the back_edge
+    request to recon is out of the agent's surface, operator ruling 2026-08-22;
+    the target-knowledge loop rides `graph_view`), no HuntConfig-writing tool
     (the mint stays deterministic at dispatch) and no budget-consume tool (Q7).
     `store_reads` is SPLIT into the two memory reads (`read_memory_hunts`
     returns prior dispatched config content by revival key, `read_memory_notes`
@@ -206,42 +208,11 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
     from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
         ReadOnlyGraphViewError,
     )
-    from polymerhus.recon.control.targeted import (  # noqa: PLC0415
-        AnalyserReconRequest,
-        ReconScope,
-    )
 
-    back_edge_seam = getattr(tools, "back_edge", None)
     graph_view_seam = getattr(tools, "graph_view", None)
     store_seam = getattr(tools, "store_reads", None)
     mint_seam = getattr(tools, "mint_emissions", None)
     surface: list = []
-
-    @tool
-    def back_edge(job: str, unit_id: str, targets: list | None = None,
-                  note: str | None = None) -> dict:
-        """Raise a targeted-recon need on the hunt back-edge (IA-6, origin
-        'hunting'). The returned recon evidence lands in the run's hunt store
-        and refoots the re-match. job is a registered recon tool; unit_id the
-        kind-qualified testable-unit identity ('Service:<slug>'); targets the
-        concrete L0 handles; note records why the need arose."""
-        if back_edge_seam is None:
-            return {"error": "no back_edge seam configured; recon need not raised",
-                    "unit_id": unit_id, "job": job}
-        try:
-            request = AnalyserReconRequest(
-                job=job,
-                scope=ReconScope(unit_id=unit_id, targets=list(targets or ()),
-                                 note=note),
-                origin="hunting",
-                requester_id=f"hunt-orchestrator-{run_id}",
-            )
-            result = back_edge_seam(request, run_id, project_id)
-            return result.model_dump() if hasattr(result, "model_dump") else {"result": result}
-        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
-            logger.warning("back_edge tool degraded for %s (%s)", unit_id, exc)
-            return {"error": f"back_edge degraded: {exc}", "unit_id": unit_id,
-                    "job": job}
 
     @tool
     def graph_view(cypher: str, params: dict | None = None) -> dict:
@@ -357,7 +328,7 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
                     "revival_key": revival_key}
 
     surface.extend([
-        back_edge, graph_view, read_memory_hunts, read_memory_notes,
+        graph_view, read_memory_hunts, read_memory_notes,
         mint_hunt_config, record_note,
     ])
     return surface

@@ -117,36 +117,20 @@ def _ok_dispatch(calls: list | None = None):
     return dispatch
 
 
-def _ok_back_edge(seen: list | None = None):
-    record = seen if seen is not None else []
-
-    def back_edge(request: AnalyserReconRequest, run_id: str, project_id: str) -> TargetedReconResult:
-        record.append(request)
-        return TargetedReconResult(
-            correlation_id=request.correlation_id,
-            requester_id=request.requester_id,
-            origin="hunting",
-            status="success",
-        )
-
-    return back_edge
-
-
-def _tools(store: HuntStore, *, back_edge=None, read_fn=None) -> OrchestratorTools:
+def _tools(store: HuntStore, *, read_fn=None) -> OrchestratorTools:
     return OrchestratorTools(
-        back_edge=back_edge,
         store_reads=store,
         graph_view=ReadOnlyGraphView("project-1", read_fn=read_fn or (lambda cy, p: [])),
     )
 
 
-def _run(store: HuntStore, candidates, *, dispatch=None, back_edge=None, tools=None,
+def _run(store: HuntStore, candidates, *, dispatch=None, tools=None,
          **kwargs) -> OrchestratorReport:
     return run_orchestration(
         project_id="project-1",
         run_id=RUN_ID,
         candidates=candidates,
-        tools=tools or _tools(store, back_edge=back_edge),
+        tools=tools or _tools(store),
         dispatch_fn=dispatch or _ok_dispatch(),
         **kwargs,
     )
@@ -431,8 +415,8 @@ def test_actor_binds_exactly_the_six_tools(tmp_path, monkeypatch):
 
     asyncio.run(_drive())
     names = {t.name for t in seen["tools"]}
-    assert names == set(TOOL_SURFACE)                      # exactly the six, no seventh
-    assert len(seen["tools"]) == 6
+    assert names == set(TOOL_SURFACE)                      # exactly the five, no sixth
+    assert len(seen["tools"]) == 5
     assert all(hasattr(t, "invoke") for t in seen["tools"])  # real tool callables
 
 
@@ -444,12 +428,12 @@ def test_no_hunt_config_writing_tool_on_the_surface(tmp_path):
     only carries the model's emission)."""
     store = HuntStore(tmp_path)
     fake = _FakeGraph(_service_a_row())
-    tools = _tools(store, back_edge=_ok_back_edge(), read_fn=fake.read)
+    tools = _tools(store, read_fn=fake.read)
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
     assert set(by_name) == set(TOOL_SURFACE)
-    # each tool's reply is a recon/store/graph/ack shape, never a HuntConfig
+    # each tool's reply is a store/graph/acknowledgment shape, never a HuntConfig
     out = by_name["read_memory_hunts"].invoke(
         {"revival_key": revival_key(SERVICE_A, "CWE-352")})
     assert "configs" in out
@@ -462,65 +446,19 @@ def test_no_hunt_config_writing_tool_on_the_surface(tmp_path):
     out = by_name["mint_hunt_config"].invoke(
         {"unit_id": SERVICE_A, "candidates": [], "research_direction": "csrf"})
     assert out["acknowledged"] is True
-    out = by_name["back_edge"].invoke({"job": "httpx_reprofile", "unit_id": SERVICE_A})
-    assert "correlation_id" in out
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert "rows" in out
 
 
 # --- C18: a missing seam body degrades the surface, never raises ---------------
 
-def test_absent_back_edge_degrades_the_surface(tmp_path):
-    """With the back-edge seam absent the surface still binds all three tools;
-    the back_edge tool returns a denoted error (never raises), the surviving
-    tools keep working, and the actor turn still yields a GateDecision."""
-    store = HuntStore(tmp_path)
-    fake = _FakeGraph(_service_a_row())
-    tools = OrchestratorTools(
-        back_edge=None, store_reads=store,
-        graph_view=ReadOnlyGraphView("project-1", read_fn=fake.read))
-    surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
-                                              project_id="project-1")
-    by_name = {t.name: t for t in surface}
-    assert set(by_name) == set(TOOL_SURFACE)
-    out = by_name["back_edge"].invoke({"job": "httpx_reprofile", "unit_id": SERVICE_A})
-    assert out["error"].startswith("no back_edge seam configured")
-    assert out["unit_id"] == SERVICE_A
-    out = by_name["read_memory_hunts"].invoke(
-        {"revival_key": revival_key(SERVICE_A, "CWE-352")})
-    assert out["configs"] == []
-    out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
-    assert "rows" in out
-
-    # the degraded surface rides the turn without raising: a structured
-    # GateDecision still comes back (the actor's fail-open canon is untouched)
-    async def _drive():
-        actor = HuntOrchestratorActor(
-            "c18-run-1", tools=tools, project_id="project-1",
-            checkpointer=InMemorySaver(),
-            model_factory=lambda role: _ToolFake(
-                call_name="GateDecision",
-                args={"directions": [
-                    {"unit_id": SERVICE_A, "fault_class": "CWE-352", "carried": True,
-                     "rationale": "plausible"}]}),
-            observe=False,
-        )
-        decision = await actor.reason(_gate_input())
-        await actor.stop()
-        return decision
-
-    decision = asyncio.run(_drive())
-    assert isinstance(decision, GateDecision)
-    assert decision.directions[0].carried is True
-
-
 def test_absent_graph_view_degrades_the_surface():
     """With the graph-view seam absent the graph_view tool returns a denoted
-    error instead of raising; the back-edge and store-reads tools keep real
-    bodies."""
+    error instead of raising; the memory-read and note tools keep real bodies,
+    and the actor turn still yields a GateDecision."""
     store = HuntStore("/tmp/irrelevant")
     tools = OrchestratorTools(
-        back_edge=_ok_back_edge(), store_reads=store, graph_view=None)
+        store_reads=store, graph_view=None)
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
@@ -530,17 +468,15 @@ def test_absent_graph_view_degrades_the_surface():
     out = by_name["read_memory_hunts"].invoke(
         {"revival_key": revival_key(SERVICE_A, "CWE-352")})
     assert out["configs"] == []
-    out = by_name["back_edge"].invoke({"job": "httpx_reprofile", "unit_id": SERVICE_A})
-    assert out["origin"] == "hunting"
 
 
 def test_absent_hunt_store_degrades_the_surface(tmp_path):
     """With the hunt-store seam absent the memory-read and note tools all
-    return denoted errors instead of raising; the back-edge and graph-view tools
-    keep real bodies."""
+    return denoted errors instead of raising; the graph-view tool keeps its real
+    body."""
     fake = _FakeGraph(_service_a_row())
     tools = OrchestratorTools(
-        back_edge=_ok_back_edge(), store_reads=None,
+        store_reads=None,
         graph_view=ReadOnlyGraphView("project-1", read_fn=fake.read))
     surface = build_orchestrator_tool_surface(tools, run_id=RUN_ID,
                                               project_id="project-1")
@@ -558,8 +494,6 @@ def test_absent_hunt_store_degrades_the_surface(tmp_path):
     assert out["error"] == "no notes seam configured; note not recorded"
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert "rows" in out
-    out = by_name["back_edge"].invoke({"job": "httpx_reprofile", "unit_id": SERVICE_A})
-    assert out["origin"] == "hunting"
 
 
 # --- C18b: the split memory reads, the mint, and the note tool -----------------
@@ -979,10 +913,17 @@ def test_reason_node_seeds_prior_minted_keys_from_the_ledger(tmp_path):
 
     assert len(gate_inputs) == 2
     assert gate_inputs[0].prior_minted_keys == []           # fresh ledger -> fail-open
-    assert gate_inputs[1].prior_minted_keys == [f"{SERVICE_A}::CWE-352"]
+    # the second-called fault carries the first fault's minted key as its prior
+    # list. The schedule is risk-descending (fault_risk, f8b5203): CWE-639
+    # (IDOR) always precedes CWE-352 (CSRF), so the first gate is 639 and the
+    # second is 352 - assert the RELATIONSHIP, never the specific key.
+    assert len(gate_inputs[1].prior_minted_keys) == 1
+    first_key = f"{SERVICE_A}::{gate_inputs[0].candidates[0].fault_class}"
+    assert gate_inputs[1].prior_minted_keys == [first_key]
+    second_key = gate_inputs[1].prior_minted_keys[0]
     text = _compose_gate_prompt(gate_inputs[1])
     assert "Prior minted-config keys to reflect on" in text
-    assert f"{SERVICE_A}::CWE-352" in text
+    assert second_key in text
     assert "(none)" not in text.split("Prior minted-config keys")[1].splitlines()[0]
     assert report.ledger.units_done == 2
 
@@ -992,7 +933,7 @@ def test_structured_schemas_and_surface_unchanged():
     (the 110-vs-135 regression guard), and the deterministic mint still
     attaches the folded sub-fault ids to the HuntConfig."""
     assert TOOL_SURFACE == frozenset({
-        "read_memory_hunts", "read_memory_notes", "graph_view", "back_edge",
+        "read_memory_hunts", "read_memory_notes", "graph_view",
         "mint_hunt_config", "record_note",
     })
 

@@ -22,13 +22,11 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     OrchestratorTools,
     ReadOnlyGraphView,
     Witness,
-    build_back_edge_request,
     mint_hunt_config,
     normalize_candidates,
     revival_key,
     run_orchestration,
 )
-from polymerhus.recon.control.targeted import TargetedReconResult
 
 SERVICE_A = "Service:slug:a"
 FAULT_X = "fault-x"
@@ -79,9 +77,8 @@ def _carry(candidate: DeliveredCandidate) -> EnvisionedDirection:
     )
 
 
-def _tools(store, *, read_fn=None, back_edge=None) -> OrchestratorTools:
+def _tools(store, *, read_fn=None) -> OrchestratorTools:
     return OrchestratorTools(
-        back_edge=back_edge,
         store_reads=store,
         graph_view=ReadOnlyGraphView("project-1", read_fn=read_fn or (lambda cy, p: [])),
     )
@@ -372,25 +369,6 @@ def test_fanned_out_direction_dispatches_each_config():
 
 # --- Seam behaviours: park/resume (H3) ----------------------------------------
 
-def test_park_resume_positive_path_dispatches_after_rematch():
-    store = _MemoryStore()
-    seen: list = []
-    yellow = _candidate(verdict="insufficient-evidence")
-
-    def back_edge(request, run_id, project_id):
-        seen.append(request)
-        return TargetedReconResult(
-            correlation_id=request.correlation_id, requester_id=request.requester_id,
-            origin="hunting", status="success",
-        )
-
-    report = _run(store, [yellow], tools=_tools(store, back_edge=back_edge))
-    assert report.hunts_dispatched == 1
-    assert len(seen) == 1
-    assert len(store.list_records("run-1", "back_edge")) == 1
-    assert report.unresolved == ()
-
-
 # --- Seam behaviours: fail-open degradations ----------------------------------
 
 def test_store_read_failure_degrades_prior_insights(caplog):
@@ -420,24 +398,6 @@ def test_graph_view_query_failure_degrades_the_gate(caplog):
     assert "warning" in caplog.text.lower()
 
 
-def test_errored_back_edge_is_folded_into_the_evidence_trail():
-    store = _MemoryStore()
-    yellow = _candidate(verdict="insufficient-evidence")
-
-    def failing_back_edge(request, run_id, project_id):
-        return TargetedReconResult(
-            correlation_id=request.correlation_id, requester_id=request.requester_id,
-            origin="hunting", status="error", error="probe blew up",
-        )
-
-    report = _run(store, [yellow], tools=_tools(store, back_edge=failing_back_edge))
-    records = store.list_records("run-1", "back_edge")
-    assert len(records) == 1
-    assert records[0]["status"] == "error"
-    assert records[0]["error"] == "probe blew up"
-    assert report.unresolved == ()
-
-
 def test_reason_turn_failure_carries_all_directions(caplog):
     store = _MemoryStore()
 
@@ -456,10 +416,7 @@ def test_rematch_failure_degrades_to_unresolved(caplog):
     def boom(unit_id, fault_class, result):
         raise RuntimeError("re-match exhausted")
 
-    report = _run(store, [yellow], rematch=boom,
-                  tools=_tools(store, back_edge=lambda req, r, p: TargetedReconResult(
-                      correlation_id=req.correlation_id, requester_id=req.requester_id,
-                      origin="hunting", status="success")))
+    report = _run(store, [yellow], rematch=boom)
     assert report.hunts_dispatched == 0
     assert report.unresolved == (revival_key(SERVICE_A, FAULT_X),)
     assert "warning" in caplog.text.lower()
@@ -478,20 +435,6 @@ def test_gate_pruned_direction_is_not_dispatched():
     report = _run(store, [cand], reason_fn=pruning_gate)
     assert report.hunts_dispatched == 0
     assert report.gate_pruned == (revival_key(SERVICE_A, FAULT_X),)
-
-
-# --- Seam behaviours: the back-edge request shape (IA-6) ----------------------
-
-def test_back_edge_request_builds_origin_hunting():
-    request = build_back_edge_request(
-        SERVICE_A, FAULT_X, requester_id="hunt-orchestrator-1",
-        note="yellow match: insufficient evidence of exposure",
-    )
-    assert request.origin == "hunting"
-    assert request.requester_id == "hunt-orchestrator-1"
-    assert request.scope.unit_id == SERVICE_A
-    assert request.correlation_id
-    assert "insufficient evidence" in request.scope.note
 
 
 # --- The async-native parent entry point (#94) --------------------------------

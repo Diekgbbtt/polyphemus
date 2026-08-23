@@ -25,7 +25,7 @@ A skip of any sub-problem is a stated assumption, never a silent omission.
 
 For each reading that would justify CARRYING a direction, hold at least one competing reading that would justify PRUNING it, and settle between them on the evidence actually present: the unit projection, the fault materialisation, the candidate's applies-witnesses, the read-only graph surface, and any prior-hunt insights. Prefer external signal over fluency: a confident-sounding direction with no witness is the failure mode to avoid.
 
-Ground in the live surface when the evidence is reachable - `graph_view` for the read-only L0/L1 cards, `read_memory_hunts` / `read_memory_notes` for prior-hunt insights by revival key (both keyed identically as `<unit_id>::<fault_class>`). Raise a narrow recon need through `back_edge` only when a specific load-bearing fact is missing and the gap is target knowledge.
+Ground in the live surface when the evidence is reachable - `graph_view` for the read-only L0/L1 cards, `read_memory_hunts` / `read_memory_notes` for prior-hunt insights by revival key (both keyed identically as `<unit_id>::<fault_class>`). There is NO back-edge-to-recon tool on this surface: the target-knowledge loop is served by `graph_view` alone (operator ruling 2026-08-22).
 
 ## Judge each proposal critically
 
@@ -43,7 +43,7 @@ A direction is pruned only when the evidence positively establishes the fault ca
 This pass reasons per fault over all its matched units as explicit per-unit work-items. The harness tracks a LoopLedger (units done, units skipped, minted config keys, notes recorded, budget remaining) and re-injects it ONLY at the unit boundary - never after an intra-unit tool call. The following steps are verbatim and ordered per unit:
 
 ```
-unit N analysis (tools on-thread: read_memory_hunts / read_memory_notes / graph_view / back_edge - no harness interposition)
+unit N analysis (tools on-thread: read_memory_hunts / read_memory_notes / graph_view - no harness interposition)
   -> prior-hunt reflection (Q11) [LLM, verbatim prompt]
   -> knowledge-sufficiency / target-knowledge loops (Q9) [LLM-callered]
   -> hypothesis elicitation (Q8) + same-class merge (Q16) [LLM reflection]
@@ -72,7 +72,7 @@ The composed prompt splits matched units into Services and Systems with distinct
 
 ## Emit the structured GateDecision
 
-One REASON pass per fault over all matched units, with per-unit work-items. The GateDecision carries one EnvisionedDirection per work-item unit (carried true or false). For every carried direction, fill `rationale`, `assumptions`, `envisioned_test_primitives`, `supposed_payload_vectors`, plus `research_direction` (class-level verbatim prose, never narrowed to a surface locale / payload / vector / symptom) and `concrete_fault_candidates[]` (each with `fault_hypothesis`, `adversarial_capabilities[]`, `blocking_constraints[]`). Never write a HuntConfig yourself: there is no HuntConfig-writing tool on this surface. Your tools are exactly six - read_memory_hunts, read_memory_notes, graph_view, back_edge, mint_hunt_config, record_note - and the config is minted deterministically from your carried directions by the dispatch stage (N HuntConfigs per distinct class after your same-class merge). No budget_consume tool.
+One REASON pass per fault over all matched units, with per-unit work-items. The GateDecision carries one EnvisionedDirection per work-item unit (carried true or false). For every carried direction, fill `rationale`, `assumptions`, `envisioned_test_primitives`, `supposed_payload_vectors`, plus `research_direction` (class-level verbatim prose, never narrowed to a surface locale / payload / vector / symptom) and `concrete_fault_candidates[]` (each with `fault_hypothesis`, `adversarial_capabilities[]`, `blocking_constraints[]`). Never write a HuntConfig yourself: there is no HuntConfig-writing tool on this surface. Your tools are exactly five - read_memory_hunts, read_memory_notes, graph_view, mint_hunt_config, record_note - and the config is minted deterministically from your carried directions by the dispatch stage (N HuntConfigs per distinct class after your same-class merge). There is no back-edge-to-recon tool (the target-knowledge loop rides graph_view; operator ruling 2026-08-22). No budget_consume tool.
 
 ## What the mint mints from your directions (the HuntConfig format)
 

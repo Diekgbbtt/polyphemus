@@ -156,10 +156,11 @@ _GATE_SKILL_FALLBACK = (
     "at the end of each unit's analysis; record_note then follows deterministically. "
     "State will be re-fed only after record_note - the only reinjection point. "
     "Consider cooperating systems when creating a HuntConfig targeting a system. "
-    "Tools are exactly six: read_memory_hunts, read_memory_notes, graph_view, "
-    "back_edge, mint_hunt_config, record_note (no HuntConfig-writing tool, no "
-    "budget_consume). Return the directions, each marked carried or pruned; the "
-    "deterministic mint fans out N HuntConfigs per distinct class."
+    "Tools are exactly five: read_memory_hunts, read_memory_notes, graph_view, "
+    "mint_hunt_config, record_note (no back-edge-to-recon tool, no "
+    "HuntConfig-writing tool, no budget_consume). Return the directions, each "
+    "marked carried or pruned; the deterministic mint fans out N HuntConfigs per "
+    "distinct class."
 )
 
 _REMATCH_SKILL_FALLBACK = (

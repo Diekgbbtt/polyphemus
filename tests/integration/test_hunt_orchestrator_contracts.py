@@ -31,11 +31,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     run_orchestration,
 )
 from polymerhus.attack.hunting.hunt_store import HuntStore
-from polymerhus.recon.control.targeted import (
-    AnalyserReconRequest,
-    ReconScope,
-    TargetedReconResult,
-)
+from polymerhus.recon.control.targeted import TargetedReconResult
 
 SERVICE_A = "Service:slug:a"
 SYSTEM_B = "System:key:b"
@@ -68,15 +64,14 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True) -> Envisioned
     )
 
 
-def _ok_dispatch(calls: list | None = None, *, needs: list[AnalyserReconRequest] | None = None):
-    """The fixture hunting agent (IA-2): returns a successful result, optionally
-    surfacing an inline back-edge need on the first call (IA-5 -> IA-6)."""
+def _ok_dispatch(calls: list | None = None):
+    """The fixture hunting agent (IA-2): returns a successful result on every
+    dispatch (the inline back-edge need path is out of scope - the back_edge
+    request to recon is not an agent tool, operator ruling 2026-08-22)."""
     record = calls if calls is not None else []
 
     def dispatch(config: HuntConfig, routed=()):
         record.append((config, tuple(routed)))
-        if needs and not routed:
-            return DispatchResult(back_edge_needs=needs)
         return DispatchResult(
             spec_ref=f"spec-{len(record)}",
             pod_result_ref=f"pod-{len(record)}",
@@ -94,36 +89,20 @@ def _ok_rematch(verdict: str = "applies"):
     return rematch
 
 
-def _ok_back_edge(seen: list | None = None, *, status: str = "success"):
-    record = seen if seen is not None else []
-
-    def back_edge(request: AnalyserReconRequest, run_id: str, project_id: str) -> TargetedReconResult:
-        record.append(request)
-        return TargetedReconResult(
-            correlation_id=request.correlation_id,
-            requester_id=request.requester_id,
-            origin="hunting",
-            status=status,
-        )
-
-    return back_edge
-
-
-def _tools(store: HuntStore, *, back_edge=None, read_fn=None) -> OrchestratorTools:
+def _tools(store: HuntStore, *, read_fn=None) -> OrchestratorTools:
     return OrchestratorTools(
-        back_edge=back_edge,
         store_reads=store,
         graph_view=ReadOnlyGraphView("project-1", read_fn=read_fn or (lambda cy, p: [])),
     )
 
 
 def _run(store: HuntStore, candidates, *, dispatch=None, rematch=None,
-         back_edge=None, tools=None, **kwargs) -> OrchestratorReport:
+         tools=None, **kwargs) -> OrchestratorReport:
     return run_orchestration(
         project_id="project-1",
         run_id=RUN_ID,
         candidates=candidates,
-        tools=tools or _tools(store, back_edge=back_edge),
+        tools=tools or _tools(store),
         dispatch_fn=dispatch or _ok_dispatch(),
         rematch_fn=rematch or _ok_rematch(),
         **kwargs,
@@ -192,7 +171,7 @@ def test_graph_view_rejects_writes():
     with pytest.raises(ReadOnlyGraphViewError):
         view.merge("MATCH (n) MERGE (m) ...")  # write-shaped call through the view
     assert TOOL_SURFACE == frozenset({
-        "read_memory_hunts", "read_memory_notes", "graph_view", "back_edge",
+        "read_memory_hunts", "read_memory_notes", "graph_view",
         "mint_hunt_config", "record_note",
     })
 
@@ -237,40 +216,11 @@ def test_kb_failure_degrades_the_gate(tmp_path, caplog):
 
 # --- C8: park/resume depth-1 cap (O8, IA-6) -----------------------------------
 
-def test_park_resume_depth_one_cap(tmp_path):
-    store = HuntStore(tmp_path)
-    back_edges: list = []
-    yellow = _candidate(SERVICE_A, FAULT_X, verdict="insufficient-evidence")
-    report = _run(store, [yellow],
-                  back_edge=_ok_back_edge(back_edges),
-                  rematch=_ok_rematch(verdict="insufficient-evidence"))
-    assert report.hunts_dispatched == 0
-    assert len(back_edges) == 1
-    assert report.unresolved == (revival_key(SERVICE_A, FAULT_X),)
-    unresolved = store.list_records(RUN_ID, "unresolved")
-    assert len(unresolved) == 1
-    assert unresolved[0]["revival_key"] == revival_key(SERVICE_A, FAULT_X)
-
-
-# --- C9: inline back-edge routes on the correlation_id (IA-6, D67-14) ---------
-
-def test_inline_back_edge_routes_on_correlation_id(tmp_path):
-    store = HuntStore(tmp_path)
-    routed: list = []
-    need = AnalyserReconRequest(
-        job="graphql-cop",
-        requester_id="hunting-agent-1",
-        origin="hunting",
-        correlation_id="cid-inline-1",
-        scope=ReconScope(unit_id=SERVICE_A, targets=["https://a/graphql"]),
-    )
-    report = _run(store, [_candidate(SERVICE_A, FAULT_X)],
-                  dispatch=_ok_dispatch(needs=[need]),
-                  back_edge=_ok_back_edge(routed))
-    assert report.hunts_dispatched == 1
-    assert len(routed) == 1
-    assert routed[0].origin == "hunting"
-    assert routed[0].correlation_id == "cid-inline-1"
+# --- C8/C9: park/resume + inline back-edge → recon are OUT OF SCOPE ----------
+# The back_edge request to recon is wrongly designed and is NOT an agent tool in
+# this tree (operator ruling 2026-08-22); the target-knowledge loop rides
+# graph_view, never a recon request. The park/resume and inline back-edge
+# predicates are removed from the integration tier, not substituted.
 
 
 # --- C10: store write failure degrades to a warning (O3, IA-7) ----------------

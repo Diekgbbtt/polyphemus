@@ -1,0 +1,318 @@
+# Assertions - system "candidate-creation → projection → gate → mint rewrite"
+**Source:** docs/design/hunting-orchestrator-candidates-rewrite-spec.md
+**Seams under assertion:** candidate intake, per-fault REASON pass, rich projection, gate prompt, deterministic mint, graph envelope, HuntStore, runtime bootstrap
+
+## Contract predicates (integration) C1-C12
+
+### C1 - bootstrap opens row and schedules on shared loop
+- **seam:** `attack/hunting/runtime.py::start_hunting` <-> `app/clients/pg.py::create_hunting_run` + `app/runtime.py::schedule("hunting",...)` + `app/llm/checkpoints.py::module_context("hunting")`
+- **delivery semantic:** success
+- **input:** `project_id="proj-1"`, `candidates=[DeliveredCandidate(unit_id="Service:slug:a", fault_class="CWE-352", applies_witnesses=Witness(llm="form Z no token", deterministic="EXPOSED_VIA=WebPresentation"), match_verdict="applies")]`
+- **observable:** exactly 1 `hunting_runs` row with `hunting_run_id="run-c1"` status `running`; exactly 1 Future scheduled via `runtime.schedule("hunting", coro, name="hunting-proj-1")` on shared worker loop; `hunting_module_context()` active so `get_session_checkpointer()` resolves hunting index during `arun_orchestration`
+- **yields:** `test_integration_c1_bootstrap_schedules_on_shared_loop`
+
+### C2 - bootstrap fail-closed when control plane absent
+- **seam:** `project_management/api.py::POST /projects/{project_id}/hunting` <-> `attack/hunting/runtime.py::hunting_control_plane_available`
+- **delivery semantic:** degradation (runtime not landed)
+- **input:** `GET_ACTIVE_RUNTIME()=None`, `POST /projects/proj-1/hunting` with 1 candidate
+- **observable:** HTTP 503, body `hunting control-plane runtime is not active`, zero calls to `pg.create_hunting_run`, zero calls to `runtime.schedule`
+- **yields:** `test_integration_c2_bootstrap_fail_closed_503`
+
+### C3 - prompt splits Services vs Systems with distinct intros (Q4)
+- **seam:** `attack/hunting/llm.py::_compose_gate_prompt` <-> `attack/hunting/unit_projection.py::build_projection` + `attack/hunting/fault_kb.py::load_materialisation`
+- **delivery semantic:** success (rich slots populated)
+- **input:** `GateInput(candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z"),"applies"), DeliveredCandidate("System:auth-service:auth-service","CWE-352",Witness(llm="exposure internal"),"applies")], unit_projection={"Service:slug:a": UnitProjection(kind="Service", data_items={"PRODUCES": (DataItem(name="csrf_token"),)}, cooperating_systems={}), "System:auth-service:auth-service": UnitProjection(kind="System", cooperating_systems={"CALLS": (SystemInfo(kind="Cache"),)})}, materialisation={"CWE-352": {name:"CSRF"}}, fold_family={"CWE-352": ()})`
+- **observable:** prompt contains `Services:` then `Adversarial reasoning over each Service: spell its surface - its edged DataItems and Systems` then per-Service block sorted by unit_id, then `Systems:` then `Adversarial reasoning over each System: outline the System distinctly`; each Service block shows `data items: PRODUCES: name=csrf_token`; System block shows `cooperating systems: CALLS: kind=Cache`
+- **yields:** `test_integration_c3_prompt_splits_services_systems`
+
+### C4 - per-slot degrade renders UNKNOWN never FALSE (fail-open)
+- **seam:** `attack/hunting/llm.py::_render_projection` <-> `attack/hunting/unit_projection.py::build_projection`
+- **delivery semantic:** degradation (one slot raises)
+- **input:** `build_projection("proj-1","Service:slug:a", read_fn=raising_fn)` raises; `build_projection("proj-1","System:cache:1", read_fn=ok)` succeeds; same GateInput with `unit_projection={"Service:slug:a": None, "System:cache:1": UnitProjection(kind="System")}`
+- **observable:** rendered prompt has exactly 1 `UNKNOWN (projection read failed or absent)` for Service:slug:a, zero occurrences of `FALSE`; System slot renders `unit kind: System`; `normalize_candidates` still yields 2 accepted, 0 malformed, GateDecision still carries both
+- **yields:** `test_integration_c4_projection_degrade_unknown_never_false`
+
+### C5 - Loop protocol verbatim (Q11/Q9/Q8/Q16) bound in prompt
+- **seam:** `attack/hunting/llm.py::_gate_skill` + `_compose_gate_prompt` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface`
+- **delivery semantic:** success
+- **input:** `GateInput(prior_minted_keys=["Service:slug:a::CWE-352"], candidates=[DeliveredCandidate("Service:slug:b","CWE-352",Witness(llm="x"),"applies")])`
+- **observable:** prompt contains verbatim `Prior-hunt reflection (Q11): Prior minted-config keys to reflect on: Service:slug:a::CWE-352`, `Knowledge-sufficiency decision point (Q9): Given this fault class and unit type`, `Target-knowledge loop (Q9): do I have enough technical knowledge`, `Same-class merge (Q16): if multiple concrete-fault candidates`, `Unit boundary (spec 3.3): call mint_hunt_config ONCE`, `State will be re-fed only after record_note`
+- **yields:** `test_integration_c5_loop_protocol_verbatim`
+
+### C6 - supervisor is sole router via Command(goto=...) DP-5
+- **seam:** `attack/hunting/orchestrator_graph.py::build_hunting_graph` <-> langgraph StateGraph
+- **delivery semantic:** success + ordering
+- **input:** schedule `[FaultWorkItem(fault_class="CWE-352", candidates=[c1,c2]), FaultWorkItem(fault_class="CWE-639", candidates=[c3])]`
+- **observable:** `set(g.nodes)=={"supervisor","reason","budget","dispatch"}`; exactly 4 static edges `reason->supervisor, budget->supervisor, dispatch->supervisor, START->supervisor`; supervisor returns `Command(goto="reason")` while phase=reason and schedule non-empty, `Command(goto="budget")` when schedule empty, `Command(goto="dispatch")` while worklist non-empty, `Command(goto=END)` when worklist empty; reason/budget/dispatch never return Command
+- **yields:** `test_integration_c6_supervisor_only_router`
+
+### C7 - ledger and minted_configs are last-write, per-fault accumulation
+- **seam:** `attack/hunting/hunt_orchestrator.py::_reason_node` <-> `attack/hunting/orchestrator_graph.py::HuntOrchestrationState[ledger, minted_configs]`
+- **delivery semantic:** success (2 faults, 2 units each)
+- **input:** fault CWE-352 with units Service:slug:a, Service:slug:b; fault CWE-639 with unit Service:slug:a; `reason_fn` returns 1 carried EnvisionedDirection per unit with distinct `concrete_fault_candidates`
+- **observable:** after fault1 reason, `state["ledger"]==LoopLedger(units_done=2, minted_config_keys=["Service:slug:a::CWE-352","Service:slug:b::CWE-352"], notes_recorded=2)`; after fault2, `units_done=3` appended; `state["minted_configs"]` has exactly 3 keys with last-write value (second write to same key overwrites); `directions` channel length 3 via reducer `operator.add`
+- **yields:** `test_integration_c7_ledger_last_write_per_fault`
+
+### C8 - deterministic BUDGET cuts accumulated set (O9)
+- **seam:** `attack/hunting/hunt_orchestrator.py::_budget_node` <-> `attack/hunting/orchestrator_graph.py::budget`
+- **delivery semantic:** success (batch cut)
+- **input:** `state["directions"]=[EnvisionedDirection("Service:slug:a","CWE-352",carried=True), EnvisionedDirection("Service:slug:b","CWE-352",carried=True), EnvisionedDirection("System:cache:1","CWE-639",carried=True)]`, `budget_fn=lambda ds: ds[:1]` keeps first
+- **observable:** `state["worklist"]` length 1 containing exactly `Service:slug:a::CWE-352`; trail has exactly 2 `{"kind":"cut","revival_key":...}` for the cut keys; HuntStore `cut.md` has 2 rows matching those keys; ledger `budget_remaining==1`
+- **yields:** `test_integration_c8_budget_cut_batch`
+
+### C9 - HuntStore append-only at fixed root, store_reads split
+- **seam:** `attack/hunting/hunt_store.py::HuntStore` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface{read_memory_hunts,read_memory_notes}`
+- **delivery semantic:** success
+- **input:** `HuntStore(tmp_path).append("run-c9","config",{"unit_id":"Service:slug:a","fault_class":"CWE-352","hunt_id":"h1"})` then `append("run-c9","notes",{"revival_key":"Service:slug:a::CWE-352","note":"track it"})`
+- **observable:** file `run-c9/config.md` has `## 0001` then YAML with `_seq=1 _ref="run-c9/config-0001"`; file `run-c9/notes.md` has `## 0002`; `read_configs_by_key("run-c9","Service:slug:a::CWE-352")==[{"hunt_id":"h1"}]`; `read_notes("run-c9","Service:slug:a::CWE-352")==[{"note":"track it"}]`; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data/hunts`; cross-run `memory.md` unchanged
+- **yields:** `test_integration_c9_store_append_and_split_reads`
+
+### C10 - store read failure degrades to empty prior insights (O4)
+- **seam:** `attack/hunting/hunt_orchestrator.py::_read_prior_insights` <-> `attack/hunting/hunt_store.py::read_memory`
+- **delivery semantic:** degradation
+- **input:** `tools.store_reads.read_memory` raises `OSError("disk")` for key `Service:slug:a::CWE-352`; 1 candidate CWE-352
+- **observable:** `arun_orchestration` completes with `hunts_dispatched==1`, `prior_hunt_insights==[]` on minted config, 1 warning logged `hunt store read degraded`, no exception
+- **yields:** `test_integration_c10_store_read_degrades_empty`
+
+### C11 - mint fans out N per distinct fault_hypothesis, hunt_id base/base-i (KB-class oracle)
+- **seam:** `attack/hunting/hunt_orchestrator.py::mint_hunt_config` <-> `attack/hunting/hunt_orchestrator.py::ConcreteFaultCandidate` + `fault_kb` KB class vocabulary
+- **delivery semantic:** success (2 KB classes CSRF vs IDOR)
+- **input:** `direction=EnvisionedDirection(unit_id="Service:slug:a", fault_class="CWE-352", research_direction="probe CSRF vs IDOR", concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis="CSRF"), ConcreteFaultCandidate(fault_hypothesis="IDOR")])` where CSRF/IDOR are KB class vocabulary entries, `hunt_id="abc123"`
+- **observable:** returns list length 2; `[0].hunt_id=="abc123"` maps to KB class CSRF, `[1].hunt_id=="abc123-1"` maps to IDOR; each `prompt_template.concrete_fault_candidates[0].fault_hypothesis` equals corresponding KB class string, both share `research_direction=="probe CSRF vs IDOR"`, `l0_evidence==["llm: form Z no token"]`; oracle is KB class not raw string count, so adding third candidate with same class would not increase count
+- **yields:** `test_integration_c11_mint_fanout_per_distinct_class`
+
+### C12 - mint collapses same-class duplicates and empty degrades to carried-bare
+- **seam:** `attack/hunting/hunt_orchestrator.py::_concrete_candidates_by_class` <-> `attack/hunting/hunt_orchestrator.py::mint_hunt_config`
+- **delivery semantic:** duplicate + empty
+- **input:** a) `concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis="CSRF"), ConcreteFaultCandidate(fault_hypothesis="CSRF")]` grouped via KB class vocabulary `fault_kb` CSRF id; b) `concrete_fault_candidates=[]` or with `fault_hypothesis=""`
+- **observable:** a) exactly 1 HuntConfig with `hunt_id=="base"` and 2 candidates collapsed into 1 group where KB class is CSRF; b) exactly 1 HuntConfig with `prompt_template.concrete_fault_candidates==[]` and `research_direction` passed through; HuntConfig validates via Pydantic with 5-part fields `prompt_template,surface_context,target_caveats,prior_hunt_insights,tool_registry` all present; oracle is KB class not raw string count
+- **yields:** `test_integration_c12_mint_collapse_and_bare_degrade`
+
+### C13 - ReadOnlyGraphView write-shaped guard rejects before driver
+- **seam:** `attack/hunting/hunt_orchestrator.py::ReadOnlyGraphView._guard` <-> `neo4j_client` driver
+- **delivery semantic:** degradation (write-shaped cypher)
+- **input:** `graph_view.read("MATCH (u) MERGE (u)-[:EXPOSED_VIA]->(m)", {})` and `graph_view.read("match (u) merge (u)-[:EXPOSED_VIA]->(m)", {})` and `graph_view.merge()` any args
+- **observable:** each raises `ReadOnlyGraphViewError` containing `refusing write-shaped cypher`, zero calls to underlying `neo4j_client.read`, `graph_view._guard` regex case-insensitive on `MERGE|CREATE|DELETE|SET|REMOVE|FOREACH|LOAD CSV`
+- **yields:** `test_integration_c13_write_guard_rejects`
+
+### C14 - HuntOrchestratorActor thread reused across faults on same run
+- **seam:** `attack/hunting/hunt_orchestrator.py::_ORCHESTRATOR_ACTORS registry` <-> `attack/hunting/actors.py::HuntOrchestratorActor`
+- **delivery semantic:** ordering + duplicate-idempotent
+- **input:** `run_id="run-c14"`, 2 faults `CWE-352` over Service:slug:a and `CWE-639` over Service:slug:b, stub `reason_fn` carries; call `arun_orchestration` with 2 faults, capture `orchestrator` object after first `_reason_node` and after second
+- **observable:** `registry[run_id]` is same object identity across both faults, `len(registry)==1`, actor `run_id` thread name `hunting_orchestrator:run-c14` reused, reaped only via `await _reap_orchestrator(run_id)` not via pass finally, after reap `registry.get(run_id) is None`
+- **yields:** `test_integration_c14_actor_thread_reused`
+
+### C15 - cross-run memory.md via fixed HUNT_STORE_ROOT
+- **seam:** `attack/hunting/hunt_store.py::HUNT_STORE_ROOT` <-> `attack/hunting/actors.py::build_orchestrator_tool_surface{read_memory_hunts}`
+- **delivery semantic:** success (cross-run) + ordering
+- **input:** `storeA = HuntStore()` at default `src/polymerhus/attack/hunting/data/hunts` appends `run-a/config.md` revival `Service:slug:a::CWE-352`; `storeB = HuntStore()` same default reads `read_memory_hunts("Service:slug:a::CWE-352")` in new run
+- **observable:** `storeB.read_memory("Service:slug:a::CWE-352")` returns 1 config with `hunt_id` from run-a; file `data/hunts/memory.md` has cross-run index entry; default `HUNT_STORE_ROOT==src/polymerhus/attack/hunting/data/hunts` string equality, no env var
+- **yields:** `test_integration_c15_cross_run_memory_fixed_root`
+
+### C16 - HuntingAgent dispatch harness per-hunt thread via HuntingActorRegistry
+- **seam:** `attack/hunting/hunting_agent.py::build_actor_hunting_agent` <-> `attack/hunting/actors.py::HuntingActorRegistry` + `HuntingHunterActor`
+- **delivery semantic:** concurrency + ordering
+- **input:** dispatch 2 concurrent hunts `HuntSession(run_id="run-c16", hunt_id="hunt-A")` and `hunt-B` via `build_hunting_agent` inside `arun_orchestration` dispatch phase, spy on `HuntingActorRegistry.get_or_create`
+- **observable:** `author` and `judge` for hunt-A use same `HuntSession` thread `run-c16:hunt-A:hunting_hunter`, hunt-B uses distinct `run-c16:hunt-B:hunting_hunter`, registry holds 2 entries during dispatch, concurrent hunts never share thread
+- **yields:** `test_integration_c16_hunting_harness_per_hunt_thread`
+
+## Walkthrough predicates (end-to-end) E1-E14
+
+### E1 - per-fault fan-out 2 units x 2 classes -> 3 configs
+- **grounds:** spec 3.1 Q1 (one REASON per fault), 3.5 Q2/Q12 (N per class), 3.6 rich projection
+- **entry seam:** `attack/hunting/runtime.py::start_hunting` scheduled via `runtime.schedule("hunting",...)`
+- **input:** `project_id="proj-e1"`, `run_id="run-e1"`, `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z no token"),"applies"), DeliveredCandidate("Service:slug:b","CWE-352",Witness(llm="form Y carries token, Z does not"),"applies")]`; stub `reason_fn` returns per-unit: Service:slug:a -> 2 candidates (CSRF, IDOR), Service:slug:b -> 1 (CSRF)
+- **live edge:** none (all in-process, graph seam mocked `read_fn=lambda cy,p: []`, LLM stubbed)
+- **path:** candidate intake normalizes 2 accepted, 0 dropped -> supervisor pops FaultWorkItem(CWE-352, [a,b]) -> REASON renders rich projection per unit (data_items, cooperating_systems slots) in single GateInput with prior_minted_keys=[] -> stub returns 3 directions -> deterministic unit-boundary mint+note runs twice -> BUDGET passes all 3 -> DISPATCH pops 3 HuntConfigs via dispatch_fn
+- **terminal:** `hunts_dispatched==3`; HuntStore `run-e1/config.md` has 3 rows, `run-e1/notes.md` has 2 rows (one per unit), `run-e1/hunt.md` has 3 rows, `run-e1/dispatch.md` has 3 rows; `ledger==LoopLedger(units_done=2, notes_recorded=2, minted_config_keys=["Service:slug:a::CWE-352","Service:slug:b::CWE-352"], budget_remaining=3)`, report `budget_cut==()`
+- **observed:** `python -c "HuntStore(tmp).list_records('run-e1','config')"` returns 3 dicts with hunt_ids `base, base-1` pattern; `read_md run-e1/notes.md` shows 2 notes keyed correctly
+- **yields:** `test_e2e_e1_per_fault_fanout`
+
+### E2 - runtime bootstrap via POST completes and persists
+- **grounds:** spec 3.8 reuse + runtime seam F1 + O1-O10
+- **entry seam:** `POST /projects/proj-e2/hunting`
+- **input:** `project_id="proj-e2"`, HTTP body `{candidates:[Service:slug:a CWE-352 applies]}` with real `hunting_runs` table
+- **live edge:** none (worker loop seeded, neo4j not required)
+- **path:** API handler calls `pg.create_hunting_run` sync then `runtime.schedule("hunting", start_hunting(...))` on shared worker loop -> `start_hunting` sets `hunting_module_context("hunting")` -> runs `arun_orchestration` with 1 fault -> writes hunt store -> `set_hunting_run_status("complete")` via `asyncio.to_thread`
+- **terminal:** `hunting_runs` row `hunting_run_id` status `complete`; HuntStore `run-e2/run.md` count 1, `config.md` count 1; HTTP response 201 with `{"hunting_run_id": "<id>"}`
+- **observed:** `SELECT status FROM hunting_runs WHERE hunting_run_id='run-e2'` returns `complete`; `GET /projects/proj-e2/hunting/run-e2` returns 200 with same row
+- **yields:** `test_e2e_e2_bootstrap_post_persists`
+
+### E3 - BLOCKED (removed from scope): park/resume via back_edge to recon
+- **grounds:** the back_edge request to recon is **wrongly designed and is NOT an agent tool** in this tree (operator ruling 2026-08-22): the target-knowledge loop rides `graph_view`, never a recon request. The yellow park/resume predicate is therefore REMOVED from the walking tier, not substituted. Since #111 (graceful stop) is blocked by #110 and back_edge is out of the agent surface, the park/resume canon is not exercised e2e.
+
+### E4 - budget cut before dispatch (O9 deterministic)
+- **grounds:** spec 3.4 O9 envelope BUDGET stage unchanged
+- **entry seam:** `arun_orchestration` with injected `budget_fn`
+- **input:** `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="a"),"applies"), DeliveredCandidate("Service:slug:b","CWE-352",Witness(llm="b"),"applies")]` in order a then b, stub reason returns 3 configs (2 for a with hunt_ids base/base-1, 1 for b), `budget_fn=lambda ds: [ds[0]]` keeps exactly `Service:slug:a::CWE-352` base
+- **live edge:** none
+- **path:** REASON mints 3 configs across 2 units -> BUDGET receives 3 in order [a-base, a-base-1, b], returns [a-base] -> DISPATCH pops 1
+- **terminal:** `hunts_dispatched==1`; `report.budget_cut==("Service:slug:a::CWE-352-1","Service:slug:b::CWE-352")` length exactly 2 in order; `HuntStore.list_records("run-e4","cut")` length 2 matching those keys; `config.md` has 3 rows (mint before cut), `hunt.md` has 1 row with hunt_id base
+- **observed:** `cut.md` rows exact keys and count 2; dispatched hunt_id equals `base` not base-1
+- **yields:** `test_e2e_e4_budget_cut_records`
+
+### E5 - malformed + does-not-apply + UNKNOWN degrade never abort (O1/O7/O10)
+- **grounds:** spec 5 O1/O7/O10 fail-open
+- **entry seam:** `arun_orchestration`
+- **input:** `candidates` in fixed order [0] `DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm=None), "applies")` malformed, [1] `DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="x"),"applies")` duplicate key of [0], [2] `DeliveredCandidate("System:cache:1","CWE-639",Witness(llm="x"),"does-not-apply")` plus `read_fn` that raises for System slot but gated after prune
+- **live edge:** none
+- **path:** `normalize_candidates` processes in order: [0] malformed `malformed_dropped=1`, [1] duplicate of dropped key still counts as duplicate `duplicates_dropped=1`, [2] pruned `pruned_by_verdict=1` before gate -> gate receives empty list -> O1 empty pass, no BUDGET/DISPATCH
+- **terminal:** `hunts_dispatched==0`; `report.malformed_dropped==1`; `report.duplicates_dropped==1`; `report.pruned_by_verdict==1`; `report.store_write_failures==0`; HuntStore `run.md` `candidates_received==3`; zero rows in `config/hunt/dispatch/cut` tables
+- **observed:** `HuntStore.list_records("run-e5","run")[0]["candidates_received"]==3` and report fields exact as above
+- **yields:** `test_e2e_e5_empty_after_prunes_is_empty_pass`
+
+### E6 - cooperating systems surface in System-targeting hunt (Q5)
+- **grounds:** spec 3.6 D3 adjacency + 3.7 Q5 cooperating-systems instruction
+- **entry seam:** `arun_orchestration` with real-ish `build_projection` over seeded neo4j fixture
+- **input:** `candidates=[DeliveredCandidate("System:cache:1","CWE-639",Witness(llm="System cache internal"),"applies")]`; neo4j has `L1System(kind="cache",discriminator="1")-[:CALLS]->L1System(kind="db")` and `L1System(cache:1)<-[:EXPOSED_VIA]-L1Service(slug:b)`
+- **live edge:** neo4j mini-fixture `L1System cache:1 -> db` and `Service slug:b -> cache:1` seeded by test (requires live neo4j; blocked when neo4j unavailable, not substituted)
+- **path:** `build_projection("proj-e6","System:cache:1")` reads System-to-System adjacency -> `GateInput.unit_projection["System:cache:1"].cooperating_systems=={"CALLS": (SystemInfo(kind="db"),), "EXPOSED_VIA": (SystemInfo(kind="Service"),)}` -> `_compose_gate_prompt` renders `cooperating systems: CALLS: kind=db` with verbatim `Consider cooperating systems when creating a HuntConfig targeting a system`
+- **terminal:** prompt string contains `cooperating systems:` and `kind=db`; 1 HuntConfig minted with `unit_id=="System:cache:1"`; HuntStore notes count 1
+- **observed:** `trace_gate_step("symbolic-render", input={"cooperating_systems":"ok"})` row present; prompt file read-back contains cooperating line; Cypher `MATCH (s:System {discriminator:"1"})-[r:CALLS]->(t) RETURN count(t)` ==1
+- **yields:** `test_e2e_e6_cooperating_systems_rendered`
+
+### E7 - Q1 latency: fault-level batch < U * single-pair (p50/p95 ms)
+- **grounds:** spec 3.1 quality not carried by effort - structural Nx saving
+- **entry seam:** `attack/hunting/orchestrator_tracing.py::orchestrator_gate_span` + `arun_orchestration` with stub reason_fn sleeping 20ms
+- **input:** `candidates` for fault CWE-352 over U=4 units `Service:slug:a..d` each `applies`; single-pair baseline measured as one GateInput with 1 candidate
+- **live edge:** none for harness batch proof; blocked when real LLM required (needs real model for token-scaling claim)
+- **criterion/metric:** latency criterion: `p50(batch_duration) < 0.8 * U * p50(single_duration)` and `p95(batch_duration) < U * p95(single_duration)`. Metric: `orchestrator_gate_span` duration ms per REASON turn from trace table (fake langfuse span for harness, real LLM span when model available). Threshold 0.8 is harness-only empirical; real-model baseline required to distinguish flawed (batching overhead fixable) vs wrong (model scales linearly fundamental). Fixable if threshold breached by overhead - batching bug; fundamental if LLM prompt tokens grow linearly despite batching.
+- **critical examination:** core claim batch cheaper than N singles; stub sleep proves harness not model - needs real LLM distribution for burden of proof. Hidden assumption: token overhead dominates - fails if model does per-unit reasoning anyway. Metric currently collapses flawed vs wrong without real-model baseline.
+- **terminal:** harness stub: 1 span `orchestrator-<run[:8]>` with duration_ms; batch < 64ms (4*20*0.8) at p50 over 10 reps; real-model blocked
+- **observed:** `SELECT duration_ms FROM trace WHERE name like 'orchestrator-%'` aggregated p50/p95; assert only for harness
+- **yields:** `test_e2e_e7_q1_latency_batch_beats_n_singles`
+- **verdict:** flawed if harness threshold not met - fixable; wrong if real model intrinsically linear - fundamental re-architecture needed; currently blocked for real-model
+
+### E8 - Q2 accuracy: exhaustiveness, non-overlapping, unfeasibility filtered
+- **grounds:** spec 3.2 hypothesis elicitation + Q11 novelty + Q16 merge
+- **entry seam:** `arun_orchestration` with fixture L1 graph where 2 Services + 1 System each have not-FALSE projection
+- **input:** 3 units all `applies` under CWE-352; stub reason carries all 3 and emits distinct classes; one pruned direction `carried=False` for unreachable unit
+- **live edge:** none
+- **criterion/metric:** coverage = `minted_config_units / units_where_not_FALSE_and_carried` must be 100%; duplicate_rate = `duplicate_revival_keys / total_configs` must be 0; filtered = pruned directions mint 0 configs. Metric: HuntStore config revival keys distinct count.
+- **critical examination:** core claim every plausible locus gets >=1 config without dupes; evidence needs ground truth of which units truly not-FALSE - seeded fixture defines it. Hidden assumption: stub LLM carries correctly - real LLM may miss subtle unit (exhaustiveness failure). Flawed (fixable by prompt tuning) vs wrong (model cannot discriminate faults) - latter fundamental.
+- **terminal:** `config.md` has 3 rows with distinct `revival_key`; 0 duplicate hunt_ids; pruned key absent from `config.md`
+- **observed:** `HuntStore.list_records("run-e8","config")` grouped by revival_key coverage 100% duplicate 0
+- **yields:** `test_e2e_e8_q2_accuracy_coverage`
+
+### E9 - Q3 detail depth: HuntConfig prompt_template sufficient for DECOMPOSE
+- **grounds:** spec 3.5 extension + Q8 concretisation
+- **entry seam:** `arun_orchestration` -> downstream `HuntConfig` read-back -> `hunting_agent` dry-run `DECOMPOSE` judge
+- **input:** same E1 input with stub emitting `research_direction="probe state-changing form for missing anti-CSRF token verification at WebPresentation boundary"`, `concrete_fault_candidates=[{fault_hypothesis:"CSRF", adversarial_capabilities:["authenticated session obtainable"], blocking_constraints:["global origin-check may block"]}]`
+- **live edge:** none for harness fields; HuntingAgent judge version is operator-ratified gate for semantic sufficiency
+- **criterion/metric:** harness: each HuntConfig `prompt_template.research_direction` len>20 and contains class name not locale/payload, `concrete_fault_candidates[0].fault_hypothesis` non-empty, `adversarial_capabilities` len>=1, `blocking_constraints` len>=1, `extension_points` len>=1, `supposed_payload_vectors` len>=1, all strings len>10; metric fields_present 6/6 and avg length>20; semantic: blind HuntingAgent `DECOMPOSE` returns at least one `TestImplementationSpec` with `TestVariant` non-empty when fed the HuntConfig, asserting agent can extend without re-deriving. Hidden assumption len correlates with usefulness - vacuous 72-char CSRF string would pass len but fail blind judge.
+- **critical examination:** string presence alone is weak proxy - length equals usefulness is hasty generalisation. Needs blind judge rating to distinguish flawed (missing field fixable via schema) vs wrong (vacuous fluent prose fundamental prompt failure).
+- **terminal:** harness 3 configs pass Pydantic and len; blind judge 3/3 `TestVariant` produced with provenance
+- **observed:** harness field length checks + `HuntingAgent.dry_run(HuntConfig)` TestVariant count
+- **yields:** `test_e2e_e9_q3_detail_depth`
+- **verdict:** flawed if missing field - fixable; wrong if fluent but vacuous and blind judge 0 variants - needs human eval fundamental
+
+### E10 - Q4 trajectory soundness: graph envelope respected in prompt trace
+- **grounds:** spec 3.3 ledger re-inject only after record_note + graph envelope 3.8
+- **entry seam:** `arun_orchestration` with trace spy on `trace_gate_step` and graph traversal log
+- **input:** 2 units fault CWE-352 as E1
+- **live edge:** none (stub) but real actor run needed to prove prompt adherence beyond harness order
+- **criterion/metric:** trace order must be `symbolic-render` -> `gate-decision` per fault with `ledger re-inject` must-not-happen between intra-unit graph_view calls (negative assertion), and supervisor phases observed as `reason` -> `budget` -> `dispatch` via Command(goto=...) order; `build_hunting_graph` nodes still 4. Metric: step order index, ledger_inject_count==faults (2) not tool_calls, node count=4, Command source is supervisor only.
+- **critical examination:** harness order proves code, not that LLM internal graph in system prompt is followed - stub bypasses prompt. Needs real actor trace to prove model respects prompt graph vs invents steps. Fixable if harness mis-orders, fundamental if model ignores prompt.
+- **terminal:** `trace rows ==2` with correct order, ledger_inject==2, zero ledger_inject between graph_view calls; `graph.nodes=={"supervisor","reason","budget","dispatch"}`; no extra node, no Command from reason/budget/dispatch
+- **observed:** `trace_gate_step` call log order + ledger re-inject negative assertion between tool calls; `build_hunting_graph().nodes` and edge sources
+- **yields:** `test_e2e_e10_q4_trajectory_soundness`
+- **verdict:** flawed if harness mis-orders - fixable; wrong if model invents steps - fundamental prompt hardening needed
+
+### E11 - Q5 mint+note consistency: mint once per unit then note, counts align
+- **grounds:** spec 3.3 collocated unit boundary
+- **entry seam:** `arun_orchestration` with spy on `build_orchestrator_tool_surface` mint_emissions bucket and graph_view interleaving guard
+- **input:** 2 units CWE-352 each with N=1 and N=2 distinct classes respectively (total 3 configs) as E1, with graph_view calls interleaved before first mint
+- **live edge:** none
+- **criterion/metric:** `mint_hunt_config` call count == units_done (2), each precedes exactly one `record_note` with same revival_key within 1 trace step and no graph_view between mint and its note (interleaving guard); `HuntStore notes.md` rows == units_done (2); `config.md` rows == distinct classes (3); each note's revival_key matches a config revival_key; call order must be `mint a -> note a -> mint b -> note b` not `mint a -> graph_view -> note a`. Metric: counts equality + order index + interleaving zero, Pydantic HuntConfig validation passes.
+- **critical examination:** counts alone prove boundary but not that harness never interleaves tool after mint before note - stub mimics discipline, real LLM may double-mint or interleave graph_view. Flawed (retry logic) fixable vs wrong (prompt ambiguous) fundamental - needs tool guard if double-mint.
+- **terminal:** `mint_emissions` length 2; `notes.md` length 2; `config.md` length 3; sequential log `mint a -> note a -> mint b -> note b` with zero interleaving
+- **observed:** `HuntStore.list_records` counts + `mint_emissions` bucket inspection + spy call order with interleaving check
+- **yields:** `test_e2e_e11_q5_mint_note_consistency`
+- **verdict:** flawed if counts off by harness - fixable; wrong if model double-mints or interleaves - needs tool guard fundamental
+
+### E12 - Q6 effective tool use: sufficiency loops fire when needed
+- **grounds:** spec 3.2 target-knowledge loop + Q11 prior-hunt reflection
+- **entry seam:** `attack/hunting/actors.py::build_orchestrator_tool_surface` with instrumented `read_memory_hunts`/`graph_view` spies
+- **input:** a) GateInput with `projection=None` (UNKNOWN) for Service:slug:a; b) GateInput with `prior_minted_keys=["Service:slug:a::CWE-352"]` and store has 1 prior config
+- **live edge:** none
+- **criterion/metric:** when projection UNKNOWN then `graph_view` invoked >=1 until sufficient before mint; when prior keys non-empty then `read_memory_hunts` invoked >=1 before mint. Metric: spy call counts `graph_view_calls>=1`, `read_memory_hunts_calls>=1`.
+- **critical examination:** core claim tool-augmented ReAct uses tools conditionally; evidence sufficiency needs observable decision - call log proves use but not sufficiency reasoning. Hidden assumption: UNKNOWN always needs graph_view - but some faults may be decidable without it (false positive). What is missing: negative case (when sufficient, zero calls allowed). Flawed if harness never calls - prompt bug fixable; fundamental if LLM never learns to call despite prompt.
+- **terminal:** case a) `graph_view_calls==2` then mint; case b) `read_memory_hunts_calls==1` then mint; opposite sufficient case 0 calls still passes
+- **observed:** injected `read_fn` spy and `store_reads` spy call logs
+- **yields:** `test_e2e_e12_q6_effective_tool_use`
+- **verdict:** flawed if spy counts wrong - fix harness; wrong if LLM ignores prompt - prompt redesign fundamental
+
+### E13 - Q7 LLM reflection strategy: trace shows symbolic-render, sufficiency string, reflection keys, merge marker
+- **grounds:** spec 3.2 + fallback skill verbatim
+- **entry seam:** `_compose_gate_prompt` + `trace_gate_step` + stub LLM that emits research_direction class-level
+- **input:** GateInput as E1 with `prior_minted_keys=["Service:slug:a::CWE-352"]`, stub LLM emits `research_direction="probe CSRF token verification"` (class-level) and 2 candidates where same-class merge collapses to 1
+- **live edge:** none (stub) but oracle requires locale leak list
+- **criterion/metric:** prompt contains `symbolic-render` preamble, knowledge-sufficiency question substring, `Prior minted-config keys` line, `Same-class merge` instruction; trace rows include `symbolic-render` and `gate-decision` with `per-unit work-items` count 2; `research_direction` contains class token "CSRF" and zero forbidden locale tokens `["Origin:", "/state-change", "attacker.site", "payload"]` via negative check; concrete candidates merged to 1 proves merge executed. Metric: substring presence 5/5, work-items ==units, locale leak 0, merge collapsed.
+- **critical examination:** substring check alone passes vacuous reflection - locale negative check and merge collapse prove strategy not just prompt presence. Hidden assumption: prompt substring equals execution - still proxy. Missing independent judge for class-level vs narrowed - added locale oracle fixes part. Flawed (missing marker) fixable vs wrong (fluent but locale-leaking despite marker) needs fine-tuning fundamental.
+- **terminal:** `GateDecision.directions[0].research_direction=="probe CSRF token verification"` length >20 with 0 locale tokens; concrete candidates length 1 after merge
+- **observed:** prompt string search + trace row + emitted direction field + locale token negative search via oracle list
+- **yields:** `test_e2e_e13_q7_reflection_strategy`
+- **verdict:** flawed if missing marker - add to skill; wrong if LLM leaks payload despite marker - fundamental alignment
+
+### E14 - store write failure + KB degraded still completes (fail-open O3/O4/O5)
+- **grounds:** spec 5 O3/O4/O5 + 3.6 fail-open discipline
+- **entry seam:** `arun_orchestration` with flaky HuntStore and raising kb_retrieve_fn
+- **input:** `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z"),"applies")]`, `kb_retrieve_fn` raises `RuntimeError("KB unavailable")`, `HuntStore.append` fails first 2 writes then succeeds
+- **live edge:** none
+- **path:** KB degraded -> gate prompt shows `KB grounding: DEGRADED` -> flaky store fails first writes `store_write_failures==2` -> gate still carries -> mint succeeds on retry
+- **terminal:** `hunts_dispatched==1`; `report.store_write_failures==2`; `report.ledger.units_done==1`; `HuntStore config.md` has 1 row despite earlier failures; `kb_degraded==True` in GateInput
+- **observed:** `HuntStore.list_records("run-e14","config")` length 1; GateInput kb_degraded flag
+- **yields:** `test_e2e_e14_fail_open_store_kb_graph`
+
+### E15 - concurrency barrier, duplicate-idempotent reads, malformed LLM output degrades to carry-bare
+- **grounds:** spec 5 duplicate-idempotent + ordering + degradation, spec 3.8 graph last-write serialisation
+- **entry seam:** `arun_orchestration` with concurrent fault schedule + `read_memory_hunts` spy + stub LLM returning unparseable GateDecision
+- **input:** a) concurrency: 2 faults `CWE-352` and `CWE-639` each with 1 unit dispatched concurrently via `asyncio.gather` over two `arun_orchestration` calls on same `run_id` with shared HuntStore; b) duplicate-idempotent: same `read_memory_hunts("Service:slug:a::CWE-352")` called twice in same REASON turn; c) malformed: `reason_fn` returns `GateDecision` with `__pydantic_validation_error__` or raises `JSONDecodeError` on parsing LLM output
+- **live edge:** none (concurrency via in-process gather, blocked when real worker loop required)
+- **criterion/metric:** a) ledger writes serialised: `final ledger.units_done ==2` with no interleaved `minted_config_keys` corruption, `HuntStore config.md` rows 2 distinct revival keys, not 1 lost update; b) duplicate reads: second `read_memory_hunts` returns identical list without extra HuntStore side effect, count stays 1 config per key; c) malformed LLM: harness degrades to carry fault bare with 1 HuntConfig per unit (not crash), `report.store_write_failures` counts only store failures not parse failures
+- **critical examination:** core claim StateGraph last-write channels provide serialisation not optimistic concurrency; evidence is ledger final state not intermediate interleaving. Hidden assumption: asyncio.gather mimics worker loop concurrency - real shared worker loop may queue serially anyway. Flawed (missing lock) fixable via reducer, fundamental if StateGraph cannot serialise ledger.
+- **terminal:** a) `ledger.units_done==2`, `minted_config_keys` length 2 distinct, `config.md` 2 rows; b) `read_memory` spy call count 2 but HuntStore rows unchanged 1; c) `hunts_dispatched==1` per fault with `research_direction==""` bare
+- **observed:** ledger final read, HuntStore counts, spy call logs, GateDecision validation error caught and logged `gate reasoning failed for CWE-352, carrying`
+- **yields:** `test_e2e_e15_concurrency_duplicate_malformed`
+
+## Quiz - operator-supplied bootstrap (one question per missing item)
+
+Each walkthrough is self-contained except the fixtures it cannot invent. A walkthrough whose bootstrap is unanswered stays blocked - not substituted with a double.
+
+- **E1 (per-fault fan-out):** Q: seed L1 fixture - which 2 Service slugs and fault CWE-352 witnesses define the expected 3 configs? Provide slugs + distinct class names (CSRF, IDOR) or carry as blocked.
+- **E2 (POST bootstrap):** Q: target tenant - which `project_id` has `hunting_runs` table migrated and which credentials/DB URL does the API use? Without live PG, blocked.
+- **E3 (yellow rematch):** REMOVED from scope - the back_edge request to recon is wrongly designed and not an agent tool (operator ruling 2026-08-22). No bootstrap question needed.
+- **E4 (budget cut):** Q: budget policy - what deterministic `budget_fn` threshold cuts 3->1, and which revival key is expected survivor?
+- **E5 (prunes):** Q: known surface - for the empty-pass assertion, confirm the expected `pruned_by_verdict` count matches the seeded `known_faults` list.
+- **E6 (cooperating systems):** Q: L1 System graph fixture - which System kinds and edge families (`CALLS`, `EXPOSED_VIA`) are seeded for System:cache:1's cooperating neighbors?
+- **E7 (Q1 latency):** Q: LLM latency baseline - what real model and concurrency provides `single_duration` ms, and what threshold multiplier (0.8) is approved?
+- **E8 (Q2 accuracy):** Q: ground truth - for the 3-unit fixture, which units are not-FALSE by predicate so coverage denominator is known?
+- **E9 (Q3 detail):** Q: HuntingAgent DECOMPOSE - which agent version judges research_direction sufficient, and what length threshold (>20) is ratified?
+- **E10 (Q4 trajectory):** Q: trace backend - which Langfuse/span table holds `orchestrator_gate_span` durations and is it writable in CI?
+- **E11 (Q5 mint+note):** Q: store path - confirm `data/hunts` root is writable for count assertions, or is HuntStore tmp_path acceptable?
+- **E12 (Q6 tool use):** Q: read seam - which `graph_view` spy and prior `read_memory_hunts` store fixture define the UNKNOWN/keys cases?
+- **E13 (Q7 reflection):** Q: locale leak oracle - which forbidden locale tokens (`Origin:`, `/state-change`, payload strings) define class-level vs narrowed?
+- **E14 (fail-open):** Q: fault injection - which store failure mode (first 2 appends raise) and KB unavailability stub are used to assert fail-open counts?
+- **E15 (concurrency/duplicate/malformed):** Q: worker loop - which shared loop runs concurrent `arun_orchestration` gathers, and what malformed GateDecision JSON triggers carry-bare degrade vs crash?
+
+Blocked walkthroughs carried as blocked (not doubled): E2 if PG unavailable, E6 if neo4j fixture unavailable, E7 if real LLM/trace backend unavailable, E15 concurrency part if worker loop not available - all others use in-process stubs and remain mechanisable.
+
+## Coverage map
+
+- F1 bootstrap: C1, C2, E2
+- F2 prompt materialization: C3, C4, C5, E6, E13
+- F3 graph workflow: C6, C7, C14, E1, E10
+- F4 deterministic phases: C8, C13, E4, E14, E15
+- F5 memory: C9, C10, C15, E3, E8, E15
+- F6 mint: C11, C12, E1, E11
+- dispatch harness: C16
+- outlier duplicate/concurrency/malformed: C13, E15
+- Q1 latency: E7 (harness proof; blocked for real-model)
+- Q2 accuracy: E8
+- Q3 detail depth: E9 (harness + blind judge)
+- Q4 trajectory soundness: E10 (order + negative ledger re-inject)
+- Q5 mint+note consistency: E11 (counts + order + interleaving guard)
+- Q6 effective tool use: E12
+- Q7 LLM reflection strategy: E13 (substrings + locale negative + merge)
+
+Total: 16 contract + 15 walkthrough = 31 predicates; blocked: up to 4 (E2 PG, E6 neo4j, E7 real LLM, E15 concurrency when worker loop not available) when live edges unavailable, plus E7 real-model part and E9 blind judge when agent unavailable.

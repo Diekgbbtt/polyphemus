@@ -34,6 +34,58 @@ REPO_ROOT = Path(__file__).resolve().parents[2]
 
 COMPOSE = ["docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.dev.yml"]
 
+# The sibling hunting e2e agent. The walking tier must point at an agent-1
+# container BUILT FROM THIS WORKTREE (docker-compose.e2e.yml, service `agent-1`,
+# published on 8081) so the REST walkthroughs exercise the candidates-rewrite
+# code, never the main-repo `dev` tree. `AGENT_HTTP_URL` overrides, else default
+# to the worktree sibling on 8081 (host) or `agent-1:8080` (in-network).
+SIBLING_COMPOSE = ["docker", "compose", "-f", "docker-compose.e2e.yml"]
+
+DEFAULT_AGENT_HTTP_URL = "http://localhost:8081"
+
+
+def agent_http_url() -> str:
+    """The base URL of the sibling agent-1 container the walking tier drives.
+
+    `AGENT_HTTP_URL` wins when set; the default is the worktree sibling's
+    published port (8081). Inside the compose network the tests service
+    resolves the sibling by its network alias ``agent-1`` on 8080."""
+    from os import environ
+
+    if environ.get("NEO4J_URI") == "bolt://neo4j:7687":
+        return environ.get("AGENT_HTTP_URL") or "http://agent-1:8080"
+    return environ.get("AGENT_HTTP_URL") or DEFAULT_AGENT_HTTP_URL
+
+
+def sibling_up() -> bool:
+    """True when the worktree sibling agent-1 container answers `/health`."""
+    import urllib.request
+
+    try:
+        with urllib.request.urlopen(f"{agent_http_url()}/health", timeout=5) as resp:  # noqa: S310
+            return resp.status == 200
+    except Exception:
+        return False
+
+
+def ensure_sibling_agent(timeout: int = 240) -> bool:
+    """Bring up the worktree sibling agent-1 (docker-compose.e2e.yml) and wait
+    for `/health`; True when ready. The sibling is a SEPARATE container built
+    from the polymerhus-agent image that mounts THIS worktree's src/db/skills/
+    gateway - the walking tier MUST drive it, never the main-repo agent."""
+    if sibling_up():
+        return True
+    try:
+        _run(SIBLING_COMPOSE + ["up", "-d", "agent-1"], timeout=60)
+    except Exception:
+        return False
+    deadline = time.time() + timeout
+    while time.time() < deadline:
+        if sibling_up():
+            return True
+        time.sleep(3)
+    return False
+
 
 def _run(cmd: list[str], *, timeout: int = 60) -> subprocess.CompletedProcess:
     return subprocess.run(cmd, cwd=REPO_ROOT, capture_output=True, text=True, timeout=timeout)
