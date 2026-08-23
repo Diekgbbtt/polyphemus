@@ -260,7 +260,7 @@ class TraceJudge:
 
     def assert_reflection_markers(self) -> None:
         """Q7: the traced gate-decision output carries a class-level research_direction
-        (no locale leak) and concrete_fault_candidates. The reflection-strategy
+        (no locale leak) and vulnerability_classes. The reflection-strategy
         markers (knowledge-sufficiency, same-class merge, prior-hunt reflection)
         live in the system PROMPT - E13 asserts them as prompt substrings; here we
         judge the LLM output the strategy produced: research_direction must be
@@ -278,8 +278,8 @@ class TraceJudge:
                     assert forbidden.lower() not in rd.lower(), \
                         f"research_direction leaks locale token {forbidden}"
                 # the strategy's class grain survives to the trace
-                assert d.get("concrete_fault_candidates") is not None, \
-                    f"direction {d.get('pair')} carries no concrete_fault_candidates"
+                assert d.get("vulnerability_classes") is not None, \
+                    f"direction {d.get('pair')} carries no vulnerability_classes"
 
 
 _ALL_TOOL_NAMES = {

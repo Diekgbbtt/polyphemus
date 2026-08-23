@@ -99,17 +99,19 @@ def _config(**overrides) -> HuntConfig:
         hunt_id="hunt-1",
         unit_id=SERVICE_A,
         fault_class=FAULT_X,
+        vulnerability_class="CSRF",
         prompt_template=HuntPromptTemplate(
             rationale="fault-x applies to slug-a because ...",
-            extension_points=["csrf-probe"],
-            assumptions=["public exposure"],
-            supposed_payload_vectors=["q=value"],
             l0_evidence=["GET /api/a answers 200"],
+            research_direction="probe the state-changing form for token verification",
         ),
         surface_context={"cards": [CARD_A]},
         target_caveats=["perimeter WAF on /api/*"],
         prior_hunt_insights=[],
         tool_registry=[{"technique": "csrf-probe"}],
+        adversarial_capabilities=["authenticated session obtainable"],
+        assumptions=["public exposure"],
+        technique_primitives=["foreign-origin tokenless submission"],
     )
     return base.model_copy(update=overrides)
 

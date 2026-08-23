@@ -76,9 +76,10 @@ def test_confirmed_hypothesis(session, project, tmp_path):
     Entry seam: the `HuntConfig` dispatch (IA-2).
     Input: a fixture `HuntConfig` with the five parts set to stated values -
       prompt template (rationale "fault-x applies to slug-a because ...",
-      assumptions [...], supposed payload vectors [...], L0 evidence [...]),
-      adapted index-card (spine + one-hop DFS of unit "kind:slug:a"), target
-      caveats [...], prior-hunt insights [], tool registry [].
+      research direction [...], L0 evidence [...]), vulnerability class
+      CSRF, adversarial capabilities / assumptions / technique primitives
+      [...], adapted index-card (spine + one-hop DFS of unit "kind:slug:a"),
+      target caveats [...], prior-hunt insights [], tool registry [].
     Live edge: none (self-contained; the pod is the real one).
     Path: agent queries the fixture KB on `(fault-x, slug-a-technological-
       axis)` -> authors the spec -> pod executes -> {successful,

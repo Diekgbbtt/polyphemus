@@ -60,7 +60,6 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True) -> Envisioned
         rationale="fixture rationale from the spec's H1 gate",
         assumptions=["fixture assumption"],
         envisioned_test_primitives=["fixture probe"],
-        supposed_payload_vectors=["fixture vector"],
     )
 
 

@@ -49,7 +49,7 @@
 ### C7 - ledger and minted_configs are last-write, per-fault accumulation
 - **seam:** `attack/hunting/hunt_orchestrator.py::_reason_node` <-> `attack/hunting/orchestrator_graph.py::HuntOrchestrationState[ledger, minted_configs]`
 - **delivery semantic:** success (2 faults, 2 units each)
-- **input:** fault CWE-352 with units Service:slug:a, Service:slug:b; fault CWE-639 with unit Service:slug:a; `reason_fn` returns 1 carried EnvisionedDirection per unit with distinct `concrete_fault_candidates`
+- **input:** fault CWE-352 with units Service:slug:a, Service:slug:b; fault CWE-639 with unit Service:slug:a; `reason_fn` returns 1 carried EnvisionedDirection per unit with distinct `vulnerability_classes`
 - **observable:** after fault1 reason, `state["ledger"]==LoopLedger(units_done=2, minted_config_keys=["Service:slug:a::CWE-352","Service:slug:b::CWE-352"], notes_recorded=2)`; after fault2, `units_done=3` appended; `state["minted_configs"]` has exactly 3 keys with last-write value (second write to same key overwrites); `directions` channel length 3 via reducer `operator.add`
 - **yields:** `test_integration_c7_ledger_last_write_per_fault`
 
@@ -74,18 +74,18 @@
 - **observable:** `arun_orchestration` completes with `hunts_dispatched==1`, `prior_hunt_insights==[]` on minted config, 1 warning logged `hunt store read degraded`, no exception
 - **yields:** `test_integration_c10_store_read_degrades_empty`
 
-### C11 - mint fans out N per distinct fault_hypothesis, hunt_id base/base-i (KB-class oracle)
-- **seam:** `attack/hunting/hunt_orchestrator.py::mint_hunt_config` <-> `attack/hunting/hunt_orchestrator.py::ConcreteFaultCandidate` + `fault_kb` KB class vocabulary
-- **delivery semantic:** success (2 KB classes CSRF vs IDOR)
-- **input:** `direction=EnvisionedDirection(unit_id="Service:slug:a", fault_class="CWE-352", research_direction="probe CSRF vs IDOR", concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis="CSRF"), ConcreteFaultCandidate(fault_hypothesis="IDOR")])` where CSRF/IDOR are KB class vocabulary entries, `hunt_id="abc123"`
-- **observable:** returns list length 2; `[0].hunt_id=="abc123"` maps to KB class CSRF, `[1].hunt_id=="abc123-1"` maps to IDOR; each `prompt_template.concrete_fault_candidates[0].fault_hypothesis` equals corresponding KB class string, both share `research_direction=="probe CSRF vs IDOR"`, `l0_evidence==["llm: form Z no token"]`; oracle is KB class not raw string count, so adding third candidate with same class would not increase count
+### C11 - mint fans out N per distinct vulnerability class, hunt_id base/base-i (class oracle)
+- **seam:** `attack/hunting/hunt_orchestrator.py::mint_hunt_config` <-> `attack/hunting/hunt_orchestrator.py::_distinct_vulnerability_classes` + the elicited class vocabulary (ADR G5)
+- **delivery semantic:** success (2 classes CSRF vs IDOR)
+- **input:** `direction=EnvisionedDirection(unit_id="Service:slug:a", fault_class="CWE-352", research_direction="probe CSRF vs IDOR", vulnerability_classes=["CSRF", "IDOR"])` where CSRF/IDOR are elicited web-vulnerability classes, `hunt_id="abc123"`
+- **observable:** returns list length 2; `[0].hunt_id=="abc123"` carries class CSRF, `[1].hunt_id=="abc123-1"` carries IDOR; each config `status=="hypothesised"`, `vulnerability_class` equals its class, both share `prompt_template.research_direction=="probe CSRF vs IDOR"`, `l0_evidence==["llm: form Z no token"]`, `adversarial_capabilities==[]` and `technique_primitives==[]`; oracle is the class not the raw string count, so adding a third emission of the same class would not increase the fan-out
 - **yields:** `test_integration_c11_mint_fanout_per_distinct_class`
 
 ### C12 - mint collapses same-class duplicates and empty degrades to carried-bare
-- **seam:** `attack/hunting/hunt_orchestrator.py::_concrete_candidates_by_class` <-> `attack/hunting/hunt_orchestrator.py::mint_hunt_config`
+- **seam:** `attack/hunting/hunt_orchestrator.py::_distinct_vulnerability_classes` <-> `attack/hunting/hunt_orchestrator.py::mint_hunt_config`
 - **delivery semantic:** duplicate + empty
-- **input:** a) `concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis="CSRF"), ConcreteFaultCandidate(fault_hypothesis="CSRF")]` grouped via KB class vocabulary `fault_kb` CSRF id; b) `concrete_fault_candidates=[]` or with `fault_hypothesis=""`
-- **observable:** a) exactly 1 HuntConfig with `hunt_id=="base"` and 2 candidates collapsed into 1 group where KB class is CSRF; b) exactly 1 HuntConfig with `prompt_template.concrete_fault_candidates==[]` and `research_direction` passed through; HuntConfig validates via Pydantic with 5-part fields `prompt_template,surface_context,target_caveats,prior_hunt_insights,tool_registry` all present; oracle is KB class not raw string count
+- **input:** a) `vulnerability_classes=["CSRF", "CSRF"]`; b) `vulnerability_classes=[]` or with `[""]`
+- **observable:** a) exactly 1 hypothesised HuntConfig with `hunt_id=="base"` and `vulnerability_class=="CSRF"`; b) exactly 1 hypothesised draft with `vulnerability_class==""` and `research_direction` passed through; HuntConfig validates via Pydantic with the reworked slots (`status`, `vulnerability_class`, `prompt_template.rationale|research_direction|l0_evidence`, `surface_context`, `target_caveats`, `prior_hunt_insights`, `tool_registry`, `adversarial_capabilities`, `assumptions`, `technique_primitives`) all present; oracle is the class not the raw string count
 - **yields:** `test_integration_c12_mint_collapse_and_bare_degrade`
 
 ### C13 - ReadOnlyGraphView write-shaped guard rejects before driver
@@ -197,9 +197,9 @@
 ### E9 - Q3 detail depth: HuntConfig prompt_template sufficient for DECOMPOSE
 - **grounds:** spec 3.5 extension + Q8 concretisation
 - **entry seam:** `arun_orchestration` -> downstream `HuntConfig` read-back -> `hunting_agent` dry-run `DECOMPOSE` judge
-- **input:** same E1 input with stub emitting `research_direction="probe state-changing form for missing anti-CSRF token verification at WebPresentation boundary"`, `concrete_fault_candidates=[{fault_hypothesis:"CSRF", adversarial_capabilities:["authenticated session obtainable"], blocking_constraints:["global origin-check may block"]}]`
+- **input:** same E1 input with stub emitting `research_direction="probe state-changing form for missing anti-CSRF token verification at WebPresentation boundary"`, `vulnerability_classes=["CSRF"]`
 - **live edge:** none for harness fields; HuntingAgent judge version is operator-ratified gate for semantic sufficiency
-- **criterion/metric:** harness: each HuntConfig `prompt_template.research_direction` len>20 and contains class name not locale/payload, `concrete_fault_candidates[0].fault_hypothesis` non-empty, `adversarial_capabilities` len>=1, `blocking_constraints` len>=1, `extension_points` len>=1, `supposed_payload_vectors` len>=1, all strings len>10; metric fields_present 6/6 and avg length>20; semantic: blind HuntingAgent `DECOMPOSE` returns at least one `TestImplementationSpec` with `TestVariant` non-empty when fed the HuntConfig, asserting agent can extend without re-deriving. Hidden assumption len correlates with usefulness - vacuous 72-char CSRF string would pass len but fail blind judge.
+- **criterion/metric:** harness: each HuntConfig `prompt_template.research_direction` len>20 and contains class name not locale/payload, `vulnerability_class` non-empty, `status=="hypothesised"`, `prompt_template.rationale` non-empty; metric fields_present and avg length>20; semantic: blind HuntingAgent `DECOMPOSE` returns at least one `TestImplementationSpec` with `TestVariant` non-empty when fed the HuntConfig, asserting agent can extend without re-deriving. Hidden assumption len correlates with usefulness - vacuous 72-char CSRF string would pass len but fail blind judge.
 - **critical examination:** string presence alone is weak proxy - length equals usefulness is hasty generalisation. Needs blind judge rating to distinguish flawed (missing field fixable via schema) vs wrong (vacuous fluent prose fundamental prompt failure).
 - **terminal:** harness 3 configs pass Pydantic and len; blind judge 3/3 `TestVariant` produced with provenance
 - **observed:** harness field length checks + `HuntingAgent.dry_run(HuntConfig)` TestVariant count

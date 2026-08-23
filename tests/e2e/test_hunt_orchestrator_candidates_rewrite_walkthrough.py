@@ -68,7 +68,6 @@ import pytest
 from db.neo4j.init_schema import init_schema
 from db.neo4j.l1_schema import init_l1_schema
 from polymerhus.attack.hunting.hunt_orchestrator import (
-    ConcreteFaultCandidate,
     DeliveredCandidate,
     DispatchResult,
     EnvisionedDirection,
@@ -226,13 +225,13 @@ def _candidate(unit_id: str, fault_class: str, *, verdict: str = "applies",
 
 
 def _carry(candidate: DeliveredCandidate, *, research_direction: str = "probe CSRF",
-           candidates: list[ConcreteFaultCandidate] | None = None) -> EnvisionedDirection:
+           classes: list[str] | None = None) -> EnvisionedDirection:
     return EnvisionedDirection(
         unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=True,
         rationale="fixture rationale", assumptions=["fixture assumption"],
-        envisioned_test_primitives=["fixture probe"], supposed_payload_vectors=["fixture vector"],
+        envisioned_test_primitives=["fixture probe"],
         research_direction=research_direction,
-        concrete_fault_candidates=candidates or [],
+        vulnerability_classes=classes or [],
     )
 
 
@@ -340,16 +339,13 @@ def test_e2e_e1_per_fault_fanout(tmp_path):
                 dirs.append(EnvisionedDirection(
                     unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                     rationale="r", research_direction="probe CSRF vs IDOR",
-                    concrete_fault_candidates=[
-                        ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-                        ConcreteFaultCandidate(fault_hypothesis="IDOR"),
-                    ],
+                    vulnerability_classes=["CSRF", "IDOR"],
                 ))
             else:
                 dirs.append(EnvisionedDirection(
                     unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                     rationale="r", research_direction="probe CSRF",
-                    concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis="CSRF")],
+                    vulnerability_classes=["CSRF"],
                 ))
         return GateDecision(directions=dirs)
 
@@ -494,16 +490,13 @@ def test_e2e_e4_budget_cut_records(tmp_path):
                 dirs.append(EnvisionedDirection(
                     unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                     rationale="r", research_direction="probe CSRF vs IDOR",
-                    concrete_fault_candidates=[
-                        ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-                        ConcreteFaultCandidate(fault_hypothesis="IDOR"),
-                    ],
+                    vulnerability_classes=["CSRF", "IDOR"],
                 ))
             else:
                 dirs.append(EnvisionedDirection(
                     unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                     rationale="r", research_direction="probe CSRF",
-                    concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis="CSRF")],
+                    vulnerability_classes=["CSRF"],
                 ))
         return GateDecision(directions=dirs)
 
@@ -697,7 +690,7 @@ def test_e2e_e8_q2_accuracy_coverage(tmp_path):
     def reason_fn(inp: GateInput) -> GateDecision:
         # carry all 3, distinct classes, one pruned direction carried=False not minted
         dirs = [EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-                                    concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis=f"CSRF-{c.unit_id}")]) for c in inp.candidates]
+                                    vulnerability_classes=[f"CSRF-{c.unit_id}"]) for c in inp.candidates]
         # add a pruned direction for unreachable unit (not in candidates list, so not minted)
         return GateDecision(directions=dirs)
 
@@ -731,11 +724,7 @@ def test_e2e_e9_q3_detail_depth(tmp_path):
                 rationale="r", research_direction="probe state-changing form for missing anti-CSRF token verification at WebPresentation boundary",
                 envisioned_test_primitives=["probe form"],
                 assumptions=["assumption holds"],
-                supposed_payload_vectors=["vector"],
-                concrete_fault_candidates=[ConcreteFaultCandidate(
-                    fault_hypothesis="CSRF", adversarial_capabilities=["authenticated session obtainable"],
-                    blocking_constraints=["global origin-check may block"],
-                )],
+                vulnerability_classes=["CSRF"],
             ))
         return GateDecision(directions=dirs)
 
@@ -756,16 +745,10 @@ def test_e2e_e9_q3_detail_depth(tmp_path):
         tpl = cfg.prompt_template
         assert len(tpl.research_direction) > 20
         assert "CSRF" in tpl.research_direction
-        assert len(tpl.concrete_fault_candidates) >= 0
-        if tpl.concrete_fault_candidates:
-            ch = tpl.concrete_fault_candidates[0]
-            assert ch.fault_hypothesis
-            assert len(ch.adversarial_capabilities) >= 1
-            assert len(ch.blocking_constraints) >= 1
-        assert len(tpl.extension_points) >= 1
-        assert len(tpl.assumptions) >= 1
-        assert all(len(s) > 0 for s in tpl.extension_points + tpl.assumptions)
-        assert any(len(s) > 10 for s in tpl.extension_points + tpl.assumptions)
+        assert cfg.vulnerability_class == "CSRF"
+        assert cfg.status == "hypothesised"
+        assert len(tpl.rationale) > 0
+        assert all(len(s) > 0 for s in tpl.rationale.split())
     # semantic: blind HuntingAgent dry-run would produce TestVariant - we simulate by asserting
     # dispatched configs carry research_direction class-level (no locale leak check here, covered in E13)
 
@@ -824,16 +807,13 @@ def test_e2e_e11_q5_mint_note_consistency(tmp_path):
                 dirs.append(EnvisionedDirection(
                     unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                     rationale="r", research_direction="probe CSRF vs IDOR",
-                    concrete_fault_candidates=[
-                        ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-                        ConcreteFaultCandidate(fault_hypothesis="IDOR"),
-                    ],
+                    vulnerability_classes=["CSRF", "IDOR"],
                 ))
             else:
                 dirs.append(EnvisionedDirection(
                     unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                     rationale="r", research_direction="probe CSRF",
-                    concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis="CSRF")],
+                    vulnerability_classes=["CSRF"],
                 ))
         return GateDecision(directions=dirs)
 
@@ -927,10 +907,7 @@ def test_e2e_e13_q7_reflection_strategy(tmp_path):
             EnvisionedDirection(
                 unit_id=SERVICE_A, fault_class=FAULT_352, carried=True,
                 research_direction="probe CSRF token verification",
-                concrete_fault_candidates=[
-                    ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-                    ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-                ],
+                vulnerability_classes=["CSRF", "CSRF"],
             ),
         ])
 

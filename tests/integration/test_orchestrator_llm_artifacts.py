@@ -97,7 +97,6 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True) -> Envisioned
         rationale="fixture rationale from the spec's H1 gate",
         assumptions=["fixture assumption"],
         envisioned_test_primitives=["fixture probe"],
-        supposed_payload_vectors=["fixture vector"],
     )
 
 
@@ -444,7 +443,7 @@ def test_no_hunt_config_writing_tool_on_the_surface(tmp_path):
         {"revival_key": revival_key(SERVICE_A, "CWE-352"), "note": "n"})
     assert out["recorded"] is True
     out = by_name["mint_hunt_config"].invoke(
-        {"unit_id": SERVICE_A, "candidates": [], "research_direction": "csrf"})
+        {"unit_id": SERVICE_A, "vulnerability_classes": [], "research_direction": "csrf"})
     assert out["acknowledged"] is True
     out = by_name["graph_view"].invoke({"cypher": "MATCH (u) RETURN u"})
     assert "rows" in out
@@ -563,7 +562,7 @@ def test_read_memory_notes_fails_open_when_store_absent():
 
 def test_mint_hunt_config_records_an_emission_not_a_config(tmp_path):
     """`mint_hunt_config` records the model's emission onto the run-local
-    `mint_emissions` bucket (unit_id + research_direction + candidates dicts)
+    `mint_emissions` bucket (unit_id + research_direction + vulnerability_classes)
     and returns the acknowledgment - it never writes a `HuntConfig` object (the
     deterministic module mint stays downstream)."""
     store = HuntStore(tmp_path)
@@ -573,22 +572,16 @@ def test_mint_hunt_config_records_an_emission_not_a_config(tmp_path):
     by_name = {t.name: t for t in surface}
     out = by_name["mint_hunt_config"].invoke({
         "unit_id": SERVICE_A,
-        "candidates": [{"fault_hypothesis": "CSRF",
-                        "adversarial_capabilities": ["c1"],
-                        "blocking_constraints": ["b1"]}],
+        "vulnerability_classes": ["CSRF", "IDOR"],
         "research_direction": "csrf on all authed POSTs",
     })
     assert out["acknowledged"] is True
-    assert out["recorded_candidates"] == 1
+    assert out["recorded_classes"] == 2
     assert len(tools.mint_emissions) == 1
     emission = tools.mint_emissions[0]
     assert emission["unit_id"] == SERVICE_A
     assert emission["research_direction"] == "csrf on all authed POSTs"
-    assert emission["candidates"] == [{
-        "fault_hypothesis": "CSRF",
-        "adversarial_capabilities": ["c1"],
-        "blocking_constraints": ["b1"],
-    }]
+    assert emission["vulnerability_classes"] == ["CSRF", "IDOR"]
     # no HuntConfig ever landed in the store from the tool
     assert store.list_records(RUN_ID, "config") == []
 
@@ -602,7 +595,7 @@ def test_mint_hunt_config_fails_open_without_the_emission_seam():
                                               project_id="project-1")
     by_name = {t.name: t for t in surface}
     out = by_name["mint_hunt_config"].invoke(
-        {"unit_id": SERVICE_A, "candidates": [], "research_direction": "csrf"})
+        {"unit_id": SERVICE_A, "vulnerability_classes": [], "research_direction": "csrf"})
     assert out["error"] == "no mint emissions seam configured; emission not recorded"
 
 
@@ -834,7 +827,7 @@ def test_gate_step_records_pair_and_degraded_slots(monkeypatch):
                 "rationale": "plausible",
                 "assumptions": [],
                 "envisioned_test_primitives": [],
-                "supposed_payload_vectors": [],
+                "vulnerability_classes": [],
             }],
         })
 
@@ -928,10 +921,12 @@ def test_reason_node_seeds_prior_minted_keys_from_the_ledger(tmp_path):
     assert report.ledger.units_done == 2
 
 
-def test_structured_schemas_and_surface_unchanged():
+def test_structured_schemas_and_tool_surface_unchanged():
     """The structural-output schemas and the tool surface compile unchanged
-    (the 110-vs-135 regression guard), and the deterministic mint still
-    attaches the folded sub-fault ids to the HuntConfig."""
+    (the 110-vs-135 regression guard), the reworked `EnvisionedDirection` /
+    `HuntConfig` carry the vulnerability-class identity and the hypothesised
+    status, and the deterministic mint still attaches the folded sub-fault ids
+    to the HuntConfig."""
     assert TOOL_SURFACE == frozenset({
         "read_memory_hunts", "read_memory_notes", "graph_view",
         "mint_hunt_config", "record_note",
@@ -940,13 +935,14 @@ def test_structured_schemas_and_surface_unchanged():
     direction = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class="CWE-352", carried=True,
         rationale="r", assumptions=["a"],
-        envisioned_test_primitives=["p"], supposed_payload_vectors=["v"],
+        envisioned_test_primitives=["p"], vulnerability_classes=["CSRF"],
     )
     decision = GateDecision(directions=[direction])
     verdict = MatchVerdict(unit_id=SERVICE_A, fault_class="CWE-352", verdict="applies")
     dumped = decision.model_dump()
     assert dumped["directions"][0]["carried"] is True
     assert dumped["directions"][0]["assumptions"] == ["a"]
+    assert dumped["directions"][0]["vulnerability_classes"] == ["CSRF"]
     assert verdict.model_dump()["verdict"] == "applies"
 
     config = mint_hunt_config(
@@ -955,8 +951,12 @@ def test_structured_schemas_and_surface_unchanged():
         sub_fault_ids=["CWE-520", "CWE-9"],
     )[0]
     assert config.sub_fault_ids == ["CWE-520", "CWE-9"]
-    assert config.prompt_template.extension_points == ["p"]
-    assert config.prompt_template.assumptions == ["a"]
+    assert config.status == "hypothesised"
+    assert config.vulnerability_class == "CSRF"
+    assert config.prompt_template.rationale == "r"
+    assert config.adversarial_capabilities == []
+    assert config.assumptions == []
+    assert config.technique_primitives == []
 
 
 class _ToolFake(BaseChatModel):

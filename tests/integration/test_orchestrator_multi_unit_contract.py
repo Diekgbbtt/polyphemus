@@ -52,7 +52,7 @@ def _carry(candidate: DeliveredCandidate) -> EnvisionedDirection:
         rationale="carried from the fixture gate",
         assumptions=["fixture assumption"],
         envisioned_test_primitives=["fixture probe"],
-        supposed_payload_vectors=["fixture vector"],
+        vulnerability_classes=["CSRF"],
     )
 
 
@@ -135,9 +135,12 @@ def test_two_distinct_faults_reason_once_each(tmp_path):
 
     report = _run(store, [a, c], reason_fn=reason_fn)
 
-    # point 4: two faults -> two SEPARATE gate turns, one per distinct fault
+    # point 4: two faults -> two SEPARATE gate turns, one per distinct fault.
+    # The schedule is risk-descending (fault_risk, f8b5203): CWE-639 (IDOR, the
+    # broken-access-control tier) always precedes CWE-352 (CSRF), so assert the
+    # SET of faults, never their order.
     assert len(gate_inputs) == 2
-    assert [inp.candidates[0].fault_class for inp in gate_inputs] == [FAULT_CSRF, FAULT_IDOR]
+    assert {inp.candidates[0].fault_class for inp in gate_inputs} == {FAULT_CSRF, FAULT_IDOR}
     assert all(len(inp.candidates) == 1 for inp in gate_inputs)
     assert report.hunts_dispatched == 2
     assert report.ledger.units_done == 2

@@ -3,9 +3,9 @@
 Consumes the FaultSource candidate set (IA-1, spec 4.1), runs the per-FAULT
 tool-augmented gate-reasoning turn (Q8, one turn per fault over all its matched
 units), mints the deterministically fan-out `HuntConfig` set (D3, one per
-distinct web-vulnerability class a direction's emitted concrete fault
-candidates carry) at the unit boundary, dispatches one hunting agent per
-hunt (IA-2, synchronous in-process), and writes every event to the
+distinct elicited vulnerability-class the direction carries, each a
+status="hypothesised" draft) at the unit boundary, dispatches one hunting
+agent per hunt (IA-2, synchronous in-process), and writes every event to the
 append-only hunt store (#68, O12). It is the planner: it selects, configures,
 dispatches, holds memory and budget, and writes the D8 hunt records. It never
 writes L0/L1 (its graph access is the read-only view, D67-04); the hunting
@@ -108,29 +108,18 @@ class DeliveredCandidate(BaseModel):
     match_verdict: Literal["applies", "does-not-apply", "insufficient-evidence"]
 
 
-class ConcreteFaultCandidate(BaseModel):
-    """The Q8 hypothesis-manner concretisation grain the mint fans out on
-    (spec 3.5): a web-vulnerability CLASS with a `fault_hypothesis` (the class
-    marker - never narrowed to a surface locale / payload / vector / symptom),
-    plus the Q9-refined adversarial capabilities and the constraints that block
-    the candidate's testing primitives. The LLM's Q16 same-class merge runs
-    BEFORE the mint, so same-class duplicates should already be gone; the mint
-    still collapses them deterministically."""
-
-    fault_hypothesis: str
-    adversarial_capabilities: list[str] = Field(default_factory=list)
-    blocking_constraints: list[str] = Field(default_factory=list)
-
-
 class EnvisionedDirection(BaseModel):
     """One gate output: a carried (or pruned) direction, seeded with the
     rationale, assumptions, and envisioned test primitives that stub the
-    hunting agent's later, more concrete hypothesis (Q8). As of the
-    candidates-rewrite it also carries the class-level `research_direction`
-    (verbatim prose, never narrowed to a surface locale / payload / vector /
-    symptom) and the emitted concrete fault candidates (the Q8 hypothesis
-    manner + the Q9 capability/blocker analysis) the mint fans out into one
-    `HuntConfig` per distinct web-vulnerability class."""
+    hunting agent's later, more concrete hypothesis (Q8), plus the
+    candidates-rewrite class-level `research_direction` (verbatim prose, never
+    narrowed to a surface locale / payload / vector / symptom). As of the
+    HuntConfig typing rework the direction is the ELICITATION CARRIER: it rides
+    the `vulnerability_classes` the mint fans out into ONE `HuntConfig` per
+    distinct class (the class is the config's identity axis); the concrete-fault
+    stretch (`supposed_payload_vectors`, per-candidate capability/blocker
+    analysis) is the #164 hunter's DECOMPOSE/GENERATE ownership, never this
+    carrier's."""
 
     unit_id: str
     fault_class: str
@@ -138,9 +127,8 @@ class EnvisionedDirection(BaseModel):
     rationale: str = ""
     assumptions: list[str] = Field(default_factory=list)
     envisioned_test_primitives: list[str] = Field(default_factory=list)
-    supposed_payload_vectors: list[str] = Field(default_factory=list)
     research_direction: str = ""
-    concrete_fault_candidates: list[ConcreteFaultCandidate] = Field(default_factory=list)
+    vulnerability_classes: list[str] = Field(default_factory=list)
 
 
 class GateInput(BaseModel):
@@ -182,40 +170,49 @@ class GateDecision(BaseModel):
 
 class HuntPromptTemplate(BaseModel):
     """Part 1 of the five-part HuntConfig parameter set (Q8/D3): the fault-matching
-    rationale, the suggested extension points (the orchestrator's envisioned
-    test primitives), the adversarial-capability / environmental assumptions,
-    the supposed payload vectors, and the L0 fault-applicability evidence. The
-    candidates-rewrite concretisation slots ride along: the class-level
-    `research_direction` and the per-class `concrete_fault_candidates` subset
-    the mint fills (one `HuntConfig` per distinct web-vulnerability class)."""
+    rationale, the L0 fault-applicability evidence, and the class-level
+    `research_direction` - the hypothesise-phase content of the config. The
+    capability/assumption/technique-primitive analysis is NOT a template slot
+    anymore: it rides the config level (`HuntConfig.adversarial_capabilities` /
+    `assumptions` / `technique_primitives`, the ratification-phase fields), and
+    the concrete-fault slots (`extension_points`, `supposed_payload_vectors`,
+    per-class candidates) are removed - the #164 hunter owns that stretch."""
 
     rationale: str = ""
-    extension_points: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    supposed_payload_vectors: list[str] = Field(default_factory=list)
     l0_evidence: list[str] = Field(default_factory=list)
     research_direction: str = ""
-    concrete_fault_candidates: list[ConcreteFaultCandidate] = Field(default_factory=list)
 
 
 class HuntConfig(BaseModel):
     """The declarative config the hunting agent consumes (D3): the five-part
-    parameter set - prompt template, wide surface context (adapted index-card),
-    target caveats, prior-hunt insights (by revival key), tool registry.
-    `sub_fault_ids` carries the folded fault_ids (the sub-faults / reflection
-    material) captured under the parent `fault_class` from the fold-family
-    relation (`fault_kb.load_fold_families`): the hunting agent bounds the
-    parent fault, the sub-faults are consideration material."""
+    parameter set - prompt template, wide surface context (adapted index-card,
+    a Service's edge_degree transformed to its connected DataItems), target
+    caveats, prior-hunt insights (by revival key), tool registry - plus the
+    orchestrator's stretch as of the typing rework: `status` (the config
+    lifecycle `hypothesised -> ratified | dropped`; the mint writes
+    hypothesised drafts), `vulnerability_class` (the config's identity axis,
+    one config per elicited class), and the ratification-phase fields
+    (`adversarial_capabilities` / `assumptions` / `technique_primitives`,
+    empty on the hypothesised draft). `sub_fault_ids` carries the folded
+    fault_ids (the sub-faults / reflection material) captured under the parent
+    `fault_class` from the fold-family relation
+    (`fault_kb.load_fold_families`): the hunting agent bounds the parent fault,
+    the sub-faults are consideration material."""
 
     hunt_id: str
     unit_id: str
     fault_class: str
+    status: Literal["hypothesised", "ratified", "dropped"] = "hypothesised"
+    vulnerability_class: str = ""
     sub_fault_ids: list[str] = Field(default_factory=list)
     prompt_template: HuntPromptTemplate
     surface_context: dict = Field(default_factory=dict)
     target_caveats: list[str] = Field(default_factory=list)
     prior_hunt_insights: list[dict] = Field(default_factory=list)
     tool_registry: list[dict] = Field(default_factory=list)
+    adversarial_capabilities: list[str] = Field(default_factory=list)
+    assumptions: list[str] = Field(default_factory=list)
+    technique_primitives: list[str] = Field(default_factory=list)
 
 
 class DispatchResult(BaseModel):
@@ -405,31 +402,72 @@ def normalize_candidates(
     return intake
 
 
-def _class_discriminator(candidate: ConcreteFaultCandidate) -> str:
-    """The mint's per-candidate fan-out discriminator: the concrete fault
-    candidate's web-vulnerability class. There is no dedicated typed class
-    field on the candidate, so the `fault_hypothesis` text carries the class
-    marker (the candidates-rewrite spec 3.5 / 4). An empty hypothesis carries
-    no class marker and never forms a minted group."""
-    return candidate.fault_hypothesis
-
-
-def _concrete_candidates_by_class(
-    candidates: Sequence[ConcreteFaultCandidate],
-) -> list[list[ConcreteFaultCandidate]]:
-    """Partition the direction's emitted concrete-fault candidates into one
-    group per distinct class (grouping on the `fault_hypothesis` discriminator).
-    Same-class duplicates - already merged by the LLM's Q16 same-class merge -
-    collapse into ONE group; first-emission order is preserved, so the
-    partition (and the fan-out that consumes it) is deterministic given the
-    emitted set. Candidates with an empty hypothesis carry no class marker and
-    are excluded: they degrade to the carried-bare fallback."""
-    by_class: dict[str, list[ConcreteFaultCandidate]] = {}
-    for candidate in candidates:
-        if not _class_discriminator(candidate):
+def _distinct_vulnerability_classes(classes: Sequence[str]) -> list[str]:
+    """The mint's fan-out discriminator: the direction's elicited vulnerability
+    classes, deduped in first-emission order (the LLM's Q16 same-class merge
+    runs BEFORE the mint, so same-class duplicates should already be gone; the
+    mint still collapses them deterministically). A class string carrying no
+    marker - empty or absent - never forms a minted group; a direction with no
+    surviving classes degrades to the carried-bare fallback."""
+    seen: set[str] = set()
+    out: list[str] = []
+    for cls in classes:
+        if not cls:
             continue
-        by_class.setdefault(candidate.fault_hypothesis, []).append(candidate)
-    return list(by_class.values())
+        if cls in seen:
+            continue
+        seen.add(cls)
+        out.append(cls)
+    return out
+
+
+def _data_item_detail(item) -> dict:
+    """Pure: one connected-DataItem detail dict for the surface-context
+    transform (name/type/sensitivity/fields/notes, the ADR G5 slots). An
+    absent slot stays absent - absence is not-yet-filled, never a marker."""
+    detail: dict = {}
+    for attr in ("name", "type", "sensitivity"):
+        val = getattr(item, attr, None)
+        if val is not None:
+            detail[attr] = val
+    if getattr(item, "fields", None):
+        detail["fields"] = sorted(map(str, item.fields))
+    if getattr(item, "notes", None):
+        detail["notes"] = item.notes
+    return detail
+
+
+def _surface_cards_with_connected_data_items(
+    surface: Sequence[dict], projection,
+) -> list[dict]:
+    """The config surface-context transform (ADR G5, operator correction): a
+    Service card's `edge_degree` counts are replaced by the detailed connected
+    DataItems (name/type/sensitivity/fields/notes) of the unit's rich
+    projection, mirroring the projection reader - the slot becomes
+    `connected_data_items` (family -> the item details). The transform applies
+    only to the card of the projection's own unit (the config's target); an
+    absent projection, a non-matching card, or a projection that resolved no
+    data items degrades to the counts card unchanged - fail-open per the canon,
+    never a raise, never a prune signal."""
+    unit_id = getattr(projection, "unit_id", None)
+    data_items = getattr(projection, "data_items", None) if projection is not None \
+        else None
+    cards: list[dict] = []
+    for card in surface:
+        key = (card or {}).get("key") or {}
+        slug = key.get("business_function_slug")
+        if not (card.get("kind") == "Service" and slug
+                and unit_id == f"Service:{slug}" and data_items):
+            cards.append(card)
+            continue
+        transformed = dict(card)
+        transformed.pop("edge_degree", None)
+        transformed["connected_data_items"] = {
+            family: [_data_item_detail(item) for item in items]
+            for family, items in data_items.items()
+        }
+        cards.append(transformed)
+    return cards
 
 
 def mint_hunt_config(
@@ -442,54 +480,52 @@ def mint_hunt_config(
     tool_registry: Sequence[dict],
     target_caveats: Sequence[str] = (),
     sub_fault_ids: Sequence[str] = (),
+    status: Literal["hypothesised", "ratified", "dropped"] = "hypothesised",
 ) -> list[HuntConfig]:
     """Mint the five-part `HuntConfig` set (D3) for a carried direction - the
-    candidates-rewrite fan-out: ONE `HuntConfig` per distinct web-vulnerability
-    class the direction's emitted concrete-fault candidates carry, after the
-    (LLM-owned, Q16) same-class merge. The prompt template maps the direction's
-    seeds verbatim (rationale -> rationale, envisioned test primitives ->
-    extension points, assumptions -> assumptions, supposed payload vectors ->
-    supposed payload vectors, the L0 fault-applicability evidence from the
-    candidate's witnesses) and adds the candidates-rewrite slots: `research_direction`
-    passes through and each config's `concrete_fault_candidates` carries that
-    class's distinct subset. The remaining four parameter-set slots - the wide
-    surface context (adapted index-card), the target caveats, the prior-hunt
-    insights, and the fault-targeting tool registry - and `sub_fault_ids`
-    (the folded fault_ids captured under the parent `fault_class` by the
-    fold-family relation, #135) are unchanged.
+    typing-rework fan-out: ONE `HuntConfig` per distinct elicited
+    `vulnerability_class` (the config's identity axis, spec 3.5), after the
+    (LLM-owned, Q16) same-class merge. Each minted config is a HYPOTHESISED
+    draft (default `status`): the prompt template maps the direction's
+    hypothesise-phase seeds verbatim (rationale -> rationale, the L0
+    fault-applicability evidence from the candidate's witnesses, research_direction
+    passes through), while the ratification-phase fields - `adversarial_capabilities`,
+    `assumptions`, `technique_primitives` - stay empty. The remaining
+    parameter-set slots - the wide surface context (adapted index-card), the
+    target caveats, the prior-hunt insights, and the fault-targeting tool
+    registry - and `sub_fault_ids` (the folded fault_ids captured under the
+    parent `fault_class` by the fold-family relation, #135) are unchanged.
 
     The mint stays deterministic given the emitted set (no LLM, no I/O): the
     distinct-class grouping preserves first-emission order, and config hunt_ids
     derive from the single `hunt_id` base (the first config keeps the base, the
-    i-th fan-out config gets `base-<i>`). A direction with NO emitted class
-    markers - empty or absent concrete fault candidates - degrades to a single
-    carried-bare config: it still renders with the legacy seeds and the
-    research direction, without minting a class-specific config."""
+    i-th fan-out config gets `base-<i>`). A direction with NO elicited class
+    markers - empty or absent `vulnerability_classes` - degrades to a single
+    carried-bare draft: it still renders the hypothesise-phase seeds and the
+    research direction, with an empty class identity (fail-open)."""
     evidence: list[str] = []
     if candidate.applies_witnesses.deterministic is not None:
         evidence.append(f"deterministic: {candidate.applies_witnesses.deterministic}")
     if candidate.applies_witnesses.llm is not None:
         evidence.append(f"llm: {candidate.applies_witnesses.llm}")
-    groups = _concrete_candidates_by_class(direction.concrete_fault_candidates)
-    if not groups:
-        # the carried-bare degrade: one config, no class-specific material
-        groups = [[]]
+    classes = _distinct_vulnerability_classes(direction.vulnerability_classes)
+    if not classes:
+        # the carried-bare degrade: one config, no class identity
+        classes = [""]
     configs: list[HuntConfig] = []
-    for index, group in enumerate(groups):
+    for index, cls in enumerate(classes):
         config_id = hunt_id if index == 0 else f"{hunt_id}-{index}"
         configs.append(HuntConfig(
             hunt_id=config_id,
             unit_id=direction.unit_id,
             fault_class=direction.fault_class,
+            status=status,
+            vulnerability_class=cls,
             sub_fault_ids=list(sub_fault_ids),
             prompt_template=HuntPromptTemplate(
                 rationale=direction.rationale,
-                extension_points=list(direction.envisioned_test_primitives),
-                assumptions=list(direction.assumptions),
-                supposed_payload_vectors=list(direction.supposed_payload_vectors),
                 l0_evidence=evidence,
                 research_direction=direction.research_direction,
-                concrete_fault_candidates=list(group),
             ),
             surface_context=surface_context,
             target_caveats=list(target_caveats),
@@ -786,14 +822,17 @@ async def arun_orchestration(
         direction: EnvisionedDirection,
         candidate: DeliveredCandidate,
         prior_insights: Sequence[dict],
+        projection=None,
     ) -> list[HuntConfig]:
-        """The deterministic fan-out mint (D3/spec 3.5): ONE `HuntConfig` per
-        distinct web-vulnerability class the direction's emitted concrete-fault
-        candidates carry (a class-less direction degrades to a single
-        carried-bare config), each config's hunt_id derived from one base. Runs
-        at the unit boundary (in the REASON body) - the emitted set is the model's
-        authoritative submission; the `mint_emissions` bucket rides as the
-        submission record."""
+        """The deterministic fan-out mint (D3/spec 3.5): ONE hypothesised
+        `HuntConfig` draft per distinct elicited `vulnerability_class` (a
+        class-less direction degrades to a single carried-bare draft), each
+        config's hunt_id derived from one base. Runs at the unit boundary (in
+        the REASON body) - the emitted set is the model's authoritative
+        submission. The surface context is transformed at the mint: a Service
+        card's edge_degree counts become the detailed connected DataItems from
+        the unit's rich projection when the projection resolved them; an absent
+        projection degrades to the counts card (fail-open)."""
         caveats: list[str] = []
         if candidate.match_verdict != "applies":
             caveats.append("yellow match re-matched after back-edge")
@@ -801,11 +840,14 @@ async def arun_orchestration(
             direction,
             candidate,
             uuid.uuid4().hex,
-            surface_context={"cards": surface},
+            surface_context={
+                "cards": _surface_cards_with_connected_data_items(surface, projection),
+            },
             prior_hunt_insights=prior_insights,
             tool_registry=_registry_from_kb(kb_evidences.get(direction.fault_class, {})),
             target_caveats=caveats,
             sub_fault_ids=fold_families.get(direction.fault_class) or (),
+            status="hypothesised",
         )
 
     def _note_for_unit(direction: EnvisionedDirection, key: str,
@@ -912,18 +954,9 @@ async def arun_orchestration(
                             "assumptions": list(d.assumptions),
                             "envisioned_test_primitives": list(
                                 d.envisioned_test_primitives),
-                            "supposed_payload_vectors": list(
-                                d.supposed_payload_vectors),
                             "research_direction": d.research_direction,
-                            "concrete_fault_candidates": [
-                                {
-                                    "fault_hypothesis": c.fault_hypothesis,
-                                    "adversarial_capabilities": list(
-                                        c.adversarial_capabilities),
-                                    "blocking_constraints": list(
-                                        c.blocking_constraints),
-                                } for c in d.concrete_fault_candidates
-                            ],
+                            "vulnerability_classes": list(
+                                d.vulnerability_classes),
                         } for d in directions],
                         "prior_minted_keys": list(gate_input.prior_minted_keys),
                     })
@@ -958,16 +991,15 @@ async def arun_orchestration(
                 ledger.units_skipped += 1
                 continue
             prior_insights = await _read_prior_insights(key)
-            configs = _mint_for_direction(direction, candidate, prior_insights)
+            configs = _mint_for_direction(
+                direction, candidate, prior_insights,
+                projection=unit_projection.get(direction.unit_id))
             minted[key] = list(configs)
             ledger.minted_config_keys.append(key)
             trace_gate_step("emit-mint", input={
                 "revival_key": key,
                 "configs": len(configs),
-                "classes": sorted(
-                    c.fault_hypothesis
-                    for cfg in configs
-                    for c in cfg.prompt_template.concrete_fault_candidates),
+                "classes": sorted(cfg.vulnerability_class for cfg in configs),
             })
             _write("notes", {
                 "revival_key": key,

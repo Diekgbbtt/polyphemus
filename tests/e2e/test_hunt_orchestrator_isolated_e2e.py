@@ -141,7 +141,7 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True) -> Envisioned
     return EnvisionedDirection(
         unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=carried,
         rationale="fixture rationale", assumptions=["fixture assumption"],
-        envisioned_test_primitives=["fixture probe"], supposed_payload_vectors=["fixture vector"],
+        envisioned_test_primitives=["fixture probe"],
     )
 
 

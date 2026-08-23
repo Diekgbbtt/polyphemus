@@ -137,8 +137,8 @@ _GATE_SKILL_FALLBACK = (
     "materialisation and fold family, the read-only graph surface, and the rich "
     "typed projection (including cooperating systems adjacency). Carry a direction "
     "when the fault plausibly applies and seed it with rationale, assumptions, "
-    "envisioned test primitives, supposed payload vectors, research_direction, and "
-    "concrete_fault_candidates; prune only on positive grounds. NEVER prune on "
+    "envisioned test primitives, research_direction, and vulnerability_classes; "
+    "prune only on positive grounds. NEVER prune on "
     "degraded grounds: when the KB is unavailable (kb_degraded), reason from the "
     "candidate and surface alone and carry rather than prune. "
     "Loop protocol: Prior minted-config keys to reflect on: listed in the prompt; "
@@ -470,17 +470,17 @@ def _compose_gate_prompt(inp: GateInput) -> str:
         "concretise the abstract fault at this locus, query the attack-surface / "
         "L1 graph via graph_view, iterating until sufficient.",
         "  Per-unit work-items + hypothesis elicitation (Q8): for each unit "
-        "above, elicit one or more concrete fault candidates - at the grain of a "
+        "above, elicit one or more vulnerability classes - at the grain of a "
         "web-vulnerability CLASS with a research-direction rationale (e.g. CSRF, "
         "IDOR) - never narrowed to a surface locale, payload profile, vector, or "
         "symptom; the narrowing belongs to the hunting agent at spec-writing.",
         "  Testing-primitive / capability / blocker analysis (Q9): reason on the "
-        "required testing primitives and what could block their usage (payload "
-        "vectors, auth level, interaction method, target state, request context); "
+        "required testing primitives and what could block their usage (auth "
+        "level, interaction method, target state, request context); "
         "that yields the adversarial capabilities and assumptions the fault "
         "hypothesis relies on.",
-        "  Same-class merge (Q16): if multiple concrete fault candidates at one "
-        "unit are the SAME web-vulnerability class, merge them into one; only "
+        "  Same-class merge (Q16): if multiple elicited vulnerability classes at "
+        "one unit are the SAME web-vulnerability class, merge them into one; only "
         "fundamentally discriminable classes survive as distinct configs. Pure "
         "LLM reflection - no module-side parsing.",
         "  Unit boundary (spec 3.3): call mint_hunt_config ONCE at the end of "
@@ -490,8 +490,7 @@ def _compose_gate_prompt(inp: GateInput) -> str:
         "",
         "Return one direction per candidate: set carried true/false, and for a "
         "carried direction fill rationale, assumptions, research_direction, "
-        "concrete_fault_candidates, envisioned_test_primitives, and "
-        "supposed_payload_vectors.",
+        "vulnerability_classes, and envisioned_test_primitives.",
     ]
     return "\n".join(lines)
 

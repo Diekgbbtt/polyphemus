@@ -280,16 +280,16 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
                     "revival_key": revival_key}
 
     @tool
-    def mint_hunt_config(unit_id: str, candidates: list,
+    def mint_hunt_config(unit_id: str, vulnerability_classes: list,
                          research_direction: str | None = None) -> dict:
-        """Submit the unit's emitted concrete-fault candidates ONCE at its end
+        """Submit the unit's elicited vulnerability classes ONCE at its end
         (Q8/Q12/Q15): carries the model's choice (research_direction plus the
-        candidates with fault_hypothesis / adversarial_capabilities /
-        blocking_constraints); the MODULE mints the N `HuntConfig`s
-        deterministically from the emitted set afterwards. NO config object is
-        written here. The emission is recorded onto the run-local seam for the
-        deterministic mint to fan out from; a missing seam degrades to a
-        denoted error, never into the turn."""
+        vulnerability classes); the MODULE mints the N `HuntConfig`s
+        deterministically from the emitted set afterwards - one hypothesised
+        draft per distinct class. NO config object is written here. The
+        emission is recorded onto the run-local seam for the deterministic mint
+        to fan out from; a missing seam degrades to a denoted error, never into
+        the turn."""
         if mint_seam is None:
             return {"error": "no mint emissions seam configured; emission "
                              "not recorded", "unit_id": unit_id}
@@ -297,11 +297,12 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
             emission = {
                 "unit_id": unit_id,
                 "research_direction": research_direction or "",
-                "candidates": [dict(c) for c in (candidates or [])],
+                "vulnerability_classes": [
+                    str(c) for c in (vulnerability_classes or [])],
             }
             mint_seam.append(emission)
             return {"acknowledged": True, "unit_id": unit_id,
-                    "recorded_candidates": len(emission["candidates"])}
+                    "recorded_classes": len(emission["vulnerability_classes"])}
         except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
             logger.warning("mint_hunt_config tool degraded for %s (%s)",
                            unit_id, exc)

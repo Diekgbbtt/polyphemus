@@ -12,7 +12,6 @@ in tests/integration/test_hunt_orchestrator_contracts.py and are never
 repeated in this tier's red/green loop.
 """
 from polymerhus.attack.hunting.hunt_orchestrator import (
-    ConcreteFaultCandidate,
     DeliveredCandidate,
     DispatchResult,
     EnvisionedDirection,
@@ -73,7 +72,7 @@ def _carry(candidate: DeliveredCandidate) -> EnvisionedDirection:
     return EnvisionedDirection(
         unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=True,
         rationale="r", assumptions=["a"],
-        envisioned_test_primitives=["p"], supposed_payload_vectors=["v"],
+        envisioned_test_primitives=["p"],
     )
 
 
@@ -160,19 +159,10 @@ def test_does_not_apply_is_pruned_and_never_reaches_the_gate():
 
 # --- Pure mechanics: the D3 HuntConfig minting --------------------------------
 
-def _ccf(*, hypothesis: str, capabilities=(), blockers=()) -> ConcreteFaultCandidate:
-    """A concrete fault candidate: a web-vulnerability CLASS (hypothesis text)
-    with the Q9-refined capability / blocker analysis."""
-    return ConcreteFaultCandidate(
-        fault_hypothesis=hypothesis,
-        adversarial_capabilities=list(capabilities),
-        blocking_constraints=list(blockers),
-    )
-
-
-def test_mint_hunt_config_carries_the_five_part_parameter_set():
-    # the candidates-rewrite fan-out: a direction with no concrete fault
-    # candidates degrades to ONE carried-bare config (the legacy seeded slots)
+def test_mint_hunt_config_mints_a_hypothesised_draft():
+    # the rework (spec 3.5): a direction with no elicited vulnerability classes
+    # degrades to ONE carried-bare draft - status="hypothesised", rationale +
+    # research_direction filled, the ratification-phase fields empty
     candidate = _candidate(deterministic_witness=None)
     config = mint_hunt_config(
         direction=_carry(candidate), candidate=candidate, hunt_id="hunt-1",
@@ -183,12 +173,16 @@ def test_mint_hunt_config_carries_the_five_part_parameter_set():
     assert config.hunt_id == "hunt-1"
     assert config.unit_id == SERVICE_A
     assert config.fault_class == FAULT_X
+    assert config.status == "hypothesised"
+    assert config.vulnerability_class == ""
     template = config.prompt_template
     assert template.rationale == "r"
-    assert template.extension_points == ["p"]
-    assert template.assumptions == ["a"]
-    assert template.supposed_payload_vectors == ["v"]
+    assert template.research_direction == ""
     assert template.l0_evidence == ["llm: witness"]
+    # the ratification-phase fields are empty in the hypothesised draft
+    assert config.adversarial_capabilities == []
+    assert config.assumptions == []
+    assert config.technique_primitives == []
     assert config.surface_context["card"]["kind"] == "Service"
     assert config.target_caveats == []
     assert config.prior_hunt_insights == [{"insight": "form Z carries no CSRF token"}]
@@ -236,23 +230,21 @@ def test_schedule_processes_the_riskiest_fault_first():
 
 
 def test_mint_fans_out_one_config_per_distinct_class():
-    # N HuntConfigs per distinct web-vulnerability class (the emitted set):
-    # the grouping discriminator is the candidate's `fault_hypothesis` text
+    # N HuntConfigs per distinct elicited vulnerability class (the emitted
+    # set): the class is the config's identity axis (spec 3.5 / ADR G5)
     direction = _carry(_candidate(deterministic_witness=None))
-    direction.concrete_fault_candidates = [
-        _ccf(hypothesis="csrf"),
-        _ccf(hypothesis="idor"),
-        _ccf(hypothesis="ssti"),
-    ]
+    direction.vulnerability_classes = ["csrf", "idor", "ssti"]
     configs = mint_hunt_config(
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
         surface_context={}, prior_hunt_insights=[], tool_registry=[],
     )
     assert len(configs) == 3
-    # each config carries its own class's candidate as the class marker
-    assert [c.prompt_template.concrete_fault_candidates[0].fault_hypothesis
-            for c in configs] == ["csrf", "idor", "ssti"]
+    # each config carries its own class as the identity axis
+    assert [c.vulnerability_class for c in configs] == ["csrf", "idor", "ssti"]
+    # every fan-out config is a hypothesised draft
+    assert all(c.status == "hypothesised" for c in configs)
+    assert all(c.prompt_template.rationale == "r" for c in configs)
     # the seeding identity persists on every fan-out config
     assert {c.unit_id for c in configs} == {SERVICE_A}
     assert {c.fault_class for c in configs} == {FAULT_X}
@@ -260,33 +252,22 @@ def test_mint_fans_out_one_config_per_distinct_class():
 
 def test_mint_collapses_same_class_duplicates_deterministically():
     # the (LLM-owned, Q16) same-class merge should already have removed
-    # duplicates; the mint still collapses candidates sharing the same
-    # hypothesis text into one config, keeping the class's full subset
+    # duplicates; the mint still collapses same-class emissions into one
+    # config, keeping first-emission order
     direction = _carry(_candidate(deterministic_witness=None))
-    direction.concrete_fault_candidates = [
-        _ccf(hypothesis="csrf", capabilities=["token bypass"], blockers=["WAF guards"]),
-        _ccf(hypothesis="csrf", capabilities=["same-origin policy"], blockers=[]),
-        _ccf(hypothesis="idor"),
-    ]
+    direction.vulnerability_classes = ["csrf", "csrf", "idor"]
     configs = mint_hunt_config(
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
         surface_context={}, prior_hunt_insights=[], tool_registry=[],
     )
     assert len(configs) == 2
-    csrf, idor = configs
-    assert csrf.prompt_template.concrete_fault_candidates == [
-        _ccf(hypothesis="csrf", capabilities=["token bypass"], blockers=["WAF guards"]),
-        _ccf(hypothesis="csrf", capabilities=["same-origin policy"], blockers=[]),
-    ]
-    assert idor.prompt_template.concrete_fault_candidates == [
-        _ccf(hypothesis="idor"),
-    ]
+    assert [c.vulnerability_class for c in configs] == ["csrf", "idor"]
 
 
-def test_mint_without_candidates_is_the_carried_bare_fallback():
-    # a direction with no emitted class markers still mints ONE dispatchable
-    # config from the legacy seeds + research direction (no class-specific slot)
+def test_mint_without_classes_is_the_carried_bare_fallback():
+    # a direction with no elicited class markers still mints ONE dispatchable
+    # hypothesised draft with research_direction (no class-specific identity)
     direction = _carry(_candidate(deterministic_witness=None))
     direction.research_direction = "csrf hygiene across state-changing flows"
     configs = mint_hunt_config(
@@ -297,52 +278,98 @@ def test_mint_without_candidates_is_the_carried_bare_fallback():
     assert len(configs) == 1
     config = configs[0]
     assert config.hunt_id == "hunt-1"
-    assert config.prompt_template.concrete_fault_candidates == []
+    assert config.vulnerability_class == ""
     assert config.prompt_template.research_direction == \
         "csrf hygiene across state-changing flows"
+    assert config.status == "hypothesised"
 
 
-def test_mint_with_only_empty_hypotheses_is_the_carried_bare_fallback():
-    # candidates whose hypothesis carries no class marker degrade the same way
+def test_mint_with_only_empty_classes_is_the_carried_bare_fallback():
+    # class strings carrying no marker degrade the same way (fail-open)
     direction = _carry(_candidate(deterministic_witness=None))
-    direction.concrete_fault_candidates = [_ccf(hypothesis=""), _ccf(hypothesis="")]
+    direction.vulnerability_classes = ["", ""]
     configs = mint_hunt_config(
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
         surface_context={}, prior_hunt_insights=[], tool_registry=[],
     )
     assert len(configs) == 1
-    assert configs[0].prompt_template.concrete_fault_candidates == []
+    assert configs[0].vulnerability_class == ""
 
 
-def test_mint_passes_research_direction_and_preserves_the_seed_slots():
-    # the extended template mapping: research_direction passes through, the
-    # legacy seeds keep their old direction-to-template slots, and the fan-out
-    # hides nothing
+def test_mint_passes_research_direction_and_preserves_the_identity_slots():
+    # the reworked template mapping: research_direction passes through, the
+    # class identity rides each fan-out config, and the ratification-phase
+    # fields stay empty on the hypothesised draft
     direction = _carry(_candidate(deterministic_witness=None))
     direction.research_direction = "enumerating the receipts resource"
-    direction.concrete_fault_candidates = [
-        _ccf(hypothesis="idor", capabilities=["direct object ref"], blockers=["authz check"]),
-        _ccf(hypothesis="csrf", capabilities=["token bypass"], blockers=["same-site cookies"]),
-    ]
+    direction.vulnerability_classes = ["idor", "csrf"]
     configs = mint_hunt_config(
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
         surface_context={}, prior_hunt_insights=[], tool_registry=[],
     )
     assert [c.hunt_id for c in configs] == ["hunt-1", "hunt-1-1"]
+    assert [c.vulnerability_class for c in configs] == ["idor", "csrf"]
     for config in configs:
         template = config.prompt_template
         assert template.rationale == "r"
-        assert template.extension_points == ["p"]
-        assert template.assumptions == ["a"]
-        assert template.supposed_payload_vectors == ["v"]
         assert template.l0_evidence == ["llm: witness"]
         assert template.research_direction == "enumerating the receipts resource"
-    assert configs[0].prompt_template.concrete_fault_candidates == [
-        _ccf(hypothesis="idor", capabilities=["direct object ref"], blockers=["authz check"])]
-    assert configs[1].prompt_template.concrete_fault_candidates == [
-        _ccf(hypothesis="csrf", capabilities=["token bypass"], blockers=["same-site cookies"])]
+        assert config.status == "hypothesised"
+        assert config.adversarial_capabilities == []
+        assert config.assumptions == []
+        assert config.technique_primitives == []
+
+
+def test_surface_context_replaces_edge_degree_with_connected_data_items():
+    """The config surface-context transform (ADR G5): a Service card's
+    edge_degree counts are replaced by the detailed connected DataItems
+    (name/type/sensitivity/fields/notes) from the unit's rich projection;
+    an absent projection or a non-matching card degrades to the counts card."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        _surface_cards_with_connected_data_items,
+    )
+    from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
+        DataItem,
+        UnitProjection,
+    )
+
+    card = {
+        "kind": "Service",
+        "key": {"business_function_slug": "a"},
+        "edge_degree": {"EXPOSED_VIA": 1, "CONSUMES": 1},
+        "spine": {"exposure": "public"},
+    }
+    proj = UnitProjection(
+        unit_id="Service:a", kind="Service", spine={}, edges={},
+        data_edges={"CONSUMES": 1}, data_rel_kinds=frozenset(),
+        data_items={"CONSUMES": (
+            DataItem(item_key="session_token", name="session token", type="secret",
+                     sensitivity="high", fields=("sid",), notes="session-bound"),
+        )},
+    )
+    cards = _surface_cards_with_connected_data_items([card], proj)
+    transformed = cards[0]
+    assert "edge_degree" not in transformed
+    assert transformed["connected_data_items"]["CONSUMES"] == [
+        {"name": "session token", "type": "secret", "sensitivity": "high",
+         "fields": ["sid"], "notes": "session-bound"},
+    ]
+    assert transformed["spine"] == {"exposure": "public"}  # rest of the card kept
+    # a non-matching card degrades to its counts card
+    other = {"kind": "System", "key": {"kind": "cache", "discriminator": "1"},
+             "edge_degree": {"DEPENDS_ON": 2}}
+    assert _surface_cards_with_connected_data_items([other], proj) == [other]
+    # an absent projection degrades to the counts card (fail-open)
+    assert _surface_cards_with_connected_data_items([card], None) == [card]
+    # a projection whose unit does not match the card degrades to the counts card
+    other_proj = UnitProjection(
+        unit_id="Service:slug:b", kind="Service", spine={}, edges={},
+        data_edges={}, data_rel_kinds=frozenset(),
+        data_items={"PRODUCES": (DataItem(item_key="k", name="x"),)},
+    )
+    assert _surface_cards_with_connected_data_items([card], other_proj) == [card]
 
 
 def test_fanned_out_direction_dispatches_each_config():
@@ -352,10 +379,7 @@ def test_fanned_out_direction_dispatches_each_config():
 
     def reason_fn(inp):
         direction = _carry(inp.candidates[0])
-        direction.concrete_fault_candidates = [
-            _ccf(hypothesis="csrf class"),
-            _ccf(hypothesis="idor class"),
-        ]
+        direction.vulnerability_classes = ["csrf class", "idor class"]
         return GateDecision(directions=[direction])
 
     report = _run(store, [_candidate()], reason_fn=reason_fn)

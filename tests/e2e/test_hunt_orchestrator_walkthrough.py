@@ -308,11 +308,11 @@ def test_live_gate_turn_reasons_over_the_rich_render(session, project, tmp_path)
         assert report.unresolved == () and report.budget_cut == ()
         config_recs = store.list_records(run_id, "config")
         assert len(config_recs) == 1
-        cfg = config_recs[0]["prompt_template"]
-        assert cfg["rationale"]
-        assert cfg["extension_points"]
-        assert cfg["assumptions"]
-        assert cfg["supposed_payload_vectors"]
+        cfg = config_recs[0]
+        assert cfg["prompt_template"]["rationale"]
+        assert cfg["prompt_template"]["research_direction"]
+        assert cfg["status"] == "hypothesised"
+        assert cfg["vulnerability_class"] == ""
         assert len(store.list_records(run_id, "hunt")) == 1
         assert len(store.list_records(run_id, "dispatch")) == 1
     assert _graph_counts(session, project) == before
@@ -491,7 +491,6 @@ def test_full_pass_canon_unchanged_with_new_artifacts(session, project, tmp_path
                 unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                 rationale="fixture rationale", assumptions=["assumption"],
                 envisioned_test_primitives=["probe"],
-                supposed_payload_vectors=["vector"],
             ) for c in inp.candidates])
 
     def report_for(tools, run_id, reason_fn):

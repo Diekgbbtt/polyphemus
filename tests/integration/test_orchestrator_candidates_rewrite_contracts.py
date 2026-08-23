@@ -25,7 +25,6 @@ from polymerhus.attack.hunting.actors import (
     HuntingActorRegistry,
 )
 from polymerhus.attack.hunting.hunt_orchestrator import (
-    ConcreteFaultCandidate,
     DeliveredCandidate,
     DispatchResult,
     EnvisionedDirection,
@@ -74,13 +73,13 @@ def _candidate(unit_id: str, fault_class: str, *, verdict: str = "applies",
 
 def _carry(candidate: DeliveredCandidate, *, carried: bool = True,
            research_direction: str = "probe CSRF token verification",
-           candidates: list[ConcreteFaultCandidate] | None = None) -> EnvisionedDirection:
+           classes: list[str] | None = None) -> EnvisionedDirection:
     return EnvisionedDirection(
         unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=carried,
         rationale="fixture rationale", assumptions=["fixture assumption"],
-        envisioned_test_primitives=["fixture probe"], supposed_payload_vectors=["fixture vector"],
+        envisioned_test_primitives=["fixture probe"],
         research_direction=research_direction,
-        concrete_fault_candidates=candidates or [],
+        vulnerability_classes=classes or [],
     )
 
 
@@ -387,13 +386,13 @@ def test_integration_c7_ledger_last_write_per_fault(tmp_path):
     store = HuntStore(tmp_path)
 
     def reason_fn(inp: GateInput) -> GateDecision:
-        # one carried direction per unit, distinct concrete candidates
+        # one carried direction per unit, distinct vulnerability classes
         dirs = []
         for c in inp.candidates:
             dirs.append(EnvisionedDirection(
                 unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
                 rationale="r", assumptions=["a"],
-                concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis=f"CSRF-{c.unit_id}")],
+                vulnerability_classes=[f"CSRF-{c.unit_id}"],
             ))
         return GateDecision(directions=dirs)
 
@@ -522,19 +521,16 @@ def test_integration_c10_store_read_degrades_empty(tmp_path, caplog):
     assert "hunt store read degraded" in caplog.text.lower() or "degraded" in caplog.text.lower()
 
 
-# --- C11: mint fans out N per distinct fault_hypothesis, hunt_id base/base-i
+# --- C11: mint fans out N per distinct vulnerability class, hunt_id base/base-i
 
 def test_integration_c11_mint_fanout_per_distinct_class():
-    """C11 - mint_hunt_config fans out one HuntConfig per distinct KB class,
-    hunt_ids base, base-1, and concrete_fault_candidates per class."""
+    """C11 - mint_hunt_config fans out one hypothesised HuntConfig per distinct
+    vulnerability class, hunt_ids base, base-1, class as the identity axis."""
     direction = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class=FAULT_352,
         carried=True,
         research_direction="probe CSRF vs IDOR",
-        concrete_fault_candidates=[
-            ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-            ConcreteFaultCandidate(fault_hypothesis="IDOR"),
-        ],
+        vulnerability_classes=["CSRF", "IDOR"],
     )
     candidate = DeliveredCandidate(
         unit_id=SERVICE_A, fault_class=FAULT_352,
@@ -548,19 +544,18 @@ def test_integration_c11_mint_fanout_per_distinct_class():
     assert len(configs) == 2
     assert configs[0].hunt_id == "abc123"
     assert configs[1].hunt_id == "abc123-1"
-    assert configs[0].prompt_template.concrete_fault_candidates[0].fault_hypothesis == "CSRF"
-    assert configs[1].prompt_template.concrete_fault_candidates[0].fault_hypothesis == "IDOR"
+    assert [c.vulnerability_class for c in configs] == ["CSRF", "IDOR"]
+    assert all(c.status == "hypothesised" for c in configs)
     assert all(c.prompt_template.research_direction == "probe CSRF vs IDOR" for c in configs)
     assert all("llm: form Z no token" in c.prompt_template.l0_evidence for c in configs)
-    # oracle is KB class not raw string count: adding third candidate with same class would not increase count
+    assert all(c.adversarial_capabilities == [] for c in configs)
+    assert all(c.technique_primitives == [] for c in configs)
+    # oracle is the class not the raw string count: adding a third emission of
+    # the same class does not increase the fan-out
     direction2 = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class=FAULT_352, carried=True,
         research_direction="probe CSRF vs IDOR",
-        concrete_fault_candidates=[
-            ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-            ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-            ConcreteFaultCandidate(fault_hypothesis="IDOR"),
-        ],
+        vulnerability_classes=["CSRF", "CSRF", "IDOR"],
     )
     configs2 = mint_hunt_config(direction2, candidate, "abc123", surface_context={}, prior_hunt_insights=[], tool_registry=[])
     assert len(configs2) == 2  # collapsed to 2 distinct classes
@@ -569,8 +564,8 @@ def test_integration_c11_mint_fanout_per_distinct_class():
 # --- C12: mint collapses same-class duplicates and empty degrades to carried-bare
 
 def test_integration_c12_mint_collapse_and_bare_degrade():
-    """C12 - same-class duplicates collapse to one group; empty degrades to
-    carried-bare with validated HuntConfig 5-part fields."""
+    """C12 - same-class duplicates collapse to one config; empty degrades to a
+    carried-bare hypothesised draft with the 5-part fields present."""
     candidate = DeliveredCandidate(
         unit_id=SERVICE_A, fault_class=FAULT_352,
         applies_witnesses=Witness(llm="x"), match_verdict="applies",
@@ -579,41 +574,110 @@ def test_integration_c12_mint_collapse_and_bare_degrade():
     direction_dup = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class=FAULT_352, carried=True,
         research_direction="probe CSRF",
-        concrete_fault_candidates=[
-            ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-            ConcreteFaultCandidate(fault_hypothesis="CSRF"),
-        ],
+        vulnerability_classes=["CSRF", "CSRF"],
     )
     configs_dup = mint_hunt_config(direction_dup, candidate, "base", surface_context={}, prior_hunt_insights=[], tool_registry=[])
     assert len(configs_dup) == 1
     assert configs_dup[0].hunt_id == "base"
-    assert len(configs_dup[0].prompt_template.concrete_fault_candidates) == 2 or configs_dup[0].prompt_template.concrete_fault_candidates[0].fault_hypothesis == "CSRF"
+    assert configs_dup[0].vulnerability_class == "CSRF"
     # b) empty degrades to carried-bare
     direction_empty = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class=FAULT_352, carried=True,
         research_direction="probe bare",
-        concrete_fault_candidates=[],
+        vulnerability_classes=[],
     )
     configs_bare = mint_hunt_config(direction_empty, candidate, "base", surface_context={}, prior_hunt_insights=[], tool_registry=[])
     assert len(configs_bare) == 1
-    assert configs_bare[0].prompt_template.concrete_fault_candidates == []
+    assert configs_bare[0].vulnerability_class == ""
     assert configs_bare[0].prompt_template.research_direction == "probe bare"
-    # Pydantic 5-part fields all present
+    # the reworked 5-part fields + the new typing slots all present
     for cfg in configs_dup + configs_bare:
+        assert hasattr(cfg, "status") and cfg.status == "hypothesised"
+        assert hasattr(cfg, "vulnerability_class")
         assert hasattr(cfg.prompt_template, "research_direction")
         assert hasattr(cfg, "surface_context")
         assert hasattr(cfg, "target_caveats")
         assert hasattr(cfg, "prior_hunt_insights")
         assert hasattr(cfg, "tool_registry")
-    # empty fault_hypothesis string degrades same as empty list
+        assert hasattr(cfg, "adversarial_capabilities")
+        assert hasattr(cfg, "assumptions")
+        assert hasattr(cfg, "technique_primitives")
+    # empty class string degrades same as empty list
     direction_blank = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class=FAULT_352, carried=True,
         research_direction="probe bare",
-        concrete_fault_candidates=[ConcreteFaultCandidate(fault_hypothesis="")],
+        vulnerability_classes=[""],
     )
     configs_blank = mint_hunt_config(direction_blank, candidate, "base", surface_context={}, prior_hunt_insights=[], tool_registry=[])
     assert len(configs_blank) == 1
-    assert configs_blank[0].prompt_template.concrete_fault_candidates == []
+    assert configs_blank[0].vulnerability_class == ""
+
+
+# --- C12b: the config surface_context shows connected DataItems (ADR G5) ------
+
+def test_integration_c12b_surface_context_shows_connected_data_items(tmp_path):
+    """C12b - the minted HuntConfig's surface_context replaces the Service
+    card's edge_degree counts with the detailed connected DataItems
+    (name/type/sensitivity/fields/notes) from the unit's rich projection;
+    an absent projection degrades to the counts card (fail-open)."""
+    slug = "a"
+    unit_id = f"Service:{slug}"
+
+    def read_fn(cypher, params):
+        if "collect(type(r)) AS rels" in cypher:
+            # the index-cards surface read (the gate's surface input)
+            return [{
+                "labels": ["L1Service"],
+                "props": {"business_function_slug": slug, "exposure": "public"},
+                "rels": ["EXPOSED_VIA", "CONSUMES"],
+            }]
+        if "collect({family: type(r)" in cypher:
+            # the projection unit row: one CONSUMES data-flow edge to a DataItem
+            return [{
+                "labels": ["L1Service"],
+                "props": {"business_function_slug": slug},
+                "edges": [
+                    {"family": "CONSUMES", "tlabels": ["L1DataItem"],
+                     "tprops": {"item_key": "session_token", "name": "session token",
+                                "type": "secret", "sensitivity": "high",
+                                "fields": ["sid"], "notes": "session-bound"},
+                     "rprops": {}},
+                ],
+            }]
+        return []  # the data-relationship and adjacency reads: empty
+
+    store = HuntStore(tmp_path)
+
+    def reason_fn(inp: GateInput) -> GateDecision:
+        return GateDecision(directions=[EnvisionedDirection(
+            unit_id=unit_id, fault_class=FAULT_352, carried=True,
+            rationale="r", research_direction="probe CSRF",
+            vulnerability_classes=["CSRF"],
+        )])
+
+    report = run_orchestration(
+        project_id="project-1", run_id="run-c12b",
+        candidates=[DeliveredCandidate(
+            unit_id=unit_id, fault_class=FAULT_352,
+            applies_witnesses=Witness(llm="x"), match_verdict="applies",
+        )],
+        tools=OrchestratorTools(
+            store_reads=store,
+            graph_view=ReadOnlyGraphView("project-1", read_fn=read_fn),
+        ),
+        reason_fn=reason_fn,
+    )
+    assert report.hunts_dispatched == 1
+    configs = store.list_records("run-c12b", "config")
+    assert len(configs) == 1
+    cards = configs[0]["surface_context"]["cards"]
+    service = next(c for c in cards if c["kind"] == "Service")
+    assert "edge_degree" not in service
+    assert service["connected_data_items"]["CONSUMES"] == [
+        {"name": "session token", "type": "secret", "sensitivity": "high",
+         "fields": ["sid"], "notes": "session-bound"},
+    ]
+    assert service["spine"] == {"exposure": "public"}
 
 
 # --- C13: ReadOnlyGraphView write-shaped guard rejects before driver ---------
