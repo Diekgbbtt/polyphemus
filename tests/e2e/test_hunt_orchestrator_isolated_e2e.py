@@ -1,13 +1,16 @@
 """E3-E15 e2e predicates for the hunt-orchestrator in ISOLATION (spec section 6.3).
 
 The orchestrator's own infrastructure seams are REAL here: a live Neo4j L0/L1
-graph the read-only view grounds on, and a real append-only markdown hunt store
-on the filesystem. Only the agent-side collaborators are stubbed at their
-boundaries - the reasoning turn (Q8), the dispatch (IA-2, #83), the re-match
-(#71/#64), the KB retrieval (D67-11), and the back-edge router (IA-6). That is
-exactly the fixture-agent contract the spec section 3 sanctions; the REAL
-hunting agent and pod are the blocked E1/E2 walkthrough's live edge
-(test_hunt_orchestrator_walkthrough.py), never substituted here.
+graph the read-only view grounds on, and the real per-project memory store on
+the filesystem (#166 - `data/<project_id>/orchestration/` with
+`hunt_configs/produced`, `hunt_configs/consumed`, and `memory.yaml`; the
+append-only per-run kind files are removed). Only the agent-side collaborators
+are stubbed at their boundaries - the reasoning turn (Q8), the dispatch
+(IA-2, #83), the re-match (#71/#64), the KB retrieval (D67-11), and the
+back-edge router (IA-6). That is exactly the fixture-agent contract the spec
+section 3 sanctions; the REAL hunting agent and pod are the blocked E1/E2
+walkthrough's live edge (test_hunt_orchestrator_walkthrough.py), never
+substituted here.
 
 Why this file exists (the gap it closes): C1-C12 (integration tier) drive the
 orchestrator with the graph view MOCKED empty (`read_fn=lambda cy, p: []`), so
@@ -15,9 +18,9 @@ the gate's surface input and the minted HuntConfig.surface_context are never
 exercised against a real graph; and E1/E2 are carried/blocked on the hunting
 agent. Nothing asserted that the orchestrator (a) grounds its gate in real
 index-cards, (b) never writes L0/L1 through its read-only view, or (c) persists
-the full lifecycle into real store files. This catalogue pins all of those,
-covering every happy path (H1-H4) and every outlier shape (O1-O10) the
-orchestrator can take.
+the hypothesised configs and notes into the real per-project store. This
+catalogue pins all of those, covering every happy path (H1-H4) and every
+outlier shape (O1-O10) the orchestrator can take.
 
 Source: docs/design/hunting-67-orchestrator-spec.md section 6.3.
 """
@@ -240,17 +243,13 @@ def test_E3_full_run_grounds_in_real_graph_and_never_writes(session, project, tm
     # The KB probing techniques become the fault-targeting tool registry (D10).
     assert all(cfg.tool_registry == [{"technique": "csrf-probe"}] for cfg in configs)
 
-    # The full lifecycle landed in the REAL store files.
-    assert len(store.list_records("run-e3", "run")) == 1
-    assert len(store.list_records("run-e3", "config")) == 2
-    assert len(store.list_records("run-e3", "hunt")) == 2
-    assert len(store.list_records("run-e3", "dispatch")) == 2
-    assert len(store.list_records("run-e3", "result")) == 2
-    assert store.list_records("run-e3", "back_edge") == []
-    hunts = store.list_records("run-e3", "hunt")
-    configs_rec = store.list_records("run-e3", "config")
-    assert hunts[0]["config_ref"] == configs_rec[0]["_ref"]
-    assert hunts[1]["config_ref"] == configs_rec[1]["_ref"]
+    # The full lifecycle landed in the REAL per-project store (memory-system
+    # spec #166): the hypothesised configs in produced/, one note per unit in
+    # memory.yaml; the per-run run/hunt/dispatch/result/back_edge kind files
+    # are removed (G10/G11/G12).
+    assert len(store.read_configs(project)) == 2
+    assert len(store.read_notes(project)) == 2
+    assert store.read_configs(project)[0]["status"] == "hypothesised"
 
     # D67-04 on a REAL graph: the run wrote nothing to L0/L1.
     assert _graph_counts(session, project) == before
@@ -276,10 +275,13 @@ def test_E4_park_resume_unresolved_at_depth_cap(session, project, tmp_path):
     assert len(back_edges) == 1
     assert back_edges[0].origin == "hunting"
     assert report.unresolved == (revival_key(SERVICE_A, FAULT_X),)
-    unresolved = store.list_records("run-e4", "unresolved")
-    assert len(unresolved) == 1
-    assert unresolved[0]["revival_key"] == revival_key(SERVICE_A, FAULT_X)
-    assert len(store.list_records("run-e4", "back_edge")) == 1
+    # the unresolved state rides the report trail (the per-run `unresolved` /
+    # `back_edge` kind records are removed, #166); the direction's hypothesised
+    # draft was still minted to produced/ at the unit boundary BEFORE the
+    # dispatch-stage unresolved decision - it stays as an in-progress config
+    # (G10), never dispatched
+    assert len(store.read_configs(project)) == 1
+    assert len(store.read_notes(project)) == 1
     # The back-edge path wrote nothing to the graph either.
     assert _graph_counts(session, project) == before
 
@@ -303,8 +305,9 @@ def test_E5_park_resume_rematch_applies_dispatches(project, tmp_path):
     assert report.hunts_dispatched == 2
     assert report.unresolved == ()
     assert len(back_edges) == 1
-    assert len(store.list_records("run-e5", "back_edge")) == 1
-    assert len(store.list_records("run-e5", "hunt")) == 2
+    # the back-edge/hunt kind records are removed (#166); the re-matched
+    # direction's config persists in produced/ like any other
+    assert len(store.read_configs(project)) == 2
     # The re-matched yellow's config carries the back-edge caveat (spec 5).
     re_matched = [c for c in configs if c.unit_id == SERVICE_A]
     assert len(re_matched) == 1
@@ -334,7 +337,7 @@ def test_E6_deterministic_prune_before_the_gate(project, tmp_path):
     # The gate still grounded in the REAL graph even though one direction was
     # pruned before it (Q8 level 1 prune is intake-side, not gate-side).
     assert any(c["kind"] == "Service" for c in seen["surface"])
-    assert len(store.list_records("run-e6", "hunt")) == 1
+    assert len(store.read_configs(project)) == 1  # only the carried direction minted
 
 
 # --- E7: O1 empty candidate set is an empty pass -------------------------------
@@ -348,9 +351,10 @@ def test_E7_empty_candidate_set_is_an_empty_pass(project, tmp_path):
         rematch_fn=_ok_rematch(),
     )
     assert report.hunts_dispatched == 0
-    passes = store.list_records("run-e7", "run")
-    assert len(passes) == 1
-    assert passes[0]["candidates_received"] == 0
+    # the empty pass persists nothing in the memory topology (the per-run
+    # `run` record with candidates_received is removed, #166)
+    assert store.read_configs(project) == []
+    assert store.read_notes(project) == []
 
 
 # --- E8: O7 duplicate + O10 malformed are dropped, counted ---------------------
@@ -372,7 +376,7 @@ def test_E8_duplicate_and_malformed_dropped_counted(project, tmp_path):
     assert report.hunts_dispatched == 1
     assert report.duplicates_dropped == 1
     assert report.malformed_dropped == 1
-    assert len(store.list_records("run-e8", "hunt")) == 1
+    assert len(store.read_configs(project)) == 1
 
 
 # --- E9: H4/D67-11 KB degradation never prunes a direction ---------------------
@@ -398,7 +402,7 @@ def test_E9_kb_failure_degrades_the_gate_never_prunes(project, tmp_path):
     assert seen["kb_degraded"] is True
     assert report.hunts_dispatched == 1
     assert configs[0].tool_registry == []  # no KB -> empty registry
-    assert len(store.list_records("run-e9", "hunt")) == 1
+    assert len(store.read_configs(project)) == 1
 
 
 # --- E10: O3 store write failure degrades to a warning -------------------------
@@ -408,11 +412,18 @@ class _FlakyStore(HuntStore):
         super().__init__(root)
         self._failures_left = fail_first
 
-    def append(self, run_id, kind, record):
+    def _write_guard(self):
         if self._failures_left > 0:
             self._failures_left -= 1
             raise OSError("disk full (fixture)")
-        return super().append(run_id, kind, record)
+
+    def write_config(self, project_id, config, *, directory="produced"):
+        self._write_guard()
+        return super().write_config(project_id, config, directory=directory)
+
+    def append_note(self, project_id, key, note):
+        self._write_guard()
+        return super().append_note(project_id, key, note)
 
 
 def test_E10_store_write_failure_degrades_to_warning(project, tmp_path, caplog):
@@ -424,6 +435,9 @@ def test_E10_store_write_failure_degrades_to_warning(project, tmp_path, caplog):
         dispatch_fn=_recording_dispatch([]),
         rematch_fn=_ok_rematch(),
     )
+    # the 1-candidate pass makes exactly two store writes (the config at the
+    # mint + the unit-boundary note); both fail (O3 - warned + counted), the
+    # pass still completes and dispatches
     assert report.store_write_failures == 2
     assert report.hunts_dispatched == 1
     assert "warning" in caplog.text.lower()
@@ -432,7 +446,10 @@ def test_E10_store_write_failure_degrades_to_warning(project, tmp_path, caplog):
 # --- E11: O4 store read failure degrades prior insights ------------------------
 
 class _RaisingReadStore(HuntStore):
-    def read_memory(self, revival_key):
+    def read_configs_by_key(self, project_id, key):
+        raise OSError("store read failed (fixture)")
+
+    def read_notes(self, project_id, key=None):
         raise OSError("store read failed (fixture)")
 
 
@@ -490,10 +507,10 @@ def test_E13_dispatch_failure_degrades_the_hunt(project, tmp_path):
         rematch_fn=_ok_rematch(),
     )
     assert report.hunts_dispatched == 1
-    hunts = store.list_records("run-e13", "hunt")
-    assert len(hunts) == 1
-    assert hunts[0]["degraded"] is True
-    assert "exhausted" in hunts[0]["error"]
+    # the degraded hunt record is removed (#166): the pass still dispatches and
+    # the minted config persists; the degraded/error detail rides the in-memory
+    # trail (the report exposes hunt_ids, never the record's error field)
+    assert len(store.read_configs(project)) == 1
 
 
 # --- E14: O9 budget cut records the un-dispatched direction --------------------
@@ -514,18 +531,22 @@ def test_E14_budget_cut_records_undispatched_direction(project, tmp_path):
     )
     assert report.hunts_dispatched == 1
     assert report.budget_cut == (revival_key(SYSTEM_B, FAULT_Y),)
-    cuts = store.list_records("run-e14", "cut")
-    assert len(cuts) == 1
-    assert cuts[0]["direction"] == revival_key(SYSTEM_B, FAULT_Y)
-    assert len(store.list_records("run-e14", "config")) == 1
+    # the cut rides the report trail (the per-run `cut` record is removed,
+    # #166); ALL configs were minted to produced/ BEFORE the budget stage, so
+    # the cut direction's hypothesised draft stays on disk (G10: a budget cut
+    # is a dispatch-stage decision, never a config deletion)
+    assert len(store.read_configs(project)) == 2
+    assert len(store.read_notes(project)) == 2
 
 
-# --- E15: cross-run memory by revival key (the #70 seam) -----------------------
+# --- E15: cross-pass memory by revival key (the #166 per-project store) ---------
 
 def test_E15_cross_run_memory_by_revival_key(project, tmp_path):
-    """Two passes over the same project + revival key: the first pass's feedback
-    becomes the second pass's prior-hunt insight, read back out of the REAL
-    cross-run memory.md file."""
+    """Two passes over the same project + revival key: the first pass's
+    persisted config (produced/) + note (memory.yaml) become the second pass's
+    prior-hunt insights, read back out of the REAL per-project store - the
+    cross-run memory.md (and its dispatch-feedback insight) is removed (#166),
+    the store is per-project and per-pass durable (memory-system spec 10)."""
     store = HuntStore(tmp_path)
     first_configs: list = []
     second_configs: list = []
@@ -537,10 +558,8 @@ def test_E15_cross_run_memory_by_revival_key(project, tmp_path):
         dispatch_fn=_recording_dispatch(first_configs, feedback="form Z carries no CSRF token"),
         rematch_fn=_ok_rematch(),
     )
-    memory = store.list_records("memory", "memory")
-    assert len(memory) == 1
-    assert memory[0]["revival_key"] == revival_key(SERVICE_A, FAULT_X)
-    assert memory[0]["insight"] == "form Z carries no CSRF token"
+    assert len(store.read_configs(project)) == 1
+    assert len(store.read_notes(project)) == 1
 
     run_orchestration(
         project_id=project, run_id="run-e15b",
@@ -550,18 +569,12 @@ def test_E15_cross_run_memory_by_revival_key(project, tmp_path):
         rematch_fn=_ok_rematch(),
     )
     assert len(second_configs) == 1
-    # The second pass's prior-hunt insights read the first pass's memory record
-    # back out of the real cross-run memory.md (the raw record round-trips with
-    # its _seq/_ref provenance).
-    assert second_configs[0].prior_hunt_insights == [
-        {
-            "_seq": memory[0]["_seq"],
-            "_ref": memory[0]["_ref"],
-            "revival_key": revival_key(SERVICE_A, FAULT_X),
-            "hunt_id": first_configs[0].hunt_id,
-            "insight": "form Z carries no CSRF token",
-        }
-    ]
+    # The second pass's prior-hunt insights read the first pass's persisted
+    # config and note back out of the real per-project store.
+    insights = second_configs[0].prior_hunt_insights
+    assert any(i.get("unit_id") == SERVICE_A and i.get("fault_class") == FAULT_X
+               for i in insights)
+    assert any(i.get("note") for i in insights)
 
 
 # --- E16 (#110): the graph engine's actor lives past a completed pass ----------

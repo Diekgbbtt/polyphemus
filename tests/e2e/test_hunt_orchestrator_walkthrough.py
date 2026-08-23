@@ -78,17 +78,15 @@ def test_full_run_two_candidates(session, project, tmp_path):
     Path: gate carries both -> ranker orders -> two HuntConfigs minted ->
       two dispatches -> two hunting agents -> two pod runs -> two verdicts ->
       S7 persistence.
-    Terminal: exactly two hunt records in the store, each with config_ref,
-      spec_ref, pod_result_ref and a hypothesis verdict; zero back-edge records.
-    Observed: the store listing queried by run id returns the two records with
-      their field values.
+    Terminal: exactly two hypothesised configs in the store's produced/ and
+      two notes in memory.yaml; zero back-edge records (the per-run hunt
+      record kinds are removed, #166).
 
     When unblocked: run one orchestration pass with the real hunting agent as
     dispatch_fn over a HuntStore(tmp_path), then assert
-      len(store.list_records(run_id, "hunt")) == 2
-      all(h["config_ref"] and h["spec_ref"] and h["pod_result_ref"]
-          and h["hypothesis_verdict"] for h in hunts)
-      store.list_records(run_id, "back_edge") == []
+      len(store.read_configs(project_id)) == 2
+      all(c["status"] == "hypothesised" for c in configs)
+      len(store.read_notes(project_id)) == 2
     """
 
 
@@ -104,15 +102,13 @@ def test_yellow_park_resume(session, project, tmp_path):
       recon that resolves the yellow gap is the real one).
     Path: gate -> dispatch for a -> park for b with a back-edge record ->
       recon lands -> re-match applies -> second dispatch for b.
-    Terminal: two hunt records, one back-edge record, an unresolved-free run;
-      the depth-1 cap is not hit.
-    Observed: the store's back-edge records and both hunt records.
+    Terminal: two hypothesised configs in produced/, one unit note each in
+      memory.yaml, an unresolved-free run; the depth-1 cap is not hit (the
+      per-run hunt/back-edge/unresolved record kinds are removed, #166).
 
     When unblocked: run one orchestration pass with the real dispatch and the
     real back-edge harness seam, then assert
-      len(store.list_records(run_id, "hunt")) == 2
-      len(store.list_records(run_id, "back_edge")) == 1
-      store.list_records(run_id, "unresolved") == []
+      len(store.read_configs(project_id)) == 2
       report.unresolved == ()
     """
 
@@ -307,7 +303,7 @@ def test_live_gate_turn_reasons_over_the_rich_render(session, project, tmp_path)
         assert report.hunts_dispatched == 1
         assert report.gate_pruned == ()
         assert report.unresolved == () and report.budget_cut == ()
-        config_recs = store.list_records(run_id, "config")
+        config_recs = store.read_configs(project)
         assert len(config_recs) == 1
         cfg = config_recs[0]
         assert cfg["prompt_template"]["rationale"]
@@ -317,8 +313,9 @@ def test_live_gate_turn_reasons_over_the_rich_render(session, project, tmp_path)
         # degrade (an empty class) - both are valid hypothesised drafts; never
         # assert emptiness for a real model turn
         assert isinstance(cfg["vulnerability_class"], str)
-        assert len(store.list_records(run_id, "hunt")) == 1
-        assert len(store.list_records(run_id, "dispatch")) == 1
+        # the per-run hunt/dispatch kind records are removed (#166); the
+        # hypothesised config + the unit note are the persisted state
+        assert len(store.read_notes(project)) == 1
     assert _graph_counts(session, project) == before
 
 
@@ -373,7 +370,7 @@ def test_gate_renders_unknown_never_false_on_degraded_slots_live(
     assert "Unit projection (typed facet surface)" in text
     assert "Sub-fault fold family" in text
     assert report is not None
-    assert len(store.list_records("run-e4", "config")) == report.hunts_dispatched
+    assert len(store.read_configs(project)) == report.hunts_dispatched
     assert _graph_counts(session, project) == before
 
 
@@ -435,9 +432,11 @@ def test_live_tool_surface_is_the_five_tools_and_grounds_in_the_real_graph(
     assert any("L1Service" in l for l in labels)
     assert any("L1System" in l for l in labels)
 
-    # And the full pass: a park/resume back-edge for a yellow candidate lands
-    # the SAME-shaped store record (origin round-trips in the store) through
-    # the HARNESS seam - the orchestrator's park/resume path, never a tool.
+    # And the full pass: a park/resume back-edge for a yellow candidate is
+    # raised through the HARNESS seam - the orchestrator's park/resume path,
+    # never a tool. The back-edge's durable store record is gone (#166): the
+    # raised request is the observable (the `seen` harness list), and the
+    # re-matched direction's config persists in produced/.
     report = _run_live(
         store, project, "run-e5",
         [_candidate(SERVICE_A, FAULT_LIVE, verdict="insufficient-evidence")],
@@ -447,10 +446,9 @@ def test_live_tool_surface_is_the_five_tools_and_grounds_in_the_real_graph(
         back_edge=_ok_back_edge(seen),
     )
     assert report.hunts_dispatched == 1
-    records = store.list_records("run-e5", "back_edge")
-    assert len(records) == 1
-    assert records[0]["origin"] == "hunting"
-    assert records[0]["unit_id"] == SERVICE_A
+    assert len(seen) == 1
+    assert seen[0].origin == "hunting"
+    assert seen[0].scope.unit_id == SERVICE_A
     assert _graph_counts(session, project) == before
 
 
@@ -528,8 +526,9 @@ def test_full_pass_canon_unchanged_with_new_artifacts(session, project, tmp_path
     assert len(report_plain.hunt_ids) == len(report_live.hunt_ids) == 2
     assert report_live.hunts_dispatched == 2
     assert report_live.unresolved == () and report_live.budget_cut == ()
-    assert len(store_live.list_records("run-e6-live", "run")) == 1
-    assert len(store_live.list_records("run-e6-live", "config")) == 2
-    assert len(store_live.list_records("run-e6-live", "hunt")) == 2
-    assert len(store_live.list_records("run-e6-live", "back_edge")) == 1
+    # the memory topology (#166): two hypothesised configs in produced/, two
+    # unit notes in memory.yaml; the per-run run/hunt/back_edge kind records
+    # are removed
+    assert len(store_live.read_configs(project)) == 2
+    assert len(store_live.read_notes(project)) == 2
     assert _graph_counts(session, project) == before

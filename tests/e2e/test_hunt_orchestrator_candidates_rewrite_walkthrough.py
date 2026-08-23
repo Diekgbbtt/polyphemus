@@ -514,10 +514,13 @@ def test_e2e_e4_budget_cut_records(tmp_path):
     # budget_cut length 1 for the dropped unit; the cut rides the report trail
     # (the per-run cut.md kind file is removed, #166)
     assert len(report.budget_cut) >= 1
-    # configs were persisted at the mint (BEFORE the budget stage), so both
-    # units' configs land in produced/ - a budget cut is a dispatch-stage
-    # decision, never a config deletion (G10)
-    assert len(store.read_configs("proj-e4")) == 2
+    # G10 budget-cut semantics: ALL configs are minted (and persisted to
+    # produced/) at the unit boundary BEFORE the budget stage, so the cut
+    # direction's hypothesised draft (Service:slug:b, 1 config) stays on disk
+    # alongside the kept direction's (Service:slug:a, 2 configs) - a budget
+    # cut is a dispatch-stage decision, never a config deletion. The notes
+    # still land one per unit (both were reasoned over).
+    assert len(store.read_configs("proj-e4")) == 3
     assert len(store.read_notes("proj-e4")) == 2
 
 
