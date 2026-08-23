@@ -45,6 +45,7 @@ degradation canon). No driver and no I/O at import (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
+import enum
 import inspect
 import logging
 import operator
@@ -53,13 +54,20 @@ from typing import Annotated, Any, Callable, TypedDict
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command
 
-from polymerhus.attack.hunting.hunt_orchestrator import LoopState
-
 logger = logging.getLogger(__name__)
 
-# The harness loop-state machine (G2/G5): NOTED is a LOOP state, never a config
-# status - the config lifecycle `hypothesised -> ratified | dropped` stops at
-# ratified (the memory-system spec 5). Single-sourced in hunt_orchestrator.
+
+class LoopState(enum.Enum):
+    """The harness loop-state machine (G2/G5): NOTED is a LOOP state, never a
+    config status - the config lifecycle `hypothesised -> ratified | dropped`
+    stops at ratified (the memory-system spec 5). Single-sourced HERE so the
+    graph's `loop_state` channel, the phase-node wrappers, and the canon phase
+    nodes share one vocabulary; the channel carries the member's `.value`
+    string."""
+
+    HYPOTHESISED = "HYPOTHESISED"
+    RATIFIED = "RATIFIED"
+    NOTED = "NOTED"
 
 # Stable node names (routed by the supervisor). The phase chain is the REASON
 # stretch; there is NO dispatch node (G12) and NO budget stage (G7).
@@ -94,6 +102,7 @@ class HuntOrchestrationState(TypedDict, total=False):
     trail: Annotated[list[dict], operator.add]       # report bookkeeping
     ledger: Any                              # last-write: the LoopLedger, updated at the pair boundary
     minted_configs: dict                     # last-write: revival_key -> minted HuntConfig list
+    projections: dict                        # last-write: unit_id -> the pair's typed projection (S6)
     kb_evidences: dict                       # read-only, assembled by the driver
     kb_degraded: bool                        # read-only
     surface: list[dict]                      # read-only
@@ -110,8 +119,12 @@ def _supervisor(state: HuntOrchestrationState) -> Command:
     and routes it into the hypothesise phase; when the current fault's pair
     queue is exhausted it pops the next FAULT work item (the fault stays the
     schedule unit, spec 3.1) and seeds its candidate queue; an exhausted
-    schedule AND queue -> END. Routing ONLY (a single `Command` - never both
-    paths); the payload travels as the typed values on state."""
+    schedule AND queue -> END. A fault with no candidates cannot occur
+    post-intake (O7/O10); defensively it is SKIPPED - the supervisor routes
+    straight back to itself (S10), so no degenerate pair enters the phase chain
+    and no spurious loop transitions or ledger noise are recorded. Routing ONLY
+    (a single `Command` - never both paths); the payload travels as the typed
+    values on state."""
     pairs = list(state.get("pairs") or [])
     if not pairs:
         schedule = list(state.get("schedule") or [])
@@ -119,13 +132,15 @@ def _supervisor(state: HuntOrchestrationState) -> Command:
             return Command(goto=END)
         head, *tail = schedule
         pairs = list(getattr(head, "candidates", None) or [])
-        if pairs:
-            current_pair, *rest = pairs
-        else:
-            # a fault with no candidates cannot occur post-intake (O7/O10);
-            # fail-open: route a degenerate pair so the phase chain still
-            # advances and the supervisor pops the next fault.
-            current_pair, rest = None, []
+        if not pairs:
+            # an empty fault is skipped: no phase chain, no transitions
+            return Command(goto="supervisor", update={
+                "current": head,
+                "schedule": tail,
+                "current_pair": None,
+                "loop_state": None,
+            })
+        current_pair, *rest = pairs
         return Command(goto=_HYPOTHESISE, update={
             "current": head,
             "schedule": tail,
@@ -157,24 +172,26 @@ def _make_phase_node(loop_state: LoopState, name: str) -> Callable[[Callable | N
     """Factory for the three phase-node wrappers. Each runs the injected seam
     body for the CURRENT pair - sync or async - and ALWAYS advances the
     loop-state machine to its phase (`HYPOTHESISED -> RATIFIED -> NOTED`, G2),
-    appending the transition to the `loop_states` reducer. Fail-open: a missing
-    or raising seam body skips that phase's side effect (the canon's own
-    fail-open produces the degraded trail) but the pass keeps serving and the
-    graph still reaches END."""
+    appending the transition to the `loop_states` reducer (the channel carries
+    the enum member's `.value` string). Fail-open: a missing or raising seam
+    body skips that phase's side effect (the canon's own fail-open produces the
+    degraded trail) but the pass keeps serving and the graph still reaches
+    END."""
 
     def make(body: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
         async def phase(state: HuntOrchestrationState) -> dict:
+            transition = loop_state.value
             try:
                 out = _call_maybe_await(body, state)
                 if inspect.isawaitable(out):
                     out = await out
                 if out is not None:
-                    return {**out, "loop_state": loop_state,
-                            "loop_states": [loop_state]}
+                    return {**out, "loop_state": transition,
+                            "loop_states": [transition]}
             except Exception as exc:  # noqa: BLE001 - fail-open: keep serving
                 logger.warning("%s phase failed for %s (%s)", name,
                                _pair_label(state.get("current_pair")), exc)
-            return {"loop_state": loop_state, "loop_states": [loop_state]}
+            return {"loop_state": transition, "loop_states": [transition]}
 
         return phase
 
@@ -187,7 +204,7 @@ def _make_hypothesise(hypothesise_node: Callable | None) -> Callable[[HuntOrches
     effect when the seam is absent or raises (fail-open). The wrapper marks the
     loop state HYPOTHESISED - the hypothesise write's tool-call response
     carries the NEXT_RATIFY_HINT constant (G1/G3)."""
-    return _make_phase_node("HYPOTHESISED", "hypothesise")(hypothesise_node)
+    return _make_phase_node(LoopState.HYPOTHESISED, "hypothesise")(hypothesise_node)
 
 
 def _make_ratify(ratify_node: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
@@ -196,7 +213,7 @@ def _make_ratify(ratify_node: Callable | None) -> Callable[[HuntOrchestrationSta
     phase's side effect when the seam is absent or raises (fail-open). The
     wrapper marks the loop state RATIFIED - the ratified write's tool-call
     response carries ONLY the NEXT_NOTE_HINT constant (G1)."""
-    return _make_phase_node("RATIFIED", "ratify")(ratify_node)
+    return _make_phase_node(LoopState.RATIFIED, "ratify")(ratify_node)
 
 
 def _make_note(note_node: Callable | None) -> Callable[[HuntOrchestrationState], "Any"]:
@@ -205,7 +222,7 @@ def _make_note(note_node: Callable | None) -> Callable[[HuntOrchestrationState],
     plus the NEXT_PAIR_HINT constant - G1), or skip the phase's side effect
     when the seam is absent or raises (fail-open). The wrapper marks the loop
     state NOTED - a LOOP state, never a config status (G5)."""
-    return _make_phase_node("NOTED", "note")(note_node)
+    return _make_phase_node(LoopState.NOTED, "note")(note_node)
 
 
 def _pair_label(current: Any) -> str:

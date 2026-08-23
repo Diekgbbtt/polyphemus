@@ -65,7 +65,7 @@ Each phase turn returns its phase's schema: the hypothesise turn returns a `Gate
 
 ## What a hypothesised draft carries (the HuntConfig format)
 
-The hypothesise write submits a draft config per surviving vulnerability class: `status="hypothesised"`, `vulnerability_class` (the identity axis), the hypothesise-phase seeds (`prompt_template.rationale` + `research_direction`, the candidate's `l0_evidence`), and the harness-filled parameter-set slots (`surface_context` with a Service's edge_degree replaced by its connected DataItems, `target_caveats`, `prior_hunt_insights`, `tool_registry`, `sub_fault_ids`). The ratification-phase fields (`adversarial_capabilities`, `assumptions`, `technique_primitives`) are EMPTY on the hypothesised draft - the ratification phase fills them. Never write a `HuntConfig` yourself outside `hunts_store(write)`.
+The hypothesise write submits a draft config per surviving vulnerability class: `status="hypothesised"`, `vulnerability_class` (the identity axis), and the hypothesise-phase seeds - `prompt_template.rationale` + `research_direction` and the candidate's `l0_evidence` - ONLY (S7). The draft as written by the model via the tool is bare; the parameter-set slots (`surface_context` with a Service's edge_degree replaced by its connected DataItems, `target_caveats`, `prior_hunt_insights`, `tool_registry`, `sub_fault_ids`) are filled when the ratification upsert wholesale-replaces the draft with the rich config. The ratification-phase fields (`adversarial_capabilities`, `assumptions`, `technique_primitives`) are EMPTY on the hypothesised draft - the ratification phase fills them. Never write a `HuntConfig` yourself outside `hunts_store(write)`.
 
 ## Worked example (few-shot)
 

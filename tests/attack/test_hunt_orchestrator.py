@@ -561,6 +561,102 @@ def test_gate_pruned_direction_writes_no_config():
     assert store.read_configs("project-1") == []
 
 
+def test_ratify_returning_unratified_configs_does_not_count_them_ratified_and_does_not_note(caplog):
+    """S2 - the "must END with ratified" contract: a ratify turn that returns
+    still-hypothesised configs does NOT count them ratified, does NOT re-persist
+    them, and the note phase does NOT note over them (the draft stays
+    hypothesised on disk, the pair is still ratifying)."""
+    store = _MemoryStore()
+
+    def ratify_return_unratified(inp):
+        # return the drafts verbatim (still hypothesised) - the turn did NOT end
+        # with ratified
+        return RatifyDecision(configs=list(inp.configs))
+
+    report = _run(store, [_candidate()], ratify=ratify_return_unratified)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 1
+    assert report.configs_ratified == 0
+    assert report.configs_unratified == 1
+    assert report.notes_written == 0
+    assert store.read_configs("project-1")[0]["status"] == "hypothesised"
+    assert store.read_notes("project-1") == []
+
+
+def test_gate_pruned_pair_does_not_invoke_ratify():
+    """S5 - a gate-pruned pair has no drafts and the ratify seam is NOT
+    invoked (the pass keeps serving)."""
+    store = _MemoryStore()
+    cand = _candidate()
+    ratify_calls: list = []
+
+    def pruning_gate(inp):
+        direction = _carry(inp.candidates[0])
+        return GateDecision(directions=[
+            EnvisionedDirection(unit_id=direction.unit_id, fault_class=direction.fault_class,
+                                carried=False)])
+
+    def spying_ratify(inp):
+        ratify_calls.append(inp.pair.unit_id)
+        return _ratify_drafts(inp)
+
+    report = _run(store, [cand], hypothesise=pruning_gate, ratify=spying_ratify)
+    assert ratify_calls == []
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 0
+
+
+def test_multi_direction_for_one_pair_accumulates_all_drafts():
+    """S8 - a model returning several carried directions for ONE pair (all at
+    the same locus) accumulates every draft into the ratify set instead of
+    earlier drafts being orphaned forever-hypothesised."""
+    store = _MemoryStore()
+
+    def hypothesise_two_dirs(inp):
+        c = inp.candidates[0]
+        d1 = EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
+                                 rationale="r", vulnerability_classes=["CSRF"])
+        d2 = EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
+                                 rationale="r", vulnerability_classes=["IDOR"])
+        return GateDecision(directions=[d1, d2])
+
+    report = _run(store, [_candidate()], hypothesise=hypothesise_two_dirs)
+    assert report.pairs_processed == 1
+    assert report.configs_hypothesised == 2
+    assert report.configs_ratified == 2
+    assert len(store.read_configs("project-1")) == 2
+    assert {c["vulnerability_class"] for c in store.read_configs("project-1")} == {"CSRF", "IDOR"}
+    assert report.ledger.units_done == 1  # one pair, one unit done
+    assert len(report.ledger.minted_config_keys) == 1  # one locus key
+
+
+def test_note_next_pair_at_fault_drain_carries_next_fault_first_candidate():
+    """S3 - when the last pair of a fault drains but the schedule holds
+    another fault, the note phase's next_pair is the next fault's first
+    candidate (not None), so the tool-call response carries the correct frame."""
+    store = _MemoryStore()
+    c_352 = _candidate(SERVICE_A, "CWE-352")
+    c_639 = _candidate(SERVICE_A, "CWE-639")
+    captured: list[dict | None] = []
+    tools = _tools(store)
+
+    def spying_note(inp):
+        # next_pair is set BEFORE this turn is invoked (S3)
+        captured.append(dict(tools.phase_context.next_pair)
+                        if tools.phase_context.next_pair is not None else None)
+        return _note_pair(inp)
+
+    report = _run(store, [c_352, c_639], tools=tools, note=spying_note)
+    assert report.pairs_processed == 2
+    # first note's next_pair is the next fault's candidate, last is None
+    assert len(captured) == 2
+    assert captured[0] is not None
+    assert captured[1] is None
+    # the first next_pair points at whichever fault is second in schedule
+    assert captured[0]["unit_id"] == SERVICE_A
+    assert captured[0]["fault_class"] in ("CWE-352", "CWE-639")
+
+
 # --- The async-native parent entry point (#94) --------------------------------
 
 def _arun(store, candidates, **kwargs):

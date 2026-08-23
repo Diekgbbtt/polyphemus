@@ -294,3 +294,51 @@ def test_missing_seams_skip_side_effects_but_keep_the_pass_serving():
     final = _drive(build_hunting_graph(), _initial([p1]))
     assert final["loop_states"] == ["HYPOTHESISED", "RATIFIED", "NOTED"]
     assert final["loop_state"] == "NOTED"
+
+
+def test_degenerate_fault_with_no_candidates_skips_phase_chain():
+    """S10 - a fault with no candidates routes straight back to the supervisor
+    (no degenerate pair enters the phase chain, no loop transitions or ledger
+    noise are recorded)."""
+    empty_fault = FaultWorkItem(fault_class="f-empty", candidates=[])
+    real = _candidate("u-1", "f-1")
+    visits: list[str] = []
+
+    def hypothesise(state):
+        visits.append("hypothesise")
+        return {}
+
+    def ratify(state):
+        visits.append("ratify")
+        return {}
+
+    def note(state):
+        visits.append("note")
+        return {}
+
+    final = _drive(build_hunting_graph(
+        hypothesise_node=hypothesise, ratify_node=ratify, note_node=note,
+    ), _initial([real]) | {
+        "schedule": [empty_fault] + _fault_grouped([real]),
+    })
+
+    assert visits == ["hypothesise", "ratify", "note"]
+    assert final["loop_states"] == ["HYPOTHESISED", "RATIFIED", "NOTED"]
+    assert final["schedule"] == []
+
+
+def test_degenerate_schedule_ending_with_empty_fault_appends_no_transitions():
+    """S10 - an empty fault at the tail (the defensive path) appends no
+    spurious HYPOTHESISED/RATIFIED/NOTED transitions."""
+    empty = FaultWorkItem(fault_class="f-empty", candidates=[])
+    final = _drive(build_hunting_graph(), {
+        "project_id": "p", "run_id": "r",
+        "schedule": [empty], "current": None,
+        "pairs": [], "current_pair": None,
+        "loop_state": None, "loop_states": [], "trail": [],
+        "ledger": None, "minted_configs": {},
+        "kb_evidences": {}, "kb_degraded": False, "surface": [],
+        "exhausted_faults": (),
+    })
+    assert final["loop_states"] == []
+    assert final["loop_state"] is None
