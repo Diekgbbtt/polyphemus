@@ -195,7 +195,6 @@ def test_E3_full_run_grounds_in_real_graph_and_never_writes(session, project, tm
         hypothesise_fn=_recording_hypothesise(seen),
         ratify_fn=_ratify_drafts,
         note_fn=_note_pair,
-        kb_retrieve_fn=lambda fault_class: {"probing_techniques": ["csrf-probe"]},
     )
 
     assert report.pairs_processed == 2
@@ -359,14 +358,14 @@ def test_E8_duplicate_and_malformed_dropped_counted(project, tmp_path):
     assert len(store.read_configs(project)) == 1
 
 
-# --- E9: H4/D67-11 KB degradation never prunes a direction ---------------------
+# --- E9: the gate grounds via the direct materialisation read, never degrades --
 
-def test_E9_kb_failure_degrades_the_gate_never_prunes(project, tmp_path):
+def test_E9_gate_grounds_on_materialisation_never_prunes(project, tmp_path):
+    """The gate's `kb_retrieve_fn` duplicate seam is RETIRED: the gate grounds
+    via the direct fault-KB materialisation read, so `kb_degraded` is always
+    False and the gate never prunes on degraded grounds."""
     store = HuntStore(tmp_path)
     seen: dict = {}
-
-    def kb_retrieve(fault_class):
-        raise RuntimeError("KB unavailable")
 
     report = run_orchestration(
         project_id=project, run_id="run-e9",
@@ -375,14 +374,12 @@ def test_E9_kb_failure_degrades_the_gate_never_prunes(project, tmp_path):
         hypothesise_fn=_recording_hypothesise(seen),
         ratify_fn=_ratify_drafts,
         note_fn=_note_pair,
-        kb_retrieve_fn=kb_retrieve,
     )
 
-    assert seen["kb_degraded"] is True
+    assert seen["kb_degraded"] is False  # the direct materialisation read is the gate's grounding
     assert report.pairs_processed == 1
     assert report.configs_ratified == 1
     configs = store.read_configs(project)
-    assert configs[0]["tool_registry"] == []  # no KB -> empty registry
     assert len(store.read_configs(project)) == 1
 
 

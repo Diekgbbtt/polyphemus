@@ -157,7 +157,7 @@ no back-edge tool, no budget tool. Tool names are reused verbatim. The hunter's 
 | `hunts_store` | `read` / `write` cmds; `write` takes the fault/spec object carrying the `status` attribute (`hypothesised | verified | dropped | specified`); `read` by id + optional attributes, never the whole surface | The status-bearing write seam; the transition verbatim lives here. Duplicate-id write FAILS as a *very rare* novelty gate (G4/G5); re-authoring UPDATES the existing file in place. `graph_view` is the surface-inspection tool, never this tool |
 | `notes` | `read` / `write` cmds, same data contract; write options `append`, `update`, `delete` | One note per fault covering all decisions that concern it, more detailed than the rationale |
 | `graph_view` | read-only L0/L1 view; write-shaped calls rejected | The hunter's target-knowledge inspection (G8a) |
-| `kb_query` | LightRAG `QuerySpecV1` -> `AnswerBundleV1` | Retires `symptom_kb.py`'s typed seams (R1). Consumed directly in the author lane. Fail-open (empty/raising -> degraded grounding, C2/C3). The LightRAG integration is a SIMULTANEOUS workstream; this ticket only adds the tool to the agent, replicating the project's tool-implementation pattern |
+| `kb_query` | LightRAG `QuerySpecV1` -> `AnswerBundleV1` | Retires `symptom_kb.py`'s typed seams (R1). Consumed directly in the author lane. Fail-open (empty/raising -> degraded grounding, C2/C3). **WIRED from scratch onto the lightrag branch's single `query_lightrag` tool** (config-gated by `HUNTING_LIGHTRAG_TOOL`): the `KbQueryTool` keeps the local `QuerySpecV1`/`AnswerBundleV1` mirror as its args/response contract, but when the opt-in flag is on it invokes the real `build_lightrag_tool`; the injected `kb_fn` seam (contract tier) is used only when the flag is off. The `polymerhus.lightrag` import is lazy (no I/O at import) |
 | `exec` | Kali-container exec, `EXEC_TIMEOUT_S` per call | Unbounded at the harness level - the model decides (R2b). NEVER produces the hypothesis verdict; the pod remains the only source of experimental evidence for the committed hypothesis (partition guard) |
 
 Phase-transition constants (G9): the hunter has its own constants, injected in the tool-call responses with the
@@ -231,7 +231,6 @@ The inline back-edge (S5/S6, D67-14) is cut COMPLETELY from the hunter and funct
 - The verdict-consumption workflow graph + the inbox surfer (produced->consumed movement, orchestrator->hunter and
   hunter->pod delivery, `pending_verdicts` consumption) - another workstream.
 - The test-executor pod (#84, a separate build); the hunter only contracts against its typed handoff.
-- The LightRAG integration itself (the `lightrag` branch) - a simultaneous workstream; only the tool is added here.
 - The fault-KB / symptom-technique KB content, `symptom_kb.py`'s typed seams (retired here), the closed-enum pattern
   engine (#81), the DAG plan-control tool (#136), the exploit submodule.
 - No `MERGE` Cypher outside `l1_curator`; no `.env` edits; no L0/L1 writes via the hunter (only via the `exec` pod
@@ -248,7 +247,7 @@ is reviewed AFTER this refactor; the test-infra specification is deferred to the
   moves and the trail append.
 - **Tool seams**: `FakeLightRagTool` (returns an `AnswerBundleV1`-shaped bundle / raises), `FakeMemoryStore` (a temp
   dir under the G1-G9 topology), `FakeExec` (scripted probe results) - following the pod's
-  `KbRetrieveTool`/`ExecTool` pattern.
+  `KbQueryTool`/`ExecTool` pattern (the former `kb_retrieve` seam is retired).
 - **The hunting-agent contracts** (`tests/attack/test_hunting_agent.py`, `test_hunting_agent_contracts.py`) are
   updated only after the dispositions land; the hermetic e2e (`tests/e2e/test_hunting_agent_isolated_e2e.py`) stays
   hermetic over the compiled graph with fake tools + the real skill file.

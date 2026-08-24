@@ -254,14 +254,14 @@
 - **yields:** `test_e2e_e13_q7_reflection_strategy`
 - **verdict:** flawed if missing marker - add to skill; wrong if LLM leaks payload despite marker - fundamental alignment
 
-### E14 - store write failure + KB degraded still completes (fail-open O3/O4/O5)
+### E14 - store write failure still completes (fail-open O3/O4/O5); the KB seam is retired
 - **grounds:** spec 5 O3/O4/O5 + 3.6 fail-open discipline
-- **entry seam:** `arun_orchestration` with flaky HuntStore and raising kb_retrieve_fn
-- **input:** `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z"),"applies")]`, `kb_retrieve_fn` raises `RuntimeError("KB unavailable")`, `HuntStore.write_config`/`update_config`/`append_note` fail the first 2 writes then succeed
+- **entry seam:** `arun_orchestration` with flaky HuntStore
+- **input:** `candidates=[DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="form Z"),"applies")]`, `HuntStore.write_config`/`update_config`/`append_note` fail the first 2 writes then succeed. The gate's `kb_retrieve_fn` duplicate seam is RETIRED (the gate grounds via the direct `load_materialisation` read, so `kb_degraded` is always `False`).
 - **live edge:** none
-- **path:** KB degraded -> hypothesise prompt shows `KB grounding: DEGRADED` -> flaky store fails the pass's first two store writes (the hypothesise create + the ratify upsert) `store_write_failures==2` -> the phase machine keeps serving and the third write (the note) lands (O3 - warned + counted, never a crash)
-- **terminal:** `pairs_processed==1`; `report.store_write_failures==2`; `report.ledger.units_done==1`; the failed config writes landed nothing - `read_configs("proj-e14")==[]`; `kb_degraded==True` in the hypothesise GateInput
-- **observed:** GateInput kb_degraded flag; the pass's write-failure count
+- **path:** the flaky store fails the pass's first two store writes (the hypothesise create + the ratify upsert) `store_write_failures==2` -> the phase machine keeps serving and the third write (the note) lands (O3 - warned + counted, never a crash)
+- **terminal:** `pairs_processed==1`; `report.store_write_failures==2`; `report.ledger.units_done==1`; the failed config writes landed nothing - `read_configs("proj-e14")==[]`
+- **observed:** GateInput kb_degraded flag (False - the direct materialisation read is the gate's grounding); the pass's write-failure count
 - **yields:** `test_e2e_e14_fail_open_store_kb_graph`
 
 ### E15 - concurrency barrier, duplicate-idempotent reads, malformed hypothesise output degrades to carry-bare

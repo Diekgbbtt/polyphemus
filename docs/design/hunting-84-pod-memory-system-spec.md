@@ -37,10 +37,11 @@ directives shape the adaptation's invariants:
   All writes happen in deterministic stages of the graph (init, mint_variant, the triager's interpretation record)
   and inside tool internals (the exec tool's `_record`). Writing logic is held in the symbolic/deterministic layer,
   never expressed by the model.
-- **All logs write in deterministic stages, and that must include `kb_retrieve` responses.** Today only exec
-  results are recorded. A `kb_retrieve` response (the symptom/technique/source bundle that drove the Runner's
-  concretization) does not enter the log, so the trail does not capture which KB knowledge led to which probe.
-  Extending the log domain model with the KB-retrieve response is a NEW work item of this spec.
+- **All logs write in deterministic stages, and that must include KB-query responses.** Today only exec
+  results are recorded. A KB-query response (the answer bundle that drove the Runner's concretization) does not
+  enter the log, so the trail does not capture which KB knowledge led to which probe.
+  Extending the log domain model with the KB-query response is a NEW work item of this spec (T3/#179, implemented
+  on `KbQueryTool` - the single config-gated `query_lightrag` tool; the former `kb_retrieve` seam is retired).
 
 ## Solution
 
@@ -73,9 +74,9 @@ data/<project_id>/test-executor-pod/
   keeps supplying the deterministic write stages and the prompt context slices, but its persistence is delegated to
   the store at the deterministic boundary - the `ExperimentLog` records each mutation THROUGH the store (the
   symbolic-layer capture middleware, operator, 2026-08-24).
-- **KB-retrieve recording** (implemented T3/#179): `KbRetrieveTool` has a log-recording step (a deterministic
-  `_record` like the exec tool's), so every KB response enters the variant's experiment-log file with the query,
-  the fault/axis context, and the returned symptoms/techniques/source.
+- **KB-query recording** (implemented T3/#179): `KbQueryTool` (the single config-gated `query_lightrag` tool) has
+  a log-recording step (a deterministic `_record` like the exec tool's), so every KB response enters the
+  variant's experiment-log file with the query's scenario/concern and the returned answer bundle.
 - **Prompt materialization** (`D84-27` reconciled): the prompts embed an indexable, readable key-list covering BOTH
   the notes (by key) AND the experiment-log identifiers (spec id + orders present on file), plus the reading
   guidance - so the Runner/Triager can address any persisted artifact by a deterministic identifier.
@@ -107,7 +108,7 @@ data/<project_id>/test-executor-pod/
    counter.
 10. As the test-executor pod, I want the experiment log to be a PURE log, with no tool capability for the LLM to
     write it, so that the D6 trail is a faithful record of deterministic write stages only.
-11. As the test-executor pod, I want `kb_retrieve` responses recorded into the experiment log deterministically in
+11. As the test-executor pod, I want KB-query responses recorded into the experiment log deterministically in
     the tool internals, so that the trail captures which KB knowledge informed each probe's concretization.
 12. As the test-executor pod, I want all other deterministic write stages (init variant, minted variant, the
     triager's interpretation record, the exec observation) to persist into the variant file, so that nothing the
@@ -208,7 +209,7 @@ data/<project_id>/test-executor-pod/
 ### 7. The pure-log invariant (operator directive)
 
 - The LLM is granted NO toolcapability to write the experiment log. The tool surface stays
-  `exec` / `kb_retrieve` / `note`; none writes the log directly.
+  `exec` / `note` (+ the config-gated `query_lightrag` KB tool); none writes the log directly.
 - All log writes remain in deterministic stages:
   - `init` records the v0 variant (`graph.py`).
   - `mint_variant` records the derived variant.
@@ -220,20 +221,20 @@ data/<project_id>/test-executor-pod/
 
 ### 8. KB-retrieve response recording (implemented T3/#179)
 
-- `KbRetrieveTool` has a deterministic `_record` step mirroring the exec tool's: every KB response (query,
-  fault/axis context, returned symptoms / techniques / source bundle) is appended to the variant's experiment-log
-  file as a KB observation (`KbObservation`).
+- The KB tool is `KbQueryTool` - the single `query_lightrag` tool from the `lightrag` branch, config-gated by
+  `HUNTING_LIGHTRAG_TOOL` (the former `kb_retrieve` symptom-technique typed seam is RETIRED). It has a
+  deterministic `_record` step mirroring the exec tool's: every KB response (the query's scenario/concern, the
+  returned answer bundle) is appended to the variant's experiment-log file as a KB observation (`KbObservation`).
 - The log domain model is extended so a KB observation is a first-class record (`types.py::KbObservation`,
   distinct from an exec's `RawObservation`), rendered into the experiment-log file via the `ExperimentLog`'s
   capture middleware (`record_kb_observation`, the SAME seam as `record_observation`) and preserved by the
   migration.
-- Degradation is unchanged: an empty/raising KB result is recorded as the empty bundle (fail-open, O13); the
-  recording itself never raises into the turn. A logless tool (the triager's context-read seam when no harness is
-  bound) records nothing.
-- The tool surface is unchanged (`exec` / `kb_retrieve` / `note`): the recording is a deterministic stage inside
-  the tool internals, never an LLM-initiated log write (the pure-log invariant holds). This is a separate work
-  item integrated into this spec's ticket (T3 in the ticket split, #179), not a modification of the memorization
-  kernel.
+- Degradation is unchanged: an empty/raising KB result is recorded as the degraded bundle (fail-open, O13); the
+  recording itself never raises into the turn. A logless tool (the contract tier) records nothing.
+- The tool surface is `exec` / `note` (+ the config-gated `query_lightrag` KB tool): the recording is a
+  deterministic stage inside the tool internals, never an LLM-initiated log write (the pure-log invariant holds).
+  This is a separate work item integrated into this spec's ticket (T3 in the ticket split, #179), not a
+  modification of the memorization kernel.
 
 ### 9. Prompt materialization of logs and notes identifiers (D84-27 reconciled)
 
@@ -314,8 +315,8 @@ degrading gracefully if the write itself is the failure source.
   fail-open semantics - never the internal file mutation mechanics.
 - The pure-log invariant is asserted structurally: no tool exposes a log-write; every record in a persisted variant
   file is attributable to a deterministic stage.
-- The KB-recording work item is asserted by driving `KbRetrieveTool` over a fixture KB and checking the persisted
-  variant file contains the KB observation.
+- The KB-recording work item is asserted by driving `KbQueryTool` (the config-gated `query_lightrag` tool) over a
+  fixture KB and checking the persisted variant file contains the KB observation.
 - The migration is asserted by round-trip: an in-memory `ExperimentLog` populated by the deterministic stages
   persists to the correct per-project file, reads back byte-equivalent, and survives a second `arun_pod` pass.
 
@@ -324,7 +325,7 @@ degrading gracefully if the write itself is the failure source.
 | Seam | Coverage | Prior art |
 |---|---|---|
 | `PodMemoryStore` public read/write contract (primary seam) | identity/layout per D84-33/34, order enumeration, idempotent overwrite (D84-37), append + read-latest for notes, typed attribute filters (D84-36), no `_seq`/`_ref` anywhere, per-project scoping | current `tests/attack/pod/test_pod_memory.py` (rewritten to the new topology/identity) |
-| Deterministic write stages incl. KB recording | init/mint_variant/triager records persist; `ExecTool._record` and the NEW `KbRetrieveTool._record` each land a record in the variant file | `tests/attack/pod/test_tools.py` (extended with the KB-record assertions) |
+| Deterministic write stages incl. KB recording | init/mint_variant/triager records persist; `ExecTool._record` and `KbQueryTool._record` each land a record in the variant file | `tests/attack/pod/test_tools.py` (extended with the KB-record assertions) |
 | Prompt materialization | the composed memory header renders BOTH the note keys and the experiment-log identifiers that the reading tool can address | `tests/attack/pod/test_prompt_memory.py` |
 | `note` tool contract | unchanged contract (extra="forbid", coded rejections, fail-open) + the new typed read filters + the summary sink routing | `tests/attack/pod/test_note_tool.py` |
 | Pod-level assertions | C13 (KB tool bound) extended to assert the KB response is recorded; C14 (note written on P3) re-scoped to the summary landing in the variant's experiment-log file; C15 unchanged | `tests/integration/test_test_executor_pod_contracts.py` |
@@ -345,12 +346,13 @@ degrading gracefully if the write itself is the failure source.
 - The #164 hunter rework itself (its test-spec store, tool surface, state graph) - a separate ticket; the pod only
   consumes its minted `spec_id`.
 - The inbox surfer and produced->consumed delivery (G13, another workstream; the pod has no dispatch lifecycle).
-- LightRAG integration itself (the `lightrag` branch) - a simultaneous workstream; `kb_retrieve` keeps its fail-open
-  seam and gains the recording step.
+- LightRAG's own tool internals beyond the config-gated `query_lightrag`/`KbQueryTool` binding (the recording step
+  is pod-side; the tool itself is the lightrag branch's, now merged).
 - The plan-control tool / DAG workflow control-plane (#136).
 - The closed-enum testing-pattern engine (#81) and the fault-targeting tool registry (#71).
 - `update`/`delete` write options on the pod's `note` tool (D84-37).
-- Changes to the LLM tool surface beyond the reading filters - the tool set stays `exec` / `kb_retrieve` / `note`.
+- Changes to the LLM tool surface beyond the reading filters - the tool set stays `exec` / `note` (+ the
+  config-gated `query_lightrag` KB tool).
 
 ## Further Notes
 

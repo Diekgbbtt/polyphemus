@@ -964,10 +964,12 @@ def test_e2e_e13_q7_reflection_strategy(tmp_path):
         pytest.fail(f"Q7 reflection evidence absent in observed traces: {exc}")
 
 
-# --- E14: store write failure + KB degraded still completes -----------------
+# --- E14: store write failure still completes (the KB seam is retired) ---------
 
 def test_e2e_e14_fail_open_store_kb_graph(tmp_path, caplog):
-    """E14 - fail-open O3/O4/O5: KB degraded + flaky HuntStore still completes."""
+    """E14 - fail-open O3/O4/O5: a flaky HuntStore still completes. The gate's
+    kb_retrieve_fn duplicate seam is RETIRED (the gate grounds via the direct
+    materialisation read, so kb_degraded is always False)."""
     class _FlakyStore(HuntStore):
         def __init__(self, root, *, fail_first: int):
             super().__init__(root)
@@ -988,9 +990,6 @@ def test_e2e_e14_fail_open_store_kb_graph(tmp_path, caplog):
 
     store = _FlakyStore(tmp_path, fail_first=2)
 
-    def kb_retrieve(fault_class):
-        raise RuntimeError("KB unavailable")
-
     def hypothesise_fn(inp: GateInput) -> GateDecision:
         return GateDecision(directions=[_carry(x, classes=["CSRF"]) for x in inp.candidates])
 
@@ -999,7 +998,7 @@ def test_e2e_e14_fail_open_store_kb_graph(tmp_path, caplog):
         project_id="proj-e14", run_id="run-e14", candidates=[c],
         tools=_tools(store, "proj-e14"),
         hypothesise_fn=hypothesise_fn, ratify_fn=_ratify_drafts,
-        note_fn=_note_pair, kb_retrieve_fn=kb_retrieve,
+        note_fn=_note_pair,
     )
     # the 1-candidate pass makes exactly three store writes (the hypothesise
     # create, the ratify upsert, the note append); the first two fail (O3 -
