@@ -57,10 +57,8 @@ The tool calls are the only place the live target is touched.
 The `TestImplementationSpec` (D4); the communication interface with the parent HuntingAgent (the typed handoff: D4 in, D5 + D6 out); the memory and observability seams; and the pod experiment-memory store.
 
 The pod has **no graph access**.
-It OWNS a pod experiment-memory store (D84-20): a persistent memory store of hunting test-executors, keyed by `TestImplementationSpec` identifier, with a child attribute holding ALL variants, each variant carrying the relevant attributes (the consolidation of the run's insightful material for later note reads).
-The store's indexing/retrieval/data model replicates the hunt per-project memory store's patterns (`_seq`/`_ref`, append-only, grep-match read, read-latest) WITHOUT importing it - it is pod-owned and spec-keyed, not cross-project `(unit_id, fault_class)` (D84-20).
-The note tool reads/writes this pod-owned store; the experiment log rides the D6 export too.
-The pod prompts embed an INDEXABLE LIST of the pod memory's keys (per spec id + variant refs) plus note-reading guidance, mirroring the hunt-orchestrator's prior-config key-list + reading-tool pattern, so the Runner/Triager can index into the store when required (D84-27).
+It OWNS a pod experiment-memory store (D84-33 through D84-38, adapted as of T1/#177): a per-project, deterministic-key store at `data/<project_id>/test-executor-pod/` with two bodies - `experiment-logs/<fault>_<strategy>/<order>.yaml` (one file per variant, overwritten idempotently) and the per-project `notes.yaml` keyed `<fault>_<strategy>:<order>:<note_name>`. The spec identifier is the #164 hunter's `<fault>_<strategy>` (D84-34), NOT a content-addressed hash; the order number is the variant ordinal. There is NO `_seq`/`_ref` (D84-36): the deterministic key plus the natural list order disambiguate every artifact; reads are latest-first. The note tool reads/writes this store; the experiment log rides the D6 export too. The authoritative build spec for the store is `docs/design/hunting-84-pod-memory-system-spec.md`.
+The pod prompts embed an INDEXABLE LIST of the pod memory's keys (notes by key + the experiment-log identifiers, spec id + orders on file) plus note-reading guidance, mirroring the hunt-orchestrator's prior-config key-list + reading-tool pattern, so the Runner/Triager can index into the store when required (D84-27).
 
 ### 1.6 Output template
 

@@ -26,14 +26,18 @@ from polymerhus.attack.hunting.pod.agents import (
     default_runner_step_fn,
     default_triager_fn,
 )
-from polymerhus.attack.hunting.pod.context import ExperimentLog, _dicts_to_lc
+from polymerhus.attack.hunting.pod.context import (
+    ExperimentLog,
+    _dicts_to_lc,
+    canonical_spec_hash,
+)
 from polymerhus.attack.hunting.pod.llm import (
     POD_RUNNER_ROLE,
     PodHarnessContext,
     bind_pod_session,
     pod_harness,
 )
-from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_spec_id
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.types import RunnerStep
 from polymerhus.recon.domain.types import ExecResult
 
@@ -45,6 +49,8 @@ SPEC = {
     "payload_vector_space": {"method": "GET", "path": "/"},
     "rationale": "reachability",
 }
+
+SPEC_ID = spec_identifier("sqli", "blind")
 
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
 _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
@@ -111,7 +117,7 @@ def test_runner_turn_performs_one_react_stretch_and_synthesizes_conclude(tmp_pat
     calls = []
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
+    spec_id = SPEC_ID
     hc = PodHarnessContext(exec_fn=_exec(_OK, calls=calls), kb_fn=None,
                            memory_store=store, spec_id=spec_id, log=log,
                            variant_ref="v0", model_factory=_factory(REACT_EXEC_AND_CONCLUDE))
@@ -129,7 +135,7 @@ def test_runner_turn_flags_an_empty_stretch_as_exhausted(tmp_path):
     # The runner concludes WITHOUT executing anything: the old empty-probe rule.
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
+    spec_id = SPEC_ID
     hc = PodHarnessContext(exec_fn=_exec(_OK), kb_fn=None, memory_store=store,
                            spec_id=spec_id, log=log, variant_ref="v0",
                            model_factory=_factory([AIMessage(content="nothing to probe")]))
@@ -146,12 +152,12 @@ def test_runner_turn_binds_note_and_kb_on_the_same_agent(tmp_path):
     calls = []
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
+    spec_id = SPEC_ID
     replies = [
         AIMessage(content="", tool_calls=[
             {"name": "kb_retrieve", "args": {"query": "csrf on search"}, "id": "c1"}]),
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "write", "variant_ref": "v0",
+            {"name": "note", "args": {"operation": "write", "order": 0,
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the consolidated summary"},
@@ -195,8 +201,8 @@ def _drive_triager(spec, hc, log):
 def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path):
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
-    store.append(spec_id, variant_ref="v0", note_name="experiment",
+    spec_id = SPEC_ID
+    store.append(spec_id, order=0, note_name="experiment",
                  kind="experiment_summary", body="the verbatim consolidation")
     hc = PodHarnessContext(exec_fn=_exec(_OK), kb_fn=None, memory_store=store,
                            spec_id=spec_id, log=log, variant_ref="v0",
@@ -216,7 +222,7 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path):
 def test_triager_seam_degrades_to_a_safe_terminal_on_failure(tmp_path):
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
+    spec_id = SPEC_ID
 
     def raising(role_id):
         raise RuntimeError("no model")
@@ -293,6 +299,6 @@ def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path)
                         memory_store=PodMemoryStore(tmp_path)))
     assert env["verdict"] == "unsuccessful"
     assert seen and seen[0] is not None
-    assert seen[0].spec_id == canonical_spec_id(root_spec)   # root spec keys the memory
+    assert seen[0].spec_id == canonical_spec_hash(root_spec)   # root spec keys the memory
     assert seen[0].variant_ref == "v0"
     assert seen[0].log is not None

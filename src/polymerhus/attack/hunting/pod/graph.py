@@ -76,6 +76,7 @@ from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
     _lc_to_dicts,
+    canonical_spec_hash,
     compose_runner_delta,
     compose_triager_delta,
 )
@@ -86,7 +87,7 @@ from polymerhus.attack.hunting.pod.llm import (
     PodHarnessContext,
     bind_pod_session,
 )
-from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_spec_id
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
 from polymerhus.attack.hunting.pod.symbolic import evaluate_symptom
 from polymerhus.attack.hunting.pod.tools import command_signature, parse_curl, run_with_retry
 from polymerhus.attack.hunting.pod.types import (
@@ -169,26 +170,46 @@ def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
     return {"export": export.to_envelope(), "verdict": verdict, "terminal_reason": reason}
 
 
-def _root_spec_id(state: PodState) -> str:
-    """The memory-store key (D84-20): the ROOT spec's canonical hash (variants
-    are the child attribute), never the current variant's spec hash."""
-    return canonical_spec_id(state.get("root_spec") or state.get("spec") or {})
+def _root_spec_id(state: PodState, spec_id: str | None) -> str:
+    """The memory-store key (D84-34): the #164 hunter's `spec_id`
+    (`<fault>_<strategy>`) crossed through the typed handoff. When a caller
+    supplies no `spec_id` (the handoff is not wired yet, or a hermetic test),
+    it falls back to the root spec's canonical hash - a T1 stand-in that keeps
+    the memory key deterministic until the #164 handoff lands. The session
+    thread identity is ALWAYS the canonical hash (`context.canonical_spec_hash`,
+    unchanged), never this memory key."""
+    if spec_id:
+        return spec_id
+    return canonical_spec_hash(state.get("root_spec") or state.get("spec") or {})
+
+
+def _variant_order(state: PodState) -> int:
+    """The variant ORDINAL (D84-34): the current variant's index in the D6 log,
+    0 for the initial v0 - the memory key's order component."""
+    log = state.get("log")
+    if log is not None and log.variant_specs:
+        ref = state.get("current_variant_ref", "v0")
+        for i, v in enumerate(log.variant_specs):
+            if v.ref == ref:
+                return i
+    return 0
 
 
 def _harness_ctx(state: PodState, *, exec_fn, kb_fn, memory_store,
-                 model_factory) -> PodHarnessContext:
+                 model_factory, spec_id) -> PodHarnessContext:
     """The run-scoped harness the production seams read (T7): exec/kb/store/log/
-    variant/model factory, with the memory key on the ROOT spec id."""
+    variant/model factory, with the memory key on the #164 spec id (D84-34)."""
     return PodHarnessContext(
         exec_fn=exec_fn, kb_fn=kb_fn, memory_store=memory_store,
-        spec_id=_root_spec_id(state), log=state.get("log"),
+        spec_id=_root_spec_id(state, spec_id), log=state.get("log"),
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS)
 
 
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None,
                     runner_middleware=(), triager_middleware=(),
-                    memory_store=None, model_factory=None):
+                    memory_store=None, model_factory=None,
+                    project_id=None, spec_id=None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
@@ -203,11 +224,18 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
     - `runner_middleware` / `triager_middleware` - the per-role #95 compaction
       middleware sets the run injected (T5); the production default seams pass
       them to the stateful turns verbatim (D84-12). Default `()` = uncompacted.
-    - `memory_store` - the pod-owned experiment-memory store (D84-20/28); default
-      = the fixed `data/pod-memory` root when a PRODUCTION seam is in play,
-      `None` (never constructed) for a fully-injected contract tier.
+    - `memory_store` - the pod-owned experiment-memory store (D84-33); default
+      = the per-project root `data/<project_id>/test-executor-pod/` when a
+      PRODUCTION seam is in play AND `project_id` is provided, `None` (never
+      constructed) for a fully-injected contract tier or an absent project id
+      (the note tool then degrades fail-open, O10).
     - `model_factory(role) -> chat model` - the session model seam for the
       production turns (`None` = the role's real model; tests inject a fake).
+    - `project_id` - the store's scoping axis (D84-33), from the parent hunting
+      module context.
+    - `spec_id` - the #164 hunter's `SpecItem.spec_id` (`<fault>_<strategy>`)
+      crossed through the typed handoff; when absent the memory key falls back
+      to the root spec's canonical hash (a T1 stand-in).
     """
     if runner_step_fn is None:
         runner_step_fn = default_runner_step_fn
@@ -222,8 +250,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
     if kb_fn is None:
         from polymerhus.attack.hunting.pod.tools import kb_retrieve
         kb_fn = kb_retrieve
-    if memory_store is None and (production_runner or production_triager):
-        memory_store = PodMemoryStore()
+    if memory_store is None and (production_runner or production_triager) and project_id:
+        memory_store = PodMemoryStore(project_id=project_id)
 
     def init(state: PodState) -> dict:
         spec = dict(state["spec"])
@@ -260,7 +288,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                                        log, spec, state.get("feedback", ""),
                                        state.get("iteration", 1), HUNT_POD_MAX_ITERS,
                                        store=memory_store,
-                                       spec_id=_root_spec_id(state))}])
+                                       spec_id=_root_spec_id(state, spec_id))}])
             before_obs = len(log.raw_observations)
             before_exec = len(log.executed)
             # D84-7: the graph owns the pod-session binding - the `pod_runner`
@@ -273,7 +301,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                                   harness=_harness_ctx(
                                       state, exec_fn=exec_fn, kb_fn=kb_fn,
                                       memory_store=memory_store,
-                                      model_factory=model_factory)):
+                                      model_factory=model_factory,
+                                      spec_id=spec_id)):
                 step = await _await_seam(runner_step_fn, spec, delta,
                                          state.get("tool_calls", 0))
             if not isinstance(step, RunnerStep):
@@ -394,8 +423,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             # the memory guidance + variant_refs; the thread holds the history,
             # so only the delta is new_messages (D84-11).
             human = {"role": "human", "content": compose_triager_delta(
-                log, spec, obs, store=memory_store, spec_id=_root_spec_id(state),
-                variant_ref=state.get("current_variant_ref", "v0"))}
+                log, spec, obs, store=memory_store,
+                spec_id=_root_spec_id(state, spec_id),
+                order=_variant_order(state))}
             seam_view = [human]
         else:
             human = {"role": "human", "content": log.triager_context(spec, obs)}
@@ -420,7 +450,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
                                   harness=_harness_ctx(
                                       state, exec_fn=exec_fn, kb_fn=kb_fn,
                                       memory_store=memory_store,
-                                      model_factory=model_factory)):
+                                       model_factory=model_factory,
+                                       spec_id=spec_id)):
                 raw = await _await_seam(triager_fn, spec, obs, seam_view, log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":

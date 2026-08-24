@@ -51,10 +51,10 @@ _pod_harness_ctx: "ContextVar" = None
 class PodHarnessContext:
     """The run-scoped pieces the production ReAct seams need beyond the session
     address (D84-7 extension, T7): the injected terminal (exec_fn), the KB seam
-    (kb_fn), the pod memory store + its spec key (spec_id = the ROOT spec's
-    canonical hash - the D84-20 data model keys the store by the spec, with
-    variants as a child), the D6 log, the CURRENT variant_ref for dedup scope,
-    and the session model factory (None = the role's real model)."""
+    (kb_fn), the pod memory store + its spec key (spec_id = the #164 hunter's
+    `<fault>_<strategy>` memory key - D84-34 - NOT the session hash), the D6 log,
+    the CURRENT variant_ref for dedup scope, and the session model factory
+    (None = the role's real model)."""
 
     exec_fn: Callable
     kb_fn: Callable | None = None

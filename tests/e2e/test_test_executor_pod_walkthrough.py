@@ -54,8 +54,8 @@ from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
 from polymerhus.attack.hunting.pod.pod_memory import (
     PodMemoryStore,
-    canonical_spec_id,
-    notation_key,
+    note_key,
+    spec_identifier,
 )
 from polymerhus.recon.domain.types import ExecResult
 
@@ -73,6 +73,9 @@ VALID_SPEC = {
     "rationale": "reachability probe from H1",
     "interpretation_guidance": "a 200 with a non-empty body confirms the symptom",
 }
+
+# The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).
+SPEC_ID = spec_identifier("sqli", "blind")
 
 # The fixed synthetic curl trailers (tools.py `parse_curl` reads the markers).
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
@@ -138,7 +141,7 @@ _REACT_KB_EXEC_NOTE_CONCLUDE = [
     AIMessage(content="", tool_calls=[
         {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
     AIMessage(content="", tool_calls=[
-        {"name": "note", "args": {"operation": "write", "variant_ref": "v0",
+        {"name": "note", "args": {"operation": "write", "order": 0,
                                   "note_name": "experiment",
                                   "kind": "experiment_summary",
                                   "body": "the default probe returned HTTP 404 "
@@ -235,7 +238,7 @@ def test_space_exhausted_run_writes_the_p3_note(tmp_path):
     store = PodMemoryStore(tmp_path)
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls), kb_fn=_kb_empty(),
-        trace_fn=_no_trace, memory_store=store,
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: _REACT_KB_EXEC_NOTE_CONCLUDE,
                                 POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
 
@@ -250,13 +253,12 @@ def test_space_exhausted_run_writes_the_p3_note(tmp_path):
     assert "third-party miner" in env["evidence"]["interpretations"][0]["note"]
 
     # C14/H6: the pod experiment-memory store holds the ONE consolidated
-    # experiment-summary note, keyed by the spec id + variant.
-    notes = store.read_notes(canonical_spec_id(VALID_SPEC))
+    # experiment-summary note, keyed by the spec id + variant order.
+    notes = store.read_notes(SPEC_ID)
     assert len(notes) == 1
     assert notes[0]["kind"] == "experiment_summary"
-    assert notes[0]["variant_ref"] == "v0"
-    assert notes[0]["key"].startswith(
-        notation_key(canonical_spec_id(VALID_SPEC), "v0", ""))
+    assert notes[0]["order"] == 0
+    assert notes[0]["key"].startswith(note_key(SPEC_ID, 0, ""))
     assert "404" in notes[0]["body"]
 
 

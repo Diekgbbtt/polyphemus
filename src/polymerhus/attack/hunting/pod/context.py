@@ -168,7 +168,7 @@ def compose_runner_delta(log: ExperimentLog, spec: dict, feedback: str,
 
 def compose_triager_delta(log: ExperimentLog, spec: dict,
                           observation: RawObservation | None, *, store,
-                          spec_id: str, variant_ref: str) -> str:
+                          spec_id: str, order: int) -> str:
     """The Triager's delta (D84-23): the VERBATIM P3 consolidation note (read
     from the pod-owned store) + the filtered `triager_context` + the per-turn
     memory key-list/guidance. No structured `RunnerStep` crosses the seam; a
@@ -178,7 +178,7 @@ def compose_triager_delta(log: ExperimentLog, spec: dict,
         read_variant_summary,
     )
 
-    note_body = read_variant_summary(store, spec_id, variant_ref)
+    note_body = read_variant_summary(store, spec_id, order)
     note_part = (f"## Runner's consolidation note (verbatim)\n{note_body}" if note_body
                  else "## Runner's consolidation note (verbatim)\n"
                        "(no consolidation note for this stretch yet)")

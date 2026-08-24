@@ -20,7 +20,7 @@ from polymerhus.attack.hunting.pod.agents import runner_react_tools, triager_rea
 from polymerhus.attack.hunting.pod.config import EXEC_TIMEOUT_S, MAX_POD_ITERS
 from polymerhus.attack.hunting.pod.context import ExperimentLog
 from polymerhus.attack.hunting.pod.note_tool import PodNoteTool
-from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_spec_id
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.tools import (
     ExecSpec,
     ExecTool,
@@ -29,6 +29,9 @@ from polymerhus.attack.hunting.pod.tools import (
     kb_retrieve,
 )
 from polymerhus.recon.domain.types import ExecResult
+
+SPEC_ID = spec_identifier("sqli", "blind")
+
 
 SPEC = {
     "target_identity": "service:web:soupmarket",
@@ -53,7 +56,7 @@ def test_runner_binds_kb_retrieve_as_a_bound_tool(tmp_path):
     """The Runner's ReAct `tools=` list carries a `kb_retrieve` BaseTool (the
     D84-16 defect: the KB existed in the prompt text but was never bound)."""
     tools = runner_react_tools(exec_fn=_exec(), memory_store=PodMemoryStore(tmp_path),
-                               spec_id=canonical_spec_id(SPEC), log=ExperimentLog(),
+                               spec_id=SPEC_ID, log=ExperimentLog(),
                                variant_ref="v0")
     names = {t.name for t in tools}
     assert {"exec", "kb_retrieve", "note"} <= names
@@ -62,7 +65,7 @@ def test_runner_binds_kb_retrieve_as_a_bound_tool(tmp_path):
 
 
 def test_triager_binds_note_and_kb_and_no_exec(tmp_path):
-    tools = triager_react_tools(PodMemoryStore(tmp_path), canonical_spec_id(SPEC))
+    tools = triager_react_tools(PodMemoryStore(tmp_path), SPEC_ID)
     names = {t.name for t in tools}
     assert {"note", "kb_retrieve"} <= names
     assert "exec" not in names
@@ -71,7 +74,7 @@ def test_triager_binds_note_and_kb_and_no_exec(tmp_path):
 def test_runner_tools_are_injective_constructed_per_stretch(tmp_path):
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
+    spec_id = SPEC_ID
     tools_v0 = runner_react_tools(_exec(), store, spec_id, log, "v0")
     tools_v1 = runner_react_tools(_exec(), store, spec_id, log, "v1")
     exec_v0 = next(t for t in tools_v0 if t.name == "exec")
@@ -197,10 +200,10 @@ def test_exec_tool_async_path_records_same_shape():
 
 
 def test_runner_tools_note_tool_rejects_a_storeless_instance(tmp_path):
-    tools = runner_react_tools(_exec(), None, canonical_spec_id(SPEC),
+    tools = runner_react_tools(_exec(), None, SPEC_ID,
                                ExperimentLog(), "v0")
     note = next(t for t in tools if t.name == "note")
     assert isinstance(note, PodNoteTool)
-    out = note.invoke({"operation": "write", "variant_ref": "v0", "note_name": "n",
+    out = note.invoke({"operation": "write", "order": 0, "note_name": "n",
                        "kind": "freeform", "body": "x"})
     assert out.startswith("NOTES_NO_STORE")

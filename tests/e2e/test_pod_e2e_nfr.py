@@ -215,7 +215,7 @@ def _hermetic_h2_env():
                              "note": "third-party miner: no symptom established"}]}}
 
 
-_HERMETIC_H2_NOTE = [{"kind": "experiment_summary", "variant_ref": "v0",
+_HERMETIC_H2_NOTE = [{"kind": "experiment_summary", "order": 0,
                       "body": ("the default probe (GET /) returned HTTP 404 "
                                "with an empty body; the search-parameter "
                                "families were exhausted; payload banana reflects "

@@ -1,4 +1,4 @@
-"""The pod `note` tool (T7, D84-20/27/32): write + read into the pod memory store.
+"""The pod `note` tool (T7, D84-20/27/32; T1 rides the per-project store).
 
 The Runner calls `note` at P3 to write ONE consolidated `experiment_summary` as
 the FINAL tool call of an exhausted stretch (D84-17/19); the Triager calls it to
@@ -17,8 +17,12 @@ reads return a graceful empty result, so the ReAct loop survives an unwired
 store. A read returns the note bodies prompt-verbatim and un-truncated
 (D84-19.2) - the summary is a different object from a raw tool body slice.
 
-The VALUE fields stored match the D84-32 CANONICAL set (the D84-30/31
-removals applied).
+T1: the tool rides the per-project deterministic-key store. The write's
+`variant_ref` becomes the integer `order` (the variant ordinal), notes are keyed
+`<spec_id>:<order>:<note_name>` (D84-36), and the read surface gains the typed
+attribute filters (`order`, `kind`, `classification`, `symptom_status`) beside
+the retained substring filters. The VALUE fields stored match the D84-32
+CANONICAL set (the D84-30/31 removals applied; `_seq`/`_ref` gone).
 """
 from __future__ import annotations
 
@@ -41,22 +45,25 @@ NOTE_KINDS_DECLARED = list(POD_NOTE_KINDS)
 
 
 class NoteToolSpec(BaseModel):
-    """The `note` tool's contract (D84-32): `operation` discriminates write/read.
+    """The `note` tool's contract (D84-32, T1): `operation` discriminates
+    write/read.
 
-    Write fields carry the consolidation attributes; the read filters
-    (`parent_key` / `key_keyword` / `body_keyword`) are the store's grep-match
-    read, nullable and combinable. `extra="forbid"` (D84-22) rejects a
+    Write fields carry the consolidation attributes, with `order` (the variant
+    ordinal) replacing the old `variant_ref` string per D84-36. The read filters
+    are the store's typed attribute filters (`order`, `kind`, `classification`,
+    `symptom_status`) plus the substring filters (`parent_key` / `key_keyword` /
+    `body_keyword`), nullable and combinable. `extra="forbid"` (D84-22) rejects a
     parameter outside this contract BEFORE `_run`.
     """
 
     operation: str = "write"
-    # write:
-    variant_ref: str = ""
+    # write (order/kind required on a write; None on a read = no filter):
+    order: int | None = None
     note_name: str = ""
-    kind: str = "freeform"
+    kind: str | None = None
     body: str = ""
-    classification: str = ""
-    symptom_status: str = ""
+    classification: str | None = None
+    symptom_status: str | None = None
     kb_primitives_used: list[str] = Field(default_factory=list)
     exhaustion_evidence: str = ""
     # read filters:
@@ -76,12 +83,12 @@ class PodNoteTool(BaseTool):
     description: str = (
         "Write or read a pod experiment note in the pod's memory store. "
         f"Kinds: {', '.join(POD_NOTE_KINDS)}. "
-        "operation=write persists a note for the current variant "
+        "operation=write persists a note for the current variant order "
         "(kind experiment_summary is the consolidated stretch summary written as "
         "the FINAL tool call when the probe space is exhausted); "
-        "operation=read returns matching notes newest-first with parent_key "
-        "(the spec or variant prefix), key_keyword, or body_keyword filters, "
-        "each note's body verbatim."
+        "operation=read returns matching notes newest-first with the order, kind, "
+        "classification, symptom_status, parent_key, key_keyword, or body_keyword "
+        "filters, each note's body verbatim."
     )
     args_schema: type[BaseModel] = NoteToolSpec
 
@@ -100,14 +107,17 @@ class PodNoteTool(BaseTool):
         body = (spec.body or "").strip()
         if not body:
             return NOTES_EMPTY_BODY
-        if spec.kind not in POD_NOTE_KINDS:
-            return f"{NOTES_BAD_KIND}: {spec.kind!r}; known: {', '.join(POD_NOTE_KINDS)}"
+        kind = spec.kind or "freeform"
+        if kind not in POD_NOTE_KINDS:
+            return f"{NOTES_BAD_KIND}: {kind!r}; known: {', '.join(POD_NOTE_KINDS)}"
+        if spec.order is None:
+            return NOTES_ARGS_REJECTED + ": a note write needs the variant order"
         try:
-            ref = self.__store.append(
+            key = self.__store.append(
                 self.__spec_id,
-                variant_ref=spec.variant_ref or "",
+                order=spec.order,
                 note_name=spec.note_name or "",
-                kind=spec.kind,
+                kind=kind,
                 body=body,
                 classification=spec.classification or "",
                 symptom_status=spec.symptom_status or "",
@@ -116,8 +126,8 @@ class PodNoteTool(BaseTool):
             )
         except Exception as exc:  # noqa: BLE001 - fail-open: never raise into the loop
             return f"NOTES_WRITE_FAILED: {exc}"
-        return (f"NOTES_WRITTEN {ref}: {spec.kind} note {spec.note_name!r} for "
-                f"variant {spec.variant_ref!r} persisted")
+        return (f"NOTES_WRITTEN {key}: {kind} note {spec.note_name!r} for "
+                f"order {spec.order} persisted")
 
     def _read(self, spec: NoteToolSpec) -> str:
         if self.__store is None:
@@ -125,6 +135,10 @@ class PodNoteTool(BaseTool):
         try:
             notes = self.__store.read_notes(
                 self.__spec_id,
+                order=spec.order,
+                kind=spec.kind,
+                classification=spec.classification,
+                symptom_status=spec.symptom_status,
                 parent_key=spec.parent_key or None,
                 key_keyword=spec.key_keyword or None,
                 body_keyword=spec.body_keyword or None,
@@ -143,8 +157,8 @@ class PodNoteTool(BaseTool):
                     if isinstance(rendered, list):
                         rendered = json.dumps(rendered)
                     fields.append(f"{f}: {rendered}")
-            meta = (f"NOTE {n.get('_ref')} kind={n.get('kind')} key={n.get('key')}"
-                    f" variant_ref={n.get('variant_ref')}")
+            meta = (f"NOTE key={n.get('key')} kind={n.get('kind')}"
+                    f" order={n.get('order')}")
             body = str(n.get("body", ""))
             block = f"{meta}\n" + ("\n".join(fields) + "\n" if fields else "") + f"body:\n{body}"
             blocks.append(block)

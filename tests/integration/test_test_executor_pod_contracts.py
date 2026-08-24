@@ -38,7 +38,7 @@ from polymerhus.attack.hunting.pod.note_tool import (
     PodNoteTool,
     note_tool_for,
 )
-from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_spec_id
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.tools import (
     ExecSpec,
     ExecTool,
@@ -57,6 +57,9 @@ VALID_SPEC = {
     "rationale": "reachability probe from H1",
     "interpretation_guidance": "a 200 with a non-empty body confirms the symptom",
 }
+
+# The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).
+SPEC_ID = spec_identifier("sqli", "blind")
 
 # A spec whose symptom the symbolic recogniser cannot decide, so the Critic runs.
 SEMANTIC_SPEC = {**VALID_SPEC, "verification_symptoms": ["reflects the injected marker"]}
@@ -390,7 +393,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path):
         AIMessage(content="", tool_calls=[
             {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "write", "variant_ref": "v0",
+            {"name": "note", "args": {"operation": "write", "order": 0,
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the default probe returned HTTP 404 "
@@ -401,7 +404,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path):
     ]
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls), kb_fn=_kb_empty(),
-        trace_fn=_no_trace, memory_store=store,
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: runner_script,
                                 POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
 
@@ -410,10 +413,10 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path):
     assert env["evidence"]["clean"] is True
     assert len(exec_calls) == 1
 
-    notes = store.read_notes(canonical_spec_id(VALID_SPEC))
+    notes = store.read_notes(SPEC_ID)
     assert len(notes) == 1                          # exactly ONE consolidated note
     assert notes[0]["kind"] == "experiment_summary"
-    assert notes[0]["variant_ref"] == "v0"
+    assert notes[0]["order"] == 0
     assert "404" in notes[0]["body"]
 
 
@@ -434,7 +437,7 @@ def test_tool_contract_rejects_foreign_params(tmp_path):
 
     tool = SpyTool(store=store, spec_id="spec-x")
     with pytest.raises(ValueError):
-        tool.invoke({"operation": "write", "variant_ref": "v0",
+        tool.invoke({"operation": "write", "order": 0,
                      "note_name": "x", "kind": "experiment_summary",
                      "body": "consolidation", "surprise_field": "oops"})
     assert calls == []                              # never reached _run
