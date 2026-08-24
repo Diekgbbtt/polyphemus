@@ -112,8 +112,8 @@ Per the to-assertions rule a path that substitutes its live edge (the LLM) is a
 simulation, so these pin the harness's DETERMINISTIC wiring in the integration
 tier; the same path run live is the e2e tier's E1.
 
-- **H1 - the full lifecycle through the harness.** A scripted `HunterStep`
-  model drives hypothesise -> verify -> specify (F1) and hypothesise -> drop
+- **H1 - the full lifecycle through the harness.** A scripted model emitting REAL
+  tool calls drives hypothesise -> verify -> specify (F1) and hypothesise -> drop
   (F2) through the real harness, real store, real graph -> EXACTLY TWO produced
   files carrying the lifecycle terminals (`specified` / `dropped`), the
   no-verdict idle, and the terminal state in the feedback (no stale
@@ -173,10 +173,12 @@ probe and reads the report), not by a fixed script.
   (the full hypothesise -> verified -> commit-specification lifecycle); one note
   `fault-x-service-a:hunt-decision-trail` whose key embeds the same used
   fault_key (identifier equality). All E1 assertions held.
-  Qualitative finding: the model intermittently emits `extra="forbid"`-violating
-  tool args (e.g. a string `provenance`, invented `kb_query` fields) because the
-  tool surface is prose-only - they degrade fail-open and the happy path still
-  completes, but the contract robustness is a follow-up item.
+  Qualitative finding (RESOLVED 2026-08-24, option B): the model intermittently
+  emitted `extra="forbid"`-violating tool args because the tool surface was
+  prose-only - the five tools are now bound REQUEST-ONLY to the generation
+  request (`convert_to_openai_tool`, the standard tool interface: their JSON
+  schemas ride the request's `tools` body, no ToolNode), so the model emits real
+  tool calls with valid args. The live run is re-verified after the fix.
 
 ### Whole-hunter walkthroughs - blocked on the REST-capability workstream
 

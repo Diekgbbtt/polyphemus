@@ -2,10 +2,10 @@
 
 The state-graph hunter's seams (spec 5, ADR R4): the per-project
 `HunterMemoryStore`, the `hunts_store` / `notes` tool seam over it, and the
-turn-by-turn ReAct host's `model_factory` (a scripted model emitting
-`HunterStep` tool calls). Owned here so the memory contract catalogue (C1-C22)
-and the memory walkthrough catalogue (E1-E4) speak the SAME canned objects and
-the duplication stays in one place.
+turn-by-turn ReAct host's `model_factory` (a scripted model emitting REAL tool
+calls - the standard tool interface the harness binds request-only). Owned here
+so the memory contract catalogue (C1-C22) and the harness-seam catalogue (H1-H4)
+speak the SAME canned objects and the duplication stays in one place.
 """
 from __future__ import annotations
 
@@ -28,27 +28,33 @@ FAULT_CLASS = "fault-x"
 FAULT_KEY = f"{UNIT_ID}|{FAULT_CLASS}"
 
 
-class _HunterStepFake(BaseChatModel):
-    """A one-reply scripted model emitting a `HunterStep` tool call - the shape
-    `ToolStrategy(HunterStep)` consumes, so the session turn's `content` is the
-    parsed `HunterStep` object. Every message list it was handed is appended to
-    the shared `seen` list (the hint assertions read the tool responses). The
-    `seen` list rides a pydantic `PrivateAttr` so construction never copies it."""
+class _ScriptedFake(BaseChatModel):
+    """A one-reply scripted model: either a REAL tool call (name + args, the
+    standard tool interface the harness binds request-only) or a plain answer
+    (no tool calls -> the model concluded the hunt). Every message list it was
+    handed is appended to the shared `seen` list (the hint assertions read the
+    tool responses). The `seen` list rides a pydantic `PrivateAttr` so
+    construction never copies it."""
 
-    step: dict
+    reply: dict
     call_id: str
     _seen: list = PrivateAttr()
 
-    def __init__(self, *, step, seen, call_id):
-        super().__init__(step=step, call_id=call_id)
+    def __init__(self, *, reply, seen, call_id):
+        super().__init__(reply=reply, call_id=call_id)
         self._seen = seen
 
     def _generate(self, messages, stop=None, run_manager=None, **kwargs):
         self._seen.append([getattr(m, "content", None) for m in messages])
+        answer = self.reply.get("answer")
+        if answer is not None:
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(
+                content=answer, tool_calls=[]))])
+        name, args = self.reply["tool_call"]
         return ChatResult(generations=[ChatGeneration(message=AIMessage(
             content="",
             tool_calls=[{
-                "name": "HunterStep", "args": self.step,
+                "name": name, "args": args,
                 "id": self.call_id, "type": "tool_call",
             }],
         ))])
@@ -70,8 +76,8 @@ def _hunter_factory(steps, seen=None):
     def make(role_id):
         i = cursor["i"]
         cursor["i"] = i + 1
-        return _HunterStepFake(
-            step=steps[min(i, len(steps) - 1)],
+        return _ScriptedFake(
+            reply=steps[min(i, len(steps) - 1)],
             seen=record,
             call_id=f"h-{i}",
         )
@@ -79,10 +85,14 @@ def _hunter_factory(steps, seen=None):
     return make
 
 
-def _hunter_step(action, *, reasoning="", tool="", args=None, answer=""):
-    """One `HunterStep` args dict the scripted model emits."""
-    return {"action": action, "reasoning": reasoning, "tool": tool,
-            "args": args or {}, "answer": answer}
+def _tool_call(name, args=None):
+    """One scripted REAL tool call the model emits (name + args per schema)."""
+    return {"tool_call": (name, args or {})}
+
+
+def _answer(text):
+    """One scripted plain answer - the model concluded the hunt."""
+    return {"answer": text}
 
 
 def _hunt_config(**overrides) -> HuntConfig:
