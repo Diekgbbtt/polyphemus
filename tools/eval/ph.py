@@ -3,7 +3,7 @@
 
 A thin subcommand client over the polymerhus REST surface, encoding the
 payloads and polling semantics so the eval agent never guesses API shapes.
-Stdlib only (urllib); the API base is PH_API (default http://localhost:8000).
+Stdlib only (urllib); the API base is PH_API (default http://localhost:8080).
 
 Usage:
   ph.py project create <name>
@@ -31,7 +31,7 @@ import time
 import urllib.error
 import urllib.request
 
-API_BASE = os.environ.get("PH_API", "http://localhost:8000").rstrip("/")
+API_BASE = os.environ.get("PH_API", "http://localhost:8080").rstrip("/")
 
 RECON_TERMINAL = {"complete", "failed"}
 HUNTING_TERMINAL = {"complete", "stopped", "failed", "interrupted"}

@@ -7,7 +7,7 @@ pipeline's memory families (produced/consumed) when present, plus the run
 statuses and a manifest. The bundle is the oracle's only input, and the
 migration seam: a later deterministic oracle replays the same bundles.
 
-Stdlib only. The polymerhus API base is PH_API (default http://localhost:8000).
+Stdlib only. The polymerhus API base is PH_API (default http://localhost:8080).
 
 Usage:
   ev.py collect <project_id> <hunting_run_id> --out <dir>
@@ -25,7 +25,7 @@ import urllib.error
 import urllib.request
 from pathlib import Path
 
-API_BASE = os.environ.get("PH_API", "http://localhost:8000").rstrip("/")
+API_BASE = os.environ.get("PH_API", "http://localhost:8080").rstrip("/")
 
 # The hunting module's data seam, resolved from this script's location:
 # tools/eval/ -> ../../src/polymerhus/attack/hunting/data

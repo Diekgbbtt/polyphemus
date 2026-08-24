@@ -34,7 +34,7 @@ All commands run from the polymerhus repo root (`tools/eval/`).
 | `tools/eval/ev.py collect <p> <hunting_run_id> --out <dir> [--recon-run R] [--target-url U] [--challenge C]` | The evidence bundle (graph + hunt store + memories + pod artifacts + statuses + manifest). |
 | `tools/eval/cwes.yaml` | Vulnerability Type -> CWE ids. A HEURISTIC aid, never authoritative. |
 
-Env: `PH_API` (default `http://localhost:8000`), `EVAL_SSH_HOST`, `EVAL_WEB_DIR`
+Env: `PH_API` (default `http://localhost:8080`), `EVAL_SSH_HOST`, `EVAL_WEB_DIR`
 (default `~/WebExploitBench`).
 
 ## 2. The per-trial workflow
