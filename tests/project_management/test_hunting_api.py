@@ -92,8 +92,14 @@ class _FakeHuntingRows:
 
 
 def _patch_control_plane(monkeypatch, runtime=None):
+    """Patch BOTH runtime getters the surface consults onto the same fake: the
+    hunting module's `_app_runtime` (the launch + orchestrator-pass gates) and
+    the SHARED `polymerhus.app.runtime.get_active_runtime` (the API's own
+    `_runtime()` used by the module-lifecycle and per-session verbs)."""
+    import polymerhus.app.runtime as app_runtime
     from polymerhus.attack.hunting import runtime as hunting_runtime
     monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: runtime)
+    monkeypatch.setattr(app_runtime, "get_active_runtime", lambda: runtime)
     return hunting_runtime
 
 
@@ -459,6 +465,107 @@ def test_orchestrator_launch_fails_closed_503_without_control_plane(monkeypatch)
     monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: None)
 
     resp = client.post("/projects/p1/hunting/orchestrator", json={})
+
+    assert resp.status_code == 503
+
+
+# --- T5: per-session lifecycle verbs (ADR #169 Q17, spec #169 "REST surface") ---
+
+ORCH_SESSION = f"hunting:{RUN_ID}:orchestrator"
+HUNT_SESSION = f"hunting:{RUN_ID}:hunt:u_CWE-x_C"
+FOREIGN_SESSION = "hunting:other-run:orchestrator"
+
+
+def test_session_pause_routes_to_the_per_session_hold(monkeypatch):
+    monkeypatch.setattr(pg, "get_hunting_run", lambda rid: _row())
+    fake_runtime = _FakeRuntime()
+    _patch_control_plane(monkeypatch, fake_runtime)
+
+    resp = client.post(
+        f"/projects/p1/hunting/{RUN_ID}/sessions/{ORCH_SESSION}/pause")
+
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "held"
+    assert fake_runtime.held == [ORCH_SESSION]  # hold_session by session id
+    assert fake_runtime.cancelled == []        # never the module-wide verbs
+
+
+def test_session_resume_routes_to_the_per_session_resume(monkeypatch):
+    monkeypatch.setattr(pg, "get_hunting_run", lambda rid: _row())
+    fake_runtime = _FakeRuntime()
+    _patch_control_plane(monkeypatch, fake_runtime)
+
+    resp = client.post(
+        f"/projects/p1/hunting/{RUN_ID}/sessions/{ORCH_SESSION}/resume")
+
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "resumed"
+    assert fake_runtime.resumed == [ORCH_SESSION]
+
+
+def test_session_stop_routes_to_the_per_session_cancel(monkeypatch):
+    monkeypatch.setattr(pg, "get_hunting_run", lambda rid: _row())
+    fake_runtime = _FakeRuntime()
+    _patch_control_plane(monkeypatch, fake_runtime)
+
+    resp = client.post(
+        f"/projects/p1/hunting/{RUN_ID}/sessions/{HUNT_SESSION}/stop")
+
+    assert resp.status_code == 200
+    assert resp.json()["state"] == "stopping"
+    assert fake_runtime.cancelled == [HUNT_SESSION]  # ONE session, not the run
+
+
+def test_session_verb_unknown_run_404(monkeypatch):
+    monkeypatch.setattr(pg, "get_hunting_run", lambda rid: None)
+    fake_runtime = _FakeRuntime()
+    _patch_control_plane(monkeypatch, fake_runtime)
+
+    resp = client.post(f"/projects/p1/hunting/{RUN_ID}/sessions/{ORCH_SESSION}/pause")
+
+    assert resp.status_code == 404
+    assert fake_runtime.held == []
+
+
+def test_session_verb_foreign_session_404(monkeypatch):
+    """A session id that does not belong to the run is an unknown session - it
+    must never hold/cancel a sibling run's session through this endpoint."""
+    monkeypatch.setattr(pg, "get_hunting_run", lambda rid: _row())
+    fake_runtime = _FakeRuntime()
+    _patch_control_plane(monkeypatch, fake_runtime)
+
+    resp = client.post(
+        f"/projects/p1/hunting/{RUN_ID}/sessions/{FOREIGN_SESSION}/pause")
+
+    assert resp.status_code == 404
+    assert fake_runtime.held == []
+
+
+def test_session_stop_unregistered_session_404_via_the_runtime_error(monkeypatch):
+    """A session of the run that is not currently registered (already settled)
+    maps the runtime's own `RunNotRegistered` onto 404 - the cancel never
+    tears down something that is not there."""
+    from polymerhus.app.runtime import RunNotRegistered
+
+    class _StrictRuntime(_FakeRuntime):
+        def cancel_run(self, module, run_id):
+            raise RunNotRegistered(run_id)
+
+    monkeypatch.setattr(pg, "get_hunting_run", lambda rid: _row())
+    _patch_control_plane(monkeypatch, _StrictRuntime())
+
+    resp = client.post(
+        f"/projects/p1/hunting/{RUN_ID}/sessions/{ORCH_SESSION}/stop")
+
+    assert resp.status_code == 404
+
+
+def test_session_verb_503_without_an_active_runtime(monkeypatch):
+    _patch_control_plane(monkeypatch, None)
+    monkeypatch.setattr(pg, "get_hunting_run", lambda rid: _row())
+
+    resp = client.post(
+        f"/projects/p1/hunting/{RUN_ID}/sessions/{ORCH_SESSION}/pause")
 
     assert resp.status_code == 503
 

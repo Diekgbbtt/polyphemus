@@ -614,6 +614,89 @@ async def launch_pod_only(project_id: str, body: HuntingPodLaunch) -> dict:
     }
 
 
+# --- T5: per-session lifecycle verbs (ADR #169 Q17, spec #169 "REST surface") ---
+#
+# Pause / resume / stop for ONE registered session of a run, under the project
+# and hunting-run namespace. They route to the SHARED runtime's per-session
+# lifecycle (`hold_session` / `resume_session` / `cancel_run`, module
+# "hunting"), keyed by the ADR Q13 session id (session id = coroutine id =
+# registry run name) - NOT the module-wide verbs, so one stuck or costly
+# session never forces a whole-run stop. Map: 404 unknown run, 404 unknown /
+# unregistered session (the runtime's own `RunNotRegistered` error), 503 no
+# active runtime.
+
+_SESSION_STATES = {"pause": "held", "resume": "resumed", "stop": "stopping"}
+
+
+async def _session_verb(project_id: str, hunting_run_id: str, session_id: str,
+                        verb: str) -> dict:
+    """Route ONE per-session lifecycle verb to the shared control plane by the
+    session's ADR Q13 id. The run's own row must exist (404 unknown run) and
+    the session id must belong to the run (`is_run_session_id` - 404 unknown
+    session); a session of a SIBLING run is never reachable through this
+    namespace. `pause`/`stop` map the runtime's own `RunNotRegistered` onto
+    404 (nothing live to hold/cancel); `resume` of a not-held session is the
+    runtime verb's own safe no-op."""
+    from polymerhus.app.clients import pg  # noqa: PLC0415
+    from polymerhus.app.runtime import RunNotRegistered  # noqa: PLC0415
+    from polymerhus.attack.hunting.surfer import is_run_session_id  # noqa: PLC0415
+
+    row = await asyncio.to_thread(pg.get_hunting_run, hunting_run_id)
+    if row is None:
+        raise HTTPException(
+            status_code=404, detail="no hunting run for that hunting_run_id")
+    if not is_run_session_id(session_id, hunting_run_id):
+        raise HTTPException(
+            status_code=404,
+            detail=f"no session {session_id!r} of hunting run {hunting_run_id}",
+        )
+    runtime = _runtime_or_503()
+    try:
+        if verb == "pause":
+            runtime.hold_session("hunting", session_id)
+        elif verb == "resume":
+            runtime.resume_session("hunting", session_id)
+        else:  # stop
+            runtime.cancel_run("hunting", session_id)
+    except RunNotRegistered as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no live session {session_id!r} of hunting run "
+                f"{hunting_run_id}"
+            ),
+        ) from exc
+    return {
+        "hunting_run_id": hunting_run_id,
+        "session_id": session_id,
+        "state": _SESSION_STATES[verb],
+    }
+
+
+@router.post("/projects/{project_id}/hunting/{hunting_run_id}/sessions/{session_id}/pause")
+async def pause_hunting_session(project_id: str, hunting_run_id: str,
+                                session_id: str) -> dict:
+    """Hold ONE session (ADR #169 Q14): its NEXT unit boundary at the module
+    gate waits until resumed; sibling sessions of the run keep dispatching."""
+    return await _session_verb(project_id, hunting_run_id, session_id, "pause")
+
+
+@router.post("/projects/{project_id}/hunting/{hunting_run_id}/sessions/{session_id}/resume")
+async def resume_hunting_session(project_id: str, hunting_run_id: str,
+                                 session_id: str) -> dict:
+    """Release a held session; resuming a not-held session is the runtime
+    verb's own safe no-op."""
+    return await _session_verb(project_id, hunting_run_id, session_id, "resume")
+
+
+@router.post("/projects/{project_id}/hunting/{hunting_run_id}/sessions/{session_id}/stop")
+async def stop_hunting_session(project_id: str, hunting_run_id: str,
+                               session_id: str) -> dict:
+    """Hard-cancel ONE session by its id (phase-1 per-session stop); a session
+    that already settled maps the runtime's own `RunNotRegistered` onto 404."""
+    return await _session_verb(project_id, hunting_run_id, session_id, "stop")
+
+
 # --- module-lifecycle surface (#118/#121): drive the runtime plane ------------
 
 _MODULES = ("recon", "analysis", "hunting")
