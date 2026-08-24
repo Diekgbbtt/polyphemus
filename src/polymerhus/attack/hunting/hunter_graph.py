@@ -57,7 +57,7 @@ No driver and no I/O at import (CODING_STANDARD section 6).
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Literal
+from typing import Any, Callable
 
 from langgraph.graph import END, START, StateGraph
 from langgraph.types import Command

@@ -527,8 +527,11 @@ def build_hunting_agent(
             trace_span("hunter-tool", input={"tool": step.tool, "args": step.args},
                        output=result[:500])
             new_messages = [ToolMessage(tool_call_id=call_id, content=result)]
-
-        feedback.append(f"hunt {hunt_id} step budget exhausted ({_MAX_STEPS} steps)")
+        else:
+            # A natural loop end (no break) is genuine budget exhaustion; the
+            # break paths above already reported their own degradation, so a
+            # degraded turn must never surface a budget message.
+            feedback.append(f"hunt {hunt_id} step budget exhausted ({_MAX_STEPS} steps)")
         return _assemble(state, feedback)
 
     def _assemble(state: dict, feedback: list[str]) -> DispatchResult:

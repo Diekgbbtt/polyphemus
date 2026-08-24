@@ -783,11 +783,10 @@ async def arun_orchestration(
             "degraded": False,
             "error": None,
         }
-        round_no = 1
         if dispatch_fn is None:
             hunt.update({"degraded": True, "error": "hunting agent unavailable"})
             _write("dispatch", {
-                "hunt_id": hunt_id, "round": round_no,
+                "hunt_id": hunt_id,
                 "error": "hunting agent unavailable",
             })
         else:
@@ -797,11 +796,11 @@ async def arun_orchestration(
                 logger.warning("hunt %s dispatch failed (%s)", hunt_id, exc)
                 hunt.update({"degraded": True, "error": str(exc)})
                 _write("dispatch", {
-                    "hunt_id": hunt_id, "round": round_no, "error": str(exc),
+                    "hunt_id": hunt_id, "error": str(exc),
                 })
             else:
                 _write("dispatch", {
-                    "hunt_id": hunt_id, "round": round_no,
+                    "hunt_id": hunt_id,
                     "spec_ref": result.spec_ref,
                     "pod_result_ref": result.pod_result_ref,
                     "hypothesis_verdict": result.hypothesis_verdict,
