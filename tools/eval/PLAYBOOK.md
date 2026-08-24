@@ -71,6 +71,68 @@ classification), katana (crawl), jsluice (JS endpoint mining), arjun
 (parameter discovery). NEVER add steel_crawl, ffuf, kiterunner, subfinder,
 whois, dnsx, puredns, naabu, or subdomain_takeover to the subset.
 
+## 2b. The execution discipline (you are the driver of failure handling)
+
+You are responsible for making the execution persist. Monitor the state
+periodically, detect failure modes, and apply the remediation with the
+smallest blast radius that keeps the run moving. A failure is a first-class
+trial event: it is recorded, remediated, and the trial continues on the
+evidence that exists.
+
+### The monitoring loop
+
+Do not blind-poll: every poll, READ the state and classify it.
+
+- `ph.py recon poll` output: the run status, and per job `job=status` with the
+  job's elapsed time (started_at vs now) and its stats counts.
+- `recon_status.stats`: the analysis drain report - `analysis_drained`
+  (whether the terminal pass observed the surface) and
+  `advance_blocked_s_max` (the analysis stall predicate: a value growing past
+  a few minutes means the analysis consumer is blocked).
+- `ph.py hunting poll`: the hunting run status row.
+- Run liveness: heartbeats older than the liveness TTL (30s) mean a stalled
+  run (`GET /runs?status=running` annotates `live`/`stalled`).
+
+Cadence: every 30-60s while recon is in flight, every 60s while analysis
+drains, every 60-120s while hunting runs.
+
+### The failure modes catalog
+
+| # | Mode | Detection signal |
+|---|---|---|
+| F1 | Stalled job | A `per_job` row `running` with no progress across 2+ polls, far past its expected duration |
+| F2 | Over-saturated phase | A job repeatedly failing/retrying (pod retries cap at `MAX_POD_ITERS=3`), or a crawl/content job driving the host to OOM - the run crawls |
+| F3 | Stalled run | Run `running` with a stale heartbeat (liveness TTL 30s) or zero job rows |
+| F4 | Analysis blocked | `advance_blocked_s_max` growing across polls; the analysis never drains |
+| F5 | Hunting hang | Hunting run `running` with no terminal progress across several polls |
+| F6 | Admission refused | A launch 503 (module paused/draining/stopped) |
+| F7 | Provider degradation | Everything slows simultaneously (escalating retries #73); pods take many minutes |
+
+### The remediation catalog
+
+| # | Operation | Interface and semantics |
+|---|---|---|
+| R1 | Note-and-continue | A SINGLE failed job is not a failure: the pipeline is best-effort per job (design 10.6), the run completes, that slice of surface is degraded. Record it, continue. |
+| R2 | Graceful recon stop (the workhorse) | `POST /projects/{id}/recon/{run_id}/stop`. Cancels recon ONLY; the terminal marker is enqueued so the ANALYSIS CONSUMER STILL DRAINS what was already pushed. Then wait for the analysis to drain (`analysis_drained` true, or the analysis run terminal), THEN proceed to hunting. The partial surface is judged as-is. |
+| R3 | Narrow job suppression | Over-saturation attributable to ONE job: stop the run (R2), start a FRESH project/attempt with that job removed from the contract subset. Suppress the local failure narrowly; never re-add the excluded jobs. |
+| R4 | Analysis resume | After a graceful stop whose analysis did not drain (the queue was preserved): `POST /projects/{id}/analysis` `{run_id}` resumes the consumer (D7). Wait for the drain. |
+| R5 | Graceful analysis stop | `POST /projects/{id}/analysis/{run_id}/stop` - finish the in-flight chunk, preserve the queue for a resume. |
+| R6 | Hunting stop | `POST /projects/{id}/hunting/{hunting_run_id}/stop` - hard cancel + reap; the append-only trail preserves the partial evidence. Grade the degraded trail and record the stop. |
+| R7 | Module lifecycle | On a 503 launch (F6): read the module state through `POST /projects/{id}/modules/{module}/pause|resume|drain` responses (`module` in recon/analysis/hunting); wait for a paused/draining module to settle, or resume it explicitly. Never leave a module paused silently. |
+| R8 | Target fault | If the target becomes unreachable mid-trial (in-kali probe fails): `hosts.sh clear`, `target.sh down`, then either restart the attempt or record the failure. Never judge an unreachable-target trial as an empty finding. |
+
+### The decision rule
+
+1. Detect, then classify (F1-F7) from the signals above.
+2. Apply the remediation with the SMALLEST blast radius that keeps the
+   execution moving: R1 (note-and-continue) first, then R2/R3 (recon-level),
+   then R6 (hunting-level), then R4/R5/R7 (module-level). A whole-stack
+   restart is never a remediation - tear down and record instead.
+3. Record EVERY detection and remediation in `trial.yaml` under
+   `remediations`: `[{detected: F?, signal, action: R?, outcome}]`.
+4. Never fabricate: a suppressed run's verdicts are graded on the evidence
+   that exists; `trial.yaml` says exactly what was suppressed and why.
+
 ## 2. The per-trial workflow
 
 The trial directory `<runs>/<target>/<attempt>/` (under `tools/eval/runs/`) is
@@ -99,7 +161,9 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
    toggles.
 6. `ph.py bootstrap`.
 7. `ph.py recon launch` with the contract's job subset (section 2a).
-8. `ph.py recon poll` to terminal.
+8. `ph.py recon poll` to terminal, running the monitoring loop (section 2b)
+   throughout - every poll reads the state, detects failure modes, and applies
+   the minimal remediation. Record every remediation.
 9. `ph.py hunting launch`; `ph.py hunting poll` to terminal.
 10. `ph.py graph get --out <trial>/graph.json`; `ev.py collect --out <trial>`
     with the run ids.
@@ -204,6 +268,11 @@ health:
   recon_job_counts: {job: status, ...}
   hunting_status: complete
   oracle_summary: {identified: N, partial: M, missed: K}
+remediations:
+  - detected: F2
+    signal: "katana running 40m+ without progress, host memory saturated"
+    action: R3
+    outcome: "stopped run, fresh attempt without katana"
 ```
 
 ## 5. Integrity gates (never read absence as success)

@@ -18,7 +18,11 @@ Evaluate the WebExploitBench target <TARGET> with pass@k=<K>:
   kali aliasing, ground truth, the precomputed operator KB per target, the
   recon configuration contract in section 2a VERBATIM, project + bootstrap +
   recon + hunting via ph.py, evidence bundle via ev.py, the judgment
-  protocol, verdicts)
+  protocol, verdicts) and apply the execution discipline in section 2b -
+  monitor the state, detect failure modes, remediate with the smallest
+  blast radius (e.g. a stalled recon job: stop recon gracefully so analysis
+  still drains, then continue to hunting), and record every remediation in
+  trial.yaml
 - tear down the target after every trial
 - report at the end: Pass@1 / Pass@3 (Avg) / Pass@3 (Max), the per-vuln-class
   and per-locus breakdowns, and the trial.yaml health rows
@@ -42,7 +46,7 @@ ssh access to the remote docker host, and the bundled targets reachable there.
 | File | What it tells you |
 |---|---|
 | `verdicts.yaml` | The oracle's per-vuln rows: `identified / partial / missed`, confidence, evidence refs with quoted passages |
-| `trial.yaml` | Run metadata + the integrity gates (recon status + job counts, hunting status, oracle summary) |
+| `trial.yaml` | Run metadata + the integrity gates (recon status + job counts, hunting status, oracle summary) + the `remediations` log (every failure detected, the minimal-impact action taken, and its outcome) |
 | `manifest.json` | What `ev.py` collected and what was absent (per-store `present` flags, statuses, KB files) |
 | `operator_kb.md` / `research-notes.md` | What the pipeline was told the deployed application is (per-target, precomputed in `tools/eval/kbs/<target>/`), and the reverse-engineering source ledger |
 | `surface-map.md` (in `tools/eval/kbs/<target>/`) | The reverse-engineered endpoint inventory the KB was derived from - judge's reference only, never piped |
@@ -84,7 +88,8 @@ a closer look.
 - `identified` requires all three conjuncts (symptom confirmed + fault class +
   locus) with quoted evidence refs. A `partial` with a matching quote is a
   near-miss; a bare `identified` with no refs is a judgement to distrust.
-- The integrity rows in `trial.yaml` decide whether absence means anything:
-  a trial with a dead recon run says nothing about the pipeline.
+- The integrity rows and the `remediations` log in `trial.yaml` decide whether
+  absence means anything: a trial with a dead recon run says nothing about the
+  pipeline; a suppressed job explains a degraded slice of the surface.
 - Cross-trial variance is the norm (the benchmark's own runs vary run to run);
   trust pass@3 over pass@1.
