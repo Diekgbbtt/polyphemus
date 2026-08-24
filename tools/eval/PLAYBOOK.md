@@ -37,6 +37,40 @@ All commands run from the polymerhus repo root (`tools/eval/`).
 Env: `PH_API` (default `http://localhost:8080`), `EVAL_SSH_HOST`, `EVAL_WEB_DIR`
 (default `~/WebExploitBench`).
 
+## 2a. The recon configuration contract (VERBATIM - do not improvise)
+
+The full recon pipeline CANNOT run against these targets: `steel_crawl`
+(Steel is a CLOUD browser - it cannot reach a target that is only exposed on a
+private workshop VM), and the DNS/port-scan jobs (subfinder, whois, dnsx,
+naabu) probe the VM's external surface, not the app, producing off-scope
+noise. The brute/content jobs (ffuf, kiterunner) are heavy and OOM-prone on a
+small host. Apply this contract for EVERY trial:
+
+Settings PUT body (`ph.py settings put`):
+
+```
+--target-seed http://<domain>:<published-port>     (the domain, never the IP)
+--operator-kb tools/eval/kbs/<target>/operator_kb.md
+--toggle streaming_analysis=true
+--toggle async_analysis_consumer=true
+```
+
+No `auth_context` is supplied: the seeded credentials of a target ARE its
+ground truth (e.g. siyucms' weak-credentials vuln) and must be discovered by
+the pipeline, never handed to it.
+
+Recon launch (`ph.py recon launch`):
+
+```
+--jobs httpx,httpx_reprofile,katana,jsluice,arjun
+```
+
+`with_analysis` stays the default (combined recon+analysis). The five jobs are
+the whole contract: httpx (surface probe), httpx_reprofile (profile
+classification), katana (crawl), jsluice (JS endpoint mining), arjun
+(parameter discovery). NEVER add steel_crawl, ffuf, kiterunner, subfinder,
+whois, dnsx, puredns, naabu, or subdomain_takeover to the subset.
+
 ## 2. The per-trial workflow
 
 The trial directory `<runs>/<target>/<attempt>/` (under `tools/eval/runs/`) is
@@ -49,23 +83,22 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
    reach the remote target. The domain name is what the pipeline will observe.
 3. `gt.py <target>`; read the ground truth (the JUDGE's private reference, kept
    out of anything the pipeline sees).
-4. **The operator-KB stage** (mandatory): follow `tools/eval/kb-authoring.md`
-   VERBATIM. Research the target SOLUTION extensively with web search (official
-   docs, GitHub README, feature pages - the bundled targets are real products:
-   ComfyUI, JetLinks, PrestaShop, SiyuCMS, White-Jotter). Decompose its service
-   surface at very small granularity (account-service -> address-management,
-   payment-management, account-deletion, password-update), map services and
-   systems coherently, and write `operator_kb.md` + `research-notes.md` into
-   the trial directory. The KB must be adversarial-blind: no vuln content, no
-   paths/URLs, no hints. YOU are the entity that owns its generation; the
-   bootstrap's skeleton quality is your product.
-5. `ph.py project create eval-<target>-<attempt>`; `ph.py settings put` with
+4. **The operator-KB stage**: use the PRECOMPUTED per-target KB VERBATIM:
+   `tools/eval/kbs/<target>/operator_kb.md` is the operator knowledge passed
+   to the pipeline (`--operator-kb`); `tools/eval/kbs/<target>/surface-map.md`
+   and `research-notes.md` are the judge's reference (reverse-engineered
+   endpoint inventory + source ledger) and never reach the pipeline. Do NOT
+   re-research or rewrite the KB per trial. The KBs were written per target by
+   reverse-engineering the application implementation (see `kb-authoring.md`);
+   a missing KB is a blocking defect - stop and report.
+5. **Apply the recon configuration contract VERBATIM** (section 2a): the
+   settings PUT and the job subset are FIXED, not left to your judgment.
+6. `ph.py project create eval-<target>-<attempt>`; `ph.py settings put` with
    `--target-seed http://<domain>:<port>` (the DOMAIN, not the IP) +
-   `--operator-kb operator_kb.md`.
+   `--operator-kb tools/eval/kbs/<target>/operator_kb.md` + the contract
+   toggles.
 6. `ph.py bootstrap`.
-7. `ph.py recon launch` (combined; pick a job subset that suits the target
-   environment, e.g. skip the heavy browser/brute jobs when the target is a
-   small local app on a published port).
+7. `ph.py recon launch` with the contract's job subset (section 2a).
 8. `ph.py recon poll` to terminal.
 9. `ph.py hunting launch`; `ph.py hunting poll` to terminal.
 10. `ph.py graph get --out <trial>/graph.json`; `ev.py collect --out <trial>`

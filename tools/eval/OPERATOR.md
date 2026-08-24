@@ -15,9 +15,10 @@ VERBATIM. The toolkit lives in /Users/diekgbbtt/polymerhus/tools/eval/.
 
 Evaluate the WebExploitBench target <TARGET> with pass@k=<K>:
 - run the full per-trial workflow from the playbook section 2 (target up,
-  kali aliasing, ground truth, the operator-KB authoring stage per
-  kb-authoring.md, project + bootstrap + recon + hunting via ph.py, evidence
-  bundle via ev.py, the judgment protocol, verdicts)
+  kali aliasing, ground truth, the precomputed operator KB per target, the
+  recon configuration contract in section 2a VERBATIM, project + bootstrap +
+  recon + hunting via ph.py, evidence bundle via ev.py, the judgment
+  protocol, verdicts)
 - tear down the target after every trial
 - report at the end: Pass@1 / Pass@3 (Avg) / Pass@3 (Max), the per-vuln-class
   and per-locus breakdowns, and the trial.yaml health rows
@@ -43,7 +44,8 @@ ssh access to the remote docker host, and the bundled targets reachable there.
 | `verdicts.yaml` | The oracle's per-vuln rows: `identified / partial / missed`, confidence, evidence refs with quoted passages |
 | `trial.yaml` | Run metadata + the integrity gates (recon status + job counts, hunting status, oracle summary) |
 | `manifest.json` | What `ev.py` collected and what was absent (per-store `present` flags, statuses, KB files) |
-| `operator_kb.md` / `research-notes.md` | What the pipeline was told the solution is, and the research source ledger |
+| `operator_kb.md` / `research-notes.md` | What the pipeline was told the deployed application is (per-target, precomputed in `tools/eval/kbs/<target>/`), and the reverse-engineering source ledger |
+| `surface-map.md` (in `tools/eval/kbs/<target>/`) | The reverse-engineered endpoint inventory the KB was derived from - judge's reference only, never piped |
 | `graph.json` | The L0+L1 graph the pipeline built |
 | `hunt_store/`, `project_memory/`, `pod_memory/`, `wiring_memory/` | The raw evidence the oracle judged on |
 
@@ -62,8 +64,9 @@ append-only orchestration trail (configs, dispatches, results, back-edges);
 
 ### Langfuse (the trajectory layer)
 
-One trace per agent session, spans per loop iteration. Session ids are
-semantic: `hunting:<run_id>:orchestrator`, `hunting:<run_id>:hunt:<config_id>`,
+Configured via `LANGFUSE_*` in `.env` (the stack traces by default). One trace
+per agent session, spans per loop iteration. Session ids are semantic:
+`hunting:<run_id>:orchestrator`, `hunting:<run_id>:hunt:<config_id>`,
 `hunting:<run_id>:pod:<config_id>:<spec_id>` - searchable when a verdict needs
 a closer look.
 
