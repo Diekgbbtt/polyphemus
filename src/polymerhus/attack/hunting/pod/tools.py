@@ -32,7 +32,11 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.pod.config import EXEC_TIMEOUT_S, MAX_POD_ITERS
-from polymerhus.attack.hunting.pod.types import ProbeStep, RawObservation
+from polymerhus.attack.hunting.pod.types import (
+    KbObservation,
+    ProbeStep,
+    RawObservation,
+)
 from polymerhus.recon.domain.types import ExecResult
 
 # The injected exec seam: (command, timeout_s) -> ExecResult (async or sync).
@@ -65,6 +69,15 @@ async def _await_seam(fn, *args):
     if inspect.iscoroutinefunction(fn):
         return await fn(*args)
     return await asyncio.to_thread(fn, *args)
+
+
+async def _await_seam_kw(fn, *args, **kwargs):
+    """The kwargs-capable twin of `_await_seam` (T3): the KB seams take keyword
+    join-key hints (`fault_id`/`technological_axis`, `lookup`), so an async or
+    sync seam is awaited/offloaded with its kwargs intact."""
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 async def run_with_retry(exec_fn: ExecFn, command: str, *,
@@ -124,6 +137,114 @@ def parse_curl(result: ExecResult) -> dict:
 
 # --- the bound-tool surface (T7, D84-16/22/26) --------------------------------
 
+class KbQueryTool(BaseTool):
+    """The pod's KB query tool as a bound `BaseTool` (D84-16/26): wraps the
+    lightrag branch's single `query_lightrag` tool and, when a D6 log is bound,
+    records every response as a first-class `KbObservation` into the variant's
+    experiment-log file (T3/#179). The former `kb_retrieve` symptom-technique
+    typed seam (surface B) is RETIRED; the KB capability is `query_lightrag`
+    (config-gated by `HUNTING_LIGHTRAG_TOOL`), and the pod runner/triager bind
+    it exactly like the hunting agent's author lane.
+
+    Fail-open (O13): an empty/raising KB degrades to a denoted degraded bundle,
+    never raises into the turn. A tool with no log bound (the contract tier)
+    records nothing. The `query_lightrag` tool itself is built lazily
+    (no I/O at import) from the app config."""
+
+    name: str = "query_lightrag"
+    description: str = (
+        "Retrieve reusable web-application testing methodology from the "
+        "LightRAG knowledge base for one bounded testing concern, then return "
+        "a structured answer: one ontology entity (type + canonical name) with "
+        "a detailed prose explanation, grounded only in the returned "
+        "references. Use it to ground a probe or a payload family when the "
+        "spec's own primitives are not enough; an empty result means the KB "
+        "has nothing further - degrade to the spec's own primitives and "
+        "continue."
+    )
+    args_schema: type[BaseModel] = None  # set in __init__ from the lightrag tool
+
+    def __init__(self, *, log=None, variant_ref: str = "", tool=None, **kwargs):
+        super().__init__(**kwargs)
+        self._log = log
+        self._variant_ref = variant_ref
+        if tool is not None:
+            self._tool = tool
+            self.args_schema = tool.args_schema
+        else:
+            from polymerhus.lightrag.tool import build_lightrag_tool  # noqa: PLC0415
+
+            self._tool = build_lightrag_tool()
+            self.args_schema = self._tool.args_schema
+
+    def _record(self, spec: Any, answer_text: str) -> None:
+        """The deterministic recording step (T3/#179): the query spec + the
+        returned AnswerBundle-shaped answer land in the D6 log + the variant's
+        experiment-log file as a `KbObservation`. Fail-open (O13): the
+        recording never raises into the turn; a logless tool records nothing."""
+        if self._log is None:
+            return
+        try:
+            if isinstance(spec, dict):
+                scenario_id = str(spec.get("scenario_id") or "")
+                query = str(spec.get("concern") or "")
+            else:
+                scenario_id = str(getattr(spec, "scenario_id", "") or "")
+                query = str(getattr(spec, "concern", "") or "")
+            observation = KbObservation(
+                variant_ref=self._variant_ref,
+                query=query or str(spec)[:200],
+                fault_id=scenario_id,
+            )
+            try:
+                answer = json.loads(answer_text)
+                observation.source = str(answer.get("schema_version") or "lightrag-answer/v2")
+                observation.symptoms = [
+                    str(x.get("entity_name") or x.get("entity_type") or "")
+                    for x in (answer.get("ontology_explanations") or [])
+                    if isinstance(x, dict)
+                ][:8]
+            except (ValueError, TypeError):
+                observation.source = "lightrag-answer/v2"
+            self._log.record_kb_observation(observation)
+        except Exception:  # noqa: BLE001 - fail-open (O13)
+            pass
+
+    def _run(self, **kwargs: Any) -> str:
+        try:
+            text = self._tool.invoke(kwargs)
+            self._record(kwargs, text)
+            return text
+        except Exception as exc:  # noqa: BLE001 - fail-open (O13): never into the turn
+            degraded = {
+                "schema_version": "lightrag-answer/v2",
+                "scenario_id": kwargs.get("scenario_id", ""),
+                "summary": "query_lightrag degraded - grounded on the HuntConfig alone",
+                "ontology_explanations": [],
+                "provenance_references": [],
+                "knowledge_gaps": [f"knowledge base unavailable ({type(exc).__name__})"],
+                "notes": "degraded",
+            }
+            self._record(kwargs, json.dumps(degraded))
+            return json.dumps(degraded)
+
+    async def _arun(self, **kwargs: Any) -> str:
+        try:
+            text = await self._tool.ainvoke(kwargs)
+            self._record(kwargs, text)
+            return text
+        except Exception as exc:  # noqa: BLE001 - fail-open (O13): never into the turn
+            degraded = {
+                "schema_version": "lightrag-answer/v2",
+                "scenario_id": kwargs.get("scenario_id", ""),
+                "summary": "query_lightrag degraded - grounded on the HuntConfig alone",
+                "ontology_explanations": [],
+                "provenance_references": [],
+                "knowledge_gaps": [f"knowledge base unavailable ({type(exc).__name__})"],
+                "notes": "degraded",
+            }
+            self._record(kwargs, json.dumps(degraded))
+            return json.dumps(degraded)
 
 class ExecSpec(BaseModel):
     """The `exec` tool's ARGS contract: the exact command to run. The per-exec

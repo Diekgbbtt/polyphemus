@@ -17,8 +17,11 @@ recon-orchestrator uses (`recon/control/orchestrator_agent.ReconOrchestratorActo
 - `HuntingHunterActor` - one per hunt on the `hunting_hunter` session role
   (`HuntSession(run_id, hunt_id)` thread), fed the spec-authoring (D4) and
   continuation-judgment (D5) prompts via its inbox. `HuntingActorRegistry`
-  hands the async hunting-agent harness (`hunting_agent.build_hunting_agent`)
-  per-hunt author/judge closures bound to these actors.
+  hands per-hunt author/judge closures bound to these actors. AS OF #164 W5 the
+  hunting-agent harness (`hunting_agent.build_hunting_agent`) is the turn-by-turn
+  ReAct host and drives `arun_session_turn` DIRECTLY on the per-hunt thread, so
+  this actor remains the SYNC/lazy rollback lane (and is kept as tested
+  infrastructure), no longer the harness's production mechanism.
 
 Both use the same mechanics as `ReconOrchestratorActor`: an inbox that routes
 message kinds to the next on-thread turn, a post-call middleware that delivers
@@ -639,13 +642,15 @@ class HuntingHunterActor(_TurnActor):
     """The hunting-hunter as a per-hunt MAILBOX actor (feat/async-actor-agents).
 
     ONE actor per hunt on the `hunting_hunter` session role (`HuntSession(run_id,
-    hunt_id)` thread), spawned lazily by the first author/judge turn. The harness
-    (`hunting_agent`) is the client: it posts the composed D4 authoring prompt
-    (stable skill already embedded) and awaits the parsed spec, and posts the D5
-    judgment prompt and awaits the parsed judgment; re-entries after a routed
-    back-edge resume the SAME thread, so the judge sees the author's reasoning
-    (replacing the `hunt_session` ContextVar + `stateful_turn` seam, which
-    remains the sync rollback lane).
+    hunt_id)` thread), spawned lazily by the first author/judge turn. The legacy
+    harness (`hunting_agent`) was its client: it posted the composed D4 authoring
+    prompt (stable skill already embedded) and awaited the parsed spec, and
+    posted the D5 judgment prompt and awaited the parsed judgment; the judge
+    resumed the SAME thread, so it saw the author's reasoning (replacing the
+    `hunt_session` ContextVar + `stateful_turn` seam, which remains the sync
+    rollback lane). AS OF #164 W5 the harness drives `arun_session_turn` directly
+    and no longer posts author/judge prompts here - this actor stays as the
+    tested rollback lane.
 
     Turns are free-text-then-parse (the D4 typed base is #83/#84's to ratify), so
     no `response_format` is bound; a None reply is the degraded signal the

@@ -215,7 +215,7 @@ def _hermetic_h2_env():
                              "note": "third-party miner: no symptom established"}]}}
 
 
-_HERMETIC_H2_NOTE = [{"kind": "experiment_summary", "variant_ref": "v0",
+_HERMETIC_H2_NOTE = [{"kind": "experiment_summary", "order": 0,
                       "body": ("the default probe (GET /) returned HTTP 404 "
                                "with an empty body; the search-parameter "
                                "families were exhausted; payload banana reflects "
@@ -276,6 +276,26 @@ def test_n6_termination_persistence_full():
 def test_n6_wrong_terminal_is_zero():
     env = {"verdict": "unsuccessful", "evidence": {"terminal_reason": "not-a-reason"}}
     assert score_n6_termination_persistence(env) == 0
+
+
+def test_n5_space_exploration_variants_and_observations():
+    evidence = {"variant_specs": [{"ref": "v0"}, {"ref": "v1"}],
+                "raw_observations": [{"status": 404}, {"status": 404}, {"status": 404}]}
+    assert score_n5_space_exploration(evidence) == 3
+
+
+def test_n5_zero_with_no_trail():
+    assert score_n5_space_exploration({}) == 0
+
+
+def test_n7_triager_paradigm_shift_scores_three():
+    variants = [{"ref": "v0"},
+                {"ref": "v1", "declined_attribute": "testing_pattern"}]
+    assert score_n7_triager_reflection(variants) == 3
+
+
+def test_n7_no_variant_is_zero():
+    assert score_n7_triager_reflection([]) == 0
 
 
 def test_n8_loop_seamless_in_cap():

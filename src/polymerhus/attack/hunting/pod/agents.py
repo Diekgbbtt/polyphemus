@@ -151,7 +151,8 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
         if ctx is None or hc is None:
             raise RuntimeError(
                 "no bound pod session/harness for the stateful triager turn (D84-14)")
-        tools = triager_react_tools(hc.memory_store, hc.spec_id)
+        tools = triager_react_tools(hc.memory_store, hc.spec_id,
+                                    log=hc.log, variant_ref=hc.variant_ref or "")
         delta = _dicts_to_lc(list(messages))
         result = stateful_turn(
             ctx.address.role_id, ctx.address, delta,
@@ -202,11 +203,12 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
                        kb_fn=None, kb_lookup=None):
     """The Runner's bound-tool set (D84-16/27): `exec` (raw-recording terminal),
     `note` (pod memory write/read), and - when `HUNTING_LIGHTRAG_TOOL` is
-    enabled - the single `query_lightrag` tool from the lightrag branch (the pod
-    runner can be configured with it, exactly like the hunting agent's author
-    lane). Constructed PER STRETCH because `exec` carries the current variant's
-    dedup scope. The former `kb_retrieve` symptom-technique seam (surface B) is
-    retired."""
+    enabled - the single `query_lightrag` KB tool from the lightrag branch (the
+    pod runner can be configured with it, exactly like the hunting agent's
+    author lane), with the T3 (#179) `KbObservation` recording bound to the SAME
+    log + variant the exec tool records into. The former `kb_retrieve`
+    symptom-technique typed seam (surface B) is retired. Constructed PER
+    STRETCH because `exec` carries the current variant's dedup scope."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.tools import ExecTool  # noqa: PLC0415
 
@@ -214,29 +216,35 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
         ExecTool(exec_fn=exec_fn, log=log, variant_ref=variant_ref),
         PodNoteTool(store=memory_store, spec_id=spec_id),
     ]
-    tools += _lightrag_query_tools()
+    tools += _lightrag_query_tools(log=log, variant_ref=variant_ref)
     return tools
 
 
-def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None):
+def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
+                        log=None, variant_ref=""):
     """The Triager's bound-tool set (D84-27): note read + (when enabled) the
-    `query_lightrag` tool - NEVER exec (the critic never touches the target)."""
+    `query_lightrag` KB tool - NEVER exec (the critic never touches the target).
+    The triager's KB reads are CONTEXT reads (D84-27), so `log`/`variant_ref`
+    may be unbound - a logless KB tool records nothing (fail-open); when the
+    harness provides them, the reads are recorded against the current variant
+    (T3/#179)."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
 
     tools = [PodNoteTool(store=memory_store, spec_id=spec_id)]
-    tools += _lightrag_query_tools()
+    tools += _lightrag_query_tools(log=log, variant_ref=variant_ref)
     return tools
 
 
-def _lightrag_query_tools() -> list:
+def _lightrag_query_tools(*, log=None, variant_ref="") -> list:
     """The optional `query_lightrag` tool for the pod's ReAct turns, gated by
     `HUNTING_LIGHTRAG_TOOL` (the lightrag branch's single KB tool; fail-open to
-    an empty list when disabled or the config is unavailable)."""
+    an empty list when disabled or the config is unavailable). Bound with the
+    T3 (#179) `KbObservation` recording seam when a D6 log is present."""
     try:
         from polymerhus.app.config import config  # noqa: PLC0415
         if not config.HUNTING_LIGHTRAG_TOOL:
             return []
-        from polymerhus.lightrag.tool import build_lightrag_tool  # noqa: PLC0415
-        return [build_lightrag_tool()]
+        from polymerhus.attack.hunting.pod.tools import KbQueryTool  # noqa: PLC0415
+        return [KbQueryTool(log=log, variant_ref=variant_ref)]
     except Exception:  # noqa: BLE001 - fail-open to no KB tool
         return []

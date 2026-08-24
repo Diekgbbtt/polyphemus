@@ -54,8 +54,7 @@ from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
 from polymerhus.attack.hunting.pod.pod_memory import (
     PodMemoryStore,
-    canonical_spec_id,
-    notation_key,
+    spec_identifier,
 )
 from polymerhus.recon.domain.types import ExecResult
 
@@ -73,6 +72,9 @@ VALID_SPEC = {
     "rationale": "reachability probe from H1",
     "interpretation_guidance": "a 200 with a non-empty body confirms the symptom",
 }
+
+# The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).
+SPEC_ID = spec_identifier("sqli", "blind")
 
 # The fixed synthetic curl trailers (tools.py `parse_curl` reads the markers).
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
@@ -138,7 +140,7 @@ _REACT_KB_EXEC_NOTE_CONCLUDE = [
     AIMessage(content="", tool_calls=[
         {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
     AIMessage(content="", tool_calls=[
-        {"name": "note", "args": {"operation": "write", "variant_ref": "v0",
+        {"name": "note", "args": {"operation": "write", "order": 0,
                                   "note_name": "experiment",
                                   "kind": "experiment_summary",
                                   "body": "the default probe returned HTTP 404 "
@@ -175,6 +177,21 @@ def _kb_empty(calls=None):
     return fake
 
 
+def _negotiation_for_pod_triager(monkeypatch):
+    """Thread the #99 negotiation seam for a hermetic pod-triager schema turn
+    (#147): the no-tools `stateful_turn(schema=TriagerDecision)` resolves the
+    role's env model key + capability profile. Point it at a tool-calling-only
+    profile so the fake's TriagerDecision tool_calls become the structured
+    output (ToolStrategy) instead of an unmet json_schema probe."""
+    monkeypatch.setenv("LLM_MODEL_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "resolve_capability",
+        lambda provider, model: type("_P", (), {
+            "supports_structured_output": False, "supports_tool_calling": True})())
+
+
 def _no_trace(_run_id):
     return []
 
@@ -198,7 +215,7 @@ def test_trivial_real_run(tmp_path):
     store = PodMemoryStore(tmp_path)
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls), kb_fn=_kb_empty(kb_calls),
-        trace_fn=_no_trace, memory_store=store,
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: _REACT_KB_EXEC_CONCLUDE})))
 
     # E1 terminal: exactly one verdict + the experiment log.
@@ -226,16 +243,17 @@ def test_trivial_real_run(tmp_path):
 
 # --- E1/2: space-exhausted (spec 2 H2, C14) -----------------------------------
 
-def test_space_exhausted_run_writes_the_p3_note(tmp_path):
+def test_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
     """The runner concludes with no symptom in the probe space, writes the ONE
     consolidated `experiment_summary` P3 note as its FINAL tool call, and the
     Triager's production note-reading turn terminates `{unsuccessful,
     space-exhausted}` with a clean trail."""
+    _negotiation_for_pod_triager(monkeypatch)
     exec_calls = []
     store = PodMemoryStore(tmp_path)
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls), kb_fn=_kb_empty(),
-        trace_fn=_no_trace, memory_store=store,
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: _REACT_KB_EXEC_NOTE_CONCLUDE,
                                 POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
 
@@ -249,15 +267,18 @@ def test_space_exhausted_run_writes_the_p3_note(tmp_path):
     # interpretation) - not a symbolic fast path.
     assert "third-party miner" in env["evidence"]["interpretations"][0]["note"]
 
-    # C14/H6: the pod experiment-memory store holds the ONE consolidated
-    # experiment-summary note, keyed by the spec id + variant.
-    notes = store.read_notes(canonical_spec_id(VALID_SPEC))
-    assert len(notes) == 1
-    assert notes[0]["kind"] == "experiment_summary"
-    assert notes[0]["variant_ref"] == "v0"
-    assert notes[0]["key"].startswith(
-        notation_key(canonical_spec_id(VALID_SPEC), "v0", ""))
-    assert "404" in notes[0]["body"]
+    # C14/H6 (T2 re-scoped): the ONE consolidated experiment-summary lands as
+    # the TERMINAL RECORD of the variant's experiment-log slice - keyed by the
+    # spec id + variant order - NOT in notes.yaml (kb_insight/freeform only).
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert slice["experiment_summary"] == (
+        "the default probe returned HTTP 404 with an empty body; no kb "
+        "primitive differs from the initial set")
+    assert slice["variant_ref"] == "v0"
+    assert read_variant_summary(store, SPEC_ID, 0) == slice["experiment_summary"]
+    assert "404" in slice["experiment_summary"]
+    assert store.read_notes(SPEC_ID) == []
 
 
 # --- E2-E4 are OUT OF SCOPE (2026-08-22): the full-pipeline chain walkthroughs

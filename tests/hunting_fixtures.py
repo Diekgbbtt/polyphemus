@@ -2,10 +2,9 @@
 
 The fixture collaborators at their contract boundaries (IA-2 through IA-8):
 the symptom-technique KB, the pod, the spec-authoring turn, and the D5
-continuation judgment - plus the canonical D4 spec fixtures and the inline
-back-edge records. Owned here so the integration catalogue (C1-C17) and the
-isolated e2e catalogue (E3-E9) speak the SAME canned fixtures and the
-duplication stays in one place.
+continuation judgment - plus the canonical D4 spec fixtures. Owned here so the
+integration catalogue (C1-C17) and the isolated e2e catalogue (E3-E9) speak
+the SAME canned fixtures and the duplication stays in one place.
 
 Applies everywhere in this module: the fixtures never outlive the seam
 contract, e.g. `_kb` records every join key, `_pod` records every received
@@ -17,14 +16,6 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     HuntPromptTemplate,
 )
 from polymerhus.attack.hunting.hunting_agent import build_sync_hunting_agent
-from polymerhus.recon.control.targeted import (
-    AnalyserReconRequest,
-    ReconScope,
-    TargetedReconResult,
-)
-
-SERVICE_A = "Service:slug:a"
-FAULT_X = "fault-x"
 
 # The D4 fixture the authoring turn returns (typed base + NL core, section 7).
 SPEC = {
@@ -137,25 +128,4 @@ def _agent(store, run_id: str, *, kb=None, pod=None, author=None, judge=None, **
     return build_sync_hunting_agent(
         store=store, run_id=run_id, kb=kb, pod=pod,
         author=author, judge=judge, **kw,
-    )
-
-
-def _need(fault_class: str = FAULT_X, *, unit_id: str = SERVICE_A) -> AnalyserReconRequest:
-    return AnalyserReconRequest(
-        job="httpx_reprofile",
-        scope=ReconScope(unit_id=unit_id, note=f"hunt gap on {fault_class}"),
-        origin="hunting",
-        requester_id="fixture-requester",
-    )
-
-
-def _route(need: AnalyserReconRequest) -> TargetedReconResult:
-    """The orchestrator's IA-6 side of the inline back-edge (D67-14): the
-    recon result routed back on the need's correlation_id."""
-    return TargetedReconResult(
-        correlation_id=need.correlation_id,
-        requester_id=need.requester_id,
-        origin="hunting",
-        status="success",
-        observations_merged=1,
     )

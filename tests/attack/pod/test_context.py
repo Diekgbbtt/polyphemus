@@ -8,6 +8,7 @@ from polymerhus.attack.hunting.pod.context import (
     _dicts_to_lc,
     _lc_to_dicts,
 )
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.types import (
     Interpretation,
     RawObservation,
@@ -100,10 +101,11 @@ def test_runner_context_lists_executed_signatures():
 
 def test_canonical_spec_hash_is_deterministic_and_shared_with_the_hunter():
     """D84-2: the canonical spec fingerprint is owned by the pod; the parent
-    hunting agent re-exports it as `_canonical_hash`, so the pod's spec keys and
-    the parent's experiment log stay byte-identical. Deterministic across calls
-    and insensitive to dict key order (equal dicts hash equal, C9)."""
-    from polymerhus.attack.hunting.hunting_agent import _canonical_hash
+    hunting agent's experiment-log key uses the SAME hash (the #164 rewrite
+    dropped its `_canonical_hash` re-export - the pod's `canonical_spec_hash`
+    is the single source, kept byte-identical so the pod's spec keys and the
+    parent's experiment log never drift). Deterministic across calls and
+    insensitive to dict key order (equal dicts hash equal, C9)."""
     from polymerhus.attack.hunting.pod.context import canonical_spec_hash
 
     spec_a = {"verification_symptoms": ["a"],
@@ -113,7 +115,7 @@ def test_canonical_spec_hash_is_deterministic_and_shared_with_the_hunter():
     for spec in (spec_a, spec_b):
         first = canonical_spec_hash(spec)
         assert first == canonical_spec_hash(spec)      # stable across calls
-        assert first == _canonical_hash(spec)          # the parent's source of truth
+        assert len(first) == 64                        # sha256 hexdigest
 
     # Key order never changes the hash (C9: an identical spec is never
     # dispatched twice), and two distinct specs never collide.
@@ -121,6 +123,31 @@ def test_canonical_spec_hash_is_deterministic_and_shared_with_the_hunter():
                 "verification_symptoms": ["a"]}
     assert canonical_spec_hash(spec_a) == canonical_spec_hash(shuffled)
     assert canonical_spec_hash(spec_a) != canonical_spec_hash(spec_b)
+
+
+def test_start_run_clears_stale_summaries_across_all_on_file_orders(tmp_path):
+    """D84-37 / the consolidated code-review finding: a re-run must NOT serve a
+    prior run's `experiment_summary` for ANY order the new run does not reach
+    with a fresh P3 write. `start_run` clears the stale summary from every
+    on-file order, not just order 0, so the persisted log is the current truth
+    (a budget/triager terminate mid-stretch at a higher order cannot leak the
+    old order's summary to the Triager)."""
+    store = PodMemoryStore(tmp_path)
+    spec_id = spec_identifier("sqli", "blind")
+    store.write_experiment_log(spec_id, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "kb_observations": [],
+                                            "interpretations": [], "executed": []})
+    store.write_experiment_log(spec_id, 1, {"order": 1, "variant_ref": "v1",
+                                            "raw_observations": [], "kb_observations": [],
+                                            "interpretations": [], "executed": []})
+    store.write_variant_summary(spec_id, 0, "stale summary for order 0")
+    store.write_variant_summary(spec_id, 1, "stale summary for order 1")
+
+    log = ExperimentLog(store=store, spec_id=spec_id)
+    log.start_run()
+
+    assert store.read_experiment_log(spec_id, 0).get("experiment_summary") is None
+    assert store.read_experiment_log(spec_id, 1).get("experiment_summary") is None
 
 
 def test_pod_session_address_derives_a_per_spec_hunt_session():

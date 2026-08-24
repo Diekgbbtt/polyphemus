@@ -57,10 +57,8 @@ The tool calls are the only place the live target is touched.
 The `TestImplementationSpec` (D4); the communication interface with the parent HuntingAgent (the typed handoff: D4 in, D5 + D6 out); the memory and observability seams; and the pod experiment-memory store.
 
 The pod has **no graph access**.
-It OWNS a pod experiment-memory store (D84-20): a persistent memory store of hunting test-executors, keyed by `TestImplementationSpec` identifier, with a child attribute holding ALL variants, each variant carrying the relevant attributes (the consolidation of the run's insightful material for later note reads).
-The store's indexing/retrieval/data model replicates the hunt per-project memory store's patterns (`_seq`/`_ref`, append-only, grep-match read, read-latest) WITHOUT importing it - it is pod-owned and spec-keyed, not cross-project `(unit_id, fault_class)` (D84-20).
-The note tool reads/writes this pod-owned store; the experiment log rides the D6 export too.
-The pod prompts embed an INDEXABLE LIST of the pod memory's keys (per spec id + variant refs) plus note-reading guidance, mirroring the hunt-orchestrator's prior-config key-list + reading-tool pattern, so the Runner/Triager can index into the store when required (D84-27).
+It OWNS a pod experiment-memory store (D84-33 through D84-38, adapted as of T1/#177 and re-scoped 2026-08-24): a per-project, deterministic-key store at `data/<project_id>/test-executor-pod/` with three bodies under the per-spec directory `<fault>_<strategy>/` - `variants/<variant-ref>.yaml` (the minted TestImplementationSpec variants, `v0`/`v1`/...), `experiment-log/<order>.yaml` (one file per variant - the D6 slice with the `executed` dedup ledger and the `experiment_summary` terminal record, overwritten idempotently) and the per-project `notes.yaml` keyed `<fault>_<strategy>:<order>:<note_name>`. The variant ref `vN` and the order `N` are the SAME ordinal in two spellings, easily mappable. The spec identifier is the #164 hunter's `<fault>_<strategy>` (D84-34), NOT a content-addressed hash; the order number is the variant ordinal. There is NO `_seq`/`_ref` (D84-36): the deterministic key plus the natural list order disambiguate every artifact; reads are latest-first. The note tool reads/writes this store; the `experiment_summary` write sinks into the variant's experiment-log file as its terminal record (D84-35), `kb_insight`/`freeform` accumulate in `notes.yaml`. The authoritative build spec for the store is `docs/design/hunting-84-pod-memory-system-spec.md`.
+The pod prompts embed an INDEXABLE LIST of the pod memory's keys (notes by key + the experiment-log identifiers, spec id + orders on file) plus note-reading guidance, mirroring the hunt-orchestrator's prior-config key-list + reading-tool pattern, so the Runner/Triager can index into the store when required (D84-27).
 
 ### 1.6 Output template
 
@@ -69,7 +67,7 @@ The pod prompts embed an INDEXABLE LIST of the pod memory's keys (per spec id + 
 
 ### 1.7 Produced outcome
 
-The verdict and evidence land in the hunt store, wired to the hunt; the parent HuntingAgent consumes them for the hypothesis-level evaluation; nothing is written to L0/L1.
+The verdict and evidence land in the hunt store, wired to the hunt; the parent HuntingAgent consumes them for the hypothesis-level evaluation; nothing is written to L0/L1. **As of T7/#183 (GP3): the pod ALSO persists its OWN terminal `PodExport` envelope to its pod memory store at `<spec_id>/<run_id>.yaml` (the pod store is the source of truth; the parent reads from it).**
 
 ### 1.8 Observability (D84-21)
 
@@ -79,7 +77,7 @@ Langfuse is fail-open and never a gate (C12).
 
 ### 1.9 Honour clauses
 
-- Sole-writer: never writes L0/L1; persists only through the parent's hunt-store write and the pod-owned experiment-memory store.
+- Sole-writer: never writes L0/L1; persists only through the parent's hunt-store write and the pod-owned experiment-memory store - including the pod's OWN terminal `PodExport` envelope (T7/#183: `<spec_id>/<run_id>.yaml`).
 - Binary terminal invariant: the state machine ends in exactly `successful` or `unsuccessful`, never a third state (D67-02).
 - Fail-open: section 5.
 - Fixed internal caps: budget and timeout are pod-internal (D67-09), set by the pod, env-overridable, never carried in the spec.

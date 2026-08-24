@@ -26,14 +26,17 @@ from polymerhus.attack.hunting.pod.agents import (
     default_runner_step_fn,
     default_triager_fn,
 )
-from polymerhus.attack.hunting.pod.context import ExperimentLog, _dicts_to_lc
+from polymerhus.attack.hunting.pod.context import (
+    ExperimentLog,
+    _dicts_to_lc,
+)
 from polymerhus.attack.hunting.pod.llm import (
     POD_RUNNER_ROLE,
     PodHarnessContext,
     bind_pod_session,
     pod_harness,
 )
-from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_spec_id
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.types import RunnerStep
 from polymerhus.recon.domain.types import ExecResult
 
@@ -45,6 +48,8 @@ SPEC = {
     "payload_vector_space": {"method": "GET", "path": "/"},
     "rationale": "reachability",
 }
+
+SPEC_ID = spec_identifier("sqli", "blind")
 
 _OK = "<html>market</html>\n__POD_HTTP_STATUS__:200\n__POD_HTTP_TIME__:0.05"
 _ABSENT = "not found\n__POD_HTTP_STATUS__:404\n__POD_HTTP_TIME__:0.02"
@@ -59,18 +64,6 @@ class _FakeModel(BaseChatModel):
         self.idx["i"] = i + 1
         return ChatResult(generations=[ChatGeneration(
             message=self.replies[min(i, len(self.replies) - 1)])])
-
-    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
-        # Async-native on purpose: `ainvoke` on a SYNC-only BaseChatModel routes
-        # `_generate` through `run_in_executor`, and langgraph deadlocks that
-        # path when the agent thread RESUMES from a checkpoint (the same fix as
-        # the hunting actor fakes in test_hunting_actors.py).
-        return self._generate(
-            messages,
-            stop=stop,
-            run_manager=run_manager.get_sync() if run_manager else None,
-            **kwargs,
-        )
 
     @property
     def _llm_type(self):
@@ -123,7 +116,7 @@ def test_runner_turn_performs_one_react_stretch_and_synthesizes_conclude(tmp_pat
     calls = []
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
+    spec_id = SPEC_ID
     hc = PodHarnessContext(exec_fn=_exec(_OK, calls=calls),
                            memory_store=store, spec_id=spec_id, log=log,
                            variant_ref="v0", model_factory=_factory(REACT_EXEC_AND_CONCLUDE))
@@ -141,7 +134,7 @@ def test_runner_turn_flags_an_empty_stretch_as_exhausted(tmp_path):
     # The runner concludes WITHOUT executing anything: the old empty-probe rule.
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
+    spec_id = SPEC_ID
     hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store,
                            spec_id=spec_id, log=log, variant_ref="v0",
                            model_factory=_factory([AIMessage(content="nothing to probe")]))
@@ -159,10 +152,10 @@ def test_runner_turn_binds_note_on_the_same_agent(tmp_path):
     calls = []
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
+    spec_id = SPEC_ID
     replies = [
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "write", "variant_ref": "v0",
+            {"name": "note", "args": {"operation": "write", "order": 0,
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the consolidated summary"},
@@ -174,10 +167,11 @@ def test_runner_turn_binds_note_on_the_same_agent(tmp_path):
                            variant_ref="v0", model_factory=_factory(replies))
     step = _run(_drive_runner(SPEC, hc))
     assert step.action == "conclude"
-    notes = store.read_notes(spec_id)
-    assert notes, "the runner's P3 note write must persist"
-    assert notes[0]["kind"] == "experiment_summary"
-    assert notes[0]["body"] == "the consolidated summary"
+    # D84-35: the P3 experiment_summary sinks into the variant's log slice as
+    # its terminal record - NOT into notes.yaml.
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    assert read_variant_summary(store, spec_id, 0) == "the consolidated summary"
+    assert store.read_notes(spec_id) == []
 
 
 def test_runner_turn_hard_fails_without_a_bound_session():
@@ -203,12 +197,26 @@ def _drive_triager(spec, hc, log):
     return _drive()
 
 
-def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path):
+def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatch):
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
-    store.append(spec_id, variant_ref="v0", note_name="experiment",
-                 kind="experiment_summary", body="the verbatim consolidation")
+    spec_id = SPEC_ID
+    # D84-35: the P3 summary is the variant log slice's terminal record.
+    store.write_experiment_log(spec_id, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
+    store.write_variant_summary(spec_id, 0, "the verbatim consolidation")
+    # The #99 negotiation seam (#147): a no-tools schema turn resolves the pod
+    # role's env model key and capability profile. Point it at a tool-calling-
+    # only profile so the fake's TriagerDecision tool_calls become the
+    # structured output (ToolStrategy) instead of an unmet json_schema probe.
+    monkeypatch.setenv("LLM_MODEL_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "resolve_capability",
+        lambda provider, model: type("_P", (), {
+            "supports_structured_output": False, "supports_tool_calling": True})())
     hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store,
                            spec_id=spec_id, log=log, variant_ref="v0",
                            model_factory=_factory([AIMessage(content="", tool_calls=[
@@ -227,7 +235,7 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path):
 def test_triager_seam_degrades_to_a_safe_terminal_on_failure(tmp_path):
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
-    spec_id = canonical_spec_id(SPEC)
+    spec_id = SPEC_ID
 
     def raising(role_id):
         raise RuntimeError("no model")
@@ -264,7 +272,7 @@ def test_full_production_pod_lands_symptom_confirmed_with_fake_models(tmp_path):
     live model."""
     env = _run(arun_pod(
         SPEC, exec_fn=_exec(_OK), trace_fn=_no_trace,
-        memory_store=PodMemoryStore(tmp_path),
+        memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
         model_factory=_factory(REACT_EXEC_AND_CONCLUDE)))
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
@@ -280,14 +288,15 @@ def test_production_pod_degrades_to_a_safe_terminal_without_model_env(tmp_path,
     monkeypatch.delenv("LLM_MODEL_POD_RUNNER", raising=False)
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     env = _run(arun_pod(SPEC, exec_fn=_exec(_OK), trace_fn=_no_trace,
-                        memory_store=PodMemoryStore(tmp_path)))
+                        memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID))
     assert env["verdict"] == "unsuccessful"
 
 
 def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path):
     """The graph's production runner node binds the run-scoped harness around the
     default seam call (spied by patching `graph.default_runner_step_fn`) - the
-    memory key rides the ROOT spec id, the variant_ref the current stretch."""
+    memory key rides the #164 spec id (NO hash fallback, operator 2026-08-23),
+    the variant_ref the current stretch."""
     seen = []
     root_spec = {"target_identity": "svc",
                  "verification_symptoms": ["reflects the marker"],
@@ -301,9 +310,9 @@ def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path)
 
     monkeypatch.setattr(graph_mod, "default_runner_step_fn", spy)
     env = _run(arun_pod(root_spec, exec_fn=_exec(_ABSENT), trace_fn=_no_trace,
-                        memory_store=PodMemoryStore(tmp_path)))
+                        memory_store=PodMemoryStore(tmp_path), spec_id="sqli_blind"))
     assert env["verdict"] == "unsuccessful"
     assert seen and seen[0] is not None
-    assert seen[0].spec_id == canonical_spec_id(root_spec)   # root spec keys the memory
+    assert seen[0].spec_id == "sqli_blind"             # the #164 handoff keys memory
     assert seen[0].variant_ref == "v0"
     assert seen[0].log is not None

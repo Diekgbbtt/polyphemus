@@ -30,6 +30,7 @@ ROOT = Path("/srv")
 RUNS = ROOT / "tests" / "e2e" / "fixtures" / "runs"
 RUN_ID = os.environ.get("POD_RUN_ID", "pod-unset")
 SPEC_PATH = os.environ.get("POD_SPEC_PATH", "")
+PROJECT_ID = os.environ.get("POD_PROJECT_ID", "pod-e2e")
 
 
 def _load_spec() -> dict[str, Any]:
@@ -75,26 +76,45 @@ async def _run_pod(spec: dict) -> dict[str, Any]:
 
     run_id = f"pod-e2e-{RUN_ID}"
     try:
+        from polymerhus.attack.hunting.pod.pod_memory import spec_identifier
+        spec_id = spec_identifier(
+            str(spec.get("fault") or "fault"), str(spec.get("strategy") or "strategy"))
         with hunt_session(run_id, f"hunt-{RUN_ID}"):
             return await arun_pod(spec, run_id=run_id, kb_fn=_mocked_kb,
-                                  trace_fn=None)
+                                  trace_fn=None, project_id=PROJECT_ID,
+                                  spec_id=spec_id)
     except Exception as exc:  # noqa: BLE001 - the pod must never raise
         _persist("driver_error.json", {"error": str(exc)})
         return {"verdict": "unsuccessful", "evidence": {"error": str(exc)}}
 
 
 def _read_notes(spec: dict) -> list[dict]:
-    """Read the pod's run notes back from the fixed memory-store root the
-    production lane wrote (D84-28 `data/pod-memory` under the hunting module),
-    keyed by the spec's canonical id - the N3 note-detail evidence source."""
+    """Read the pod's run notes back from the per-project memory-store root the
+    production lane wrote (D84-33 `data/<project_id>/test-executor-pod/` under
+    the hunting module), keyed by the #164 spec id (`<fault>_<strategy>`) - the
+    N3 note-detail evidence source.
+
+    The `experiment_summary` is the TERMINAL RECORD of each variant's
+    experiment-log slice (D84-35, T2) - NOT a notes.yaml record - so it is
+    surfaced here from the variant files, shaped like the note records the NFR
+    scorer expects; `kb_insight`/`freeform` come from notes.yaml."""
     try:
         from polymerhus.attack.hunting.pod.pod_memory import (
             PodMemoryStore,
-            canonical_spec_id,
+            spec_identifier,
         )
 
-        store = PodMemoryStore()
-        return store.read_notes(canonical_spec_id(spec))
+        store = PodMemoryStore(project_id=PROJECT_ID)
+        spec_id = spec_identifier(
+            str(spec.get("fault") or "fault"), str(spec.get("strategy") or "strategy"))
+        notes = [n for n in store.read_notes(spec_id)
+                 if n.get("kind") != "experiment_summary"]
+        for order in store.list_variant_orders(spec_id):
+            body = store.read_experiment_log(spec_id, order).get("experiment_summary")
+            if body:
+                notes.append({"kind": "experiment_summary", "order": order,
+                              "body": body})
+        return notes
     except Exception:  # noqa: BLE001 - a missing store yields [], never a raise
         return []
 

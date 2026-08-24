@@ -3,20 +3,18 @@
 
 The contract predicates exercise the agent's EXTERNAL behaviour through the
 seams - dispatch (IA-2) -> KB query (IA-8) -> spec authoring (D4) -> pod
-handoff (IA-3) -> verdict derivation (D67-02) - never the internals of a
-single pass. Every out-of-tree collaborator is injected: the
+handoff (IA-3) -> verdict derivation (D67-02) -> store (S7) - never the
+internals of a single pass. Every out-of-tree collaborator is injected: the
 symptom-technique KB, the pod, the spec-authoring turn, and the D5
 continuation judgment all arrive as fixtures; the real KB and the real pod
 (#84) are sibling tickets, and the real chain is walked in the e2e tier
-(E1-E2, blocked). The agent's durable `spec` / `evidence` record writes rode
-the old per-run hunt store, which is now the per-project config+notes memory
-store (memory-system spec, #166): the writes degrade fail-open to a None ref
-and the derived verdict rides the `DispatchResult` - the hunter's durable
-record trail is #164's own memory (G5).
+(E1-E2, blocked). The hunt store is the REAL append-only markdown stub, and
+the agent writes exactly the two record kinds Q6 declares (`spec` and
+`evidence`) through it.
 
 The seam contract (what the harness must expose):
   build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None)
-      -> dispatch_fn(config: HuntConfig, routed=()) -> DispatchResult
+      -> dispatch_fn(config: HuntConfig) -> DispatchResult
   kb(query)    - IA-8: one call per hunt on the join key; the query carries
                  `fault_class` and the deterministically derived `axis`; the
                  result is {symptoms, probing_techniques}. Empty result or a
@@ -36,8 +34,8 @@ The seam contract (what the harness must expose):
                  without re-rolling).
   judge(text)  - the D5 continuation judgment; consulted ONLY when the
                  derived verdict is insufficient-evidence; returns
-                 {"meaningful_insight": bool, "next_step": "end"|"back_edge",
-                  "rationale": str, "back_edge_requests": [...]}.
+                 {"meaningful_insight": bool, "next_step": "end",
+                  "rationale": str}.
 
 The deterministic verdict derivation (D67-02, Q3-amended; the pure function
 is unit-tested in the red/green loop, the catalogue exercises it here through
@@ -73,11 +71,9 @@ from tests.hunting_fixtures import (
     _author,
     _judge,
     _kb,
-    _need,
     _no_judge,
     _outcome,
     _pod,
-    _route,
 )
 from tests.hunting_fixtures import _agent as _build_agent
 
@@ -101,19 +97,17 @@ def _config(**overrides) -> HuntConfig:
         hunt_id="hunt-1",
         unit_id=SERVICE_A,
         fault_class=FAULT_X,
-        vulnerability_class="CSRF",
         prompt_template=HuntPromptTemplate(
             rationale="fault-x applies to slug-a because ...",
+            extension_points=["csrf-probe"],
+            assumptions=["public exposure"],
+            supposed_payload_vectors=["q=value"],
             l0_evidence=["GET /api/a answers 200"],
-            research_direction="probe the state-changing form for token verification",
         ),
         surface_context={"cards": [CARD_A]},
         target_caveats=["perimeter WAF on /api/*"],
         prior_hunt_insights=[],
         tool_registry=[{"technique": "csrf-probe"}],
-        adversarial_capabilities=["authenticated session obtainable"],
-        assumptions=["public exposure"],
-        technique_primitives=["foreign-origin tokenless submission"],
     )
     return base.model_copy(update=overrides)
 
@@ -141,20 +135,22 @@ def test_spec_validates_against_typed_base(tmp_path):
 
     assert result.hypothesis_verdict == "successful"
     assert len(pod_calls) == 1
-    # Surface B retired: the hunter no longer queries the symptom-technique KB;
-    # grounding is via query_lightrag (when HUNTING_LIGHTRAG_TOOL enabled).
-    assert len(queries) == 0
-    # The D4 spec (as the pod received it) carries the full typed base and
-    # both NL fields.
-    spec = pod_calls[0]
+    # The KB join key was (fault-class, unit technological-axis) (D10, IA-8).
+    assert len(queries) == 1
+    assert queries[0].fault_class == FAULT_X
+    assert isinstance(queries[0].axis, str) and queries[0].axis
+    # The spec record (D4) carries the full typed base and both NL fields.
+    specs = store.list_records(RUN_ID, "spec")
+    assert len(specs) == 1
+    spec = specs[0]
     for field in ("target_identity", "verification_symptoms", "testing_pattern",
                   "assumptions", "payload_vector_space"):
         assert spec[field], f"typed base field {field} is empty"
     assert spec["rationale"] and spec["interpretation_guidance"]
-    # The durable spec/evidence records are gone with the per-run kinds
-    # (#166, memory-system spec 3); the harness degrades fail-open to None
-    # refs and the derived verdict rides the DispatchResult.
-    assert result.spec_ref is None and result.pod_result_ref is None
+    # The evidence record (Q6) carries the derived verdict.
+    evidence = store.list_records(RUN_ID, "evidence")
+    assert len(evidence) == 1
+    assert evidence[0]["derived_verdict"] == "successful"
 
 
 # --- C2: empty KB degrades to HuntConfig-alone grounding (O1) -------------------
@@ -174,7 +170,7 @@ def test_empty_kb_degrades_to_config_grounding(tmp_path):
 
     assert result.hypothesis_verdict == "successful"
     assert len(pod_calls) == 1
-    assert result.spec_ref is None  # the store has no spec kind (#166)
+    assert len(store.list_records(RUN_ID, "spec")) == 1
 
 
 # --- C3: KB raise degrades the same way; nothing raises (O2) --------------------
@@ -194,7 +190,7 @@ def test_kb_unavailable_degrades(tmp_path):
 
     assert result.hypothesis_verdict == "successful"
     assert len(pod_calls) == 1
-    assert result.spec_ref is None  # fail-open degrade, never a raise
+    assert len(store.list_records(RUN_ID, "spec")) == 1
 
 
 # --- C4: malformed config authors from the present parts, gap flagged (O3) ------
@@ -214,7 +210,7 @@ def test_malformed_huntconfig_flags_gap(tmp_path):
     result = agent(_config(surface_context={}))
 
     assert result.hypothesis_verdict == "successful"
-    assert result.spec_ref is None  # the durable spec record is gone (#166)
+    assert result.spec_ref  # still authored from the present parts
     assert result.feedback and "surface context" in result.feedback.lower()
     assert len(pod_calls) == 1
 
@@ -235,8 +231,7 @@ def test_pod_success_maps_to_hypothesis_success(tmp_path):
     result = agent(_config())
 
     assert result.hypothesis_verdict == "successful"
-    assert result.spec_ref is None and result.pod_result_ref is None  # #166
-    assert result.back_edge_needs == []
+    assert result.spec_ref and result.pod_result_ref
     assert len(pod_calls) == 1
 
 
@@ -262,8 +257,9 @@ def test_clean_absent_maps_to_hypothesis_unsuccessful(tmp_path):
 
     assert result.hypothesis_verdict == "unsuccessful"
     assert len(pod_calls) == 1
-    # the derived verdict rides the DispatchResult; the durable evidence
-    # record is gone with the per-run kinds (#166)
+    evidence = store.list_records(RUN_ID, "evidence")
+    assert len(evidence) == 1
+    assert evidence[0]["derived_verdict"] == "unsuccessful"
 
 
 # --- C7: {unsuccessful, technical-infeasibility} -> unsuccessful (Q3) -----------
@@ -323,55 +319,15 @@ def test_pod_init_rejection_lands_underspecified_spec(tmp_path):
 
     assert result.hypothesis_verdict == "underspecified-spec"
     assert len(pod_calls) == 2  # exactly two dispatches, no third attempt (Q5)
-    # The re-authored spec was dispatched and the pod received both specs; the
-    # D67-03/D67-08 parent lineage and the validation evidence ride the
-    # in-memory working set now (#166 removed the durable spec/evidence kinds;
-    # the hunter's record trail is #164's own memory).
-
-
-# --- C9: identical spec already dispatched -> no second dispatch (O7) -----------
-
-def test_duplicate_hypothesis_not_redispatched(tmp_path):
-    store = HuntStore(tmp_path)
-    pod_calls: list = []
-    judge_calls: list = []
-    agent = _agent(
-        store,
-        kb=_kb(),
-        pod=_pod(pod_calls, outcomes=[_outcome(
-            "no-symptom-evidence",
-            evidence={"clean": False, "interpretations": [
-                {"variant": "v1", "note": "observations unreachable"},
-            ]},
-        )]),
-        # The identical spec is supplied again: whether the re-entry re-authors
-        # (and the canonical-hash log short-circuits) or re-enters VERIFY-CLAIMS,
-        # the observable is the same - one pod dispatch, one spec record.
-        author=_author([SPEC, SPEC]),
-        judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the reachable surface", "back_edge_requests": [_need()]},
-            {"meaningful_insight": False, "next_step": "end",
-             "rationale": "still no reachable surface"},
-        ], calls=judge_calls),
-    )
-    config = _config()
-
-    first = agent(config)
-    assert first.back_edge_needs  # insufficient-evidence surfaces the inline need
-
-    # The orchestrator routes the recon result back (IA-6); the agent re-enters
-    # with the SAME spec - the experiment log (Q5) short-circuits the pod.
-    second = agent(config, routed=(_route(first.back_edge_needs[0]),))
-
-    assert len(pod_calls) == 1  # no second dispatch for the identical spec
-    # both refs are None BY DESIGN (#166 removes the durable spec/evidence
-    # records; the agent's durable trail is #164's own memory, G5) - the
-    # equality is over the None refs, and the pod-call count above is what
-    # carries the dedup assertion
-    assert second.spec_ref == first.spec_ref
-    assert second.pod_result_ref == first.pod_result_ref
-    assert len(judge_calls) == 2
+    specs = store.list_records(RUN_ID, "spec")
+    assert len(specs) == 2
+    # D67-03/D67-08 lineage: the re-authored spec records its parent.
+    assert specs[1]["parent_spec_ref"] == specs[0]["_ref"]
+    # The validation evidence rides the evidence record (Q6).
+    evidence = store.list_records(RUN_ID, "evidence")
+    assert len(evidence) == 2
+    assert evidence[1]["derived_verdict"] == "underspecified-spec"
+    assert evidence[1]["init_validation"]
 
 
 # --- C10: no meaningful insight ends the evaluation (D67-14, D67-12) ------------
@@ -390,25 +346,18 @@ def test_no_meaningful_insight_ends_evaluation(tmp_path):
         )]),
         author=_author(),
         judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the reachable surface", "back_edge_requests": [_need()]},
             {"meaningful_insight": False, "next_step": "end",
-             "rationale": "no insight in the routed recon"},
+             "rationale": "no insight in the blocked trail"},
         ]),
     )
-    config = _config()
 
-    first = agent(config)
-    assert first.back_edge_needs
-
-    second = agent(config, routed=(_route(first.back_edge_needs[0]),))
+    result = agent(_config())
 
     # The guard ended the evaluation: no unbounded loop, no further needs.
-    assert second.back_edge_needs == []
     # D67-12 failure state: the hunt degrades to unsuccessful with the trail.
-    assert second.hypothesis_verdict == "unsuccessful"
-    assert second.feedback  # never empty; carries the evidence-backed insights
-    assert second.feedback and "unreachable" in second.feedback
+    assert result.hypothesis_verdict == "unsuccessful"
+    assert result.feedback  # never empty; carries the evidence-backed insights
+    assert "unreachable" in result.feedback
 
 
 # --- C11: a raising pod degrades to unsuccessful with the error (O5) ------------
@@ -427,7 +376,9 @@ def test_raising_pod_degrades(tmp_path):
 
     assert result.hypothesis_verdict == "unsuccessful"
     assert result.feedback and "pod turn exhausted" in result.feedback
-    # the error rides the feedback; the durable evidence record is gone (#166)
+    evidence = store.list_records(RUN_ID, "evidence")
+    assert len(evidence) == 1
+    assert "pod turn exhausted" in evidence[0].get("error", "")
 
 
 # --- C12: worst case - technically unfeasible, feedback never empty (D67-12) ----
@@ -496,19 +447,19 @@ def test_no_symptom_evidence_blocked_maps_to_insufficient_evidence(tmp_path):
         )]),
         author=_author(),
         judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the reachable surface", "back_edge_requests": [_need()]},
+            {"meaningful_insight": True, "next_step": "end",
+             "rationale": "the blocked observations are a meaningful lead"},
         ]),
     )
 
     result = agent(_config())
 
-    # The blocked trail derives insufficient-evidence, surfacing the inline need.
-    assert result.back_edge_needs
-    assert len(result.back_edge_needs) == 1
-    assert result.back_edge_needs[0].origin == "hunting"
-    assert result.back_edge_needs[0].scope.unit_id == SERVICE_A
+    # The blocked trail derives insufficient-evidence and the D5 meaningfulness
+    # guard keeps it; the candidate closes with the four-valued verdict.
     assert result.hypothesis_verdict == "insufficient-evidence"
+    evidence = store.list_records(RUN_ID, "evidence")
+    assert len(evidence) == 1
+    assert evidence[0]["derived_verdict"] == "insufficient-evidence"
     assert len(pod_calls) == 1
 
 
@@ -533,7 +484,6 @@ def test_no_symptom_evidence_clean_maps_to_unsuccessful(tmp_path):
     result = agent(_config())
 
     assert result.hypothesis_verdict == "unsuccessful"
-    assert result.back_edge_needs == []
     assert len(pod_calls) == 1
 
 
@@ -553,15 +503,17 @@ def test_budget_timeout_partial_maps_to_insufficient_evidence(tmp_path):
         )]),
         author=_author(),
         judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the remaining surface", "back_edge_requests": [_need()]},
+            {"meaningful_insight": True, "next_step": "end",
+             "rationale": "the mid-flight trail still carries a lead"},
         ]),
     )
 
     result = agent(_config())
 
-    assert result.back_edge_needs
     assert result.hypothesis_verdict == "insufficient-evidence"
+    evidence = store.list_records(RUN_ID, "evidence")
+    assert len(evidence) == 1
+    assert evidence[0]["derived_verdict"] == "insufficient-evidence"
     assert len(pod_calls) == 1
 
 
@@ -586,5 +538,4 @@ def test_budget_timeout_clean_maps_to_unsuccessful(tmp_path):
     result = agent(_config())
 
     assert result.hypothesis_verdict == "unsuccessful"
-    assert result.back_edge_needs == []
     assert len(pod_calls) == 1

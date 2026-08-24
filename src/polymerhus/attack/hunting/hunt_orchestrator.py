@@ -129,7 +129,7 @@ _ORCHESTRATOR_ACTORS: dict[str, "HuntOrchestratorActor"] = {}
 _ORCHESTRATOR_LOCK = threading.Lock()
 
 # The default targeted job a park/resume back-edge runs (a re-witness of the
-# unit's surface); the agent's inline needs carry their own job.
+# unit's surface).
 _DEFAULT_BACK_EDGE_JOB = "httpx_reprofile"
 
 # The config status lifecycle (ADR G5/G6): hypothesised -> ratified | dropped.
@@ -323,13 +323,12 @@ class HuntConfig(BaseModel):
 
 class DispatchResult(BaseModel):
     """One hunting-agent dispatch outcome (IA-2): the delivered refs plus the
-    hypothesis verdict and NL feedback (D11), or the inline back-edge needs."""
+    hypothesis verdict and NL feedback (D11)."""
 
     spec_ref: str | None = None
     pod_result_ref: str | None = None
     hypothesis_verdict: str | None = None
     feedback: str | None = None
-    back_edge_needs: list[AnalyserReconRequest] = Field(default_factory=list)
 
 
 class MatchVerdict(BaseModel):

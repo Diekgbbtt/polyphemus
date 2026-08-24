@@ -1,7 +1,7 @@
 # Assertions - hunting test-executor pod regrounding (#84)
 
 **Source:** spec `docs/design/hunting-67-test-executor-pod-spec.md` section 6; ADR `docs/design/hunting-84-regrounding-decisions.md` (D84-1..D84-32); parent `docs/design/hunting-67-per-agent-specs-spec.md` section 6.
-**Seams under assertion:** the `arun_pod` async entry (IA-3 in / IA-4 out, D84-15); the HIGH-LEVEL workflow map (INIT -> RUNNER STRETCH -> TRIAGER -> decide -> TERMINAL, D84-16/29); the six-way termination + `terminal_reason`/`clean`/`init_validation` vocabulary (D5, Q3-amended); the fixed caps (`HUNT_POD_MAX_TOOL_CALLS`=200, `HUNT_POD_MAX_ITERS`=8, `MAX_POD_ITERS`=3, `EXEC_TIMEOUT_S`=300); variants + experiment log (D67-08, D6); the pod experiment-memory store + `note` tool (D84-20/27/32); the KB tool binding (D84-16/26); the production ReAct lane vs the injected contract lane (D84-22/29); the E1-E4 bulletproof chain walkthroughs (merged spec section 10).
+**Seams under assertion:** the `arun_pod` async entry (IA-3 in / IA-4 out, D84-15); the HIGH-LEVEL workflow map (INIT -> RUNNER STRETCH -> TRIAGER -> decide -> TERMINAL, D84-16/29); the six-way termination + `terminal_reason`/`clean`/`init_validation` vocabulary (D5, Q3-amended); the fixed caps (`HUNT_POD_MAX_TOOL_CALLS`=200, `HUNT_POD_MAX_ITERS`=8, `MAX_POD_ITERS`=3, `EXEC_TIMEOUT_S`=300); variants + experiment log (D67-08, D6); the per-project deterministic-key pod experiment-memory store + `note` tool (D84-33 through D84-38 - the store's public read/write contract, the notes `notes.yaml` keyed `<fault>_<strategy>:<order>:<note_name>`, the minted variants `variants/<ref>.yaml`, the experiment-log slice `<fault>_<strategy>/experiment-log/<order>.yaml` with the `experiment_summary` terminal record, the typed attribute filters order/kind/classification/symptom_status, no `_seq`/`_ref`, per-project scoping, idempotent overwrite); the pod's OWN terminal `PodExport` persistence (T7/#183, `<spec_id>/<run_id>.yaml`, GP1-GP5); the KB tool binding (D84-16/26); the production ReAct lane vs the injected contract lane (D84-22/29); the E1-E4 bulletproof chain walkthroughs (merged spec section 10).
 
 **Coverage state (2026-08-22):** the catalogue is three-tier. The CONTRACT predicates C1-C15 are mechanised at the `arun_pod` seam in `tests/integration/test_test_executor_pod_contracts.py` (C1-C12 + C13-C15 via the injected-symbolic lane for the workflow temperature and the production fake-model lane for the T7 tool/KB/note surface). Walkthrough E1 is mechanised hermetically (`tests/e2e/test_test_executor_pod_walkthrough.py`). **Scope is the test-executor pod ONLY**: the full-pipeline chain walkthroughs (orchestrator -> hunter -> pod) and any other single-component testing are OUT OF SCOPE for this workstream; the E2-E4 chain predicates are REMOVED, never active coverage here. The holistic pod e2e (E5-E8, sibling-container in-network stack + the four juice-shop spec fixtures in `tests/e2e/fixtures/specs/`) is SCAFFOLDED in `tests/e2e/test_pod_e2e_holistic.py` + `tests/e2e/harness/` and skip-gated on the stack being up; the NFR scorer is implemented + unit-proven in `tests/e2e/test_pod_e2e_nfr.py`.
 
@@ -67,20 +67,25 @@ input: a `trace_fn` that raises.
 observable: the run completes unaffected (`{successful, symptom-confirmed}`).
 yields: `test_langfuse_failure_is_fail_open`.
 
-**C13 - KB tool bound on the Runner (T7-new).** seam: `arun_pod` production lane -> runner's `create_agent` tool list. semantic: tool-surface.
+**C13 - KB tool bound on the Runner (T7-new; recording extended T3/#179).** seam: `arun_pod` production lane -> runner's `create_agent` tool list. semantic: tool-surface.
 input: a production-lane run (fake model) whose ReAct script issues a `kb_retrieve` call.
-observable: the binding is EXERCISED - EXACTLY ONE `kb_retrieve` happens and returns through the typed seam; the KB empty result fails-open and the runner degrades to the spec's own primitives (O13), landing a binary end.
+observable: the binding is EXERCISED - EXACTLY ONE `kb_retrieve` happens and returns through the typed seam; the KB empty result fails-open and the runner degrades to the spec's own primitives (O13), landing a binary end; T3: the KB response is RECORDED - the persisted `experiment-log/<order>.yaml` slice carries one first-class `KbObservation` (the query, the fault/axis context, the empty returned bundle, `variant_ref == v0`) DISTINCT from the exec `RawObservation`s.
 yields: `test_kb_retrieve_bound_and_fails_open` (integration; production lane with fake model).
 
-**C14 - Note written on P3, triager reads it (T7-new).** seam: `arun_pod` production lane -> runner's `note` tool -> `PodMemoryStore` -> triager's note read. semantic: success.
-input: a space-exhausted production run (fake model, 404 trailer) whose ReAct script writes the ONE consolidated `experiment_summary` note as its final tool call.
-observable: the store holds exactly ONE note keyed by the spec id + variant `v0`, `kind == experiment_summary`, body mentions the 404; the triager's production turn terminates `{unsuccessful, space-exhausted}`.
+**C14 - Note written on P3, triager reads it (T7-new; re-scoped T2/#178).** seam: `arun_pod` production lane -> runner's `note` tool -> `PodMemoryStore` -> triager's note read. semantic: success.
+input: a space-exhausted production run (fake model, 404 trailer) whose ReAct script writes the ONE consolidated `experiment_summary` as its final tool call.
+observable: the summary is the TERMINAL RECORD of the variant's `experiment-log/<order>.yaml` slice (`experiment_summary` == the note body, `variant_ref == v0`, order 0 - the slice also holds the D6 observations/interpretations/executed); `notes.yaml` holds NO summary (`kb_insight`/`freeform` only); the triager's production turn terminates `{unsuccessful, space-exhausted}`.
 yields: `test_note_written_on_p3_and_read_by_triager` (integration; production lane with fake model).
 
 **C15 - Tool-contract validation (T7-new).** seam: `NoteToolSpec`/`ExecSpec`/`KbRetrieveSpec` `extra="forbid"` at a bound tool. semantic: degradation/malformed.
 input: a tool call carrying a parameter outside the schema (e.g. `note` write with an unknown field, or `exec` with a foreign param).
 observable: the call is REJECTED - a ToolMessage with the pydantic detail + the coded rejection (`NOTES_ARGS_REJECTED`/`NOTES_EMPTY_BODY`/`NOTES_BAD_KIND`/`NOTES_NO_STORE`), never executed, never harness-revalidated.
 yields: `test_tool_contract_rejection_codes` (integration; direct bound-tool invocation + the create_agent-loop wrong-param path already in `tests/attack/pod/test_note_tool.py`).
+
+**C16 - PodExport persistence (T7-new, #183).** seam: `arun_pod` -> the deterministic terminal node `_export` -> the pod memory store. semantic: success/idempotent/fail-open.
+input: a completed run (production lane or injected-symbolic) with a bound store + `spec_id` + `run_id`.
+observable: the pod OWNS its terminal result - the `PodExport` envelope persists to `<spec_id>/<run_id>.yaml`, the persisted record EQUALS the returned IA-4 envelope (GP3/GP4), a re-run with the same `run_id` OVERWRITES the same file (GP1, D84-37), and a WRITE FAILURE degrades fail-open to the in-memory envelope (the run still returns it, never raises - O3/IA-4); the `arun_pod` degrade path persists its real terminal result when a store is bound with a spec_id. The envelope body stays the D5/D6 fields unchanged (NO new correlation fields, GP2); the pure-log invariant holds (written by the deterministic node, never an LLM tool - GP5).
+yields: `test_production_run_persists_its_pod_export` (integration; production lane) + the store-tier (`test_pod_export_*`) and graph-tier (`test_terminal_export_persists_to_spec_run_id`/`test_export_rerun_overwrites_the_same_file`/`test_export_write_failure_degrades_to_the_envelope`) in `tests/attack/pod/`.
 
 ## Walkthrough predicates (e2e tier)
 
@@ -97,8 +102,8 @@ yields: `test_trivial_real_run` (hermetic). A HOLISTIC sibling-container variant
 entry seam: IA-3. input: the same E1 spec; the terminal returns the 404 trailer.
 live edge: as E1 (hermetic fake model; note store = temp-dir `PodMemoryStore`).
 path: INIT -> RUNNER STRETCH (ReAct: `kb_retrieve` -> `exec` 404 -> `note` FINAL tool call writing the consolidated `experiment_summary`) -> TRIAGER production note-reading turn (`ToolStrategy(TriagerDecision)`) -> TERMINAL.
-terminal: `{unsuccessful, space-exhausted}`, `clean True`, exactly 1 raw observation status 404; the store holds exactly ONE note (`kind experiment_summary`, `variant_ref v0`, key prefixed by the canonical spec id, body mentions "404"); the triager's production interpretation note carries "third-party miner".
-observed: the store read back (one note) + the interpretation.
+terminal: `{unsuccessful, space-exhausted}`, `clean True`, exactly 1 raw observation status 404; the summary is the TERMINAL RECORD of the variant's `experiment-log/0.yaml` slice (`experiment_summary` body mentions "404", `variant_ref == v0`), `notes.yaml` holds no summary; the triager's production interpretation note carries "third-party miner".
+observed: the store read back (the variant log slice's terminal summary) + the interpretation.
 yields: `test_space_exhausted_run_writes_the_p3_note`.
 
 **E5-E8 - Holistic pod e2e over the in-network stack (SCAFFOLDED, executes after the REST-exposure stream lands).** grounds the NFR evaluation framework below (section 8). entry seam: `arun_pod` inside a sibling `polymerhus-agent` container mounting this worktree's `src/`, real session/checkpointer/compaction/memory-store stack, real kali exec, mocked `kb_retrieve`. input: the rich juice-shop fixture specs (section 9). live edge: `soupmarket.shop` live HTTP from kali; kb returns mocked results (KB workstream not merged - taints realism, acknowledged). Each is a self-contained pass whose traces + experiment log + memory-store notes feed the scoring rubric.

@@ -23,8 +23,9 @@ from polymerhus.attack.hunting.pod.pod import arun_pod
 from polymerhus.attack.hunting.pod.pod_memory import (
     POD_NOTE_KINDS,
     PodMemoryStore,
-    canonical_spec_id,
     compose_memory_guidance,
+    note_key,
+    spec_identifier,
 )
 from polymerhus.attack.hunting.pod.types import (
     PodExport,
@@ -39,6 +40,7 @@ __all__ = [
     "PodMemoryStore",
     "PodNoteTool",
     "POD_NOTE_KINDS",
-    "canonical_spec_id",
     "compose_memory_guidance",
+    "note_key",
+    "spec_identifier",
 ]

@@ -38,7 +38,7 @@ from polymerhus.attack.hunting.pod.note_tool import (
     PodNoteTool,
     note_tool_for,
 )
-from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_spec_id
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identifier
 from polymerhus.attack.hunting.pod.tools import (
     ExecSpec,
     ExecTool,
@@ -57,6 +57,9 @@ VALID_SPEC = {
     "rationale": "reachability probe from H1",
     "interpretation_guidance": "a 200 with a non-empty body confirms the symptom",
 }
+
+# The #164 `<fault>_<strategy>` memory key the pod stores under (D84-34).
+SPEC_ID = spec_identifier("sqli", "blind")
 
 # A spec whose symptom the symbolic recogniser cannot decide, so the Critic runs.
 SEMANTIC_SPEC = {**VALID_SPEC, "verification_symptoms": ["reflects the injected marker"]}
@@ -336,6 +339,21 @@ def _kb_empty(calls=None):
     return fake
 
 
+def _negotiation_for_pod_triager(monkeypatch):
+    """Thread the #99 negotiation seam for a hermetic pod-triager schema turn
+    (#147): the no-tools `stateful_turn(schema=TriagerDecision)` resolves the
+    role's env model key + capability profile. Point it at a tool-calling-only
+    profile so the fake's TriagerDecision tool_calls become the structured
+    output (ToolStrategy) instead of an unmet json_schema probe."""
+    monkeypatch.setenv("LLM_MODEL_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "resolve_capability",
+        lambda provider, model: type("_P", (), {
+            "supports_structured_output": False, "supports_tool_calling": True})())
+
+
 # The triager's production turn terminating `{unsuccessful, space-exhausted}`.
 _TRIAGER_ABSENT = [
     AIMessage(content="", tool_calls=[{"name": "TriagerDecision", "id": "c9", "args": {
@@ -351,9 +369,14 @@ def test_kb_retrieve_bound_and_fails_open(tmp_path):
     """The production Runner's `create_agent` binds `kb_retrieve` - the KB wiring
     hole is closed. The ReAct script issues exactly one `kb_retrieve` call, the
     empty result fails open (O13: degrade to the spec's primitives), and the pod
-    lands a binary end with the KB call recorded once."""
+    lands a binary end with the KB call recorded once. T3 (#179): the KB
+    response is also RECORDED - the persisted variant experiment-log slice
+    carries a first-class `KbObservation` (distinct from the exec
+    `RawObservation`), so the trail captures the KB knowledge that drove the
+    probe's concretization."""
     exec_calls = []
     kb_calls = []
+    store = PodMemoryStore(tmp_path)
     runner_script = [
         AIMessage(content="", tool_calls=[
             {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
@@ -364,7 +387,7 @@ def test_kb_retrieve_bound_and_fails_open(tmp_path):
     ]
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls), kb_fn=_kb_empty(kb_calls),
-        trace_fn=_no_trace, memory_store=PodMemoryStore(tmp_path),
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: runner_script})))
 
     assert len(kb_calls) == 1                       # the binding was EXERCISED
@@ -372,15 +395,28 @@ def test_kb_retrieve_bound_and_fails_open(tmp_path):
     assert len(exec_calls) == 1
     assert env["verdict"] == "successful"           # fail-open: the empty KB degraded
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+    # T3: the KB response is RECORDED into the variant's persisted slice as a
+    # first-class `KbObservation` - distinct from the exec raw observation.
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    kb_records = slice["kb_observations"]
+    assert len(kb_records) == 1
+    assert kb_records[0]["query"] == "csrf patterns on form posts"
+    assert kb_records[0]["variant_ref"] == "v0"
+    assert kb_records[0]["symptoms"] == []          # the empty KB recorded as empty
+    assert kb_records[0]["techniques"] == []
+    assert kb_records[0]["source"] is None
+    assert len(slice["raw_observations"]) == 1      # the exec observation still lands
 
 
 # --- C14 - the P3 note written and read by the triager (D84-17/19/23) -----------
 
-def test_note_written_on_p3_and_read_by_triager(tmp_path):
+def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     """On P3 space exhaustion the production Runner writes the ONE consolidated
-    `experiment_summary` note to the pod memory store as its FINAL tool call
-    (D84-17/19), and the Triager's production note-reading turn terminates
+    `experiment_summary` as its FINAL tool call (D84-17/19); it lands as the
+    TERMINAL RECORD of the variant's experiment-log slice (D84-35) - NOT in
+    notes.yaml - and the Triager's production note-reading turn terminates
     `{unsuccessful, space-exhausted}` (D84-23, C14/H6)."""
+    _negotiation_for_pod_triager(monkeypatch)
     exec_calls = []
     store = PodMemoryStore(tmp_path)
     runner_script = [
@@ -390,7 +426,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path):
         AIMessage(content="", tool_calls=[
             {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
         AIMessage(content="", tool_calls=[
-            {"name": "note", "args": {"operation": "write", "variant_ref": "v0",
+            {"name": "note", "args": {"operation": "write", "order": 0,
                                       "note_name": "experiment",
                                       "kind": "experiment_summary",
                                       "body": "the default probe returned HTTP 404 "
@@ -401,7 +437,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path):
     ]
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls), kb_fn=_kb_empty(),
-        trace_fn=_no_trace, memory_store=store,
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: runner_script,
                                 POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
 
@@ -410,11 +446,123 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path):
     assert env["evidence"]["clean"] is True
     assert len(exec_calls) == 1
 
-    notes = store.read_notes(canonical_spec_id(VALID_SPEC))
-    assert len(notes) == 1                          # exactly ONE consolidated note
-    assert notes[0]["kind"] == "experiment_summary"
-    assert notes[0]["variant_ref"] == "v0"
-    assert "404" in notes[0]["body"]
+    # C14 re-scoped (T2): the summary is the terminal record of the variant's
+    # experiment-log slice - the store's notes.yaml holds NO summary.
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert slice["experiment_summary"] == (
+        "the default probe returned HTTP 404 with an empty body; no kb "
+        "primitive differs from the initial set")
+    assert read_variant_summary(store, SPEC_ID, 0) == slice["experiment_summary"]
+    assert "404" in slice["experiment_summary"]
+    assert store.read_notes(SPEC_ID) == []
+
+
+# --- T7 (#183): the pod owns the persistence of its OWN terminal result ---------
+
+def test_production_run_persists_its_pod_export(tmp_path):
+    """T7 (GP1/GP3/GP4): a completed PRODUCTION-lane `arun_pod` leaves its
+    `PodExport` envelope persisted at `<spec_id>/<run_id>.yaml` - the pod owns
+    its terminal result, readable back and EQUAL to the returned envelope, so it
+    is seamlessly mappable to the originating spec + session via the run_id."""
+    store = PodMemoryStore(tmp_path)
+    runner_script = [
+        AIMessage(content="", tool_calls=[
+            {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
+             "id": "c0"}]),
+        AIMessage(content="", tool_calls=[
+            {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
+        AIMessage(content="symptom confirmed; the observation grounds the verdict"),
+    ]
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_OK), kb_fn=_kb_empty(), trace_fn=_no_trace,
+        memory_store=store, spec_id=SPEC_ID, run_id="run-84",
+        model_factory=_factory({POD_RUNNER_ROLE: runner_script})))
+
+    assert env["verdict"] == "successful"
+    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+    persisted = store.read_pod_export(SPEC_ID, "run-84")
+    assert persisted == env                        # the persisted record == the returned envelope
+    assert store.list_pod_exports(SPEC_ID) == ["run-84"]
+    # The envelope is unchanged from before T7 (the IA-4 shape carries no new
+    # correlation fields on the body, GP2 - the run_id IS the identifier).
+    assert set(env) == {"verdict", "evidence"}
+
+
+# --- T2 round-trip: the D6 log + executed ledger persist per variant ------------
+
+def test_experiment_log_persists_round_trip_and_survives_a_rerun(tmp_path):
+    """T2 (D84-38): an `arun_pod` pass with a bound store leaves its full D6
+    slice + `executed` ledger + the minted variant on disk per (spec, order),
+    reads back byte-equivalent, and a SECOND pass over the same (spec, order)
+    REWRITES the file idempotently (D84-37) - no unbounded accumulation."""
+    store = PodMemoryStore(tmp_path)
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=None, trace_fn=_no_trace, memory_store=store,
+                        spec_id=SPEC_ID))
+    assert env["verdict"] == "successful"
+
+    # The deterministic stages persisted the variant + the D6 slice.
+    variant = store.read_variant(SPEC_ID, "v0")
+    assert variant["ref"] == "v0"
+    assert variant["spec"]["target_identity"] == VALID_SPEC["target_identity"]
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert slice["variant_ref"] == "v0"
+    assert len(slice["raw_observations"]) == len(env["evidence"]["raw_observations"]) >= 1
+    assert slice["raw_observations"][0]["status"] == 200
+    assert len(slice["interpretations"]) == len(env["evidence"]["interpretations"]) >= 1
+    # The executed ledger persisted (the raw observation's probe_ref IS the sig).
+    assert slice["executed"] and slice["executed"][0] == slice["raw_observations"][0]["probe_ref"]
+
+    # A second pass over the same (spec, order) overwrites idempotently: the
+    # file is the current truth, never an accumulation. A PRIOR run's terminal
+    # summary is cleared at the new run's start (D84-37), so a run that does
+    # not reach P3 does not carry a stale consolidation.
+    store.write_variant_summary(SPEC_ID, 0, "stale summary from a prior run")
+    env2 = _run(arun_pod(SEMANTIC_SPEC, exec_fn=_exec(_ABSENT),
+                         runner_step_fn=symbolic_runner_step_fn,
+                         triager_fn=_terminate("space-exhausted"), trace_fn=_no_trace,
+                         memory_store=store, spec_id=SPEC_ID))
+    assert env2["verdict"] == "unsuccessful"
+    slice2 = store.read_experiment_log(SPEC_ID, 0)
+    assert len(slice2["raw_observations"]) == 1          # overwritten, not stacked
+    assert slice2["raw_observations"][0]["status"] == 404
+    assert "experiment_summary" not in slice2            # no stale summary rides a re-run
+    assert len(list((store._root / SPEC_ID / "experiment-log").iterdir())) == 1
+
+
+def test_minted_variant_persists_to_its_variants_file(tmp_path):
+    """T2 (D84-38): the mint_variant deterministic stage records the derived
+    variant INTO the store - `variants/v1.yaml` lands beside v0's, one file per
+    variant ref, overwritten idempotently (D84-37)."""
+    decisions = iter([
+        {"classification": "symptom-absent", "action": "variant",
+         "declined_attribute": "testing_pattern",
+         "variant_spec": {**SEMANTIC_SPEC, "testing_pattern": "blind-differential"},
+         "feedback": "try the differential pattern"},
+        {"classification": "symptom-absent", "action": "terminate",
+         "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
+         "clean": False},
+    ])
+
+    def triager(spec, obs, messages, log):
+        return next(decisions)
+
+    store = PodMemoryStore(tmp_path)
+    env = _run(arun_pod(SEMANTIC_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn, triager_fn=triager,
+                        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID))
+    assert env["verdict"] == "unsuccessful"
+    v0 = store.read_variant(SPEC_ID, "v0")
+    v1 = store.read_variant(SPEC_ID, "v1")
+    assert v0["ref"] == "v0" and v1["ref"] == "v1"
+    assert v1["parent_ref"] == "v0"
+    assert v1["declined_attribute"] == "testing_pattern"
+    assert store.list_variant_refs(SPEC_ID) == ["v0", "v1"]
+    # Both orders' log slices exist: order 1's slice holds v1's interpretation.
+    slice1 = store.read_experiment_log(SPEC_ID, 1)
+    assert slice1["variant_ref"] == "v1"
+    assert slice1["interpretations"] and slice1["interpretations"][0]["variant"] == "v1"
 
 
 # --- C15 - tool-contract validation (D84-22, extra="forbid") --------------------
@@ -434,7 +582,7 @@ def test_tool_contract_rejects_foreign_params(tmp_path):
 
     tool = SpyTool(store=store, spec_id="spec-x")
     with pytest.raises(ValueError):
-        tool.invoke({"operation": "write", "variant_ref": "v0",
+        tool.invoke({"operation": "write", "order": 0,
                      "note_name": "x", "kind": "experiment_summary",
                      "body": "consolidation", "surprise_field": "oops"})
     assert calls == []                              # never reached _run

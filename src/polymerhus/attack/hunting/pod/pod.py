@@ -55,7 +55,9 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                    runner_middleware: Sequence = (),
                    triager_middleware: Sequence = (),
                    memory_store=None,
-                   model_factory: Callable | None = None) -> dict:
+                   model_factory: Callable | None = None,
+                   project_id: str | None = None,
+                   spec_id: str | None = None) -> dict:
     """Execute `spec` against the live target and return the IA-4 envelope.
 
     Async-only (D84-15): the graph is driven with `ainvoke`, and every injected
@@ -72,11 +74,15 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     `stateful_turn` verbatim. Default `()` = compaction disabled - the pod runs
     exactly as before, nothing breaks.
 
-    `memory_store` is the pod-owned experiment-memory store (D84-20/28; default =
-    the fixed `data/pod-memory` root when a PRODUCTION seam is in play); the
+    `memory_store` is the pod-owned experiment-memory store (D84-33; default =
+    the per-project root `data/<project_id>/test-executor-pod/` when a PRODUCTION
+    seam is in play and `project_id` is provided, else `None` fail-open); the
     `model_factory(role) -> chat model` seam lets a harness or test inject a fake
     model for the production stateful turns (default None = the role's real
-    model)."""
+    model). `project_id` is the store's scoping axis (D84-33); `spec_id` is the
+    #164 hunter's `<fault>_<strategy>` crossed through the typed handoff -
+    REQUIRED when a memory store is bound (no fallback; a missing spec_id is the
+    dispatch's failure mode, never a hash key)."""
     exec_fn = exec_fn or default_exec_fn
     trace_fn = trace_fn if trace_fn is not None else _default_trace_fn
 
@@ -92,7 +98,8 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
             exec_fn=exec_fn, runner_step_fn=runner_step_fn,
             triager_fn=triager_fn,
             runner_middleware=runner_middleware, triager_middleware=triager_middleware,
-            memory_store=memory_store, model_factory=model_factory)
+            memory_store=memory_store, model_factory=model_factory,
+            project_id=project_id, spec_id=spec_id)
         final = await graph.ainvoke(
             {"spec": dict(spec or {}), "run_id": run_id},
             config={"recursion_limit": RECURSION_LIMIT, "callbacks": callbacks})
@@ -102,6 +109,18 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
         return export
     except Exception as exc:  # noqa: BLE001 - IA-4: degrade, never raise into the parent
         logger.warning("pod run degraded to unsuccessful (%s)", exc)
-        return PodExport(
+        export = PodExport(
             verdict="unsuccessful", terminal_reason=TECHNICAL_INFEASIBILITY,
             iterations=0, clean=False, error=str(exc)).to_envelope()
+        # T7 (#183): the degrade path is a REAL terminal result - persist it too
+        # (idempotent overwrite, GP1). The fail-closed spec_id gate is respected:
+        # no spec_id means no export is persisted (the graph's init already
+        # failed on it), and a write failure degrades fail-open (O3/IA-4), never
+        # raising into the parent.
+        if memory_store is not None and spec_id:
+            try:
+                memory_store.write_pod_export(spec_id, run_id, export)
+            except Exception:  # noqa: BLE001 - fail-open (O3/IA-4)
+                logger.warning("pod export persistence failed on the degrade "
+                               "path (%s)", exc)
+        return export

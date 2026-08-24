@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 
 from langgraph.graph import END, START, StateGraph
 
@@ -86,7 +87,7 @@ from polymerhus.attack.hunting.pod.llm import (
     PodHarnessContext,
     bind_pod_session,
 )
-from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, canonical_spec_id
+from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
 from polymerhus.attack.hunting.pod.symbolic import evaluate_symptom
 from polymerhus.attack.hunting.pod.tools import command_signature, parse_curl, run_with_retry
 from polymerhus.attack.hunting.pod.types import (
@@ -105,6 +106,8 @@ from polymerhus.attack.hunting.pod.types import (
     VariantSpec,
 )
 from polymerhus.attack.hunting.pod.verification import validate_decision, validate_spec
+
+logger = logging.getLogger(__name__)
 
 
 def _curated(messages) -> list[dict]:
@@ -155,6 +158,26 @@ async def _await_seam(fn, *args):
     return await asyncio.to_thread(fn, *args)
 
 
+def _persist_pod_export(state: PodState, log: ExperimentLog,
+                        envelope: dict) -> None:
+    """The deterministic terminal persistence of the `PodExport` envelope
+    (T7/#183, GP1/GP4): `<spec_id>/<run_id>.yaml`, idempotent overwrite, written
+    by the terminal node - never an LLM seam (the pure-log invariant extends to
+    the export). Only happens when a store is bound (the log carries it) with a
+    spec_id (fail-closed). Fail-open (O3/IA-4): a write failure degrades to the
+    in-memory envelope - the run still returns it, never raising into the parent."""
+    store = getattr(log, "store", None)
+    spec_id = getattr(log, "spec_id", None)
+    if store is None or not spec_id:
+        return
+    try:
+        store.write_pod_export(spec_id, state.get("run_id") or POD_DEFAULT_RUN_ID,
+                               envelope)
+    except Exception as exc:  # noqa: BLE001 - fail-open (O3/IA-4)
+        logger.warning("pod export persistence failed, returning the in-memory "
+                       "envelope (%s)", exc)
+
+
 def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
             init_validation=None, error=None) -> dict:
     log: ExperimentLog = state["log"]
@@ -166,29 +189,65 @@ def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
         raw_observations=[o.model_dump() for o in log.raw_observations],
         interpretations=[i.model_dump() for i in log.interpretations],
         error=error)
-    return {"export": export.to_envelope(), "verdict": verdict, "terminal_reason": reason}
+    envelope = export.to_envelope()
+    # T7 (#183): the pod OWNS the persistence of its OWN terminal result - the
+    # `PodExport` envelope - written here by this deterministic terminal node.
+    # The persisted record EQUALS the envelope returned to the parent.
+    _persist_pod_export(state, log, envelope)
+    return {"export": envelope, "verdict": verdict, "terminal_reason": reason}
 
 
-def _root_spec_id(state: PodState) -> str:
-    """The memory-store key (D84-20): the ROOT spec's canonical hash (variants
-    are the child attribute), never the current variant's spec hash."""
-    return canonical_spec_id(state.get("root_spec") or state.get("spec") or {})
+def _root_spec_id(state: PodState, spec_id: str | None) -> str:
+    """The memory-store key (D84-34): the #164 hunter's `spec_id`
+    (`<fault>_<strategy>`) crossed through the typed handoff. NO FALLBACK
+    (operator, 2026-08-23): the typed handoff is the runtime control-plane's
+    ownership (communicated by the inbox surfer loop), so a missing `spec_id`
+    is the dispatch's own anticipated failure mode, never the pod's to paper
+    over. A caller with a bound store but without a `spec_id` is a hard
+    configuration error - the dispatch must fail before the pod runs, never
+    persist under a hash. The session thread identity is ALWAYS the canonical
+    hash (`context.canonical_spec_hash`, unchanged), never this memory key."""
+    if not spec_id:
+        raise ValueError(
+            "pod memory requires the #164 hunter's spec_id "
+            "(<fault>_<strategy>); a missing spec_id is the dispatch's "
+            "failure mode, the pod never falls back to a hash")
+    return spec_id
+
+
+def _variant_order(state: PodState) -> int:
+    """The variant ORDINAL (D84-34): the current variant's index in the D6 log,
+    0 for the initial v0 - the memory key's order component."""
+    log = state.get("log")
+    if log is not None and log.variant_specs:
+        ref = state.get("current_variant_ref", "v0")
+        for i, v in enumerate(log.variant_specs):
+            if v.ref == ref:
+                return i
+    return 0
 
 
 def _harness_ctx(state: PodState, *, exec_fn, memory_store,
-                 model_factory) -> PodHarnessContext:
+                 model_factory, spec_id) -> PodHarnessContext:
     """The run-scoped harness the production seams read (T7): exec/store/log/
-    variant/model factory, with the memory key on the ROOT spec id."""
+    variant/model factory, with the memory key on the #164 spec id (D84-34). The
+    memory key is required ONLY when a store is bound (a real persist path) -
+    the contract tier with no store never persists, so no spec_id is demanded
+    and the note tool degrades fail-open (O10). The KB query capability is the
+    single `query_lightrag` tool (lightrag branch, config-gated); the former
+    `kb_fn` symptom-technique seam (surface B) is retired."""
+    mem_key = _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
     return PodHarnessContext(
         exec_fn=exec_fn, memory_store=memory_store,
-        spec_id=_root_spec_id(state), log=state.get("log"),
+        spec_id=mem_key, log=state.get("log"),
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS)
 
 
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                     runner_middleware=(), triager_middleware=(),
-                    memory_store=None, model_factory=None):
+                    memory_store=None, model_factory=None,
+                    project_id=None, spec_id=None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
@@ -201,11 +260,19 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
     - `runner_middleware` / `triager_middleware` - the per-role #95 compaction
       middleware sets the run injected (T5); the production default seams pass
       them to the stateful turns verbatim (D84-12). Default `()` = uncompacted.
-    - `memory_store` - the pod-owned experiment-memory store (D84-20/28); default
-      = the fixed `data/pod-memory` root when a PRODUCTION seam is in play,
-      `None` (never constructed) for a fully-injected contract tier.
+    - `memory_store` - the pod-owned experiment-memory store (D84-33); default
+      = the per-project root `data/<project_id>/test-executor-pod/` when a
+      PRODUCTION seam is in play AND `project_id` is provided, `None` (never
+      constructed) for a fully-injected contract tier or an absent project id
+      (the note tool then degrades fail-open, O10).
     - `model_factory(role) -> chat model` - the session model seam for the
       production turns (`None` = the role's real model; tests inject a fake).
+    - `project_id` - the store's scoping axis (D84-33), from the parent hunting
+      module context.
+    - `spec_id` - the #164 hunter's `SpecItem.spec_id` (`<fault>_<strategy>`)
+      crossed through the typed handoff; REQUIRED when a memory store is bound
+      (no fallback - a missing spec_id is the dispatch's failure mode, never a
+      hash key), optional only for a fully-injected store-less contract tier.
     """
     if runner_step_fn is None:
         runner_step_fn = default_runner_step_fn
@@ -217,12 +284,17 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         production_triager = True
     else:
         production_triager = False
-    if memory_store is None and (production_runner or production_triager):
-        memory_store = PodMemoryStore()
+    if memory_store is None and (production_runner or production_triager) and project_id:
+        memory_store = PodMemoryStore(project_id=project_id)
 
     def init(state: PodState) -> dict:
         spec = dict(state["spec"])
-        log = ExperimentLog()
+        mem_key = _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
+        # T2: the in-memory ExperimentLog is ALSO the symbolic-layer capture
+        # middleware - bound to the store it re-persists every deterministic
+        # mutation to the variant's experiment-log slice (init records v0 here).
+        log = ExperimentLog(store=memory_store, spec_id=mem_key)
+        log.start_run()
         log.record_variant(VariantSpec(ref="v0", parent_ref=None, spec=spec))
         violations = validate_spec(spec)
         runner_messages = [{"role": "system", "content": RUNNER_SYSTEM}]
@@ -250,12 +322,13 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         spec = state["spec"]
         if production_runner:
             log: ExperimentLog = state["log"]
+            mem_key = _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
             delta = _dicts_to_lc([{"role": "human",
                                    "content": compose_runner_delta(
                                        log, spec, state.get("feedback", ""),
                                        state.get("iteration", 1), HUNT_POD_MAX_ITERS,
                                        store=memory_store,
-                                       spec_id=_root_spec_id(state))}])
+                                       spec_id=mem_key)}])
             before_obs = len(log.raw_observations)
             before_exec = len(log.executed)
             # D84-7: the graph owns the pod-session binding - the `pod_runner`
@@ -268,7 +341,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                   harness=_harness_ctx(
                                       state, exec_fn=exec_fn,
                                       memory_store=memory_store,
-                                      model_factory=model_factory)):
+                                      model_factory=model_factory,
+                                      spec_id=spec_id)):
                 step = await _await_seam(runner_step_fn, spec, delta,
                                          state.get("tool_calls", 0))
             if not isinstance(step, RunnerStep):
@@ -380,8 +454,10 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             # the memory guidance + variant_refs; the thread holds the history,
             # so only the delta is new_messages (D84-11).
             human = {"role": "human", "content": compose_triager_delta(
-                log, spec, obs, store=memory_store, spec_id=_root_spec_id(state),
-                variant_ref=state.get("current_variant_ref", "v0"))}
+                log, spec, obs, store=memory_store,
+                spec_id=(_root_spec_id(state, spec_id)
+                         if memory_store is not None else (spec_id or "")),
+                order=_variant_order(state))}
             seam_view = [human]
         else:
             human = {"role": "human", "content": log.triager_context(spec, obs)}
@@ -406,7 +482,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                   harness=_harness_ctx(
                                       state, exec_fn=exec_fn,
                                       memory_store=memory_store,
-                                      model_factory=model_factory)):
+                                       model_factory=model_factory,
+                                       spec_id=spec_id)):
                 raw = await _await_seam(triager_fn, spec, obs, seam_view, log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":

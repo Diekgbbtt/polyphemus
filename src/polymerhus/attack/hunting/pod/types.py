@@ -100,6 +100,22 @@ class RawObservation(BaseModel):
     duration_ms: int = 0
 
 
+class KbObservation(BaseModel):
+    """One KB-retrieve response recorded into the D6 trail (T3/#179): the
+    query, the fault/axis join-key context, the returned symptoms/techniques/
+    source bundle, and the variant it drove. A first-class typed record
+    DISTINCT from an exec `RawObservation` - it captures which KB knowledge
+    informed a probe's concretization (the spec's KB-recording work item)."""
+
+    variant_ref: str = ""
+    query: str = ""
+    fault_id: str = ""
+    technological_axis: list[str] = Field(default_factory=list)
+    symptoms: list[str] = Field(default_factory=list)
+    techniques: list[str] = Field(default_factory=list)
+    source: str | None = None
+
+
 class Interpretation(BaseModel):
     """One Triager classification (D6). NL notes the parent's feedback rides on
     (hunting-83: `interpretations` are pure NL, no per-variant machine outcome)."""

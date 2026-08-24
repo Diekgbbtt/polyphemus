@@ -226,25 +226,27 @@ async def start_hunting(
         return hunting_run_id
 
 
-def build_production_hunting_agent(*, store, run_id, target_url=None,
-                                   checkpointer=None, model_factory=None,
-                                   observe: bool = True):
-    """The production default hunting-agent dispatch seam: the actor-backed
-    harness wired to the REAL fault-KB symptom-technique lookup and the REAL
-    deterministic HTTP probing pod. Construction performs no I/O (everything
-    heavy resolves on first use).
+def build_production_hunting_agent(*, store, run_id, project_id="",
+                                   target_url=None, graph_view_fn=None,
+                                   memory_store=None, checkpointer=None,
+                                   model_factory=None, observe: bool = True):
+    """The production default hunting-agent dispatch seam (as of #164 W5): the
+    turn-by-turn ReAct harness wired to the real `query_lightrag` KB tool (the
+    lightrag branch's single KB tool, config-gated by `HUNTING_LIGHTRAG_TOOL`),
+    the real Kali-container exec seam, and the per-project hunter memory store.
+    Construction performs no I/O (everything heavy resolves on first use).
 
     Returns `(dispatch_fn, registry)`; the caller must reap the registry
     (`stop_all`) when the run's orchestration finishes."""
-    from polymerhus.attack.hunting.hunting_pod import HuntingHttpPod  # noqa: PLC0415
     from polymerhus.attack.hunting.llm import build_actor_hunting_agent  # noqa: PLC0415
-    from polymerhus.attack.hunting.symptom_kb import build_fault_kb_lookup  # noqa: PLC0415
 
     return build_actor_hunting_agent(
-        store=store,
         run_id=run_id,
-        kb=build_fault_kb_lookup(),
-        pod=HuntingHttpPod(target_url=target_url),
+        project_id=project_id,
+        memory_store=memory_store,
+        graph_view_fn=graph_view_fn,
+        kb_fn=None,  # the KB seam: the harness binds the config-gated query_lightrag tool
+        exec_fn=None,  # None -> the harness's default fail-open exec seam (the Kali container is a sibling workstream)
         checkpointer=checkpointer,
         model_factory=model_factory,
         observe=observe,
