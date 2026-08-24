@@ -293,6 +293,17 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
     return `{hunting_run_id}`. The row opens HERE so the id exists the instant
     the POST returns and a follow-up GET never 404-races.
 
+    At-most-once / one-live-run-per-project (spec #169 US10/13, ADR Q6; T5):
+    the `hunting_runs` row IS the creation marker. The API-tier guard
+    (`list_hunting_runs` for a live `running` row, point 2 of the ticket
+    ruling) refuses a second/replayed launch with 409 Conflict BEFORE the new
+    row opens - the per-project produced/consumed directories are single-owner
+    (a terminal row never holds the guard; a relaunch is not a replay). A
+    post-open refusal closes the orphan row to `failed` synchronously so no
+    `running` row is ever left behind: an admission 503 closes HERE, and the
+    bootstrap's own guard-refusal (a concurrent launch that slipped past) is
+    closed in-band inside `start_hunting`.
+
     Fail-closed on the control plane: while `polymerhus.app.runtime` has not
     landed the launch is a 503, NOT an in-process run - a real orchestration
     pass (LLM turns) must never ride the uvicorn request loop."""
@@ -310,6 +321,7 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
             status_code=503,
             detail="hunting control-plane runtime has not landed",
         )
+    await _hunting_live_run_guard(project_id)
 
     candidates = [DeliveredCandidate(
         unit_id=c.unit_id,
@@ -329,8 +341,54 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
             name=f"hunting:{hunting_run_id}",
         )
     except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
+        # An admission refusal is a POST-OPEN refusal: the just-opened
+        # `running` row must not be left behind as an orphan (at-most-once,
+        # T5 ruling point 3). Close it to `failed` synchronously, then map.
+        try:
+            await asyncio.to_thread(
+                pg.set_hunting_run_status, hunting_run_id, "failed"
+            )
+        except Exception:  # noqa: BLE001 - best-effort orphan close
+            logger.warning(
+                "launch_hunting: could not close the refused run row %s "
+                "(fail-open)", hunting_run_id,
+            )
         _admission_refused_503(exc)
     return {"hunting_run_id": hunting_run_id}
+
+
+async def _hunting_live_run_guard(project_id: str) -> None:
+    """The API-tier ONE-live-run-per-project guard (T5, spec #169 US10 / ticket
+    ruling point 2): refuse a launch while the project already holds a
+    `running` hunting run - the per-project produced/consumed memory
+    directories are single-owner, so two concurrent runs must never race them.
+
+    The `hunting_runs` row read (`list_hunting_runs`) is the authority the API
+    tier owns, checked BEFORE the new row opens so a refusal never leaves an
+    orphan. The bootstrap's own guard is belt-and-braces (it excludes the
+    run's own pinned row); this check prevents the orphan in the first place.
+    Fail-open: with pg unavailable the guard cannot fire and the launch
+    proceeds (the row open would have failed too)."""
+    from polymerhus.app.clients import pg
+
+    try:
+        rows = await asyncio.to_thread(pg.list_hunting_runs, project_id)
+    except Exception as exc:  # noqa: BLE001 - fail-open: no pg, no guard
+        logger.warning(
+            "launch_hunting: live-run guard unavailable (%s); proceeding (fail-open)",
+            exc,
+        )
+        return
+    for row in rows:
+        if row.get("status") == "running":
+            raise HTTPException(
+                status_code=409,
+                detail=(
+                    "a hunting run is already live for this project; "
+                    "one live hunting run per project (the produced/consumed "
+                    "directories are single-owner)"
+                ),
+            )
 
 
 @router.post("/projects/{project_id}/hunting/{hunting_run_id}/stop")

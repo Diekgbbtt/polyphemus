@@ -347,6 +347,22 @@ async def start_hunting(
                 "%s; launch refused (one live run per project)",
                 project_id,
             )
+            # The launch surface opened the run's row BEFORE scheduling (the
+            # creation marker, ADR Q6 "at-most-once"): a refusal here must not
+            # leave that `running` row behind as an orphan, so close it to a
+            # terminal status in-band (T5 orphan resolution). No row was
+            # opened when `run_id` is None (the row-open fail-open path never
+            # had one to refuse).
+            if hunting_run_id is not None:
+                try:
+                    await asyncio.to_thread(
+                        pg.set_hunting_run_status, hunting_run_id, "failed"
+                    )
+                except Exception:  # noqa: BLE001 - best-effort orphan close
+                    logger.warning(
+                        "start_hunting: could not close the refused run row %s "
+                        "(fail-open)", hunting_run_id,
+                    )
             return None
 
         if hunting_run_id is None:

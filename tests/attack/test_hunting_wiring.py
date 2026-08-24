@@ -295,10 +295,30 @@ def test_guard_refuses_a_second_live_run_per_project(stores, monkeypatch):
     assert fake.statuses == []              # no row touched
 
 
+def test_guard_refusal_closes_a_preopened_row_in_band(stores, monkeypatch):
+    """T5 orphan resolution: when the API pre-opened the run's row (the
+    creation marker) and the bootstrap's own guard still refuses (a concurrent
+    launch slipped past the API check), the refusal closes the pre-opened
+    `running` row to `failed` in-band - no orphan `running` row is left behind,
+    and the at-most-once marker (the row) is honestly terminal."""
+    fake = _FakePg(seeded_running=("other-live-run",))
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    hunt, hunter, pod = stores
+    control = _FakeControl()
+
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, run_id=RUN, candidates=[_candidate()], tools=_tools(hunt),
+        control=control, hunt_store=hunt, hunter_store=hunter, pod_store=pod,
+        hunter_builder=_noop_hunts, pod_builder=_noop_pods,
+    ))
+    assert hid is None                 # refused
+    assert control.started == []       # nothing scheduled
+    assert fake.statuses == [(RUN, "failed")]  # the pre-opened row is closed
+
+
 def test_guard_lets_the_runs_own_pinned_row_through(stores, monkeypatch):
-    """The guard excludes the run's OWN row (the API opens the row before
-    scheduling the bootstrap): a pinned run id whose row is already `running`
-    does not trip it."""
     fake = _FakePg(seeded_running=(RUN,))
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
