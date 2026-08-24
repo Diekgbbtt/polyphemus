@@ -138,6 +138,33 @@ def validate_hunting_llm_config() -> None:
 
 # --- pure prompt/parse helpers ------------------------------------------------
 
+# The L1 ontology primer (memory-system spec 7, ADR G9): the FOURTH phase-
+# constant, rendered at the TOP of each pair's frame in the USER prompt (never
+# the system prompt - spec 3.7). It is deliberately NOT an over-specified
+# glossary: system kinds and edge types are self-explanatory and the projection
+# render already carries them self-describingly. The primer is the fundamental
+# knowledge that makes every other part of the graph readable - what a Service,
+# a System, and a DataItem are conceived FOR, plus the philosophy of the domain
+# model (the L1 is a judged abstraction over the L0 graph; the projection is the
+# typed facet surface the gate reasons over; typed facets are proxies, never
+# authoritative classification). Single-sourced here and shared by the gate /
+# ratify / note composers; never duplicated in the skill or the fallback.
+L1_ONTOLOGY_PRIMER = (
+    "L1 ontology primer (the domain model every part of this graph reads "
+    "through): a Service is the business-function abstraction - the "
+    "operator-facing capability a hunt anchors on, kind-qualified as "
+    "'<kind>:<key>'. A System is the technological/mechanism abstraction that "
+    "capability rides - the typed locus where the fault may bite, identified "
+    "by kind and discriminator. A DataItem is the logical data-flow "
+    "abstraction - the data a Service produces or consumes, carrying its "
+    "name, type, and sensitivity. The L1 is a judged abstraction over the "
+    "observed L0 graph: every node here is an inference licensed by "
+    "observations, never direct evidence. The projection is the typed facet surface "
+    "you reason over - a proxy for the full characterisation, not an "
+    "authoritative classification - so an absent or unknown facet is missing "
+    "evidence, never evidence of absence."
+)
+
 _GATE_SKILL_FALLBACK = (
     "You are the hunt-orchestrator: the node-per-phase REASON body "
     "(candidates-rewrite spec 3.2/3.3, amended by the memory + workflow-graph "
@@ -408,14 +435,16 @@ def _render_unit_block(units, unit_projection, compat_projection, kb_evidences) 
 
 
 def _compose_gate_prompt(inp: GateInput) -> str:
-    """Render the HYPOTHESISE-phase input (spec 3.7, re-scoped by #167) into
-    the phase turn's user prompt. The pair is the unit of the turn: the header
-    renders the fault class, the KB-grounding line, the read-only graph
-    surface, the materialisation and the fold family; the matched units split
-    into a Services section and a Systems section, each with its own
-    adversarial-reasoning intro (Q4) and each unit's OWN rich projection
-    render; then the hypothesise-phase discipline block (Q11 prior-hunt
-    reflection on `prior_minted_keys`, Q9 knowledge-sufficiency +
+    """Render the HYPOTHESISE-phase input (spec 3.7, re-scoped by #167/#168) into
+    the phase turn's user prompt. The frame OPENS with the L1 ontology primer
+    constant (G9, the conceptions of Service / System / DataItem + the domain-
+    model philosophy - a user-prompt constant, never the system prompt, spec
+    3.7), then the pair header renders the fault class, the KB-grounding line,
+    the read-only graph surface, the materialisation and the fold family; the
+    matched units split into a Services section and a Systems section, each
+    with its own adversarial-reasoning intro (Q4) and each unit's OWN rich
+    projection render; then the hypothesise-phase discipline block (Q11 prior-
+    hunt reflection on `prior_minted_keys`, Q9 knowledge-sufficiency +
     target-knowledge loops, Q8 hypothesis elicitation, Q16 same-class merge,
     and the hypothesise write). The phase-TRANSITION verbatims are NOT part of
     this prompt - they ride the tool-call responses from the constants (G1/G3).
@@ -434,7 +463,8 @@ def _compose_gate_prompt(inp: GateInput) -> str:
     systems = sorted((c for c in inp.candidates if _section(c.unit_id) == "System"),
                      key=lambda c: c.unit_id)
 
-    lines = [
+    lines = [L1_ONTOLOGY_PRIMER, ""]
+    lines += [
         f"KB grounding: {'DEGRADED (KB unavailable; do not prune on this)' if inp.kb_degraded else 'available'}",
         f"Read-only graph surface (index cards): {inp.surface or '(none)'}",
     ]
@@ -510,15 +540,17 @@ def _compose_gate_prompt(inp: GateInput) -> str:
 
 
 def _compose_ratify_prompt(inp: PhaseTurnInput) -> str:
-    """Render the RATIFY-phase input (spec 3.2, re-scoped by #167): the pair
-    and the hypothesised drafts it may update/delete/create. The phase
-    transitions ride the tool-call responses (NEXT_RATIFY_HINT on the
-    hypothesised write, ONLY NEXT_NOTE_HINT on the ratified write - G1), never
-    this prompt: the prompt carries the pair data and the ratification
-    contract (must END with a status='ratified' write carrying the filled
-    capabilities / assumptions / technique-primitives)."""
+    """Render the RATIFY-phase input (spec 3.2, re-scoped by #167/#168): the
+    frame OPENS with the L1 ontology primer constant (G9, shared with the gate
+    and note frames), then the pair and the hypothesised drafts it may
+    update/delete/create. The phase transitions ride the tool-call responses
+    (NEXT_RATIFY_HINT on the hypothesised write, ONLY NEXT_NOTE_HINT on the
+    ratified write - G1), never this prompt: the prompt carries the pair data
+    and the ratification contract (must END with a status='ratified' write
+    carrying the filled capabilities / assumptions / technique-primitives)."""
     pair = inp.pair
-    lines = [
+    lines = [L1_ONTOLOGY_PRIMER, ""]
+    lines += [
         f"RATIFICATION phase (pair {pair.unit_id}::{pair.fault_class}):",
         f"Hypothesised drafts to ratify: {len(inp.configs)}",
     ]
@@ -546,13 +578,16 @@ def _compose_ratify_prompt(inp: PhaseTurnInput) -> str:
 
 
 def _compose_note_prompt(inp: PhaseTurnInput) -> str:
-    """Render the NOTE-phase input (spec 3.2/G8, re-scoped by #167): the pair
-    and its ratified configs. The note-taking verbatim rides the ratified
-    write's tool-call response (NEXT_NOTE_HINT, G1) and the pair-end verbatim
-    rides the notes tool's response (NEXT_PAIR_HINT + next pair) - this prompt
-    carries the pair data and the G8 note contract only."""
+    """Render the NOTE-phase input (spec 3.2/G8, re-scoped by #167/#168): the
+    frame OPENS with the L1 ontology primer constant (G9, shared with the gate
+    and ratify frames), then the pair and its ratified configs. The note-taking
+    verbatim rides the ratified write's tool-call response (NEXT_NOTE_HINT, G1)
+    and the pair-end verbatim rides the notes tool's response (NEXT_PAIR_HINT +
+    next pair) - this prompt carries the pair data and the G8 note contract
+    only."""
     pair = inp.pair
-    lines = [
+    lines = [L1_ONTOLOGY_PRIMER, ""]
+    lines += [
         f"NOTE phase (pair {pair.unit_id}::{pair.fault_class}):",
         f"Ratified configs to note: {len(inp.configs)}",
     ]

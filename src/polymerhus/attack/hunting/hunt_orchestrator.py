@@ -138,10 +138,11 @@ _DEFAULT_BACK_EDGE_JOB = "httpx_reprofile"
 # sourced so the config model and the mint share one vocabulary (C_STD §7).
 ConfigStatus = Literal["hypothesised", "ratified", "dropped"]
 
-# The harness's loop-state machine (G2/G5), single-sourced here so the graph's
-# `loop_state` channel and the canon phase nodes share one vocabulary. `NOTED`
-# is a LOOP state, never a config status.
-LoopState = Literal["HYPOTHESISED", "RATIFIED", "NOTED"]
+# The harness's loop-state machine (G2/G5) is single-sourced in
+# `orchestrator_graph.LoopState` (an enum - the graph's phase-node wrappers and
+# the `loop_state` channel share it); the canon phase nodes here reference the
+# enum's `.value` strings only through the graph's wrappers. `NOTED` is a LOOP
+# state, never a config status.
 
 
 class Witness(BaseModel):
@@ -384,13 +385,18 @@ class OrchestratorReport(BaseModel):
     (G12) and no budget stage (G7) - so the report carries what the graph did:
     the pairs processed through the phase machine, the configs hypothesised /
     ratified / dropped, the notes written, the ledger, and the failure counts.
-    `duplicate_config_writes` is the G4 deduplication-signal count, kept
-    separate from (but additive with) the O3 `store_write_failures` counter."""
+    `configs_unratified` counts configs the ratify turn RETURNED without a
+    terminal `ratified` status (the "must END with ratified" contract, S2):
+    they stay hypothesised on disk, are never counted ratified, and the note
+    phase does not note over them. `duplicate_config_writes` is the G4
+    deduplication-signal count, kept separate from (but additive with) the O3
+    `store_write_failures` counter."""
 
     pairs_processed: int = 0
     configs_hypothesised: int = 0
     configs_ratified: int = 0
     configs_dropped: int = 0
+    configs_unratified: int = 0
     notes_written: int = 0
     duplicates_dropped: int = 0
     malformed_dropped: int = 0
@@ -448,14 +454,15 @@ class ReadOnlyGraphView:
 
 @dataclass
 class PhaseContext:
-    """The harness-owned per-pair phase cursor the tool seams read to inject
-    the phase-transition verbatims (G1/G3): `phase` (the current phase node)
-    and `next_pair` (the NEXT pair's frame the notes tool's response carries
-    at the pair end - the note phase's canon body sets it before the turn).
-    The verbatims themselves are module constants, never the system prompt
-    (D3)."""
+    """The harness-owned per-pair context the tool seams read to inject the
+    phase-transition verbatims (G1/G3): `next_pair` (the NEXT pair's frame the
+    notes tool's response carries at the pair end - the note phase's canon body
+    sets it before the turn). The verbatim SELECTION rides the write's `status`
+    attribute on the config object (hypothesised -> NEXT_RATIFY_HINT, ratified
+    -> ONLY NEXT_NOTE_HINT, the note append -> NEXT_PAIR_HINT), so there is no
+    separate phase cursor (S4). The verbatims themselves are module constants,
+    never the system prompt (D3)."""
 
-    phase: str | None = None
     next_pair: dict | None = None
 
 
@@ -466,10 +473,10 @@ class OrchestratorTools:
     `hunts_store` and `notes` bind to, plus the prior-config/notes reads), the
     read-only graph view (`graph_view` - the surface `graph_view` defers to
     for the projected context: the store tools only ever read service keys),
-    and the run-local `phase_context` the canon phase nodes set so the
-    tool-call responses carry the phase verbatims. `back_edge` is retained for
-    the runtime plane's dispatch ownership (G12) but is NOT part of the model
-    surface anymore."""
+    and the run-local `phase_context` the note phase node sets so the notes
+    tool's response carries the next pair's frame (G1). `back_edge` is
+    retained for the runtime plane's dispatch ownership (G12) but is NOT part
+    of the model surface anymore."""
 
     back_edge: Callable[[AnalyserReconRequest, str, str], TargetedReconResult] | None = None
     store_reads: Any = None
@@ -1040,14 +1047,22 @@ async def arun_orchestration(
     def _phase_input(pair: DeliveredCandidate, configs: Sequence[HuntConfig],
                      state) -> PhaseTurnInput:
         """One ratify/note turn's input for the pair: the pair, its current
-        configs, and the shared symbolic render slots (fail-open per slot)."""
+        configs, and the shared symbolic render slots (fail-open per slot).
+        The pair's typed projection (built at the hypothesise phase and carried
+        on the graph state) rides into the ratify turn so the proximity /
+        too-near merging reasoning is grounded on it (S6); an absent slot
+        degrades to None, never a prune signal."""
         fault_class = pair.fault_class
+        projection = (state.get("projections") or {}).get(pair.unit_id)
         return PhaseTurnInput(
             pair=pair,
             configs=list(configs),
             kb_degraded=kb_degraded,
             kb_evidences=kb_evidences,
             surface=surface,
+            projection=projection,
+            unit_projection={pair.unit_id: projection}
+            if projection is not None else {},
             materialisation={fault_class: materialisations.get(fault_class)},
             fold_family={fault_class: fold_families.get(fault_class)},
             prior_minted_keys=list(_ledger(state).minted_config_keys),
@@ -1107,8 +1122,6 @@ async def arun_orchestration(
             fold_family={fault_class: fold_ids},
             prior_minted_keys=list(prior_ledger.minted_config_keys),
         )
-        if getattr(tools, "phase_context", None) is not None:
-            tools.phase_context.phase = "hypothesise"
 
         directions: list[EnvisionedDirection] = []
         from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
@@ -1161,14 +1174,19 @@ async def arun_orchestration(
         configs_written = 0
         if not carried:
             ledger.units_skipped += 1
-            return {"ledger": ledger, "minted_configs": minted, "trail": trail}
+            return {"ledger": ledger, "minted_configs": minted, "trail": trail,
+                    "projections": {pair.unit_id: projection}}
         candidate = by_identity.get((pair.unit_id, fault_class)) or pair
         for direction in carried:
             prior_insights = await _read_prior_insights(key)
             configs = _mint_for_direction(
                 direction, candidate, prior_insights, projection=projection)
-            minted[key] = list(configs)
-            ledger.minted_config_keys.append(key)
+            # S8: several carried directions for ONE pair all sit at the SAME
+            # locus key (the pair's (unit, fault)) - accumulate the union into
+            # `minted[key]` (never overwrite), so every draft enters the
+            # ratify set instead of earlier drafts being orphaned
+            # forever-hypothesised.
+            minted.setdefault(key, []).extend(configs)
             trace_gate_step("emit-mint", input={
                 "revival_key": key,
                 "configs": len(configs),
@@ -1180,28 +1198,36 @@ async def arun_orchestration(
                 # interpretation of the signal is the `hunts_store` TOOL.
                 _write_config(config)
                 configs_written += 1
-            ledger.units_done += 1
+        ledger.minted_config_keys.append(key)
+        ledger.units_done += 1
         trail.append({"kind": "hypothesised", "revival_key": key,
                       "configs": configs_written})
-        return {"ledger": ledger, "minted_configs": minted, "trail": trail}
+        return {"ledger": ledger, "minted_configs": minted, "trail": trail,
+                "projections": {pair.unit_id: projection}}
 
     async def _ratify_node(state) -> dict:
         """The RATIFY phase (spec 3.2): the pair's ratification turn on the run's
         orchestration thread. The model may update/delete/create configs and
         MUST end with a status="ratified" write carrying the filled
         capabilities/assumptions/technique-primitives; the harness persists
-        each decision config at its final status (upsert; dropped stays on
-        disk - G6). The `hunts_store` tool's ratified-write response carried
-        ONLY the NEXT_NOTE_HINT constant (G1); the loop state RATIFIED is the
-        graph's own. Fail-open: a raising/empty turn skips the phase's side
-        effect (the drafts stay hypothesised) but the pair keeps serving."""
+        each decision config at its terminal status (ratified upsert; dropped
+        stays on disk - G6). The `hunts_store` tool's ratified-write response
+        carried ONLY the NEXT_NOTE_HINT constant (G1); the loop state RATIFIED
+        is the graph's own. The "must END with ratified" contract (S2): a
+        decision entry RETURNED without status="ratified" (still hypothesised)
+        is NOT counted ratified, is NOT re-persisted (the draft stays
+        hypothesised on disk), and is NOT fed to the note phase. Fail-open: a
+        raising/empty turn skips the phase's side effect (the drafts stay
+        hypothesised) but the pair keeps serving."""
         pair = state.get("current_pair")
         if pair is None:
             return {"trail": []}
         key = revival_key(pair.unit_id, pair.fault_class)
         drafts = list((state.get("minted_configs") or {}).get(key) or [])
-        if getattr(tools, "phase_context", None) is not None:
-            tools.phase_context.phase = "ratify"
+        if not drafts:
+            # S5: a pair with no drafts (the gate pruned everything) has no
+            # ratification work - skip the seam turn entirely, keep serving.
+            return {"trail": []}
 
         decision = RatifyDecision()
         if ratify_fn is not None:
@@ -1213,19 +1239,28 @@ async def arun_orchestration(
 
         trail: list[dict] = []
         ratified_configs: list[HuntConfig] = []
-        ratified = dropped = 0
+        ratified = dropped = unratified = 0
         for config in decision.configs:
-            _update_config(config)
-            if config.status == "dropped":
-                dropped += 1
-                trail.append({"kind": "dropped", "revival_key": key})
-            else:
+            if config.status == "ratified":
+                _update_config(config)
                 ratified += 1
                 ratified_configs.append(config)
                 trail.append({"kind": "ratified", "revival_key": key})
+            elif config.status == "dropped":
+                _update_config(config)
+                dropped += 1
+                trail.append({"kind": "dropped", "revival_key": key})
+            else:
+                # S2: returned-unratified (still hypothesised) - the turn did
+                # NOT end with ratified, so the config is never counted
+                # ratified and never noted over; the draft stays hypothesised
+                # on disk (the pair is still ratifying).
+                unratified += 1
+                trail.append({"kind": "unratified", "revival_key": key})
         if decision.configs:
             trail.append({"kind": "ratify-ended", "revival_key": key,
-                          "ratified": ratified, "dropped": dropped})
+                          "ratified": ratified, "dropped": dropped,
+                          "unratified": unratified})
             minted = dict(state.get("minted_configs") or {})
             minted[key] = ratified_configs
             return {"trail": trail, "minted_configs": minted}
@@ -1245,16 +1280,24 @@ async def arun_orchestration(
         key = revival_key(pair.unit_id, pair.fault_class)
         ratified = list((state.get("minted_configs") or {}).get(key) or [])
         if not ratified:
-            # a pair with no configs (pruned at hypothesise, or every config
-            # dropped during ratification) has nothing to note: the phase skips
-            # its side effect but the loop state NOTED still advances (G5).
+            # a pair with no configs (pruned at hypothesise, every config
+            # dropped during ratification, or all returned-unratified - S2) has
+            # nothing to note: the phase skips its side effect but the loop
+            # state NOTED still advances (G5).
             return {"trail": []}
         if getattr(tools, "phase_context", None) is not None:
-            tools.phase_context.phase = "note"
             # The pair end: the notes tool's response carries the next pair's
             # frame + NEXT_PAIR_HINT (G1). The next pair is the queue head the
-            # supervisor will pop next (or None - the pass is done).
+            # supervisor will pop next; at a fault DRAIN (the current fault's
+            # queue is empty but the schedule holds another fault) it is the
+            # next fault's first candidate (S3).
             next_pairs = list(state.get("pairs") or [])
+            if not next_pairs:
+                schedule = list(state.get("schedule") or [])
+                if schedule:
+                    next_fault_candidates = getattr(schedule[0], "candidates", None)
+                    if next_fault_candidates:
+                        next_pairs = [next_fault_candidates[0]]
             tools.phase_context.next_pair = _pair_frame_for(next_pairs[0]) \
                 if next_pairs else None
 
@@ -1294,6 +1337,7 @@ async def arun_orchestration(
         "trail": [],
         "ledger": LoopLedger(),
         "minted_configs": {},
+        "projections": {},
         "kb_evidences": kb_evidences,
         "kb_degraded": kb_degraded,
         "surface": surface,
@@ -1321,6 +1365,7 @@ async def arun_orchestration(
                                  if t.get("kind") == "hypothesised"),
         configs_ratified=sum(t.get("ratified", 0) for t in ratified_events),
         configs_dropped=sum(t.get("dropped", 0) for t in ratified_events),
+        configs_unratified=sum(t.get("unratified", 0) for t in ratified_events),
         notes_written=sum(t.get("notes", 0) for t in trail
                           if t.get("kind") == "note"),
         duplicates_dropped=intake.duplicates_dropped,

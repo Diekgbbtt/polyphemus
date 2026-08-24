@@ -295,6 +295,74 @@ def test_reason_stretch_render_carries_projection_materialisation_fold_family(tm
     assert "CWE-520, CWE-9" in text                        # sorted fold ids
 
 
+def test_gate_prompt_opens_with_the_l1_ontology_primer():
+    """G9 - the L1 ontology primer constant renders at the TOP of each pair's
+    frame in the USER prompt (never the system prompt): the hypothesise, ratify,
+    and note turns all open with the SAME `L1_ONTOLOGY_PRIMER` constant. The
+    primer carries the three conceptions (what a Service / System / DataItem is
+    conceived FOR) and the domain-model philosophy, and deliberately names NONE
+    of the edge-type glossary (system kinds, edge families, DataRelationship
+    kinds) - those are self-explanatory (G9)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        HuntPromptTemplate,
+        PhaseTurnInput,
+    )
+    from polymerhus.attack.hunting.llm import (
+        L1_ONTOLOGY_PRIMER,
+        _compose_note_prompt,
+        _compose_ratify_prompt,
+    )
+
+    # the hypothesise (gate) frame opens with the primer
+    gate_input = GateInput(
+        candidates=[_candidate(SERVICE_A, "CWE-352")],
+        unit_projection={SERVICE_A: UnitProjection(
+            unit_id=SERVICE_A, kind="Service", spine={}, edges={},
+            data_edges={}, data_rel_kinds=frozenset())},
+        materialisation={"CWE-352": types.SimpleNamespace(name="CSRF")},
+        fold_family={"CWE-352": ()},
+    )
+    gate_text = _compose_gate_prompt(gate_input)
+    assert gate_text.startswith(L1_ONTOLOGY_PRIMER)      # top of the frame
+
+    # the ratify and note frames open with the SAME constant
+    pair = gate_input.candidates[0]
+    draft = HuntConfig(
+        hunt_id="h1", unit_id=SERVICE_A, fault_class="CWE-352",
+        vulnerability_class="CSRF", status="hypothesised",
+        prompt_template=HuntPromptTemplate(rationale="r", research_direction="rd"),
+    )
+    turn = PhaseTurnInput(pair=pair, configs=[draft])
+    for text in (_compose_ratify_prompt(turn), _compose_note_prompt(turn)):
+        assert text.startswith(L1_ONTOLOGY_PRIMER)
+
+    # the three conceptions + the philosophy
+    for conception in ("Service", "System", "DataItem"):
+        assert conception in L1_ONTOLOGY_PRIMER
+    assert "judged abstraction" in L1_ONTOLOGY_PRIMER      # L1 over L0
+    assert "projection" in L1_ONTOLOGY_PRIMER              # the typed facet surface
+    assert "proxy" in L1_ONTOLOGY_PRIMER                   # proxies, not authoritative
+    assert "authoritative" in L1_ONTOLOGY_PRIMER
+
+    # NONE of the edge-type glossary is named (G9: deliberately not an
+    # over-specified glossary - kinds and edge types are self-explanatory).
+    forbidden = [
+        # the six DataRelationship kinds
+        "DERIVED_FROM", "REFLECTED_IN", "EQUALS_HASH_OF", "COPY_OF",
+        "CONCATENATION_OF", "SUBSET_OF",
+        # the data-flow edge types
+        "PRODUCES", "CONSUMES",
+        # the System-edge families
+        "EXPOSED_VIA", "AUTHENTICATED_BY", "AUTHORIZED_BY", "FRONTED_BY",
+        "PROTECTED_BY", "DEPENDS_ON",
+        # the system kinds
+        "WAF", "CDN", "ReverseProxy", "APIGateway", "RESTApi", "GraphQLApi",
+        "IdentificationSystem", "AuthenticationMechanism", "AuthorizationSystem",
+    ]
+    for token in forbidden:
+        assert token not in L1_ONTOLOGY_PRIMER, f"primer names glossary token {token!r}"
+
+
 def test_fold_family_renders_sorted():
     """The fold-family render is deterministic: ids sorted lexicographically
     whatever order the loader handed them in; an absent family is UNKNOWN."""

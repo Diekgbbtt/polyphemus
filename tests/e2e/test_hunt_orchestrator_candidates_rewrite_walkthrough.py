@@ -930,8 +930,10 @@ def test_e2e_e13_q7_reflection_strategy(tmp_path):
         materialisation={FAULT_352: type("M", (), {"name": "CSRF"})()},
         fold_family={FAULT_352: ()},
     )
-    from polymerhus.attack.hunting.llm import _compose_gate_prompt
+    from polymerhus.attack.hunting.llm import L1_ONTOLOGY_PRIMER, _compose_gate_prompt
     prompt = _compose_gate_prompt(gate_input)
+    # #168/G9: the pair's frame opens with the L1 ontology primer constant
+    assert prompt.startswith(L1_ONTOLOGY_PRIMER)
     assert "Prior minted-config keys to reflect on" in prompt
     assert "Knowledge-sufficiency decision point" in prompt or "Knowledge-sufficiency" in prompt
     assert "Target-knowledge loop" in prompt
