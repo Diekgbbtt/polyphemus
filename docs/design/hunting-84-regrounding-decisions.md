@@ -514,3 +514,25 @@ dedup becomes possible).
   `data/<project_id>/hunting/test-specs/`).
 - Session thread ids (`run:{hunt_id}:{spec_hash}:pod_runner`, D84-2) keep the hash and become independent of memory
   keys.
+
+## D84-39 - The PodExport body: the pod owns its OWN terminal result (T7/#183, grey-points 2026-08-24)
+
+The operator's grey-point rulings (2026-08-24) amend the pod spec 1.5/1.7 boundary - the pod now persists its OWN
+terminal `PodExport` envelope itself, so it is seamlessly mappable to the originating TestImplementationSpec and the
+hunting hunter-agent session that created it (a consequent design change following the actor-inbox runtime redesign
+and the message-passing mechanism).
+
+- **GP1 = A**: the export identifier is the `run_id`; re-runs of the same spec overwrite the same file (idempotent
+  overwrite, D84-37).
+- **GP2 = A**: the filename's `<spec_id>` directory + `<run_id>` resolve to the spec/session; the export body stays
+  the D5/D6 fields as today (NO new correlation fields on the envelope).
+- **GP3 = A**: the pod store becomes the source of truth; the parent reads from it instead of persisting its own
+  copy. (Wiring the parent's read is the 164-merged `hunting_agent.py` path - a documented follow-on if it ripples
+  beyond T7's scope.)
+- **GP4**: the current deterministic write node (`_export` in `graph.py`) writes it.
+- **GP5**: the pure-log invariant holds (the export is written by the deterministic node, never an LLM tool).
+
+The store gains a first-class export body (`write_pod_export`/`read_pod_export`/`list_pod_exports`) replicating the
+`write_experiment_log`/`read_experiment_log` pattern; no `_seq`/`_ref` (D84-36). Fail-open (O3/IA-4): a write failure
+degrades to the in-memory envelope (the run still returns it, never raises); the `arun_pod` degrade path also
+persists its real terminal result when a store is bound with a spec_id (respecting the fail-closed spec_id gate).

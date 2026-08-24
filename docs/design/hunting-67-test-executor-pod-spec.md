@@ -67,7 +67,7 @@ The pod prompts embed an INDEXABLE LIST of the pod memory's keys (notes by key +
 
 ### 1.7 Produced outcome
 
-The verdict and evidence land in the hunt store, wired to the hunt; the parent HuntingAgent consumes them for the hypothesis-level evaluation; nothing is written to L0/L1.
+The verdict and evidence land in the hunt store, wired to the hunt; the parent HuntingAgent consumes them for the hypothesis-level evaluation; nothing is written to L0/L1. **As of T7/#183 (GP3): the pod ALSO persists its OWN terminal `PodExport` envelope to its pod memory store at `<spec_id>/<run_id>.yaml` (the pod store is the source of truth; the parent reads from it).**
 
 ### 1.8 Observability (D84-21)
 
@@ -77,7 +77,7 @@ Langfuse is fail-open and never a gate (C12).
 
 ### 1.9 Honour clauses
 
-- Sole-writer: never writes L0/L1; persists only through the parent's hunt-store write and the pod-owned experiment-memory store.
+- Sole-writer: never writes L0/L1; persists only through the parent's hunt-store write and the pod-owned experiment-memory store - including the pod's OWN terminal `PodExport` envelope (T7/#183: `<spec_id>/<run_id>.yaml`).
 - Binary terminal invariant: the state machine ends in exactly `successful` or `unsuccessful`, never a third state (D67-02).
 - Fail-open: section 5.
 - Fixed internal caps: budget and timeout are pod-internal (D67-09), set by the pod, env-overridable, never carried in the spec.

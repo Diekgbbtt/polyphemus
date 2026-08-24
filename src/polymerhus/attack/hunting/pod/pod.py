@@ -111,6 +111,18 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
         return export
     except Exception as exc:  # noqa: BLE001 - IA-4: degrade, never raise into the parent
         logger.warning("pod run degraded to unsuccessful (%s)", exc)
-        return PodExport(
+        export = PodExport(
             verdict="unsuccessful", terminal_reason=TECHNICAL_INFEASIBILITY,
             iterations=0, clean=False, error=str(exc)).to_envelope()
+        # T7 (#183): the degrade path is a REAL terminal result - persist it too
+        # (idempotent overwrite, GP1). The fail-closed spec_id gate is respected:
+        # no spec_id means no export is persisted (the graph's init already
+        # failed on it), and a write failure degrades fail-open (O3/IA-4), never
+        # raising into the parent.
+        if memory_store is not None and spec_id:
+            try:
+                memory_store.write_pod_export(spec_id, run_id, export)
+            except Exception:  # noqa: BLE001 - fail-open (O3/IA-4)
+                logger.warning("pod export persistence failed on the degrade "
+                               "path (%s)", exc)
+        return export

@@ -24,6 +24,18 @@ from polymerhus.attack.hunting.pod.llm import (
 from polymerhus.attack.hunting.pod.types import RunnerStep
 from polymerhus.recon.domain.types import ExecResult
 
+from polymerhus.attack.hunting.pod.pod_memory import spec_identifier
+
+# The #164 `<fault>_<strategy>` spec id (D84-34), the pod memory store key (T7).
+SPEC_ID = spec_identifier("sqli", "blind")
+
+
+def _terminate_space(spec, obs, messages, log):
+    """A triager that ends a semantic (non-symbolic) stretch space-exhausted."""
+    return {"action": "terminate", "verdict": "unsuccessful",
+            "terminal_reason": "space-exhausted", "clean": True}
+
+
 VALID_SPEC = {
     "target_identity": "service:web:soupmarket",
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
@@ -449,3 +461,57 @@ def test_seams_receive_curated_dict_views_with_role_and_content():
         assert view["role"] in ("system", "human", "ai", "tool")
     assert triager_views[0][0]["role"] == "system"     # the critic sees its own system prompt
     assert all("role" in v and "content" in v for v in triager_views[0])
+
+
+# --- T7 (#183): the pod owns the persistence of its OWN terminal result ---------
+
+def test_terminal_export_persists_to_spec_run_id(tmp_path):
+    """T7 (GP1/GP3/GP4): a completed run with a bound store + spec_id persists
+    its `PodExport` envelope to `<spec_id>/<run_id>.yaml` - the persisted record
+    EQUALS the returned envelope (`env["evidence"]` round-trips), written by the
+    deterministic terminal node."""
+    from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
+
+    store = PodMemoryStore(tmp_path)
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=None, trace_fn=_no_trace, memory_store=store,
+                        spec_id=SPEC_ID, run_id="run-42"))
+    assert env["verdict"] == "successful"
+    persisted = store.read_pod_export(SPEC_ID, "run-42")
+    assert persisted == env                       # the persisted record == the returned envelope
+
+
+def test_export_rerun_overwrites_the_same_file(tmp_path):
+    """GP1/D84-37: a re-run of the same spec with the SAME run_id overwrites the
+    same `<spec_id>/<run_id>.yaml` - the deterministic path is the address."""
+    from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
+
+    store = PodMemoryStore(tmp_path)
+    env1 = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
+                         triager_fn=None, trace_fn=_no_trace, memory_store=store,
+                         spec_id=SPEC_ID, run_id="run-1"))
+    env2 = _run(arun_pod({**VALID_SPEC, "verification_symptoms": ["reflects the marker"]},
+                         exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
+                         triager_fn=_terminate_space, trace_fn=_no_trace,
+                         memory_store=store, spec_id=SPEC_ID, run_id="run-1"))
+    assert env1["verdict"] == "successful"
+    assert env2["verdict"] == "unsuccessful"
+    assert store.read_pod_export(SPEC_ID, "run-1") == env2
+    assert store.list_pod_exports(SPEC_ID) == ["run-1"]   # one file, overwritten
+
+
+def test_export_write_failure_degrades_to_the_envelope(tmp_path):
+    """O3/IA-4 fail-open: a write failure degrades to the in-memory envelope -
+    the run STILL returns it to the parent and never raises."""
+    from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
+
+    class _FailingStore(PodMemoryStore):
+        def write_pod_export(self, spec_id, run_id, export_dict):
+            raise OSError("boom")
+
+    store = _FailingStore(tmp_path)
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=None, trace_fn=_no_trace, memory_store=store,
+                        spec_id=SPEC_ID, run_id="run-42"))
+    assert env["verdict"] == "successful"
+    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"

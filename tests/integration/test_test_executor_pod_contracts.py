@@ -458,6 +458,37 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     assert store.read_notes(SPEC_ID) == []
 
 
+# --- T7 (#183): the pod owns the persistence of its OWN terminal result ---------
+
+def test_production_run_persists_its_pod_export(tmp_path):
+    """T7 (GP1/GP3/GP4): a completed PRODUCTION-lane `arun_pod` leaves its
+    `PodExport` envelope persisted at `<spec_id>/<run_id>.yaml` - the pod owns
+    its terminal result, readable back and EQUAL to the returned envelope, so it
+    is seamlessly mappable to the originating spec + session via the run_id."""
+    store = PodMemoryStore(tmp_path)
+    runner_script = [
+        AIMessage(content="", tool_calls=[
+            {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
+             "id": "c0"}]),
+        AIMessage(content="", tool_calls=[
+            {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
+        AIMessage(content="symptom confirmed; the observation grounds the verdict"),
+    ]
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_OK), kb_fn=_kb_empty(), trace_fn=_no_trace,
+        memory_store=store, spec_id=SPEC_ID, run_id="run-84",
+        model_factory=_factory({POD_RUNNER_ROLE: runner_script})))
+
+    assert env["verdict"] == "successful"
+    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+    persisted = store.read_pod_export(SPEC_ID, "run-84")
+    assert persisted == env                        # the persisted record == the returned envelope
+    assert store.list_pod_exports(SPEC_ID) == ["run-84"]
+    # The envelope is unchanged from before T7 (the IA-4 shape carries no new
+    # correlation fields on the body, GP2 - the run_id IS the identifier).
+    assert set(env) == {"verdict", "evidence"}
+
+
 # --- T2 round-trip: the D6 log + executed ledger persist per variant ------------
 
 def test_experiment_log_persists_round_trip_and_survives_a_rerun(tmp_path):

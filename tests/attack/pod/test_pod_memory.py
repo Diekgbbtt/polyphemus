@@ -301,6 +301,80 @@ def test_note_keys_lists_the_indexable_keys_newest_first(store):
     assert store.note_keys(OTHER_ID) == []
 
 
+# --- the PodExport body (T7/#183): the pod's OWN terminal result ---------------
+
+ENVELOPE = {
+    "verdict": "unsuccessful",
+    "evidence": {
+        "terminal_reason": "space-exhausted", "iterations": 1, "clean": True,
+        "interpretations": [], "init_validation": [], "variant_specs": [],
+        "raw_observations": [{"status": 404}],
+    },
+}
+
+
+def test_pod_export_round_trip_and_idempotent_overwrite(store):
+    """T7 (GP1, D84-37): the export identifier is the run_id - a re-run of the
+    same spec overwrites the SAME `<spec_id>/<run_id>.yaml` file (one file, the
+    deterministic path is the address), reads back byte-equivalent."""
+    store.write_pod_export(SPEC_ID, "run-42", ENVELOPE)
+    assert store.read_pod_export(SPEC_ID, "run-42") == ENVELOPE
+    # A re-run with the same run_id OVERWRITES, never accumulates.
+    revised = {"verdict": "successful", "evidence": {"terminal_reason": "symptom-confirmed"}}
+    store.write_pod_export(SPEC_ID, "run-42", revised)
+    assert store.read_pod_export(SPEC_ID, "run-42") == revised
+    assert len(list((store._root / SPEC_ID).iterdir())) == 1  # only the one export file
+    # The file lives at the spec directory root (not in variants/experiment-log).
+    assert (store._root / SPEC_ID / "run-42.yaml").exists()
+
+
+def test_pod_export_is_per_spec(store):
+    store.write_pod_export(SPEC_ID, "run-42", ENVELOPE)
+    assert store.read_pod_export(OTHER_ID, "run-42") == {}
+    assert store.list_pod_exports(OTHER_ID) == []
+
+
+def test_pod_export_list_enumerates_run_ids(store):
+    assert store.list_pod_exports(SPEC_ID) == []
+    store.write_pod_export(SPEC_ID, "run-1", ENVELOPE)
+    store.write_pod_export(SPEC_ID, "run-2", ENVELOPE)
+    assert store.list_pod_exports(SPEC_ID) == ["run-1", "run-2"]
+
+
+def test_pod_export_read_absent_returns_empty(store):
+    assert store.read_pod_export(SPEC_ID, "nope") == {}
+
+
+def test_pod_export_no_seq_or_ref_on_disk(store):
+    store.write_pod_export(SPEC_ID, "run-42", ENVELOPE)
+    import yaml
+    loaded = yaml.safe_load(
+        (store._root / SPEC_ID / "run-42.yaml").read_text(encoding="utf-8"))
+    assert "_seq" not in loaded and "_ref" not in loaded
+
+
+def test_pod_export_run_id_filename_keeps_colon_and_dash_but_not_path(store):
+    """GP1/GP2: the run_id is a SINGLE filename segment - the `_`-separator
+    rules for multi-part keys don't apply, so `:`/`-` are allowed; but it must
+    stay filesystem-safe, so a path separator is sanitised (never nested)."""
+    store.write_pod_export(SPEC_ID, "run:1-a", ENVELOPE)
+    assert (store._root / SPEC_ID / "run:1-a.yaml").exists()
+    assert store.list_pod_exports(SPEC_ID) == ["run:1-a"]
+    # A `/` (or `\`) is a path separator - sanitised to `-`, not nested.
+    store.write_pod_export(SPEC_ID, "a/b", ENVELOPE)
+    assert (store._root / SPEC_ID / "a-b.yaml").exists()
+    assert store.list_pod_exports(SPEC_ID) == ["a-b", "run:1-a"]
+
+
+def test_pod_export_write_failure_raises_for_the_caller_to_degrade(tmp_path):
+    store = PodMemoryStore(tmp_path)
+    # Make the target path a DIRECTORY so the export write's open-for-write fails (O3).
+    (store._root / SPEC_ID).mkdir(parents=True)
+    (store._root / SPEC_ID / "run-42.yaml").mkdir()
+    with pytest.raises(OSError):
+        store.write_pod_export(SPEC_ID, "run-42", ENVELOPE)
+
+
 # --- fail-open durability semantics -------------------------------------------
 
 def test_corrupt_notes_file_raises_not_silently_returns_empty(tmp_path):

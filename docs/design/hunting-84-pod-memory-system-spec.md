@@ -52,6 +52,7 @@ data/<project_id>/test-executor-pod/
   <fault>_<strategy>/
     variants/<variant-ref>.yaml           (the minted TestImplementationSpec variants)
     experiment-log/<order>.yaml           (one file per variant, the D6 slice + summary)
+    <run_id>.yaml                         (T7/#183: the pod's OWN terminal PodExport)
   notes.yaml                              (per-project note store)
 ```
 
@@ -125,6 +126,9 @@ data/<project_id>/test-executor-pod/
     store fails open in the note tool (O10).
 18. As a maintainer, I want the ExperimentLog's runtime-only state (budget counters, iteration, working set) to stay
     in the `PodState` graph channels, so that persistence is scoped to the durable D6 content and dedup ledger.
+19. As the test-executor pod, I want to persist my OWN terminal `PodExport` envelope (`{verdict, evidence}`) to
+    `<spec_id>/<run_id>.yaml`, written by the deterministic terminal node, so that my result is seamlessly mappable
+    to the originating TestImplementationSpec and the hunting hunter-agent session that created it (T7/#183).
 
 ## Implementation Decisions
 
@@ -266,6 +270,42 @@ data/<project_id>/test-executor-pod/
 - `project_id` is a first-class store axis but NOT a session axis (the session stays run/hunt/scario-keyed).
 - No schema change to the #164 hunter: the pod consumes the minted `spec_id` through the typed handoff.
 
+### 13. The PodExport body - the pod owns its OWN terminal result (T7/#183, operator grey-points GP1-GP5, 2026-08-24)
+
+The pod OWNS the persistence of its OWN terminal `PodExport` envelope. This amends the pod spec 1.5 boundary
+("persists only through the parent's hunt-store write and the pod-owned experiment-memory store") and 1.7 ("the
+verdict and evidence land in the hunt store"): the pod now persists the export itself, so it is seamlessly mappable
+to the originating TestImplementationSpec and the hunting hunter-agent session that created it. It is a consequent
+design change following the actor-inbox runtime redesign and the message-passing mechanism. The operator's
+grey-point rulings (2026-08-24) are the design authority:
+
+- **GP1 = A**: the export identifier is the `run_id`; re-runs of the same spec overwrite the same file (idempotent
+  overwrite, D84-37). The path is `data/test-executor-pod/<project_id>/<spec_id>/<run_id>.yaml` - a SINGLE filename
+  segment at the spec-directory root (a run_id may contain `:`/`-`, so the `_`-separator rules for multi-part keys
+  don't apply; it is kept filesystem-safe by sanitising only path separators and control chars).
+- **GP2 = A**: the filename's `<spec_id>` directory + `<run_id>` resolve to the spec/session; the export body stays
+  the D5/D6 fields as today (NO new correlation fields on the envelope).
+- **GP3 = A**: the **pod store becomes the source of truth**; the parent reads from it instead of persisting its own
+  copy. (Wiring the parent's read is the 164-merged `hunting_agent.py` path - a DOCUMENTED FOLLOW-ON when it
+  ripples beyond T7's scope; this spec's T7 implements the pod-side write.)
+- **GP4**: the existing deterministic write node (`_export` in `graph.py`) writes it - the terminal call sites
+  (`terminal`, `infeasible_terminal`, `exhausted_terminal`, `budget_terminal`) all route through `_export`, which
+  assembles the `PodExport` and persists the envelope. The envelope returned to the parent is UNCHANGED (the IA-4
+  shape); the persisted record EQUALS the returned envelope (the post-validation decision fields from the terminal
+  call sites, never raw model output).
+- **GP5**: the pure-log invariant holds - the export is written by the deterministic node, never an LLM tool. No new
+  tool seam.
+
+The store gains a first-class export body: `write_pod_export(spec_id, run_id, export_dict)` (idempotent overwrite,
+D84-37) + `read_pod_export(spec_id, run_id)` + `list_pod_exports(spec_id)`, replicating the
+`write_experiment_log`/`read_experiment_log` pattern. All matching logic stays strictly inside the store; no
+`_seq`/`_ref` (D84-36).
+
+Fail-open (O3/IA-4): a write failure degrades to the in-memory envelope - the run still returns it to the parent,
+never raises. The `arun_pod` degrade path (`pod.py`, the exception branch) also builds a `PodExport`; it is a REAL
+terminal result, so it persists too when a store is bound with a spec_id (respecting the fail-closed spec_id gate),
+degrading gracefully if the write itself is the failure source.
+
 ## Testing Decisions
 
 ### What makes a good test here
@@ -288,6 +328,7 @@ data/<project_id>/test-executor-pod/
 | Prompt materialization | the composed memory header renders BOTH the note keys and the experiment-log identifiers that the reading tool can address | `tests/attack/pod/test_prompt_memory.py` |
 | `note` tool contract | unchanged contract (extra="forbid", coded rejections, fail-open) + the new typed read filters + the summary sink routing | `tests/attack/pod/test_note_tool.py` |
 | Pod-level assertions | C13 (KB tool bound) extended to assert the KB response is recorded; C14 (note written on P3) re-scoped to the summary landing in the variant's experiment-log file; C15 unchanged | `tests/integration/test_test_executor_pod_contracts.py` |
+| PodExport persistence (T7/#183) | the deterministic terminal node persists the envelope to `<spec_id>/<run_id>.yaml`; the persisted record equals the returned envelope; a re-run with the same run_id overwrites; a write failure degrades fail-open to the in-memory envelope; the degrade path persists a real terminal result | `tests/attack/pod/test_pod_memory.py`, `tests/attack/pod/test_graph.py`, `tests/integration/test_test_executor_pod_contracts.py` |
 | E2E harness/driver | `project_id` plumbing through the in-process driver + the persisted store on the harness seam | `tests/e2e/harness/driver.py` |
 
 ### Test-tier decisions

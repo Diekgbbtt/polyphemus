@@ -108,6 +108,30 @@ def variant_ref(order: int) -> str:
     return f"v{int(order)}"
 
 
+# The pod-export run_id is a SINGLE filename segment (T7/#183, GP1): the
+# `_`-separator rules for multi-part keys don't apply, so a run_id may contain
+# `:`/`-`/`_`; it must still stay filesystem-safe, so only path separators and
+# control chars are banned (replaced with `-`).
+_UNSAFE_RUN_ID_CHARS = frozenset("/\\")
+
+
+def _sanitise_run_id(run_id: str) -> str:
+    """Sanitise the pod-export run_id for use as a SINGLE filename segment
+    (T7/#183, GP1/GP2): a `:`/`-`/`_` run_id is preserved, path separators and
+    control chars are replaced, and a result that would be a path-traversal
+    name (empty, `.`, `..`) is rejected."""
+    out = "".join(
+        "-" if ch in _UNSAFE_RUN_ID_CHARS or ord(ch) < 32 else ch
+        for ch in str(run_id)
+    )
+    if not out or out in (".", ".."):
+        raise ValueError(
+            f"pod memory: run_id {run_id!r} sanitises to the unsafe "
+            f"filename {out!r}"
+        )
+    return out
+
+
 def order_of(ref: str | None) -> int:
     """The order of a variant ref (`v0` -> 0, `v1` -> 1, ...); a missing or
     non-`v<N>` ref defaults to 0. The inverse of `variant_ref`."""
@@ -192,6 +216,13 @@ class PodMemoryStore:
     def _notes_file(self) -> Path:
         return self._root / "notes.yaml"
 
+    def _pod_export_file(self, spec_id: str, run_id: str) -> Path:
+        """The pod's OWN terminal result (T7/#183): `<spec_id>/<run_id>.yaml` -
+        the export identifier is the run_id (GP1), a SINGLE filename segment at
+        the spec-directory root, so a re-run of the same spec overwrites the
+        SAME file (idempotent, D84-37)."""
+        return self._spec_dir(spec_id) / f"{_sanitise_run_id(run_id)}.yaml"
+
     # -- minted variants (D84-35: the TestImplementationSpec variants) --------
 
     def write_variant(self, spec_id: str, variant_ref: str, variant: dict) -> None:
@@ -270,6 +301,48 @@ class PodMemoryStore:
                 except ValueError:
                     continue
         return sorted(orders)
+
+    # -- the PodExport body (T7/#183): the pod's OWN terminal result -----------
+
+    def write_pod_export(self, spec_id: str, run_id: str, export_dict: dict) -> None:
+        """IDEMPOTENTLY overwrite the pod's terminal `PodExport` envelope
+        (T7/#183, GP1/GP2): `<spec_id>/<run_id>.yaml`, the deterministic path is
+        the address - a re-run of the same spec with the same run_id REWRITES
+        the same file (D84-37). The body keeps the D5/D6 fields as today (NO new
+        correlation fields on the envelope, GP2 - the run_id IS the identifier,
+        resolving to the spec/session). The persisted record EQUALS the envelope
+        returned to the parent. A write failure raises for the caller to degrade
+        (O3)."""
+        path = self._pod_export_file(spec_id, run_id)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        with path.open("w", encoding="utf-8") as fh:
+            yaml.safe_dump(export_dict, fh, sort_keys=False)
+
+    def read_pod_export(self, spec_id: str, run_id: str) -> dict:
+        """The persisted `PodExport` envelope, or {} when absent. A corrupt file
+        raises (O4) rather than returning {}."""
+        path = self._pod_export_file(spec_id, run_id)
+        if not path.exists():
+            return {}
+        try:
+            loaded = yaml.safe_load(path.read_text(encoding="utf-8"))
+        except yaml.YAMLError as exc:
+            raise OSError(
+                f"pod memory: unreadable pod-export file {path}: {exc}") from exc
+        return loaded if isinstance(loaded, dict) else {}
+
+    def list_pod_exports(self, spec_id: str) -> list[str]:
+        """The pod-export run_ids present on file for one spec - the
+        deterministic export identifiers directly under `<spec_id>/` (never the
+        `variants/`/`experiment-log/` sub-bodies)."""
+        sdir = self._spec_dir(spec_id)
+        if not sdir.exists():
+            return []
+        run_ids = []
+        for child in sdir.iterdir():
+            if child.suffix == ".yaml" and child.is_file():
+                run_ids.append(child.stem)
+        return sorted(run_ids)
 
     def write_variant_summary(self, spec_id: str, order: int, body: str) -> str:
         """The `experiment_summary` terminal record (D84-35): set it on the

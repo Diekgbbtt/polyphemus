@@ -57,6 +57,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import logging
 
 from langgraph.graph import END, START, StateGraph
 
@@ -105,6 +106,8 @@ from polymerhus.attack.hunting.pod.types import (
     VariantSpec,
 )
 from polymerhus.attack.hunting.pod.verification import validate_decision, validate_spec
+
+logger = logging.getLogger(__name__)
 
 
 def _curated(messages) -> list[dict]:
@@ -155,6 +158,26 @@ async def _await_seam(fn, *args):
     return await asyncio.to_thread(fn, *args)
 
 
+def _persist_pod_export(state: PodState, log: ExperimentLog,
+                        envelope: dict) -> None:
+    """The deterministic terminal persistence of the `PodExport` envelope
+    (T7/#183, GP1/GP4): `<spec_id>/<run_id>.yaml`, idempotent overwrite, written
+    by the terminal node - never an LLM seam (the pure-log invariant extends to
+    the export). Only happens when a store is bound (the log carries it) with a
+    spec_id (fail-closed). Fail-open (O3/IA-4): a write failure degrades to the
+    in-memory envelope - the run still returns it, never raising into the parent."""
+    store = getattr(log, "store", None)
+    spec_id = getattr(log, "spec_id", None)
+    if store is None or not spec_id:
+        return
+    try:
+        store.write_pod_export(spec_id, state.get("run_id") or POD_DEFAULT_RUN_ID,
+                               envelope)
+    except Exception as exc:  # noqa: BLE001 - fail-open (O3/IA-4)
+        logger.warning("pod export persistence failed, returning the in-memory "
+                       "envelope (%s)", exc)
+
+
 def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
             init_validation=None, error=None) -> dict:
     log: ExperimentLog = state["log"]
@@ -166,7 +189,12 @@ def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
         raw_observations=[o.model_dump() for o in log.raw_observations],
         interpretations=[i.model_dump() for i in log.interpretations],
         error=error)
-    return {"export": export.to_envelope(), "verdict": verdict, "terminal_reason": reason}
+    envelope = export.to_envelope()
+    # T7 (#183): the pod OWNS the persistence of its OWN terminal result - the
+    # `PodExport` envelope - written here by this deterministic terminal node.
+    # The persisted record EQUALS the envelope returned to the parent.
+    _persist_pod_export(state, log, envelope)
+    return {"export": envelope, "verdict": verdict, "terminal_reason": reason}
 
 
 def _root_spec_id(state: PodState, spec_id: str | None) -> str:
