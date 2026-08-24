@@ -105,6 +105,21 @@ def test_init_rejection_makes_no_tool_call():
     assert calls == []                               # C1: no tool call
 
 
+def test_memory_store_bound_without_spec_id_fails_closed():
+    """Operator ruling (2026-08-23): the typed spec_id handoff is the runtime
+    control-plane's ownership, so a bound store with NO spec_id is the dispatch's
+    failure mode - the pod must NOT fall back to a hash key. The run degrades to
+    `unsuccessful` with the spec_id requirement in the trail, never persists
+    under the canonical hash."""
+    from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
+
+    env = _run(arun_pod(
+        VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
+        triager_fn=None, trace_fn=_no_trace, memory_store=PodMemoryStore(project_id="p1")))
+    assert env["verdict"] == "unsuccessful"
+    assert "spec_id" in (env["evidence"].get("error") or "")
+
+
 def test_symbolic_symptom_confirmed_needs_no_triager():
     env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
                         triager_fn=None, trace_fn=_no_trace))

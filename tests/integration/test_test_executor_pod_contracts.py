@@ -382,7 +382,7 @@ def test_kb_retrieve_bound_and_fails_open(tmp_path):
     ]
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls), kb_fn=_kb_empty(kb_calls),
-        trace_fn=_no_trace, memory_store=PodMemoryStore(tmp_path),
+        trace_fn=_no_trace, memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: runner_script})))
 
     assert len(kb_calls) == 1                       # the binding was EXERCISED

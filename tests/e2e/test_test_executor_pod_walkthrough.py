@@ -216,7 +216,7 @@ def test_trivial_real_run(tmp_path):
     store = PodMemoryStore(tmp_path)
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls), kb_fn=_kb_empty(kb_calls),
-        trace_fn=_no_trace, memory_store=store,
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: _REACT_KB_EXEC_CONCLUDE})))
 
     # E1 terminal: exactly one verdict + the experiment log.

@@ -29,7 +29,6 @@ from polymerhus.attack.hunting.pod.agents import (
 from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
-    canonical_spec_hash,
 )
 from polymerhus.attack.hunting.pod.llm import (
     POD_RUNNER_ROLE,
@@ -270,7 +269,7 @@ def test_full_production_pod_lands_symptom_confirmed_with_fake_models(tmp_path):
     live model."""
     env = _run(arun_pod(
         SPEC, exec_fn=_exec(_OK), trace_fn=_no_trace,
-        memory_store=PodMemoryStore(tmp_path),
+        memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
         model_factory=_factory(REACT_EXEC_AND_CONCLUDE)))
     assert env["verdict"] == "successful"
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
@@ -286,14 +285,15 @@ def test_production_pod_degrades_to_a_safe_terminal_without_model_env(tmp_path,
     monkeypatch.delenv("LLM_MODEL_POD_RUNNER", raising=False)
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     env = _run(arun_pod(SPEC, exec_fn=_exec(_OK), trace_fn=_no_trace,
-                        memory_store=PodMemoryStore(tmp_path)))
+                        memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID))
     assert env["verdict"] == "unsuccessful"
 
 
 def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path):
     """The graph's production runner node binds the run-scoped harness around the
     default seam call (spied by patching `graph.default_runner_step_fn`) - the
-    memory key rides the ROOT spec id, the variant_ref the current stretch."""
+    memory key rides the #164 spec id (NO hash fallback, operator 2026-08-23),
+    the variant_ref the current stretch."""
     seen = []
     root_spec = {"target_identity": "svc",
                  "verification_symptoms": ["reflects the marker"],
@@ -307,9 +307,9 @@ def test_production_runner_node_binds_the_harness_context(monkeypatch, tmp_path)
 
     monkeypatch.setattr(graph_mod, "default_runner_step_fn", spy)
     env = _run(arun_pod(root_spec, exec_fn=_exec(_ABSENT), trace_fn=_no_trace,
-                        memory_store=PodMemoryStore(tmp_path)))
+                        memory_store=PodMemoryStore(tmp_path), spec_id="sqli_blind"))
     assert env["verdict"] == "unsuccessful"
     assert seen and seen[0] is not None
-    assert seen[0].spec_id == canonical_spec_hash(root_spec)   # root spec keys the memory
+    assert seen[0].spec_id == "sqli_blind"             # the #164 handoff keys memory
     assert seen[0].variant_ref == "v0"
     assert seen[0].log is not None

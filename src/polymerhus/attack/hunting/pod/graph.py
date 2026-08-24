@@ -76,7 +76,6 @@ from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
     _lc_to_dicts,
-    canonical_spec_hash,
     compose_runner_delta,
     compose_triager_delta,
 )
@@ -172,15 +171,20 @@ def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
 
 def _root_spec_id(state: PodState, spec_id: str | None) -> str:
     """The memory-store key (D84-34): the #164 hunter's `spec_id`
-    (`<fault>_<strategy>`) crossed through the typed handoff. When a caller
-    supplies no `spec_id` (the handoff is not wired yet, or a hermetic test),
-    it falls back to the root spec's canonical hash - a T1 stand-in that keeps
-    the memory key deterministic until the #164 handoff lands. The session
-    thread identity is ALWAYS the canonical hash (`context.canonical_spec_hash`,
-    unchanged), never this memory key."""
-    if spec_id:
-        return spec_id
-    return canonical_spec_hash(state.get("root_spec") or state.get("spec") or {})
+    (`<fault>_<strategy>`) crossed through the typed handoff. NO FALLBACK
+    (operator, 2026-08-23): the typed handoff is the runtime control-plane's
+    ownership (communicated by the inbox surfer loop), so a missing `spec_id`
+    is the dispatch's own anticipated failure mode, never the pod's to paper
+    over. A caller with a bound store but without a `spec_id` is a hard
+    configuration error - the dispatch must fail before the pod runs, never
+    persist under a hash. The session thread identity is ALWAYS the canonical
+    hash (`context.canonical_spec_hash`, unchanged), never this memory key."""
+    if not spec_id:
+        raise ValueError(
+            "pod memory requires the #164 hunter's spec_id "
+            "(<fault>_<strategy>); a missing spec_id is the dispatch's "
+            "failure mode, the pod never falls back to a hash")
+    return spec_id
 
 
 def _variant_order(state: PodState) -> int:
@@ -198,10 +202,14 @@ def _variant_order(state: PodState) -> int:
 def _harness_ctx(state: PodState, *, exec_fn, kb_fn, memory_store,
                  model_factory, spec_id) -> PodHarnessContext:
     """The run-scoped harness the production seams read (T7): exec/kb/store/log/
-    variant/model factory, with the memory key on the #164 spec id (D84-34)."""
+    variant/model factory, with the memory key on the #164 spec id (D84-34). The
+    memory key is required ONLY when a store is bound (a real persist path) -
+    the contract tier with no store never persists, so no spec_id is demanded
+    and the note tool degrades fail-open (O10)."""
+    mem_key = _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
     return PodHarnessContext(
         exec_fn=exec_fn, kb_fn=kb_fn, memory_store=memory_store,
-        spec_id=_root_spec_id(state, spec_id), log=state.get("log"),
+        spec_id=mem_key, log=state.get("log"),
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS)
 
@@ -234,8 +242,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
     - `project_id` - the store's scoping axis (D84-33), from the parent hunting
       module context.
     - `spec_id` - the #164 hunter's `SpecItem.spec_id` (`<fault>_<strategy>`)
-      crossed through the typed handoff; when absent the memory key falls back
-      to the root spec's canonical hash (a T1 stand-in).
+      crossed through the typed handoff; REQUIRED when a memory store is bound
+      (no fallback - a missing spec_id is the dispatch's failure mode, never a
+      hash key), optional only for a fully-injected store-less contract tier.
     """
     if runner_step_fn is None:
         runner_step_fn = default_runner_step_fn
@@ -283,12 +292,13 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
         spec = state["spec"]
         if production_runner:
             log: ExperimentLog = state["log"]
+            mem_key = _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
             delta = _dicts_to_lc([{"role": "human",
                                    "content": compose_runner_delta(
                                        log, spec, state.get("feedback", ""),
                                        state.get("iteration", 1), HUNT_POD_MAX_ITERS,
                                        store=memory_store,
-                                       spec_id=_root_spec_id(state, spec_id))}])
+                                       spec_id=mem_key)}])
             before_obs = len(log.raw_observations)
             before_exec = len(log.executed)
             # D84-7: the graph owns the pod-session binding - the `pod_runner`
@@ -424,7 +434,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
             # so only the delta is new_messages (D84-11).
             human = {"role": "human", "content": compose_triager_delta(
                 log, spec, obs, store=memory_store,
-                spec_id=_root_spec_id(state, spec_id),
+                spec_id=(_root_spec_id(state, spec_id)
+                         if memory_store is not None else (spec_id or "")),
                 order=_variant_order(state))}
             seam_view = [human]
         else:
