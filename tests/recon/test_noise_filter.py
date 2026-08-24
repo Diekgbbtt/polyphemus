@@ -273,6 +273,11 @@ def test_filter_drops_static_endpoint_missing_url_prop():
     ("notexample.com", "example.com", False),
     ("app.example.com", "app.example.com", True), # exact-mode seed host
     ("api.example.com", "app.example.com", False),# sibling is out of an exact scope
+    # A seeded AUTHORITY (scheme + explicit port) admits assets on the same
+    # host: the scope side is normalized the way the asset side already is.
+    ("dj-viscon-workshop-1.vsos.ethz.ch", "http://dj-viscon-workshop-1.vsos.ethz.ch:49575", True),
+    ("wj.dj-viscon-workshop-1.vsos.ethz.ch", "http://dj-viscon-workshop-1.vsos.ethz.ch:49575", True),
+    ("other.vsos.ethz.ch", "http://dj-viscon-workshop-1.vsos.ethz.ch:49575", False),
 ])
 def test_host_in_scope(host, scope, expected):
     assert host_in_scope(host, scope) is expected
