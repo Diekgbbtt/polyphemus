@@ -198,12 +198,23 @@ def _drive_triager(spec, hc, log):
     return _drive()
 
 
-def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path):
+def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatch):
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
     spec_id = SPEC_ID
     store.append(spec_id, order=0, note_name="experiment",
                  kind="experiment_summary", body="the verbatim consolidation")
+    # The #99 negotiation seam (#147): a no-tools schema turn resolves the pod
+    # role's env model key and capability profile. Point it at a tool-calling-
+    # only profile so the fake's TriagerDecision tool_calls become the
+    # structured output (ToolStrategy) instead of an unmet json_schema probe.
+    monkeypatch.setenv("LLM_MODEL_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "resolve_capability",
+        lambda provider, model: type("_P", (), {
+            "supports_structured_output": False, "supports_tool_calling": True})())
     hc = PodHarnessContext(exec_fn=_exec(_OK), kb_fn=None, memory_store=store,
                            spec_id=spec_id, log=log, variant_ref="v0",
                            model_factory=_factory([AIMessage(content="", tool_calls=[

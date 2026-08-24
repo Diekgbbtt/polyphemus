@@ -100,10 +100,11 @@ def test_runner_context_lists_executed_signatures():
 
 def test_canonical_spec_hash_is_deterministic_and_shared_with_the_hunter():
     """D84-2: the canonical spec fingerprint is owned by the pod; the parent
-    hunting agent re-exports it as `_canonical_hash`, so the pod's spec keys and
-    the parent's experiment log stay byte-identical. Deterministic across calls
-    and insensitive to dict key order (equal dicts hash equal, C9)."""
-    from polymerhus.attack.hunting.hunting_agent import _canonical_hash
+    hunting agent's experiment-log key uses the SAME hash (the #164 rewrite
+    dropped its `_canonical_hash` re-export - the pod's `canonical_spec_hash`
+    is the single source, kept byte-identical so the pod's spec keys and the
+    parent's experiment log never drift). Deterministic across calls and
+    insensitive to dict key order (equal dicts hash equal, C9)."""
     from polymerhus.attack.hunting.pod.context import canonical_spec_hash
 
     spec_a = {"verification_symptoms": ["a"],
@@ -113,7 +114,7 @@ def test_canonical_spec_hash_is_deterministic_and_shared_with_the_hunter():
     for spec in (spec_a, spec_b):
         first = canonical_spec_hash(spec)
         assert first == canonical_spec_hash(spec)      # stable across calls
-        assert first == _canonical_hash(spec)          # the parent's source of truth
+        assert len(first) == 64                        # sha256 hexdigest
 
     # Key order never changes the hash (C9: an identical spec is never
     # dispatched twice), and two distinct specs never collide.

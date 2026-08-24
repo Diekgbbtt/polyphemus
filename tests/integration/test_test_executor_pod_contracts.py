@@ -339,6 +339,21 @@ def _kb_empty(calls=None):
     return fake
 
 
+def _negotiation_for_pod_triager(monkeypatch):
+    """Thread the #99 negotiation seam for a hermetic pod-triager schema turn
+    (#147): the no-tools `stateful_turn(schema=TriagerDecision)` resolves the
+    role's env model key + capability profile. Point it at a tool-calling-only
+    profile so the fake's TriagerDecision tool_calls become the structured
+    output (ToolStrategy) instead of an unmet json_schema probe."""
+    monkeypatch.setenv("LLM_MODEL_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "resolve_capability",
+        lambda provider, model: type("_P", (), {
+            "supports_structured_output": False, "supports_tool_calling": True})())
+
+
 # The triager's production turn terminating `{unsuccessful, space-exhausted}`.
 _TRIAGER_ABSENT = [
     AIMessage(content="", tool_calls=[{"name": "TriagerDecision", "id": "c9", "args": {
@@ -379,11 +394,12 @@ def test_kb_retrieve_bound_and_fails_open(tmp_path):
 
 # --- C14 - the P3 note written and read by the triager (D84-17/19/23) -----------
 
-def test_note_written_on_p3_and_read_by_triager(tmp_path):
+def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     """On P3 space exhaustion the production Runner writes the ONE consolidated
     `experiment_summary` note to the pod memory store as its FINAL tool call
     (D84-17/19), and the Triager's production note-reading turn terminates
     `{unsuccessful, space-exhausted}` (D84-23, C14/H6)."""
+    _negotiation_for_pod_triager(monkeypatch)
     exec_calls = []
     store = PodMemoryStore(tmp_path)
     runner_script = [
