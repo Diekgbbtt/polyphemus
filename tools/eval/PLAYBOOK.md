@@ -74,6 +74,21 @@ Each job consumes only what the previous stage produced ON THE SEED HOST; the
 chain is closed on the app's own surface. This is the ONLY pipeline shape for
 this profile - the excluded families above are never re-added.
 
+### The discovery ceiling for client-side-rendered SPAs (know it, grade honestly)
+
+A CSR SPA with webpack code-splitting (e.g. white-jotter) serves its real API
+surface in LAZY-LOADED CHUNKS: the shell bundle carries the router paths and
+an axios `baseURL="/api"` config, while the actual calls (`POST /login`,
+`/api/search`, `/api/file/`, ...) live in chunk files whose URLs are only in
+the webpack runtime's chunk map (`manifest.js`). The current fleet never
+resolves that map, so the observed surface is SHELL-LEVEL: the router paths
+and the bundles katana's JS parsing finds, with the `/api` prefix invisible.
+This is a recon-platform limitation (a webpack chunk-map resolver, or a
+browser crawl that is excluded for private-VM reachability), tracked dev-side,
+NOT a harness defect and NOT improvable by configuration. When judging such a
+target, expect the backend API loci to be unobserved and grade accordingly -
+never inflate a verdict because the surface is known to be incomplete.
+
 ### The seed and the front
 
 The target is fronted by the remote nginx (a system service): `target.sh up`
