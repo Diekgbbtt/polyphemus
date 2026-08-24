@@ -124,6 +124,29 @@ def test_tool_read_order_filter_returns_only_that_variant(store, spec_id):
     assert "first variant" not in hit
 
 
+def test_tool_read_symptom_status_filter(store, spec_id):
+    """D84-36: `symptom_status` is a first-class typed attribute read filter on
+    the `note` tool, passed through to `read_notes` (the store owns the match).
+    Notes accumulate in notes.yaml (D84-35); the filter ranges them."""
+    tool = _tool(store=store, spec_id=spec_id)
+    tool.invoke({"operation": "write", "order": 0, "note_name": "a",
+                 "kind": "kb_insight", "body": "payload family X",
+                 "symptom_status": "clean"})
+    tool.invoke({"operation": "write", "order": 1, "note_name": "b",
+                 "kind": "freeform", "body": "partial",
+                 "symptom_status": "blocked"})
+    clean_hits = tool.invoke({"operation": "read", "symptom_status": "clean"})
+    assert "payload family X" in clean_hits
+    assert "partial" not in clean_hits
+    blocked_hits = tool.invoke({"operation": "read", "symptom_status": "blocked"})
+    assert "partial" in blocked_hits
+    assert "payload family X" not in blocked_hits
+    # Combines with the order filter.
+    both = tool.invoke({"operation": "read", "symptom_status": "clean", "order": 0})
+    assert "payload family X" in both
+    assert "partial" not in both
+
+
 # --- T4: the raw experiment-log slice read by order (D84-27) ------------------
 # The key-list renders the experiment-log identifier <spec_id>/<order>; the note
 # tool's read must let the agent address that raw D6 slice body by order - not
