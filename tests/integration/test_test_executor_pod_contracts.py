@@ -369,9 +369,14 @@ def test_kb_retrieve_bound_and_fails_open(tmp_path):
     """The production Runner's `create_agent` binds `kb_retrieve` - the KB wiring
     hole is closed. The ReAct script issues exactly one `kb_retrieve` call, the
     empty result fails open (O13: degrade to the spec's primitives), and the pod
-    lands a binary end with the KB call recorded once."""
+    lands a binary end with the KB call recorded once. T3 (#179): the KB
+    response is also RECORDED - the persisted variant experiment-log slice
+    carries a first-class `KbObservation` (distinct from the exec
+    `RawObservation`), so the trail captures the KB knowledge that drove the
+    probe's concretization."""
     exec_calls = []
     kb_calls = []
+    store = PodMemoryStore(tmp_path)
     runner_script = [
         AIMessage(content="", tool_calls=[
             {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
@@ -382,7 +387,7 @@ def test_kb_retrieve_bound_and_fails_open(tmp_path):
     ]
     env = _run(arun_pod(
         VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls), kb_fn=_kb_empty(kb_calls),
-        trace_fn=_no_trace, memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID,
+        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: runner_script})))
 
     assert len(kb_calls) == 1                       # the binding was EXERCISED
@@ -390,6 +395,17 @@ def test_kb_retrieve_bound_and_fails_open(tmp_path):
     assert len(exec_calls) == 1
     assert env["verdict"] == "successful"           # fail-open: the empty KB degraded
     assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
+    # T3: the KB response is RECORDED into the variant's persisted slice as a
+    # first-class `KbObservation` - distinct from the exec raw observation.
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    kb_records = slice["kb_observations"]
+    assert len(kb_records) == 1
+    assert kb_records[0]["query"] == "csrf patterns on form posts"
+    assert kb_records[0]["variant_ref"] == "v0"
+    assert kb_records[0]["symptoms"] == []          # the empty KB recorded as empty
+    assert kb_records[0]["techniques"] == []
+    assert kb_records[0]["source"] is None
+    assert len(slice["raw_observations"]) == 1      # the exec observation still lands
 
 
 # --- C14 - the P3 note written and read by the triager (D84-17/19/23) -----------

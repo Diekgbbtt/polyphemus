@@ -21,6 +21,7 @@ import json
 
 from polymerhus.attack.hunting.pod.types import (
     Interpretation,
+    KbObservation,
     RawObservation,
     VariantSpec,
 )
@@ -106,6 +107,7 @@ class ExperimentLog:
         self.spec_id = spec_id
         self.variant_specs: list[VariantSpec] = []
         self.raw_observations: list[RawObservation] = []
+        self.kb_observations: list[KbObservation] = []
         self.interpretations: list[Interpretation] = []
         self.executed: list[str] = []  # probe signatures (O7/C10)
 
@@ -148,6 +150,9 @@ class ExperimentLog:
                 "raw_observations": [
                     o.model_dump() for o in self.raw_observations
                     if self._order_of(o.variant_ref) == order],
+                "kb_observations": [
+                    k.model_dump() for k in self.kb_observations
+                    if self._order_of(k.variant_ref) == order],
                 "interpretations": [
                     i.model_dump() for i in self.interpretations
                     if self._order_of(i.variant) == order],
@@ -172,6 +177,14 @@ class ExperimentLog:
 
     def record_observation(self, obs: RawObservation) -> None:
         self.raw_observations.append(obs)
+        self._persist(self._order_of(obs.variant_ref))
+
+    def record_kb_observation(self, obs: KbObservation) -> None:
+        """The KB-retrieve recording stage (T3/#179): a KB response enters the
+        D6 trail + the variant's experiment-log file as a first-class
+        `KbObservation`, through the SAME capture seam as every other
+        deterministic mutation (the store persists the slice idempotently)."""
+        self.kb_observations.append(obs)
         self._persist(self._order_of(obs.variant_ref))
 
     def record_interpretation(self, interp: Interpretation) -> None:

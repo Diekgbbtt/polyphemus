@@ -72,7 +72,7 @@ data/<project_id>/test-executor-pod/
   keeps supplying the deterministic write stages and the prompt context slices, but its persistence is delegated to
   the store at the deterministic boundary - the `ExperimentLog` records each mutation THROUGH the store (the
   symbolic-layer capture middleware, operator, 2026-08-24).
-- **KB-retrieve recording** (new work item): `KbRetrieveTool` gains a log-recording step (a deterministic
+- **KB-retrieve recording** (implemented T3/#179): `KbRetrieveTool` has a log-recording step (a deterministic
   `_record` like the exec tool's), so every KB response enters the variant's experiment-log file with the query,
   the fault/axis context, and the returned symptoms/techniques/source.
 - **Prompt materialization** (`D84-27` reconciled): the prompts embed an indexable, readable key-list covering BOTH
@@ -214,17 +214,22 @@ data/<project_id>/test-executor-pod/
 - The model's JUDGMENT enters only as CONTENT through these mechanical stages (the triager's classification/note,
   the runner's command), never as an LLM-initiated log write.
 
-### 8. KB-retrieve response recording (NEW WORK ITEM, operator directive)
+### 8. KB-retrieve response recording (implemented T3/#179)
 
-- `KbRetrieveTool` gains a deterministic `_record` step mirroring the exec tool's: every KB response (query,
+- `KbRetrieveTool` has a deterministic `_record` step mirroring the exec tool's: every KB response (query,
   fault/axis context, returned symptoms / techniques / source bundle) is appended to the variant's experiment-log
-  file as a KB observation.
-- The log domain model is extended so a KB observation is a first-class record (distinct from an exec's
-  `RawObservation`), typed in `types.py`, rendered into the experiment-log file, and preserved by the migration.
+  file as a KB observation (`KbObservation`).
+- The log domain model is extended so a KB observation is a first-class record (`types.py::KbObservation`,
+  distinct from an exec's `RawObservation`), rendered into the experiment-log file via the `ExperimentLog`'s
+  capture middleware (`record_kb_observation`, the SAME seam as `record_observation`) and preserved by the
+  migration.
 - Degradation is unchanged: an empty/raising KB result is recorded as the empty bundle (fail-open, O13); the
-  recording itself never raises into the turn.
-- This is a separate work item integrated into this spec's ticket (T0 in the ticket split), not a modification of
-  the memoirization kernel.
+  recording itself never raises into the turn. A logless tool (the triager's context-read seam when no harness is
+  bound) records nothing.
+- The tool surface is unchanged (`exec` / `kb_retrieve` / `note`): the recording is a deterministic stage inside
+  the tool internals, never an LLM-initiated log write (the pure-log invariant holds). This is a separate work
+  item integrated into this spec's ticket (T3 in the ticket split, #179), not a modification of the memorization
+  kernel.
 
 ### 9. Prompt materialization of logs and notes identifiers (D84-27 reconciled)
 

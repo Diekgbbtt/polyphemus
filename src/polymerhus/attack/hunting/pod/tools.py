@@ -35,7 +35,11 @@ from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.pod.config import EXEC_TIMEOUT_S, MAX_POD_ITERS
-from polymerhus.attack.hunting.pod.types import ProbeStep, RawObservation
+from polymerhus.attack.hunting.pod.types import (
+    KbObservation,
+    ProbeStep,
+    RawObservation,
+)
 from polymerhus.recon.domain.types import ExecResult
 
 # The injected exec seam: (command, timeout_s) -> ExecResult (async or sync).
@@ -68,6 +72,15 @@ async def _await_seam(fn, *args):
     if inspect.iscoroutinefunction(fn):
         return await fn(*args)
     return await asyncio.to_thread(fn, *args)
+
+
+async def _await_seam_kw(fn, *args, **kwargs):
+    """The kwargs-capable twin of `_await_seam` (T3): the KB seams take keyword
+    join-key hints (`fault_id`/`technological_axis`, `lookup`), so an async or
+    sync seam is awaited/offloaded with its kwargs intact."""
+    if inspect.iscoroutinefunction(fn):
+        return await fn(*args, **kwargs)
+    return await asyncio.to_thread(fn, *args, **kwargs)
 
 
 async def run_with_retry(exec_fn: ExecFn, command: str, *,
@@ -177,7 +190,15 @@ class KbRetrieveTool(BaseTool):
     """The NL knowledge-base retrieval tool as a bound `BaseTool` (D84-16/26):
     the same fail-open `SymptomTechniqueQuery` seam, behind `extra="forbid"`
     args validation. A not-ready or raising KB yields the EMPTY result - the
-    runner degrades to the spec's own primitives (O13), never a raise."""
+    runner degrades to the spec's own primitives (O13), never a raise.
+
+    T3 (#179): every response is recorded deterministically through `_record`
+    (like `ExecTool._record`) into the variant experiment-log file as a
+    first-class `KbObservation` - the query, the fault/axis context, and the
+    returned symptoms/techniques/source bundle. Fail-open: an empty/raising KB
+    is recorded as the empty bundle, and the recording never raises into the
+    turn. A tool with no log bound (the triager's context-read seam, or the
+    contract tier) records nothing."""
 
     name: str = "kb_retrieve"
     description: str = (
@@ -191,23 +212,43 @@ class KbRetrieveTool(BaseTool):
     args_schema: type[BaseModel] = KbRetrieveSpec
 
     def __init__(self, *, kb_fn: Callable | None = None,
-                 lookup: Callable | None = None, **kwargs):
+                 lookup: Callable | None = None,
+                 log=None, variant_ref: str = "", **kwargs):
         super().__init__(**kwargs)
         self._kb_fn = kb_fn      # the pod's plain `kb_retrieve`-shaped seam
         self._lookup = lookup    # the symptom_kb-shaped fixture (contract tier)
+        self._log = log          # the D6 ExperimentLog (T3 recording sink)
+        self._variant_ref = variant_ref  # the variant the KB drove
 
-    def _run(self, **kwargs: Any) -> str:
-        spec = KbRetrieveSpec(**kwargs)
+    @staticmethod
+    def _bundle(result) -> dict:
+        """Project a KB result into the wire bundle `{symptoms, techniques,
+        source}` - the recorded and returned shape (empty lists/source None).
+        Accepts both the plain dict seam (`kb_fn`) and the typed
+        `SymptomTechniqueResult` (attribute access)."""
+        if isinstance(result, dict):
+            return {
+                "symptoms": list(result.get("symptoms") or []),
+                "techniques": list(result.get("techniques") or []),
+                "source": result.get("source"),
+            }
+        return {
+            "symptoms": list(getattr(result, "symptoms", None) or []),
+            "techniques": list(getattr(result, "techniques", None) or []),
+            "source": getattr(result, "source", None),
+        }
+
+    async def _resolve(self, spec: KbRetrieveSpec) -> dict:
+        """The KB response bundle (the `kb_fn` seam or the typed
+        `SymptomTechniqueQuery` seam), async-aware - a sync or async seam is
+        awaited/offloaded through the `_await_seam` pattern. Fail-open to the
+        EMPTY bundle (O13) - never a raise into the turn."""
         try:
             if self._kb_fn is not None:
-                result = self._kb_fn(
-                    spec.query, fault_id=spec.fault_id,
-                    technological_axis=tuple(spec.technological_axis)) or {}
-                return json.dumps({
-                    "symptoms": list(result.get("symptoms") or []),
-                    "techniques": list(result.get("techniques") or []),
-                    "source": result.get("source"),
-                })
+                result = await _await_seam_kw(
+                    self._kb_fn, spec.query, fault_id=spec.fault_id,
+                    technological_axis=tuple(spec.technological_axis))
+                return self._bundle(result or {})
             from polymerhus.attack.hunting.symptom_kb import (  # noqa: PLC0415
                 SymptomTechniqueQuery,
                 query_symptom_technique,
@@ -217,14 +258,53 @@ class KbRetrieveTool(BaseTool):
                 fault_id=spec.fault_id or spec.query,
                 technological_axis=tuple(spec.technological_axis),
             )
-            result = query_symptom_technique(typed, lookup=self._lookup)
-            return json.dumps({
-                "symptoms": list(result.symptoms),
-                "techniques": list(result.techniques),
-                "source": result.source,
-            })
+            if self._lookup is not None and inspect.iscoroutinefunction(self._lookup):
+                # An async fixture lookup (the async-native contract tier) is
+                # awaited directly - the sync typed seam cannot await it.
+                result = await self._lookup(typed)
+                return self._bundle(result)
+            result = await _await_seam_kw(
+                query_symptom_technique, typed, lookup=self._lookup)
+            return self._bundle(result)
         except Exception:  # noqa: BLE001 - fail-open is the contract (O13)
-            return json.dumps({"symptoms": [], "techniques": [], "source": None})
+            return {"symptoms": [], "techniques": [], "source": None}
+
+    def _record(self, spec: KbRetrieveSpec, result: dict) -> None:
+        """The deterministic recording step (T3/#179): append the KB response
+        as a first-class `KbObservation` into the D6 log + the variant's
+        experiment-log file through the ExperimentLog's capture seam. Fail-open
+        (O13): an empty/raising KB is recorded as the empty bundle, and the
+        recording itself NEVER raises into the turn; a storeless/logless tool
+        records nothing."""
+        if self._log is None:
+            return
+        try:
+            observation = KbObservation(
+                variant_ref=self._variant_ref,
+                query=spec.query,
+                fault_id=spec.fault_id,
+                technological_axis=list(spec.technological_axis),
+                symptoms=list(result.get("symptoms") or []),
+                techniques=list(result.get("techniques") or []),
+                source=result.get("source"),
+            )
+            self._log.record_kb_observation(observation)
+        except Exception:  # noqa: BLE001 - fail-open (O13)
+            pass
+
+    def _run(self, **kwargs: Any) -> str:
+        spec = KbRetrieveSpec(**kwargs)
+        from polymerhus.recon.control.async_bridge import run_coro_blocking
+
+        result = run_coro_blocking(self._resolve(spec))
+        self._record(spec, result)
+        return json.dumps(result)
+
+    async def _arun(self, **kwargs: Any) -> str:
+        spec = KbRetrieveSpec(**kwargs)
+        result = await self._resolve(spec)
+        self._record(spec, result)
+        return json.dumps(result)
 
 
 class ExecSpec(BaseModel):

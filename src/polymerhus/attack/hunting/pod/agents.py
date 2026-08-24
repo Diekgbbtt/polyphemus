@@ -150,7 +150,8 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
         if ctx is None or hc is None:
             raise RuntimeError(
                 "no bound pod session/harness for the stateful triager turn (D84-14)")
-        tools = triager_react_tools(hc.memory_store, hc.spec_id, kb_fn=hc.kb_fn)
+        tools = triager_react_tools(hc.memory_store, hc.spec_id, kb_fn=hc.kb_fn,
+                                    log=hc.log, variant_ref=hc.variant_ref or "")
         delta = _dicts_to_lc(list(messages))
         result = stateful_turn(
             ctx.address.role_id, ctx.address, delta,
@@ -203,7 +204,9 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     `note` (pod memory write/read), `kb_retrieve` (the KB wiring hole closed).
     Constructed PER STRETCH because `exec` carries the current variant's dedup
     scope; `kb_fn` is the pod's plain KB seam, `kb_lookup` the contract-tier
-    fixture."""
+    fixture. T3 (#179): `kb_retrieve` is bound with the SAME log + variant the
+    exec tool records into, so each KB response lands in the variant's
+    experiment-log file as a `KbObservation`."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.tools import (  # noqa: PLC0415
         ExecTool,
@@ -213,17 +216,23 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     return [
         ExecTool(exec_fn=exec_fn, log=log, variant_ref=variant_ref),
         PodNoteTool(store=memory_store, spec_id=spec_id),
-        KbRetrieveTool(kb_fn=kb_fn, lookup=kb_lookup),
+        KbRetrieveTool(kb_fn=kb_fn, lookup=kb_lookup,
+                       log=log, variant_ref=variant_ref),
     ]
 
 
-def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None):
+def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
+                        log=None, variant_ref=""):
     """The Triager's bound-tool set (D84-27): note read + kb_retrieve - NEVER
-    exec (the critic never touches the target)."""
+    exec (the critic never touches the target). The triager's kb reads are
+    CONTEXT reads (D84-27), so `log`/`variant_ref` may be unbound - a logless
+    kb tool records nothing (fail-open); when the harness provides them, the
+    reads are recorded against the current variant."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
     from polymerhus.attack.hunting.pod.tools import KbRetrieveTool  # noqa: PLC0415
 
     return [
         PodNoteTool(store=memory_store, spec_id=spec_id),
-        KbRetrieveTool(kb_fn=kb_fn, lookup=kb_lookup),
+        KbRetrieveTool(kb_fn=kb_fn, lookup=kb_lookup,
+                       log=log, variant_ref=variant_ref),
     ]

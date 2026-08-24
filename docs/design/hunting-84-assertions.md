@@ -67,9 +67,9 @@ input: a `trace_fn` that raises.
 observable: the run completes unaffected (`{successful, symptom-confirmed}`).
 yields: `test_langfuse_failure_is_fail_open`.
 
-**C13 - KB tool bound on the Runner (T7-new).** seam: `arun_pod` production lane -> runner's `create_agent` tool list. semantic: tool-surface.
+**C13 - KB tool bound on the Runner (T7-new; recording extended T3/#179).** seam: `arun_pod` production lane -> runner's `create_agent` tool list. semantic: tool-surface.
 input: a production-lane run (fake model) whose ReAct script issues a `kb_retrieve` call.
-observable: the binding is EXERCISED - EXACTLY ONE `kb_retrieve` happens and returns through the typed seam; the KB empty result fails-open and the runner degrades to the spec's own primitives (O13), landing a binary end.
+observable: the binding is EXERCISED - EXACTLY ONE `kb_retrieve` happens and returns through the typed seam; the KB empty result fails-open and the runner degrades to the spec's own primitives (O13), landing a binary end; T3: the KB response is RECORDED - the persisted `experiment-log/<order>.yaml` slice carries one first-class `KbObservation` (the query, the fault/axis context, the empty returned bundle, `variant_ref == v0`) DISTINCT from the exec `RawObservation`s.
 yields: `test_kb_retrieve_bound_and_fails_open` (integration; production lane with fake model).
 
 **C14 - Note written on P3, triager reads it (T7-new; re-scoped T2/#178).** seam: `arun_pod` production lane -> runner's `note` tool -> `PodMemoryStore` -> triager's note read. semantic: success.

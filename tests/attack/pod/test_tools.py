@@ -123,6 +123,106 @@ def test_kb_retrieve_raising_lookup_fails_open():
     assert parsed == {"symptoms": [], "techniques": [], "source": None}
 
 
+# --- T3 (#179): the KB-retrieve response is recorded into the experiment log ---
+
+def _kb_result_fixture(symptoms=("s1",), techniques=("t1",),
+                       source: str | None = "fixture"):
+    from polymerhus.attack.hunting import symptom_kb as SK
+
+    def fake_lookup(q):
+        return SK.SymptomTechniqueResult(symptoms=symptoms, techniques=techniques,
+                                         source=source)
+    return fake_lookup
+
+
+def test_kb_retrieve_tool_records_a_first_class_kb_observation(tmp_path):
+    """Every KB response is recorded as a first-class `KbObservation` into the
+    D6 log AND the persisted variant slice (T3): the query, the fault/axis
+    join-key context, the returned bundle, and the variant it drove - DISTINCT
+    from an exec `RawObservation` (which stays untouched)."""
+    from polymerhus.attack.hunting.pod.types import KbObservation
+
+    store = PodMemoryStore(tmp_path)
+    log = ExperimentLog(store=store, spec_id=SPEC_ID)
+    tool = KbRetrieveTool(lookup=_kb_result_fixture(), log=log, variant_ref="v0")
+    out = json.loads(tool.invoke({"query": "CSRF", "fault_id": "CWE-352",
+                                  "technological_axis": ["web"]}))
+    assert out["symptoms"] == ["s1"]                      # the response still returns
+    assert len(log.kb_observations) == 1
+    obs = log.kb_observations[0]
+    assert isinstance(obs, KbObservation)                 # first-class typed record
+    assert obs.variant_ref == "v0"
+    assert obs.query == "CSRF"
+    assert obs.fault_id == "CWE-352"
+    assert obs.technological_axis == ["web"]
+    assert obs.symptoms == ["s1"]
+    assert obs.techniques == ["t1"]
+    assert obs.source == "fixture"
+    # store round-trip: the KB observation persists into the variant slice,
+    # distinct from the exec raw_observations body.
+    persisted = store.read_experiment_log(SPEC_ID, 0)
+    assert persisted["kb_observations"] == [obs.model_dump()]
+    assert persisted["raw_observations"] == []            # no exec record yet
+
+
+def test_kb_retrieve_records_empty_bundle_on_raising_kb(tmp_path):
+    """Fail-open (O13): an RAISING KB result is recorded as the EMPTY bundle -
+    the empty record still lands in the log, and the recording never raises
+    into the turn."""
+    def boom(query):
+        raise RuntimeError("kb down")
+
+    store = PodMemoryStore(tmp_path)
+    log = ExperimentLog(store=store, spec_id=SPEC_ID)
+    tool = KbRetrieveTool(lookup=boom, log=log, variant_ref="v0")
+    out = json.loads(tool.invoke({"query": "x"}))
+    assert out == {"symptoms": [], "techniques": [], "source": None}
+    assert len(log.kb_observations) == 1
+    obs = log.kb_observations[0]
+    assert obs.symptoms == [] and obs.techniques == [] and obs.source is None
+    persisted = store.read_experiment_log(SPEC_ID, 0)
+    assert persisted["kb_observations"] == [obs.model_dump()]
+
+
+def test_kb_retrieve_records_empty_bundle_on_empty_kb(tmp_path):
+    """Fail-open (O13): an EMPTY KB result is recorded as the empty bundle."""
+    store = PodMemoryStore(tmp_path)
+    log = ExperimentLog(store=store, spec_id=SPEC_ID)
+    tool = KbRetrieveTool(lookup=_kb_result_fixture(symptoms=(), techniques=(), source=None),
+                          log=log, variant_ref="v0")
+    out = json.loads(tool.invoke({"query": "x"}))
+    assert out == {"symptoms": [], "techniques": [], "source": None}
+    assert len(log.kb_observations) == 1
+    assert log.kb_observations[0].symptoms == []
+
+
+def test_kb_retrieve_storeless_never_records_and_never_raises():
+    """A storeless/logless tool (the triager's context-read seam, or the plain
+    bound tool) still serves the response and never records - fail-open."""
+    tool = KbRetrieveTool(lookup=_kb_result_fixture())
+    assert tool._log is None                          # no log bound
+    out = json.loads(tool.invoke({"query": "CSRF"}))
+    assert out["symptoms"] == ["s1"]                  # the response still returns
+
+
+def test_kb_retrieve_async_path_records_same_shape(tmp_path):
+    async def fake_lookup(q):
+        from polymerhus.attack.hunting import symptom_kb as SK
+        return SK.SymptomTechniqueResult(symptoms=("s1",), techniques=("t1",), source="f")
+
+    store = PodMemoryStore(tmp_path)
+    log = ExperimentLog(store=store, spec_id=SPEC_ID)
+    tool = KbRetrieveTool(lookup=fake_lookup, log=log, variant_ref="v3")
+    out = json.loads(asyncio.run(tool.ainvoke({"query": "CSRF"})))
+    assert out["symptoms"] == ["s1"]
+    assert len(log.kb_observations) == 1
+    assert log.kb_observations[0].variant_ref == "v3"
+    assert log.kb_observations[0].source == "f"
+    # order 3 slice carries it (variant v3 <-> order 3)
+    persisted = store.read_experiment_log(SPEC_ID, 3)
+    assert persisted["kb_observations"] == [log.kb_observations[0].model_dump()]
+
+
 def test_kb_plain_function_seam_is_untouched():
     # The legacy plain seam stays importable and fail-open for the contract tier.
     out = kb_retrieve("csrf on search")

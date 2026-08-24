@@ -23,7 +23,9 @@ are keyed `<spec_id>:<order>:<note_name>` (D84-36), stored in the per-project
 artifact.
 
 The per-order experiment-log slice (`experiment-log/<order>.yaml`) holds that
-variant's `raw_observations`, `interpretations`, the `executed` dedup ledger
+variant's `raw_observations`, `kb_observations` (T3/#179: each KB-retrieve
+response, first-class and distinct from an exec observation),
+`interpretations`, the `executed` dedup ledger
 for the stretch, AND the `experiment_summary` terminal record (D84-35) - the
 P3 consolidated summary the Runner writes via the `note` tool lands IN the
 slice, not in `notes.yaml`. The slice is a SINGLE dict, OVERWRITTEN idempotently
@@ -228,9 +230,10 @@ class PodMemoryStore:
         one `experiment-log/<order>.yaml` per variant, the deterministic path is
         the address. A re-run of the same (spec, order) rewrites the file - the
         persisted slice is the current truth, never an unbounded accumulation.
-        The slice holds `raw_observations`/`interpretations`/`executed` and (as
-        its terminal record, D84-35) the `experiment_summary`. A write failure
-        raises for the caller to degrade (O3)."""
+        The slice holds `raw_observations` / `kb_observations` (T3/#179) /
+        `interpretations` / `executed` and (as its terminal record, D84-35) the
+        `experiment_summary`. A write failure raises for the caller to degrade
+        (O3)."""
         path = self._experiment_log_file(spec_id, order)
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
