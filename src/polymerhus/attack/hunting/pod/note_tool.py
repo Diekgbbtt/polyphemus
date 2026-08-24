@@ -32,7 +32,11 @@ from typing import Any
 from langchain_core.tools import BaseTool
 from pydantic import BaseModel, ConfigDict, Field
 
-from polymerhus.attack.hunting.pod.pod_memory import POD_NOTE_KINDS, PodMemoryStore
+from polymerhus.attack.hunting.pod.pod_memory import (
+    POD_NOTE_KINDS,
+    PodMemoryStore,
+    note_key,
+)
 
 # The coded contract rejections (D84-22: the error explains the semantic
 # explicitly; the prefix is the short machine code).
@@ -113,17 +117,24 @@ class PodNoteTool(BaseTool):
         if spec.order is None:
             return NOTES_ARGS_REJECTED + ": a note write needs the variant order"
         try:
-            key = self.__store.append(
-                self.__spec_id,
-                order=spec.order,
-                note_name=spec.note_name or "",
-                kind=kind,
-                body=body,
-                classification=spec.classification or "",
-                symptom_status=spec.symptom_status or "",
-                kb_primitives_used=spec.kb_primitives_used or [],
-                exhaustion_evidence=spec.exhaustion_evidence or "",
-            )
+            if kind == "experiment_summary":
+                # D84-35: the P3 consolidated summary is the TERMINAL record of
+                # the variant's experiment-log slice - NOT a note in notes.yaml.
+                key = self.__store.write_variant_summary(
+                    self.__spec_id, spec.order, body)
+            else:
+                # kb_insight / freeform accumulate in notes.yaml (D84-35).
+                key = self.__store.append(
+                    self.__spec_id,
+                    order=spec.order,
+                    note_name=spec.note_name or "",
+                    kind=kind,
+                    body=body,
+                    classification=spec.classification or "",
+                    symptom_status=spec.symptom_status or "",
+                    kb_primitives_used=spec.kb_primitives_used or [],
+                    exhaustion_evidence=spec.exhaustion_evidence or "",
+                )
         except Exception as exc:  # noqa: BLE001 - fail-open: never raise into the loop
             return f"NOTES_WRITE_FAILED: {exc}"
         return (f"NOTES_WRITTEN {key}: {kind} note {spec.note_name!r} for "
@@ -133,6 +144,17 @@ class PodNoteTool(BaseTool):
         if self.__store is None:
             return NOTES_NO_STORE
         try:
+            # D84-35: an experiment_summary read ranges the variant's log slice
+            # (its terminal record), not notes.yaml.
+            if spec.kind == "experiment_summary":
+                if spec.order is None:
+                    return NOTES_ARGS_REJECTED + ": an experiment_summary read needs the variant order"
+                from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+                body = read_variant_summary(self.__store, self.__spec_id, spec.order)
+                if not body:
+                    return "NOTES_EMPTY: no experiment_summary on file for this variant"
+                return (f"NOTE key={note_key(self.__spec_id, spec.order, 'experiment_summary')}"
+                        f" kind=experiment_summary order={spec.order}\nbody:\n{body}")
             notes = self.__store.read_notes(
                 self.__spec_id,
                 order=spec.order,

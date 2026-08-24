@@ -84,8 +84,12 @@ def test_runner_delta_is_fail_open_without_a_store(log, spec_id):
 # --- the Triager's delta: verbatim note + context + memory guidance ------------
 
 def test_triager_delta_reads_the_verbatim_p3_note(log, store, spec_id):
-    store.append(spec_id, order=1, note_name="experiment",
-                 kind="experiment_summary", body=_NOTE_BODY)
+    # D84-35: the summary is the TERMINAL RECORD of the variant's log slice,
+    # so the delta's read resolves it from there (read_variant_summary).
+    store.write_experiment_log(spec_id, 1, {"order": 1, "variant_ref": "v1",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
+    store.write_variant_summary(spec_id, 1, _NOTE_BODY)
     obs = RawObservation(status=404, body="not found")
     delta = compose_triager_delta(log, SPEC, obs, store=store, spec_id=spec_id, order=1)
     assert _NOTE_BODY in delta                          # verbatim, un-truncated

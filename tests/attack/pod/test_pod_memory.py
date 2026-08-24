@@ -1,11 +1,14 @@
-"""Unit tier: T1 (#177) - the pod-owned experiment-memory store (D84-33..38).
+"""Unit tier: T2 (#178) - the pod-owned experiment-memory store (D84-33..38).
 
-The per-project deterministic-key store: `experiment-logs/<spec_id>/<order>.yaml`
-(one file per variant, overwritten idempotently) + the per-project `notes.yaml`
-keyed `<spec_id>:<order>:<note_name>`, append + read-latest. The spec identifier
-is the #164 hunter's `<fault>_<strategy>` (D84-34) and the order is the variant
-ordinal. The reading surface gains the typed attribute filters (`order`, `kind`,
-`classification`, `symptom_status`) beside the retained `parent_key` /
+The per-project deterministic-key store, coherent per-spec layout (operator,
+2026-08-24): `experiment-log/<order>.yaml` (one file per variant, the D6 slice +
+the `experiment_summary` terminal record, overwritten idempotently) +
+`variants/<ref>.yaml` (the minted TestImplementationSpec variants) + the
+per-project `notes.yaml` keyed `<spec_id>:<order>:<note_name>`, append +
+read-latest. The spec identifier is the #164 hunter's `<fault>_<strategy>`
+(D84-34), the order is the variant ordinal, and the variant ref `vN` maps 1:1 to
+the order N. The reading surface gains the typed attribute filters (`order`,
+`kind`, `classification`, `symptom_status`) beside the retained `parent_key` /
 `key_keyword` / `body_keyword` substring match. There is NO `_seq`/`_ref`
 anywhere (D84-36). The prompt-memory pattern (D84-27) ships the persistent
 `MEMORY_READ_GUIDANCE` and the per-turn indexable `compose_memory_guidance`.
@@ -65,14 +68,19 @@ def test_spec_id_is_not_the_session_hash():
     assert SPEC_ID != canonical_spec_hash(SPEC)
 
 
-# --- the store layout: experiment-logs + notes.yaml (D84-33) -------------------
+# --- the store layout: variants + experiment-log + notes.yaml (D84-33) ----------
 
-def test_store_layout_is_experiment_logs_and_notes_yaml(store):
+def test_store_layout_is_variants_experiment_log_and_notes_yaml(store):
     store.append(SPEC_ID, order=0, note_name="capability", kind="kb_insight",
                  body="payload family X")
-    store.write_variant_log(SPEC_ID, 0, [{"kind": "stub", "order": 0}])
-    log_file = store._root / "experiment-logs" / SPEC_ID / "0.yaml"
+    store.write_variant(SPEC_ID, "v0", {"ref": "v0", "spec": {}})
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [],
+                                            "interpretations": [], "executed": []})
+    variants_file = store._root / SPEC_ID / "variants" / "v0.yaml"
+    log_file = store._root / SPEC_ID / "experiment-log" / "0.yaml"
     notes_file = store._root / "notes.yaml"
+    assert variants_file.exists()
     assert log_file.exists()
     assert notes_file.exists()
 
@@ -207,26 +215,80 @@ def test_zero_matches_is_a_valid_empty_result(store):
     assert store.read_notes(SPEC_ID, body_keyword="nope") == []
 
 
-# --- the experiment-log body: per-variant file, idempotent overwrite (D84-37) --
+# --- the experiment-log slice + variants: per-variant, idempotent overwrite (D84-37)
 
-def test_variant_log_overwrites_idempotently(store):
-    store.write_variant_log(SPEC_ID, 0, [{"order": 0, "state": "first"}])
-    store.write_variant_log(SPEC_ID, 0, [{"order": 0, "state": "second"}])
-    assert store.read_variant_log(SPEC_ID, 0) == [{"order": 0, "state": "second"}]
+def test_experiment_log_overwrites_idempotently(store):
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [{"status": 200}],
+                                            "interpretations": [], "executed": []})
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [{"status": 404}],
+                                            "interpretations": [], "executed": []})
+    assert store.read_experiment_log(SPEC_ID, 0)["raw_observations"] == [{"status": 404}]
     # The deterministic path is the address: no unbounded accumulation.
-    assert len(list((store._root / "experiment-logs" / SPEC_ID).iterdir())) == 1
+    assert len(list((store._root / SPEC_ID / "experiment-log").iterdir())) == 1
+
+
+def test_variant_overwrites_idempotently(store):
+    store.write_variant(SPEC_ID, "v1", {"ref": "v1", "spec": {"a": 1}})
+    store.write_variant(SPEC_ID, "v1", {"ref": "v1", "spec": {"a": 2}})
+    assert store.read_variant(SPEC_ID, "v1")["spec"] == {"a": 2}
+    assert store.list_variant_refs(SPEC_ID) == ["v1"]
 
 
 def test_list_variant_orders_enumerates_following_variants(store):
     assert store.list_variant_orders(SPEC_ID) == []
-    store.write_variant_log(SPEC_ID, 0, [{"kind": "stub"}])
-    store.write_variant_log(SPEC_ID, 2, [{"kind": "stub"}])
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
+    store.write_experiment_log(SPEC_ID, 2, {"order": 2, "variant_ref": "v2",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
     assert store.list_variant_orders(SPEC_ID) == [0, 2]
 
 
-def test_variant_logs_are_per_spec(store):
-    store.write_variant_log(SPEC_ID, 0, [{"kind": "stub"}])
+def test_experiment_logs_are_per_spec(store):
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
     assert store.list_variant_orders(OTHER_ID) == []
+    assert store.list_variant_refs(OTHER_ID) == []
+
+
+def test_variant_ref_and_order_are_the_same_ordinal(store):
+    # operator, 2026-08-24: `vN` <-> order N, so a minted variant and its log
+    # slice are trivially mappable.
+    from polymerhus.attack.hunting.pod.pod_memory import order_of, variant_ref
+    assert variant_ref(0) == "v0" and variant_ref(3) == "v3"
+    assert order_of("v0") == 0 and order_of("v3") == 3
+    assert order_of("") == 0 and order_of("w0") == 0
+
+
+def test_variant_summary_is_the_terminal_record_of_the_log_slice(store):
+    # D84-35: the P3 experiment_summary lands in the variant's log slice, NOT
+    # notes.yaml. write_variant_summary sets the terminal record idempotently.
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [{"status": 404}],
+                                            "interpretations": [], "executed": ["s1"]})
+    store.write_variant_summary(SPEC_ID, 0, "space exhausted; no symptom established")
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    assert read_variant_summary(store, SPEC_ID, 0) == \
+        "space exhausted; no symptom established"
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert slice["experiment_summary"] == "space exhausted; no symptom established"
+    assert slice["raw_observations"] == [{"status": 404}]   # D6 preserved
+    # A summary write does NOT leak into notes.yaml (kb_insight/freeform only).
+    assert store.read_notes(SPEC_ID) == []
+    # Idempotent: a re-write replaces the terminal record.
+    store.write_variant_summary(SPEC_ID, 0, "revised")
+    assert read_variant_summary(store, SPEC_ID, 0) == "revised"
+
+
+def test_read_variant_summary_fails_open_without_a_store_or_slice(tmp_path):
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    assert read_variant_summary(None, SPEC_ID, 0) == ""
+    # A valid store with no slice on file yields "" (the caller degrades), never a raise.
+    assert read_variant_summary(PodMemoryStore(tmp_path), SPEC_ID, 0) == ""
 
 
 # --- note_keys: the prompt-embedded index (D84-27) ----------------------------
@@ -263,12 +325,24 @@ def test_append_failure_raises_for_the_caller_to_degrade(tmp_path):
 
 def test_no_seq_or_ref_anywhere_on_disk(store):
     store.append(SPEC_ID, order=0, note_name="a", kind="freeform", body="1")
-    store.write_variant_log(SPEC_ID, 0, [{"kind": "stub"}])
+    store.write_variant(SPEC_ID, "v0", {"ref": "v0", "spec": {}})
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
     notes_text = store._notes_file().read_text(encoding="utf-8")
-    log_text = (store._root / "experiment-logs" / SPEC_ID / "0.yaml").read_text(
+    log_text = (store._root / SPEC_ID / "experiment-log" / "0.yaml").read_text(
         encoding="utf-8")
-    assert "_seq" not in notes_text and "_ref" not in notes_text
-    assert "_seq" not in log_text and "_ref" not in log_text
+    variant_text = (store._root / SPEC_ID / "variants" / "v0.yaml").read_text(
+        encoding="utf-8")
+    # D84-36: the _seq/_ref COUNTER fields are gone. The `variant_ref` attribute
+    # (the variant identifier, D84-34) is a legit field - only the bookkeeping
+    # fields (`_seq` / `_ref` as YAML KEYS) are banned.
+    import yaml
+    for text in (notes_text, log_text, variant_text):
+        loaded = yaml.safe_load(text)
+        keys = set(loaded.keys()) if isinstance(loaded, dict) else {
+            k for r in loaded if isinstance(r, dict) for k in r}
+        assert "_seq" not in keys and "_ref" not in keys
 
 
 # --- the prompt-memory pattern (D84-27) ---------------------------------------
@@ -286,9 +360,11 @@ def test_memory_read_guidance_covers_both_bodies_and_typed_filters():
 
 
 def test_compose_memory_guidance_embeds_notes_and_log_identifiers(store):
-    store.append(SPEC_ID, order=0, note_name="exhaustion", kind="experiment_summary",
+    store.append(SPEC_ID, order=0, note_name="exhaustion", kind="kb_insight",
                  body="done")
-    store.write_variant_log(SPEC_ID, 0, [{"kind": "stub"}])
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
     guidance = compose_memory_guidance(store, SPEC_ID)
     assert f"{SPEC_ID}:0:exhaustion" in guidance
     assert f"{SPEC_ID}/0" in guidance            # the experiment-log identifier

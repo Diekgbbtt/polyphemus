@@ -264,7 +264,12 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None, kb_fn=None
 
     def init(state: PodState) -> dict:
         spec = dict(state["spec"])
-        log = ExperimentLog()
+        mem_key = _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
+        # T2: the in-memory ExperimentLog is ALSO the symbolic-layer capture
+        # middleware - bound to the store it re-persists every deterministic
+        # mutation to the variant's experiment-log slice (init records v0 here).
+        log = ExperimentLog(store=memory_store, spec_id=mem_key)
+        log.start_run()
         log.record_variant(VariantSpec(ref="v0", parent_ref=None, spec=spec))
         violations = validate_spec(spec)
         runner_messages = [{"role": "system", "content": RUNNER_SYSTEM}]

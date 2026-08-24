@@ -84,25 +84,99 @@ def _lc_to_dicts(messages) -> list[dict]:
 
 
 class ExperimentLog:
-    """The D6 experiment log plus the dedup ledger. Append-only in spirit; the
-    terminal node renders its lists into the `PodExport`."""
+    """The D6 experiment log plus the dedup ledger (T2: the deterministic
+    write surface AND the symbolic-layer capture middleware).
 
-    def __init__(self) -> None:
+    The in-memory log stays the model-visible deterministic write surface
+    (spec Further Notes): its recording methods are the ONLY place the D6 trail
+    and the `executed` ledger mutate. Each recording method is ALSO the capture
+    seam (operator, 2026-08-24): when a `PodMemoryStore` sink is bound it
+    re-persists the affected variant's experiment-log slice to
+    `experiment-log/<order>.yaml` (idempotent overwrite) and the minted variant
+    to `variants/<ref>.yaml`. No LLM-facing tool writes the log; the model's
+    judgment enters only as CONTENT through these mechanical stages.
+
+    The order of a record is derived from its own variant ref (`vN` -> order N);
+    the `executed` ledger is persisted in FULL (the operator's ruling: signatures
+    are opaque, so the full accumulated ledger rides every slice write and
+    overwrite-on-re-run makes it the current truth)."""
+
+    def __init__(self, *, store=None, spec_id: str | None = None) -> None:
+        self.store = store           # the PodMemoryStore capture sink (may be None)
+        self.spec_id = spec_id
         self.variant_specs: list[VariantSpec] = []
         self.raw_observations: list[RawObservation] = []
         self.interpretations: list[Interpretation] = []
         self.executed: list[str] = []  # probe signatures (O7/C10)
 
+    # --- the capture sink -------------------------------------------------------
+    def _order_of(self, ref: str | None) -> int:
+        from polymerhus.attack.hunting.pod.pod_memory import order_of
+        return order_of(ref)
+
+    def start_run(self) -> None:
+        """A fresh run starts with a CLEAN slice for order 0 (D84-37: a re-run
+        rewrites the file - the persisted log is the current truth). Without
+        this, a prior run's `experiment_summary` terminal record would survive
+        into the new run's file until the new P3 write replaces it. Fail-open:
+        no store/no slice -> no-op."""
+        if self.store is None or not self.spec_id:
+            return
+        try:
+            current = self.store.read_experiment_log(self.spec_id, 0)
+            if isinstance(current, dict) and current.get("experiment_summary"):
+                current.pop("experiment_summary")
+                self.store.write_experiment_log(self.spec_id, 0, current)
+        except Exception:  # noqa: BLE001 - fail-open (O3)
+            pass
+
+    def _persist(self, order: int) -> None:
+        """The capture seam: re-write the variant's experiment-log slice
+        idempotently. No-op when no store/spec_id is bound (fail-open - the
+        contract tier never persists). The slice is rebuilt from the in-memory
+        log but PRESERVES the `experiment_summary` terminal record already on
+        file (D84-35): the triager's interpretation write lands AFTER the
+        runner's P3 note write, so a blind rebuild would clobber the summary."""
+        if self.store is None or not self.spec_id:
+            return
+        try:
+            from polymerhus.attack.hunting.pod.pod_memory import variant_ref
+            current = self.store.read_experiment_log(self.spec_id, order)
+            slice = {
+                "order": int(order),
+                "variant_ref": variant_ref(order),
+                "raw_observations": [
+                    o.model_dump() for o in self.raw_observations
+                    if self._order_of(o.variant_ref) == order],
+                "interpretations": [
+                    i.model_dump() for i in self.interpretations
+                    if self._order_of(i.variant) == order],
+                "executed": list(self.executed),
+            }
+            if isinstance(current, dict) and current.get("experiment_summary"):
+                slice["experiment_summary"] = current["experiment_summary"]
+            self.store.write_experiment_log(self.spec_id, order, slice)
+        except Exception:  # noqa: BLE001 - fail-open (O3: the caller warns/keeps serving)
+            pass
+
     # --- recording -------------------------------------------------------------
     def record_variant(self, variant: VariantSpec) -> None:
         if variant.ref not in {v.ref for v in self.variant_specs}:
             self.variant_specs.append(variant)
+            if self.store is not None and self.spec_id:
+                try:
+                    self.store.write_variant(self.spec_id, variant.ref,
+                                             variant.model_dump())
+                except Exception:  # noqa: BLE001 - fail-open (O3)
+                    pass
 
     def record_observation(self, obs: RawObservation) -> None:
         self.raw_observations.append(obs)
+        self._persist(self._order_of(obs.variant_ref))
 
     def record_interpretation(self, interp: Interpretation) -> None:
         self.interpretations.append(interp)
+        self._persist(self._order_of(interp.variant))
 
     # --- dedup / exhaustion ----------------------------------------------------
     def has_executed(self, signature: str) -> bool:
@@ -111,6 +185,10 @@ class ExperimentLog:
     def mark_executed(self, signature: str) -> None:
         if signature not in self.executed:
             self.executed.append(signature)
+            # The full `executed` ledger is persisted by the record_observation
+            # that always follows (ExecTool._record / tool_exec) - the opaque
+            # signatures cannot be split per variant, so every slice write
+            # carries the full accumulated list (operator ruling).
 
     # --- filtered context for the agent sessions -------------------------------
     def variant_refs(self) -> list[str]:

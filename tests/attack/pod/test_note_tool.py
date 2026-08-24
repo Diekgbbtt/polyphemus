@@ -65,16 +65,15 @@ def test_tool_write_persists_a_note_and_reads_it_back_verbatim(store, spec_id):
                        "kb_primitives_used": ["status-diff"],
                        "exhaustion_evidence": "terminal KB query returned the same set"})
     assert note_key(spec_id, 0, "experiment") in out
-    notes = store.read_notes(spec_id)
-    assert len(notes) == 1
-    assert notes[0]["kind"] == "experiment_summary"
-    assert notes[0]["classification"] == "symptom-absent"
-    assert notes[0]["kb_primitives_used"] == ["status-diff"]
-    assert notes[0]["order"] == 0
+    # D84-35: the experiment_summary sinks into the variant's log slice as its
+    # terminal record - NOT into notes.yaml (kb_insight/freeform only). The
+    # summary's value IS the note body string (operator, 2026-08-24).
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    assert read_variant_summary(store, spec_id, 0) == "space exhausted; no new primitive"
+    assert store.read_notes(spec_id) == []
 
-    read = tool.invoke({"operation": "read", "order": 0})
+    read = tool.invoke({"operation": "read", "kind": "experiment_summary", "order": 0})
     assert "space exhausted; no new primitive" in read
-    assert "status-diff" in read
 
 
 def test_tool_read_returns_the_body_prompt_verbatim_and_untruncated(store, spec_id):
@@ -84,7 +83,7 @@ def test_tool_read_returns_the_body_prompt_verbatim_and_untruncated(store, spec_
     tool = _tool(store=store, spec_id=spec_id)
     tool.invoke({"operation": "write", "order": 0, "note_name": "experiment",
                  "kind": "experiment_summary", "body": long_body})
-    read = tool.invoke({"operation": "read", "order": 0})
+    read = tool.invoke({"operation": "read", "kind": "experiment_summary", "order": 0})
     assert "symptom absent on " in read
     assert "probe-449" in read
     assert read.count("probe-") == 450
@@ -103,11 +102,13 @@ def test_tool_read_kind_and_classification_filters(store, spec_id):
     tool.invoke({"operation": "write", "order": 0, "note_name": "a",
                  "kind": "kb_insight", "body": "payload family X"})
     tool.invoke({"operation": "write", "order": 1, "note_name": "b",
-                 "kind": "experiment_summary", "body": "consolidation",
+                 "kind": "freeform", "body": "consolidation",
                  "classification": "symptom-absent"})
-    kind_hits = tool.invoke({"operation": "read", "kind": "experiment_summary"})
-    assert "consolidation" in kind_hits
-    assert "payload family X" not in kind_hits
+    # The kb_insight/freeform notes accumulate in notes.yaml (D84-35); the kind
+    # filter ranges them. An experiment_summary read ranges the log slice.
+    kind_hits = tool.invoke({"operation": "read", "kind": "kb_insight"})
+    assert "payload family X" in kind_hits
+    assert "consolidation" not in kind_hits
     class_hits = tool.invoke({"operation": "read", "classification": "symptom-absent"})
     assert "consolidation" in class_hits
 
@@ -276,9 +277,9 @@ def test_create_agent_loop_write_wrong_param_and_read(store, spec_id):
     assert "Error invoking tool 'note'" in texts          # the wrong-param rejection
     assert "Extra inputs are not permitted" in texts       # coded by the args schema
     assert "the summary" in texts                          # the read returned the body
-    notes = store.read_notes(spec_id)
-    assert len(notes) == 1                                 # exactly ONE write persisted
-    assert notes[0]["kind"] == "experiment_summary"
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    assert read_variant_summary(store, spec_id, 0) == "the summary"  # ONE terminal record
+    assert store.read_notes(spec_id) == []                 # NOT in notes.yaml
 
 
 def test_notes_args_rejected_code_is_declared():

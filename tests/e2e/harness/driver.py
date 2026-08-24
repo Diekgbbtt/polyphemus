@@ -92,7 +92,12 @@ def _read_notes(spec: dict) -> list[dict]:
     """Read the pod's run notes back from the per-project memory-store root the
     production lane wrote (D84-33 `data/<project_id>/test-executor-pod/` under
     the hunting module), keyed by the #164 spec id (`<fault>_<strategy>`) - the
-    N3 note-detail evidence source."""
+    N3 note-detail evidence source.
+
+    The `experiment_summary` is the TERMINAL RECORD of each variant's
+    experiment-log slice (D84-35, T2) - NOT a notes.yaml record - so it is
+    surfaced here from the variant files, shaped like the note records the NFR
+    scorer expects; `kb_insight`/`freeform` come from notes.yaml."""
     try:
         from polymerhus.attack.hunting.pod.pod_memory import (
             PodMemoryStore,
@@ -102,7 +107,14 @@ def _read_notes(spec: dict) -> list[dict]:
         store = PodMemoryStore(project_id=PROJECT_ID)
         spec_id = spec_identifier(
             str(spec.get("fault") or "fault"), str(spec.get("strategy") or "strategy"))
-        return store.read_notes(spec_id)
+        notes = [n for n in store.read_notes(spec_id)
+                 if n.get("kind") != "experiment_summary"]
+        for order in store.list_variant_orders(spec_id):
+            body = store.read_experiment_log(spec_id, order).get("experiment_summary")
+            if body:
+                notes.append({"kind": "experiment_summary", "order": order,
+                              "body": body})
+        return notes
     except Exception:  # noqa: BLE001 - a missing store yields [], never a raise
         return []
 

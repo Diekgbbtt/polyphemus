@@ -428,10 +428,15 @@ D84-20's "fixed root sibling to the hunt store" wording):
 
 ```
 data/<project_id>/test-executor-pod/
-  experiment-logs/<spec-identifier>/<order-number>.yaml   (per-variant persisted experiment log, D6)
-  notes.yaml                                               (per-project note store, the kept kernel sink)
+  <spec-identifier>/
+    variants/<variant-ref>.yaml          (minted TestImplementationSpec variants, vN <-> order N)
+    experiment-log/<order-number>.yaml   (per-variant persisted experiment log, D6 + summary)
+  notes.yaml                             (per-project note store, the kept kernel sink)
 ```
 
+- The layout is re-scoped 2026-08-24 (operator) into the coherent per-spec shape above: the minted variants and
+  the per-order log slices live side by side under `<spec-identifier>/`, with `vN` and `N` the SAME ordinal in two
+  spellings - trivially mappable. This supersedes the T1 `experiment-logs/<spec-identifier>/<order>.yaml` body.
 - `<project_id>` enters the pod store build (the parent provides it via the hunting module context).
 - No `produced`/`consumed` directories (the pod has no dispatch lifecycle - the experiment log is never "consumed").
 - No per-run kind files; no `_seq`/`_ref` anywhere.
@@ -461,9 +466,12 @@ ordinal. Combined identity: `experiment-logs/<fault>_<strategy>/<order>.yaml`.
 **Decision:** One file per variant holds that variant's experiment-log slice: the variant spec + its raw
 observations + its interpretations + the `executed` dedup ledger for that stretch. The `experiment_summary` note is
 promoted to the TERMINAL RECORD of that variant's experiment-log file (the P3 consolidated summary the Runner
-writes lands IN `/experiment-logs/<spec_id>/<order>.yaml`, not in notes.yaml). `kb_insight` / `freeform` remain
+writes lands IN `/experiment-log/<spec_id>/<order>.yaml`, not in notes.yaml). `kb_insight` / `freeform` remain
 notes in the per-project `notes.yaml`, keyed `spec_id:<order>:<note_name>`.
 
+- Re-scoped 2026-08-24 (operator): the variant SPEC moves to `variants/<variant-ref>.yaml` (minted
+  TestImplementationSpec variants) beside the log slice, and the `executed` ledger is persisted in FULL in each
+  slice (opaque signatures cannot be split per variant); the summary's value IS the note body string.
 - The Triager reads the variant's experiment-log file (the terminal summary + the D6 slice) instead of a separate
   summary note.
 

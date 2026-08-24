@@ -168,10 +168,11 @@ def test_runner_turn_binds_note_and_kb_on_the_same_agent(tmp_path):
                            variant_ref="v0", model_factory=_factory(replies))
     step = _run(_drive_runner(SPEC, hc))
     assert step.action == "conclude"
-    notes = store.read_notes(spec_id)
-    assert notes, "the runner's P3 note write must persist"
-    assert notes[0]["kind"] == "experiment_summary"
-    assert notes[0]["body"] == "the consolidated summary"
+    # D84-35: the P3 experiment_summary sinks into the variant's log slice as
+    # its terminal record - NOT into notes.yaml.
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    assert read_variant_summary(store, spec_id, 0) == "the consolidated summary"
+    assert store.read_notes(spec_id) == []
 
 
 def test_runner_turn_hard_fails_without_a_bound_session():
@@ -201,8 +202,11 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatc
     log = ExperimentLog()
     store = PodMemoryStore(tmp_path)
     spec_id = SPEC_ID
-    store.append(spec_id, order=0, note_name="experiment",
-                 kind="experiment_summary", body="the verbatim consolidation")
+    # D84-35: the P3 summary is the variant log slice's terminal record.
+    store.write_experiment_log(spec_id, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
+    store.write_variant_summary(spec_id, 0, "the verbatim consolidation")
     # The #99 negotiation seam (#147): a no-tools schema turn resolves the pod
     # role's env model key and capability profile. Point it at a tool-calling-
     # only profile so the fake's TriagerDecision tool_calls become the

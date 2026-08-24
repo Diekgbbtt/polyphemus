@@ -54,7 +54,6 @@ from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
 from polymerhus.attack.hunting.pod.pod_memory import (
     PodMemoryStore,
-    note_key,
     spec_identifier,
 )
 from polymerhus.recon.domain.types import ExecResult
@@ -268,14 +267,18 @@ def test_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
     # interpretation) - not a symbolic fast path.
     assert "third-party miner" in env["evidence"]["interpretations"][0]["note"]
 
-    # C14/H6: the pod experiment-memory store holds the ONE consolidated
-    # experiment-summary note, keyed by the spec id + variant order.
-    notes = store.read_notes(SPEC_ID)
-    assert len(notes) == 1
-    assert notes[0]["kind"] == "experiment_summary"
-    assert notes[0]["order"] == 0
-    assert notes[0]["key"].startswith(note_key(SPEC_ID, 0, ""))
-    assert "404" in notes[0]["body"]
+    # C14/H6 (T2 re-scoped): the ONE consolidated experiment-summary lands as
+    # the TERMINAL RECORD of the variant's experiment-log slice - keyed by the
+    # spec id + variant order - NOT in notes.yaml (kb_insight/freeform only).
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert slice["experiment_summary"] == (
+        "the default probe returned HTTP 404 with an empty body; no kb "
+        "primitive differs from the initial set")
+    assert slice["variant_ref"] == "v0"
+    assert read_variant_summary(store, SPEC_ID, 0) == slice["experiment_summary"]
+    assert "404" in slice["experiment_summary"]
+    assert store.read_notes(SPEC_ID) == []
 
 
 # --- E2-E4 are OUT OF SCOPE (2026-08-22): the full-pipeline chain walkthroughs

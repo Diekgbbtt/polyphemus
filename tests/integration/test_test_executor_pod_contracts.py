@@ -396,8 +396,9 @@ def test_kb_retrieve_bound_and_fails_open(tmp_path):
 
 def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     """On P3 space exhaustion the production Runner writes the ONE consolidated
-    `experiment_summary` note to the pod memory store as its FINAL tool call
-    (D84-17/19), and the Triager's production note-reading turn terminates
+    `experiment_summary` as its FINAL tool call (D84-17/19); it lands as the
+    TERMINAL RECORD of the variant's experiment-log slice (D84-35) - NOT in
+    notes.yaml - and the Triager's production note-reading turn terminates
     `{unsuccessful, space-exhausted}` (D84-23, C14/H6)."""
     _negotiation_for_pod_triager(monkeypatch)
     exec_calls = []
@@ -429,11 +430,92 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     assert env["evidence"]["clean"] is True
     assert len(exec_calls) == 1
 
-    notes = store.read_notes(SPEC_ID)
-    assert len(notes) == 1                          # exactly ONE consolidated note
-    assert notes[0]["kind"] == "experiment_summary"
-    assert notes[0]["order"] == 0
-    assert "404" in notes[0]["body"]
+    # C14 re-scoped (T2): the summary is the terminal record of the variant's
+    # experiment-log slice - the store's notes.yaml holds NO summary.
+    from polymerhus.attack.hunting.pod.pod_memory import read_variant_summary
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert slice["experiment_summary"] == (
+        "the default probe returned HTTP 404 with an empty body; no kb "
+        "primitive differs from the initial set")
+    assert read_variant_summary(store, SPEC_ID, 0) == slice["experiment_summary"]
+    assert "404" in slice["experiment_summary"]
+    assert store.read_notes(SPEC_ID) == []
+
+
+# --- T2 round-trip: the D6 log + executed ledger persist per variant ------------
+
+def test_experiment_log_persists_round_trip_and_survives_a_rerun(tmp_path):
+    """T2 (D84-38): an `arun_pod` pass with a bound store leaves its full D6
+    slice + `executed` ledger + the minted variant on disk per (spec, order),
+    reads back byte-equivalent, and a SECOND pass over the same (spec, order)
+    REWRITES the file idempotently (D84-37) - no unbounded accumulation."""
+    store = PodMemoryStore(tmp_path)
+    env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=symbolic_runner_step_fn,
+                        triager_fn=None, trace_fn=_no_trace, memory_store=store,
+                        spec_id=SPEC_ID))
+    assert env["verdict"] == "successful"
+
+    # The deterministic stages persisted the variant + the D6 slice.
+    variant = store.read_variant(SPEC_ID, "v0")
+    assert variant["ref"] == "v0"
+    assert variant["spec"]["target_identity"] == VALID_SPEC["target_identity"]
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert slice["variant_ref"] == "v0"
+    assert len(slice["raw_observations"]) == len(env["evidence"]["raw_observations"]) >= 1
+    assert slice["raw_observations"][0]["status"] == 200
+    assert len(slice["interpretations"]) == len(env["evidence"]["interpretations"]) >= 1
+    # The executed ledger persisted (the raw observation's probe_ref IS the sig).
+    assert slice["executed"] and slice["executed"][0] == slice["raw_observations"][0]["probe_ref"]
+
+    # A second pass over the same (spec, order) overwrites idempotently: the
+    # file is the current truth, never an accumulation. A PRIOR run's terminal
+    # summary is cleared at the new run's start (D84-37), so a run that does
+    # not reach P3 does not carry a stale consolidation.
+    store.write_variant_summary(SPEC_ID, 0, "stale summary from a prior run")
+    env2 = _run(arun_pod(SEMANTIC_SPEC, exec_fn=_exec(_ABSENT),
+                         runner_step_fn=symbolic_runner_step_fn,
+                         triager_fn=_terminate("space-exhausted"), trace_fn=_no_trace,
+                         memory_store=store, spec_id=SPEC_ID))
+    assert env2["verdict"] == "unsuccessful"
+    slice2 = store.read_experiment_log(SPEC_ID, 0)
+    assert len(slice2["raw_observations"]) == 1          # overwritten, not stacked
+    assert slice2["raw_observations"][0]["status"] == 404
+    assert "experiment_summary" not in slice2            # no stale summary rides a re-run
+    assert len(list((store._root / SPEC_ID / "experiment-log").iterdir())) == 1
+
+
+def test_minted_variant_persists_to_its_variants_file(tmp_path):
+    """T2 (D84-38): the mint_variant deterministic stage records the derived
+    variant INTO the store - `variants/v1.yaml` lands beside v0's, one file per
+    variant ref, overwritten idempotently (D84-37)."""
+    decisions = iter([
+        {"classification": "symptom-absent", "action": "variant",
+         "declined_attribute": "testing_pattern",
+         "variant_spec": {**SEMANTIC_SPEC, "testing_pattern": "blind-differential"},
+         "feedback": "try the differential pattern"},
+        {"classification": "symptom-absent", "action": "terminate",
+         "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
+         "clean": False},
+    ])
+
+    def triager(spec, obs, messages, log):
+        return next(decisions)
+
+    store = PodMemoryStore(tmp_path)
+    env = _run(arun_pod(SEMANTIC_SPEC, exec_fn=_exec(_ABSENT),
+                        runner_step_fn=symbolic_runner_step_fn, triager_fn=triager,
+                        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID))
+    assert env["verdict"] == "unsuccessful"
+    v0 = store.read_variant(SPEC_ID, "v0")
+    v1 = store.read_variant(SPEC_ID, "v1")
+    assert v0["ref"] == "v0" and v1["ref"] == "v1"
+    assert v1["parent_ref"] == "v0"
+    assert v1["declined_attribute"] == "testing_pattern"
+    assert store.list_variant_refs(SPEC_ID) == ["v0", "v1"]
+    # Both orders' log slices exist: order 1's slice holds v1's interpretation.
+    slice1 = store.read_experiment_log(SPEC_ID, 1)
+    assert slice1["variant_ref"] == "v1"
+    assert slice1["interpretations"] and slice1["interpretations"][0]["variant"] == "v1"
 
 
 # --- C15 - tool-contract validation (D84-22, extra="forbid") --------------------

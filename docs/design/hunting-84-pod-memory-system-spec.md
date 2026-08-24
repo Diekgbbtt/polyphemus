@@ -49,17 +49,18 @@ composed of two bodies:
 
 ```
 data/<project_id>/test-executor-pod/
-  experiment-logs/<fault>_<strategy>/<order>.yaml    (one file per variant, the D6 slice)
-  notes.yaml                                          (per-project note store)
+  <fault>_<strategy>/
+    variants/<variant-ref>.yaml           (the minted TestImplementationSpec variants)
+    experiment-log/<order>.yaml           (one file per variant, the D6 slice + summary)
+  notes.yaml                              (per-project note store)
 ```
 
-- **Experiment logs persist entirely** (`D84-38`): one YAML file per variant holds that variant's `variant_spec`,
-  `raw_observations`, `interpretations`, the `executed` dedup ledger for that stretch, AND the `experiment_summary`
-  terminal record (`D84-35`). The file is overwritten idempotently on a re-run (`D84-37`, the deterministic path is
+- **Experiment logs persist entirely** (`D84-38`): one YAML file per variant holds that variant's `raw_observations`, `interpretations`, the `executed` dedup ledger for that stretch, AND the `experiment_summary`
+  terminal record (`D84-35`). The minted TestImplementationSpec variant persists to `variants/<ref>.yaml`. The file is overwritten idempotently on a re-run (`D84-37`, the deterministic path is
   the address).
 - **Identity** (`D84-34`): the spec identifier is the #164 hunter's `SpecItem.spec_id = "<fault>_<strategy>"`; the
-  order number is the variant ordinal. `experiment-logs/<fault>_<strategy>/<order>.yaml`. Following variants are
-  the next ordinal file. The old content-addressed full-instance hash is rejected as the identity axis.
+  order number is the variant ordinal. The variant ref `vN` and the order `N` are the SAME ordinal in two spellings
+  (operator, 2026-08-24): `variants/v0.yaml` <-> `experiment-log/0.yaml`. Following variants are the next ordinal file. The old content-addressed full-instance hash is rejected as the identity axis.
 - **Notes** (`D84-33`): the per-project `notes.yaml` keep the pod's memorization kernel (closed kinds
   `experiment_summary`/`kb_insight`/`freeform`, grep-match read, read-latest, fail-open degradation). Notes are
   keyed `<fault>_<strategy>:<order>:<note_name>` (`D84-36`). `kb_insight`/`freeform` accumulate in `notes.yaml`;
@@ -69,7 +70,8 @@ data/<project_id>/test-executor-pod/
   position.
 - **Pure-log invariant**: the reading tool is the model's only memory seam. The run's in-memory `ExperimentLog`
   keeps supplying the deterministic write stages and the prompt context slices, but its persistence is delegated to
-  the store at the deterministic boundary.
+  the store at the deterministic boundary - the `ExperimentLog` records each mutation THROUGH the store (the
+  symbolic-layer capture middleware, operator, 2026-08-24).
 - **KB-retrieve recording** (new work item): `KbRetrieveTool` gains a log-recording step (a deterministic
   `_record` like the exec tool's), so every KB response enters the variant's experiment-log file with the query,
   the fault/axis context, and the returned symptoms/techniques/source.
@@ -85,7 +87,7 @@ data/<project_id>/test-executor-pod/
 1. As the test-executor pod, I want my experiment log to persist per project, so that the full D6 trail of a spec
    execution survives the run and the process.
 2. As the test-executor pod, I want each variant's experiment log in its own file
-   (`experiment-logs/<fault>_<strategy>/<order>.yaml`), so that following variants are enumerable from the
+   (`<fault>_<strategy>/experiment-log/<order>.yaml`), so that following variants are enumerable from the
    directory listing.
 3. As the test-executor pod, I want the spec identifier to be `<fault>_<strategy>` (the #164 hunter's spec id),
    so that the pod store and the hunter's test-spec store link by the SAME identifier with no hash drift.
@@ -126,12 +128,15 @@ data/<project_id>/test-executor-pod/
 
 ## Implementation Decisions
 
-### 1. Store topology (D84-33, VERDICTED)
+### 1. Store topology (D84-33, VERDICTED; layout re-scoped 2026-08-24)
 
 - The pod memory store moves to `data/<project_id>/test-executor-pod/` - ONE root per project under the hunting
   module's data seam (`src/polymerhus/attack/hunting/data/`), sibling to the #164 hunter's
   `data/<project_id>/hunting/` tree.
-- Two bodies: `experiment-logs/<spec-identifier>/<order>.yaml` and `notes.yaml`.
+- Three bodies, coherent per-spec layout (operator, 2026-08-24): the minted TestImplementationSpec variants in
+  `<spec_id>/variants/<variant-ref>.yaml`, the per-order experiment-log slice in
+  `<spec_id>/experiment-log/<order>.yaml`, and the per-project `notes.yaml`. The variant ref `vN` and the order `N`
+  are the SAME ordinal in two spellings - easily mappable.
 - No `produced`/`consumed` directories (the pod has no dispatch lifecycle; the experiment log is never consumed).
 - No per-run kind files.
 - The store build is parameterised by `project_id`, resolved from the parent's hunting module context; direct
@@ -144,7 +149,7 @@ data/<project_id>/test-executor-pod/
   semantic + testing strategy keywords"). The `_` separator + keyword-sanitisation ruling from the memory pattern
   applies (`:` and `-` are poisoned separators - unit/fault ids may contain them; keywords are sanitised).
 - Order number: the variant ordinal, so the file name IS the order. Combined address:
-  `experiment-logs/<fault>_<strategy>/<order>.yaml` with `<order> = 0, 1, 2, ...`.
+  `<fault>_<strategy>/experiment-log/<order>.yaml` with `<order> = 0, 1, 2, ...`.
 - The `spec_id` crosses the typed handoff from the #164 hunter to the pod (the hunter mints it). The #164 spec
   explicitly reserves a DIFFERENT store for experiment logs, linked via the spec id (hunter spec lines 194-195) -
   this pod store IS that store.
@@ -155,11 +160,12 @@ data/<project_id>/test-executor-pod/
 
 ### 3. Cardinality: per-variant log file owns the D6 slice + summary (D84-35, VERDICTED)
 
-- One file per variant holds that variant's experiment-log slice: `variant_spec` + `raw_observations` +
-  `interpretations` + the `executed` dedup ledger + the `experiment_summary` terminal record.
+- One file per variant holds that variant's experiment-log slice: `raw_observations` +
+  `interpretations` + the `executed` dedup ledger + the `experiment_summary` terminal record. The minted
+  TestImplementationSpec variant persists to `variants/<variant-ref>.yaml`.
 - `experiment_summary` is promoted to the TERMINAL RECORD of the variant's experiment-log file. The Runner's P3
-  consolidated summary (written via the `note` tool) lands IN `experiment-logs/<spec_id>/<order>.yaml`, not in
-  `notes.yaml`.
+  consolidated summary (written via the `note` tool) lands IN `experiment-log/<spec_id>/<order>.yaml`, not in
+  `notes.yaml`. The summary's value IS the note body string (operator, 2026-08-24).
 - `kb_insight` / `freeform` remain notes in `notes.yaml`, keyed `spec_id:<order>:<note_name>`.
 - The Triager reads the variant's experiment-log file (the terminal summary + the D6 slice) instead of a separate
   summary note.
@@ -185,12 +191,15 @@ data/<project_id>/test-executor-pod/
 
 ### 6. Migration scope: ALL of ExperimentLog persists (D84-38, VERDICTED)
 
-- The in-memory `ExperimentLog` migrates ENTIRELY: `variant_specs`, `raw_observations`, `interpretations` (the full
-  D6 export) AND the `executed` dedup ledger persist to the per-variant files.
+- The in-memory `ExperimentLog` migrates ENTIRELY: `variant_specs` (to `variants/<ref>.yaml`), `raw_observations`,
+  `interpretations` (the full D6 export) AND the `executed` dedup ledger persist to the per-variant files.
 - Runtime-only state (budget counters `HUNT_POD_MAX_TOOL_CALLS`, iterations, the current lap's working set) stays in
   the `PodState` graph channels.
 - Persisting `executed` widens O7 dedup from within-run to within-`(project, spec, order)` (cross-run dedup becomes
   possible).
+- The `executed` ledger is persisted in FULL in each variant file (operator, 2026-08-24): the opaque signatures
+  cannot be split per variant, so every slice write carries the full accumulated list; overwrite-on-re-run makes it
+  the current truth.
 
 ### 7. The pure-log invariant (operator directive)
 
