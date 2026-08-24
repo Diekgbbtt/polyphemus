@@ -76,13 +76,17 @@ cmd_up() {
     echo "target.sh: preparing images for ${target} (skips when already present)"
     ssh_remote "cd ${EVAL_REMOTE_DIR} && scripts/targetctl build ${target}" | sed 's/^/  [remote] /'
     echo "target.sh: starting ${target} on ${EVAL_SSH_HOST}"
-    local out url
+    local out url ip
     out="$(ssh_remote "cd ${EVAL_REMOTE_DIR} && scripts/targetctl up ${target}")"
     printf '%s\n' "$out" | sed 's/^/  [remote] /'
     url="$(printf '%s\n' "$out" | grep -oE 'https?://[^ ]+' | head -n1 | rewrite_url_host || true)"
     [ -n "$url" ] || die "no accessible URL in targetctl output"
+    ip="$(ssh_remote "hostname -I | awk '{print \$1}'" 2>/dev/null || true)"
     wait_ready "$url" || true
     printf 'TARGET_URL=%s\n' "$url"
+    if [ -n "$ip" ]; then
+        printf 'TARGET_IP=%s\n' "$ip"
+    fi
 }
 
 cmd_down() {

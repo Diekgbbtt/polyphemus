@@ -81,6 +81,11 @@ def collect(project_id: str, hunting_run_id: str, out: Path, *,
     pod_memory = _copy_tree(HUNTING_DATA / str(project_id) / "test-executor-pod", out / "pod_memory")
     wiring_memory = _copy_tree(HUNTING_DATA / str(project_id) / "hunting", out / "wiring_memory")
 
+    kb_files = {
+        name: (out / name).exists()
+        for name in ("operator_kb.md", "research-notes.md")
+    }
+
     manifest = {
         "collected_at": time.strftime("%Y-%m-%dT%H:%M:%S%z"),
         "project_id": project_id,
@@ -97,6 +102,7 @@ def collect(project_id: str, hunting_run_id: str, out: Path, *,
             "pod_memory": pod_memory,
             "wiring_memory": wiring_memory,
         },
+        "kb": kb_files,
         "elapsed_s": round(time.time() - started, 1),
     }
     (out / "manifest.json").write_text(json.dumps(manifest, indent=2))
