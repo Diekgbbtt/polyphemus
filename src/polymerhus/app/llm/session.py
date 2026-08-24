@@ -37,6 +37,8 @@ from typing import Any, Callable, Sequence
 
 from langchain_core.messages import BaseMessage
 
+from polymerhus.app.llm.capability import resolve_capability
+
 logger = logging.getLogger(__name__)
 
 # The collision-free session ADDRESSING lives in `session_address.py` (the typed,
@@ -351,14 +353,108 @@ async def arun_session_turn(
     return _to_turn(result, response_format, thread_id)
 
 
-def _structured_response_format(schema):
-    """Wrap a structured-output `schema` in `ToolStrategy` (tool-calling) - the
-    `function_calling`-equivalent, so an open `dict` field (e.g. `Observation.anchor`,
-    #44) survives, unlike the provider-native json_schema strict mode which 400s on
-    it. This is why the one_shot path pins `method="function_calling"`; the session
-    path pins `ToolStrategy` for the same reason."""
-    from langchain.agents.structured_output import ToolStrategy
+# Test seam for probe validation - when set, the session runs the real
+# probe_with_invoker (which writes the shared cache) through this invoker, each
+# rung's parsed result validated (mirrors the one-shot probe's LLM invoke).
+# Production leaves it None and the session makes NO extra LLM call at
+# construction (Q2): a cold-start miss holds the unvalidated semantic default
+# for this turn and documents it via span provenance; the cache is still read
+# from the shared one-shot _PROBE_CACHE, so a prior one-shot winner is reused.
+_session_probe_invoker = None
 
+
+def _structured_response_format(
+    role_id: str, schema, *, session_probe_invoker=None
+):
+    """The session seam's structured-output `response_format`, chosen by the A1
+    negotiation (#99) instead of pinning `ToolStrategy` unconditionally.
+
+    A no-tools structured session turn (`stateful_turn(schema=...)`) negotiates
+    like the one-shot seam: a structured-output-capable (or unknown) profile ->
+    `ProviderStrategy(schema, strict=False)` (the provider-native json_schema
+    rung - an open `dict` field survives under strict=False without the dict-form
+    workaround, unlike the one-shot `with_structured_output` path), a
+    tool-calling-only profile -> `ToolStrategy` (the proven force-tool rung).
+    TOOL-BOUND sessions and the session seam's json_mode rung stay on
+    `ToolStrategy`: a tool loop has no method-swap (A1 rung 2), and json_mode is
+    NOT expressible through `create_agent` (operator-confirmed 2026-08-21 - its
+    response_format vocabulary is ToolStrategy|ProviderStrategy|AutoStrategy
+    only; a pre-bound json_mode model raises NotImplementedError in the graph),
+    so a neither-capability no-tools turn falls back to ToolStrategy - the
+    current safe default that keeps a structured session turn working.
+
+    Capability resolution is resolve-and-hold at turn construction (D6), off the
+    #73 retry axis; D7 fail-open (unknown profile / resolution failure) degrades
+    to the json_schema semantic default and the session always starts.
+
+    Probe-on-miss (A2, increment-2, operator-ratified 2026-08-21): the probe
+    applies to UNKNOWN-to-registry models ONLY (Q1) - a known profile never
+    probes. The session seam reads the shared probe cache (primed by a prior
+    one-shot probe) but NEVER writes it (Q4), and makes no extra LLM call at
+    construction (Q2): a cold-start miss holds the unvalidated semantic default
+    for THIS turn and documents the failure risk at generation time via the
+    span/log provenance marker (semantic-default-unvalidated), so a degraded
+    negotiation is observable, not silent. Cold-start only, off the #73 axis.
+    The session seam's json_mode rung collapses to ToolStrategy; a prior
+    one-shot probe's winner is reused via the shared cache.
+
+    The whole unknown-check -> cache-read -> (probe | semantic default) ->
+    emit+log decision is delegated to the ONE shared `resolve_method`
+    orchestration in `negotiation.py`, so this seam can never drift from the
+    one-shot `invoke_role` seam. `session_probe_invoker` is the test-seam
+    override for the probe path (injectable keyword with None default; when
+    None the module-global `_session_probe_invoker` applies, which production
+    leaves None - no extra LLM call at construction, Q2)."""
+    from langchain.agents.structured_output import (
+        ProviderStrategy,
+        ToolStrategy,
+    )
+
+    if schema is None:
+        return None
+    from polymerhus.app.llm.negotiation import (
+        negotiate_method,
+        probe_with_invoker,
+        resolve_method,
+    )
+    from polymerhus.app.llm.providers import resolve_role
+
+    # Effective probe invoker: an explicit keyword takes precedence, else the
+    # module seam (None in production). The test seam has the
+    # (provider, model, schema, method) signature, so wrap it to the
+    # Callable[[Method]] shape `resolve_method`/`probe_with_invoker` consume.
+    invoker_override = (
+        session_probe_invoker
+        if session_probe_invoker is not None
+        else _session_probe_invoker
+    )
+    provider: str
+    model: str
+    method: str
+    try:
+        provider, model = resolve_role(role_id)
+        profile = resolve_capability(provider, model)
+        _invoker = (
+            (lambda m: invoker_override(provider, model, schema, m))  # type: ignore[misc]
+            if callable(invoker_override)
+            else None
+        )
+        _method, _provenance = resolve_method(
+            profile,
+            schema,
+            True,
+            invoker=_invoker,
+            role=role_id,
+            provider=provider,
+            model=model,
+            negotiate=negotiate_method,
+            probe=probe_with_invoker,
+        )
+        method = _method
+    except Exception:  # noqa: BLE001 - fail-open: the session must always start
+        method = "json_schema"
+    if method == "json_schema":
+        return ProviderStrategy(schema, strict=False)
     return ToolStrategy(schema)
 
 
@@ -383,10 +479,12 @@ def stateful_turn(
     `SessionAddress` (`session_address.py`) - or, for back-compat, a raw thread-id string
     - so each concurrent instance has a DISTINCT checkpoint the next session resumes from
     soundly (never a shared, colliding key). Structured output (when `schema` is given)
-    goes through `ToolStrategy` (the function_calling-equivalent, #44-safe). Returns the
-    parsed `schema` object (or None), or the text content when no schema - the same shape
-    the legacy `invoke_role` seam returned, so a call site swaps in place."""
-    response_format = _structured_response_format(schema) if schema is not None else None
+    is negotiated per ADR A1 (#99): json_schema (ProviderStrategy strict=False) on a
+    structured-output profile, ToolStrategy (the function_calling-equivalent, #44-safe)
+    on a tool-calling-only profile. Returns the parsed `schema` object (or None), or the
+    text content when no schema - the same shape the legacy `invoke_role` seam returned,
+    so a call site swaps in place."""
+    response_format = _structured_response_format(role_id, schema) if schema is not None else None
     return run_session_turn(
         role_id, _as_thread_id(thread), new_messages,
         checkpointer=checkpointer, response_format=response_format,

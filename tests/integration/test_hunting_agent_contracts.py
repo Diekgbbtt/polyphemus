@@ -14,7 +14,7 @@ the agent writes exactly the two record kinds Q6 declares (`spec` and
 
 The seam contract (what the harness must expose):
   build_hunting_agent(*, store, run_id, kb, pod, author, judge, axis=None)
-      -> dispatch_fn(config: HuntConfig, routed=()) -> DispatchResult
+      -> dispatch_fn(config: HuntConfig) -> DispatchResult
   kb(query)    - IA-8: one call per hunt on the join key; the query carries
                  `fault_class` and the deterministically derived `axis`; the
                  result is {symptoms, probing_techniques}. Empty result or a
@@ -34,8 +34,8 @@ The seam contract (what the harness must expose):
                  without re-rolling).
   judge(text)  - the D5 continuation judgment; consulted ONLY when the
                  derived verdict is insufficient-evidence; returns
-                 {"meaningful_insight": bool, "next_step": "end"|"back_edge",
-                  "rationale": str, "back_edge_requests": [...]}.
+                 {"meaningful_insight": bool, "next_step": "end",
+                  "rationale": str}.
 
 The deterministic verdict derivation (D67-02, Q3-amended; the pure function
 is unit-tested in the red/green loop, the catalogue exercises it here through
@@ -71,11 +71,9 @@ from tests.hunting_fixtures import (
     _author,
     _judge,
     _kb,
-    _need,
     _no_judge,
     _outcome,
     _pod,
-    _route,
 )
 from tests.hunting_fixtures import _agent as _build_agent
 
@@ -234,7 +232,6 @@ def test_pod_success_maps_to_hypothesis_success(tmp_path):
 
     assert result.hypothesis_verdict == "successful"
     assert result.spec_ref and result.pod_result_ref
-    assert result.back_edge_needs == []
     assert len(pod_calls) == 1
 
 
@@ -333,48 +330,6 @@ def test_pod_init_rejection_lands_underspecified_spec(tmp_path):
     assert evidence[1]["init_validation"]
 
 
-# --- C9: identical spec already dispatched -> no second dispatch (O7) -----------
-
-def test_duplicate_hypothesis_not_redispatched(tmp_path):
-    store = HuntStore(tmp_path)
-    pod_calls: list = []
-    judge_calls: list = []
-    agent = _agent(
-        store,
-        kb=_kb(),
-        pod=_pod(pod_calls, outcomes=[_outcome(
-            "no-symptom-evidence",
-            evidence={"clean": False, "interpretations": [
-                {"variant": "v1", "note": "observations unreachable"},
-            ]},
-        )]),
-        # The identical spec is supplied again: whether the re-entry re-authors
-        # (and the canonical-hash log short-circuits) or re-enters VERIFY-CLAIMS,
-        # the observable is the same - one pod dispatch, one spec record.
-        author=_author([SPEC, SPEC]),
-        judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the reachable surface", "back_edge_requests": [_need()]},
-            {"meaningful_insight": False, "next_step": "end",
-             "rationale": "still no reachable surface"},
-        ], calls=judge_calls),
-    )
-    config = _config()
-
-    first = agent(config)
-    assert first.back_edge_needs  # insufficient-evidence surfaces the inline need
-
-    # The orchestrator routes the recon result back (IA-6); the agent re-enters
-    # with the SAME spec - the experiment log (Q5) short-circuits the pod.
-    second = agent(config, routed=(_route(first.back_edge_needs[0]),))
-
-    assert len(pod_calls) == 1  # no second dispatch for the identical spec
-    assert len(store.list_records(RUN_ID, "spec")) == 1
-    assert second.spec_ref == first.spec_ref
-    assert second.pod_result_ref == first.pod_result_ref
-    assert len(judge_calls) == 2
-
-
 # --- C10: no meaningful insight ends the evaluation (D67-14, D67-12) ------------
 
 def test_no_meaningful_insight_ends_evaluation(tmp_path):
@@ -391,25 +346,18 @@ def test_no_meaningful_insight_ends_evaluation(tmp_path):
         )]),
         author=_author(),
         judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the reachable surface", "back_edge_requests": [_need()]},
             {"meaningful_insight": False, "next_step": "end",
-             "rationale": "no insight in the routed recon"},
+             "rationale": "no insight in the blocked trail"},
         ]),
     )
-    config = _config()
 
-    first = agent(config)
-    assert first.back_edge_needs
-
-    second = agent(config, routed=(_route(first.back_edge_needs[0]),))
+    result = agent(_config())
 
     # The guard ended the evaluation: no unbounded loop, no further needs.
-    assert second.back_edge_needs == []
     # D67-12 failure state: the hunt degrades to unsuccessful with the trail.
-    assert second.hypothesis_verdict == "unsuccessful"
-    assert second.feedback  # never empty; carries the evidence-backed insights
-    assert second.feedback and "unreachable" in second.feedback
+    assert result.hypothesis_verdict == "unsuccessful"
+    assert result.feedback  # never empty; carries the evidence-backed insights
+    assert "unreachable" in result.feedback
 
 
 # --- C11: a raising pod degrades to unsuccessful with the error (O5) ------------
@@ -499,18 +447,16 @@ def test_no_symptom_evidence_blocked_maps_to_insufficient_evidence(tmp_path):
         )]),
         author=_author(),
         judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the reachable surface", "back_edge_requests": [_need()]},
+            {"meaningful_insight": True, "next_step": "end",
+             "rationale": "the blocked observations are a meaningful lead"},
         ]),
     )
 
     result = agent(_config())
 
-    # The blocked trail derives insufficient-evidence, surfacing the inline need.
-    assert result.back_edge_needs
-    assert len(result.back_edge_needs) == 1
-    assert result.back_edge_needs[0].origin == "hunting"
-    assert result.back_edge_needs[0].scope.unit_id == SERVICE_A
+    # The blocked trail derives insufficient-evidence and the D5 meaningfulness
+    # guard keeps it; the candidate closes with the four-valued verdict.
+    assert result.hypothesis_verdict == "insufficient-evidence"
     evidence = store.list_records(RUN_ID, "evidence")
     assert len(evidence) == 1
     assert evidence[0]["derived_verdict"] == "insufficient-evidence"
@@ -538,7 +484,6 @@ def test_no_symptom_evidence_clean_maps_to_unsuccessful(tmp_path):
     result = agent(_config())
 
     assert result.hypothesis_verdict == "unsuccessful"
-    assert result.back_edge_needs == []
     assert len(pod_calls) == 1
 
 
@@ -558,14 +503,14 @@ def test_budget_timeout_partial_maps_to_insufficient_evidence(tmp_path):
         )]),
         author=_author(),
         judge=_judge([
-            {"meaningful_insight": True, "next_step": "back_edge",
-             "rationale": "recon the remaining surface", "back_edge_requests": [_need()]},
+            {"meaningful_insight": True, "next_step": "end",
+             "rationale": "the mid-flight trail still carries a lead"},
         ]),
     )
 
     result = agent(_config())
 
-    assert result.back_edge_needs
+    assert result.hypothesis_verdict == "insufficient-evidence"
     evidence = store.list_records(RUN_ID, "evidence")
     assert len(evidence) == 1
     assert evidence[0]["derived_verdict"] == "insufficient-evidence"
@@ -593,5 +538,4 @@ def test_budget_timeout_clean_maps_to_unsuccessful(tmp_path):
     result = agent(_config())
 
     assert result.hypothesis_verdict == "unsuccessful"
-    assert result.back_edge_needs == []
     assert len(pod_calls) == 1

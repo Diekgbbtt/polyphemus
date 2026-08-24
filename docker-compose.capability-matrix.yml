@@ -1,0 +1,44 @@
+services:
+  fake-llm:
+    image: python:3.11-slim
+    command: bash -lc "pip install fastapi uvicorn -q && uvicorn tests.support.fake_llm_provider:app --host 0.0.0.0 --port 8001"
+    volumes:
+      - .:/srv:ro
+    working_dir: /srv
+    environment:
+      PYTHONPATH: /srv/src
+    ports: ["8001:8001"]
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD-SHELL", "python -c 'import socket; s=socket.create_connection((\"127.0.0.1\",8001),timeout=2); s.close()'"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 40s
+
+  agent-matrix:
+    image: polymerhus-agent:latest
+    volumes:
+      - ./src:/srv/src
+      - ./tests:/srv/tests
+      - ./gateway:/srv/gateway
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      LLM_GATEWAY_URL: http://agent-matrix:4000
+      API_KEY_FAKE: test
+      LITELLM_MASTER_KEY: sk-polymerhus-dev-gateway
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus_gateway
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+      PYTHONPATH: /srv/src
+    depends_on:
+      postgres: { condition: service_healthy }
+      neo4j: { condition: service_healthy }
+      kali: { condition: service_started }
+      fake-llm: { condition: service_started }
+    networks: [polymerhus-net]

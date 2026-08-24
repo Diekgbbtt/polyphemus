@@ -161,7 +161,7 @@ def _recording_dispatch(configs: list, *, feedback: str = "ok"):
     """The fixture hunting agent (IA-2): records every minted config and
     returns a successful result - the spec-sanctioned fixture agent."""
 
-    def dispatch(config: HuntConfig, routed=()):
+    def dispatch(config: HuntConfig):
         configs.append(config)
         return DispatchResult(
             spec_ref="spec-1", pod_result_ref="pod-1",
@@ -480,7 +480,7 @@ def test_E12_graph_view_failure_degrades_the_gate(project, tmp_path, caplog):
 def test_E13_dispatch_failure_degrades_the_hunt(project, tmp_path):
     store = HuntStore(tmp_path)
 
-    def boom(config: HuntConfig, routed=()):
+    def boom(config: HuntConfig):
         raise RuntimeError("agent turn exhausted")
 
     report = run_orchestration(

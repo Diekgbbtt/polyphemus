@@ -347,6 +347,108 @@ def test_chat_model_for_carries_the_roles_thinking_baseline(monkeypatch):
     assert getattr(chat_model_for("bootstrapper"), "reasoning_effort", None) is None
 
 
+# --- A5 thinking-effort wire decision (increment-3, ticket #162) -------------
+
+def _with_profile(monkeypatch, profile):
+    """Pin the capability profile the seam resolves (via the lazily-imported
+    `resolve_capability`) so the wire decision is deterministic - no live
+    gateway. The profile is returned for every (provider, model)."""
+    from polymerhus.app.llm import capability as C
+
+    monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
+    monkeypatch.setattr(C, "resolve_capability", lambda provider, model: profile)
+
+
+def test_wire_effort_exact_match(monkeypatch):
+    from polymerhus.app.llm.capability import CapabilityProfile
+
+    _with_profile(monkeypatch, CapabilityProfile(
+        reasoning_control="effort", reasoning_efforts=("low", "medium", "high")))
+    m = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="medium")
+    assert getattr(m, "reasoning_effort", None) == "medium"
+
+
+def test_wire_effort_fallback_nearest_at_least_as_much(monkeypatch):
+    """The ADR example through the real seam: declared `medium`, offered
+    `[high, max]` -> the wire carries `high` (never a downgrade, never a 400)."""
+    from polymerhus.app.llm.capability import CapabilityProfile
+
+    _with_profile(monkeypatch, CapabilityProfile(
+        reasoning_control="effort", reasoning_efforts=("high", "max")))
+    m = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="medium")
+    assert getattr(m, "reasoning_effort", None) == "high"
+
+
+def test_wire_budget_emits_extra_body_budget_tokens(monkeypatch):
+    from polymerhus.app.llm.capability import CapabilityProfile
+
+    _with_profile(monkeypatch, CapabilityProfile(
+        reasoning_control="budget_tokens", thinking_budget_bounds=(1024, 32768)))
+    m = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="medium")
+    assert m.extra_body == {"thinking": {"type": "enabled", "budget_tokens": 4096}}
+
+
+def test_wire_budget_clamped_to_declared_bounds(monkeypatch):
+    from polymerhus.app.llm.capability import CapabilityProfile
+
+    _with_profile(monkeypatch, CapabilityProfile(
+        reasoning_control="budget_tokens", thinking_budget_bounds=(1024, 2000)))
+    m = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="medium")
+    assert m.extra_body["thinking"]["budget_tokens"] == 2000
+
+
+def test_wire_toggle_emits_thinking_enabled(monkeypatch):
+    from polymerhus.app.llm.capability import CapabilityProfile
+
+    _with_profile(monkeypatch, CapabilityProfile(reasoning_control="toggle"))
+    m = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="high")
+    assert m.extra_body == {"thinking": {"type": "enabled"}}
+
+
+def test_wire_always_on_omits(monkeypatch):
+    from polymerhus.app.llm.capability import CapabilityProfile
+
+    _with_profile(monkeypatch, CapabilityProfile(reasoning_control="none"))
+    m = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="high")
+    assert getattr(m, "reasoning_effort", None) is None
+    assert m.extra_body is None
+
+
+def test_wire_off_omits_even_with_an_effort_profile(monkeypatch):
+    from polymerhus.app.llm.capability import CapabilityProfile
+
+    _with_profile(monkeypatch, CapabilityProfile(
+        reasoning_control="effort", reasoning_efforts=("low", "medium", "high")))
+    m = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="off")
+    assert getattr(m, "reasoning_effort", None) is None
+    assert m.extra_body is None
+
+
+def test_wire_unknown_profile_keeps_the_declared_baseline(monkeypatch):
+    """D7 fail-open through the real seam: a gateway-less environment (or an
+    unregistered record) resolves an all-unknown profile, and the declared
+    baseline is sent unchanged - the legacy behaviour is preserved exactly."""
+    from polymerhus.app.llm.capability import CapabilityProfile
+
+    _with_profile(monkeypatch, CapabilityProfile())
+    m = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="high")
+    assert getattr(m, "reasoning_effort", None) == "high"
+
+
+def test_wire_adaptation_failure_falls_back_to_declared_baseline(monkeypatch):
+    """Fail-open: an unexpected adaptation error must never break construction -
+    the declared baseline rides as the raw reasoning_effort, session still starts."""
+    from polymerhus.app.llm import capability as C
+
+    def _boom(provider, model):
+        raise RuntimeError("boom")
+
+    monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
+    monkeypatch.setattr(C, "resolve_capability", _boom)
+    m = P.build_chat_model("openrouter", "openai/gpt-5-mini", thinking="high")
+    assert getattr(m, "reasoning_effort", None) == "high"
+
+
 # --- #107 (D4 item 1): the LLM_GATEWAY_URL base_url resolution seam ------------
 #
 # Two LLM-facing paths live, selected by a single env var (ADR D3 + D5):

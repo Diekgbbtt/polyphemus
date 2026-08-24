@@ -1,0 +1,125 @@
+# Spec - #99 capability-adaptive LLM client
+
+Operator-rationalised spec for ticket #99 ("LLM client is not capability-adaptive across providers").
+Grilled 2026-08-20; the five ratified answers live in `docs/design/capability-adaptive-client-99-decisions.md` (ADR A1-A5), which is authoritative where this spec and the ADR differ.
+Absorbs #44. The #73 latency/timeout axis and the #32 multiplied-retry defect are non-negotiables this spec is built around, never entangled.
+
+## Problem Statement
+
+The LLM client hard-codes ONE capability preset: `method="function_calling"` on every one-shot structured call and native `bind_tools`/`ToolStrategy` on every tool loop.
+That preset is correct for mainline OpenAI but fails at the provider boundary for reasoning models (deepseek 400 "Thinking mode does not support this tool_choice"), vLLM without `--tool-call-parser` (Qwen/Apertus 400s, #44), and any provider whose structured-output or tool-calling surface differs - every swap fails during bootstrap's first structured call, before recon/analysis can run.
+`json_mode` fails silently (HTTP 200, wrong shape) when it is used. There is no single globally-correct method: the right choice depends on the provider/model AND on whether the schema is closed or carries open `dict` fields (e.g. `Observation.anchor`) AND on whether the call is a tool loop or a pure extraction.
+
+## Solution
+
+Make the client capability-adaptive: choose the structured-output / tool-calling method at call-construction time per (provider, model, call shape), seeded from the gateway's synced capability records (the #100 substrate), probe-on-miss for unknown models, and hold the choice for the session - never resolved mid-turn, never multiplied with the #73 retry.
+The choice is **semantic-first**: a call that binds tools (session/crawl tool loops) uses native tool calling; a pure one-shot extraction with no tools uses structured output (`json_schema`, `strict=False`).
+The capability profile then corrects within a fixed degrade chain (`json_schema` -> `function_calling` -> `json_mode`), each rung validating the parsed Pydantic result; `reasoning_effort` is orthogonal to method and never a factor.
+
+## User Stories
+
+1. As an operator, I want to swap a role's model to a reasoning/"thinking" model (e.g. deepseek) and have bootstrap's first structured extract succeed, so that pipeline verification no longer stops at the LLM boundary.
+2. As an operator, I want to swap to a vLLM model without `--tool-call-parser` (e.g. Qwen3.6-27B, Apertus-70B on SwissAI) and have the structured calls negotiate `json_schema`/`json_mode` instead of 400ing, so #44's defect is absorbed and resolved.
+3. As an operator, I want the already-working mainline path (OpenAI/OpenRouter, GLM-4.7-Flash) to keep its current validated behavior on the upgrade, so the fix never regresses the proven provider.
+4. As an operator, I want a model not present in the gateway's registry to still drive a session via a semantic-default method rather than crash, so unknown and brand-new models are not a hard blocker.
+5. As an operator, I want the resolution to happen once at session construction and be held, so multi-turn P2 sessions do not pay a capability probe per turn.
+6. As an operator, I want the correct method to survive the langchain/openai conversion boundary, so the choice proven in the negotiation is the choice that reaches the wire (and comes back parseable).
+7. As an operator, I want capability resolution kept strictly off the #73 escalating-timeout retry axis, so the #32 multiplied-retry defect is never re-introduced.
+8. As an operator, I want the parsed result validated - not just the exception path - so `json_mode`'s silent wrong-shape failure is caught and renegotiated rather than accepted.
+9. As an operator, I want the chosen method and its provenance observable in langfuse/logs, so a degraded negotiation is visible, not silent.
+10. As an operator, I want the open `dict` fields our schemas carry (e.g. `Observation.anchor`) to survive whichever negotiated method is chosen, so the negotiation does not trade one provider's failure for an open-schema 400 on another.
+11. As an operator, I want the crawl tool-loop path unchanged: unsupported/unknown tool-calling still refuses to an empty manifest (T5 gate), since a 30-turn native-tool loop has no method-swap fallback.
+12. As an operator, I want the unpinned `langchain-openai`/`langgraph` floors pinned to exact versions inside this work, so the `with_structured_output` semantics the negotiation relies on cannot silently drift.
+13. As an operator, I want the thinking level I declare per role (e.g. `medium` on the triager) to be adapted to what the role's model actually offers, so a `medium` declared against a model that only offers `[high, max]` neither 400s (strict first parties) nor silently over/under-thinks (DeepSeek normalize, vLLM ignore, OpenRouter clamp - all verified server behaviors).
+14. As an operator, I want a thinking model exposed via `budget_tokens` (Anthropic-style) to honor my level through a canonical per-level token budget, clamped to the model's declared bounds, so the "level" I declare means the same effort everywhere.
+15. As an operator, I want a `toggle`-only model (reasoning on/off, no levels) to get reasoning ON when I declared a non-`off` level, and OMITTED when I declared `off` - the toggle turned honestly, never faked through a level it does not offer.
+16. As an operator, I want the adaptation to be observable (chosen level + provenance in langfuse/logs) and fail-open (unknown profile keeps my declared baseline, a 400-on-upstream degrades to a logged mismatch, never a silent change), so no capability gate can silently change my reasoning budget.
+
+## Implementation Decisions
+
+### Seam (one seam, per the least-seams ideal)
+
+The negotiation lands at ONE construction seam: the place that builds the structured-output wrapper. Concretely the pure-function selector is co-located with `with_structured_output`/`ToolStrategy` construction inside the llm layer (`app/llm`), reached from the two existing call shapes:
+- the one-shot path via `invoke_role` (the `schema is not None` branch);
+- the session path via the `response_format`/`ToolStrategy` construction (`stateful_turn` and the session turn builders).
+
+The selector is a **pure function**: `(capability_profile, no_tools_bound: bool, schema_shape) -> method`, unit-testable with LLM and gateway mocked - no live model, no live gateway in the unit tier.
+
+### Method negotiation (ADR A1, ratified)
+
+- **No tools bound** (one-shot extraction): default to `structured_output` `json_schema`, `strict=False`. `strict=False` is the load-bearing bit: it accepts open `dict` fields (the `Observation.anchor` case that hard `json_schema` 400s on) and uses `response_format` rather than forced `tool_choice`, so thinking models accept it.
+- **Tools bound** (session/crawl tool loop): `function_calling`/native tool choice is the ONLY option - no silent method-swap inside a tool loop. The T5 gate (`crawl_agentic.py`) already refuses crawl on unsupported/unknown and stays.
+- **Profile-corrected degrade chain** (each rung validates the parsed Pydantic result): `json_schema` -> `function_calling` -> `json_mode`.
+  - On a profile with structured output but unknown/absent tool calling and no tools bound: `json_schema`.
+  - On a profile with tool calling but unknown/absent structured output and no tools bound: degrade to `function_calling` (forced tool returns a dict; matches today's proven open-dict behavior).
+  - On a profile with neither: `json_mode` plus mandatory result validation (the #44-absorbed path), only when a recognized/authorized model, still off the #73 axis. **SESSION-SEAM RIDER (operator-confirmed 2026-08-21):** on the session path the `json_mode` rung is NOT expressible - `create_agent`'s response_format vocabulary is `ToolStrategy | ProviderStrategy | AutoStrategy` only (no json_mode strategy; a pre-bound json_mode model raises `NotImplementedError` in the graph, and `ProviderStrategy` hardcodes json_schema). A neither-capability no-tools session turn resolves its json_mode rung to `ToolStrategy`. `json_mode` is a one-shot-seam-only rung.
+  - **Unknown profile** (no gateway, no record, no tag): semantic default - `json_schema` for the no-tool one-shot seam, `function_calling` for the session/tool rung (proven mainline). Capability never gates session start (D7 fail-open).
+- **Reasoning is orthogonal**: `reasoning_effort` is a separate dial and NEVER a factor in method selection. Thinking models call tools fine; the ticket's deepseek 400 is a provider quirk.
+
+### Capability surface (extends the #100 substrate)
+
+- The `CapabilityProfile` reader gains `supports_structured_output: bool | None`, provenance-gated exactly like `supports_tool_calling` (D5 Rule 1: absent tag or absent field = `None`/unknown). The sync (`sync_mapping.py`) ALREADY authors `supports_structured_output` on the record and into `model_info`; only the reader surface + typed wire read are new.
+- The reader's resolve-and-hold (process-lifetime cache, D6/D7) is unchanged; resolution happens ONCE at construction and is held. Nothing re-queries mid-session.
+
+### Probe-on-miss (ADR A2, increment-2)
+
+- Models unknown to the registry get a probe: **try-in-order + validate the parsed result**, in the A1 chain order, never parsing vendor error strings (no machine-readable unsupported-capability code exists in the OpenAI standard).
+- Cadence: once, at session construction (the degenerate one-call session for one-shot). Never repeated mid-session. Off the #73 axis: cold-start only, no retry budget spent on it; probe failure degrades per the chain and the session still starts.
+- Observability: each resolution emits a langfuse span/trace; the chosen method and provenance are logged.
+
+### `extra_body` / raw-SDK escape hatch (grill element, parked)
+
+The `extra_body` open question (does `extra_body` reach `create()` through `with_structured_output` kwargs for the vLLM `guided_json` path?) is NOT built speculatively. The negotiation (json_schema/flattened) is the answer; a `guided_json` raw escape hatch only opens BEHIND a test that proves the gateway surface needs it. Parked.
+
+### Thinking-effort adaptation (ADR A5, increment-3)
+
+Addresses user stories 13-16. The declared per-role `thinking` baseline (`Role.thinking`, providers.py) is adapted client-side to what the role's model actually offers, using the SAME component-profile pattern as method negotiation - a second independent dial (A1 ortogonality preserved).
+
+- **New capability surface** (extended from the #100 substrate, provenance-gated exactly like the existing fields, D5 Rule 1: absent = unknown): the capability record/profile carries `reasoning_control` (the option kinds the model exposes: `effort` / `toggle` / `budget_tokens` / combos / `[]`-always-on), `reasoning_efforts` (the literal offered level list, incl. possible `null`/`none`), and `thinking_budget_bounds` (the model's declared min/max when the `budget_tokens` option carries them). Authored by the sync from the per-provider `reasoning_options` array (already base_model-resolved; read verbatim next to `reasoning`).
+- **Pure selector**, co-located with `negotiate_method`: `negotiate_thinking(declared_level, profile) -> (form, value, provenance)` (operator-ratified signature) where form is `effort` / `budget` / `toggle` / `omit`. Exact match wins; else the fallback matrix (see ADR A5); `omit` when the model cannot express the level (always-on `[]`, `toggle`-only with declared `off`, `budget_tokens` with declared `off`, unknown profile keeps the declared baseline - fail-open D7). Never parses vendor error strings.
+- **Canonical budget map**: `THINKING_BUDGET` (`minimal=1024, low=2048, medium=4096, high=16384, xhigh=32768, max=40000`) maps a level to `budget_tokens` for `budget_tokens`-control models; a model's own declared min/max clamps it.
+- **Toggles**: `toggle`-only control with non-`off` declared -> thinking-ON wire form; `off` declared -> OMIT.
+- **Where it lands**: `build_chat_model` is the single construction seam (both `invoke_role` and the session path reach it via `chat_model_for`/`thinking_for`), so the adaptor resolves ONCE per (provider, model) alongside the capability profile (D6 resolve-and-hold, off the #73 axis, D7 fail-open) and feeds what the client sends (`reasoning_effort`, or budget/toggle form).
+- **Transport verification (increment verifies, never assumes)**: the gateway's `drop_params: true` silently strips `reasoning_effort` for generic `openai/` deployments (verified in litellm 1.96.0 source). An adapted level is only DELIVERED if forwarded - `allowed_openai_params`/whitelist, or the mismatch is logged as observable and the provider default accepted. Whether the adapted level reaches the upstream's wire is asserted, not assumed.
+
+### SDK pinning (ADR A4, lands inside #99)
+
+Pin exact versions in `requirements-app.txt` (`langchain-openai==1.3.2`, `langchain==1.3.14`, `langchain-core==1.5.3`, `langgraph==1.2.7` at the resolved lock) landed WITH the increment that exercises `with_structured_output`, so the T6 pin-behavior tests ship against the pinned resolution. Rationale: the `ReasoningPreservingChatOpenAI` subclass pins langchain-openai 1.3.x internals (`_create_chat_result`, `_get_request_payload`), and `with_structured_output` behavior changed across 0.3.12/0.3.21 - a floor-bound is not a pin.
+
+The T1 pin tests also locked a construction consequence of the pinned resolution: `method="json_schema"` with a DICT schema and `strict=False` reaches the wire as `"strict": false`, but the PYDANTIC-CLASS path silently defaults to `"strict": true` on 1.3.2 - so the json_schema rung's construction passes `model_json_schema()` dicts, and a bump that changes either path turns the pin tests red on purpose.
+
+### Out of scope in the seams (ADR A3)
+
+- `steering.resolve_model` is ZOMBIE code (single caller is the superseded sync `decide_routing` rollback seam, `orchestrator_agent.py:110`; the production actor passes `ToolStrategy(RoutingDecision)` directly). It is NOT wired into the selector; the hardcoded `method="function_calling"` there is left untouched and the whole seam is retired in separate ticket #144.
+
+## Testing Decisions
+
+What makes a good test: it proves the negotiation is a pure function of (profile, no-tools-bound, schema-shape) AND that the chosen method survives the langchain/openai conversion boundary - the exact defect class of the ticket (the chosen capability never reaches the wire). Tests exercise external behavior (the warped method on the resulting structured-output wrapper / the invoked request payload), not the internal degrade-chain bookkeeping.
+
+- **Unit tier** (mocked; no live model, no live gateway, no DB): the selector's method resolution across the profile/unknown matrix; the degrade chain order including the validation-triggered rung change; `CapabilityProfile.supports_structured_output` wire parsing + provenance gating; the `invoke_role` one-shot and the session `stateful_turn`/response_format construction both route through the selector. Prior art: `tests/test_llm_capability.py`, `tests/test_llm_reasoning.py::test_preserving_client_*` (real conversion-boundary tests on the pin - the pattern for proving a strategy choice survives the langchain boundary).
+- **Integration tier** (contract catalogue): the seams' contract predicates - a one-shot structured call with tools absent, a session tool loop with tools bound, an unknown profile, a json_mode rung. Prior art: the gateway reasoning-passthrough wire-shape tests (`tests/test_gateway_reasoning_passthrough.py`).
+- **E2E tier**: a live walkthrough that boots each known-broken model (deepseek thinking via json_schema; vLLM Qwen/Apertus via json_schema/json_mode degrade) and asserts bootstrap clears - run in-network against the stack built from `dev` per the loop constraints. Assert the mainline provider stays GREEN (no regression). Only run where live providers are available.
+- **Pin-behavior test**: `with_structured_output` semantics on the pinned exact version (T6 pattern), red-on-purpose if the pin moves.
+- **Increment-3 thinking-adaptation unit tier** (mocked; no live model/gateway): the `negotiate_thinking` matrix across (declared x control-kind x offered-list x budget-bounds), including the fallback matrix, the `[]`-always-on -> OMIT, `toggle`-only on/off, `budget_tokens` canonical-map + clamp, and unknown-profile-fail-open cases; the wire-decision in `build_chat_model` (which `extra`/wire form the adapted choice emits - `reasoning_effort` vs budget vs bare toggle vs nothing); the observable provenance string per choice.
+- **Increment-3 integration tier**: a wire-level assertion that the adapted request carries the expected `reasoning_effort` (or is absent) when routed through the gateway surface, and that the gateway's `drop_params`/forward behavior is exercised (the transport consequence - whether the level survives to the "upstream" fake).
+- **Increment-3 E2E tier**: a live walkthrough asserting the declared `medium`/`high` roles adapt correctly on the live deepseek-family provider (the level actually reaching the wire per the transport verification) and mainline stays GREEN. Only run where live providers are available.
+
+## Out of Scope
+
+- Axis (B) latency/timeout coherence - #73's twin of this ticket; never entangled.
+- Re-engineering the crawl tool-loop answer - T5's gate is the resolved strategy; do not rebuild it.
+- Building strategy-fallbacks (native vs text-scaffolded tools) nothing uses yet - YAGNI.
+- The `extra_body`/guided_json raw escape hatch until a test proves the gateway needs it.
+- `steering.resolve_model` and the sync `decide_routing` seam - retired in #144.
+- The #95 context-window compaction consumer and the #98 context-management work - this ticket only extends the capability surface they share.
+- Per-provider strategy registries, hardcoded method tables, build-time banners.
+- (increment-3) Rewriting the reasoning-replay pipeline (`reasoning.py`) - adaptation changes only the OUTBOUND request dial, never the inbound parse/replay surfaces (D11 is untouched).
+- (increment-3) Changing the declared per-role `thinking` baselines themselves - that is operator tunable config (providers.py `Role.thinking`), not client machinery.
+- (increment-3) BIM-level `thinking` negotiation on the session-message transport - the adaptor shapes the request the OpenAI-compatible client sends; no new wire protocol, no sampler-passthrough beyond what the gateway forwards.
+
+## Further Notes
+
+- The environment is SOLO (operator ruling 2026-08-12): integration is a local fast-forward of the ticket branch into `dev` and push, no PRs. Land the branch with `Closes #99`.
+- Commit granularity follows the increment structure: increment-1 (method negotiation at the two seams + profile surface + pin) then increment-2 (probe-on-miss), each verifier-gated, landing in the same `feat/capability-adaptive-client-99` branch.
+- Increment-3 (thinking-effort adaptation, ADR A5) follows the same pattern in the same branch: one increment, verifier-gated, landing with the docs that sharpen it (ADR A5, this spec) in the same change.
+- Living documents: the ADR `capability-adaptive-client-99-decisions.md`, the domain-model capability-client note, and this spec are updated IN THE SAME change as the code that sharpens a term - do not defer.

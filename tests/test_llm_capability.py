@@ -78,10 +78,14 @@ def test_profile_fields_default_to_none():
     assert p.context_limit is None
     assert p.output_limit is None
     assert p.supports_tool_calling is None
+    assert p.supports_structured_output is None
     assert p.source is None
     assert p.synced_at is None
     assert p.reasoning_in_response is None
     assert p.reasoning_field is None
+    assert p.reasoning_control is None
+    assert p.reasoning_efforts is None
+    assert p.thinking_budget_bounds is None
 
 
 def test_profile_has_no_reasoning_caching_field():
@@ -286,6 +290,77 @@ def test_tool_calling_wrong_typed_wire_value_degrades_to_unknown(monkeypatch):
 
 
 # ---------------------------------------------------------------------------
+# The D5 structured-output surface (the #99 negotiation consumes this) -------
+# ---------------------------------------------------------------------------
+
+def test_structured_output_is_provenance_gated(monkeypatch):
+    """D5: supports_structured_output maps to the wire key of the same name
+    (the sync authors it, `sync_mapping.py`). Rule 1: an UNTAGGED record's flag
+    is NEVER trusted (litellm could be echoing something of its own); a TAGGED
+    record's flag is trusted - never asserted true, never asserted false on
+    untrusted records."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    untagged = FakeHttp({"data": [
+        _record("openrouter/untagged-so", supports_structured_output=True),
+    ]})
+    p = C.resolve_capability("openrouter", "untagged-so", http=untagged)
+    assert p.supports_structured_output is None
+
+    tagged = FakeHttp({"data": [
+        _tagged("openrouter/tagged-so", supports_structured_output=True),
+    ]})
+    p = C.resolve_capability("openrouter", "tagged-so", http=tagged)
+    assert p.supports_structured_output is True
+
+
+def test_structured_output_true_is_read_from_the_wire_key(monkeypatch):
+    """The profile value comes from the wire key `supports_structured_output` -
+    the D5 custom passthrough key the sync authors from the canonical record's
+    `supports_structured_output`."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/so-wire", supports_structured_output=True),
+    ]})
+    p = C.resolve_capability("openrouter", "so-wire", http=fake)
+    assert p.supports_structured_output is True
+
+
+def test_structured_output_absent_field_is_unknown(monkeypatch):
+    """Tag present but the structured-output field absent -> unknown (None),
+    never guessed - the negotiation must then resolve via its own matrix."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/tagged-no-so", max_input_tokens=200_000),
+    ]})
+    p = C.resolve_capability("openrouter", "tagged-no-so", http=fake)
+    assert p.supports_structured_output is None
+
+
+def test_structured_output_false_is_trusted_not_unknown(monkeypatch):
+    """An explicitly authored False is a trustworthy value, distinct from
+    unknown (None): conservative-unknown is about ABSENCE, never distrusting an
+    authored False."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/so-false", supports_structured_output=False),
+    ]})
+    p = C.resolve_capability("openrouter", "so-false", http=fake)
+    assert p.supports_structured_output is False
+
+
+def test_structured_output_wrong_typed_wire_value_degrades_to_unknown(monkeypatch):
+    """The typed profile contract: a wrong-typed wire value degrades to unknown
+    (None) - the negotiation then treats the rung as unasserted rather than
+    trusting a string that looks true."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("openrouter/so-wrong-typed", supports_structured_output="yes"),
+    ]})
+    p = C.resolve_capability("openrouter", "so-wrong-typed", http=fake)
+    assert p.supports_structured_output is None
+
+
+# ---------------------------------------------------------------------------
 # Resolution order (D6): gateway -> env -> 150k default ----------------------
 # ---------------------------------------------------------------------------
 
@@ -447,11 +522,14 @@ def test_wrong_typed_wire_values_degrade_to_unknown(monkeypatch):
     fake = FakeHttp({"data": [
         _tagged("openrouter/wrong-typed",
                 max_input_tokens="200000", max_output_tokens=True,
+                supports_function_calling="yes", supports_structured_output="yes",
                 reasoning_in_response="yes", reasoning_field=123),
     ]})
     p = C.resolve_capability("openrouter", "wrong-typed", http=fake)
     assert p.context_limit == DEFAULT_CONTEXT  # string count -> unknown -> default
     assert p.output_limit is None  # bool output -> unknown
+    assert p.supports_tool_calling is None
+    assert p.supports_structured_output is None
     assert p.reasoning_in_response is None
     assert p.reasoning_field is None
 
@@ -541,3 +619,108 @@ def test_zen_family_matches_stripped_registered_name(monkeypatch):
     p = C.resolve_capability("opencode", "deepseek/deepseek-v4-flash-free", http=fake)
     assert p.context_limit == 200_000
     assert p.source == "models.dev/opencode/deepseek-v4-flash-free"
+
+
+# ---------------------------------------------------------------------------
+# A5 thinking-effort surface (increment-3): provenance-gated typed read ------
+# ---------------------------------------------------------------------------
+
+def test_thinking_surface_is_provenance_gated(monkeypatch):
+    """Rule 1: an UNTAGGED record carrying A5-looking fields must yield all-
+    unknown thinking fields - never trusted."""
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _record("openai/gpt-5",
+                reasoning_control="effort",
+                reasoning_efforts=["low", "medium", "high"],
+                thinking_budget_bounds=[1024, 32768]),
+    ]})
+    p = C.resolve_capability("openai", "gpt-5", http=fake)
+    assert p.reasoning_control is None
+    assert p.reasoning_efforts is None
+    assert p.thinking_budget_bounds is None
+    assert fake.call_count == 1
+
+
+def test_thinking_surface_is_read_from_tagged_wire(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("deepseek/deepseek-v4-flash",
+                reasoning_control="effort+toggle",
+                reasoning_efforts=["none", "low", "high", "max"],
+                thinking_budget_bounds=[1024, 32768]),
+    ]})
+    p = C.resolve_capability("deepseek", "deepseek-v4-flash", http=fake)
+    assert p.reasoning_control == "effort+toggle"
+    assert p.reasoning_efforts == ("none", "low", "high", "max")
+    assert p.thinking_budget_bounds == (1024, 32768)
+    assert p.source == "models.dev/deepseek/deepseek-v4-flash"
+
+
+def test_thinking_surface_absent_fields_are_unknown(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [
+        _tagged("deepseek/deepseek-r1", max_input_tokens=200_000),
+    ]})
+    p = C.resolve_capability("deepseek", "deepseek-r1", http=fake)
+    assert p.reasoning_control is None
+    assert p.reasoning_efforts is None
+    assert p.thinking_budget_bounds is None
+
+
+def test_thinking_control_wrong_typed_degrades_to_unknown(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    for bad in ("bogus", "toggle+", 42, True, None):
+        fake = FakeHttp({"data": [
+            _tagged(f"prov/model-{bad}", reasoning_control=bad),
+        ]})
+        p = C.resolve_capability("prov", f"model-{bad}", http=fake)
+        assert p.reasoning_control is None
+
+
+def test_thinking_efforts_wrong_typed_degrades_to_unknown(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    for bad in ("low", 42, [], ["low", 42], [""]):
+        fake = FakeHttp({"data": [
+            _tagged(f"prov/e-{type(bad).__name__}", reasoning_efforts=bad),
+        ]})
+        p = C.resolve_capability("prov", f"e-{type(bad).__name__}", http=fake)
+        assert p.reasoning_efforts is None
+
+
+def test_thinking_budget_bounds_wrong_typed_degrades_to_unknown(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    for bad in ([1024], [1024, 32768, 1], [9000, 1000], [0, 5000], [-1, 5000],
+                ["lo", "hi"], [True, 5000]):
+        fake = FakeHttp({"data": [
+            _tagged(f"prov/b-{len(str(bad))}", thinking_budget_bounds=bad),
+        ]})
+        p = C.resolve_capability("prov", f"b-{len(str(bad))}", http=fake)
+        assert p.thinking_budget_bounds is None
+
+
+def test_thinking_surface_round_trips_the_authored_wire(monkeypatch):
+    """The sync authors reasoning_control/reasoning_efforts/thinking_budget_bounds
+    as JSON arrays; the reader parses them back typed - the author-read pair
+    (sync_mapping -> capability.py) is the round-trip contract."""
+    from polymerhus.app.llm import sync_mapping as M
+
+    rec = M.CapabilityRecord(
+        model_id="deepseek/deepseek-v4-flash",
+        provider="deepseek",
+        supports_reasoning=True,
+        reasoning_control="effort",
+        reasoning_efforts=("none", "low", "high", "max"),
+        thinking_budget_bounds=(1024, 32768),
+        source="models.dev/deepseek/deepseek-v4-flash",
+        synced_at="2026-08-22T12:00:00+00:00",
+        staleness="fresh",
+    )
+    info = M.capability_to_model_info(rec)
+    key = "deepseek/deepseek-v4-flash-roundtrip"
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway.invalid:4000")
+    fake = FakeHttp({"data": [_tagged(key, **info)]})
+    p = C.resolve_capability("deepseek", "deepseek-v4-flash-roundtrip", http=fake)
+    assert p.reasoning_control == "effort"
+    assert p.reasoning_efforts == ("none", "low", "high", "max")
+    assert p.thinking_budget_bounds == (1024, 32768)

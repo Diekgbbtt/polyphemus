@@ -62,6 +62,13 @@ the zen-family npm-SDK dict form which carries no string shape):
 Reasoning caching is NOT asserted here: `cache_read`/`cache_write` are pricing
 fields only (D11 grey point) - they are mapped to the cost keys and never used
 as capability evidence.
+
+The thinking-effort surface (A5, increment-3 - the SECOND capability dial) is
+authored the same way: `reasoning_control` / `reasoning_efforts` /
+`thinking_budget_bounds` from models.dev `reasoning_options`
+(`classify_reasoning_options`), each ABSENT when unknown (Rule 1). The client
+consumer (negotiation.py `negotiate_thinking`) adapts the declared thinking
+level to what the model actually offers.
 """
 
 from dataclasses import dataclass, field
@@ -269,12 +276,97 @@ class CapabilityRecord:
     supports_reasoning: bool | None = None
     reasoning_in_response: bool | None = None
     reasoning_field: str | None = None
+    reasoning_control: str | None = None
+    reasoning_efforts: tuple[str, ...] | None = None
+    thinking_budget_bounds: tuple[int, int] | None = None
     modalities_in: tuple[str, ...] | None = None
     modalities_out: tuple[str, ...] | None = None
     open_weights: bool | None = None
     source: str = UNKNOWN_SOURCE
     synced_at: str = ""
     staleness: str = STALENESS_UNKNOWN
+
+
+# --- The D5 reasoning-control surface (A5, increment-3): the three authored
+# fields a thinking-effort consumer reads. The classifier reads the models.dev
+# `reasoning_options` array verbatim (already base_model-resolved). The control
+# kind is the JOINED classification; single-kind values are the literal
+# `type` names, combos are `+`-joined in the catalog's canonical order, and
+# `[]` (always-on, no caller control) is `CONTROL_NONE`. The same constants
+# define what the reader (capability.py `_typed_*`) accepts - the exact names
+# are load-bearing. --------------------------------------------------------
+
+CONTROL_EFFORT = "effort"
+CONTROL_TOGGLE = "toggle"
+CONTROL_BUDGET = "budget_tokens"
+CONTROL_NONE = "none"
+
+# Order the combo string joins (`effort+budget_tokens`, etc.).
+_CONTROL_ORDER = (CONTROL_EFFORT, CONTROL_TOGGLE, CONTROL_BUDGET)
+
+
+def classify_reasoning_options(
+    reasoning_options: Any,
+) -> tuple[str | None, tuple[str, ...] | None, tuple[int, int] | None]:
+    """Classify a models.dev `reasoning_options` value into the three authored
+    fields: `(reasoning_control, reasoning_efforts, thinking_budget_bounds)`.
+
+    Pure and tolerant: a malformed/absent input degrades to all-None (unknown
+    per Rule 1 - the keys are simply ABSENT from `model_info`). The option list
+    shapes covered:
+
+    - `[]` -> always-on (no caller control) -> `reasoning_control="none"`.
+    - `[{"type":"toggle"}]` -> `"toggle"`.
+    - `[{"type":"effort","values":[...]}]` -> `"effort"` + the offered values.
+    - `[{"type":"budget_tokens", min?, max?}]` -> `"budget_tokens"` + bounds
+      when both are usable positive ints.
+    - combinations join with `+`; an `effort` option's values ride along.
+    - Budget bounds only when min AND max are present, positive ints, min<=max;
+      a missing/sentinel min or max (min: -1, absent) degrades the bounds to
+      None (the reader clamps with whatever it has; the canonical THINKING_BUDGET
+      ladder is the baseline, bounds narrow it).
+    - A JSON `null` inside effort values canonicalizes to the "none" off slot.
+    """
+    if not isinstance(reasoning_options, list):
+        return None, None, None
+    if not reasoning_options:
+        # `[]` - the model REASONS with no caller control (always-on).
+        return CONTROL_NONE, None, None
+    kinds: list[str] = []
+    efforts: list[str] | None = None
+    bounds: tuple[int, int] | None = None
+    for option in reasoning_options:
+        if not isinstance(option, dict):
+            continue
+        kind = option.get("type")
+        if kind == CONTROL_EFFORT:
+            values = option.get("values")
+            if isinstance(values, list):
+                parsed = [CONTROL_NONE if v is None else
+                          (v if isinstance(v, str) else None)
+                          for v in values]
+                parsed = [v for v in parsed if v is not None]
+                if parsed:
+                    efforts = tuple(parsed)
+            if CONTROL_EFFORT not in kinds:
+                kinds.append(CONTROL_EFFORT)
+        elif kind == CONTROL_TOGGLE:
+            if CONTROL_TOGGLE not in kinds:
+                kinds.append(CONTROL_TOGGLE)
+        elif kind == CONTROL_BUDGET:
+            lo = option.get("min")
+            hi = option.get("max")
+            if (isinstance(lo, int) and not isinstance(lo, bool) and lo > 0
+                    and isinstance(hi, int) and not isinstance(hi, bool) and hi > 0
+                    and lo <= hi):
+                bounds = (lo, hi)
+            if CONTROL_BUDGET not in kinds:
+                kinds.append(CONTROL_BUDGET)
+    if not kinds:
+        return None, None, None
+    ordered = [k for k in _CONTROL_ORDER if k in kinds]
+    control = CONTROL_NONE if not ordered else "+".join(ordered)
+    return control, efforts, bounds
 
 
 def capability_record_from_resolved(provider: str, model_id: str,
@@ -289,6 +381,9 @@ def capability_record_from_resolved(provider: str, model_id: str,
     costs = resolved.get("cost") or {}
     modalities = resolved.get("modalities") or {}
     reasoning_in_response, reasoning_field = assert_reasoning_replay(resolved)
+    reasoning_control, reasoning_efforts, thinking_budget_bounds = (
+        classify_reasoning_options(resolved.get("reasoning_options"))
+    )
     return CapabilityRecord(
         model_id=model_id,
         provider=provider,
@@ -303,6 +398,9 @@ def capability_record_from_resolved(provider: str, model_id: str,
         supports_reasoning=resolved.get("reasoning"),
         reasoning_in_response=reasoning_in_response,
         reasoning_field=reasoning_field,
+        reasoning_control=reasoning_control,
+        reasoning_efforts=reasoning_efforts,
+        thinking_budget_bounds=thinking_budget_bounds,
         modalities_in=tuple(modalities["input"]) if modalities.get("input") else None,
         modalities_out=tuple(modalities["output"]) if modalities.get("output") else None,
         open_weights=resolved.get("open_weights"),
@@ -344,6 +442,12 @@ def capability_to_model_info(record: CapabilityRecord) -> dict:
         info["supports_structured_output"] = record.supports_structured_output
     if record.supports_reasoning is not None:
         info["supports_reasoning"] = record.supports_reasoning
+    if record.reasoning_control is not None:
+        info["reasoning_control"] = record.reasoning_control
+    if record.reasoning_efforts is not None:
+        info["reasoning_efforts"] = list(record.reasoning_efforts)
+    if record.thinking_budget_bounds is not None:
+        info["thinking_budget_bounds"] = list(record.thinking_budget_bounds)
     if record.reasoning_in_response is not None:
         # D11: interleaved: true -> reasoning_in_response asserted with
         # reasoning_field ABSENT (never authored, never guessed).

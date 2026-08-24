@@ -65,6 +65,15 @@ litellm_settings:
   # the proxy is the transport; client tuning params it does not understand
   # must not become a hard failure.
   drop_params: true
+  # ADR A5 (increment-3): the thinking-effort dial adapts the declared
+  # `reasoning_effort` to what the model actually offers (negotiate_thinking);
+  # `drop_params: true` would silently STRIP the adapted level for generic
+  # `openai/` deployments before it reaches the upstream. `allowed_openai_params`
+  # force-forwards `reasoning_effort` specifically for the reasoning-capable
+  # deployments the sync registers, while `drop_params` stays the safety net
+  # for genuinely unknown params (operator-ratified 2026-08-22, litellm 1.96.0
+  # has no `passthrough_unknown_openai_params`).
+  allowed_openai_params: ["reasoning_effort"]
   # D8 auto-inject: gateway-wide prompt-caching breakpoints for Claude-family
   # models. No-op on the current openai-compatible provider set (DeepSeek +
   # OpenAI cache automatically server-side). Forwards client `cache_control`

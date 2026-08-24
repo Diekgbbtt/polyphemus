@@ -93,7 +93,7 @@ def _run(store, candidates, *, reason_fn=None, rematch=None, **kwargs) -> Orches
         run_id="run-1",
         candidates=candidates,
         tools=tools,
-        dispatch_fn=lambda config, routed=(): DispatchResult(
+        dispatch_fn=lambda config: DispatchResult(
             spec_ref="spec-1", pod_result_ref="pod-1",
             hypothesis_verdict="successful", feedback="ok",
         ),
@@ -336,7 +336,7 @@ def _arun(store, candidates, **kwargs):
     return asyncio.run(arun_orchestration(
         project_id="project-1", run_id="run-1", candidates=candidates,
         tools=_tools(store),
-        dispatch_fn=lambda config, routed=(): DispatchResult(
+        dispatch_fn=lambda config: DispatchResult(
             spec_ref="spec-1", pod_result_ref="pod-1",
             hypothesis_verdict="successful", feedback="ok"),
         rematch_fn=lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies"),
@@ -382,7 +382,7 @@ def test_arun_orchestration_does_not_block_the_event_loop():
         report = await arun_orchestration(
             project_id="project-1", run_id="run-1", candidates=[_candidate()],
             tools=_tools(_MemoryStore()),
-            dispatch_fn=lambda config, routed=(): DispatchResult(
+            dispatch_fn=lambda config: DispatchResult(
                 spec_ref="s", pod_result_ref="p",
                 hypothesis_verdict="successful", feedback="ok"),
             rematch_fn=lambda u, f, r: MatchVerdict(unit_id=u, fault_class=f, verdict="applies"),
