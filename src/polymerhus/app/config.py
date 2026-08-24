@@ -90,6 +90,10 @@ class Config:
     # process-wide ANALYSER_PASS_SEMAPHORE with a gate owned by the analysis
     # module, so analysis can pause/resume while recon and hunting keep running.
     ANALYSIS_PASS_GATE_WIDTH = int(os.environ.get("ANALYSIS_PASS_GATE_WIDTH", "1"))
+    # The hunting module's dispatch gate width (ADR #169 Q15): bounds the number
+    # of concurrently running hunting agent sessions per project. One width (the
+    # operator's ruling: effectively single-project execution, so one width).
+    HUNTING_DISPATCH_GATE_WIDTH = int(os.environ.get("HUNTING_DISPATCH_GATE_WIDTH", "20"))
     HUNTING_LIGHTRAG_TOOL = os.environ.get("HUNTING_LIGHTRAG_TOOL", "") == "1"
 
 config = Config()

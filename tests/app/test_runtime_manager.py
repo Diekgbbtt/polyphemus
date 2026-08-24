@@ -632,6 +632,187 @@ def test_gate_width_can_be_overridden_per_module(runtime):
     assert handle.gate.width == 2
 
 
+# --- per-session lifecycle (ADR #169 Q12/Q14) and the hunting dispatch
+# gate width (Q15): hold/resume/cancel a registered run by its session id
+# (= its registry run name), NOT module-wide, plus the configurable hunting
+# width that bounds concurrently running hunting sessions. Regression guard:
+# the module-wide pause/resume/drain/cancel tests above are untouched. --------
+
+def test_hold_one_session_holds_its_next_unit_while_a_sibling_proceeds(runtime):
+    """Q14 AC: a run held by its session id stops at its NEXT unit boundary
+    (the shared gate's dispatch point) while a sibling run of the same module
+    - using the SAME gate - keeps progressing; resume releases the held run."""
+    runtime.register_module("hunting")
+    gate = runtime.gate("hunting")
+    held_progress = []
+    sibling_progress = []
+
+    async def held_run():
+        for i in range(1500):
+            async with gate:
+                held_progress.append(i)
+                await asyncio.sleep(0.002)
+
+    async def sibling_run():
+        for i in range(400):
+            async with gate:
+                sibling_progress.append(i)
+                await asyncio.sleep(0.002)
+
+    fut_held = runtime.schedule("hunting", held_run(), name="hunting:r1:hunt:a")
+    fut_sib = runtime.schedule("hunting", sibling_run(), name="hunting:r1:hunt:b")
+
+    _wait_until(lambda: len(held_progress) > 5, timeout=5)
+
+    runtime.hold_session("hunting", "hunting:r1:hunt:a")
+    _wait_until_flat(held_progress, timeout=5)
+    time.sleep(0.03)
+    frozen = len(held_progress)
+    s0 = len(sibling_progress)
+    time.sleep(0.15)
+    assert len(held_progress) == frozen
+    assert len(sibling_progress) > s0
+    assert runtime.has_run("hunting", "hunting:r1:hunt:a")
+
+    runtime.resume_session("hunting", "hunting:r1:hunt:a")
+    _wait_until(lambda: len(held_progress) > frozen, timeout=5)
+
+    assert fut_held.result(timeout=15) is None
+    assert fut_sib.result(timeout=15) is None
+    assert runtime.run_ids("hunting") == []
+
+
+def test_cancel_a_session_by_id_while_a_sibling_run_continues(runtime):
+    runtime.register_module("hunting")
+    running = {"cancelled": 0, "survivor": 0}
+
+    async def ticker(key, entered, cleaned):
+        entered.set()
+        try:
+            while True:
+                running[key] += 1
+                await asyncio.sleep(0.005)
+        finally:
+            cleaned.set()
+
+    entered_a = threading.Event()
+    cleaned_a = threading.Event()
+    entered_b = threading.Event()
+    cleaned_b = threading.Event()
+
+    fut_a = runtime.schedule(
+        "hunting", ticker("cancelled", entered_a, cleaned_a),
+        name="hunting:r2:pod:a",
+    )
+    fut_b = runtime.schedule(
+        "hunting", ticker("survivor", entered_b, cleaned_b),
+        name="hunting:r2:pod:b",
+    )
+    assert entered_a.wait(timeout=5)
+    assert entered_b.wait(timeout=5)
+
+    runtime.cancel_run("hunting", "hunting:r2:pod:a")
+    with pytest.raises(concurrent.futures.CancelledError):
+        fut_a.result(timeout=5)
+    assert cleaned_a.wait(timeout=5)
+    assert runtime.run_ids("hunting") == ["hunting:r2:pod:b"]
+
+    before = running["survivor"]
+    time.sleep(0.1)
+    assert running["survivor"] > before
+
+    runtime.cancel_run("hunting", "hunting:r2:pod:b")
+    with pytest.raises(concurrent.futures.CancelledError):
+        fut_b.result(timeout=5)
+    assert runtime.run_ids("hunting") == []
+
+
+def test_hold_session_unknown_and_resume_not_held_follow_run_conventions(runtime):
+    """A hold on an unregistered run id raises RunNotRegistered (mirroring
+    cancel_run); a resume of an unknown OR a registered-but-not-held run is a
+    no-op (mirroring resume's non-paused no-op)."""
+    runtime.register_module("hunting")
+    with pytest.raises(RunNotRegistered):
+        runtime.hold_session("hunting", "nope")
+    runtime.resume_session("hunting", "nope")
+
+    runtime.schedule("hunting", asyncio.sleep(2), name="hunting:r3:orchestrator")
+    _wait_until(
+        lambda: runtime.has_run("hunting", "hunting:r3:orchestrator"), timeout=5
+    )
+    runtime.resume_session("hunting", "hunting:r3:orchestrator")
+    runtime.cancel_run("hunting", "hunting:r3:orchestrator")
+    _wait_until(lambda: runtime.run_ids("hunting") == [], timeout=5)
+
+
+def test_module_level_hold_resume_route_through_the_active_runtime(runtime):
+    from polymerhus.app import runtime as runtime_mod
+
+    runtime.register_module("hunting")
+    entered = threading.Event()
+    progress = []
+
+    async def gated_run():
+        gate = runtime.gate("hunting")
+        for i in range(2000):
+            async with gate:
+                progress.append(i)
+                entered.set()
+                await asyncio.sleep(0.002)
+
+    fut = runtime.schedule("hunting", gated_run(), name="hunting:r4")
+    assert entered.wait(timeout=5)
+
+    runtime_mod.hold_session("hunting", "hunting:r4")
+    _wait_until_flat(progress, timeout=5)
+    frozen = len(progress)
+    time.sleep(0.05)
+    assert len(progress) == frozen
+
+    runtime_mod.resume_session("hunting", "hunting:r4")
+    _wait_until(lambda: len(progress) > frozen, timeout=5)
+    assert fut.result(timeout=15) is None
+    assert runtime.run_ids("hunting") == []
+
+
+def test_hunting_dispatch_gate_width_defaults_to_20(runtime):
+    from polymerhus.app.config import config as app_config
+    assert app_config.HUNTING_DISPATCH_GATE_WIDTH == 20
+    handle = runtime.register_module("hunting")
+    assert handle.gate.width == app_config.HUNTING_DISPATCH_GATE_WIDTH
+
+
+def test_hunting_dispatch_gate_width_is_configurable_via_constructor():
+    rm = RuntimeManager(gate_widths={"hunting": 5})
+    handle = rm.register_module("hunting")
+    assert handle.gate.width == 5
+
+
+def test_hunting_dispatch_gate_admits_n_and_gates_the_next_session(runtime):
+    """Q15 enforcement: with a width of 2, two hunting-session unit boundaries
+    are admitted concurrently and the NEXT waits until one releases."""
+    runtime.register_module("hunting", gate_width=2)
+    gate = runtime.gate("hunting")
+    admitted = []
+
+    async def session_run(i):
+        async with gate:
+            admitted.append(i)
+            await asyncio.sleep(0.3)
+
+    futs = [
+        runtime.schedule("hunting", session_run(i), name=f"hunt-s{i}")
+        for i in range(3)
+    ]
+    _wait_until(lambda: len(admitted) == 2, timeout=5)
+    time.sleep(0.1)
+    assert len(admitted) == 2
+    for fut in futs:
+        fut.result(timeout=10)
+    assert len(admitted) == 3
+    assert gate.available_permits() == gate.width
+
+
 # --- lifecycle + api route through the runtime when active ------------------
 
 def test_start_analysis_schedules_through_the_runtime_when_active(runtime, monkeypatch):
