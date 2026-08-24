@@ -78,9 +78,10 @@ _CONFIG_FILE_RE = re.compile(
     r"^(?P<unit>.+)_(?P<cwe>CWE-\d+)_(?P<cls>.*)\.yaml$"
 )
 
-# The writeable config directories. `consumed` is the inbox surfer's target
-# (G13, another workstream); the store exposes the primitive so the substrate
-# exists.
+# The writeable config directories. `consumed` is the inbox-surfer mover's
+# target (G13, ADR #169 Q3); the store exposes the produced-side read
+# (`read_produced_configs`) and the single-owner move primitive
+# (`consume_config`) the mover operates on (tracker #172).
 _CONFIG_DIRECTORIES = ("produced", "consumed")
 
 # Per-project write serialisation (I2): write_config is check-then-write and
@@ -328,6 +329,83 @@ class HuntStore:
                 if body is not None:
                     out.append(body)
             return out
+
+    def read_produced_configs(self, project_id: str) -> list[tuple[str, str]]:
+        """The PRODUCED-side inbox surface (ADR #169 Q3/G13, tracker #172):
+        `(semantic_key, config_file_name)` for every produced config, in
+        file-name order - what the inbox surfer operates on. `consumed/`
+        contributes nothing (its records are already dispatched and moved).
+
+        The identity round-trips from the FILE NAME (G4, first-class) so even
+        an unreadable/foreign body is surfaceable by its name; a name outside
+        the convention falls back to the body's identity (a file-name-less
+        degrade). Fail-open: a missing directory or an unskippable record
+        contributes nothing (O4)."""
+        with _lock_for(project_id):
+            directory = self._produced_dir(project_id)
+            if not directory.exists():
+                return []
+            out: list[tuple[str, str]] = []
+            for path in sorted(directory.glob("*.yaml")):
+                parsed = parse_config_file_name(path.name)
+                if parsed is not None:
+                    out.append((semantic_key(*parsed), path.name))
+                    continue
+                item = self._config_with_key(path)
+                if item is not None:
+                    out.append((item[0], path.name))
+            return out
+
+    def consume_config(self, project_id: str, key: str) -> bool:
+        """Move one produced config to consumed/ - the single-owner
+        produced->consumed transition of the inbox-surfer protocol
+        (ADR #169 Q3/G13, tracker #172): ONLY the mover calls this (the
+        single-owner rename, #172 AC). `key` is the config's SEMANTIC key
+        (the store's canonical identity, G4); the file name round-trips from
+        it, so a produced config at that identity is renamed to consumed/.
+
+        True when the config now lives in consumed/ - renamed NOW, or already
+        moved by an earlier tick (at-least-once: the repeated invocation of a
+        confirmed move is a no-op success, never an error). False when NO such
+        record exists in either side (nothing to move). Raises on a genuine
+        storage failure (O3 - the caller warns and counts, never aborting the
+        tick) and on a non-3-part key (a revival-key prefix names several
+        configs - ambiguous, refused). Runs under the project's lock (I2,
+        mirroring `write_config`), so the rename is not TOCTOU.
+
+        The G4 novelty gate makes produced/ and consumed/ MUTUALLY EXCLUSIVE
+        per name; a store where BOTH hold the same name is corrupted, and the
+        move refuses to clobber the consumed record (at-least-once: a moved
+        message is never lost to a re-write)."""
+        parts = key.split(KEY_SEPARATOR)
+        if len(parts) != 3:
+            raise ValueError(
+                f"consume_config needs the full 3-part semantic key; "
+                f"a {len(parts)}-part key {key!r} names several configs"
+            )
+        name = config_file_name(*parts)
+        with _lock_for(project_id):
+            produced = self._produced_dir(project_id) / name
+            consumed = self._consumed_dir(project_id) / name
+            if produced.exists() and consumed.exists():
+                logger.warning(
+                    "hunt store: both produced/ and consumed/ hold %s for "
+                    "%s; refusing to clobber the consumed record (fail-open)",
+                    name, project_id,
+                )
+                return False
+            if not produced.exists():
+                return consumed.exists()
+            if consumed.exists():
+                logger.warning(
+                    "hunt store: consume of %s has produced/ and consumed/ "
+                    "both on disk; refusing to overwrite (fail-open)",
+                    name,
+                )
+                return False
+            consumed.parent.mkdir(parents=True, exist_ok=True)
+            os.replace(produced, consumed)
+            return True
 
     # --- notes surface (memory.yaml) ----------------------------------------------
 
