@@ -1,8 +1,9 @@
 """Unit tier: the in-memory context-management component - the experiment log,
 the dedup ledger, the filtered agent context, the
-BaseMessage id stamping (D84-4), and (D84-2) the pod-owned canonical spec hash
-+ HuntSession address derivation. The interim token-aware `curate_messages`
-compaction is removed (D84-13: #95's shared `CompactionManager` replaces it)."""
+BaseMessage id stamping (D84-4), and (D84-2/Q13) the HuntSession address
+derivation on the semantic `<fault>_<strategy>` spec id. The interim
+token-aware `curate_messages` compaction is removed (D84-13: #95's shared
+`CompactionManager` replaces it)."""
 from polymerhus.attack.hunting.pod.context import (
     ExperimentLog,
     _dicts_to_lc,
@@ -99,32 +100,6 @@ def test_runner_context_lists_executed_signatures():
     assert "Lap 2" in ctx
 
 
-def test_canonical_spec_hash_is_deterministic_and_shared_with_the_hunter():
-    """D84-2: the canonical spec fingerprint is owned by the pod; the parent
-    hunting agent's experiment-log key uses the SAME hash (the #164 rewrite
-    dropped its `_canonical_hash` re-export - the pod's `canonical_spec_hash`
-    is the single source, kept byte-identical so the pod's spec keys and the
-    parent's experiment log never drift). Deterministic across calls and
-    insensitive to dict key order (equal dicts hash equal, C9)."""
-    from polymerhus.attack.hunting.pod.context import canonical_spec_hash
-
-    spec_a = {"verification_symptoms": ["a"],
-              "payload_vector_space": {"method": "GET", "params": {"a": 1}}}
-    spec_b = {"target_identity": "svc", "assumptions": [], "rationale": "r"}
-
-    for spec in (spec_a, spec_b):
-        first = canonical_spec_hash(spec)
-        assert first == canonical_spec_hash(spec)      # stable across calls
-        assert len(first) == 64                        # sha256 hexdigest
-
-    # Key order never changes the hash (C9: an identical spec is never
-    # dispatched twice), and two distinct specs never collide.
-    shuffled = {"payload_vector_space": {"params": {"a": 1}, "method": "GET"},
-                "verification_symptoms": ["a"]}
-    assert canonical_spec_hash(spec_a) == canonical_spec_hash(shuffled)
-    assert canonical_spec_hash(spec_a) != canonical_spec_hash(spec_b)
-
-
 def test_start_run_clears_stale_summaries_across_all_on_file_orders(tmp_path):
     """D84-37 / the consolidated code-review finding: a re-run must NOT serve a
     prior run's `experiment_summary` for ANY order the new run does not reach
@@ -151,26 +126,27 @@ def test_start_run_clears_stale_summaries_across_all_on_file_orders(tmp_path):
 
 
 def test_pod_session_address_derives_a_per_spec_hunt_session():
-    """D84-2: `_pod_session_address` derives the pod's `HuntSession` address with
-    the canonical spec hash as the per-spec discriminator and the given role, so
-    concurrent pod sessions on one hunt never collide (#94); an empty hunt_id
-    defaults to "" rather than shifting the address."""
-    from polymerhus.attack.hunting.pod.context import canonical_spec_hash
+    """D84-2/Q13: `_pod_session_address` derives the pod's `HuntSession` address
+    with the semantic `<fault>_<strategy>` spec id (the #164 hunter's
+    `SpecItem.spec_id`, ADR #169 Q13 - never a content hash) as the per-spec
+    discriminator and the given role, so concurrent pod sessions on one hunt
+    never collide (#94); an empty hunt_id defaults to "" rather than shifting
+    the address."""
     from polymerhus.attack.hunting.pod.pod import _pod_session_address
 
-    spec = {"target_identity": "svc", "payload_vector_space": {"method": "GET"}}
-    addr = _pod_session_address("run-1", "hunt-A", spec, "pod_runner")
+    spec_id = spec_identifier("sqli", "blind")
+    addr = _pod_session_address("run-1", "hunt-A", spec_id, "pod_runner")
 
     assert addr.role_id == "pod_runner"
-    assert addr.spec == canonical_spec_hash(spec)
+    assert addr.spec == spec_id
     assert addr.run_id == "run-1"
     assert addr.hunt_id == "hunt-A"
     assert addr.thread_id.startswith("run-1:hunt-A:")
-    # The spec hash discriminates the thread: two specs on one hunt diverge.
+    # The semantic spec id discriminates the thread: two specs on one hunt
+    # diverge (per concurrent pod instance - Q13).
     other = _pod_session_address("run-1", "hunt-A",
-                                 {"target_identity": "svc",
-                                  "payload_vector_space": {"method": "POST"}},
+                                 spec_identifier("xss", "reflected"),
                                  "pod_runner")
     assert addr.thread_id != other.thread_id
     # A missing hunt_id never shifts the address (empty discriminators are dropped).
-    assert _pod_session_address("run-1", "", spec, "pod_triager").hunt_id == ""
+    assert _pod_session_address("run-1", "", spec_id, "pod_triager").hunt_id == ""

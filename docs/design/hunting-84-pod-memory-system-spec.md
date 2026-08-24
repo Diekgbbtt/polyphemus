@@ -158,10 +158,8 @@ data/<project_id>/test-executor-pod/
 - The `spec_id` crosses the typed handoff from the #164 hunter to the pod (the hunter mints it). The #164 spec
   explicitly reserves a DIFFERENT store for experiment logs, linked via the spec id (hunter spec lines 194-195) -
   this pod store IS that store.
-- The content-addressed full-instance hash is REJECTED as the identity axis. `canonical_spec_hash` may remain for
-  session-thread disambiguation ONLY (`D84-2` thread ids), never for memory keying.
-- Session THREAD ids stay hash-based and become an independent namespace from memory keys. `project_id` is the
-  store's scoping axis; the run/hunt/spec-hash is the session's identity axis.
+- The content-addressed full-instance hash is REJECTED as the identity axis, and the reconciliation (ADR #169 Q13) REMOVES `canonical_spec_hash` from every identity seam: the session-thread spec discriminator is the SAME semantic `<fault>_<strategy>` spec id as the memory key, never a hash.
+- Session THREAD ids and memory keys are ONE namespace on the semantic spec id (ADR #169 Q13): `HuntSession.spec` equals the pod-memory key (`<fault>_<strategy>`). `project_id` is the store's scoping axis; the run/hunt/semantic-spec-id is the session's identity axis.
 
 ### 3. Cardinality: per-variant log file owns the D6 slice + summary (D84-35, VERDICTED)
 

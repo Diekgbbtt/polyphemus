@@ -66,7 +66,7 @@ def reduce(state, action) -> dict:
     if s["phase"] == "p3_note" and a == "write_consolidated_note":
         # The one consolidated experiment summary, per-variant, in the pod
         # experiment-memory store (spec-keyed with variant children).
-        spec_key = "spec:" + (s.get("spec_hash") or "root")
+        spec_key = "spec:" + (s.get("spec_id") or "root")
         notes = {**s["memory"]["notes"]}
         entries = notes.get(spec_key) or []
         summary = (

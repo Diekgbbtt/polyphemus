@@ -198,21 +198,32 @@ def _export(state: PodState, *, verdict: str, reason: str, clean: bool,
 
 
 def _root_spec_id(state: PodState, spec_id: str | None) -> str:
-    """The memory-store key (D84-34): the #164 hunter's `spec_id`
-    (`<fault>_<strategy>`) crossed through the typed handoff. NO FALLBACK
-    (operator, 2026-08-23): the typed handoff is the runtime control-plane's
-    ownership (communicated by the inbox surfer loop), so a missing `spec_id`
-    is the dispatch's own anticipated failure mode, never the pod's to paper
-    over. A caller with a bound store but without a `spec_id` is a hard
-    configuration error - the dispatch must fail before the pod runs, never
-    persist under a hash. The session thread identity is ALWAYS the canonical
-    hash (`context.canonical_spec_hash`, unchanged), never this memory key."""
+    """The memory-store key AND the session-address spec discriminator
+    (D84-34/Q13): the #164 hunter's `spec_id` (`<fault>_<strategy>`) crossed
+    through the typed handoff. NO FALLBACK (operator, 2026-08-23): the typed
+    handoff is the runtime control-plane's ownership (communicated by the inbox
+    surfer loop), so a missing `spec_id` is the dispatch's own anticipated
+    failure mode, never the pod's to paper over. A caller with a bound store but
+    without a `spec_id` is a hard configuration error - the dispatch must fail
+    before the pod runs, never persist under a hash. Since ADR #169 Q13 the
+    session thread spec discriminator is THIS SAME memory key (the semantic
+    spec id, never a content hash)."""
     if not spec_id:
         raise ValueError(
             "pod memory requires the #164 hunter's spec_id "
             "(<fault>_<strategy>); a missing spec_id is the dispatch's "
             "failure mode, the pod never falls back to a hash")
     return spec_id
+
+
+def _mem_key(state: PodState, spec_id: str | None, memory_store) -> str:
+    """The ONE pod identity value (Q13): the semantic `<fault>_<strategy>`
+    spec id as the pod-memory key AND the `HuntSession.spec` discriminator,
+    resolved through the same helper so the two can never drift. Fail-closed
+    when a store is bound (`_root_spec_id` raises on a missing id); "" for a
+    store-less contract tier (the empty discriminator is dropped from the
+    session address, never shifting it)."""
+    return _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
 
 
 def _variant_order(state: PodState) -> int:
@@ -230,13 +241,15 @@ def _variant_order(state: PodState) -> int:
 def _harness_ctx(state: PodState, *, exec_fn, memory_store,
                  model_factory, spec_id) -> PodHarnessContext:
     """The run-scoped harness the production seams read (T7): exec/store/log/
-    variant/model factory, with the memory key on the #164 spec id (D84-34). The
-    memory key is required ONLY when a store is bound (a real persist path) -
-    the contract tier with no store never persists, so no spec_id is demanded
-    and the note tool degrades fail-open (O10). The KB query capability is the
-    single `query_lightrag` tool (lightrag branch, config-gated); the former
-    `kb_fn` symptom-technique seam (surface B) is retired."""
-    mem_key = _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
+    variant/model factory, with the memory key on the #164 spec id (D84-34) -
+    resolved through `_mem_key`, the SAME value `bind_pod_session` threads as
+    `HuntSession.spec` (ADR #169 Q13). The memory key is required ONLY when a
+    store is bound (a real persist path) - the contract tier with no store
+    never persists, so no spec_id is demanded and the note tool degrades
+    fail-open (O10). The KB query capability is the single `query_lightrag`
+    tool (lightrag branch, config-gated); the former `kb_fn` symptom-technique
+    seam (surface B) is retired."""
+    mem_key = _mem_key(state, spec_id, memory_store)
     return PodHarnessContext(
         exec_fn=exec_fn, memory_store=memory_store,
         spec_id=mem_key, log=state.get("log"),
@@ -289,7 +302,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
 
     def init(state: PodState) -> dict:
         spec = dict(state["spec"])
-        mem_key = _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
+        mem_key = _mem_key(state, spec_id, memory_store)
         # T2: the in-memory ExperimentLog is ALSO the symbolic-layer capture
         # middleware - bound to the store it re-persists every deterministic
         # mutation to the variant's experiment-log slice (init records v0 here).
@@ -322,7 +335,7 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         spec = state["spec"]
         if production_runner:
             log: ExperimentLog = state["log"]
-            mem_key = _root_spec_id(state, spec_id) if memory_store is not None else (spec_id or "")
+            mem_key = _mem_key(state, spec_id, memory_store)
             delta = _dicts_to_lc([{"role": "human",
                                    "content": compose_runner_delta(
                                        log, spec, state.get("feedback", ""),
@@ -331,11 +344,13 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                        spec_id=mem_key)}])
             before_obs = len(log.raw_observations)
             before_exec = len(log.executed)
-            # D84-7: the graph owns the pod-session binding - the `pod_runner`
-            # session + the run's compaction middleware + the harness context
-            # reach the production default seam out-of-band.
+            # D84-7/Q13: the graph owns the pod-session binding - the
+            # `pod_runner` session + the run's compaction middleware + the
+            # harness context reach the production default seam out-of-band;
+            # `HuntSession.spec` is the SEMANTIC spec id (`<fault>_<strategy>`),
+            # the SAME value the memory store keys on (ADR #169 Q13).
             with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "",
-                                  state.get("root_spec") or spec,
+                                  mem_key,
                                   role_id=POD_RUNNER_ROLE,
                                   middleware=runner_middleware,
                                   harness=_harness_ctx(
@@ -367,7 +382,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             }
         # --- the contract-tier lane (injected sync proposers) ------------------
         msgs = state.get("runner_messages", [])
-        with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "", spec,
+        with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "",
+                              _mem_key(state, spec_id, memory_store),
                               role_id=POD_RUNNER_ROLE, middleware=runner_middleware):
             step = await _await_seam(runner_step_fn, spec,
                                      _curated(msgs),
@@ -450,16 +466,18 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         symptoms = [str(s) for s in (spec.get("verification_symptoms", []) or [])]
         symbolic = evaluate_symptom(symptoms, obs)
         if production_triager:
-            # D84-23: the delta = the verbatim P3 note + the filtered context +
-            # the memory guidance + variant_refs; the thread holds the history,
-            # so only the delta is new_messages (D84-11).
+            # D84-23/Q13: the delta = the verbatim P3 note + the filtered
+            # context + the memory guidance + variant_refs; the thread holds
+            # the history, so only the delta is new_messages (D84-11). The
+            # session and memory ride the SAME semantic spec id.
+            mem_key = _mem_key(state, spec_id, memory_store)
             human = {"role": "human", "content": compose_triager_delta(
                 log, spec, obs, store=memory_store,
-                spec_id=(_root_spec_id(state, spec_id)
-                         if memory_store is not None else (spec_id or "")),
+                spec_id=mem_key,
                 order=_variant_order(state))}
             seam_view = [human]
         else:
+            mem_key = _mem_key(state, spec_id, memory_store)
             human = {"role": "human", "content": log.triager_context(spec, obs)}
             seam_view = _curated(state.get("triager_messages", [])) + [human]
         decision: dict = {}
@@ -473,10 +491,11 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                         "verdict": "unsuccessful", "terminal_reason": TECHNICAL_INFEASIBILITY,
                         "clean": False, "note": "no response captured (symbolic infeasibility)"}
         else:
-            # D84-7: the `pod_triager` session binding, same shape as the
-            # runner's - the graph owns the per-instance session address.
+            # D84-7/Q13: the `pod_triager` session binding, same shape as the
+            # runner's - the graph owns the per-instance session address and
+            # threads the semantic spec id (`<fault>_<strategy>`, ADR #169 Q13).
             with bind_pod_session(state.get("run_id") or POD_DEFAULT_RUN_ID, "",
-                                  state.get("root_spec") or spec,
+                                  mem_key,
                                   role_id=POD_TRIAGER_ROLE,
                                   middleware=triager_middleware,
                                   harness=_harness_ctx(

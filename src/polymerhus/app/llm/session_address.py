@@ -124,8 +124,10 @@ class HuntSession:
     """A hunt's stateful agent session. One thread per hunt (the hunter's author + judge
     + back-edge re-entries share it, so the judge resumes the author's reasoning), keyed
     by `hunt_id` so concurrent hunts never collide. The test-executor pod (#84) derives
-    its role threads from this same address: `spec` = the canonical spec hash, with
-    `role_id` = `pod_runner` | `pod_triager` (D84-2)."""
+    its role threads from this same address: `spec` = the semantic spec id
+    `<fault>_<strategy>` (the #164 hunter's `SpecItem.spec_id`, ADR #169 Q13 - NOT a
+    content hash, and the SAME value the pod-memory keys on), with `role_id` =
+    `pod_runner` | `pod_triager` (D84-2)."""
 
     run_id: str
     hunt_id: str

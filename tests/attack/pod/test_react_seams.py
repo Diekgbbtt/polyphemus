@@ -104,7 +104,7 @@ def _no_trace(_run_id):
 
 def _drive_runner(spec, hc, delta="lap 1 opener"):
     async def _drive():
-        with bind_pod_session("run-x", "", spec, role_id=POD_RUNNER_ROLE, harness=hc):
+        with bind_pod_session("run-x", "", SPEC_ID, role_id=POD_RUNNER_ROLE, harness=hc):
             return await default_runner_step_fn(spec, _dicts_to_lc(
                 [{"role": "human", "content": delta}]), 0)
     return _drive()
@@ -188,7 +188,7 @@ def test_production_seams_are_async():
 
 def _drive_triager(spec, hc, log):
     async def _drive():
-        with bind_pod_session("run-x", "", spec, role_id="pod_triager", harness=hc):
+        with bind_pod_session("run-x", "", SPEC_ID, role_id="pod_triager", harness=hc):
             # The graph passes the composed delta as DICT views (the seam's
             # boundary conversion is `_dicts_to_lc`) - mirror that here.
             return await default_triager_fn(spec, None,

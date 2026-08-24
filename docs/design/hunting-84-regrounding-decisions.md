@@ -31,14 +31,18 @@ A future many-to-one share is a one-line `model_key` edit if tuning shows no div
 
 ## D84-2 - Pod session address: reuse HuntSession + canonical hash (Q2 VERDICTED)
 
+**Superseded by the wiring reconciliation (ADR #169 Q13):** the spec discriminator is the SEMANTIC spec id
+`<fault>_<strategy>` (the #164 hunter's `SpecItem.spec_id`), threaded through the typed handoff; the canonical
+hash identity is REMOVED from the session-address spec discriminator and the pod-memory keys. The `HuntSession`
+reuse (the `spec` slot) survives; only the VALUE moved from a sha256 digest to the semantic spec id.
+
 **Decision:** Reuse the built `HuntSession(run_id, hunt_id, role_id, spec)` (`app/llm/session_address.py`) - its `spec` slot is explicitly reserved for the pod (#84 docstring).
 
-**Shape:** `HuntSession(run_id, hunt_id, role_id="pod_runner" | "pod_triager", spec=<spec_hash>)`.
-Thread id: `_compose(run_id, hunt_id, spec_hash, role_id)` -> `run:{hunt_id}:{spec_hash}:pod_runner` etc.
-Matches the ratified `run:{hunt_id}:{spec_hash}:pod` reservation (`llm-role-architecture-agent-prompt.md` §0.1 line 44).
+**Shape:** `HuntSession(run_id, hunt_id, role_id="pod_runner" | "pod_triager", spec=<spec_id>)` where `spec_id = <fault>_<strategy>` (Q13).
+Thread id: `_compose(run_id, hunt_id, spec_id, role_id)` -> `run:{hunt_id}:{spec_id}:pod_runner` etc.
+Matches the ratified `run:{hunt_id}:{spec_id}:pod` reservation (`llm-role-architecture-agent-prompt.md` §0.1 line 44, Q13-amended).
 
-**Spec discriminator:** The parent's canonical hash `hunting_agent._canonical_hash` (sha256 of sorted-json spec) - the same function that keys the parent's experiment log (C9 idempotency).
-Relocate the helper into `src/polymerhus/attack/hunting/pod/` (pure, e.g. `context.py` or `types.py`) and have `hunting_agent.py` import from the pod - pod is the substrate, parent consumes.
+**Spec discriminator:** The #164 hunter's semantic `SpecItem.spec_id` (`<fault>_<strategy>`, ADR #169 Q13) - the SAME value the pod-memory store keys on, so `HuntSession.spec` equals the pod-memory key. The old canonical hash (`canonical_spec_hash`, sha256 of sorted-json spec) is removed from the identity path.
 Ensures #85 fusion (`read_session_memory`) and #124 resume enumeration correlate by identical thread ids.
 
 **Rationale:** No new address type; reuses the reserved, typed `SessionAddress` Protocol shape; per-role threads under one spec (recon PodSession parity - configurator/triager each own thread).
@@ -369,7 +373,7 @@ seam is retired.
 **VERDICTED 2026-08-21:** prototype GREEN (28 tests in `tests/attack/pod/`), taxonomy ratified provisionally pending operator validation:
 
 - **Store root:** `src/polymerhus/attack/hunting/data/pod-memory/` (the hunting module's store seam, sibling to `data/hunts/`). Layout `<root>/specs/<spec_id>/notes.yaml`.
-- **`spec_id`:** `canonical_spec_id(spec)` = sha256 of sorted-key JSON, byte-identical to the parent's `hunting_agent._canonical_hash` (D84-2), relocated into the pod.
+- **`spec_id`:** `canonical_spec_id(spec)` = sha256 of sorted-key JSON, byte-identical to the parent's `hunting_agent._canonical_hash` (D84-2), relocated into the pod. (AMENDED: D84-34 lands `<fault>_<strategy>` as the identity - `canonical_spec_id` is superseded and never made it into code; see D84-2's supersession note for the session-discriminator move.)
 - **Note key hierarchy:** `notation_key(spec_id, variant_ref, note_name) = "<spec_id>:<variant_ref>:<note_name>"` - parent index = spec id (D84-19.3 per-variant, per-stretch).
 - **Note VALUE fields (the consolidation attributes, D84-20; superseded field set by D84-30/31/32):** `{_seq, _ref, key, spec_id, variant_ref, note_name, kind, body, classification, symptom_status, differential_shape, kb_primitives_used, exhaustion_evidence, resume_point, evidence, provenance}`; `_seq` monotonic per spec, `_ref = note-<seq:04d>`; append-only; grep-match read (`parent_key` / `key_keyword` / `body_keyword`); read-latest. The CANONICAL landed fields omit `differential_shape`/`resume_point` (D84-32).
 - **Closed `POD_NOTE_KINDS`:** `("experiment_summary", "kb_insight", "freeform")` - `experiment_summary` = the ONE consolidated P3 note per stretch (primary triager artifact, D84-17/19/23); `kb_insight` = a KB-derived testing primitive (the `implicit_test_primitive` analogue); `freeform` = any forward-useful note.
@@ -466,9 +470,11 @@ ordinal. Combined identity: `experiment-logs/<fault>_<strategy>/<order>.yaml`.
   hunter owns minting it). The #164 spec explicitly reserves a DIFFERENT store for experiment logs, linked via the
   spec id / pod result ref (line 194-195) - this pod store IS that store.
 - Following variants are the next ordinal file (`0.yaml, 1.yaml, 2.yaml, ...`).
-- Session THREAD ids stay hash-based (D84-2) and NO LONGER coincide with memory keys - memory keys and thread ids
-  coexist as distinct namespaces. This is accepted: `project_id` is the store's scoping axis, the run/hunt/spec-hash
-  remains the session's identity axis.
+- Session THREAD ids, as of the wiring reconciliation (ADR #169 Q13), ride the SAME semantic spec id as the
+  memory keys - `HuntSession.spec` IS the pod-memory key (`<fault>_<strategy>`), one identity namespace. The
+  D84-2 hash discriminator is removed; `project_id` is the store's scoping axis, the run/hunt/spec-id is the
+  session's identity axis. (The pre-wiring text said "thread ids stay hash-based ... no longer coincide" - that
+  separation is REVERSED by Q13.)
 
 ## D84-35 - Cardinality: per-variant log file owns the D6 slice + summary (VERDICTED)
 
@@ -521,8 +527,9 @@ dedup becomes possible).
   handoff, not hashed.
 - `project_id` enters the pod store build from the parent hunting module context (parallel to #164's
   `data/<project_id>/hunting/test-specs/`).
-- Session thread ids (`run:{hunt_id}:{spec_hash}:pod_runner`, D84-2) keep the hash and become independent of memory
-  keys.
+- Session thread ids (`run:{hunt_id}:{spec_id}:pod_runner`, ADR #169 Q13) ride the SAME semantic spec id as the
+  memory keys - `HuntSession.spec` IS the pod-memory key (D84-34, Q13-amended; the D84-2 hash discriminator is
+  removed, these two namespaces are ONE).
 
 ## D84-39 - The PodExport body: the pod owns its OWN terminal result (T7/#183, grey-points 2026-08-24)
 

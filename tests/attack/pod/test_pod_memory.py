@@ -18,7 +18,6 @@ from __future__ import annotations
 
 import pytest
 
-from polymerhus.attack.hunting.pod.context import canonical_spec_hash
 from polymerhus.attack.hunting.pod.pod_memory import (
     POD_NOTE_KINDS,
     PodMemoryStore,
@@ -26,15 +25,6 @@ from polymerhus.attack.hunting.pod.pod_memory import (
     note_key,
     spec_identifier,
 )
-
-SPEC = {
-    "target_identity": "service:web:soupmarket",
-    "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
-    "testing_pattern": "blind-boolean",
-    "assumptions": ["network egress allowed"],
-    "payload_vector_space": {"method": "GET", "path": "/"},
-    "rationale": "reachability",
-}
 
 # The #164 `<fault>_<strategy>` spec id (D84-34), used as the memory key.
 SPEC_ID = spec_identifier("sqli", "blind")
@@ -62,10 +52,17 @@ def test_spec_identifier_rejects_a_pathological_keyword():
         spec_identifier(".", "x")
 
 
-def test_spec_id_is_not_the_session_hash():
-    # D84-34: the content-addressed full-instance hash is REJECTED as the memory
-    # identity axis; it remains ONLY the session-thread discriminator.
-    assert SPEC_ID != canonical_spec_hash(SPEC)
+def test_spec_id_is_the_semantic_key_never_a_content_hash():
+    # Q13 (ADR #169): the canonical-hash spec identity is REMOVED - the memory
+    # key AND the session-address spec discriminator are the semantic
+    # `<fault>_<strategy>` id, which differs from any content hash BY
+    # CONSTRUCTION: the id is the short sanitised keyword pair (the old
+    # sha256 spec digest was 64 hex chars), so SPEC_ID != hash holds without
+    # a hash ever being computed (the function is gone from the identity
+    # path).
+    assert SPEC_ID == "sqli_blind"
+    assert len(SPEC_ID) != 64                       # never the sha256 digest shape
+    assert "_" in SPEC_ID                           # the semantic pair separator
 
 
 # --- the store layout: variants + experiment-log + notes.yaml (D84-33) ----------

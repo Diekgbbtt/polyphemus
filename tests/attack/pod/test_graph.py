@@ -14,7 +14,6 @@ import inspect
 from polymerhus.attack.hunting.llm import hunt_session
 from polymerhus.attack.hunting.pod import arun_pod
 from polymerhus.attack.hunting.pod.agents import symbolic_runner_step_fn
-from polymerhus.attack.hunting.pod.context import canonical_spec_hash
 from polymerhus.attack.hunting.pod.llm import (
     POD_DEFAULT_RUN_ID,
     POD_RUNNER_ROLE,
@@ -287,12 +286,13 @@ def test_clean_false_when_triager_reports_defence():
 # --- T3 (#153): graph-owned pod-session ContextVar binding (D84-7) -----------
 
 def test_runner_seam_observes_pod_runner_session_inside_a_hunt():
-    """D84-7: inside a parent `hunt_session`, the `runner_agent` node binds the
-    pod_runner role's typed `HuntSession` - the parent's run_id/hunt_id + the
-    canonical spec hash - around the seam call, so the default seam receives the
-    typed address (this spy reads the ContextVar like the default seam does; the
-    sync spy rides `asyncio.to_thread` via `_await_seam`, whose context copy
-    carries the binding)."""
+    """D84-7/Q13: inside a parent `hunt_session`, the `runner_agent` node binds
+    the pod_runner role's typed `HuntSession` - the parent's run_id/hunt_id +
+    the semantic `<fault>_<strategy>` spec id (the crossed handoff, ADR #169
+    Q13) - around the seam call, so the default seam receives the typed address
+    (this spy reads the ContextVar like the default seam does; the sync spy
+    rides `asyncio.to_thread` via `_await_seam`, whose context copy carries
+    the binding)."""
     seen = []
 
     def runner(spec, messages, tool_calls):
@@ -301,7 +301,7 @@ def test_runner_seam_observes_pod_runner_session_inside_a_hunt():
 
     with hunt_session("run-1", "hunt-A"):
         env = _run(arun_pod(VALID_SPEC, exec_fn=_exec(_OK), runner_step_fn=runner,
-                            triager_fn=None, trace_fn=_no_trace))
+                            triager_fn=None, trace_fn=_no_trace, spec_id=SPEC_ID))
 
     assert env["verdict"] == "successful"
     ctx = seen[0]
@@ -309,7 +309,7 @@ def test_runner_seam_observes_pod_runner_session_inside_a_hunt():
     assert ctx.address.role_id == POD_RUNNER_ROLE
     assert ctx.address.run_id == "run-1"
     assert ctx.address.hunt_id == "hunt-A"
-    assert ctx.address.spec == canonical_spec_hash(VALID_SPEC)
+    assert ctx.address.spec == SPEC_ID
 
 
 def test_runner_seam_sees_a_task_local_default_outside_a_hunt():
@@ -336,7 +336,8 @@ def test_runner_seam_sees_a_task_local_default_outside_a_hunt():
 def test_triager_seam_observes_pod_triager_session_inside_a_hunt():
     """The `triager` node binds the pod_triager role's `HuntSession` when its
     seam is consulted (the symbolic fast-path stays silent for a semantic
-    symptom), again deriving the instance from the parent hunt."""
+    symptom), again deriving the instance from the parent hunt and the crossed
+    semantic spec id."""
     spec = {**VALID_SPEC, "verification_symptoms": ["reflects the marker"]}
     seen = []
 
@@ -347,7 +348,7 @@ def test_triager_seam_observes_pod_triager_session_inside_a_hunt():
 
     with hunt_session("run-1", "hunt-A"):
         env = _run(arun_pod(spec, exec_fn=_exec(_ABSENT), runner_step_fn=symbolic_runner_step_fn,
-                            triager_fn=triager, trace_fn=_no_trace))
+                            triager_fn=triager, trace_fn=_no_trace, spec_id=SPEC_ID))
 
     assert env["verdict"] == "unsuccessful"
     ctx = seen[0]
@@ -355,7 +356,7 @@ def test_triager_seam_observes_pod_triager_session_inside_a_hunt():
     assert ctx.address.role_id == POD_TRIAGER_ROLE
     assert ctx.address.run_id == "run-1"
     assert ctx.address.hunt_id == "hunt-A"
-    assert ctx.address.spec == canonical_spec_hash(spec)
+    assert ctx.address.spec == SPEC_ID
 
 
 # --- T6 (#156): BaseMessage + add_messages channels (D84-4) -------------------

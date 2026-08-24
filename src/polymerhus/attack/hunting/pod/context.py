@@ -30,17 +30,6 @@ from polymerhus.attack.hunting.pod.types import (
 _BODY_SLICE = 1200
 
 
-def canonical_spec_hash(spec: dict) -> str:
-    """The canonical spec fingerprint (D84-2, relocated from the parent
-    `hunting_agent._canonical_hash`): equal D4 dicts hash equal regardless of
-    key order, so an identical spec is never dispatched twice (C9) and the pod's
-    per-spec session discriminator stays byte-identical to the parent's
-    experiment-log key."""
-    return hashlib.sha256(
-        json.dumps(spec, sort_keys=True, default=str).encode("utf-8")
-    ).hexdigest()
-
-
 def _message_id(role: str, content: str) -> str:
     """The deterministic channel-message id (D84-4): identical (role, content)
     stamps identically, so the graph channel's `add_messages` reducer merges
