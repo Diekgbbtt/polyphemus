@@ -117,18 +117,22 @@ class ExperimentLog:
         return order_of(ref)
 
     def start_run(self) -> None:
-        """A fresh run starts with a CLEAN slice for order 0 (D84-37: a re-run
-        rewrites the file - the persisted log is the current truth). Without
-        this, a prior run's `experiment_summary` terminal record would survive
-        into the new run's file until the new P3 write replaces it. Fail-open:
-        no store/no slice -> no-op."""
+        """A fresh run starts with CLEAN slices for EVERY on-file order
+        (D84-37: a re-run rewrites the files - the persisted log is the current
+        truth). Without this, a prior run's `experiment_summary` terminal record
+        would survive into the new run's file for any order the new run does not
+        reach with a fresh P3 write (a budget/triager terminate mid-stretch
+        leaves the old order's summary served to the Triager). Fail-open: no
+        store/no spec_id -> no-op; an unreadable order is skipped, never a
+        raise."""
         if self.store is None or not self.spec_id:
             return
         try:
-            current = self.store.read_experiment_log(self.spec_id, 0)
-            if isinstance(current, dict) and current.get("experiment_summary"):
-                current.pop("experiment_summary")
-                self.store.write_experiment_log(self.spec_id, 0, current)
+            for order in self.store.list_variant_orders(self.spec_id):
+                current = self.store.read_experiment_log(self.spec_id, order)
+                if isinstance(current, dict) and current.get("experiment_summary"):
+                    current.pop("experiment_summary")
+                    self.store.write_experiment_log(self.spec_id, order, current)
         except Exception:  # noqa: BLE001 - fail-open (O3)
             pass
 
