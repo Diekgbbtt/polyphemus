@@ -16,13 +16,14 @@ VERBATIM. The toolkit lives in /Users/diekgbbtt/polymerhus/tools/eval/.
 Evaluate the WebExploitBench target <TARGET> with pass@k=<K>:
 - run the full per-trial workflow from the playbook section 2 (target up,
   kali aliasing, ground truth, the precomputed operator KB per target, the
-  recon configuration contract in section 2a VERBATIM, project + bootstrap +
-  recon + hunting via ph.py, evidence bundle via ev.py, the judgment
-  protocol, verdicts) and apply the execution discipline in section 2b -
-  monitor the state, detect failure modes, remediate with the smallest
-  blast radius (e.g. a stalled recon job: stop recon gracefully so analysis
-  still drains, then continue to hunting), and record every remediation in
-  trial.yaml
+  recon configuration contract in section 2a VERBATIM, project + settings,
+  the deterministic L1 scaffold via scaffold.py as PRIMARY - the LLM
+  bootstrap only as fallback, recon + hunting via ph.py, evidence bundle via
+  ev.py, the judgment protocol, verdicts) and apply the execution discipline
+  in section 2b - monitor the state, detect failure modes, remediate with the
+  smallest blast radius (e.g. a stalled recon job: stop recon gracefully so
+  analysis still drains, then continue to hunting), and record every
+  remediation in trial.yaml
 - tear down the target after every trial
 - report at the end: Pass@1 / Pass@3 (Avg) / Pass@3 (Max), the per-vuln-class
   and per-locus breakdowns, and the trial.yaml health rows

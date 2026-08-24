@@ -25,7 +25,8 @@ All commands run from the polymerhus repo root (`tools/eval/`).
 | `tools/eval/kb-authoring.md` | The operator-KB authoring prompt (research extensively -> decompose at very small granularity -> map services+systems -> withhold). Follow it VERBATIM at the KB stage. |
 | `tools/eval/ph.py project create <name>` | `project_id` (fresh per trial). |
 | `tools/eval/ph.py settings put <p> --target-seed <url> --operator-kb <file> [--toggle k=v ...]` | The settings PUT. |
-| `tools/eval/ph.py bootstrap <p> [--operator-kb <file>]` | Synchronous L1 skeleton build. 503 = blocked, do not proceed. |
+| `tools/eval/scaffold.py <p> --kb <file>` | THE PRIMARY L1-SCAFFOLDING PATH (primary importance): deterministically projects the precomputed operator_kb.md into the L1 Service/System skeleton through the platform's own `shells_to_batch` + `l1_curate` (no LLM call, no run-to-run drift). Run host-side with `PYTHONPATH=src` and the .env in-network view (`NEO4J_URI=bolt://localhost:7687`). `--dry-run` verifies without writing. |
+| `tools/eval/ph.py bootstrap <p> [--operator-kb <file>]` | FALLBACK scaffold only: the LLM bootstrap (two calls, non-deterministic). Use it ONLY when the scaffold errors. 503 = blocked, do not proceed. |
 | `tools/eval/ph.py recon launch <p> [--jobs a,b] [--no-analysis]` | `run_id` (combined recon+analysis by default). |
 | `tools/eval/ph.py recon poll <p> <run_id>` | Poll to terminal; prints per-job statuses. |
 | `tools/eval/ph.py hunting launch <p>` | `hunting_run_id` (whole-pipeline hunting launch). |
@@ -159,7 +160,15 @@ operator KB, research notes, evidence, verdicts, trial record - lands there.
    `--target-seed http://<domain>:<port>` (the DOMAIN, not the IP) +
    `--operator-kb tools/eval/kbs/<target>/operator_kb.md` + the contract
    toggles.
-6. `ph.py bootstrap`.
+6. **Scaffold the L1 skeleton - the deterministic path, PRIMARY IMPORTANCE**:
+   `PYTHONPATH=src` (repo root) `python3 tools/eval/scaffold.py <project_id>
+   --kb tools/eval/kbs/<target>/operator_kb.md`. This is THE way the L1 gets
+   scaffolded: deterministic, zero LLM calls, byte-identical skeleton per
+   target, and the dispositions (dropped kinds, normalized exposures) are
+   printed for the trial record. Zero services parsed = a BLOCKED scaffold:
+   stop the trial and record it. Only if the scaffold errors do you fall back
+   to `ph.py bootstrap <project_id>` (the non-deterministic LLM path), and the
+   fallback is recorded in `trial.yaml`.
 7. `ph.py recon launch` with the contract's job subset (section 2a).
 8. `ph.py recon poll` to terminal, running the monitoring loop (section 2b)
    throughout - every poll reads the state, detects failure modes, and applies
