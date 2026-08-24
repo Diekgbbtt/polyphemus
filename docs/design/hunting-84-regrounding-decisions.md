@@ -411,3 +411,98 @@ X1-X6 all verdicted. Remaining: (a) the spec re-write itself (from `hunting-67-t
 `NoteToolSpec` write fields: `operation, variant_ref, note_name, kind, body, classification, symptom_status, kb_primitives_used, exhaustion_evidence` + read filters `parent_key`, `key_keyword`, `body_keyword`.
 The prototype (`impl-20260821-220932` output) must be updated to these fields when T4 lands.
 These canonical fields govern the T7 note-tool build (D84-20/27); T0 ships no note fields nor a note tool.
+
+---
+
+## D84-33 through D84-38 - the pod memory-system adaptation (grilling 2026-08-23)
+
+Grilling on adapting the orchestrator memory-system pattern (`hunting-memory-system-spec.md`) to the pod
+experiment-log store, trading the content-addressed `_seq`/`_ref` model for the memory-system's deterministic-key
+pattern. All six VERDICTED. They amend D84-20/27/28/32 where they clash.
+
+## D84-33 - Directory layout: per-project, experiment-logs + notes (VERDICTED)
+
+**Decision:** The pod store moves to a per-project namespace under the hunting module's data seam, mirroring the
+#164 hunter's `data/<project_id>/hunting/test-specs/` topology (amends D84-28's fixed `data/pod-memory/` root and
+D84-20's "fixed root sibling to the hunt store" wording):
+
+```
+data/<project_id>/test-executor-pod/
+  experiment-logs/<spec-identifier>/<order-number>.yaml   (per-variant persisted experiment log, D6)
+  notes.yaml                                               (per-project note store, the kept kernel sink)
+```
+
+- `<project_id>` enters the pod store build (the parent provides it via the hunting module context).
+- No `produced`/`consumed` directories (the pod has no dispatch lifecycle - the experiment log is never "consumed").
+- No per-run kind files; no `_seq`/`_ref` anywhere.
+- `data/` resolves to the hunting module's store seam (`src/polymerhus/attack/hunting/data/`), sibling to the #164
+  hunter's `data/<project_id>/hunting/` tree.
+
+**Files:** `src/polymerhus/attack/hunting/pod/pod_memory.py` (store root + layout), spec 1.5 re-write.
+
+## D84-34 - Identity: `<fault>_<strategy>` + order number (VERDICTED)
+
+**Decision:** The spec identifier is the #164 hunter's `SpecItem.spec_id = "<fault>_<strategy>"` (hunter spec lines
+113, 177-178: "encodes the concrete fault semantic + testing strategy keywords"). The order number is the variant's
+ordinal. Combined identity: `experiment-logs/<fault>_<strategy>/<order>.yaml`.
+
+- The content-addressed full-instance hash is REJECTED as the identity axis (amends D84-2's memo-keying and
+  D84-28's `canonical_spec_id(spec)` specification).
+- The `spec_id` crosses the typed handoff from the #164 hunter to the pod (D4 gains the identifier transport; the
+  hunter owns minting it). The #164 spec explicitly reserves a DIFFERENT store for experiment logs, linked via the
+  spec id / pod result ref (line 194-195) - this pod store IS that store.
+- Following variants are the next ordinal file (`0.yaml, 1.yaml, 2.yaml, ...`).
+- Session THREAD ids stay hash-based (D84-2) and NO LONGER coincide with memory keys - memory keys and thread ids
+  coexist as distinct namespaces. This is accepted: `project_id` is the store's scoping axis, the run/hunt/spec-hash
+  remains the session's identity axis.
+
+## D84-35 - Cardinality: per-variant log file owns the D6 slice + summary (VERDICTED)
+
+**Decision:** One file per variant holds that variant's experiment-log slice: the variant spec + its raw
+observations + its interpretations + the `executed` dedup ledger for that stretch. The `experiment_summary` note is
+promoted to the TERMINAL RECORD of that variant's experiment-log file (the P3 consolidated summary the Runner
+writes lands IN `/experiment-logs/<spec_id>/<order>.yaml`, not in notes.yaml). `kb_insight` / `freeform` remain
+notes in the per-project `notes.yaml`, keyed `spec_id:<order>:<note_name>`.
+
+- The Triager reads the variant's experiment-log file (the terminal summary + the D6 slice) instead of a separate
+  summary note.
+
+## D84-36 - Attribute addressability in the reading tool; no `_seq`/`_ref` (VERDICTED)
+
+**Decision:** The reading surface addresses records by deterministic key pattern + typed attribute filters (the
+operator's own suggested mechanism replacing the `_seq` ambiguity). Adopt:
+
+- **Key pattern:** notes keyed `<spec_id>:<order>:<note_name>` (adapting D84-28's `notation_key` to the new
+  identity - the `_`/`:` separator ruling from the memory pattern applies).
+- **Read tool gains typed attribute filters:** `order` (the variant ordinal), `kind`, `classification`,
+  `symptom_status` become first-class read filters, retaining `parent_key` / `key_keyword` / `body_keyword`
+  substring match.
+- **No `_seq`/`_ref` on records:** ordering within a file is the natural list order; read returns latest-first by
+  list position (amends D84-32's canonical field set: `_seq` and `_ref` are REMOVED).
+- **Update/replace semantics displace counters:** re-run of the same (spec, order) REWRITES the experiment-log file
+  idempotently; a notes write appends a newer record under the same deterministic key and read resolves the latest.
+
+## D84-37 - Update/overwrite semantics (VERDICTED)
+
+**Decision:** The per-variant experiment-log file is overwritten idempotently on a re-run (one file per variant,
+the deterministic path is the address). The notes file is append-only with read-latest (a re-run appends a newer
+record under the same key). No `update`/`delete` cmds are added to the pod's `note` tool (the memory-spec's
+append/update/delete write options are the orchestrator's, not the pod's).
+
+## D84-38 - Migration scope: ALL of ExperimentLog persists (VERDICTED)
+
+**Decision:** The in-memory `ExperimentLog` migrates ENTIRELY to the persistent per-variant files: `variant_specs`,
+`raw_observations`, `interpretations` (the full D6 export) AND the `executed` dedup ledger. Runtime-only state
+(budget counters `HUNT_POD_MAX_TOOL_CALLS`, iterations, the current lap's working set) stays in the `PodState`
+graph channels. Persisting `executed` widens O7 dedup from within-run to within-`(project, spec, order)` (cross-run
+dedup becomes possible).
+
+## Reconciliation with #164
+
+- The spec identifier is minted by the #164 hunter's `SpecItem` (`spec_id = <fault>_<strategy>`) and transported to
+  the pod via the typed handoff. No upstream schema change is needed - the D4 base's identity is carried by the
+  handoff, not hashed.
+- `project_id` enters the pod store build from the parent hunting module context (parallel to #164's
+  `data/<project_id>/hunting/test-specs/`).
+- Session thread ids (`run:{hunt_id}:{spec_hash}:pod_runner`, D84-2) keep the hash and become independent of memory
+  keys.

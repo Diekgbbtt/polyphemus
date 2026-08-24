@@ -42,7 +42,7 @@ assumptions:
   - network egress allowed; https://soupmarket.shop reachable
   - registration with a fresh random email is unauthenticated and open (Juice
     Shop default)
-  - the security question is disclosed pre-auth for an existing user (verified live: admin's question leaks unauth)
+  - "the security question is disclosed pre-auth for an existing user (verified live: admin's question leaks unauth)"
   - the answer space of the observed question family is small/guessable (the
     hypothesis under test); the sacrificial account uses a deliberately weak
     answer so the positive control is valid
