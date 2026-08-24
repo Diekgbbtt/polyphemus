@@ -42,8 +42,6 @@ from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, spec_identi
 from polymerhus.attack.hunting.pod.tools import (
     ExecSpec,
     ExecTool,
-    KbRetrieveSpec,
-    KbRetrieveTool,
 )
 from polymerhus.attack.hunting.pod.types import RunnerStep, TERMINAL_REASONS
 from polymerhus.recon.domain.types import ExecResult
@@ -363,53 +361,6 @@ _TRIAGER_ABSENT = [
 ]
 
 
-# --- C13 - KB tool bound on the Runner (D84-16/26) ------------------------------
-
-def test_kb_retrieve_bound_and_fails_open(tmp_path):
-    """The production Runner's `create_agent` binds `kb_retrieve` - the KB wiring
-    hole is closed. The ReAct script issues exactly one `kb_retrieve` call, the
-    empty result fails open (O13: degrade to the spec's primitives), and the pod
-    lands a binary end with the KB call recorded once. T3 (#179): the KB
-    response is also RECORDED - the persisted variant experiment-log slice
-    carries a first-class `KbObservation` (distinct from the exec
-    `RawObservation`), so the trail captures the KB knowledge that drove the
-    probe's concretization."""
-    exec_calls = []
-    kb_calls = []
-    store = PodMemoryStore(tmp_path)
-    runner_script = [
-        AIMessage(content="", tool_calls=[
-            {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
-             "id": "c0"}]),
-        AIMessage(content="", tool_calls=[
-            {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
-        AIMessage(content="concluded; the observation grounds the verdict"),
-    ]
-    env = _run(arun_pod(
-        VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls), kb_fn=_kb_empty(kb_calls),
-        trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
-        model_factory=_factory({POD_RUNNER_ROLE: runner_script})))
-
-    assert len(kb_calls) == 1                       # the binding was EXERCISED
-    assert kb_calls[0] == "csrf patterns on form posts"
-    assert len(exec_calls) == 1
-    assert env["verdict"] == "successful"           # fail-open: the empty KB degraded
-    assert env["evidence"]["terminal_reason"] == "symptom-confirmed"
-    # T3: the KB response is RECORDED into the variant's persisted slice as a
-    # first-class `KbObservation` - distinct from the exec raw observation.
-    slice = store.read_experiment_log(SPEC_ID, 0)
-    kb_records = slice["kb_observations"]
-    assert len(kb_records) == 1
-    assert kb_records[0]["query"] == "csrf patterns on form posts"
-    assert kb_records[0]["variant_ref"] == "v0"
-    assert kb_records[0]["symptoms"] == []          # the empty KB recorded as empty
-    assert kb_records[0]["techniques"] == []
-    assert kb_records[0]["source"] is None
-    assert len(slice["raw_observations"]) == 1      # the exec observation still lands
-
-
-# --- C14 - the P3 note written and read by the triager (D84-17/19/23) -----------
-
 def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     """On P3 space exhaustion the production Runner writes the ONE consolidated
     `experiment_summary` as its FINAL tool call (D84-17/19); it lands as the
@@ -420,9 +371,6 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
     exec_calls = []
     store = PodMemoryStore(tmp_path)
     runner_script = [
-        AIMessage(content="", tool_calls=[
-            {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
-             "id": "c0"}]),
         AIMessage(content="", tool_calls=[
             {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
         AIMessage(content="", tool_calls=[
@@ -436,7 +384,7 @@ def test_note_written_on_p3_and_read_by_triager(tmp_path, monkeypatch):
         AIMessage(content="space exhausted; the consolidated summary was written"),
     ]
     env = _run(arun_pod(
-        VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls), kb_fn=_kb_empty(),
+        VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: runner_script,
                                 POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))
@@ -468,14 +416,11 @@ def test_production_run_persists_its_pod_export(tmp_path):
     store = PodMemoryStore(tmp_path)
     runner_script = [
         AIMessage(content="", tool_calls=[
-            {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
-             "id": "c0"}]),
-        AIMessage(content="", tool_calls=[
             {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
         AIMessage(content="symptom confirmed; the observation grounds the verdict"),
     ]
     env = _run(arun_pod(
-        VALID_SPEC, exec_fn=_exec(_OK), kb_fn=_kb_empty(), trace_fn=_no_trace,
+        VALID_SPEC, exec_fn=_exec(_OK), trace_fn=_no_trace,
         memory_store=store, spec_id=SPEC_ID, run_id="run-84",
         model_factory=_factory({POD_RUNNER_ROLE: runner_script})))
 
@@ -603,12 +548,10 @@ def test_tool_contract_coded_rejections(tmp_path):
     assert store.read_notes("spec-x") == []         # nothing rejected persisted
 
 
-def test_exec_and_kb_contracts_are_typed():
-    """`exec` and `kb_retrieve` carry the typed `extra="forbid"` schemas: a
-    foreign parameter is rejected at the schema boundary (D84-22), and the pod's
-    caps are never model-chosen fields."""
+def test_exec_contract_is_typed():
+    """`exec` carries the typed `extra="forbid"` schema: a foreign parameter is
+    rejected at the schema boundary (D84-22), and the pod's caps are never
+    model-chosen fields."""
     spec = ExecSpec(command="curl -k https://t/")
     assert spec.command == "curl -k https://t/"
     assert ExecSpec.model_config.get("extra") == "forbid"
-    assert KbRetrieveSpec.model_config.get("extra") == "forbid"
-    assert "command" not in KbRetrieveSpec.model_fields
