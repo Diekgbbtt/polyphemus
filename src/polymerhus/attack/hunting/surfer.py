@@ -130,7 +130,7 @@ class RunDispatchState:
 @dataclass(frozen=True)
 class SurferReport:
     """The surfer loop's terminal report: how many delivery laps ran, the last
-    `TicketReport`, and why the loop ended. `quiesced` True = the run's work is
+    `TickReport`, and why the loop ended. `quiesced` True = the run's work is
     exhausted (the natural terminal); False = the loop was cancelled."""
 
     ticks: int
