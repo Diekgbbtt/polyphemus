@@ -25,9 +25,10 @@ The at-least-once protocol (Q3):
   not raise `ModuleAdmissionRefused`) -> `to_move`: the produced->consumed
   move IS the at-least-once marker.
 - A refused dispatch (gate full -> `ModuleAdmissionRefused`, module paused /
-  draining) - or a missing dispatch coroutine (the T4-designed-not-built seam)
-  - -> `to_retry`, REMAINING in produced for the next tick: at-least-once,
-  never dropped, never moved.
+  draining) - a `coro_for` that raised, or a `coro_for` that answered
+  `None` (the item is not dispatchable this tick - a draft config/spec the
+  T4 run dispatch refuses) - -> `to_retry`, REMAINING in produced for the
+  next tick: at-least-once, never dropped, never moved.
 - An item whose session id is ALREADY LIVE in the registry is considered
   dispatched (Q12: session id = registry run name) - never re-dispatched
   (the double-dispatch defense at the deduction level) - and its move lands:
@@ -38,10 +39,11 @@ The at-least-once protocol (Q3):
 The mover owns NO scheduling (the runtime owns the loop), NEVER gates
 admission (the shared gate is the control plane's, Q15), and knows no
 producer/consumer coroutine (those are injected per tick as `coro_for`,
-wired by the run bootstrap - T4). The pod family's experiment-log
-consumption rides the hunter's idle loop (T4): the pod session scheme and the
-generic item model below are the structured surface it will operate on;
-nothing here dispatches `arun_pod` or reads the pod tree yet.
+wired by the run bootstrap - T4, `attack/hunting/surfer.py`). The pod
+family's experiment-log consumption rides the hunter's idle loop (T4): the
+pod session scheme and the generic item model below are the structured
+surface it operates on; the mover itself never builds a coroutine or reads
+the pod tree.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
 section 6): the active runtime resolves lazily on first control-plane use.
@@ -244,6 +246,24 @@ class DispatchControlPlane(Protocol):
         must stay in produced and be retried - at-least-once)."""
         ...
 
+    def gate(self) -> Any:
+        """The module's dispatch gate (Q15), or None when no manager is
+        bound. Accessed by the run bootstrap so the session coroutines it
+        builds acquire the same gate the control plane's admission uses."""
+        ...
+
+    def start_session(self, session_id: str, coro: Any) -> Any:
+        """Schedule a run SESSION (the orchestrator pass, the run-scoped
+        surfer) under its Q13 session id and return an awaitable of its
+        outcome, or None when not admitted. The mover never calls this - the
+        run bootstrap does, so it can await the sessions' settle."""
+        ...
+
+    def cancel_session(self, session_id: str) -> None:
+        """Hard-cancel ONE registered session by id (the per-session stop
+        verb, Q12). A no-op for a session that already settled."""
+        ...
+
 
 class RuntimeControlPlane:
     """The real control-plane seam (ADR #169 Q12): the SHARED runtime
@@ -255,7 +275,12 @@ class RuntimeControlPlane:
     schedule that raises outside admission degrades FAIL-OPEN to refused too
     (warned): the item stays in produced for the next tick, never dropped -
     the at-least-once ring over the control plane. `runtime` may be injected
-    (tests) or None (the process's active manager)."""
+    (tests) or None (the process's active manager).
+
+    The T4 session verbs (`start_session` / `cancel_session` / `gate`) are the
+    run bootstrap's seam over the SAME manager the mover's dispatch uses, so
+    the two always see one registry and one gate (Q12: session id = coroutine
+    id = registry run name)."""
 
     def __init__(self, runtime: Any = None, module: str = "hunting"):
         self._runtime = runtime
@@ -281,6 +306,19 @@ class RuntimeControlPlane:
             )
             return frozenset()
 
+    def gate(self) -> Any:
+        manager = self._manager()
+        if manager is None:
+            return None
+        try:
+            return manager.gate(self._module)
+        except Exception as exc:  # noqa: BLE001 - fail-open: no gate, sessions run ungated
+            logger.warning(
+                "mover: gate read of module %s failed (%s); "
+                "sessions run ungated (fail-open)", self._module, exc,
+            )
+            return None
+
     def dispatch(self, session_id: str, coro: Any) -> bool:
         manager = self._manager()
         if manager is None:
@@ -301,6 +339,42 @@ class RuntimeControlPlane:
             )
             return False
         return True
+
+    def start_session(self, session_id: str, coro: Any) -> Any:
+        manager = self._manager()
+        if manager is None:
+            logger.warning(
+                "mover: no active runtime to start session %s; "
+                "run degrades (fail-open)", session_id,
+            )
+            try:
+                coro.close()  # the session is never scheduled on a manager-less plane
+            except Exception:  # noqa: BLE001 - closing is best-effort
+                pass
+            return None
+        try:
+            return manager.schedule(self._module, coro, name=session_id)
+        except Exception as exc:  # noqa: BLE001 - admission refusal is a degraded run
+            logger.warning(
+                "mover: session %s not admitted (%s); run degrades",
+                session_id, exc,
+            )
+            try:
+                coro.close()
+            except Exception:  # noqa: BLE001 - closing is best-effort
+                pass
+            return None
+
+    def cancel_session(self, session_id: str) -> None:
+        manager = self._manager()
+        if manager is None:
+            return
+        try:
+            manager.cancel_run(self._module, session_id)
+        except Exception:  # noqa: BLE001 - already settled is fine
+            logger.warning(
+                "mover: session %s had no live run to cancel (no-op)", session_id,
+            )
 
 
 def run_delivery_tick(
@@ -344,11 +418,17 @@ def run_delivery_tick(
     for item in plan.to_dispatch:
         try:
             coro = coro_for(item)
-        except Exception as exc:  # noqa: BLE001 - the T4 seam is absent
+        except Exception as exc:  # noqa: BLE001 - a raising builder is a refusal
             logger.warning(
                 "mover: no dispatch coroutine for %s (%s); "
                 "retried next tick (fail-open)", item.message_id, exc,
             )
+            feedback[item.message_id] = DispatchFeedback.REFUSED
+            refused += 1
+            continue
+        if coro is None:
+            # The T4 seam answered "not dispatchable this tick" (a draft, a
+            # dropped config, a missing parent inbox): refused, at-least-once.
             feedback[item.message_id] = DispatchFeedback.REFUSED
             refused += 1
             continue

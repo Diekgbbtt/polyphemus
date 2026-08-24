@@ -98,6 +98,37 @@ def _tools(store: HuntStore, *, back_edge=None, read_fn=None) -> OrchestratorToo
     )
 
 
+class _LoopControl:
+    """A control-plane fake that RUNS the scheduled sessions as tasks on the
+    current loop (the T4 whole-pipeline tests' convention): the bootstrap
+    drives the orchestrator pass and the run-scoped surfer through it, so the
+    run completes with no live runtime installed."""
+
+    def __init__(self):
+        self._tasks: dict[str, asyncio.Task] = {}
+        self.started: list[str] = []
+
+    def live_session_ids(self):
+        return {sid for sid, task in self._tasks.items() if not task.done()}
+
+    def start_session(self, session_id, coro):
+        self.started.append(session_id)
+        task = asyncio.get_running_loop().create_task(coro)
+        self._tasks[session_id] = task
+        return task
+
+    def dispatch(self, session_id, coro):
+        return self.start_session(session_id, coro) is not None
+
+    def cancel_session(self, session_id):
+        task = self._tasks.get(session_id)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def gate(self):
+        return None
+
+
 # --- C1: bootstrap opens row and schedules on shared loop -------------------
 
 def test_integration_c1_bootstrap_schedules_on_shared_loop(tmp_path, monkeypatch):
@@ -117,8 +148,12 @@ def test_integration_c1_bootstrap_schedules_on_shared_loop(tmp_path, monkeypatch
     def fake_set(hunting_run_id: str, status: str) -> None:
         statuses.append((hunting_run_id, status))
 
+    def fake_list(project_id: str) -> list[dict]:
+        return []
+
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake_create)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake_set)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake_list)
 
     captured: dict = {}
 
@@ -131,6 +166,10 @@ def test_integration_c1_bootstrap_schedules_on_shared_loop(tmp_path, monkeypatch
 
     monkeypatch.setattr("polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration", fake_arun)
 
+    # A control-plane fake that RUNS the sessions on the test loop: the whole
+    # run (orchestrator pass + run-scoped surfer) is driven through the
+    # bootstrap without a live runtime (T4 wiring contract).
+    control = _LoopControl()
     hid = asyncio.run(hunting_runtime.start_hunting(
         "proj-1",
         candidates=[DeliveredCandidate(
@@ -139,6 +178,8 @@ def test_integration_c1_bootstrap_schedules_on_shared_loop(tmp_path, monkeypatch
             match_verdict="applies",
         )],
         tools=_tools(HuntStore(tmp_path)),
+        control=control,
+        tick_interval=0.001,
     ))
 
     assert hid == "run-c1"
