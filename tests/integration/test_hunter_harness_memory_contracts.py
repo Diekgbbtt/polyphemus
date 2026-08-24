@@ -1,15 +1,18 @@
-"""E1-E4 e2e walkthrough predicates for the hunter memory system
+"""H1-H4 harness-seam contract predicates for the hunter memory system
 (docs/design/hunting-164-assertion-catalogue.md).
 
-The walkthroughs drive the REAL turn-by-turn ReAct host
-(`build_sync_hunting_agent`) against the REAL per-project `HunterMemoryStore`
-on the filesystem and the REAL five-tool surface; the compiled state graph
-rides per status write. The only substitution is the LIVE EDGE - the LLM
-session, declared `model service, mode=scripted`: a scripted model emits
-`HunterStep` tool calls (the real-LLM whole-hunter walkthroughs E5-E8 land
-when the REST-capability workstream lands). Every terminal quantity is read
-back from the real YAML files the store wrote or from the recorded tool
-responses.
+These are CONTRACT predicates on the harness seam, not e2e walkthroughs: they
+drive the real turn-by-turn ReAct host (`build_sync_hunting_agent`) against the
+real per-project `HunterMemoryStore` and the real five-tool surface, with the
+LIVE EDGE - the LLM session - substituted by a scripted model emitting
+`HunterStep` tool calls. Per the to-assertions rule a path that substitutes its
+live edge is a simulation, so it lives in the INTEGRATION tier: it pins the
+harness's deterministic detection+push+hint wiring (status verbatim, phase
+hints verbatim, lifecycle-on-one-file, fault/note identifier equality). The
+live qualitative walkthrough of the same path - the real model through the
+co-located gateway - is the e2e tier's `test_hunter_memory_live_walkthrough.py`
+(E1). Every terminal quantity here is read back from the real YAML files the
+store wrote or from the recorded tool responses.
 """
 from __future__ import annotations
 
@@ -41,7 +44,7 @@ def _produced(tmp_path):
 # --- E1: the full lifecycle over the real store --------------------------------
 
 
-def test_E1_full_lifecycle_over_the_real_store(tmp_path):
+def test_H1_full_lifecycle_over_the_real_store(tmp_path):
     store = build_memory_store(tmp_path)
     steps = [
         _hunter_step("tool", reasoning="ground and hypothesise F1", tool="hunts_store", args={
@@ -89,7 +92,7 @@ def test_E1_full_lifecycle_over_the_real_store(tmp_path):
 # --- E2: fault and note share the identifier over the real pipeline ------------
 
 
-def test_E2_fault_and_note_share_the_identifier_over_the_real_pipeline(tmp_path):
+def test_H2_fault_and_note_share_the_identifier_over_the_real_pipeline(tmp_path):
     store = build_memory_store(tmp_path)
     steps = [
         _hunter_step("tool", tool="hunts_store", args={
@@ -124,7 +127,7 @@ def test_E2_fault_and_note_share_the_identifier_over_the_real_pipeline(tmp_path)
 # --- E3: all memory integration capabilities through the tool surface ----------
 
 
-def test_E3_all_memory_capabilities_through_the_tool_surface(tmp_path):
+def test_H3_all_memory_capabilities_through_the_tool_surface(tmp_path):
     store = build_memory_store(tmp_path)
     seen: list = []
     steps = [
@@ -188,7 +191,7 @@ def test_E3_all_memory_capabilities_through_the_tool_surface(tmp_path):
 # --- E4: the phase hints ride the tool responses and the graph tracks ----------
 
 
-def test_E4_phase_hints_ride_tool_responses_and_graph_tracks_the_loop(tmp_path):
+def test_H4_phase_hints_ride_tool_responses_and_graph_tracks_the_loop(tmp_path):
     store = build_memory_store(tmp_path)
     seen: list = []
     steps = [

@@ -106,67 +106,77 @@ are designed and accounted as validated, but blocked on that workstream.
   -> the tool returns `{"specs": [], "error": "read_failed", ...}` (degrades to
   an empty set, never raises into the turn).
 
+### The harness seam (deterministic, scripted live edge - integration, not e2e)
+
+Per the to-assertions rule a path that substitutes its live edge (the LLM) is a
+simulation, so these pin the harness's DETERMINISTIC wiring in the integration
+tier; the same path run live is the e2e tier's E1.
+
+- **H1 - the full lifecycle through the harness.** A scripted `HunterStep`
+  model drives hypothesise -> verify -> specify (F1) and hypothesise -> drop
+  (F2) through the real harness, real store, real graph -> EXACTLY TWO produced
+  files carrying the lifecycle terminals (`specified` / `dropped`), the
+  no-verdict idle, and the terminal state in the feedback (no stale
+  `hypothesised: F1`).
+- **H2 - fault and note share the identifier over the real pipeline.** The
+  scripted model hypothesises a fault for `fault_key` AND appends a note for
+  the same `fault_key` -> the produced file under `test-specs/<fault_key>/` and
+  the note record with `key == "<fault_key>:<note_name>"` both resolve by one
+  identifier.
+- **H3 - all memory integration capabilities through the harness.** The
+  scripted model exercises every `hunts_store` / `notes` read/write capability
+  -> the produced side holds exactly the surviving spec file, `notes.yaml`
+  holds exactly the surviving notes in append order, and the tool responses the
+  model saw carried the JSON contracts.
+- **H4 - the phase hints ride the tool responses verbatim and the graph tracks
+  the loop.** The scripted model does a grounding `kb_query`, then F1
+  hypothesised -> verified -> specified, F2 hypothesised -> dropped -> the
+  D3/D2/COMMIT/NEXT_ITERATION/NEXT_FAULT hints each ride their status-write
+  response verbatim, no hint leaks onto a later response, and the terminal
+  state shows the graph never stale.
+
 ## Walkthrough predicates (end-to-end)
 
-### Memory walkthroughs - executable now
+### Memory walkthroughs
 
-The **live edge** is the LLM session, declared per walkthrough as
-`model service, mode=scripted` - a scripted model emits `HunterStep` tool calls
-(the real-LLM mode is E5-E8, below). Every component the spec owns is real: the
-harness, the five-tool surface, the compiled graph, and the per-project store on
-the filesystem.
+The memory system's e2e verification is QUALITATIVE and LIVE, like the tier's
+other live walkthroughs: the stack runs at runtime state through the hunter's
+proper interface (`dispatch_fn(HuntConfig)`, the seam the inbox surfer feeds),
+with the REAL model resolved through the co-located gateway, the real
+per-project store on the filesystem, and the real compiled state graph. The
+procedure is orchestrated by an agent (the operator/agent runs the in-container
+probe and reads the report), not by a fixed script.
 
-- **E1 - the full lifecycle over the real store.** Grounds: G4 (the persisted
+- **E1 - the full happy path at runtime state.** Grounds: G4 (the persisted
   environment state IS the fault-processing tracker), spec 2.3, spec 6. Entry
-  seam: `dispatch_fn(HuntConfig)`. Input: a `HuntConfig` for
-  `(Service:slug:a, fault-x)`; the scripted model writes fault F1
-  hypothesised -> verified -> specified, fault F2 hypothesised -> dropped, then
-  answers. Path: harness -> `hunts_store` writes -> `HunterMemoryStore` -> the
-  graph pushes on each status verbatim -> the files evolve in place. Terminal:
-  EXACTLY TWO produced files `f1_probe.yaml` (status `specified`, `spec_id`
-  `S1`) and `f2_probe.yaml` (status `dropped`) under
-  `proj-a/test-specs/Service:slug:a|fault-x/produced/`; `hypothesis_verdict is
-  None`; feedback carries the terminal state `phase: concluded`, `- ratified:
-  S1`, `- dropped: F2`, and no `- hypothesised: F1`. Observed: the files read
-  back via `read_spec`; the state summary read back from the feedback.
-- **E2 - fault and note share the identifier over the real pipeline.** Grounds:
-  G6 (notes on the same data contract), G1/G2 (per-project topology). Entry
-  seam: `dispatch_fn`. Input: a `HuntConfig`; the scripted model hypothesises
-  fault F1 for `fault_key` AND appends a note for the same `fault_key`. Path:
-  harness -> `hunts_store` write + `notes` write -> both bodies under
-  `proj-a/`. Terminal: the produced spec file exists under
-  `test-specs/<fault_key>/produced/f1_probe.yaml` AND `notes.yaml` holds the
-  note with `fault_key == <fault_key>` and `key == "<fault_key>:decision"`;
-  `read_specs(<fault_key>)` and `read_notes(parent_key=<fault_key>)` both
-  resolve - one identifier walks both bodies. Observed: the two YAML files
-  read back.
-- **E3 - all memory integration capabilities in one hunt.** Grounds: spec 5
-  (the tool surface), G4-G6 (write modes, duplicate gate, notes options).
-  Entry seam: `dispatch_fn`. Input: a `HuntConfig`; the scripted model
-  exercises every memory capability - `hunts_store` write create/update,
-  `hunts_store` read (with statuses+attributes), `notes` write append/update/
-  delete, `notes` read (by parent key) - then answers. Path: harness ->
-  both tools -> the store. Terminal: the produced side holds EXACTLY ONE
-  surviving spec file (status `specified`); `notes.yaml` holds exactly the
-  surviving note in append order (the deleted note absent); the tool responses
-  the model saw carried the JSON contracts (create `ok:true`, read the filtered
-  projection, delete `ok:true`). Observed: the files read back + the recorded
-  tool responses.
-- **E4 - the phase hints ride the tool responses verbatim and the graph tracks
-  the loop.** Grounds: G9 (the phase-transition constants), spec 2.3, R4/GP8c
-  (detection + push, never stale). Entry seam: `dispatch_fn`. Input: a
-  `HuntConfig`; the scripted model does a grounding-phase `kb_query`, then F1
-  hypothesised -> verified -> specified, F2 hypothesised -> dropped, then
-  answers. Path: harness -> tool responses (each hint injected in the SAME
-  response as its status write, consumed before the next turn) -> graph pushes.
-  Terminal: the D3_HINT rides the kb_query response, D2_HINT the hypothesise
-  responses, COMMIT_SPECIFICATION_HINT the verify response, NEXT_ITERATION_HINT
-  the specify response, NEXT_FAULT_HINT the drop response - each verbatim inside
-  `<phase-transition-hint>`; no hint leaks onto a later unrelated response; the
-  terminal feedback shows the graph NOT stale - `- ratified: S1` and
-  `- hypothesised: F2` together, `- verified: F1` absent; the files carry the
-  lifecycle terminal statuses. Observed: the recorded tool responses + the
-  files + the feedback.
+  seam: `dispatch_fn(HuntConfig)` with the real model. Input: a `HuntConfig`
+  for `(Service:slug:a, fault-x)` with a real index card. Path: the real LLM
+  grounds, hypothesises candidate faults via `hunts_store`, verifies and
+  commit-specifies (or drops), takes notes, and concludes - the graph pushes on
+  each status verbatim, the phase-transition hints ride the tool responses, and
+  the produced spec files evolve in place. Terminal (asserted on the memory
+  invariants, not step counts): `hypothesis_verdict is None`; at least one
+  produced spec file under
+  `test-specs/<fault_key>/produced/<fault>_<strategy>.yaml` carrying a
+  lifecycle status; at least one fault reached a terminal status (`specified`
+  or `dropped`); the terminal state summary reached the feedback (`phase: ...`);
+  any note keys embed the config identifier (fault/note identifier equality).
+  Observed: the real produced YAML files and the notes file read back, plus the
+  dispatch feedback. Yields: `tests/e2e/test_hunter_memory_live_walkthrough.py`
+  (E1).
+
+  **Verified live (2026-08-24)**: agent-orchestrated run inside a one-off
+  `polymerhus-agent:latest` container on the runtime stack (real
+  `opencode-go:deepseek-v4-flash` via the co-located gateway, real store).
+  Report: `verdict: null`; FIVE produced spec files under
+  `test-specs/fault-x-service-a/produced/` all carrying `status: specified`
+  (the full hypothesise -> verified -> commit-specification lifecycle); one note
+  `fault-x-service-a:hunt-decision-trail` whose key embeds the same used
+  fault_key (identifier equality). All E1 assertions held.
+  Qualitative finding: the model intermittently emits `extra="forbid"`-violating
+  tool args (e.g. a string `provenance`, invented `kb_query` fields) because the
+  tool surface is prose-only - they degrade fail-open and the happy path still
+  completes, but the contract robustness is a follow-up item.
 
 ### Whole-hunter walkthroughs - blocked on the REST-capability workstream
 
