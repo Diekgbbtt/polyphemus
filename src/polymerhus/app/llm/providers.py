@@ -47,7 +47,16 @@ CONNECT_TIMEOUT_SECONDS = 10.0
 # via `LLM_MAX_COMPLETION_TOKENS` so a value that proves too tight in the field
 # is correctable without a rebuild; an unusable override is a config lie, so it
 # fails fast rather than silently degrading to the default.
-DEFAULT_MAX_COMPLETION_TOKENS = 32768
+#
+# 131072 (4x the old 32768 default) is the measured floor for a thinking-heavy
+# role: on `opencode-go/deepseek-v4-flash` the old budget exhausted on
+# `reasoning_content` alone (`finish_reason=length`, `content` empty, 111k-125k
+# reasoning chars) and the structured answer collapsed to the schema's
+# `confidence=0.0` default - the assigner's chunk-7+ total-withholding collapse
+# on run e3ff8d51 (A/B probe 2026-08-24: 32768 red, 131072 green with real
+# 0.9/0.85 confidences). A model whose budgeted window is 1M tokens can absorb
+# this without risk.
+DEFAULT_MAX_COMPLETION_TOKENS = 131072
 
 
 def max_completion_tokens() -> int | None:
