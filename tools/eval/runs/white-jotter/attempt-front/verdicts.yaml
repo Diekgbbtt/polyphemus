@@ -1,0 +1,92 @@
+# Oracle rehearsal verdicts - white-jotter attempt-front (degraded trail)
+#
+# Trial: project c7eb42e4-3ade-4e64-aef4-b9cc475ea592, recon 62f50080-...,
+# hunting NOT RUN (the e2e owns the hunting module - degraded trail).
+# Evidence: L0 graph (22 Endpoints, 44 Observations, 14 Headers), the
+# deterministic L1 scaffold, the KB + surface-map. No pod artifacts, no hunt
+# store records.
+
+- vuln_id: white-jotter-001
+  type: "Weak or Default Credentials"
+  location: "http://wj:8443/api/login"
+  verdict: partial
+  confidence: 0.3
+  evidence_refs:
+    - file: "graph.json"
+      quote: "Endpoint GET /login (SPA route) observed; account-sign-in L1 service scaffolded with a contract"
+    - file: "hunting_status.json"
+      quote: "null - hunting never ran"
+  notes: "The login LOCUS was approached (the /login SPA page and the
+    account-sign-in service exist) but the API locus /api/login was never
+    observed and NO credential-class reasoning exists anywhere - the
+    fault-class conjunct is empty on the degraded trail. partial, never
+    identified, per the protocol."
+
+- vuln_id: white-jotter-002
+  type: "Access Control Bypass / Unauthorized Read or Write"
+  location: "http://wj:8443/api/"
+  verdict: missed
+  confidence: 0.5
+  evidence_refs:
+    - file: "graph.json"
+      quote: "Endpoint GET /api observed (SPA route), no /api/* backend endpoints"
+  notes: "The generic /api SPA route was observed; the API surface behind it
+    (the /api/* endpoint family) is absent from the L0 graph. No
+    authorization reasoning. missed."
+
+- vuln_id: white-jotter-003
+  type: "Stored XSS"
+  location: "http://wj:8443/api/admin/content/article"
+  verdict: missed
+  confidence: 0.5
+  evidence_refs:
+    - file: "graph.json"
+      quote: "no /api/admin/* endpoint observed"
+  notes: "Locus absent, class absent. missed."
+
+- vuln_id: white-jotter-004
+  type: "Remote Code Execution"
+  location: "http://wj:8443/api/admin/user"
+  verdict: missed
+  confidence: 0.5
+  evidence_refs:
+    - file: "graph.json"
+      quote: "no /api/admin/* endpoint observed"
+  notes: "Locus absent, class absent. missed."
+
+- vuln_id: white-jotter-005
+  type: "SQL Injection"
+  location: "http://wj:8443/api/search"
+  verdict: missed
+  confidence: 0.5
+  evidence_refs:
+    - file: "graph.json"
+      quote: "no /api/search endpoint observed"
+  notes: "Locus absent, class absent. missed."
+
+- vuln_id: white-jotter-006
+  type: "Arbitrary File Read"
+  location: "http://wj:8443/api/file/"
+  verdict: missed
+  confidence: 0.5
+  evidence_refs:
+    - file: "graph.json"
+      quote: "no /api/file/* endpoint observed"
+  notes: "Locus absent, class absent. missed."
+
+- vuln_id: white-jotter-007
+  type: "IDOR / Unauthorized Write or Overwrite"
+  location: "http://wj:8443/api/register"
+  verdict: missed
+  confidence: 0.5
+  evidence_refs:
+    - file: "graph.json"
+      quote: "Endpoint GET /register observed (SPA route), no /api/register endpoint"
+  notes: "The SPA register page was observed; the API locus was not. missed."
+
+# Rehearsal outcome: the schema and the degraded-trail semantics work. The
+# trial itself is a REAL finding: the backend API surface (/api/*) was never
+# observed - katana crawled the SPA shell and jsluice reported success but no
+# /api/* endpoints landed in the graph. That is a discovery gap to chase with
+# the full (wired) hunting path and a jsluice-output inspection, not a
+# harness defect.

@@ -1,0 +1,30 @@
+{
+  "collected_at": "2026-08-25T00:51:14+0200",
+  "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+  "hunting_run_id": "hunting-not-run",
+  "recon_run": "62f50080-b895-4ce8-892b-5b813900b549",
+  "target_url": "http://dj-viscon-workshop-1.vsos.ethz.ch/",
+  "challenge": "pb-white-jotter",
+  "hunting_status": null,
+  "recon_status": "complete",
+  "analysis_status": "drained",
+  "stores": {
+    "hunt_store": {
+      "present": false
+    },
+    "project_memory": {
+      "present": false
+    },
+    "pod_memory": {
+      "present": false
+    },
+    "wiring_memory": {
+      "present": false
+    }
+  },
+  "kb": {
+    "operator_kb.md": false,
+    "research-notes.md": false
+  },
+  "elapsed_s": 2.2
+}
