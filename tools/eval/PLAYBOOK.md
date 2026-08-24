@@ -40,52 +40,21 @@ Env: `PH_API` (default `http://localhost:8080`), `EVAL_SSH_HOST`, `EVAL_WEB_DIR`
 
 ## 2a. The recon configuration contract (VERBATIM - do not improvise)
 
-### The target profile
-
-These targets are single-host web applications on one published port: no DNS
-zone of their own, no host-level services beyond the app, and no TLS
-termination inside the app (a TLS front, when present, is a separate reverse
-proxy). The pipeline is configured FOR THIS PROFILE:
-
-- **Subdomain discovery (subfinder, amass, dnsx, puredns, whois,
-  subdomain_takeover) is meaningless and excluded**: the seed is one concrete
-  host, not a zone - there is nothing to enumerate.
-- **Domain-to-IP reversal is meaningless**: the host is already known and
-  pinned (the kali `/etc/hosts` alias makes resolution deterministic).
-- **Host service scanning (naabu) is excluded**: the target is one app on one
-  published port; scanning the host probes unrelated infrastructure (the
-  reverse proxy, other containers) and produces off-scope noise.
-- **The browser crawl (steel_crawl) cannot run**: Steel is a CLOUD browser and
-  cannot reach a target exposed only on a private VM.
-- **Heavy content discovery (ffuf, kiterunner) is excluded**: OOM-prone on a
-  small host, and the app's surface is small enough for katana to cover.
-
-### The outlined default pipeline (single-host web app profile)
-
-1. `httpx` - surface probe of the seed host: mints the BaseURL, the root
-   Endpoint, the profile classification, and the response headers.
-2. `httpx_reprofile` - re-probes and classifies every BaseURL the crawlers
-   later mint (so the whole surface carries a profile).
-3. `katana` - crawls the app's own surface: endpoints, links, JS references.
-4. `jsluice` - mines the JS bundles for the API surface (XHR/fetch endpoints).
-5. `arjun` - parameter discovery on the found endpoints.
-
-Each job consumes only what the previous stage produced ON THE SEED HOST; the
-chain is closed on the app's own surface. This is the ONLY pipeline shape for
-this profile - the excluded families above are never re-added.
+The full recon pipeline CANNOT run against these targets: `steel_crawl`
+(Steel is a CLOUD browser - it cannot reach a target that is only exposed on a
+private workshop VM), and the DNS/port-scan jobs (subfinder, whois, dnsx,
+naabu) probe the VM's external surface, not the app, producing off-scope
+noise. The brute/content jobs (ffuf, kiterunner) are heavy and OOM-prone on a
+small host. Apply this contract for EVERY trial:
 
 Settings PUT body (`ph.py settings put`):
 
 ```
---target-seed <scheme>://<domain>:<published-port>   (the domain, never the IP)
+--target-seed http://<domain>:<published-port>     (the domain, never the IP)
 --operator-kb tools/eval/kbs/<target>/operator_kb.md
 --toggle streaming_analysis=true
 --toggle async_analysis_consumer=true
 ```
-
-The seed scheme follows how the target is exposed: plain `http` when reached
-directly, `https` when a TLS front routes the same host (the pipeline probes
-the scheme it is given).
 
 No `auth_context` is supplied: the seeded credentials of a target ARE its
 ground truth (e.g. siyucms' weak-credentials vuln) and must be discovered by
@@ -97,9 +66,11 @@ Recon launch (`ph.py recon launch`):
 --jobs httpx,httpx_reprofile,katana,jsluice,arjun
 ```
 
-`with_analysis` stays the default (combined recon+analysis). NEVER add
-subfinder, amass, whois, dnsx, puredns, subdomain_takeover, naabu, steel_crawl,
-ffuf, or kiterunner to the subset.
+`with_analysis` stays the default (combined recon+analysis). The five jobs are
+the whole contract: httpx (surface probe), httpx_reprofile (profile
+classification), katana (crawl), jsluice (JS endpoint mining), arjun
+(parameter discovery). NEVER add steel_crawl, ffuf, kiterunner, subfinder,
+whois, dnsx, puredns, naabu, or subdomain_takeover to the subset.
 
 ## 2b. The execution discipline (you are the driver of failure handling)
 

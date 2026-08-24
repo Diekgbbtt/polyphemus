@@ -357,38 +357,15 @@ def _host_of_url(url: str) -> str:
         return ""
 
 
-def _scope_host(raw: str) -> str:
-    """Normalize a seeded scope string the way asset hosts are normalized
-    (`_host_of_url`): strip a scheme and an explicit `:port`, so a seeded
-    AUTHORITY (e.g. `http://app.example.com:8443`) admits assets on the same
-    host. Bare hosts, IPs and wildcard apexes pass through unchanged. An IPv6
-    literal is never port-split (bracketed)."""
-    s = (raw or "").strip().lower().rstrip(".")
-    if not s:
-        return s
-    try:
-        parsed = urlparse(s)
-    except ValueError:
-        return s
-    if parsed.scheme and parsed.netloc:
-        s = parsed.netloc
-    if ":" in s and not s.startswith("["):
-        s = s.rsplit(":", 1)[0]
-    return s.rstrip(".")
-
-
 def host_in_scope(host: str, scope_domain: str) -> bool:
     """True when `host` is the scope domain itself or a subdomain of it.
 
     The scope domain is the seeded target (D14): the exact host in exact mode,
     the registrable apex in wildcard mode. Both admit the domain itself (the
     apex is in scope and is explicitly probed, D11) and any subdomain of it.
-    The scope side is normalized like the asset side (`_scope_host`), so a seed
-    carrying a scheme and/or an explicit port (`http://app.example.com:8443`)
-    still admits the assets its own probe mints.
     """
     host = (host or "").lower().rstrip(".")
-    scope = _scope_host(scope_domain)
+    scope = (scope_domain or "").lower().rstrip(".")
     if not host or not scope:
         return False
     return host == scope or host.endswith("." + scope)
