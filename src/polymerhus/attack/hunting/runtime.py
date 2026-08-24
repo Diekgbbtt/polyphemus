@@ -114,6 +114,148 @@ def schedule_hunting(coro: Coroutine[Any, Any, Any], *, name: str) -> Any:
     return _require_runtime().schedule("hunting", coro, name=name)
 
 
+def enqueue_hunt_config(project_id: str, config, *, hunt_store=None) -> str:
+    """The hunter-ONLY launch seam (T5, ADR #169 Q4/Q6): enqueue ONE produced
+    RATIFIED hunt config into the project's HuntStore `produced/` family - the
+    inbox-surfer mover's hunter-dispatch input. The run-scoped surfer picks it
+    up on the next tick and dispatches one hunter; a config waits in produced
+    (at-least-once) until a run's live surfer admits it, so the enqueue NEVER
+    fabricates a chained-dependency error (no orchestrator, no live run
+    required). `status` is forced to `ratified` - the enqueue injects a
+    dispatchable config, and the mover only dispatches ratified configs. A
+    config whose file-name identity already exists in produced/ or consumed/
+    raises `DuplicateConfigError` - the storage-layer novelty gate is the
+    server-side at-most-once marker for the item (a replayed enqueue is the
+    API's 409). Returns the config's semantic key.
+
+    Blocking file I/O: the API offloads via `asyncio.to_thread`. Write failure
+    raises to the caller (O3 - warned and counted), never a silent drop.
+    `hunt_store` injectable per s6 (tests use a temp-root store)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        HuntConfig,
+    )
+    from polymerhus.attack.hunting.hunt_store import HuntStore  # noqa: PLC0415
+
+    payload = (
+        config.model_dump() if isinstance(config, HuntConfig) else dict(config)
+    )
+    payload = {**payload, "status": "ratified"}
+    store = hunt_store if hunt_store is not None else HuntStore()
+    return store.write_config(project_id, payload, directory="produced")
+
+
+def enqueue_test_spec(
+    project_id: str,
+    *,
+    fault_key: str,
+    fault_keyword: str,
+    strategy_keyword: str,
+    spec: dict,
+    hunter_store=None,
+) -> str:
+    """The pod-ONLY launch seam (T5, ADR #169 Q4/Q6): enqueue ONE produced
+    SPECIFIED test spec into the project's HunterMemoryStore `produced/`
+    family - the inbox-surfer mover's pod-dispatch input. The run-scoped
+    surfer picks it up on the next tick and dispatches one pod; a spec whose
+    parent hunter (its `fault_key`'s config) was never dispatched stays in
+    produced (at-least-once) - NEVER a dependency error. `status` is forced to
+    `specified` (the mover's pod-dispatch gate). A spec whose
+    `<fault>_<strategy>` file already exists raises `DuplicateSpecError` - the
+    storage novelty gate, the at-most-once marker for the item. Returns the
+    written spec file stem.
+
+    Blocking file I/O: the API offloads via `asyncio.to_thread`. Write failure
+    raises to the caller (O3), never a silent drop. `hunter_store` injectable
+    per s6 (tests use a temp-root store)."""
+    from polymerhus.attack.hunting.hunter_memory import (  # noqa: PLC0415
+        HunterMemoryStore,
+    )
+
+    payload = dict(spec)
+    payload["status"] = "specified"
+    store = hunter_store if hunter_store is not None else HunterMemoryStore()
+    path = store.write_spec(
+        project_id, fault_key,
+        fault_keyword=fault_keyword, strategy_keyword=strategy_keyword,
+        spec=payload, mode="create", side="produced",
+    )
+    return path.stem
+
+
+async def launch_orchestrator(
+    project_id: str,
+    *,
+    run_id: str,
+    candidates: list | tuple | None = None,
+    tools=None,
+    hunt_store=None,
+    orchestrator_fn=None,
+    **orchestration_kwargs,
+) -> Any:
+    """The orchestrator-ONLY launch coroutine (T5, spec #169 "Singular
+    component launches"): ONE orchestration pass and NOTHING else - no
+    run-scoped surfer, no dispatch, no `hunting_runs` row. The pass is exactly
+    the one the whole-pipeline bootstrap would schedule (same tool/toolkit
+    construction, same `arun_orchestration` entry): it consumes the candidate
+    batch and writes its ratified configs into the project's HuntStore
+    produced family, where a later run's surfer (or a hunter-only launch)
+    dispatches them. The control plane schedules THIS coroutine under the ADR
+    Q13 orchestrator session id (`hunting:<run_id>:orchestrator`), so the
+    per-session verbs (hold/resume/cancel, ADR Q13/Q17) address it like any
+    orchestrator session.
+
+    The produced/consumed topology carries the orchestrator's OUTPUT (hunt
+    configs) but never its INPUT (the candidate batch is in-memory at
+    schedule), so the minimal faithful reading of "enqueues into the
+    component's handoff family" for the orchestrator is scheduling its pass;
+    the component consumes its candidate inbox asynchronously. Fail-open: an
+    orchestrator failure never raises through the control plane (logged).
+    Injectable seams (s6): `orchestrator_fn` and `orchestration_kwargs`
+    substitute the pass body for tests."""
+
+    async with hunting_module_context():
+        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+            OrchestratorTools,
+            ReadOnlyGraphView,
+        )
+        from polymerhus.attack.hunting.hunt_store import HuntStore  # noqa: PLC0415
+
+        if hunt_store is None:
+            hunt_store = HuntStore()
+        if tools is None:
+            try:
+                tools = OrchestratorTools(
+                    store_reads=hunt_store,
+                    graph_view=ReadOnlyGraphView(project_id),
+                )
+            except Exception:  # noqa: BLE001 - fail-open tools default
+                logger.warning(
+                    "launch_orchestrator: default tools unavailable; the pass "
+                    "grounds on the candidate set alone (fail-open)"
+                )
+                tools = OrchestratorTools(store_reads=hunt_store, graph_view=None)
+        try:
+            if orchestrator_fn is not None:
+                return await orchestrator_fn(
+                    project_id, run_id, candidates or (), tools,
+                    **orchestration_kwargs,
+                )
+            from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+                arun_orchestration,
+            )
+            return await arun_orchestration(
+                project_id, run_id, candidates or (), tools,
+                **orchestration_kwargs,
+            )
+        except asyncio.CancelledError:
+            raise
+        except Exception:  # noqa: BLE001 - fail-open into the run
+            logger.exception(
+                "launch_orchestrator: pass %s for project %s degraded (fail-open)",
+                run_id, project_id,
+            )
+
+
 def cancel_hunting(hunting_run_id: str) -> None:
     """The phase-1 cancellation seam (seam 2.2):
     `runtime.cancel_run("hunting", hunting_run_id)`. Fail-open: with no active

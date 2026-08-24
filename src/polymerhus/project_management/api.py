@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import uuid
 
 from fastapi import APIRouter, HTTPException
 from pydantic import BaseModel
@@ -280,6 +281,30 @@ class _HuntingCandidateIn(BaseModel):
     llm_witness: str | None = None
 
 
+def _hunting_candidates(body_candidates) -> list:
+    """Build the typed `DeliveredCandidate` batch from the wire shape, used by
+    the whole-pipeline and orchestrator-only launches. The verdict is coerced
+    onto the three-valued match-verdict Literal (a foreign value survives the
+    orchestrator's normalize-stage degrade, O7/O10)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        DeliveredCandidate,
+        Witness,
+    )
+
+    verdicts = {"applies", "does-not-apply", "insufficient-evidence"}
+    return [
+        DeliveredCandidate(
+            unit_id=c.unit_id,
+            fault_class=c.fault_class,
+            applies_witnesses=Witness(
+                deterministic=c.deterministic_witness, llm=c.llm_witness,
+            ),
+            match_verdict=c.verdict if c.verdict in verdicts else "applies",
+        )
+        for c in body_candidates
+    ]
+
+
 class HuntingLaunch(BaseModel):
     """The hunting launch body (#110): the optional initial candidate batch. An
     omitted/empty batch launches an empty pass (O1) to be fed later."""
@@ -309,10 +334,6 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
     pass (LLM turns) must never ride the uvicorn request loop."""
     from polymerhus.app.clients import pg
     from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.hunt_orchestrator import (
-        DeliveredCandidate,
-        Witness,
-    )
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
@@ -323,14 +344,7 @@ async def launch_hunting(project_id: str, body: HuntingLaunch) -> dict:
         )
     await _hunting_live_run_guard(project_id)
 
-    candidates = [DeliveredCandidate(
-        unit_id=c.unit_id,
-        fault_class=c.fault_class,
-        applies_witnesses=Witness(
-            deterministic=c.deterministic_witness, llm=c.llm_witness,
-        ),
-        match_verdict=c.verdict,
-    ) for c in body.candidates]
+    candidates = _hunting_candidates(body.candidates)
 
     hunting_run_id = await asyncio.to_thread(pg.create_hunting_run, project_id)
     try:
@@ -416,6 +430,188 @@ async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
     if row is None:
         raise HTTPException(status_code=404, detail="no hunting run for that hunting_run_id")
     return row
+
+
+# --- T5: singular component launches (spec #169 "Singular component launches",
+# ADR #169 Q4/Q6) -----------------------------------------------------------
+#
+# One endpoint per component that ENQUEUES into the component's handoff family
+# so the run-scoped inbox surfer's mover dispatches it on the next tick - a
+# singular launch never BOOTS a component directly and never fabricates a
+# chained-dependency error: the enqueue succeeds with or without a live run /
+# orchestrator and the component consumes its inbox asynchronously (a queued
+# item stays in produced until admitted - the at-least-once protocol). The
+# storage-layer novelty gates (`DuplicateConfigError` / `DuplicateSpecError`,
+# ADR G4) are the server-side at-most-once marker for a replayed enqueue (409).
+
+class HuntingOrchestratorLaunch(BaseModel):
+    """Orchestrator-only launch body: the candidate batch the pass consumes.
+    The pass itself writes the ratified configs into the project's HuntStore -
+    this endpoint schedules the pass, it never fakes the orchestrator's output
+    (the produced/consumed topology has no orchestrator INPUT family; the
+    candidate batch is in-memory at schedule, so the minimal faithful reading
+    of the orchestrator's "enqueue" is scheduling its pass)."""
+
+    candidates: list[_HuntingCandidateIn] = []
+
+
+class HuntingHuntLaunch(BaseModel):
+    """Hunter-only launch body: ONE produced RATIFIED hunt config to enqueue
+    into the project's HuntStore produced family (the mover's hunter-dispatch
+    input). The essential identity fields surface; the rest of the
+    `HuntConfig` parameter set (surface context, target caveats, prior-hunt
+    insights, tool registry) keeps its defaults."""
+
+    unit_id: str
+    fault_class: str
+    vulnerability_class: str = ""
+    hunt_id: str | None = None
+    research_direction: str = ""
+    rationale: str = ""
+    adversarial_capabilities: list[str] = []
+    assumptions: list[str] = []
+    technique_primitives: list[str] = []
+
+
+class HuntingPodLaunch(BaseModel):
+    """Pod-only launch body: ONE produced SPECIFIED test spec to enqueue into
+    the project's HunterMemoryStore produced family (the mover's pod-dispatch
+    input). `fault_key` is the 3-part config key the spec lives under; the
+    `<fault>_<strategy>` keywords name the spec file; `spec` is the
+    TestImplementationSpec wire shape (status forced to `specified`)."""
+
+    fault_key: str
+    fault_keyword: str
+    strategy_keyword: str
+    spec: dict = {}
+
+
+@router.post("/projects/{project_id}/hunting/orchestrator", status_code=202)
+async def launch_orchestrator_only(project_id: str, body: HuntingOrchestratorLaunch) -> dict:
+    """'Orchestrator only': schedule ONE orchestration pass through the
+    launcher seam - no surfer, no dispatch, no run (T5). The pass consumes
+    the candidate batch and writes its ratified configs into the project's
+    HuntStore for a later run to dispatch. The outcome is asynchronous; the
+    response carries the pass's run id for observability. 404 unknown project;
+    503 fail-closed on the control plane (a real LLM pass must never ride the
+    uvicorn request loop); admission refusal maps to 503."""
+    from polymerhus.app.clients import pg
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+
+    if not await asyncio.to_thread(pg.project_exists, project_id):
+        raise HTTPException(status_code=404, detail="unknown project")
+    if not hunting_runtime.hunting_control_plane_available():
+        raise HTTPException(
+            status_code=503,
+            detail="hunting control-plane runtime has not landed",
+        )
+
+    candidates = _hunting_candidates(body.candidates)
+    run_id = str(uuid.uuid4())
+    try:
+        hunting_runtime.schedule_hunting(
+            hunting_runtime.launch_orchestrator(
+                project_id, run_id=run_id, candidates=candidates,
+            ),
+            name=f"hunting:{run_id}:orchestrator",
+        )
+    except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
+        _admission_refused_503(exc)
+    return {
+        "component": "orchestrator",
+        "run_id": run_id,
+        "dispatched_asynchronously": True,
+    }
+
+
+@router.post("/projects/{project_id}/hunting/hunt", status_code=202)
+async def launch_hunt_only(project_id: str, body: HuntingHuntLaunch) -> dict:
+    """'Hunter only': enqueue ONE produced RATIFIED hunt config into the
+    project's HuntStore produced family so the run's inbox surfer dispatches
+    one hunter on the next tick (T5). The enqueue is a store write - it
+    succeeds with or without a live run or orchestrator (the config waits in
+    produced, at-least-once), so a chained-dependency error is never
+    fabricated. A REPLAYED enqueue whose config identity already exists (a
+    duplicate file in produced/ or consumed/) is refused 409 - the storage
+    novelty gate is the server-side at-most-once marker. 404 unknown project."""
+    from polymerhus.app.clients import pg
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        HuntConfig,
+        HuntPromptTemplate,
+    )
+    from polymerhus.attack.hunting.hunt_store import DuplicateConfigError
+
+    if not await asyncio.to_thread(pg.project_exists, project_id):
+        raise HTTPException(status_code=404, detail="unknown project")
+
+    config = HuntConfig(
+        hunt_id=body.hunt_id or (
+            f"{body.unit_id}::{body.fault_class}::{body.vulnerability_class}"
+        ),
+        unit_id=body.unit_id,
+        fault_class=body.fault_class,
+        vulnerability_class=body.vulnerability_class,
+        prompt_template=HuntPromptTemplate(
+            rationale=body.rationale, research_direction=body.research_direction,
+        ),
+        adversarial_capabilities=body.adversarial_capabilities,
+        assumptions=body.assumptions,
+        technique_primitives=body.technique_primitives,
+    )
+    try:
+        key = await asyncio.to_thread(
+            hunting_runtime.enqueue_hunt_config, project_id, config
+        )
+    except DuplicateConfigError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"this hunt config is already enqueued (at-most-once): {exc}",
+        ) from exc
+    return {
+        "component": "hunt",
+        "enqueued": True,
+        "enqueued_key": key,
+        "dispatched_asynchronously": True,
+    }
+
+
+@router.post("/projects/{project_id}/hunting/pod", status_code=202)
+async def launch_pod_only(project_id: str, body: HuntingPodLaunch) -> dict:
+    """'Pod only': enqueue ONE produced SPECIFIED test spec into the project's
+    HunterMemoryStore produced family so the run's inbox surfer dispatches one
+    pod on the next tick (T5). A spec whose parent hunter was never dispatched
+    stays in produced (at-least-once), never an error - the mover refuses and
+    retries. A REPLAYED enqueue whose `<fault>_<strategy>` file already exists
+    is refused 409 - the storage novelty gate, the at-most-once marker. 404
+    unknown project."""
+    from polymerhus.app.clients import pg
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.hunter_memory import DuplicateSpecError
+
+    if not await asyncio.to_thread(pg.project_exists, project_id):
+        raise HTTPException(status_code=404, detail="unknown project")
+
+    try:
+        spec_file = await asyncio.to_thread(
+            hunting_runtime.enqueue_test_spec,
+            project_id,
+            fault_key=body.fault_key,
+            fault_keyword=body.fault_keyword,
+            strategy_keyword=body.strategy_keyword,
+            spec=body.spec,
+        )
+    except DuplicateSpecError as exc:
+        raise HTTPException(
+            status_code=409,
+            detail=f"this test spec is already enqueued (at-most-once): {exc}",
+        ) from exc
+    return {
+        "component": "pod",
+        "enqueued": True,
+        "spec_file": spec_file,
+        "dispatched_asynchronously": True,
+    }
 
 
 # --- module-lifecycle surface (#118/#121): drive the runtime plane ------------

@@ -274,6 +274,195 @@ def test_launch_closes_the_orphan_row_on_admission_503(monkeypatch):
     assert row is not None and row["status"] == "failed"
 
 
+# --- T5: singular component launches (enqueue, never a dependency error) ------
+
+def test_hunt_launch_enqueues_via_the_launcher_seam(monkeypatch):
+    """Hunter-only launch routes through the launcher seam (the recording
+    stub): the endpoint enqueues the wire config into the project's HuntStore
+    via `enqueue_hunt_config` and acks asynchronously - it never boots a
+    hunter itself, never opens a run row."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    recorded: list[tuple] = []
+
+    def record(project_id, config):
+        recorded.append((project_id, config))
+        return f"{config.unit_id}::{config.fault_class}::{config.vulnerability_class}"
+
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    monkeypatch.setattr(hunting_runtime, "enqueue_hunt_config", record)
+
+    resp = client.post("/projects/p1/hunting/hunt", json={
+        "unit_id": "Service:slug:a", "fault_class": "fault-x",
+        "vulnerability_class": "CSRF", "research_direction": "rd",
+    })
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["component"] == "hunt" and body["enqueued"] is True
+    assert body["dispatched_asynchronously"] is True
+    assert body["enqueued_key"] == "Service:slug:a::fault-x::CSRF"
+    (pid, config) = recorded[0]
+    assert pid == "p1"
+    assert config.unit_id == "Service:slug:a"
+    assert config.fault_class == "fault-x"
+    assert config.vulnerability_class == "CSRF"
+    assert config.prompt_template.research_direction == "rd"
+
+
+def test_pod_launch_enqueues_via_the_launcher_seam(monkeypatch):
+    """Pod-only launch routes through the launcher seam (the recording stub):
+    the endpoint enqueues the wire spec into the project's HunterMemoryStore
+    via `enqueue_test_spec` and acks asynchronously."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    recorded: list[tuple] = []
+
+    def record(project_id, **kw):
+        recorded.append((project_id, kw))
+        return f"{kw['fault_keyword']}_{kw['strategy_keyword']}"
+
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    monkeypatch.setattr(hunting_runtime, "enqueue_test_spec", record)
+
+    resp = client.post("/projects/p1/hunting/pod", json={
+        "fault_key": "Service:slug:a::fault-x::CSRF",
+        "fault_keyword": "sqli", "strategy_keyword": "blind",
+        "spec": {"target_identity": "http://target/"},
+    })
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["component"] == "pod" and body["enqueued"] is True
+    assert body["spec_file"] == "sqli_blind"
+    (pid, kw) = recorded[0]
+    assert pid == "p1"
+    assert kw["fault_key"] == "Service:slug:a::fault-x::CSRF"
+    assert kw["spec"]["target_identity"] == "http://target/"
+
+
+def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatch):
+    """Orchestrator-only launch schedules ONE orchestration pass through the
+    launcher seam under the ADR Q13 orchestrator session id (no surfer, no run
+    row) and acks asynchronously - the pass consumes its candidate inbox on
+    the loop."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    fake_runtime = _FakeRuntime()
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    _patch_control_plane(monkeypatch, fake_runtime)
+
+    async def _pass_ran(*_a, **_kw):
+        return None
+
+    def record_pass(*_a, **_kw):
+        return _pass_ran()
+
+    monkeypatch.setattr(hunting_runtime, "launch_orchestrator", record_pass)
+
+    resp = client.post("/projects/p1/hunting/orchestrator", json={
+        "candidates": [{"unit_id": "Service:slug:a", "fault_class": "fault-x"}],
+    })
+
+    assert resp.status_code == 202
+    body = resp.json()
+    assert body["component"] == "orchestrator"
+    assert body["dispatched_asynchronously"] is True
+    assert body["run_id"]
+    assert fake_runtime.scheduled == [f"hunting:{body['run_id']}:orchestrator"]
+
+
+def test_hunt_launch_never_fabricates_a_dependency_error_without_a_run(monkeypatch):
+    """The hunter-only enqueue succeeds with NO live run and NO control plane
+    (the control plane is not gated for an enqueue - only the whole launch
+    and the orchestrator pass schedule): the config waits in produced,
+    at-least-once, until a run's surfer admits it. No chained-dependency
+    error is ever fabricated."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    _patch_control_plane(monkeypatch, None)  # no control plane at all
+    recorded = []
+    monkeypatch.setattr(
+        hunting_runtime, "enqueue_hunt_config",
+        lambda pid, config: recorded.append(pid) or "k",
+    )
+
+    resp = client.post("/projects/p1/hunting/hunt", json={
+        "unit_id": "Service:slug:a", "fault_class": "fault-x",
+        "vulnerability_class": "CSRF",
+    })
+
+    assert resp.status_code == 202
+    assert recorded == ["p1"]
+
+
+def test_hunt_launch_unknown_project_404(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: False)
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    called = []
+    monkeypatch.setattr(
+        hunting_runtime, "enqueue_hunt_config",
+        lambda pid, config: called.append(pid) or "k",
+    )
+
+    resp = client.post("/projects/nope/hunting/hunt", json={
+        "unit_id": "u", "fault_class": "f",
+    })
+
+    assert resp.status_code == 404
+    assert called == []
+
+
+def test_hunt_launch_replayed_enqueue_is_refused_409(monkeypatch):
+    """At-most-once on the enqueue (T5 AC4): the storage novelty gate
+    (`DuplicateConfigError` - a config identity already produced or consumed)
+    maps to 409 for a replayed enqueue - duplicate requests cannot
+    double-dispatch agents."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.hunt_store import DuplicateConfigError
+
+    def already_enqueued(pid, config):
+        raise DuplicateConfigError("already exists in produced/")
+
+    monkeypatch.setattr(hunting_runtime, "enqueue_hunt_config", already_enqueued)
+
+    resp = client.post("/projects/p1/hunting/hunt", json={
+        "unit_id": "u", "fault_class": "f", "vulnerability_class": "CSRF",
+    })
+
+    assert resp.status_code == 409
+    assert "already enqueued" in resp.json()["detail"]
+
+
+def test_pod_launch_replayed_enqueue_is_refused_409(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.attack.hunting.hunter_memory import DuplicateSpecError
+
+    def already_enqueued(pid, **kw):
+        raise DuplicateSpecError("spec file already exists")
+
+    monkeypatch.setattr(hunting_runtime, "enqueue_test_spec", already_enqueued)
+
+    resp = client.post("/projects/p1/hunting/pod", json={
+        "fault_key": "u::f::CSRF", "fault_keyword": "sqli",
+        "strategy_keyword": "blind", "spec": {},
+    })
+
+    assert resp.status_code == 409
+    assert "already enqueued" in resp.json()["detail"]
+
+
+def test_orchestrator_launch_fails_closed_503_without_control_plane(monkeypatch):
+    """The orchestrator pass is a real LLM stretch: fail-closed 503 while the
+    control plane has not landed, never booted on the request loop."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    monkeypatch.setattr(hunting_runtime, "_app_runtime", lambda: None)
+
+    resp = client.post("/projects/p1/hunting/orchestrator", json={})
+
+    assert resp.status_code == 503
+
+
 # --- POST /projects/{pid}/hunting/{rid}/stop -----------------------------------
 
 def test_stop_acknowledges_and_reaches_the_cancel_seam(monkeypatch):
