@@ -40,7 +40,10 @@ RUN = "run-1"
 UNIT = "Service:catalogue-and-discovery"
 CWE = "CWE-639"
 CLASS = "IDOR"
-FAULT_KEY = f"{UNIT}::{CWE}"
+# The hunter memory <fault_key> is the 3-part config key (G4, ADR Q13's
+# `config_id`): `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>`, the
+# config file-name stem. The 2-part revival key is NOT a fault_key.
+FAULT_KEY = f"{UNIT}_{CWE}_{CLASS}"
 
 
 def _config(**overrides) -> dict:
@@ -137,7 +140,7 @@ def test_empty_inbox_yields_a_noop_tick(stores):
 
 def test_admitted_config_is_dispatched_and_moves_to_consumed(stores):
     hunt, hunter = stores
-    key = _write_config(hunt)
+    _write_config(hunt)
     control = RecordingControlPlane()
     report = run_delivery_tick(
         PROJECT, RUN, hunt_store=hunt, hunter_store=hunter,
@@ -343,15 +346,31 @@ def test_consume_spec_rejects_path_traversal_spec_files(tmp_path):
             hunter.consume_spec(PROJECT, FAULT_KEY, bad)
 
 
+def test_consume_spec_requires_the_3_part_config_key(tmp_path):
+    """The fault_key is the 3-part config key (G4/ADR Q13): a 2-part revival
+    key is the config's prefix, not its identity, and is NOT accepted."""
+    hunter = HunterMemoryStore(tmp_path)
+    _write_spec(hunter)
+    with pytest.raises(ValueError, match="3-part"):
+        hunter.consume_spec(PROJECT, f"{UNIT}::{CWE}", "sqli_blind")
+    with pytest.raises(ValueError, match="3-part"):
+        hunter.write_spec(
+            PROJECT, f"{UNIT}::{CWE}",
+            fault_keyword="sqli", strategy_keyword="blind", spec=_spec(),
+        )
+    with pytest.raises(ValueError, match="3-part"):
+        hunter.read_spec(PROJECT, f"{UNIT}::{CWE}", "sqli", "blind")
+
+
 def test_list_fault_keys_and_produced_spec_files_are_deterministic(tmp_path):
     hunter = HunterMemoryStore(tmp_path)
     _write_spec(hunter, fault_key=FAULT_KEY, keyword="sqli", strategy="blind")
     _write_spec(hunter, fault_key=FAULT_KEY, keyword="xss", strategy="reflected")
-    other = f"Service:b::{CWE}"
+    other = f"Service:b_{CWE}_{CLASS}"          # a distinct 3-part config key
     _write_spec(hunter, fault_key=other, keyword="sqli", strategy="blind")
     assert hunter.list_fault_keys(PROJECT) == [other, FAULT_KEY]   # lexical order
     assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == ["sqli_blind", "xss_reflected"]
-    assert hunter.produced_spec_files(PROJECT, "nope") == []
+    assert hunter.produced_spec_files(PROJECT, "Service:zzz_CWE-999_X") == []
 
 
 # --- the real control-plane adapter: ModuleAdmissionRefused is the refusal ------

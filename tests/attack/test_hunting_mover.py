@@ -161,9 +161,9 @@ def test_family_items_mix_in_one_deduction():
         config_key="Service:a::CWE-639::IDOR",
     )
     spec = TestSpecItem(
-        message_id="Service:a::CWE-639/sqli_blind",
-        session_id="hunting:run-1:pod:Service:a::CWE-639:sqli_blind",
-        fault_key="Service:a::CWE-639",
+        message_id="Service:a_CWE-639_IDOR/sqli_blind",
+        session_id="hunting:run-1:pod:Service:a_CWE-639_IDOR:sqli_blind",
+        fault_key="Service:a_CWE-639_IDOR",
         spec_file="sqli_blind",
     )
     plan = deduce_delivery([cfg, spec], feedback={

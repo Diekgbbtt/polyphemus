@@ -85,10 +85,10 @@ def pod_session_id(run_id: str, config_id: str, spec_id: str) -> str:
     """The ADR Q13 pod session id: `hunting:<run_id>:pod:<config_id>:<spec_id>`.
     `spec_id` is the semantic spec file name `<fault>_<strategy>` (164 spec 6).
     `config_id` is the spec's parent config identity - for a produced spec the
-    memory-item key the spec lives under IS its config key (the
-    `<unit>::<fault>` `fault_key` folder), so the mover derives the pod
-    session from the spec's own keys, on the fly (Q13: session addresses
-    derive from the memory-item keys)."""
+    memory-item key the spec lives under IS its config key (the 3-part
+    `<unit_id>_<CWE_ID>_<vulnerability_class>` fault_key folder, G4/ADR Q13),
+    so the mover derives the pod session from the spec's own keys, on the fly
+    (Q13: session addresses derive from the memory-item keys)."""
     _require_non_empty(run_id, "run_id")
     _require_non_empty(config_id, "config_id")
     _require_non_empty(spec_id, "spec_id")
@@ -125,9 +125,11 @@ class HuntConfigItem(ProducedItem):
 @dataclass(frozen=True)
 class TestSpecItem(ProducedItem):
     """A produced test-implementation spec (hunter -> pod dispatch). `fault_key`
-    is the config key the spec lives under, `spec_file` the `<fault>_<strategy>`
-    file-name stem - the two together address the single-owner
-    `HunterMemoryStore.consume_spec` move (and the pod session id)."""
+    is the 3-part config key the spec lives under (the
+    `<unit_id>_<CWE_ID>_<vulnerability_class>` fault_key folder, G4/ADR Q13),
+    `spec_file` the `<fault>_<strategy>` file-name stem - the two together
+    address the single-owner `HunterMemoryStore.consume_spec` move (and the
+    pod session id, whose `config_id` segment IS the fault_key folder)."""
 
     fault_key: str
     spec_file: str

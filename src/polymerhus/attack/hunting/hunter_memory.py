@@ -17,9 +17,15 @@ Topology under the FIXED module root `HUNTER_MEMORY_ROOT`
     <project_id>/test-specs/<fault_key>/consumed/<fault>_<strategy>.yaml
     <project_id>/notes.yaml
 
-- `<fault_key>` is the config key itself (the `(unit_id, fault_class)`
-  identity, used verbatim as the folder name); the `<fault>_<strategy>.yaml`
-  file name encodes the concrete fault semantic + testing strategy keywords
+- `<fault_key>` is the 3-part config key (memory-system G4, ADR #169 Q13's
+  `config_id`): the `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>`
+  form, the config file-name stem, used VERBATIM as the folder name (unit
+  ids contain `:` and `-`, so `_` is the one safe separator; `:`, `-`, and
+  `::` remain legal path chars - the `::`-joined semantic key
+  `hunt_store.semantic_key(...)` round-trips the same 3 parts and is
+  accepted too). The 2-part revival key (`<unit_id>::<fault_class>`) is
+  NOT the config key and is REJECTED. The `<fault>_<strategy>.yaml` file
+  name encodes the concrete fault semantic + testing strategy keywords
   joined by `_`, the one safe separator (the pattern's ruling: `-`/`:` are
   poisoned as separators). Keywords are sanitised (`_`/`:`/path separators
   and control chars replaced with `-`).
@@ -68,7 +74,7 @@ from typing import Literal
 
 import yaml
 
-from .hunt_store import ProjectMemoryStore
+from .hunt_store import ProjectMemoryStore, parse_config_file_name
 from .hunter_state import FAULT_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -148,10 +154,12 @@ class HunterMemoryStore:
     """The hunter-owned per-project memory store (#164, GP6).
 
     Per-project, per-`fault_key` durable memory of the state-graph hunter:
-    one YAML file per authored spec (the produced/ file carries the status
-    lifecycle), produced/consumed directories, and a per-project notes file
-    on the same data contract. A project folder is created lazily at the
-    first write; it is never created eagerly.
+    the `fault_key` is the 3-part config key (`<unit_id>_<CWE_ID>_<
+    vulnerability_class>`, G4/ADR Q13 - the 2-part revival key is NOT
+    accepted). One YAML file per authored spec (the produced/ file carries
+    the status lifecycle), produced/consumed directories, and a per-project
+    notes file on the same data contract. A project folder is created lazily
+    at the first write; it is never created eagerly.
 
     Determinism + fail-open: writes raise on failure (the caller degrades to
     a warning and keeps serving - O3), reads raise on failure (the harness
@@ -172,7 +180,7 @@ class HunterMemoryStore:
         return self._root / str(project_id)
 
     def _spec_dir(self, project_id: str, fault_key: str) -> Path:
-        self._validate_component(fault_key, "fault_key")
+        self._validate_fault_key(fault_key)
         return self._project_dir(project_id) / "test-specs" / fault_key
 
     def _spec_file(
@@ -200,8 +208,10 @@ class HunterMemoryStore:
         """Reject a `project_id`/`fault_key` that is not one safe path component.
 
         The config key is used verbatim as the folder name, so `:` and `-`
-        are legal (they are the config key's identity chars); only path
-        separators, control chars, and dot-traversal forms are rejected."""
+        are legal (they are the config key's identity chars); a `::`-joined
+        semantic key is also a single safe component (its `::` shares the
+        unit-id `:` char class). Only path separators, control chars, and
+        dot-traversal forms are rejected."""
         if not isinstance(value, str) or not value:
             raise ValueError(f"hunter store: {what} must be a non-empty string")
         if value in (".", ".."):
@@ -211,6 +221,41 @@ class HunterMemoryStore:
         if any(ch in value for ch in "/\\\x00") or any(ord(ch) < 32 for ch in value):
             raise ValueError(
                 f"hunter store: {what} {value!r} contains a path separator or control character"
+            )
+
+    @staticmethod
+    def _validate_fault_key(fault_key: str) -> None:
+        """Reject a `fault_key` that is not the 3-part config key (G4/ADR Q13).
+
+        The folder name carries the config's identity: the `_`-joined
+        `<unit_id>_<CWE_ID>_<vulnerability_class>` config key (the canonical
+        form, matching the config file-name convention - validated through
+        the hunt store's own `parse_config_file_name`, so a unit id or class
+        containing `_` round-trips) OR the `::`-joined semantic key
+        (`hunt_store.semantic_key`); both are safe single path components
+        and both carry the full 3 parts (the carried-bare empty class
+        round-trips like the hunt store's, G4). The 2-part revival key
+        (`<unit_id>::<fault_class>`) is a PREFIX of a semantic key, not a
+        config key - a fault_key for the wrong (revival) grain is a caller
+        defect and is rejected."""
+        HunterMemoryStore._validate_component(fault_key, "fault_key")
+        if "::" not in fault_key:
+            # The canonical `_`-joined form: parse it as the config file-name
+            # convention (the last-two-underscores + `CWE-\\d+` middle), so a
+            # 2-part `_`-joined key (no class segment) is rejected too.
+            if parse_config_file_name(f"{fault_key}.yaml") is None:
+                raise ValueError(
+                    f"hunter store: fault_key {fault_key!r} is not the 3-part "
+                    f"config key <unit_id>::<CWE_ID>::<vulnerability_class> (or "
+                    f"its `_`-joined form); the 2-part revival key is NOT accepted"
+                )
+            return
+        parts = fault_key.split("::")
+        if len(parts) != 3 or not parts[0] or not parts[1]:
+            raise ValueError(
+                f"hunter store: fault_key {fault_key!r} is not the 3-part "
+                f"config key <unit_id>::<CWE_ID>::<vulnerability_class> (or "
+                f"its `_`-joined form); the 2-part revival key is NOT accepted"
             )
 
     @classmethod
@@ -304,6 +349,10 @@ class HunterMemoryStore:
     ) -> Path:
         """Write the fault/spec object to `test-specs/<fault_key>/<side>/<fault>_<strategy>.yaml`.
 
+        `fault_key` is the 3-part config key (the config's identity, G4):
+        the `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>` form (the
+        config file-name stem, ADR Q13's `config_id`) or its round-tripping
+        `::`-joined semantic key - the 2-part revival key is NOT accepted.
         `spec` is the fault/spec object carrying the `status` attribute
         (`hypothesised | verified | dropped | specified` from
         `hunter_state.FaultStatus`); it is persisted verbatim. The
@@ -356,9 +405,11 @@ class HunterMemoryStore:
     ) -> dict | None:
         """The one spec file for `(fault_key, fault_keyword, strategy_keyword)`.
 
-        `None` for a missing file (a valid empty result, never a failure); a
-        corrupt file raises (O4, the caller degrades to an empty set). With
-        `attributes` given, each returned dict is projected onto them."""
+        `fault_key` is the 3-part config key (the config's identity, G4) -
+        the 2-part revival key is NOT accepted. `None` for a missing file
+        (a valid empty result, never a failure); a corrupt file raises (O4,
+        the caller degrades to an empty set). With `attributes` given, each
+        returned dict is projected onto them."""
         path = self._spec_file(
             project_id, fault_key, fault_keyword, strategy_keyword, side,
         )
@@ -377,12 +428,14 @@ class HunterMemoryStore:
     ) -> list[dict]:
         """All spec files under `test-specs/<fault_key>/`, in file-name order.
 
-        Read by the config identifier (the `fault_key`); the whole surface
-        context is never returned through this store (G3). `sides` selects
-        produced/consumed (default both); `statuses` filters on the persisted
-        `status`; `attributes` projects each spec onto the given fields. A
-        missing project/fault_key yields [] - a valid empty result, never a
-        failure. A corrupt file raises (O4)."""
+        Read by the config identifier (`fault_key`): the 3-part config key
+        (`<unit_id>_<CWE_ID>_<vulnerability_class>`, G4 - the 2-part revival
+        key is NOT accepted); the whole surface context is never returned
+        through this store (G3). `sides` selects produced/consumed (default
+        both); `statuses` filters on the persisted `status`; `attributes`
+        projects each spec onto the given fields. A missing project/fault_key
+        yields [] - a valid empty result, never a failure. A corrupt file
+        raises (O4)."""
         out: list[dict] = []
         for side in sides:
             self._validate_side(side)
@@ -399,8 +452,10 @@ class HunterMemoryStore:
     def list_fault_keys(self, project_id: str) -> list[str]:
         """The `test-specs/` fault-key folders in deterministic (sorted)
         order - the config-key envelope the inbox surfer enumerates to read
-        the produced spec surface (ADR #169 Q3/#172). A missing project
-        contributes nothing (a valid empty result)."""
+        the produced spec surface (ADR #169 Q3/#172). Each folder is one
+        3-part config key (G4/ADR Q13 `config_id`); the 2-part revival key
+        never names a folder. A missing project contributes nothing (a valid
+        empty result)."""
         tests_dir = self._project_dir(project_id) / "test-specs"
         if not tests_dir.exists():
             return []
@@ -409,8 +464,10 @@ class HunterMemoryStore:
     def produced_spec_files(self, project_id: str, fault_key: str) -> list[str]:
         """The PRODUCED-side spec file stems under one fault_key - the
         `<fault>_<strategy>` file names the inbox surfer operates on (ADR
-        #169 Q3/#172), in file-name order. `consumed/` contributes nothing.
-        A missing side contributes nothing (a valid empty result)."""
+        #169 Q3/#172), in file-name order. `fault_key` is the 3-part config
+        key (G4; the 2-part revival key is NOT accepted). `consumed/`
+        contributes nothing. A missing side contributes nothing (a valid
+        empty result)."""
         side_dir = self._spec_dir(project_id, fault_key) / "produced"
         if not side_dir.exists():
             return []
@@ -422,7 +479,8 @@ class HunterMemoryStore:
         (ADR #169 Q3/164 spec 6, tracker #172): ONLY the mover calls this
         (the single-owner rename, #172 AC). `spec_file` is the produced spec's
         file-name identity (the `<fault>_<strategy>` stem, G3) under
-        `test-specs/<fault_key>/`.
+        `test-specs/<fault_key>/`; `fault_key` is the 3-part config key
+        (G4/ADR Q13 `config_id` - the 2-part revival key is NOT accepted).
 
         True when the spec now lives in consumed/ - renamed NOW, or already
         moved by an earlier tick (at-least-once: the repeated invocation of a
@@ -466,7 +524,8 @@ class HunterMemoryStore:
 
     @staticmethod
     def note_key(fault_key: str, note_name: str) -> str:
-        """The hierarchy key of a note: `fault_key:<note_name>` (G6)."""
+        """The hierarchy key of a note: `fault_key:<note_name>` (G6), where
+        `fault_key` is the 3-part config key (G4)."""
         return f"{fault_key}:{note_name}"
 
     def write_note(
@@ -483,7 +542,9 @@ class HunterMemoryStore:
     ) -> str | None:
         """The `notes` body write over the per-project `notes.yaml` (G6).
 
-        `append` adds a new note for the `(fault_key, note_name)` key;
+        `append` adds a new note for the `(fault_key, note_name)` key,
+        where `fault_key` is the 3-part config key (G4, the config's
+        identity - the 2-part revival key is NOT accepted);
         `update` amends an existing note (replacing its kind/body/evidence/
         provenance); `delete` removes it. Returns the note `key`
         (`fault_key:<note_name>`); an update/delete on a missing key returns
@@ -496,6 +557,7 @@ class HunterMemoryStore:
             raise ValueError(
                 f"hunter store: unknown note kind {kind!r}; known: {NOTE_KINDS}"
             )
+        self._validate_fault_key(fault_key)
         path = self._notes_file(project_id)
         records = self._read_records(path)
         key = self.note_key(fault_key, note_name)
@@ -543,7 +605,7 @@ class HunterMemoryStore:
         """Grep-match read over the project's notes (G6), read-latest.
 
         Filters (combinable or singular):
-          parent_key  - the fault_key (the config identifier); yields that
+          parent_key  - the fault_key (the config identifier, G4); yields that
                         fault's notes (the note keys embed it).
           key_keyword - case-insensitive substring over the note KEYS.
           body_keyword- case-insensitive substring over the note BODY.
