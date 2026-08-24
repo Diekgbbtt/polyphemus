@@ -140,6 +140,9 @@ Read filters (combinable or singular):
 - parent_key - the exact spec or variant prefix to range over (e.g. "<spec_id>:0")
 - key_keyword - a case-insensitive substring of the note key
 - body_keyword - a case-insensitive substring of the note body
+Read the EXPERIMENT-LOG body by its identifier: operation=read with kind=experiment_log
+and order=<N> returns the variant's persisted D6 slice (raw_observations, kb_observations,
+interpretations, executed) verbatim; kind=experiment_summary returns its consolidated summary.
 A read returns matching notes newest-first, with each note's full body verbatim."""
 
 

@@ -144,6 +144,20 @@ class PodNoteTool(BaseTool):
         if self.__store is None:
             return NOTES_NO_STORE
         try:
+            # T4/D84-27: the experiment_log read resolves the variant's RAW D6
+            # slice body by its <spec_id>/<order> identifier - the address the
+            # key-list renders - so the agent can read any persisted slice, not
+            # only the consolidated summary.
+            if spec.kind == "experiment_log":
+                if spec.order is None:
+                    return NOTES_ARGS_REJECTED + ": an experiment_log read needs the variant order"
+                slice = self.__store.read_experiment_log(self.__spec_id, spec.order)
+                if not slice:
+                    return "NOTES_EMPTY: no experiment log on file for this variant"
+                rendered = json.dumps(slice, indent=2)
+                return (f"EXPERIMENT_LOG {self.__spec_id}/{spec.order} "
+                        f"(variant {slice.get('variant_ref', '?')})\n"
+                        f"{rendered}")
             # D84-35: an experiment_summary read ranges the variant's log slice
             # (its terminal record), not notes.yaml.
             if spec.kind == "experiment_summary":

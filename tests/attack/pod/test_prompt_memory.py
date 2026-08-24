@@ -122,3 +122,43 @@ def test_memory_guidance_is_the_indexable_list_plus_the_reading_contract(store, 
     for token in ("parent_key", "key_keyword", "body_keyword", "experiment_summary",
                   "kb_insight", "freeform"):
         assert token in guidance
+
+
+# --- the experiment-log identifiers (D84-27): the OTHER half of the index ------
+
+def test_memory_guidance_renders_the_experiment_log_identifiers(store, spec_id):
+    # T4/D84-27: the key-list covers BOTH the note keys AND the experiment-log
+    # identifiers (spec id + the orders present on file), so the Runner/Triager
+    # can index into any persisted experiment-log slice.
+    store.write_experiment_log(spec_id, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
+    store.write_experiment_log(spec_id, 2, {"order": 2, "variant_ref": "v2",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
+    store.append(spec_id, order=0, note_name="capability", kind="kb_insight", body="x")
+    guidance = compose_memory_guidance(store, spec_id)
+    assert "# Experiment logs" in guidance          # the section renders
+    assert f"{spec_id}/0" in guidance               # each order on file is listed
+    assert f"{spec_id}/2" in guidance
+    assert "# Notes" in guidance                    # the notes half still renders
+    assert f"{spec_id}:0:capability" in guidance
+
+
+def test_memory_guidance_renders_an_empty_experiment_logs_index_without_a_section(store, spec_id):
+    # No orders on file: the # Experiment logs section is omitted entirely
+    # (fail-open), while the notes index still renders.
+    store.append(spec_id, order=0, note_name="capability", kind="kb_insight", body="x")
+    guidance = compose_memory_guidance(store, spec_id)
+    assert "# Experiment logs" not in guidance
+    assert "# Notes" in guidance
+
+
+def test_memory_guidance_documents_the_experiment_log_slice_read(store, spec_id):
+    # T4: the reading guidance tells the agent it can read the experiment-log
+    # slice body by its <spec_id>/<order> identifier, alongside the notes.
+    guidance = compose_memory_guidance(store, spec_id)
+    assert "experiment-log" in guidance
+    assert "experiment_log" in guidance             # the slice read kind
+    assert "experiment_summary" in guidance
+    assert "order" in guidance

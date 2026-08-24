@@ -124,6 +124,40 @@ def test_tool_read_order_filter_returns_only_that_variant(store, spec_id):
     assert "first variant" not in hit
 
 
+# --- T4: the raw experiment-log slice read by order (D84-27) ------------------
+# The key-list renders the experiment-log identifier <spec_id>/<order>; the note
+# tool's read must let the agent address that raw D6 slice body by order - not
+# only the consolidated experiment_summary.
+
+def test_tool_read_returns_the_raw_experiment_log_slice_by_order(store, spec_id):
+    store.write_experiment_log(spec_id, 0, {
+        "order": 0, "variant_ref": "v0",
+        "raw_observations": [{"status": 404, "body": "not found"}],
+        "kb_observations": [{"query": "sqli", "response": "primitive-set"}],
+        "interpretations": [{"classification": "symptom-absent", "note": "absent"}],
+        "executed": ["sig-1"],
+    })
+    out = _tool(store=store, spec_id=spec_id).invoke(
+        {"operation": "read", "kind": "experiment_log", "order": 0})
+    assert f"{spec_id}/0" in out            # the deterministic identifier
+    assert "sig-1" in out                   # the full D6 slice body
+    assert "not found" in out
+    assert "primitive-set" in out
+    assert "symptom-absent" in out
+
+
+def test_tool_read_experiment_log_zero_matches_is_graceful(store, spec_id):
+    out = _tool(store=store, spec_id=spec_id).invoke(
+        {"operation": "read", "kind": "experiment_log", "order": 9})
+    assert "no experiment log" in out.lower()
+
+
+def test_tool_read_experiment_log_needs_the_order(store, spec_id):
+    out = _tool(store=store, spec_id=spec_id).invoke(
+        {"operation": "read", "kind": "experiment_log"})
+    assert out.startswith(NOTES_ARGS_REJECTED)
+
+
 # --- extra="forbid": a wrong parameter is rejected before _run -----------------
 
 def test_unknown_parameter_is_rejected_by_the_args_schema(store, spec_id):
