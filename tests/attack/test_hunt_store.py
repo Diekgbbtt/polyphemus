@@ -75,6 +75,25 @@ def test_parse_config_file_name_rejects_non_convention_names():
     assert parse_config_file_name(f"{UNIT}_fault-x_IDOR.yaml") is None
 
 
+def test_parse_config_file_name_preserves_a_unit_ending_in_underscore():
+    # G4 regression (live e2e eval): a unit identity ending in `_` - the
+    # `__singleton__` marker - must round-trip its FULL identity. The old
+    # greedy last-underscore match dropped the trailing `_`, so the semantic
+    # key drifted and reads by key missed the config.
+    name = "AuthenticationMechanism:__singleton___CWE-266_Broken Authentication.yaml"
+    parsed = parse_config_file_name(name)
+    assert parsed is not None
+    unit, cwe, cls = parsed
+    assert (unit, cwe, cls) == \
+        ("AuthenticationMechanism:__singleton__", "CWE-266", "Broken Authentication")
+    assert semantic_key(unit, cwe, cls) == \
+        "AuthenticationMechanism:__singleton__::CWE-266::Broken Authentication"
+    # a WebPresentation discriminator containing `::` and `-` also round-trips
+    name2 = "WebPresentation:moodique-storefront::homepage_CWE-639_CSRF.yaml"
+    assert parse_config_file_name(name2) == \
+        ("WebPresentation:moodique-storefront::homepage", "CWE-639", "CSRF")
+
+
 def test_semantic_key_is_the_canonical_internal_identity():
     assert semantic_key(UNIT, CWE, CLASS) == "Service:catalogue-and-discovery::CWE-639::IDOR"
 

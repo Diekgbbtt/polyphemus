@@ -70,13 +70,15 @@ HUNT_STORE_ROOT = Path(__file__).resolve().parent / "data"
 KEY_SEPARATOR = "::"
 
 # The config file-name convention (G4): <unit_id>_<CWE_ID>_<vulnerability_class>.yaml.
-# The regex parses on the LAST two underscores: `CWE-\d+` disambiguates the
-# middle segment, so a unit_id (or vulnerability class) containing `_`
-# round-trips; the empty-class (carried-bare) degrade keeps the trailing
-# underscore and is tolerated by `(?P<cls>.*)`.
-_CONFIG_FILE_RE = re.compile(
-    r"^(?P<unit>.+)_(?P<cwe>CWE-\d+)_(?P<cls>.*)\.yaml$"
-)
+# The CWE token (`CWE-\d+`) anchors the parse: the tri-part name is
+# `<unit>_<CWE>_<class>.yaml` and the CWE token whose suffix is the class +
+# `.yaml` is the fault-class separator. Splitting on the CWE anchor (instead
+# of a greedy last-underscore match) preserves a unit that ITSELF ends in `_` -
+# e.g. `AuthenticationMechanism:__singleton__` would otherwise lose its
+# trailing underscore and never round-trip its identity (G4). The
+# empty-class (carried-bare) degrade keeps the trailing `_` and is tolerated by
+# the empty class suffix.
+_CONFIG_FILE_RE = re.compile(r"_(CWE-\d+)_")
 
 # The writeable config directories. `consumed` is the inbox surfer's target
 # (G13, another workstream); the store exposes the primitive so the substrate
@@ -121,15 +123,20 @@ def semantic_key(unit_id: str, fault_class: str, vulnerability_class: str) -> st
 
 def parse_config_file_name(name: str) -> tuple[str, str, str] | None:
     """Parse a config file name back to
-    `(unit_id, fault_class, vulnerability_class)`. The last-two-underscores
-    convention; `CWE-\\d+` disambiguates the middle segment, so unit_ids (and
-    classes) containing `_` round-trip. None when the name does not follow the
-    convention (e.g. a non-CWE fault_class - the store's content rebuild is
-    the read-side fallback)."""
-    match = _CONFIG_FILE_RE.match(name)
-    if match is None:
+    `(unit_id, fault_class, vulnerability_class)`. The CWE token anchors the
+    parse (G4): the fault class is the `CWE-\\d+` token whose suffix is the
+    vulnerability class + `.yaml`, so a unit whose identity ends in `_` (e.g.
+    `AuthenticationMechanism:__singleton__`) round-trips its full identity.
+    None when the name does not follow the convention (e.g. a non-CWE
+    fault_class - the store's content rebuild is the read-side fallback)."""
+    if not name.endswith(".yaml"):
         return None
-    return match["unit"], match["cwe"], match["cls"]
+    parsed = None
+    for match in _CONFIG_FILE_RE.finditer(name):
+        unit, cwe, tail = name[: match.start()], match.group(1), name[match.end():]
+        if tail.endswith(".yaml"):
+            parsed = unit, cwe, tail[: -len(".yaml")]
+    return parsed
 
 
 def _keys_match(record_key: str, query_key: str) -> bool:
