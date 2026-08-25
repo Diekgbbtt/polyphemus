@@ -337,6 +337,14 @@ def is_over_budget(occupancy: int, window: CompactionWindow) -> bool:
 # from the trail's end in approximate tokens.
 DEFAULT_REPLAY_KEEP_TOKENS = 30_000
 
+# Bounded tool retention (#187): a compact pass keeps the LAST `keep_last_tools`
+# tool messages of the region verbatim (over-cut ones still offloaded to headers,
+# D8) and FOLDS the older ones into the running summary, so the trail's MESSAGE
+# COUNT shrinks across passes - not just over-cut body size. Sub-cut tool bodies
+# (the ~50K of never-folded history behind the timeout) no longer accumulate
+# unboundedly. `None` disables folding (every tool message is retained).
+DEFAULT_KEEP_LAST_TOOLS = 8
+
 # The prefix marking a synthetic running-summary message in the trail (D5) - kept
 # in lockstep with `RunningSummary.to_text()`.
 _SUMMARY_MESSAGE_PREFIX = "[running summary]"
@@ -448,6 +456,27 @@ def _is_synthetic_summary(message: BaseMessage) -> bool:
     return isinstance(content, str) and content.startswith(_SUMMARY_MESSAGE_PREFIX)
 
 
+def _dedup_system_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
+    """Collapse identical non-synthetic SystemMessage copies in a region (#187).
+
+    The thread's system prompt must never carry N stale byte-identical copies
+    forward. A legacy trail that already stacked per-turn skill copies (each
+    phase turn used to re-add `_gate_skill()`) collapses to the FIRST occurrence;
+    the synthetic running-summary message and the D7 tail are never touched. Order
+    is otherwise preserved."""
+    seen: set = set()
+    out: list[BaseMessage] = []
+    for message in messages:
+        if isinstance(message, SystemMessage) and not _is_synthetic_summary(message):
+            content = message.content
+            if isinstance(content, str):
+                if content in seen:
+                    continue  # a stale duplicate - keep only the first copy
+                seen.add(content)
+        out.append(message)
+    return out
+
+
 def _compact_pass(
     messages: list[BaseMessage],
     *,
@@ -457,6 +486,7 @@ def _compact_pass(
     summariser: Any,
     existing: RunningSummary | None,
     replay_keep_tokens: int,
+    keep_last_tools: int | None = DEFAULT_KEEP_LAST_TOOLS,
 ) -> CompactResult:
     """The compact pass's assembly, wrapped by `compact_pass` for fail-open."""
     original = list(messages)
@@ -464,8 +494,22 @@ def _compact_pass(
     tail = original[len(original) - tail_size:] if tail_size else []
     region = original[:len(original) - tail_size] if tail_size else original
 
+    # Bounded tool retention (#187): the region's tool messages beyond the last
+    # `keep_last_tools` are FOLDED into the running summary (so the trail's
+    # message count shrinks across passes, not just over-cut body size); the
+    # retained tail-of-K are kept verbatim (over-cut ones offloaded to headers,
+    # D8). Tail tool messages are exempt by construction (they are outside the
+    # region).
+    region_tool_indices = [i for i, m in enumerate(region)
+                           if isinstance(m, ToolMessage)]
+    keep_from = 0
+    if region_tool_indices and keep_last_tools is not None and keep_last_tools >= 0:
+        keep_from = max(0, len(region_tool_indices) - keep_last_tools)
+    retained_tool = set(region_tool_indices[keep_from:])
+
     staged: list[BaseMessage] = []
     spans: list[AIMessage] = []
+    folded_tools: list[BaseMessage] = []
     # Region human messages are folded into the running summary when one is
     # produced (the summary carries the user's directives - they never need to
     # stay byte-identical) but kept verbatim when no summary fires. Tracked as a
@@ -473,23 +517,30 @@ def _compact_pass(
     region_humans: set[int] = set()
     offloaded_bodies = 0
     preceding_ai: AIMessage | None = None
-    for message in region:
+    for idx, message in enumerate(region):
         if isinstance(message, AIMessage):
             preceding_ai = message
             spans.append(message)
             continue
         if isinstance(message, ToolMessage):
-            name, args = _tool_pairing(preceding_ai, message.tool_call_id)
-            try:
-                result = offload_tool_message(
-                    store, thread_id, message, name=name, args=args)
-            except Exception:  # noqa: BLE001 - a failing offload keeps the body full
-                logger.debug("compact pass: tool offload failed; keeping the body full",
-                             exc_info=True)
-                result = message
-            if result is not message:
-                offloaded_bodies += 1
-            staged.append(result)
+            if idx in retained_tool:
+                name, args = _tool_pairing(preceding_ai, message.tool_call_id)
+                try:
+                    result = offload_tool_message(
+                        store, thread_id, message, name=name, args=args)
+                except Exception:  # noqa: BLE001 - a failing offload keeps the body full
+                    logger.debug("compact pass: tool offload failed; keeping the body full",
+                                 exc_info=True)
+                    result = message
+                if result is not message:
+                    offloaded_bodies += 1
+                staged.append(result)
+            else:
+                # An older tool result beyond the retention window: fold its
+                # content into the running summary rather than keeping it in the
+                # trail (its DISCOVERED-CRUCIAL-ARTIFACT identifier is preserved
+                # by the summariser, D5).
+                folded_tools.append(message)
             continue
         if _is_synthetic_summary(message):
             continue
@@ -498,8 +549,8 @@ def _compact_pass(
         staged.append(message)
 
     new_summary: RunningSummary | None = None
-    if spans or existing is not None:
-        outcome = summarise(summariser, existing=existing, spans=spans)
+    if spans or existing is not None or folded_tools:
+        outcome = summarise(summariser, existing=existing, spans=spans + folded_tools)
         if outcome.status in ("failed", "terminal") or outcome.summary is None:
             # An "ok" without a summary is a degenerate pass - degrade the same
             # way as a failed one, never stage it (fail-open).
@@ -516,10 +567,12 @@ def _compact_pass(
                 ),
             )
         new_summary = outcome.summary
-        staged = ([m for m in staged if id(m) not in region_humans]
+        region_staged = [m for m in staged if id(m) not in region_humans]
+        region_staged = _dedup_system_messages(region_staged)
+        staged = (region_staged
                   + [SystemMessage(content=new_summary.to_text())] + tail)
     else:
-        staged = staged + tail
+        staged = _dedup_system_messages(staged) + tail
 
     reclaimed = max(0, approx_tokens(original) - approx_tokens(staged))
     return CompactResult(
@@ -548,6 +601,7 @@ def compact_pass(
     summariser: Any,
     existing: RunningSummary | None = None,
     replay_keep_tokens: int = DEFAULT_REPLAY_KEEP_TOKENS,
+    keep_last_tools: int | None = DEFAULT_KEEP_LAST_TOOLS,
 ) -> CompactResult:
     """Run ONE compact pass (D7/D8, D1-staging): compose the tool-output offload
     and the running summary into a single STAGED result.
@@ -558,16 +612,20 @@ def compact_pass(
     everything older is summarisable, tool bodies over the cut offload to the
     module store (D8), and the ONE atomic running-summary call (D5) folds the prior
     summary and new spans into a single synthetic message inserted immediately
-    before the tail. When a summary IS produced, older turn inputs in the region
-    before the tail fold into it too (the summary carries the user's directives);
-    when no summary fires, every message stays verbatim. A failed or terminal
-    summarisation returns the ORIGINAL trail unchanged (D6 fail-safe); a bad
-    message shape degrades (kept or summarised safely), never raises."""
+    before the tail. Bounded tool retention (#187): the region's tool messages
+    beyond the last `keep_last_tools` fold into that summary too, so the trail's
+    MESSAGE COUNT shrinks across passes, and duplicate identical SystemMessage
+    copies collapse to one. When a summary IS produced, older turn inputs in the
+    region before the tail fold into it too (the summary carries the user's
+    directives); when no summary fires, every message stays verbatim. A failed or
+    terminal summarisation returns the ORIGINAL trail unchanged (D6 fail-safe); a
+    bad message shape degrades (kept or summarised safely), never raises."""
     try:
         return _compact_pass(
             messages, thread_id=thread_id, profile=profile, store=store,
             summariser=summariser, existing=existing,
-            replay_keep_tokens=replay_keep_tokens)
+            replay_keep_tokens=replay_keep_tokens,
+            keep_last_tools=keep_last_tools)
     except Exception:  # noqa: BLE001 - fail-open: never into the caller
         logger.warning("compact pass failed; returning the original trail unchanged",
                        exc_info=True)
