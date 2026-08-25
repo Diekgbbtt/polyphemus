@@ -163,10 +163,20 @@ def resume_pod_session(runtime, session_id: str) -> None:
     FAIL-CLOSED when there is no stored/paused pod session to resume: it raises
     `RunNotRegistered` (the shared runtime's own signal) when no session is
     registered by that id - the launch endpoint maps it to 404 rather than
-    fabricating dispatch input. `runtime` is the shared control plane (injected
-    by the API tier; the endpoint's `_runtime_or_503` guarantees one)."""
+    fabricating dispatch input. The registration check is the seam's own
+    (verified against the live control plane 2026-08-25): the shared
+    `RuntimeManager.resume_session` verb is a documented no-op for a
+    never-registered run and NEVER raises, so an unregistered session id would
+    otherwise be silently treated as resumed (a fabricated success). Only a
+    REGISTERED pod session resumes (its hold clears); a registered-but-not-held
+    session is already running and its resume is the runtime verb's safe no-op.
+    `runtime` is the shared control plane (injected by the API tier; the
+    endpoint's `_runtime_or_503` guarantees one)."""
     if not session_id:
         raise ValueError("a pod session_id is required to resume")
+    from polymerhus.app.runtime import RunNotRegistered  # noqa: PLC0415
+    if session_id not in runtime.run_ids("hunting"):
+        raise RunNotRegistered(session_id)
     runtime.resume_session("hunting", session_id)
 
 
@@ -335,13 +345,25 @@ async def _await_session_outcome(outcome) -> None:
 
 
 async def _wait_no_run_sessions(control, run_id: str, interval: float) -> None:
-    """Wait until NO session of the run remains live in the control plane's
-    registry - the "all its component sessions have settled" state the run
-    terminal requires (ADR "Run lifecycle"). Cancellation-aware: a stop
-    cancels every session, and the sleeps here surface the cancellation."""
+    """Wait until NO COMPONENT session of the run remains live in the control
+    plane's registry - the "all its component sessions have settled" state the
+    run terminal requires (ADR "Run lifecycle"). Cancellation-aware: a stop
+    cancels every session, and the sleeps here surface the cancellation.
+
+    The wait targets the ADR Q13 component sessions ONLY
+    (`hunting:<run_id>:orchestrator|surfer|hunt:...|pod:...`), never the run's
+    OUTER BOOTSTRAP markers (`run_id` / `hunting:<run_id>`): the bootstrap task
+    that CALLS this wait is itself registered under `hunting:<run_id>`, so
+    counting it would make the run wait on its OWN registry entry forever
+    (a live-stack deadlock the contract fakes never exposed - real-runtime
+    finding, 2026-08-25)."""
     from polymerhus.attack.hunting.surfer import is_run_session_id  # noqa: PLC0415
 
-    while any(is_run_session_id(sid, run_id) for sid in control.live_session_ids()):
+    prefix = f"hunting:{run_id}:"
+    while any(
+        is_run_session_id(sid, run_id) and sid.startswith(prefix)
+        for sid in control.live_session_ids()
+    ):
         await asyncio.sleep(interval)
 
 

@@ -16,7 +16,7 @@ import logging
 import uuid
 
 from fastapi import APIRouter, HTTPException
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 from polymerhus.project_management import repository
 from polymerhus.project_management.repository import (
@@ -482,7 +482,7 @@ class HuntingPodLaunch(BaseModel):
     path remains the whole-pipeline run. No stored/paused pod session to resume
     is a FAIL-CLOSED refusal (404), never a fabricated dispatch input."""
 
-    session_id: str
+    session_id: str = Field(min_length=1)
 
 
 @router.post("/projects/{project_id}/hunting/orchestrator", status_code=202)
