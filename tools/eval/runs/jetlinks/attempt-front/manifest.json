@@ -1,0 +1,22 @@
+{
+  "collected_at": "2026-08-25T06:25:00+0200",
+  "project_id": "5886db17-a8c9-4ea9-aaab-98db205b9543",
+  "hunting_run_id": "hunting-not-run",
+  "recon_run": "40e9bcef-65a8-483c-9c5e-4628b7b0bb32",
+  "target_url": "http://dj-viscon-workshop-1.vsos.ethz.ch/",
+  "challenge": "pb-jetlinks",
+  "hunting_status": null,
+  "recon_status": "complete",
+  "analysis_status": "drained",
+  "stores": {
+    "hunt_store": { "present": false },
+    "project_memory": { "present": false },
+    "pod_memory": { "present": false },
+    "wiring_memory": { "present": false }
+  },
+  "kb": {
+    "operator_kb.md": true,
+    "research-notes.md": true
+  },
+  "elapsed_s": 2.2
+}

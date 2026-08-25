@@ -1,0 +1,35 @@
+target: comfyui
+challenge_id: pb-comfyui
+attempt: attempt-front
+target_url: http://dj-viscon-workshop-1.vsos.ethz.ch/
+project_id: 12da8565-a266-4610-9968-9ebfb86dd563
+recon_run: 08c3e2f0-cbdc-46c0-803a-8fb6f0b796fb
+hunting_run_id: null
+health:
+  recon_status: complete
+  recon_job_counts:
+    httpx: success
+    katana: success
+    jsluice: success
+    httpx_reprofile: success
+    arjun: success
+  hunting_status: not-run
+  analysis_status: drained
+  scaffold: deterministic (23 services, 7 systems, prov_job=scaffold)
+oracle_summary:
+  identified: 0
+  partial: 0
+  missed: 0
+remediations: []
+notes: >
+  Second harness trial, first on comfyui. First launch (f0f124b3) was reaped
+  by the platform's heartbeat safety when the shared stack's agent container
+  was force-recreated by an external controller (D9 cold-stop episode, keyless
+  env); relaunched as 08c3e2f0 and completed. All five jobs success; analysis
+  drained (4 passes, 3 advanced, 2240 L0 assets read, 69 dispatches). The
+  surface is rich: 283 Endpoints including the full comfyui API family
+  (/system_stats, /queue, /prompt, /object_info, /view, /embeddings,
+  /internal, /settings, /api, /api/features) - confirming the white-jotter
+  discovery gap was webpack code-splitting specifically, not a general SPA
+  ceiling. Hunting NOT run (e2e owns the module); oracle grades pending the
+  hunting stretch.

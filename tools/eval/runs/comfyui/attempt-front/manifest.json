@@ -1,0 +1,22 @@
+{
+  "collected_at": "2026-08-25T03:45:00+0200",
+  "project_id": "12da8565-a266-4610-9968-9ebfb86dd563",
+  "hunting_run_id": "hunting-not-run",
+  "recon_run": "08c3e2f0-cbdc-46c0-803a-8fb6f0b796fb",
+  "target_url": "http://dj-viscon-workshop-1.vsos.ethz.ch/",
+  "challenge": "pb-comfyui",
+  "hunting_status": null,
+  "recon_status": "complete",
+  "analysis_status": "drained",
+  "stores": {
+    "hunt_store": { "present": false },
+    "project_memory": { "present": false },
+    "pod_memory": { "present": false },
+    "wiring_memory": { "present": false }
+  },
+  "kb": {
+    "operator_kb.md": true,
+    "research-notes.md": true
+  },
+  "elapsed_s": 2.2
+}

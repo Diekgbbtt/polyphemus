@@ -68,8 +68,22 @@ rewrite_url_host() {
     sed -E "s#http://(0\.0\.0\.0|127\.0\.0\.1|localhost):#http://$(public_host):#g"
 }
 
+# targetctl prints one or more "Accessible URLs"; some targets (e.g. jetlinks)
+# list several lines (UI / API docs). Prefer an explicit "UI:" line; otherwise
+# fall back to the first URL that has no path (a bare host:port).
+pick_url() {
+    local ui
+    ui="$(printf '%s' "$1" | grep -oE 'UI: http://[^ ]+' | head -n1 | sed -E 's#^UI: ##' || true)"
+    if [ -n "$ui" ]; then
+        printf '%s' "$ui"
+        return
+    fi
+    printf '%s' "$1" | grep -oE 'https?://[^ ]+' | grep -vE 'https?://[^/]+/' | head -n1 || true
+}
+
 url_port() {
-    printf '%s' "$1" | sed -E 's#.*:([0-9]+)/?$#\1#'
+    # strip any path component first (jetlinks prints http://host:port/doc.html)
+    printf '%s' "$1" | sed -E 's#(https?://[^:]+:[0-9]+)/.*#\1#' | sed -E 's#.*:([0-9]+)/?$#\1#'
 }
 
 wait_ready() {
@@ -123,7 +137,7 @@ cmd_up() {
     local out url ip port domain
     out="$(ssh_remote "cd ${EVAL_REMOTE_DIR} && scripts/targetctl up ${target}")"
     printf '%s\n' "$out" | sed 's/^/  [remote] /'
-    url="$(printf '%s\n' "$out" | grep -oE 'https?://[^ ]+' | head -n1 | rewrite_url_host || true)"
+    url="$(pick_url "$out" | rewrite_url_host)"
     [ -n "$url" ] || die "no accessible URL in targetctl output"
     port="$(url_port "$url")"
     domain="$(public_host)"
