@@ -123,8 +123,9 @@ class PodSession:
 class HuntSession:
     """A hunt's stateful agent session. One thread per hunt (the hunter's author + judge
     + back-edge re-entries share it, so the judge resumes the author's reasoning), keyed
-    by `hunt_id` so concurrent hunts never collide. The test-executor pod (#84) adds a
-    `spec` discriminator for its per-spec/variant sessions."""
+    by `hunt_id` so concurrent hunts never collide. The test-executor pod (#84) derives
+    its role threads from this same address: `spec` = the canonical spec hash, with
+    `role_id` = `pod_runner` | `pod_triager` (D84-2)."""
 
     run_id: str
     hunt_id: str

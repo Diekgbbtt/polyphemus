@@ -35,6 +35,35 @@ def test_exec_result_from_artifact_wrapped_structured_content():
     assert result.stdout == "y"
 
 
+def test_observation_batch_coerces_coherent_empty_artifact_shapes():
+    """The triager's `_ObservationBatch` must parse the coherent "no observations"
+    artifact in whatever shape the provider returns - a bare `[]`, an empty
+    string, `"[]\nprose"`, null, or prose-only. A reasoning model that decides
+    "nothing noteworthy" does not reliably emit the wrapped `{"observations": []}`
+    object (live muse-spark output was a bare `[]`), and those shapes must yield an
+    empty batch instead of raising `StructuredOutputValidationError` and failing
+    the pod (silently dropping the already-parsed assets)."""
+    from pydantic import ValidationError
+
+    for shape in (None, [], "", "[]", "[\n]", "[] - no noteworthy observations",
+                  "No noteworthy security findings on this surface"):
+        batch = pod._ObservationBatch.model_validate(shape)
+        assert batch.observations == []
+
+    # a genuinely-populated list still parses
+    populated = pod._ObservationBatch.model_validate(
+        {"observations": [{
+            "macro_kind": "open-port", "severity": "info", "evidence": "443 open",
+            "rationale": "expected web port", "anchor": {"type": "Port", "identity": {"number": 443}},
+            "source_job": "port_scan", "source_tool": "naabu",
+        }]}
+    )
+    assert len(populated.observations) == 1
+
+    # the wrapped empty object is the canonical form
+    assert pod._ObservationBatch.model_validate({"observations": []}).observations == []
+
+
 def test_exec_result_from_artifact_missing_is_failure_not_success():
     result = pod._exec_result_from_artifact(None)
     assert result.returncode == 1  # missing structured result is FAILURE, never assumed success

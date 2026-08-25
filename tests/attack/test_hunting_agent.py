@@ -19,8 +19,6 @@ This tier pins the pure functions the harness relies on:
   ROLES - the `hunting` role joins the LLM role registry keyed by
       `LLM_MODEL_HUNTING` (Q1).
 """
-import pytest
-
 from polymerhus.attack.hunting.hunting_agent import (
     HypothesisVerdict,
     derive_technological_axis,
@@ -114,7 +112,8 @@ def test_hunting_roles_are_registered_off_app_boot():
     hunting module bootstrap), never in the app-boot ROLES (operator ruling
     2026-08-06). Both are `session` agents."""
     hunting_ids = {r.role_id for r in HUNTING_ROLES}
-    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter"}
+    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter",
+                           "pod_runner", "pod_triager"}
     assert not (hunting_ids & {r.role_id for r in ROLES})  # off app boot
     assert all(r.agent_mode == "session" for r in HUNTING_ROLES)
 

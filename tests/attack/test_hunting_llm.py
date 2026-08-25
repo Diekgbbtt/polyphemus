@@ -164,3 +164,153 @@ def test_author_and_judge_share_ONE_per_hunt_thread_when_session_bound(monkeypat
     assert seen[0] == ("hunting_hunter", "run1:hunt-A:hunting_hunter")
     assert seen[1] == ("hunting_hunter", "run1:hunt-A:hunting_hunter")  # SAME thread -> shared memory
     assert seen[2] == ("hunting_hunter", "run1:hunt-B:hunting_hunter")  # other hunt -> distinct thread
+
+
+def test_hunt_session_context_reads_the_bound_binding_only_inside_a_hunt():
+    """The public `hunt_session_context()` getter returns the typed binding set by
+    `hunt_session()` (None outside it) - the pod's session binding (D84-7) reads
+    this to derive the pod run's run_id/hunt_id from an enclosing hunt."""
+    assert HL.hunt_session_context() is None
+    with HL.hunt_session("run1", "hunt-A"):
+        ctx = HL.hunt_session_context()
+        assert ctx is not None
+        assert ctx.address.role_id == "hunting_hunter"
+        assert ctx.address.run_id == "run1"
+        assert ctx.address.hunt_id == "hunt-A"
+    assert HL.hunt_session_context() is None
+
+
+# --- the rich projection render (candidates-rewrite T5, spec 3.7) -------------
+
+def test_render_projection_renders_rich_slots_sorted():
+    """T5: `_render_projection` renders the rich typed slots the T2 projection
+    carries - the exploded DataItems (name/type/sensitivity), the fully-unpacked
+    target System on each edge, the DataRelationship kind chains, and the D3
+    cooperating-systems adjacency - IN ADDITION to the compat facets (kind,
+    spine, edges target_kind+role, data_edges counts, data_rel_kinds), sorted
+    deterministically throughout."""
+    from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
+        DataItem,
+        DataRelationship,
+        EdgeInfo,
+        SystemInfo,
+        UnitProjection,
+    )
+
+    proj = UnitProjection(
+        unit_id="Service:orders",
+        kind="Service",
+        spine={"exposure": "public"},
+        edges={"EXPOSED_VIA": (EdgeInfo(
+            family="EXPOSED_VIA", target_kind="WebPresentation",
+            target=SystemInfo(
+                kind="WebPresentation", discriminator="orders::cart",
+                exposure="public", description="the cart pages",
+                props={"kind": "WebPresentation", "rendering_model": "CSR"})),)},
+        data_edges={"PRODUCES": 1, "CONSUMES": 1},
+        data_rel_kinds=frozenset({"DERIVED_FROM"}),
+        data_items={
+            "PRODUCES": (DataItem(item_key="order", name="order", type="record",
+                                  sensitivity="high"),),
+            "CONSUMES": (DataItem(item_key="session token", name="session token",
+                                  type="secret", sensitivity="critical"),),
+        },
+        data_relationships=(DataRelationship(
+            family="DERIVED_FROM", from_item_key="line", to_item_key="basket",
+            predicate="line = basket.items"),),
+        cooperating_systems={"DEPENDS_ON": (SystemInfo(
+            kind="ReverseProxy", discriminator="proxy-1", exposure="public"),)},
+    )
+    text = HL._render_projection(proj)
+    # the compat facets survive unchanged
+    assert "unit kind: Service" in text
+    assert "spine (present keys): ['exposure']" in text
+    assert "data edges: CONSUMES=1, PRODUCES=1" in text
+    assert "data-relationship kinds: DERIVED_FROM" in text
+    # the rich slots render, each sorted
+    assert "data items:" in text
+    assert "- PRODUCES: name=order; type=record; sensitivity=high" in text
+    assert "- CONSUMES: name=session token; type=secret; sensitivity=critical" in text
+    assert "data relationships:" in text
+    assert "- DERIVED_FROM: line -> basket (predicate: line = basket.items)" in text
+    assert "cooperating systems:" in text
+    assert "- DEPENDS_ON: kind=ReverseProxy; discriminator=proxy-1; " \
+        "exposure=public" in text
+    # the fully-unpacked target System rides the edge render
+    assert "kind=WebPresentation; discriminator=orders::cart" in text
+    assert "exposure=public; description=the cart pages" in text
+    assert "props={rendering_model=CSR}" in text
+    # deterministic: the section order is stable
+    assert text.index("data items:") < text.index("data relationships:") \
+        < text.index("cooperating systems:")
+
+
+def test_render_projection_absent_rich_slots_degrade_fail_open():
+    """T5: a projection with the rich slots absent (or the attributes missing
+    entirely, the `object | None` slot contract) renders each as a '(none)'
+    line - never a raise, never a prune signal."""
+    from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
+        UnitProjection,
+    )
+
+    sparse = UnitProjection(
+        unit_id="Service:ghost", kind="Service",
+        spine={"exposure": "public"}, edges={},
+        data_edges={}, data_rel_kinds=frozenset(),
+    )
+    text = HL._render_projection(sparse)
+    assert "unit kind: Service" in text
+    assert "data items: (none)" in text
+    assert "data relationships: (none)" in text
+    assert "cooperating systems: (none)" in text
+    assert "FALSE" not in text
+
+    class Sparse:
+        kind = "System"
+        spine = {}
+        edges = {}
+        data_edges = {}
+        data_rel_kinds = frozenset()
+
+    text = HL._render_projection(Sparse())  # no rich attrs at all
+    assert "unit kind: System" in text
+    assert "data items: (none)" in text
+    assert "data relationships: (none)" in text
+    assert "cooperating systems: (none)" in text
+
+
+# --- _parse_json_object: free-text D4/D5 replies -------------------------------
+
+
+def test_parse_json_object_extracts_fenced_block_after_prose():
+    """A live D4 reply may open with prose and THEN carry a ```json fence (the
+    model's free-text answer before the spec); the parser must recover it."""
+    reply = (
+        "The LightRAG retrieval returned a fallback, so I ground the spec in "
+        "the rationale.\n\n"
+        '```json\n{"target_identity": {"unit": "a"}, "rationale": "spec"}\n```\n'
+    )
+    assert HL._parse_json_object(reply) == {
+        "target_identity": {"unit": "a"},
+        "rationale": "spec",
+    }
+
+
+def test_parse_json_object_keeps_leading_fence_support():
+    reply = '```json\n{"meaningful_insight": false, "next_step": "end"}\n```'
+    assert HL._parse_json_object(reply) == {
+        "meaningful_insight": False,
+        "next_step": "end",
+    }
+
+
+def test_parse_json_object_rejects_unfenced_prose_with_inline_json():
+    # No code fence: prose-plus-json stays unparseable (fail-open), so the
+    # harness treats the turn as degraded instead of guessing.
+    assert HL._parse_json_object('Here is the answer {"ok": true}.') is None
+
+
+def test_parse_json_object_passthrough_and_empty():
+    assert HL._parse_json_object({"ok": True}) == {"ok": True}
+    assert HL._parse_json_object("") is None
+    assert HL._parse_json_object(None) is None

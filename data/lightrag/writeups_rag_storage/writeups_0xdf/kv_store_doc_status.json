@@ -1,0 +1,1101 @@
+{
+  "doc-0a5b62addae42b2d3e684b41ed40260e": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 7379,
+    "created_at": "2026-08-03T10:57:24.618522+00:00",
+    "updated_at": "2026-08-03T10:57:53.752296+00:00",
+    "file_path": "barbhack-2025-ctf-methodology.md",
+    "track_id": "upload_20260803_105724_57db76a2",
+    "content_hash": "b45f853e3a0c45c3c9c24cc8b7e48eb2",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754644,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754644,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785754644,
+      "processing_end_time": 1785754673,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-0a5b62addae42b2d3e684b41ed40260e-chunk-000",
+      "doc-0a5b62addae42b2d3e684b41ed40260e-chunk-001"
+    ]
+  },
+  "doc-abae2141b512784d1f09780ffa398a5d": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 3512,
+    "created_at": "2026-08-03T10:57:24.624722+00:00",
+    "updated_at": "2026-08-03T10:58:33.605292+00:00",
+    "file_path": "htb-abducted-methodology.md",
+    "track_id": "upload_20260803_105724_5f5e074c",
+    "content_hash": "1badc5b59c92cb93d0bc01bea0c3f6a7",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754673,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754673,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785754673,
+      "processing_end_time": 1785754713,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-abae2141b512784d1f09780ffa398a5d-chunk-000"
+    ]
+  },
+  "doc-dd80fa5ebb19e9944238770f478851fb": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 12027,
+    "created_at": "2026-08-03T10:57:24.636424+00:00",
+    "updated_at": "2026-08-03T10:59:30.349330+00:00",
+    "file_path": "htb-airtouch-methodology.md",
+    "track_id": "upload_20260803_105724_d0e20ed9",
+    "content_hash": "c4e51161c64f53f358cd3da5bfd34126",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754673,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754673,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785754713,
+      "processing_end_time": 1785754770,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-dd80fa5ebb19e9944238770f478851fb-chunk-000",
+      "doc-dd80fa5ebb19e9944238770f478851fb-chunk-001",
+      "doc-dd80fa5ebb19e9944238770f478851fb-chunk-002"
+    ]
+  },
+  "doc-9d1d825cd69dea8aed6d1651fb993c0c": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 6207,
+    "created_at": "2026-08-03T10:57:25.136122+00:00",
+    "updated_at": "2026-08-03T11:00:26.356674+00:00",
+    "file_path": "htb-bamboo-methodology.md",
+    "track_id": "upload_20260803_105724_1c548ccc",
+    "content_hash": "ff90a43aa727d1fb0d19a340352eebbd",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754673,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754673,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785754770,
+      "processing_end_time": 1785754826,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-9d1d825cd69dea8aed6d1651fb993c0c-chunk-000",
+      "doc-9d1d825cd69dea8aed6d1651fb993c0c-chunk-001"
+    ]
+  },
+  "doc-d193154c13a7545340d6aac7f93551ff": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 7388,
+    "created_at": "2026-08-03T10:57:25.145748+00:00",
+    "updated_at": "2026-08-03T11:00:59.107548+00:00",
+    "file_path": "htb-barrier-methodology.md",
+    "track_id": "upload_20260803_105725_dc430308",
+    "content_hash": "05e118906822b8a8fef712a5736be33a",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754673,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754673,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785754826,
+      "processing_end_time": 1785754859,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-d193154c13a7545340d6aac7f93551ff-chunk-000",
+      "doc-d193154c13a7545340d6aac7f93551ff-chunk-001"
+    ]
+  },
+  "doc-db51747d6e1553794dcbbc6d673eb1a6": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 6584,
+    "created_at": "2026-08-03T10:57:25.148165+00:00",
+    "updated_at": "2026-08-03T11:01:54.504128+00:00",
+    "file_path": "htb-breach-methodology.md",
+    "track_id": "upload_20260803_105725_bd044b4d",
+    "content_hash": "694e5e0358f5071f12e307e2c9a322fb",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754673,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754673,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785754859,
+      "processing_end_time": 1785754914,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-db51747d6e1553794dcbbc6d673eb1a6-chunk-000",
+      "doc-db51747d6e1553794dcbbc6d673eb1a6-chunk-001"
+    ]
+  },
+  "doc-d57f4dccb7b1de7c796c24d456b2c90f": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 10298,
+    "created_at": "2026-08-03T10:57:25.151350+00:00",
+    "updated_at": "2026-08-03T11:02:57.315453+00:00",
+    "file_path": "htb-browsed-methodology.md",
+    "track_id": "upload_20260803_105725_d82c55aa",
+    "content_hash": "963874d4cb6215616e2b9239735fbb94",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754673,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754673,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785754914,
+      "processing_end_time": 1785754977,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-d57f4dccb7b1de7c796c24d456b2c90f-chunk-000",
+      "doc-d57f4dccb7b1de7c796c24d456b2c90f-chunk-001"
+    ]
+  },
+  "doc-136da9e7ebc65a69c7a4923c2daacd7b": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 4840,
+    "created_at": "2026-08-03T10:57:25.154362+00:00",
+    "updated_at": "2026-08-03T11:03:29.738893+00:00",
+    "file_path": "htb-bruno-methodology.md",
+    "track_id": "upload_20260803_105725_6c7876b8",
+    "content_hash": "aedaf0d274c0299c18b6c014703a5b34",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754673,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754673,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785754977,
+      "processing_end_time": 1785755009,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-136da9e7ebc65a69c7a4923c2daacd7b-chunk-000"
+    ]
+  },
+  "doc-39047a18b515fcf5a6bcfa50dda4ee3a": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 11711,
+    "created_at": "2026-08-03T10:57:25.161682+00:00",
+    "updated_at": "2026-08-03T11:04:37.615859+00:00",
+    "file_path": "htb-cctv-methodology.md",
+    "track_id": "upload_20260803_105725_fcbcbf82",
+    "content_hash": "50be2b6316dd0ff20c75c935d3b0144e",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754673,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754673,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755009,
+      "processing_end_time": 1785755077,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-39047a18b515fcf5a6bcfa50dda4ee3a-chunk-000",
+      "doc-39047a18b515fcf5a6bcfa50dda4ee3a-chunk-001"
+    ]
+  },
+  "doc-d8a71a5db941f76cbd976ed319daa4ce": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 10518,
+    "created_at": "2026-08-03T10:57:25.165381+00:00",
+    "updated_at": "2026-08-03T11:05:24.569088+00:00",
+    "file_path": "htb-codetwo-methodology.md",
+    "track_id": "upload_20260803_105725_e5f6fc86",
+    "content_hash": "abd954f6ca35bcb44fa91670a7e4922e",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785754673,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785754673,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755077,
+      "processing_end_time": 1785755124,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-d8a71a5db941f76cbd976ed319daa4ce-chunk-000",
+      "doc-d8a71a5db941f76cbd976ed319daa4ce-chunk-001"
+    ]
+  },
+  "doc-5b3691250d8034efc538f45153325e82": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 9957,
+    "created_at": "2026-08-03T11:11:12.330634+00:00",
+    "updated_at": "2026-08-03T11:12:14.018610+00:00",
+    "file_path": "htb-conversor-methodology.md",
+    "track_id": "upload_20260803_111112_e678fcc8",
+    "content_hash": "660c02013f1b10d188cfcd94df9d33f1",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755472,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755472,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755472,
+      "processing_end_time": 1785755534,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-5b3691250d8034efc538f45153325e82-chunk-000",
+      "doc-5b3691250d8034efc538f45153325e82-chunk-001"
+    ]
+  },
+  "doc-ccb6aa44b59c087ddbe71de229597bd4": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 11384,
+    "created_at": "2026-08-03T11:11:12.336364+00:00",
+    "updated_at": "2026-08-03T11:13:13.742305+00:00",
+    "file_path": "htb-darkzero-methodology.md",
+    "track_id": "upload_20260803_111112_9d299aae",
+    "content_hash": "8ebab3e50fd49fd09a0b50f6ed606bd2",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755534,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755534,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755534,
+      "processing_end_time": 1785755593,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-ccb6aa44b59c087ddbe71de229597bd4-chunk-000",
+      "doc-ccb6aa44b59c087ddbe71de229597bd4-chunk-001",
+      "doc-ccb6aa44b59c087ddbe71de229597bd4-chunk-002"
+    ]
+  },
+  "doc-ce55c93390355c438aad3e42f2558ea0": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 12299,
+    "created_at": "2026-08-03T11:11:12.359424+00:00",
+    "updated_at": "2026-08-03T11:14:11.383979+00:00",
+    "file_path": "htb-devarea-methodology.md",
+    "track_id": "upload_20260803_111112_52ecb9f0",
+    "content_hash": "a040d6d18018bfff385373f74057fe6c",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755534,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755534,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755593,
+      "processing_end_time": 1785755651,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-ce55c93390355c438aad3e42f2558ea0-chunk-000",
+      "doc-ce55c93390355c438aad3e42f2558ea0-chunk-001",
+      "doc-ce55c93390355c438aad3e42f2558ea0-chunk-002"
+    ]
+  },
+  "doc-66bd77b51f9ea38a4762d65732ac21c9": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 8528,
+    "created_at": "2026-08-03T11:11:12.362386+00:00",
+    "updated_at": "2026-08-03T11:14:53.381219+00:00",
+    "file_path": "htb-eighteen-methodology.md",
+    "track_id": "upload_20260803_111112_bebd0950",
+    "content_hash": "180f724bcab6f91322ef69c7c045014f",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755534,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755534,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755651,
+      "processing_end_time": 1785755693,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-66bd77b51f9ea38a4762d65732ac21c9-chunk-000",
+      "doc-66bd77b51f9ea38a4762d65732ac21c9-chunk-001"
+    ]
+  },
+  "doc-a267c575fd1175171a41707a2ac80c03": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 5075,
+    "created_at": "2026-08-03T11:11:12.366103+00:00",
+    "updated_at": "2026-08-03T11:15:36.530517+00:00",
+    "file_path": "htb-expressway-methodology.md",
+    "track_id": "upload_20260803_111112_41bc7dbc",
+    "content_hash": "8e25c4fa28c73dc8a5ffd1c343385221",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755534,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755534,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755693,
+      "processing_end_time": 1785755736,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-a267c575fd1175171a41707a2ac80c03-chunk-000"
+    ]
+  },
+  "doc-e60bdd5f7d1090f66c283ab2ebd04906": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 11178,
+    "created_at": "2026-08-03T11:11:12.370293+00:00",
+    "updated_at": "2026-08-03T11:16:12.305988+00:00",
+    "file_path": "htb-facts-methodology.md",
+    "track_id": "upload_20260803_111112_5f084455",
+    "content_hash": "9b7fa7844d3d5b132e4cf35ea2390023",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755534,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755534,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755736,
+      "processing_end_time": 1785755772,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-e60bdd5f7d1090f66c283ab2ebd04906-chunk-000",
+      "doc-e60bdd5f7d1090f66c283ab2ebd04906-chunk-001"
+    ]
+  },
+  "doc-b35a43e83892d75bc8e3746466c2bcfc": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 10777,
+    "created_at": "2026-08-03T11:11:12.374773+00:00",
+    "updated_at": "2026-08-03T11:16:55.843330+00:00",
+    "file_path": "htb-gavel-methodology.md",
+    "track_id": "upload_20260803_111112_5d92a5db",
+    "content_hash": "49e22c041f6578d0355f34dae74b40d7",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755534,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755534,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755772,
+      "processing_end_time": 1785755815,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-b35a43e83892d75bc8e3746466c2bcfc-chunk-000",
+      "doc-b35a43e83892d75bc8e3746466c2bcfc-chunk-001"
+    ]
+  },
+  "doc-8047b6c93b09b89977542720f829a1da": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 15335,
+    "created_at": "2026-08-03T11:11:12.380338+00:00",
+    "updated_at": "2026-08-03T11:17:56.843157+00:00",
+    "file_path": "htb-giveback-methodology.md",
+    "track_id": "upload_20260803_111112_89ca8e5e",
+    "content_hash": "bfd9f04ca2b1bddc23191fe22826ed62",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755534,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755534,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755815,
+      "processing_end_time": 1785755876,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-8047b6c93b09b89977542720f829a1da-chunk-000",
+      "doc-8047b6c93b09b89977542720f829a1da-chunk-001",
+      "doc-8047b6c93b09b89977542720f829a1da-chunk-002"
+    ]
+  },
+  "doc-28e61b57c4ef53155963a0bdc0146d46": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 14213,
+    "created_at": "2026-08-03T11:11:12.383207+00:00",
+    "updated_at": "2026-08-03T11:18:58.597116+00:00",
+    "file_path": "htb-guardian-methodology.md",
+    "track_id": "upload_20260803_111112_0a205667",
+    "content_hash": "7b0a6374dc5328b288f6e246d3935998",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755534,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755534,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755876,
+      "processing_end_time": 1785755938,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-28e61b57c4ef53155963a0bdc0146d46-chunk-000",
+      "doc-28e61b57c4ef53155963a0bdc0146d46-chunk-001",
+      "doc-28e61b57c4ef53155963a0bdc0146d46-chunk-002"
+    ]
+  },
+  "doc-6b1a9df875b4f4d10c856b106f068993": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 9118,
+    "created_at": "2026-08-03T11:11:12.387145+00:00",
+    "updated_at": "2026-08-03T11:19:50.151108+00:00",
+    "file_path": "htb-hacknet-methodology.md",
+    "track_id": "upload_20260803_111112_721f469e",
+    "content_hash": "c6337c6cb4a6ff7ad3b59dfea2d2daff",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785755534,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785755534,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785755938,
+      "processing_end_time": 1785755990,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-6b1a9df875b4f4d10c856b106f068993-chunk-000",
+      "doc-6b1a9df875b4f4d10c856b106f068993-chunk-001"
+    ]
+  },
+  "doc-495dc2d2fa3a0bb201cd26ebaa77ad10": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 10969,
+    "created_at": "2026-08-03T11:28:22.411811+00:00",
+    "updated_at": "2026-08-03T11:29:45.880980+00:00",
+    "file_path": "htb-imagery-methodology.md",
+    "track_id": "upload_20260803_112822_81f24d5f",
+    "content_hash": "62336ea2a5a4b5e43f711f28a56a0b79",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756502,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756502,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785756502,
+      "processing_end_time": 1785756585,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-495dc2d2fa3a0bb201cd26ebaa77ad10-chunk-000",
+      "doc-495dc2d2fa3a0bb201cd26ebaa77ad10-chunk-001"
+    ]
+  },
+  "doc-6ee3143291e5ed56b99323040f30f7d7": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 12828,
+    "created_at": "2026-08-03T11:28:22.423155+00:00",
+    "updated_at": "2026-08-03T11:31:07.716816+00:00",
+    "file_path": "htb-interpreter-methodology.md",
+    "track_id": "upload_20260803_112822_6d44ffe2",
+    "content_hash": "e51d8a1b2ea677d687682516a4050bae",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756585,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756585,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785756585,
+      "processing_end_time": 1785756667,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-6ee3143291e5ed56b99323040f30f7d7-chunk-000",
+      "doc-6ee3143291e5ed56b99323040f30f7d7-chunk-001",
+      "doc-6ee3143291e5ed56b99323040f30f7d7-chunk-002"
+    ]
+  },
+  "doc-1e4ab66012df8871bd0b67c09233a063": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 5966,
+    "created_at": "2026-08-03T11:28:22.435521+00:00",
+    "updated_at": "2026-08-03T11:32:12.281385+00:00",
+    "file_path": "htb-job-methodology.md",
+    "track_id": "upload_20260803_112822_fa408d46",
+    "content_hash": "a43ee1ee5e77da5e6035d10f11589946",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756585,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756585,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785756667,
+      "processing_end_time": 1785756732,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-1e4ab66012df8871bd0b67c09233a063-chunk-000",
+      "doc-1e4ab66012df8871bd0b67c09233a063-chunk-001"
+    ]
+  },
+  "doc-a539186415b267cf2fe68e024581d476": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 7600,
+    "created_at": "2026-08-03T11:28:22.451573+00:00",
+    "updated_at": "2026-08-03T11:33:31.488787+00:00",
+    "file_path": "htb-jobtwo-methodology.md",
+    "track_id": "upload_20260803_112822_d6f1a1e6",
+    "content_hash": "e20314177df881019bc04e735b5df9b9",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756585,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756585,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785756732,
+      "processing_end_time": 1785756811,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-a539186415b267cf2fe68e024581d476-chunk-000",
+      "doc-a539186415b267cf2fe68e024581d476-chunk-001"
+    ]
+  },
+  "doc-e3971755d02df1ca9d73a71e46dde1d7": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 7356,
+    "created_at": "2026-08-03T11:28:22.456926+00:00",
+    "updated_at": "2026-08-03T11:34:09.260423+00:00",
+    "file_path": "htb-logging-methodology.md",
+    "track_id": "upload_20260803_112822_a5e3ae56",
+    "content_hash": "32d144fd185451360a32ad740d8b99a0",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756585,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756585,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785756811,
+      "processing_end_time": 1785756849,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-e3971755d02df1ca9d73a71e46dde1d7-chunk-000",
+      "doc-e3971755d02df1ca9d73a71e46dde1d7-chunk-001"
+    ]
+  },
+  "doc-7eff443bdc3f8249787b9d9ee690d679": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 12719,
+    "created_at": "2026-08-03T11:28:22.460898+00:00",
+    "updated_at": "2026-08-03T11:35:44.752064+00:00",
+    "file_path": "htb-monitorsfour-methodology.md",
+    "track_id": "upload_20260803_112822_6d04f84e",
+    "content_hash": "9922261f78fa409fda3f92168998ff08",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756585,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756585,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785756849,
+      "processing_end_time": 1785756944,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-7eff443bdc3f8249787b9d9ee690d679-chunk-000",
+      "doc-7eff443bdc3f8249787b9d9ee690d679-chunk-001",
+      "doc-7eff443bdc3f8249787b9d9ee690d679-chunk-002"
+    ]
+  },
+  "doc-a18d9206e0b44dc082a257441a96e79d": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 10066,
+    "created_at": "2026-08-03T11:28:22.466178+00:00",
+    "updated_at": "2026-08-03T11:36:45.989188+00:00",
+    "file_path": "htb-nanocorp-methodology.md",
+    "track_id": "upload_20260803_112822_0234297d",
+    "content_hash": "1c7d522873db22a8c02f166c0b8a355d",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756585,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756585,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785756944,
+      "processing_end_time": 1785757005,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-a18d9206e0b44dc082a257441a96e79d-chunk-000",
+      "doc-a18d9206e0b44dc082a257441a96e79d-chunk-001"
+    ]
+  },
+  "doc-d9672c1c086c805dbb8f8962ec642b7a": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 10690,
+    "created_at": "2026-08-03T11:28:22.470629+00:00",
+    "updated_at": "2026-08-03T11:37:34.413240+00:00",
+    "file_path": "htb-orion-methodology.md",
+    "track_id": "upload_20260803_112822_754802f1",
+    "content_hash": "cd45e5635db318b2307514584c740f64",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756585,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756585,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785757006,
+      "processing_end_time": 1785757054,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-d9672c1c086c805dbb8f8962ec642b7a-chunk-000",
+      "doc-d9672c1c086c805dbb8f8962ec642b7a-chunk-001"
+    ]
+  },
+  "doc-ff53209713af43febf0054a8036e08a1": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 10767,
+    "created_at": "2026-08-03T11:28:22.476624+00:00",
+    "updated_at": "2026-08-03T11:38:31.566801+00:00",
+    "file_path": "htb-overwatch-methodology.md",
+    "track_id": "upload_20260803_112822_3532cf5c",
+    "content_hash": "ca1baae99e0991ea8c9e2dbadd75ba91",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756585,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756585,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785757054,
+      "processing_end_time": 1785757111,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-ff53209713af43febf0054a8036e08a1-chunk-000",
+      "doc-ff53209713af43febf0054a8036e08a1-chunk-001"
+    ]
+  },
+  "doc-e758367fdb2b5f6f0ba25e5351f06fae": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 9485,
+    "created_at": "2026-08-03T11:28:22.480431+00:00",
+    "updated_at": "2026-08-03T11:39:38.185874+00:00",
+    "file_path": "htb-previous-methodology.md",
+    "track_id": "upload_20260803_112822_31e1620a",
+    "content_hash": "25e2c8b4d2d4800cc1e343a3e29d05d2",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785756585,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785756585,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785757111,
+      "processing_end_time": 1785757178,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-e758367fdb2b5f6f0ba25e5351f06fae-chunk-000",
+      "doc-e758367fdb2b5f6f0ba25e5351f06fae-chunk-001"
+    ]
+  },
+  "doc-da041acb6b82f70d6eea7e644d1ab933": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 6197,
+    "created_at": "2026-08-03T11:45:44.215895+00:00",
+    "updated_at": "2026-08-03T11:47:09.467069+00:00",
+    "file_path": "htb-principal-methodology.md",
+    "track_id": "upload_20260803_114544_727a5fc0",
+    "content_hash": "5872ebb026b8084c6376132affe6dfcb",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785757544,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785757544,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785757544,
+      "processing_end_time": 1785757629,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-da041acb6b82f70d6eea7e644d1ab933-chunk-000",
+      "doc-da041acb6b82f70d6eea7e644d1ab933-chunk-001"
+    ]
+  },
+  "doc-219fb4a2de2e4f86f2a836460b2e4201": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 14794,
+    "created_at": "2026-08-03T11:45:44.228386+00:00",
+    "updated_at": "2026-08-03T11:48:51.835310+00:00",
+    "file_path": "htb-pterodactyl-methodology.md",
+    "track_id": "upload_20260803_114544_fe5d23f0",
+    "content_hash": "13e4d2c0cf73a73ec7cb9fea8e5b9fd7",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785757629,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785757629,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785757629,
+      "processing_end_time": 1785757731,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-219fb4a2de2e4f86f2a836460b2e4201-chunk-000",
+      "doc-219fb4a2de2e4f86f2a836460b2e4201-chunk-001",
+      "doc-219fb4a2de2e4f86f2a836460b2e4201-chunk-002"
+    ]
+  },
+  "doc-8c76c270a0e4b9c50447afdcbfd22aa1": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 11811,
+    "created_at": "2026-08-03T11:45:44.242424+00:00",
+    "updated_at": "2026-08-03T11:50:26.261590+00:00",
+    "file_path": "htb-signed-methodology.md",
+    "track_id": "upload_20260803_114544_e7340115",
+    "content_hash": "5d3be84f1980d5af8ffb318694b26a07",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785757629,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785757629,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785757731,
+      "processing_end_time": 1785757826,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-8c76c270a0e4b9c50447afdcbfd22aa1-chunk-000",
+      "doc-8c76c270a0e4b9c50447afdcbfd22aa1-chunk-001",
+      "doc-8c76c270a0e4b9c50447afdcbfd22aa1-chunk-002"
+    ]
+  },
+  "doc-2af45459b5392b7945360d1fe34d952c": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 6224,
+    "created_at": "2026-08-03T11:45:44.247819+00:00",
+    "updated_at": "2026-08-03T11:51:29.327160+00:00",
+    "file_path": "htb-slonik-methodology.md",
+    "track_id": "upload_20260803_114544_c254aed5",
+    "content_hash": "d598bbf9b1d69cb8ea66ed2eb91246c3",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785757629,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785757629,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785757826,
+      "processing_end_time": 1785757889,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-2af45459b5392b7945360d1fe34d952c-chunk-000",
+      "doc-2af45459b5392b7945360d1fe34d952c-chunk-001"
+    ]
+  },
+  "doc-9756198566adacc24b429de0c91a0beb": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 7762,
+    "created_at": "2026-08-03T11:45:44.253230+00:00",
+    "updated_at": "2026-08-03T11:52:15.972069+00:00",
+    "file_path": "htb-snapped-methodology.md",
+    "track_id": "upload_20260803_114544_74c1c072",
+    "content_hash": "6f2d4e597653129b7a8e349597ac57ff",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785757629,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785757629,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785757889,
+      "processing_end_time": 1785757935,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-9756198566adacc24b429de0c91a0beb-chunk-000",
+      "doc-9756198566adacc24b429de0c91a0beb-chunk-001"
+    ]
+  },
+  "doc-3a8496df2ccf7a2fedc35b83bd6c5e51": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 15472,
+    "created_at": "2026-08-03T11:45:44.259049+00:00",
+    "updated_at": "2026-08-03T11:53:50.678285+00:00",
+    "file_path": "htb-sorcery-methodology.md",
+    "track_id": "upload_20260803_114544_a9d5a7f5",
+    "content_hash": "ea050935916ea9603d3fc924461ff91a",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785757629,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785757629,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785757936,
+      "processing_end_time": 1785758030,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-3a8496df2ccf7a2fedc35b83bd6c5e51-chunk-000",
+      "doc-3a8496df2ccf7a2fedc35b83bd6c5e51-chunk-001",
+      "doc-3a8496df2ccf7a2fedc35b83bd6c5e51-chunk-002"
+    ]
+  },
+  "doc-4cbd3a65e3bbf220a047cbb226753147": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 9197,
+    "created_at": "2026-08-03T11:45:44.266305+00:00",
+    "updated_at": "2026-08-03T11:54:37.764289+00:00",
+    "file_path": "htb-soulmate-methodology.md",
+    "track_id": "upload_20260803_114544_3d825dd3",
+    "content_hash": "2a9ffd8019771b096bf07240100e9dff",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785757629,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785757629,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785758030,
+      "processing_end_time": 1785758077,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-4cbd3a65e3bbf220a047cbb226753147-chunk-000",
+      "doc-4cbd3a65e3bbf220a047cbb226753147-chunk-001"
+    ]
+  },
+  "doc-198b423c5fcf5fd72465af48d35436e5": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 12326,
+    "created_at": "2026-08-03T11:45:44.276004+00:00",
+    "updated_at": "2026-08-03T11:56:00.439020+00:00",
+    "file_path": "htb-variatype-methodology.md",
+    "track_id": "upload_20260803_114544_ffcee347",
+    "content_hash": "6c413efd4ad410cc23dc53aff4b1892f",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785757629,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785757629,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785758077,
+      "processing_end_time": 1785758160,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-198b423c5fcf5fd72465af48d35436e5-chunk-000",
+      "doc-198b423c5fcf5fd72465af48d35436e5-chunk-001",
+      "doc-198b423c5fcf5fd72465af48d35436e5-chunk-002"
+    ]
+  },
+  "doc-f25479dd4ca15c3238c1385baf2d1e75": {
+    "status": "processed",
+    "content_summary": "# Writeup Methodology Overlay\n\n## Methodology Scope\n\nThis document contains reusable attack-methodology observations extracted from a writeup.\nProvenance metadata is stored in the manifest and omitted from this ingestion document.\n\n## Attack Chain Su...",
+    "content_length": 5527,
+    "created_at": "2026-08-03T11:45:44.283133+00:00",
+    "updated_at": "2026-08-03T11:56:53.065212+00:00",
+    "file_path": "htb-wingdata-methodology.md",
+    "track_id": "upload_20260803_114544_39aa7417",
+    "content_hash": "7ca53ae41b3f37fdaec7de235e122443",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785757629,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785757629,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785758160,
+      "processing_end_time": 1785758213,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-f25479dd4ca15c3238c1385baf2d1e75-chunk-000"
+    ]
+  }
+}

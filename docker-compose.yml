@@ -7,11 +7,93 @@ networks:
 volumes:
   neo4j-data:
   pg-data:
+  n8n-data:
   kali-tools:      # persists massdns/puredns/kr so recreation never recompiles
   resolvers:
   work:
 
 services:
+  lightrag:
+    image: ghcr.io/hkuds/lightrag:v1.5.0rc3
+    profiles: ["lightrag"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: 9621
+      WORKING_DIR: /app/data/rag_storage
+      INPUT_DIR: /app/data/inputs
+      PROMPT_DIR: /app/data/prompts
+      SUMMARY_LANGUAGE: English
+      ENTITY_EXTRACTION_USE_JSON: "false"
+      ENTITY_TYPE_PROMPT_FILE: methodology_entities.yml
+      LIGHTRAG_PARSER: "*:native-teP,*:legacy-R"
+      VLM_PROCESS_ENABLE: "false"
+      LLM_BINDING: ${LLM_BINDING:-ollama}
+      LLM_BINDING_HOST: ${LLM_BINDING_HOST:-http://localhost:11434}
+      LLM_MODEL: ${LLM_MODEL:-mistral-nemo:latest}
+      LLM_BINDING_API_KEY: ${LLM_BINDING_API_KEY:-}
+      EMBEDDING_BINDING: ${EMBEDDING_BINDING:-ollama}
+      EMBEDDING_BINDING_HOST: ${EMBEDDING_BINDING_HOST:-http://localhost:11434}
+      EMBEDDING_MODEL: ${EMBEDDING_MODEL:-}
+      EMBEDDING_BINDING_API_KEY: ${EMBEDDING_BINDING_API_KEY:-}
+      EMBEDDING_DIM: ${EMBEDDING_DIM:-2048}
+      EMBEDDING_USE_BASE64: ${EMBEDDING_USE_BASE64:-false}
+      MAX_PARALLEL_INSERT: ${MAX_PARALLEL_INSERT:-1}
+      MAX_GRAPH_NODES: ${MAX_GRAPH_NODES:-5000}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "127.0.0.1:${LIGHTRAG_PORT:-9621}:9621"
+    volumes:
+      - ./data/lightrag/rag_storage:/app/data/rag_storage
+      - ./data/lightrag/inputs:/app/data/inputs
+      - ./data/lightrag/prompts:/app/data/prompts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:9621/health', timeout=3).read()\nPY"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  lightrag-writeups:
+    image: ghcr.io/hkuds/lightrag:v1.5.0rc3
+    profiles: ["lightrag"]
+    environment:
+      HOST: 0.0.0.0
+      PORT: 9621
+      WORKSPACE: writeups_0xdf
+      WORKING_DIR: /app/data/writeups_rag_storage
+      INPUT_DIR: /app/data/writeups_overlay
+      PROMPT_DIR: /app/data/prompts
+      SUMMARY_LANGUAGE: English
+      ENTITY_EXTRACTION_USE_JSON: "false"
+      ENTITY_TYPE_PROMPT_FILE: methodology_entities.yml
+      LIGHTRAG_PARSER: "*:native-teP,*:legacy-R"
+      VLM_PROCESS_ENABLE: "false"
+      MAX_PARALLEL_INSERT: ${MAX_PARALLEL_INSERT:-1}
+      MAX_GRAPH_NODES: ${MAX_GRAPH_NODES:-5000}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "127.0.0.1:${LIGHTRAG_WRITEUP_PORT:-9622}:9621"
+    volumes:
+      - ./data/lightrag/writeups_rag_storage:/app/data/writeups_rag_storage
+      - ./data/lightrag/inputs/writeups_overlay:/app/data/writeups_overlay
+      - ./data/lightrag/prompts:/app/data/prompts
+    extra_hosts:
+      - "host.docker.internal:host-gateway"
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD-SHELL", "python - <<'PY'\nimport urllib.request\nurllib.request.urlopen('http://127.0.0.1:9621/health', timeout=3).read()\nPY"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
   postgres:
     image: pgvector/pgvector:pg16
     environment:
@@ -80,6 +162,10 @@ services:
       POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
       KALI_MCP_URL: http://kali:8000/mcp
       PROJECT_ID: default
+      LIGHTRAG_API_URL: http://lightrag:9621
+      LIGHTRAG_BASE_API_URL: http://lightrag:9621
+      INGESTION_ROOT: /data/ingestion
+      INGESTION_NORMALIZED_DIR: /data/ingestion/normalized
       # --- LLM API gateway (#100) - the co-located litellm proxy (#104 T1) ----
       # The proxy is the SECOND ASGI process in this container; it starts BEFORE
       # the agent uvicorn and is polled on /health/liveliness before the agent
@@ -119,5 +205,81 @@ services:
     depends_on:
       postgres: { condition: service_healthy }
       neo4j: { condition: service_healthy }
-      kali: { condition: service_started }
+    volumes:
+      - ./data/ingestion:/data/ingestion
     networks: [polymerhus-net]
+
+  n8n:
+    image: n8nio/n8n:1.102.4
+    profiles: ["lightrag"]
+    environment:
+      N8N_HOST: 0.0.0.0
+      N8N_PORT: 5678
+      N8N_PROTOCOL: http
+      N8N_USER_FOLDER: /home/node/.n8n
+      N8N_DIAGNOSTICS_ENABLED: "false"
+      N8N_PERSONALIZATION_ENABLED: "false"
+      N8N_ENCRYPTION_KEY: ${N8N_ENCRYPTION_KEY:-local-dev-change-me-32-bytes-min}
+      POLYPHEMUS_AGENT_URL: http://ingestion:8080
+      POLYPHEMUS_INGESTION_INBOX: /data/ingestion/inbox
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "127.0.0.1:${N8N_PORT:-5678}:5678"
+    volumes:
+      - n8n-data:/home/node/.n8n
+      - ./data/ingestion:/data/ingestion
+      - ./workflows/n8n:/workflows/n8n:ro
+    depends_on:
+      ingestion: { condition: service_healthy }
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD-SHELL", "wget -qO- http://127.0.0.1:5678/healthz >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s
+
+  ingestion:
+    build: { context: ., dockerfile: src/polymerhus/Dockerfile.ingestion }
+    image: polyphemus-ingestion:latest
+    profiles: ["lightrag"]
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+      LIGHTRAG_API_URL: http://lightrag:9621
+      LIGHTRAG_BASE_API_URL: http://lightrag:9621
+      LIGHTRAG_STORAGE_DIR: ${LIGHTRAG_STORAGE_DIR:-/data/lightrag/rag_storage}
+      LIGHTRAG_INGESTION_TIMEOUT_SECONDS: ${LIGHTRAG_INGESTION_TIMEOUT_SECONDS:-1800}
+      LIGHTRAG_POLL_INTERVAL_SECONDS: ${LIGHTRAG_POLL_INTERVAL_SECONDS:-2}
+      INGESTION_ROOT: /data/ingestion
+      INGESTION_NORMALIZED_DIR: /data/ingestion/normalized
+      URL_DOWNLOAD_CONNECT_TIMEOUT: ${URL_DOWNLOAD_CONNECT_TIMEOUT:-10.0}
+      URL_DOWNLOAD_READ_TIMEOUT: ${URL_DOWNLOAD_READ_TIMEOUT:-30.0}
+      URL_DOWNLOAD_TOTAL_TIMEOUT: ${URL_DOWNLOAD_TOTAL_TIMEOUT:-120.0}
+      URL_DOWNLOAD_MAX_REDIRECTS: ${URL_DOWNLOAD_MAX_REDIRECTS:-5}
+      URL_DOWNLOAD_MAX_WIRE_BYTES: ${URL_DOWNLOAD_MAX_WIRE_BYTES:-10485760}
+      URL_DOWNLOAD_MAX_DECODED_BYTES: ${URL_DOWNLOAD_MAX_DECODED_BYTES:-10485760}
+      URL_DOWNLOAD_STREAM_CHUNK_SIZE: ${URL_DOWNLOAD_STREAM_CHUNK_SIZE:-65536}
+    env_file:
+      - path: .env
+        required: false
+    ports:
+      - "127.0.0.1:${INGESTION_PORT:-8081}:8080"
+    depends_on:
+      postgres: { condition: service_healthy }
+      lightrag: { condition: service_healthy }
+    volumes:
+      - ./data/ingestion:/data/ingestion
+      - ./data/lightrag/rag_storage:/data/lightrag/rag_storage:ro
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD-SHELL", "curl -fsS http://127.0.0.1:8080/health >/dev/null || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 20
+      start_period: 30s

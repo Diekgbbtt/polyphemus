@@ -1,0 +1,58 @@
+# Mock symptom-technique KB for the pod e2e tier (#84, E5-E8).
+#
+# The symptom-technique KB workstream is NOT merged on the pod branch, so the
+# holistic e2e injects THIS canned set instead of a live KB call (taints
+# realism, acknowledged - the KB is the one mocked collaborator; everything
+# else is real). The entries mirror the Juice Shop fixture spec surface so a
+# well-behaved runner can meaningfully call kb_retrieve during P1
+# (concretization) and cite a retrieved technique in its P3 note.
+#
+# Shape: a map of query keywords (substring-match on the runner's query) to
+# the `SymptomTechniqueResult` shape the pod's KbRetrieveTool returns:
+#   {symptoms: [...], techniques: [...], source: "mock-kb"}
+# A query matching no key returns the empty result (fail-open, O13).
+symptom_kb:
+  reflect:
+    symptoms:
+      - "a search term is reflected into the response without encoding"
+    techniques:
+      - "submit a marker inside an HTML tag and inspect the raw body for unescaped echo"
+      - "try event-handler and img-onerror attribute contexts, one family per probe"
+    source: "mock-kb"
+  cross-site:
+    symptoms:
+      - "the application re-inserts user input into the served markup"
+    techniques:
+      - "differential XSS probe: control marker vs html-tag/event-handler/svg families"
+    source: "mock-kb"
+  sql:
+    symptoms:
+      - "a query parameter is interpolated into a server-side SQL statement"
+    techniques:
+      - "blind-boolean differential: AND 1=1 vs AND 1=2 over the response result set"
+      - "error-based echo of an injected marker into the SQLite error page"
+    source: "mock-kb"
+  "sql injection":
+    symptoms:
+      - "server-side SQL built by string interpolation"
+    techniques:
+      - "union-select column-count probing after stripping the param to the numeric context"
+    source: "mock-kb"
+  security:
+    symptoms:
+      - "the password-recovery question is disclosed before authentication"
+    techniques:
+      - "multi-step flow replay: register sacrificial account, leak the question, reset with a guessed answer, re-login"
+    source: "mock-kb"
+  rate:
+    symptoms:
+      - "an endpoint is protected by a per-window request cap"
+    techniques:
+      - "stay under the observed header cap (X-RateLimit-Limit); pair each probe with a clean control"
+    source: "mock-kb"
+  waf:
+    symptoms:
+      - "a per-request defence refuses attack-marked traffic"
+    techniques:
+      - "differential defence-probe: innocent control vs attack-marked pair, compare response class"
+    source: "mock-kb"

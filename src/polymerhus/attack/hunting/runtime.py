@@ -18,8 +18,8 @@ plane drives and the tear-down hooks it calls:
                              `asyncio.to_thread` onto the shared executor, never
                              the worker loop.
   stop_hunting             - the phase-1 hard stop: cancels the run's task, reaps
-                             the run's actor, persists `stopped` (the append-only
-                             store already preserves the partial trail).
+                             the run's actor, persists `stopped` (the per-project
+                             store already preserves the partial config/notes trail).
   flush_hunting_checkpointer - the tear-down flush hook (#123): archive the
                              hunting module in-memory checkpointer index into the
                              still-open pooled saver via the shared
@@ -150,7 +150,7 @@ async def start_hunting(
     re-raised after teardown so `stop_hunting` can stamp `stopped`.
 
     Returns the `hunting_run_id` - the run's identity, keying both the
-    `hunting_runs` row and the hunt store's append-only trail."""
+    `hunting_runs` row and the project's memory-store folder."""
     async with hunting_module_context():
         from polymerhus.app.clients import pg  # noqa: PLC0415
         from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
@@ -226,10 +226,37 @@ async def start_hunting(
         return hunting_run_id
 
 
+def build_production_hunting_agent(*, store, run_id, project_id="",
+                                   target_url=None, graph_view_fn=None,
+                                   memory_store=None, checkpointer=None,
+                                   model_factory=None, observe: bool = True):
+    """The production default hunting-agent dispatch seam (as of #164 W5): the
+    turn-by-turn ReAct harness wired to the real `query_lightrag` KB tool (the
+    lightrag branch's single KB tool, config-gated by `HUNTING_LIGHTRAG_TOOL`),
+    the real Kali-container exec seam, and the per-project hunter memory store.
+    Construction performs no I/O (everything heavy resolves on first use).
+
+    Returns `(dispatch_fn, registry)`; the caller must reap the registry
+    (`stop_all`) when the run's orchestration finishes."""
+    from polymerhus.attack.hunting.llm import build_actor_hunting_agent  # noqa: PLC0415
+
+    return build_actor_hunting_agent(
+        run_id=run_id,
+        project_id=project_id,
+        memory_store=memory_store,
+        graph_view_fn=graph_view_fn,
+        kb_fn=None,  # the KB seam: the harness binds the config-gated query_lightrag tool
+        exec_fn=None,  # None -> the harness's default fail-open exec seam (the Kali container is a sibling workstream)
+        checkpointer=checkpointer,
+        model_factory=model_factory,
+        observe=observe,
+    )
+
+
 async def stop_hunting(hunting_run_id: str) -> None:
     """Phase-1 hard stop (seam 3.1): cancel the run's task on the hunting loop,
-    reap the run's actor, and persist `stopped`. The append-only store preserves
-    the partial trail. Fail-open: never raises through the control plane."""
+    reap the run's actor, and persist `stopped`. The per-project store preserves
+    the partial config/notes trail. Fail-open: never raises through the control plane."""
     async with hunting_module_context():
         from polymerhus.app.clients import pg  # noqa: PLC0415
         from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415

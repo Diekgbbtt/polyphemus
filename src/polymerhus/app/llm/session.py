@@ -485,12 +485,40 @@ def stateful_turn(
     text content when no schema - the same shape the legacy `invoke_role` seam returned,
     so a call site swaps in place."""
     response_format = _structured_response_format(role_id, schema) if schema is not None else None
-    return run_session_turn(
-        role_id, _as_thread_id(thread), new_messages,
-        checkpointer=checkpointer, response_format=response_format,
-        system_prompt=system_prompt, model_factory=model_factory, observe=observe,
-        middleware=middleware,
-    ).content
+    try:
+        turn = run_session_turn(
+            role_id, _as_thread_id(thread), new_messages,
+            checkpointer=checkpointer, response_format=response_format,
+            system_prompt=system_prompt, model_factory=model_factory, observe=observe,
+            middleware=middleware,
+        )
+        return turn.content
+    except Exception as exc:
+        # FAIL-OPEN (the invariant the recon context owns, mirrored from the
+        # one-shot `invoke_role` seam, which already degrades to None): a
+        # structured-output PARSE failure must never kill a stateful turn. The
+        # native `StructuredOutputValidationError` (raised by langchain's
+        # `create_agent` factory when the provider's output does not parse into
+        # `schema` - e.g. a reasoning model that returns a bare `[]` / empty /
+        # prose instead of the wrapped object) propagates here and would fail
+        # the pod, silently dropping the already-parsed assets. Degrade to
+        # `None` (the exhausted-generation signal) so the caller treats it as
+        # "no structured result" - exactly what `invoke_role` does. Any other
+        # exception is logged and also degrades: the session must always return
+        # a usable shape, never crash the caller.
+        from langchain.agents.structured_output import (
+            StructuredOutputValidationError,
+        )
+
+        if isinstance(exc, StructuredOutputValidationError):
+            logger.warning(
+                "stateful_turn %s structured-output parse failed (%s); "
+                "degrading to None (fail-open)", role_id, exc)
+        else:
+            logger.warning(
+                "stateful_turn %s raised %s (%s); degrading to None (fail-open)",
+                role_id, type(exc).__name__, exc)
+        return None
 
 
 def _read_thread_state(checkpointer, thread_id: str) -> dict | None:

@@ -1,0 +1,78 @@
+name: waf-bypass-or-technical-infeasibility
+# Designed for the six-way termination: N4 (INIT validation criticality - the
+# environment contract must be checked) and the infeasibility/defence terminals.
+# Terminal expected: technical-infeasibility (if the surface is blocked) or a
+# clean unsuccessful with a specific-defence-prevention/specific-defence trail.
+target_identity: >-
+  service:web:soupmarket; the Juice Shop web application behind whatever edge
+  protection fronts https://soupmarket.shop/, over HTTPS. The hypothesis under
+  test is that a per-request defence (a web-application firewall or bot-wall)
+  blocks hostile traffic to the standard application routes, making ordinary
+  payloads indistinguishable from a blanket-capture page; the environmental
+  precondition is that the pod's probe tooling (the REST/HTTP surface) can reach
+  the backend at all. This spec exercises the pod's DEGRADED lanes rather than a
+  confirmed vulnerability: reachability, defence, and exhaustion signals.
+verification_symptoms:
+  - >-
+    A per-request WAF/bot-human-check: a probe carrying a classic attack marker
+    (e.g. a string with "<script>" or "union select" or a suspicious UA) is met
+    with a challenge/capture/refusal (a 4xx/5xx, a captcha or bot-check page, an
+    empty/blanked response, or a connection-level close) while the SAME request
+    with an innocent payload returns the normal 200 application page. Confirmed
+    = the differential between innocent and attack-marked requests is a
+    defence-class response (not an application error).
+  - >-
+    Reachability: the application root responds with its own content (200 + the
+    SPA shell) proving the network path from the pod is live; if even the root
+    is unreachable/closed, the environment contract fails and no further probe
+    is meaningful (technical-infeasibility).
+testing_pattern: >-
+  differential defence-probing: issue paired requests that differ ONLY in an
+  attack signature (a marker wrapped in an HTML/script fragment, a classic SQL
+  token, a hostile User-Agent, an unusual Content-Type) against a fixed
+  application route, and compare the response class (200-app / 4xx-5xx-challenge
+  / connection-close / blank) across the pairs. An innocent-baseline request to
+  the same route is the control. The discriminator is whether the attack-marked
+  request is refused by a DIFFERENT mechanism than the control reaches.
+assumptions:
+  - network egress allowed; https://soupmarket.shop reachable from the pod
+  - the edge in front of the app (if any) intercepts HTTP(S) request content and
+    may refuse attack-marked traffic
+  - the pod's exec surface can issue raw curl with arbitrary headers/bodies
+  - a connection-close or empty body on the attack-marked pair (with the control
+    succeeding) is a defence signal, not an application crash
+payload_vector_space:
+  method: GET
+  path: "https://soupmarket.shop/rest/products/search?q=<marker>"
+  parameter: q
+  families:
+    - "innocent-control: banana"
+    - "script-marker: <script>{marker}</script>"
+    - "sqli-token: ' OR 1=1--"
+    - "hostile-ua: a UA header carrying \"union select\""
+    - "odd-content-type: an application/json Content-Type on a GET"
+    - "second-route-check: the same markers against /rest/user/security-question?email=x@y.z"
+rationale: >-
+  The distinction between "the app is genuinely clean" and "a WAF hides the
+  app's true behaviour" is the pod's hardest judgement. This spec forces the
+  run to separate three six-way outcomes with evidence: reachability failure
+  (technical-infeasibility), a confirmed per-request defence (a defence-signal
+  trail - the pod's specific-defence-prevention lane exercises its clean/blocked
+  semantics), and honest exhaustion (no defence observed + no symptom across the
+  markers -> space-exhausted/no-symptom-evidence). It is the designed
+  negative-control spec for the whole suite.
+interpretation_guidance: >-
+  Reachability first: if the innocent control fails to reach the app, terminate
+  technical-infeasibility with the connection evidence. If the innocent control
+  reaches the app but the attack-marked pairs are refused by a defence-class
+  response (challenge/close/blank), the defence is CONFIRMED - record
+  specific-defence-prevention with the pair differential in the trail. If all
+  pairs reach the app and return normal application responses (the markers are
+  simply not special), no defence and no symptom - terminate unsuccessful with
+  the exhausted marker set as evidence. The clean flag must follow the spec's
+  semantics: blocked/unreachable observations are clean=False.
+comments: >-
+  Grounded live 2026-08-22: the innocent root returns the SPA shell, and a
+  wrong-uppercase-Host request is closed (000/444) - proof the app closes some
+  edges. Whether a real WAF fronts soupmarket.shop is exactly what this spec
+  tasks the pod to determine; no assumption is baked in either direction.

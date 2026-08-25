@@ -22,7 +22,7 @@ import time
 import os
 
 from langgraph.graph import StateGraph, START, END
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from typing import Literal
 
 from polymerhus.recon.domain.types import (
@@ -523,6 +523,39 @@ def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult
 
 class _ObservationBatch(BaseModel):
     observations: list[Observation] = Field(default_factory=list)
+
+    @model_validator(mode="before")
+    @classmethod
+    def _coerce_coherent_empty(cls, data):
+        """Accept the coherent "no observations" artifact in whatever shape the
+        provider actually returns. A reasoning model that decides "nothing
+        noteworthy" does not reliably emit the wrapped `{"observations": []}`
+        object - live muse-spark output included a bare `[]`, an empty string,
+        and prose wrapping an array (see the reasoning-token-exhaustion
+        diagnosis). All of those ARE a legitimate empty result, so they must
+        parse as one instead of raising `StructuredOutputValidationError` and
+        failing the pod (which silently drops the already-parsed assets). The
+        validator is the native pydantic primitive for this shape coercion.
+        """
+        if data is None:
+            return {"observations": []}
+        if isinstance(data, list):
+            return {"observations": data}
+        if isinstance(data, str):
+            text = data.strip()
+            if not text:
+                return {"observations": []}
+            if text.startswith("["):
+                import json as _json
+                try:
+                    parsed = _json.loads(text)
+                    if isinstance(parsed, list):
+                        return {"observations": parsed}
+                except Exception:
+                    pass
+                return {"observations": []}
+            return {"observations": []}
+        return data
 
 
 # Max parsed assets serialized into the triager prompt (see default_triage_fn).

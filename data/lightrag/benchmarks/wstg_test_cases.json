@@ -1,0 +1,349 @@
+{
+  "schema_version": 1,
+  "corpus": "OWASP Web Security Testing Guide",
+  "description": "Phase 2 abstracted web application profiles for benchmarking LightRAG WSTG hypothesis generation.",
+  "cases": [
+    {
+      "test_case_id": "wstg-auth-session-spa-jwt-localstorage",
+      "title": "SPA OAuth2 JWT token storage and reflected UI input",
+      "phase2_abstracted_profile": {
+        "application_type": "single_page_application",
+        "frontend": ["React"],
+        "backend_style": "JSON API",
+        "auth_mechanisms": ["OAuth2 authorization code flow", "JWT bearer access token"],
+        "token_storage": "localStorage",
+        "observed_inputs": [
+          "reflected search parameter",
+          "client-rendered profile fields"
+        ],
+        "session_controls": [
+          "no server-side session cookie",
+          "logout clears browser storage only"
+        ],
+        "security_signals": [
+          "missing Content-Security-Policy",
+          "user-controlled HTML reflected into client route"
+        ]
+      },
+      "expected_wstg_ids": [
+        "WSTG-SESS-10",
+        "WSTG-SESS-06",
+        "WSTG-CLNT-01",
+        "WSTG-CLNT-12",
+        "WSTG-INPV-01",
+        "WSTG-CONF-12"
+      ],
+      "expected_topics": [
+        "JSON Web Tokens",
+        "logout handling",
+        "DOM based cross site scripting",
+        "browser storage",
+        "reflected cross site scripting",
+        "content security policy"
+      ],
+      "evaluation_terms": [
+        "JWT",
+        "localStorage",
+        "browser storage",
+        "XSS",
+        "logout",
+        "session",
+        "CSP"
+      ]
+    },
+    {
+      "test_case_id": "wstg-api-graphql-bola-introspection",
+      "title": "REST and GraphQL backend with object authorization gaps",
+      "phase2_abstracted_profile": {
+        "application_type": "API backend",
+        "api_styles": ["REST", "GraphQL"],
+        "auth_mechanisms": ["bearer token"],
+        "authorization_model": "tenant scoped object IDs",
+        "observed_endpoints": [
+          "GET /api/users/{id}",
+          "POST /graphql"
+        ],
+        "security_signals": [
+          "GraphQL introspection enabled",
+          "sequential numeric object identifiers",
+          "same token can request adjacent account IDs"
+        ]
+      },
+      "expected_wstg_ids": [
+        "WSTG-APIT-99",
+        "WSTG-APIT-02",
+        "WSTG-ATHZ-02",
+        "WSTG-ATHZ-05"
+      ],
+      "expected_topics": [
+        "GraphQL testing",
+        "REST API testing",
+        "authorization schema bypass",
+        "insecure direct object references"
+      ],
+      "evaluation_terms": [
+        "GraphQL",
+        "introspection",
+        "REST",
+        "authorization",
+        "object",
+        "IDOR",
+        "BOLA"
+      ]
+    },
+    {
+      "test_case_id": "wstg-input-node-nested-json-nosql",
+      "title": "Express endpoint accepting nested JSON query filters",
+      "phase2_abstracted_profile": {
+        "application_type": "server-rendered API hybrid",
+        "backend": ["Node.js", "Express"],
+        "data_stores": ["MongoDB", "PostgreSQL"],
+        "observed_inputs": [
+          "nested JSON request body",
+          "filter object passed into search endpoint",
+          "sort expression accepted as string"
+        ],
+        "parser_stack": [
+          "body-parser JSON",
+          "ORM query builder"
+        ],
+        "security_signals": [
+          "raw JSON operators preserved",
+          "error messages expose database syntax",
+          "input appears concatenated into query fragments"
+        ]
+      },
+      "expected_wstg_ids": [
+        "WSTG-INPV-05",
+        "WSTG-INPV-05-6",
+        "WSTG-INPV-12",
+        "WSTG-ERRH-01"
+      ],
+      "expected_topics": [
+        "SQL injection",
+        "NoSQL injection",
+        "command injection",
+        "error handling"
+      ],
+      "evaluation_terms": [
+        "nested JSON",
+        "NoSQL",
+        "SQL",
+        "injection",
+        "Express",
+        "MongoDB",
+        "error"
+      ]
+    },
+    {
+      "test_case_id": "wstg-upload-media-processing-storage",
+      "title": "Authenticated file upload pipeline with public object storage",
+      "phase2_abstracted_profile": {
+        "application_type": "content management workflow",
+        "features": [
+          "profile image upload",
+          "document attachment upload",
+          "public CDN download URLs"
+        ],
+        "processing_stack": [
+          "image resizing worker",
+          "metadata extraction",
+          "object storage"
+        ],
+        "security_signals": [
+          "extension allow list but weak MIME validation",
+          "uploaded files served from same parent domain",
+          "metadata parser returns stack traces on malformed files"
+        ]
+      },
+      "expected_wstg_ids": [
+        "WSTG-BUSL-08",
+        "WSTG-BUSL-09",
+        "WSTG-CONF-05",
+        "WSTG-ERRH-01"
+      ],
+      "expected_topics": [
+        "upload of unexpected file types",
+        "malicious file upload",
+        "file extension handling",
+        "improper error handling",
+        "information leakage"
+      ],
+      "evaluation_terms": [
+        "file upload",
+        "MIME",
+        "extension",
+        "metadata",
+        "CDN",
+        "storage"
+      ]
+    },
+    {
+      "test_case_id": "wstg-ssrf-url-fetcher-webhook-import",
+      "title": "Server-side URL fetcher in webhook and import features",
+      "phase2_abstracted_profile": {
+        "application_type": "SaaS integration console",
+        "features": [
+          "webhook validation",
+          "import from URL",
+          "link preview generation"
+        ],
+        "network_behavior": [
+          "server performs outbound HTTP requests",
+          "redirects are followed",
+          "metadata endpoint not explicitly blocked"
+        ],
+        "security_signals": [
+          "internal hostnames resolve from server",
+          "response timing differs for private IP ranges",
+          "URL parser accepts encoded host variants"
+        ]
+      },
+      "expected_wstg_ids": [
+        "WSTG-INPV-19",
+        "WSTG-INPV-12",
+        "WSTG-INFO-10",
+        "WSTG-ERRH-01"
+      ],
+      "expected_topics": [
+        "server-side request forgery",
+        "command injection",
+        "application architecture mapping",
+        "error handling"
+      ],
+      "evaluation_terms": [
+        "SSRF",
+        "server-side request forgery",
+        "URL",
+        "redirect",
+        "internal",
+        "metadata"
+      ]
+    },
+    {
+      "test_case_id": "wstg-session-cookie-samesite-fixation",
+      "title": "Cookie-backed session with weak attributes and fixation risk",
+      "phase2_abstracted_profile": {
+        "application_type": "multi-page web application",
+        "backend_style": "cookie-backed session",
+        "auth_mechanisms": ["username password login", "remember me cookie"],
+        "session_controls": [
+          "session ID persists after login",
+          "remember me token does not rotate",
+          "logout invalidates client cookie only"
+        ],
+        "cookie_observations": [
+          "SameSite missing",
+          "Secure missing in staging",
+          "broad Domain attribute"
+        ],
+        "security_signals": [
+          "session identifier accepted before authentication",
+          "login does not issue new session ID"
+        ]
+      },
+      "expected_wstg_ids": [
+        "WSTG-SESS-01",
+        "WSTG-SESS-02",
+        "WSTG-SESS-03",
+        "WSTG-SESS-05",
+        "WSTG-SESS-06"
+      ],
+      "expected_topics": [
+        "session management schema",
+        "cookie attributes",
+        "session fixation",
+        "cross site request forgery",
+        "logout functionality"
+      ],
+      "evaluation_terms": [
+        "cookie",
+        "SameSite",
+        "Secure",
+        "session fixation",
+        "remember me",
+        "logout"
+      ]
+    },
+    {
+      "test_case_id": "wstg-client-cors-postmessage",
+      "title": "Browser client using permissive CORS and postMessage integrations",
+      "phase2_abstracted_profile": {
+        "application_type": "browser-based dashboard",
+        "frontend": ["Vue", "iframe widgets"],
+        "cross_origin_features": [
+          "CORS allows reflected Origin",
+          "postMessage accepts wildcard origin",
+          "embedded admin widget"
+        ],
+        "auth_mechanisms": ["cookie session", "bearer token in JavaScript memory"],
+        "security_signals": [
+          "Access-Control-Allow-Credentials true",
+          "message handler trusts event data shape only",
+          "third-party origin can trigger privileged UI action"
+        ]
+      },
+      "expected_wstg_ids": [
+        "WSTG-CLNT-07",
+        "WSTG-CLNT-11",
+        "WSTG-CLNT-13",
+        "WSTG-SESS-05"
+      ],
+      "expected_topics": [
+        "cross origin resource sharing",
+        "cross origin messaging",
+        "cross site script inclusion",
+        "cross site request forgery"
+      ],
+      "evaluation_terms": [
+        "CORS",
+        "postMessage",
+        "Origin",
+        "credentials",
+        "iframe",
+        "cross-origin"
+      ]
+    },
+    {
+      "test_case_id": "wstg-input-path-traversal-file-include",
+      "title": "File retrieval endpoint with path traversal indicators",
+      "phase2_abstracted_profile": {
+        "application_type": "document portal",
+        "features": [
+          "download by path parameter",
+          "template preview",
+          "localized static assets"
+        ],
+        "observed_inputs": [
+          "GET /download?file=invoice.pdf",
+          "GET /preview?template=default"
+        ],
+        "security_signals": [
+          "dot-dot sequences normalized inconsistently",
+          "absolute paths produce different error classes",
+          "URL encoded separators reach backend resolver"
+        ]
+      },
+      "expected_wstg_ids": [
+        "WSTG-ATHZ-01",
+        "WSTG-INPV-11",
+        "WSTG-INPV-11-1",
+        "WSTG-CONF-05"
+      ],
+      "expected_topics": [
+        "directory traversal",
+        "file inclusion",
+        "authorization bypass",
+        "information leakage"
+      ],
+      "evaluation_terms": [
+        "path traversal",
+        "directory traversal",
+        "file inclusion",
+        "download",
+        "template",
+        "information leakage"
+      ]
+    }
+  ]
+}

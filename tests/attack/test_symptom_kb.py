@@ -20,6 +20,8 @@ import pytest
 from polymerhus.attack.hunting.symptom_kb import (
     SymptomTechniqueQuery,
     SymptomTechniqueResult,
+    build_fault_kb_lookup,
+    build_gate_kb_retriever,
     query_symptom_technique,
 )
 
@@ -83,3 +85,33 @@ def test_ready_kb_result_is_passed_through_unchanged():
     result = query_symptom_technique(
         SymptomTechniqueQuery(fault_id="CWE-89"), lookup=ready)
     assert result == expected
+
+
+# --- the real fault-KB wiring (closes the designed-not-built seam) ------------
+
+
+def test_fault_kb_lookup_returns_materialised_symptoms_and_techniques():
+    lookup = build_fault_kb_lookup()
+    result = query_symptom_technique(
+        SymptomTechniqueQuery(fault_id="CWE-1021", technological_axis=("http",)),
+        lookup=lookup,
+    )
+    assert result.symptoms
+    assert result.techniques
+    assert result.source == "fault-kb"
+
+
+def test_fault_kb_lookup_fail_open_on_unknown_fault():
+    lookup = build_fault_kb_lookup()
+    result = query_symptom_technique(
+        SymptomTechniqueQuery(fault_id="CWE-999999"), lookup=lookup)
+    assert result == SymptomTechniqueResult()
+
+
+def test_gate_kb_retriever_returns_probing_techniques_dict():
+    retriever = build_gate_kb_retriever()
+    entry = retriever("CWE-1021")
+    assert isinstance(entry, dict)
+    assert "probing_techniques" in entry
+    assert entry["probing_techniques"]
+    assert entry["symptoms"]

@@ -130,7 +130,11 @@ Deliberately kept blind to the target's true identity (it analyses `soupmarket.s
 
 **Fail-open**:
 One bad delta never aborts a batch and a missing collaborator degrades rather than crashes; the accepted cost is that a dropped item is silently lost with only a log line.
+The stateful triager (and every `session`-mode structured turn) holds this invariant at the LLM seam: a structured-output PARSE failure (`StructuredOutputValidationError`, e.g. a reasoning model returning a bare `[]` / empty / prose instead of the wrapped batch object) degrades to "no observations" (`stateful_turn` returns `None`), never fails the pod - so the already-parsed assets are still curated instead of silently dropped. The triager's `_ObservationBatch` also accepts those coherent empty-artifact shapes via a pydantic `model_validator(mode="before")`.
 _Avoid_: fail-safe, fail-closed.
+
+**Reasoning-token budget**:
+Every LLM construction (`app/llm/providers.py::build_chat_model`) sends a generous `max_completion_tokens` (default 32768, override `LLM_MAX_COMPLETION_TOKENS`) - the reasoning-INCLUSIVE output budget. Reasoning models burn output tokens on `reasoning_content` before the answer; a tight `max_tokens` exhausts on thinking alone and the model returns `content: null` (`finish_reason: stop`) with no answer. The generous ceiling keeps a thinking-heavy turn (observed bursts ~9k tokens) able to emit its result.
 
 **asset_context**:
 The context string threaded end-to-end into every pod for the designed-not-built context-memory scaffold; today always the empty string.

@@ -256,18 +256,27 @@ def _tool_surface(tools) -> str:
 
 
 def _compose_grounding(config: HuntConfig) -> str:
-    """The HuntConfig's five-part parameter set rendered once, ahead of the
-    first step (the #83 authoring template, reused verbatim in shape)."""
+    """The HuntConfig's parameter set rendered once, ahead of the first step:
+    the orchestrator's stretch (rationale, research direction, vulnerability
+    class, the ratification-phase capabilities / assumptions / technique
+    primitives) plus the five-part surface (adapted index card, caveats, prior
+    insights, tool registry). Rendered from the current declarative shape
+    (#165 typing rework): the concrete-fault slots that the old template
+    carried (`extension_points` / `supposed_payload_vectors`) are removed - the
+    #164 hunter owns that stretch."""
     tpl = config.prompt_template
     surface = config.surface_context or {}
     return (
         f"You are dispatched to hunt {config.unit_id} for fault class "
         f"{config.fault_class}.\n"
         f"Orchestrator's fault-matching rationale: {tpl.rationale or '(none)'}\n"
-        f"Suggested extension points: {_fmt_list(tpl.extension_points)}\n"
-        f"Adversarial-capability and environmental-precondition assumptions: "
-        f"{_fmt_list(tpl.assumptions)}\n"
-        f"Supposed payload vectors: {_fmt_list(tpl.supposed_payload_vectors)}\n"
+        f"Class-level research direction: {tpl.research_direction or '(none)'}\n"
+        f"Vulnerability class: {config.vulnerability_class or '(none)'}\n"
+        f"Orchestrator's ratification-phase adversarial capabilities: "
+        f"{_fmt_list(config.adversarial_capabilities)}\n"
+        f"Environmental-precondition assumptions: "
+        f"{_fmt_list(config.assumptions)}\n"
+        f"Technique primitives: {_fmt_list(config.technique_primitives)}\n"
         f"L0 fault-applicability evidence: {_fmt_list(tpl.l0_evidence)}\n"
         f"Adapted surface context (index card of {config.unit_id}): "
         f"{_fmt_list(surface.get('cards') or []) if surface.get('cards') else '(no adapted index cards)'}\n"

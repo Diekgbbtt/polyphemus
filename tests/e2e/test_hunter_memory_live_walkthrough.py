@@ -60,10 +60,8 @@ config = HuntConfig(
     prompt_template=HuntPromptTemplate(
         rationale=("fault-x applies to slug-a because it exposes an unvalidated "
                    "parameter surface over the public REST api"),
-        extension_points=["csrf-probe", "parameter-tampering"],
-        assumptions=["public exposure", "no auth on /api/a"],
-        supposed_payload_vectors=["q=value"],
         l0_evidence=["GET /api/a answers 200"],
+        research_direction="probe the state-changing form for token verification",
     ),
     surface_context={"cards": [{
         "kind": "Service",

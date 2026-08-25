@@ -1,0 +1,3543 @@
+{
+  "doc-2efb3aacf8e172b84b6e1793e84eff76": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHZ-01\n- WSTG title: Testing Directory Traversal File Include\n- WSTG category: Authorization...",
+    "content_length": 20405,
+    "created_at": "2026-07-30T12:59:31.166915+00:00",
+    "updated_at": "2026-07-30T13:00:00.168838+00:00",
+    "file_path": "wstg-athz-01-methodology.md",
+    "track_id": "upload_20260730_125931_9c601445",
+    "content_hash": "3f44c9070151308fef82589dbc8f5eac",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785416371,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785416371,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785416371,
+      "processing_end_time": 1785416400,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-2efb3aacf8e172b84b6e1793e84eff76-chunk-000",
+      "doc-2efb3aacf8e172b84b6e1793e84eff76-chunk-001",
+      "doc-2efb3aacf8e172b84b6e1793e84eff76-chunk-002",
+      "doc-2efb3aacf8e172b84b6e1793e84eff76-chunk-003",
+      "doc-2efb3aacf8e172b84b6e1793e84eff76-chunk-004"
+    ]
+  },
+  "doc-9a2a918bb83307307b4812469ae0001c": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-01\n- WSTG title: Testing for Reflected Cross Site Scripting\n- WSTG category: Input Valid...",
+    "content_length": 25078,
+    "created_at": "2026-07-30T12:59:31.678970+00:00",
+    "updated_at": "2026-07-30T13:00:53.092077+00:00",
+    "file_path": "wstg-inpv-01-methodology.md",
+    "track_id": "upload_20260730_125931_71dec40f",
+    "content_hash": "de2a180f1888021fa40f1c372db9159b",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785416400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785416400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785416400,
+      "processing_end_time": 1785416453,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 6,
+    "chunks_list": [
+      "doc-9a2a918bb83307307b4812469ae0001c-chunk-000",
+      "doc-9a2a918bb83307307b4812469ae0001c-chunk-001",
+      "doc-9a2a918bb83307307b4812469ae0001c-chunk-002",
+      "doc-9a2a918bb83307307b4812469ae0001c-chunk-003",
+      "doc-9a2a918bb83307307b4812469ae0001c-chunk-004",
+      "doc-9a2a918bb83307307b4812469ae0001c-chunk-005"
+    ]
+  },
+  "doc-d8f69c7e813a7c5f87c603a15e656cb8": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-05\n- WSTG title: Testing for SQL Injection\n- WSTG category: Input Validation Testing (IN...",
+    "content_length": 63919,
+    "created_at": "2026-07-30T12:59:31.694111+00:00",
+    "updated_at": "2026-07-30T13:01:40.898466+00:00",
+    "file_path": "wstg-inpv-05-methodology.md",
+    "track_id": "upload_20260730_125931_9accb570",
+    "content_hash": "f4c8e4fc041a1f42dc5ddc1ef82021d4",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785416400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785416400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785416400,
+      "processing_end_time": 1785416500,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 15,
+    "chunks_list": [
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-000",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-001",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-002",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-003",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-004",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-005",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-006",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-007",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-008",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-009",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-010",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-011",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-012",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-013",
+      "doc-d8f69c7e813a7c5f87c603a15e656cb8-chunk-014"
+    ]
+  },
+  "doc-4bbd60ae8a8276a511522c70e38b3d51": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-05-6\n- WSTG title: Testing for NoSQL Injection\n- WSTG category: Input Validation Testing...",
+    "content_length": 15252,
+    "created_at": "2026-07-30T12:59:31.712411+00:00",
+    "updated_at": "2026-07-30T13:01:16.418392+00:00",
+    "file_path": "wstg-inpv-05-6-methodology.md",
+    "track_id": "upload_20260730_125931_ff6e4d80",
+    "content_hash": "238f2fdd32c18b46a260acc36fb2d77d",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785416400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785416400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785416453,
+      "processing_end_time": 1785416476,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-4bbd60ae8a8276a511522c70e38b3d51-chunk-000",
+      "doc-4bbd60ae8a8276a511522c70e38b3d51-chunk-001",
+      "doc-4bbd60ae8a8276a511522c70e38b3d51-chunk-002",
+      "doc-4bbd60ae8a8276a511522c70e38b3d51-chunk-003"
+    ]
+  },
+  "doc-db3753bb1b28c5b9ebe5769dc9c06af2": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-06\n- WSTG title: Testing for LDAP Injection\n- WSTG category: Input Validation Testing (I...",
+    "content_length": 12846,
+    "created_at": "2026-07-30T12:59:31.725685+00:00",
+    "updated_at": "2026-07-30T13:01:41.435921+00:00",
+    "file_path": "wstg-inpv-06-methodology.md",
+    "track_id": "upload_20260730_125931_52e21d0c",
+    "content_hash": "963106780f39b43b34fff2be9028d180",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785416400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785416400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785416476,
+      "processing_end_time": 1785416501,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-db3753bb1b28c5b9ebe5769dc9c06af2-chunk-000",
+      "doc-db3753bb1b28c5b9ebe5769dc9c06af2-chunk-001",
+      "doc-db3753bb1b28c5b9ebe5769dc9c06af2-chunk-002"
+    ]
+  },
+  "doc-5bb2d236b1e2b43118e82283180ff198": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-07\n- WSTG title: Testing for XML Injection\n- WSTG category: Input Validation Testing (IN...",
+    "content_length": 24256,
+    "created_at": "2026-07-30T12:59:31.741827+00:00",
+    "updated_at": "2026-07-30T13:02:20.289231+00:00",
+    "file_path": "wstg-inpv-07-methodology.md",
+    "track_id": "upload_20260730_125931_4381ac8a",
+    "content_hash": "6084c7cd5e0d1b5c6817447fa30b7a76",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785416400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785416400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785416500,
+      "processing_end_time": 1785416540,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 6,
+    "chunks_list": [
+      "doc-5bb2d236b1e2b43118e82283180ff198-chunk-000",
+      "doc-5bb2d236b1e2b43118e82283180ff198-chunk-001",
+      "doc-5bb2d236b1e2b43118e82283180ff198-chunk-002",
+      "doc-5bb2d236b1e2b43118e82283180ff198-chunk-003",
+      "doc-5bb2d236b1e2b43118e82283180ff198-chunk-004",
+      "doc-5bb2d236b1e2b43118e82283180ff198-chunk-005"
+    ]
+  },
+  "doc-ab2f517f1c742be6f3d510cb76dc6940": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-09\n- WSTG title: Testing for XPath Injection\n- WSTG category: Input Validation Testing (...",
+    "content_length": 13161,
+    "created_at": "2026-07-30T12:59:31.754107+00:00",
+    "updated_at": "2026-07-30T13:02:15.655070+00:00",
+    "file_path": "wstg-inpv-09-methodology.md",
+    "track_id": "upload_20260730_125931_0542f7fd",
+    "content_hash": "0a3d6c2e842ff637d8cfa3a3467c13f1",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785416400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785416400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785416501,
+      "processing_end_time": 1785416535,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-ab2f517f1c742be6f3d510cb76dc6940-chunk-000",
+      "doc-ab2f517f1c742be6f3d510cb76dc6940-chunk-001",
+      "doc-ab2f517f1c742be6f3d510cb76dc6940-chunk-002"
+    ]
+  },
+  "doc-eff998e21395157f6ed4ce495ef006aa": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-12\n- WSTG title: Testing for Command Injection\n- WSTG category: Input Validation Testing...",
+    "content_length": 26733,
+    "created_at": "2026-07-30T12:59:31.767768+00:00",
+    "updated_at": "2026-07-30T13:03:02.579753+00:00",
+    "file_path": "wstg-inpv-12-methodology.md",
+    "track_id": "upload_20260730_125931_8a24ea81",
+    "content_hash": "02ce23792498e4706993443572d427a1",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785416400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785416400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785416535,
+      "processing_end_time": 1785416582,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 6,
+    "chunks_list": [
+      "doc-eff998e21395157f6ed4ce495ef006aa-chunk-000",
+      "doc-eff998e21395157f6ed4ce495ef006aa-chunk-001",
+      "doc-eff998e21395157f6ed4ce495ef006aa-chunk-002",
+      "doc-eff998e21395157f6ed4ce495ef006aa-chunk-003",
+      "doc-eff998e21395157f6ed4ce495ef006aa-chunk-004",
+      "doc-eff998e21395157f6ed4ce495ef006aa-chunk-005"
+    ]
+  },
+  "doc-1724f5a35cf4fa9478c28ef76ea64632": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-19\n- WSTG title: Testing for Server-Side Request Forgery\n- WSTG category: Input Validati...",
+    "content_length": 13370,
+    "created_at": "2026-07-30T12:59:31.781411+00:00",
+    "updated_at": "2026-07-30T13:02:47.777675+00:00",
+    "file_path": "wstg-inpv-19-methodology.md",
+    "track_id": "upload_20260730_125931_9cc336bb",
+    "content_hash": "45d6803dd337c12f8746bb4a94118bf5",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785416400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785416400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785416540,
+      "processing_end_time": 1785416567,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-1724f5a35cf4fa9478c28ef76ea64632-chunk-000",
+      "doc-1724f5a35cf4fa9478c28ef76ea64632-chunk-001",
+      "doc-1724f5a35cf4fa9478c28ef76ea64632-chunk-002"
+    ]
+  },
+  "doc-366fc7951a16dd549e3f1dc83417fabe": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-APIT-03\n- WSTG title: Testing for Excessive Data Exposure\n- WSTG category: API Testing (APIT)...",
+    "content_length": 15507,
+    "created_at": "2026-07-30T13:13:16.284833+00:00",
+    "updated_at": "2026-07-30T13:28:10.671591+00:00",
+    "file_path": "wstg-apit-03-methodology.md",
+    "track_id": "upload_20260730_131316_87d4ebf0",
+    "content_hash": "0ba6d51511301056a1735f97615a623d",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785417556,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785417556,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785417917,
+      "processing_end_time": 1785418090,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-366fc7951a16dd549e3f1dc83417fabe-chunk-000",
+      "doc-366fc7951a16dd549e3f1dc83417fabe-chunk-001",
+      "doc-366fc7951a16dd549e3f1dc83417fabe-chunk-002",
+      "doc-366fc7951a16dd549e3f1dc83417fabe-chunk-003"
+    ]
+  },
+  "doc-10b0482900b8736b3891a9f801951942": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-APIT-04\n- WSTG title: API Broken Function Level Authorization\n- WSTG category: API Testing (A...",
+    "content_length": 9604,
+    "created_at": "2026-07-30T13:13:16.298938+00:00",
+    "updated_at": "2026-07-30T13:28:08.940077+00:00",
+    "file_path": "wstg-apit-04-methodology.md",
+    "track_id": "upload_20260730_131316_c331c817",
+    "content_hash": "e9ec8552c60c135143fc0ae3f4a98efe",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785417556,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785417556,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785417917,
+      "processing_end_time": 1785418088,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-10b0482900b8736b3891a9f801951942-chunk-000",
+      "doc-10b0482900b8736b3891a9f801951942-chunk-001"
+    ]
+  },
+  "doc-5f4e64e8a4e13f14c3ff3f3f15491570": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-APIT-99\n- WSTG title: Testing GraphQL\n- WSTG category: API Testing (APIT)\n- Source file: data...",
+    "content_length": 34584,
+    "created_at": "2026-07-30T13:13:16.317822+00:00",
+    "updated_at": "2026-07-30T13:30:38.554792+00:00",
+    "file_path": "wstg-apit-99-methodology.md",
+    "track_id": "upload_20260730_131316_b8ef202b",
+    "content_hash": "40c358bf92480662cbc03964cfda8a77",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785417556,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785417556,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785418089,
+      "processing_end_time": 1785418238,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 8,
+    "chunks_list": [
+      "doc-5f4e64e8a4e13f14c3ff3f3f15491570-chunk-000",
+      "doc-5f4e64e8a4e13f14c3ff3f3f15491570-chunk-001",
+      "doc-5f4e64e8a4e13f14c3ff3f3f15491570-chunk-002",
+      "doc-5f4e64e8a4e13f14c3ff3f3f15491570-chunk-003",
+      "doc-5f4e64e8a4e13f14c3ff3f3f15491570-chunk-004",
+      "doc-5f4e64e8a4e13f14c3ff3f3f15491570-chunk-005",
+      "doc-5f4e64e8a4e13f14c3ff3f3f15491570-chunk-006",
+      "doc-5f4e64e8a4e13f14c3ff3f3f15491570-chunk-007"
+    ]
+  },
+  "doc-1564e3d5f1827a65b9154317ee688371": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-APIT-01\n- WSTG title: API Reconnaissance\n- WSTG category: API Testing (APIT)\n- Source file: d...",
+    "content_length": 6731,
+    "created_at": "2026-07-31T10:16:32.149601+00:00",
+    "updated_at": "2026-07-31T10:16:52.005276+00:00",
+    "file_path": "wstg-apit-01-methodology.md",
+    "track_id": "upload_20260731_101632_70e2734e",
+    "content_hash": "28cfb8b93862fa846f5543116c3250d3",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785492992,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785492992,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785492992,
+      "processing_end_time": 1785493012,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-1564e3d5f1827a65b9154317ee688371-chunk-000",
+      "doc-1564e3d5f1827a65b9154317ee688371-chunk-001"
+    ]
+  },
+  "doc-1838f0008a46f27b66d8dac8325a6a1e": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-APIT-02\n- WSTG title: API Broken Object Level Authorization\n- WSTG category: API Testing (API...",
+    "content_length": 6001,
+    "created_at": "2026-07-31T10:16:32.682231+00:00",
+    "updated_at": "2026-07-31T10:17:12.108189+00:00",
+    "file_path": "wstg-apit-02-methodology.md",
+    "track_id": "upload_20260731_101632_5204970c",
+    "content_hash": "d230e0a8c54159a75cca2a4f7688532c",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785493012,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785493012,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785493012,
+      "processing_end_time": 1785493032,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-1838f0008a46f27b66d8dac8325a6a1e-chunk-000",
+      "doc-1838f0008a46f27b66d8dac8325a6a1e-chunk-001"
+    ]
+  },
+  "doc-c56c4ddd4a9ad9a942ce665b8c935019": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-02\n- WSTG title: Testing for Default Credentials\n- WSTG category: Authentication Testing...",
+    "content_length": 7494,
+    "created_at": "2026-07-31T10:28:29.195597+00:00",
+    "updated_at": "2026-07-31T10:28:56.559026+00:00",
+    "file_path": "wstg-athn-02-methodology.md",
+    "track_id": "upload_20260731_102829_59160fe6",
+    "content_hash": "6c19aaf2d4baac51c36a5defb7456d57",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785493709,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785493709,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785493709,
+      "processing_end_time": 1785493736,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-c56c4ddd4a9ad9a942ce665b8c935019-chunk-000",
+      "doc-c56c4ddd4a9ad9a942ce665b8c935019-chunk-001"
+    ]
+  },
+  "doc-f56c9dfd36da3c20bd6a449315c7cd44": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-03\n- WSTG title: Testing for Weak Lock Out Mechanism\n- WSTG category: Authentication Tes...",
+    "content_length": 16568,
+    "created_at": "2026-07-31T10:28:29.220008+00:00",
+    "updated_at": "2026-07-31T10:29:33.649702+00:00",
+    "file_path": "wstg-athn-03-methodology.md",
+    "track_id": "upload_20260731_102829_9fbf0237",
+    "content_hash": "68e5818ac225223dd05acb8b334623dd",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785493736,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785493736,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785493736,
+      "processing_end_time": 1785493773,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-f56c9dfd36da3c20bd6a449315c7cd44-chunk-000",
+      "doc-f56c9dfd36da3c20bd6a449315c7cd44-chunk-001",
+      "doc-f56c9dfd36da3c20bd6a449315c7cd44-chunk-002",
+      "doc-f56c9dfd36da3c20bd6a449315c7cd44-chunk-003"
+    ]
+  },
+  "doc-31756ff9be064b82f25dbfbf1263059b": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-04\n- WSTG title: Testing for Bypassing Authentication Schema\n- WSTG category: Authentica...",
+    "content_length": 17268,
+    "created_at": "2026-07-31T10:28:29.233030+00:00",
+    "updated_at": "2026-07-31T10:29:27.138887+00:00",
+    "file_path": "wstg-athn-04-methodology.md",
+    "track_id": "upload_20260731_102829_9848b0cc",
+    "content_hash": "4bf3aaaa26ecbbf8cb298c89e587f1b9",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785493736,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785493736,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785493736,
+      "processing_end_time": 1785493767,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-31756ff9be064b82f25dbfbf1263059b-chunk-000",
+      "doc-31756ff9be064b82f25dbfbf1263059b-chunk-001",
+      "doc-31756ff9be064b82f25dbfbf1263059b-chunk-002",
+      "doc-31756ff9be064b82f25dbfbf1263059b-chunk-003"
+    ]
+  },
+  "doc-e7b9806d7dfaeb2a86d3d73ea8317aef": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-05\n- WSTG title: Testing for Vulnerable Remember Password\n- WSTG category: Authenticatio...",
+    "content_length": 6755,
+    "created_at": "2026-07-31T10:28:29.247475+00:00",
+    "updated_at": "2026-07-31T10:29:43.448738+00:00",
+    "file_path": "wstg-athn-05-methodology.md",
+    "track_id": "upload_20260731_102829_1e340dde",
+    "content_hash": "be1957386981f88dd1c0f2c8b8415af5",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785493736,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785493736,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785493767,
+      "processing_end_time": 1785493783,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-e7b9806d7dfaeb2a86d3d73ea8317aef-chunk-000",
+      "doc-e7b9806d7dfaeb2a86d3d73ea8317aef-chunk-001"
+    ]
+  },
+  "doc-536e7409d2b781ede98f0ff8ef399eed": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-06\n- WSTG title: Testing for Browser Cache Weaknesses\n- WSTG category: Authentication Te...",
+    "content_length": 9769,
+    "created_at": "2026-07-31T10:28:29.266915+00:00",
+    "updated_at": "2026-07-31T10:29:49.285791+00:00",
+    "file_path": "wstg-athn-06-methodology.md",
+    "track_id": "upload_20260731_102829_b13bcd94",
+    "content_hash": "a118e5029650ddbffe42cd4ab33e4c7e",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785493736,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785493736,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785493773,
+      "processing_end_time": 1785493789,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-536e7409d2b781ede98f0ff8ef399eed-chunk-000",
+      "doc-536e7409d2b781ede98f0ff8ef399eed-chunk-001",
+      "doc-536e7409d2b781ede98f0ff8ef399eed-chunk-002"
+    ]
+  },
+  "doc-117449b3898c46f40eb1a6ade4a7d591": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-07\n- WSTG title: Testing for Weak Authentication Methods\n- WSTG category: Authentication...",
+    "content_length": 8964,
+    "created_at": "2026-07-31T10:33:31.170851+00:00",
+    "updated_at": "2026-07-31T10:33:53.622472+00:00",
+    "file_path": "wstg-athn-07-methodology.md",
+    "track_id": "upload_20260731_103331_794a0282",
+    "content_hash": "7bb038ccb659d6717349adeefde95c35",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494011,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494011,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494011,
+      "processing_end_time": 1785494033,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-117449b3898c46f40eb1a6ade4a7d591-chunk-000",
+      "doc-117449b3898c46f40eb1a6ade4a7d591-chunk-001"
+    ]
+  },
+  "doc-001ecd8aa1d653a3601526cc957ea31d": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-08\n- WSTG title: Testing for Weak Security Question Answer\n- WSTG category: Authenticati...",
+    "content_length": 10878,
+    "created_at": "2026-07-31T10:33:31.190104+00:00",
+    "updated_at": "2026-07-31T10:34:13.701852+00:00",
+    "file_path": "wstg-athn-08-methodology.md",
+    "track_id": "upload_20260731_103331_a0ceace6",
+    "content_hash": "23a405affc13530dff49cc7a222e6480",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494033,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494033,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494033,
+      "processing_end_time": 1785494053,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-001ecd8aa1d653a3601526cc957ea31d-chunk-000",
+      "doc-001ecd8aa1d653a3601526cc957ea31d-chunk-001",
+      "doc-001ecd8aa1d653a3601526cc957ea31d-chunk-002"
+    ]
+  },
+  "doc-78ae69b0945c38feef67e89b19a2ce78": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-09\n- WSTG title: Testing for Weak Password Change or Reset Functionalities\n- WSTG catego...",
+    "content_length": 20822,
+    "created_at": "2026-07-31T10:33:31.204559+00:00",
+    "updated_at": "2026-07-31T10:34:28.741440+00:00",
+    "file_path": "wstg-athn-09-methodology.md",
+    "track_id": "upload_20260731_103331_6abd8a41",
+    "content_hash": "402bd600234b7fbabdae5f8ce405509e",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494033,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494033,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494033,
+      "processing_end_time": 1785494068,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-78ae69b0945c38feef67e89b19a2ce78-chunk-000",
+      "doc-78ae69b0945c38feef67e89b19a2ce78-chunk-001",
+      "doc-78ae69b0945c38feef67e89b19a2ce78-chunk-002",
+      "doc-78ae69b0945c38feef67e89b19a2ce78-chunk-003"
+    ]
+  },
+  "doc-885b93e02cd3b91d546f9598a3d9a512": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-10\n- WSTG title: Testing for Weaker Authentication in Alternative Channel\n- WSTG categor...",
+    "content_length": 12976,
+    "created_at": "2026-07-31T10:33:31.220437+00:00",
+    "updated_at": "2026-07-31T10:34:33.454077+00:00",
+    "file_path": "wstg-athn-10-methodology.md",
+    "track_id": "upload_20260731_103331_167a700d",
+    "content_hash": "19367bf5a1c75bbfb0bbe99b7f0f080b",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494033,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494033,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494053,
+      "processing_end_time": 1785494073,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-885b93e02cd3b91d546f9598a3d9a512-chunk-000",
+      "doc-885b93e02cd3b91d546f9598a3d9a512-chunk-001",
+      "doc-885b93e02cd3b91d546f9598a3d9a512-chunk-002"
+    ]
+  },
+  "doc-3057c5214ae12e7effb35fb90f29a423": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHN-11\n- WSTG title: Testing Multi-Factor Authentication (MFA)\n- WSTG category: Authenticati...",
+    "content_length": 22521,
+    "created_at": "2026-07-31T10:33:31.234237+00:00",
+    "updated_at": "2026-07-31T10:35:01.195084+00:00",
+    "file_path": "wstg-athn-11-methodology.md",
+    "track_id": "upload_20260731_103331_702312e7",
+    "content_hash": "e083b238747ef0bd908ea4302c070f45",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494033,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494033,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494068,
+      "processing_end_time": 1785494101,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-3057c5214ae12e7effb35fb90f29a423-chunk-000",
+      "doc-3057c5214ae12e7effb35fb90f29a423-chunk-001",
+      "doc-3057c5214ae12e7effb35fb90f29a423-chunk-002",
+      "doc-3057c5214ae12e7effb35fb90f29a423-chunk-003",
+      "doc-3057c5214ae12e7effb35fb90f29a423-chunk-004"
+    ]
+  },
+  "doc-6f670d995ce51702a51369a33841be6d": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHZ-02\n- WSTG title: Testing for Bypassing Authorization Schema\n- WSTG category: Authorizati...",
+    "content_length": 17118,
+    "created_at": "2026-07-31T10:41:11.939348+00:00",
+    "updated_at": "2026-07-31T10:41:42.894679+00:00",
+    "file_path": "wstg-athz-02-methodology.md",
+    "track_id": "upload_20260731_104111_153af7ab",
+    "content_hash": "c05598d841f362dd43aa4181cef04f55",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494471,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494471,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494471,
+      "processing_end_time": 1785494502,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-6f670d995ce51702a51369a33841be6d-chunk-000",
+      "doc-6f670d995ce51702a51369a33841be6d-chunk-001",
+      "doc-6f670d995ce51702a51369a33841be6d-chunk-002",
+      "doc-6f670d995ce51702a51369a33841be6d-chunk-003"
+    ]
+  },
+  "doc-99ca68306b054ccf1d7b5816bafb1048": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHZ-03\n- WSTG title: Testing for Privilege Escalation\n- WSTG category: Authorization Testing...",
+    "content_length": 15653,
+    "created_at": "2026-07-31T10:41:11.969892+00:00",
+    "updated_at": "2026-07-31T10:42:20.281578+00:00",
+    "file_path": "wstg-athz-03-methodology.md",
+    "track_id": "upload_20260731_104111_e20ba406",
+    "content_hash": "fff51b41c64e507a866945a778546352",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494503,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494503,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494503,
+      "processing_end_time": 1785494540,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-99ca68306b054ccf1d7b5816bafb1048-chunk-000",
+      "doc-99ca68306b054ccf1d7b5816bafb1048-chunk-001",
+      "doc-99ca68306b054ccf1d7b5816bafb1048-chunk-002",
+      "doc-99ca68306b054ccf1d7b5816bafb1048-chunk-003"
+    ]
+  },
+  "doc-f381850f068d5b79abeb8a970d52c486": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHZ-05-1\n- WSTG title: Testing for OAuth Authorization Server Weaknesses\n- WSTG category: Au...",
+    "content_length": 27831,
+    "created_at": "2026-07-31T10:41:11.984045+00:00",
+    "updated_at": "2026-07-31T10:42:39.961203+00:00",
+    "file_path": "wstg-athz-05-1-methodology.md",
+    "track_id": "upload_20260731_104111_f5e7973c",
+    "content_hash": "061433984a9c3170f0425b547a7106ff",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494503,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494503,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494503,
+      "processing_end_time": 1785494559,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 7,
+    "chunks_list": [
+      "doc-f381850f068d5b79abeb8a970d52c486-chunk-000",
+      "doc-f381850f068d5b79abeb8a970d52c486-chunk-001",
+      "doc-f381850f068d5b79abeb8a970d52c486-chunk-002",
+      "doc-f381850f068d5b79abeb8a970d52c486-chunk-003",
+      "doc-f381850f068d5b79abeb8a970d52c486-chunk-004",
+      "doc-f381850f068d5b79abeb8a970d52c486-chunk-005",
+      "doc-f381850f068d5b79abeb8a970d52c486-chunk-006"
+    ]
+  },
+  "doc-7d44ae2e3796fb2811788a45b296b379": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHZ-05-2\n- WSTG title: Testing for OAuth Client Weaknesses\n- WSTG category: Authorization Te...",
+    "content_length": 10413,
+    "created_at": "2026-07-31T10:41:11.998640+00:00",
+    "updated_at": "2026-07-31T10:42:44.715848+00:00",
+    "file_path": "wstg-athz-05-2-methodology.md",
+    "track_id": "upload_20260731_104111_63a9d0f7",
+    "content_hash": "48ea7a90aa86acf10b7d71f538967fa7",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494503,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494503,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494540,
+      "processing_end_time": 1785494564,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-7d44ae2e3796fb2811788a45b296b379-chunk-000",
+      "doc-7d44ae2e3796fb2811788a45b296b379-chunk-001",
+      "doc-7d44ae2e3796fb2811788a45b296b379-chunk-002"
+    ]
+  },
+  "doc-432cbf8013fe1cec9f0bb28ca6062ff9": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ATHZ-05\n- WSTG title: Testing for OAuth Weaknesses\n- WSTG category: Authorization Testing (AT...",
+    "content_length": 22472,
+    "created_at": "2026-07-31T10:41:12.016065+00:00",
+    "updated_at": "2026-07-31T10:43:20.163823+00:00",
+    "file_path": "wstg-athz-05-methodology.md",
+    "track_id": "upload_20260731_104112_7f384068",
+    "content_hash": "19479a42b37b37cc0b0a21223181d313",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785494503,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785494503,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785494560,
+      "processing_end_time": 1785494600,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-432cbf8013fe1cec9f0bb28ca6062ff9-chunk-000",
+      "doc-432cbf8013fe1cec9f0bb28ca6062ff9-chunk-001",
+      "doc-432cbf8013fe1cec9f0bb28ca6062ff9-chunk-002",
+      "doc-432cbf8013fe1cec9f0bb28ca6062ff9-chunk-003",
+      "doc-432cbf8013fe1cec9f0bb28ca6062ff9-chunk-004"
+    ]
+  },
+  "doc-2aa6b633c690c5e25a9eb12e43b6e5e7": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-01\n- WSTG title: Test Business Logic Data Validation\n- WSTG category: Business Logic Tes...",
+    "content_length": 12546,
+    "created_at": "2026-07-31T10:53:15.194752+00:00",
+    "updated_at": "2026-07-31T10:53:31.782343+00:00",
+    "file_path": "wstg-busl-01-methodology.md",
+    "track_id": "upload_20260731_105315_e089f9c7",
+    "content_hash": "93b33be8436a768d19b10451b0032903",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495195,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495195,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495195,
+      "processing_end_time": 1785495211,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-2aa6b633c690c5e25a9eb12e43b6e5e7-chunk-000",
+      "doc-2aa6b633c690c5e25a9eb12e43b6e5e7-chunk-001",
+      "doc-2aa6b633c690c5e25a9eb12e43b6e5e7-chunk-002"
+    ]
+  },
+  "doc-789e31e1fb6ec71ec3cf4b32985fc3cd": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-02\n- WSTG title: Test Ability to Forge Requests\n- WSTG category: Business Logic Testing ...",
+    "content_length": 10600,
+    "created_at": "2026-07-31T10:53:15.225759+00:00",
+    "updated_at": "2026-07-31T10:53:56.938107+00:00",
+    "file_path": "wstg-busl-02-methodology.md",
+    "track_id": "upload_20260731_105315_6fe6b402",
+    "content_hash": "62c76b002f51165672ddbe9b17e70746",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495211,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495211,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495211,
+      "processing_end_time": 1785495236,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-789e31e1fb6ec71ec3cf4b32985fc3cd-chunk-000",
+      "doc-789e31e1fb6ec71ec3cf4b32985fc3cd-chunk-001"
+    ]
+  },
+  "doc-29d6f57c466399a4a7ca64ca8cc68c2b": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-03\n- WSTG title: Test Integrity Checks\n- WSTG category: Business Logic Testing (BUSL)\n- ...",
+    "content_length": 12269,
+    "created_at": "2026-07-31T10:53:15.234490+00:00",
+    "updated_at": "2026-07-31T10:53:52.615334+00:00",
+    "file_path": "wstg-busl-03-methodology.md",
+    "track_id": "upload_20260731_105315_33c1bed7",
+    "content_hash": "7d79464cc7fe856b435ad50f2d6b2bfd",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495211,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495211,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495211,
+      "processing_end_time": 1785495232,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-29d6f57c466399a4a7ca64ca8cc68c2b-chunk-000",
+      "doc-29d6f57c466399a4a7ca64ca8cc68c2b-chunk-001",
+      "doc-29d6f57c466399a4a7ca64ca8cc68c2b-chunk-002"
+    ]
+  },
+  "doc-dbe81fa3136cd9d8be4999b7ce88ef1d": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-04\n- WSTG title: Test for Process Timing\n- WSTG category: Business Logic Testing (BUSL)\n...",
+    "content_length": 11075,
+    "created_at": "2026-07-31T10:53:15.249726+00:00",
+    "updated_at": "2026-07-31T10:54:13.067929+00:00",
+    "file_path": "wstg-busl-04-methodology.md",
+    "track_id": "upload_20260731_105315_03bcf14e",
+    "content_hash": "bda4f8a6d6c723c02d960a203766a0a0",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495211,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495211,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495232,
+      "processing_end_time": 1785495253,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-dbe81fa3136cd9d8be4999b7ce88ef1d-chunk-000",
+      "doc-dbe81fa3136cd9d8be4999b7ce88ef1d-chunk-001",
+      "doc-dbe81fa3136cd9d8be4999b7ce88ef1d-chunk-002"
+    ]
+  },
+  "doc-a31923b4f652caa120555ba173823de0": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-05\n- WSTG title: Test Number of Times a Function Can Be Used Limits\n- WSTG category: Bus...",
+    "content_length": 8234,
+    "created_at": "2026-07-31T10:53:15.264891+00:00",
+    "updated_at": "2026-07-31T10:54:14.625742+00:00",
+    "file_path": "wstg-busl-05-methodology.md",
+    "track_id": "upload_20260731_105315_fb0d4cc3",
+    "content_hash": "fc0b37b12fa20b55eaf5402c35437979",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495211,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495211,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495237,
+      "processing_end_time": 1785495254,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-a31923b4f652caa120555ba173823de0-chunk-000",
+      "doc-a31923b4f652caa120555ba173823de0-chunk-001"
+    ]
+  },
+  "doc-7b894ecbcf45d3791dc1ef6f20506686": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-06\n- WSTG title: Testing for the Circumvention of Work Flows\n- WSTG category: Business L...",
+    "content_length": 11886,
+    "created_at": "2026-07-31T10:58:24.280721+00:00",
+    "updated_at": "2026-07-31T10:58:41.152550+00:00",
+    "file_path": "wstg-busl-06-methodology.md",
+    "track_id": "upload_20260731_105824_a78f557d",
+    "content_hash": "798df280c6e0a436e2c0cf1d6b2b2908",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495504,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495504,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495504,
+      "processing_end_time": 1785495521,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-7b894ecbcf45d3791dc1ef6f20506686-chunk-000",
+      "doc-7b894ecbcf45d3791dc1ef6f20506686-chunk-001",
+      "doc-7b894ecbcf45d3791dc1ef6f20506686-chunk-002"
+    ]
+  },
+  "doc-c97667ce0118a17b753aecd821dcef59": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-07\n- WSTG title: Test Defenses Against Application Misuse\n- WSTG category: Business Logi...",
+    "content_length": 14400,
+    "created_at": "2026-07-31T10:58:24.311900+00:00",
+    "updated_at": "2026-07-31T11:03:04.461927+00:00",
+    "file_path": "wstg-busl-07-methodology.md",
+    "track_id": "upload_20260731_105824_0de1f7eb",
+    "content_hash": "1c7dcf5ce90a43b0979e4412d9f11d1a",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495521,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495521,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495521,
+      "processing_end_time": 1785495784,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-c97667ce0118a17b753aecd821dcef59-chunk-000",
+      "doc-c97667ce0118a17b753aecd821dcef59-chunk-001",
+      "doc-c97667ce0118a17b753aecd821dcef59-chunk-002"
+    ]
+  },
+  "doc-9ec7e33bd3116d8145d08b1827c4cf01": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-08\n- WSTG title: Test Upload of Unexpected File Types\n- WSTG category: Business Logic Te...",
+    "content_length": 10669,
+    "created_at": "2026-07-31T10:58:24.325302+00:00",
+    "updated_at": "2026-07-31T11:02:41.824082+00:00",
+    "file_path": "wstg-busl-08-methodology.md",
+    "track_id": "upload_20260731_105824_4fb991de",
+    "content_hash": "03b8b1f6cbffffadd92f6208aa393455",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495521,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495521,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495521,
+      "processing_end_time": 1785495761,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-9ec7e33bd3116d8145d08b1827c4cf01-chunk-000",
+      "doc-9ec7e33bd3116d8145d08b1827c4cf01-chunk-001",
+      "doc-9ec7e33bd3116d8145d08b1827c4cf01-chunk-002"
+    ]
+  },
+  "doc-ed012a5a5665472e517fe8207083f49a": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-09\n- WSTG title: Test Upload of Malicious Files\n- WSTG category: Business Logic Testing ...",
+    "content_length": 25170,
+    "created_at": "2026-07-31T10:58:24.343327+00:00",
+    "updated_at": "2026-07-31T11:07:00.924222+00:00",
+    "file_path": "wstg-busl-09-methodology.md",
+    "track_id": "upload_20260731_105824_d4fa7ccb",
+    "content_hash": "a5f339f756b1e7ff39b5cead45c23214",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495521,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495521,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495762,
+      "processing_end_time": 1785496020,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 6,
+    "chunks_list": [
+      "doc-ed012a5a5665472e517fe8207083f49a-chunk-000",
+      "doc-ed012a5a5665472e517fe8207083f49a-chunk-001",
+      "doc-ed012a5a5665472e517fe8207083f49a-chunk-002",
+      "doc-ed012a5a5665472e517fe8207083f49a-chunk-003",
+      "doc-ed012a5a5665472e517fe8207083f49a-chunk-004",
+      "doc-ed012a5a5665472e517fe8207083f49a-chunk-005"
+    ]
+  },
+  "doc-3f4f5cff505f73ed00fb5bb4eebf4557": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-BUSL-10\n- WSTG title: Test Payment Functionality\n- WSTG category: Business Logic Testing (BUS...",
+    "content_length": 30347,
+    "created_at": "2026-07-31T10:58:24.359658+00:00",
+    "updated_at": "2026-07-31T11:07:22.018353+00:00",
+    "file_path": "wstg-busl-10-methodology.md",
+    "track_id": "upload_20260731_105824_02b4a98e",
+    "content_hash": "23d767c399cb1ab951df62176a64c11d",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785495521,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785495521,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785495784,
+      "processing_end_time": 1785496042,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 7,
+    "chunks_list": [
+      "doc-3f4f5cff505f73ed00fb5bb4eebf4557-chunk-000",
+      "doc-3f4f5cff505f73ed00fb5bb4eebf4557-chunk-001",
+      "doc-3f4f5cff505f73ed00fb5bb4eebf4557-chunk-002",
+      "doc-3f4f5cff505f73ed00fb5bb4eebf4557-chunk-003",
+      "doc-3f4f5cff505f73ed00fb5bb4eebf4557-chunk-004",
+      "doc-3f4f5cff505f73ed00fb5bb4eebf4557-chunk-005",
+      "doc-3f4f5cff505f73ed00fb5bb4eebf4557-chunk-006"
+    ]
+  },
+  "doc-aa5c9321922fff53a8b5093aeb86d6b2": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-01-1\n- WSTG title: Testing for Self DOM Based Cross-Site Scripting\n- WSTG category: Clie...",
+    "content_length": 9304,
+    "created_at": "2026-07-31T11:12:47.192801+00:00",
+    "updated_at": "2026-07-31T11:15:24.104351+00:00",
+    "file_path": "wstg-clnt-01-1-methodology.md",
+    "track_id": "upload_20260731_111247_1ffac015",
+    "content_hash": "bf0bdf3d2fd2001ccb66784744e177ab",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785496367,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785496367,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785496367,
+      "processing_end_time": 1785496524,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-aa5c9321922fff53a8b5093aeb86d6b2-chunk-000",
+      "doc-aa5c9321922fff53a8b5093aeb86d6b2-chunk-001"
+    ]
+  },
+  "doc-dd948cd6478c95cb615c3b86568b8163": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-01\n- WSTG title: Testing for DOM-Based Cross Site Scripting\n- WSTG category: Client-side...",
+    "content_length": 21679,
+    "created_at": "2026-07-31T11:12:47.221194+00:00",
+    "updated_at": "2026-07-31T11:19:52.200911+00:00",
+    "file_path": "wstg-clnt-01-methodology.md",
+    "track_id": "upload_20260731_111247_358e0b65",
+    "content_hash": "03a234920d8c7f486f2cb78afec9cf51",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785496524,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785496524,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785496524,
+      "processing_end_time": 1785496792,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-dd948cd6478c95cb615c3b86568b8163-chunk-000",
+      "doc-dd948cd6478c95cb615c3b86568b8163-chunk-001",
+      "doc-dd948cd6478c95cb615c3b86568b8163-chunk-002",
+      "doc-dd948cd6478c95cb615c3b86568b8163-chunk-003",
+      "doc-dd948cd6478c95cb615c3b86568b8163-chunk-004"
+    ]
+  },
+  "doc-f4eb0f9a10aea7bceef93114d6569d66": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-02\n- WSTG title: Testing for JavaScript Execution\n- WSTG category: Client-side Testing (...",
+    "content_length": 8047,
+    "created_at": "2026-07-31T11:12:47.230185+00:00",
+    "updated_at": "2026-07-31T11:15:43.929718+00:00",
+    "file_path": "wstg-clnt-02-methodology.md",
+    "track_id": "upload_20260731_111247_5adb8219",
+    "content_hash": "c96d554defe1b2045557dd9838aae4b7",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785496524,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785496524,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785496524,
+      "processing_end_time": 1785496543,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-f4eb0f9a10aea7bceef93114d6569d66-chunk-000",
+      "doc-f4eb0f9a10aea7bceef93114d6569d66-chunk-001"
+    ]
+  },
+  "doc-507feea21a2b9071c451f23d5f3c743d": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-03\n- WSTG title: Testing for HTML Injection\n- WSTG category: Client-side Testing (CLNT)\n...",
+    "content_length": 9555,
+    "created_at": "2026-07-31T11:12:47.246426+00:00",
+    "updated_at": "2026-07-31T11:23:42.535460+00:00",
+    "file_path": "wstg-clnt-03-methodology.md",
+    "track_id": "upload_20260731_111247_02f4a35e",
+    "content_hash": "b624964ce5cd92d073b798f512f4b48f",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785496524,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785496524,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785496544,
+      "processing_end_time": 1785497022,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-507feea21a2b9071c451f23d5f3c743d-chunk-000",
+      "doc-507feea21a2b9071c451f23d5f3c743d-chunk-001",
+      "doc-507feea21a2b9071c451f23d5f3c743d-chunk-002"
+    ]
+  },
+  "doc-941fa0691039c2c45bba006d5dc06144": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-04\n- WSTG title: Testing for Client-side URL Redirect\n- WSTG category: Client-side Testi...",
+    "content_length": 11312,
+    "created_at": "2026-07-31T11:12:47.260276+00:00",
+    "updated_at": "2026-07-31T11:23:46.665530+00:00",
+    "file_path": "wstg-clnt-04-methodology.md",
+    "track_id": "upload_20260731_111247_8cbe5858",
+    "content_hash": "5b97f5ca64cde5bb36c2b10c6e660b58",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785496524,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785496524,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785496792,
+      "processing_end_time": 1785497026,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-941fa0691039c2c45bba006d5dc06144-chunk-000",
+      "doc-941fa0691039c2c45bba006d5dc06144-chunk-001",
+      "doc-941fa0691039c2c45bba006d5dc06144-chunk-002"
+    ]
+  },
+  "doc-4c0346a2efd97b80ae672827b3a9795d": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-05\n- WSTG title: Testing for CSS Injection\n- WSTG category: Client-side Testing (CLNT)\n-...",
+    "content_length": 12217,
+    "created_at": "2026-07-31T11:27:45.789135+00:00",
+    "updated_at": "2026-07-31T11:28:14.089040+00:00",
+    "file_path": "wstg-clnt-05-methodology.md",
+    "track_id": "upload_20260731_112745_7e3a875a",
+    "content_hash": "ef21cd501ba19cdbe8a46d631d44e074",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785497265,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785497265,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785497265,
+      "processing_end_time": 1785497294,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-4c0346a2efd97b80ae672827b3a9795d-chunk-000",
+      "doc-4c0346a2efd97b80ae672827b3a9795d-chunk-001",
+      "doc-4c0346a2efd97b80ae672827b3a9795d-chunk-002"
+    ]
+  },
+  "doc-a331af288c84a3d43384e1ec0cd67904": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-06\n- WSTG title: Testing for Client-side Resource Manipulation\n- WSTG category: Client-s...",
+    "content_length": 13999,
+    "created_at": "2026-07-31T11:27:45.817885+00:00",
+    "updated_at": "2026-07-31T11:32:40.720335+00:00",
+    "file_path": "wstg-clnt-06-methodology.md",
+    "track_id": "upload_20260731_112745_a5b986da",
+    "content_hash": "0824d3815835720402661336f01c5590",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785497294,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785497294,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785497294,
+      "processing_end_time": 1785497560,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-a331af288c84a3d43384e1ec0cd67904-chunk-000",
+      "doc-a331af288c84a3d43384e1ec0cd67904-chunk-001",
+      "doc-a331af288c84a3d43384e1ec0cd67904-chunk-002"
+    ]
+  },
+  "doc-d89410974592b19e283a445bd3ea68aa": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-07\n- WSTG title: Testing Cross Origin Resource Sharing\n- WSTG category: Client-side Test...",
+    "content_length": 22405,
+    "created_at": "2026-07-31T11:27:45.831465+00:00",
+    "updated_at": "2026-07-31T11:32:43.708520+00:00",
+    "file_path": "wstg-clnt-07-methodology.md",
+    "track_id": "upload_20260731_112745_77250528",
+    "content_hash": "ae714ef887f1045909bab6d2e9408f87",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785497294,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785497294,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785497294,
+      "processing_end_time": 1785497563,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-d89410974592b19e283a445bd3ea68aa-chunk-000",
+      "doc-d89410974592b19e283a445bd3ea68aa-chunk-001",
+      "doc-d89410974592b19e283a445bd3ea68aa-chunk-002",
+      "doc-d89410974592b19e283a445bd3ea68aa-chunk-003",
+      "doc-d89410974592b19e283a445bd3ea68aa-chunk-004"
+    ]
+  },
+  "doc-fbf0208722534d321dede8c097bd3086": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-08\n- WSTG title: Testing for Cross Site Flashing\n- WSTG category: Client-side Testing (C...",
+    "content_length": 20632,
+    "created_at": "2026-07-31T11:27:45.846492+00:00",
+    "updated_at": "2026-07-31T11:37:41.672486+00:00",
+    "file_path": "wstg-clnt-08-methodology.md",
+    "track_id": "upload_20260731_112745_ac11fb12",
+    "content_hash": "3c2ae0cf4a6dcad2aea765353a0e7413",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785497294,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785497294,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785497561,
+      "processing_end_time": 1785497861,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-fbf0208722534d321dede8c097bd3086-chunk-000",
+      "doc-fbf0208722534d321dede8c097bd3086-chunk-001",
+      "doc-fbf0208722534d321dede8c097bd3086-chunk-002",
+      "doc-fbf0208722534d321dede8c097bd3086-chunk-003",
+      "doc-fbf0208722534d321dede8c097bd3086-chunk-004"
+    ]
+  },
+  "doc-c2d6cc4252ff2b5d320731c75450c84a": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-09\n- WSTG title: Testing for Clickjacking\n- WSTG category: Client-side Testing (CLNT)\n- ...",
+    "content_length": 12557,
+    "created_at": "2026-07-31T11:27:45.860456+00:00",
+    "updated_at": "2026-07-31T11:37:43.340041+00:00",
+    "file_path": "wstg-clnt-09-methodology.md",
+    "track_id": "upload_20260731_112745_209976fc",
+    "content_hash": "348bab673f86d40ca08af10639936f39",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785497294,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785497294,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785497563,
+      "processing_end_time": 1785497863,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-c2d6cc4252ff2b5d320731c75450c84a-chunk-000",
+      "doc-c2d6cc4252ff2b5d320731c75450c84a-chunk-001",
+      "doc-c2d6cc4252ff2b5d320731c75450c84a-chunk-002"
+    ]
+  },
+  "doc-6357b0935e2602236d9174d0c502b68b": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-10\n- WSTG title: Testing WebSockets\n- WSTG category: Client-side Testing (CLNT)\n- Source...",
+    "content_length": 7908,
+    "created_at": "2026-07-31T11:44:50.507639+00:00",
+    "updated_at": "2026-07-31T11:45:19.432092+00:00",
+    "file_path": "wstg-clnt-10-methodology.md",
+    "track_id": "upload_20260731_114450_4139dac2",
+    "content_hash": "e61fc94af04b58554d2a8247a9b2b336",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785498290,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785498290,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785498290,
+      "processing_end_time": 1785498319,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-6357b0935e2602236d9174d0c502b68b-chunk-000",
+      "doc-6357b0935e2602236d9174d0c502b68b-chunk-001"
+    ]
+  },
+  "doc-56ec4bd79a20108806b6b5a5ffb14b16": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-11\n- WSTG title: Testing Web Messaging\n- WSTG category: Client-side Testing (CLNT)\n- Sou...",
+    "content_length": 13137,
+    "created_at": "2026-07-31T11:44:50.536781+00:00",
+    "updated_at": "2026-07-31T11:49:24.769420+00:00",
+    "file_path": "wstg-clnt-11-methodology.md",
+    "track_id": "upload_20260731_114450_987a2904",
+    "content_hash": "8f6f674b9aeac6088fee3bb9b3794b01",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785498319,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785498319,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785498319,
+      "processing_end_time": 1785498564,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-56ec4bd79a20108806b6b5a5ffb14b16-chunk-000",
+      "doc-56ec4bd79a20108806b6b5a5ffb14b16-chunk-001",
+      "doc-56ec4bd79a20108806b6b5a5ffb14b16-chunk-002"
+    ]
+  },
+  "doc-566bc938b8c6a8464007d93896a672d4": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-12\n- WSTG title: Testing Browser Storage\n- WSTG category: Client-side Testing (CLNT)\n- S...",
+    "content_length": 13631,
+    "created_at": "2026-07-31T11:44:50.550313+00:00",
+    "updated_at": "2026-07-31T11:49:27.964790+00:00",
+    "file_path": "wstg-clnt-12-methodology.md",
+    "track_id": "upload_20260731_114450_d7753220",
+    "content_hash": "658aff1a1173beda39f74802d692c738",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785498319,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785498319,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785498319,
+      "processing_end_time": 1785498567,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-566bc938b8c6a8464007d93896a672d4-chunk-000",
+      "doc-566bc938b8c6a8464007d93896a672d4-chunk-001",
+      "doc-566bc938b8c6a8464007d93896a672d4-chunk-002"
+    ]
+  },
+  "doc-f6cdc807870a77b5064fef34c66d10a7": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-13\n- WSTG title: Testing for Cross Site Script Inclusion\n- WSTG category: Client-side Te...",
+    "content_length": 19409,
+    "created_at": "2026-07-31T11:44:50.568410+00:00",
+    "updated_at": "2026-07-31T11:53:38.744148+00:00",
+    "file_path": "wstg-clnt-13-methodology.md",
+    "track_id": "upload_20260731_114450_1e5d9fcd",
+    "content_hash": "d073321e165ec72cd678f4675032bae9",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785498319,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785498319,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785498565,
+      "processing_end_time": 1785498818,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-f6cdc807870a77b5064fef34c66d10a7-chunk-000",
+      "doc-f6cdc807870a77b5064fef34c66d10a7-chunk-001",
+      "doc-f6cdc807870a77b5064fef34c66d10a7-chunk-002",
+      "doc-f6cdc807870a77b5064fef34c66d10a7-chunk-003",
+      "doc-f6cdc807870a77b5064fef34c66d10a7-chunk-004"
+    ]
+  },
+  "doc-90180de2e2c3b7e753b6b84b5a742062": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-14\n- WSTG title: Testing for Reverse Tabnabbing\n- WSTG category: Client-side Testing (CL...",
+    "content_length": 7558,
+    "created_at": "2026-07-31T11:44:50.581067+00:00",
+    "updated_at": "2026-07-31T11:53:13.552828+00:00",
+    "file_path": "wstg-clnt-14-methodology.md",
+    "track_id": "upload_20260731_114450_f81302d5",
+    "content_hash": "61a109210c7b3cd2312865573c20abb9",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785498319,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785498319,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785498568,
+      "processing_end_time": 1785498793,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-90180de2e2c3b7e753b6b84b5a742062-chunk-000",
+      "doc-90180de2e2c3b7e753b6b84b5a742062-chunk-001"
+    ]
+  },
+  "doc-157a4cb1972bdf9a0880f5cf18f04a6a": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CLNT-15\n- WSTG title: Testing for Client-side Template Injection\n- WSTG category: Client-side...",
+    "content_length": 16274,
+    "created_at": "2026-08-01T09:47:23.681358+00:00",
+    "updated_at": "2026-08-01T09:53:18.290739+00:00",
+    "file_path": "wstg-clnt-15-methodology.md",
+    "track_id": "upload_20260801_094723_1abcbf72",
+    "content_hash": "c632dade7372876f46bf06578f4c2672",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785577956,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785577956,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785577956,
+      "processing_end_time": 1785577998,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-157a4cb1972bdf9a0880f5cf18f04a6a-chunk-000",
+      "doc-157a4cb1972bdf9a0880f5cf18f04a6a-chunk-001",
+      "doc-157a4cb1972bdf9a0880f5cf18f04a6a-chunk-002",
+      "doc-157a4cb1972bdf9a0880f5cf18f04a6a-chunk-003"
+    ]
+  },
+  "doc-f2dca49b17414baedefbdc455292dffd": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-01\n- WSTG title: Test Network Infrastructure Configuration\n- WSTG category: Configuratio...",
+    "content_length": 16284,
+    "created_at": "2026-08-01T09:47:24.144227+00:00",
+    "updated_at": "2026-08-01T09:53:55.365197+00:00",
+    "file_path": "wstg-conf-01-methodology.md",
+    "track_id": "upload_20260801_094724_f4d80abc",
+    "content_hash": "dd98834811f06f5b2a99aae41ff8d0fc",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785577956,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785577956,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785577998,
+      "processing_end_time": 1785578035,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-f2dca49b17414baedefbdc455292dffd-chunk-000",
+      "doc-f2dca49b17414baedefbdc455292dffd-chunk-001",
+      "doc-f2dca49b17414baedefbdc455292dffd-chunk-002"
+    ]
+  },
+  "doc-fe9d496999c75fb86d9f8a49604d02d0": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-02\n- WSTG title: Test Application Platform Configuration\n- WSTG category: Configuration ...",
+    "content_length": 11838,
+    "created_at": "2026-08-01T09:47:24.151994+00:00",
+    "updated_at": "2026-08-01T09:54:21.104851+00:00",
+    "file_path": "wstg-conf-02-methodology.md",
+    "track_id": "upload_20260801_094724_31ee9e03",
+    "content_hash": "d30cce11b7fe47d65305da143119e7f0",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785577956,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785577956,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578035,
+      "processing_end_time": 1785578061,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-fe9d496999c75fb86d9f8a49604d02d0-chunk-000",
+      "doc-fe9d496999c75fb86d9f8a49604d02d0-chunk-001",
+      "doc-fe9d496999c75fb86d9f8a49604d02d0-chunk-002"
+    ]
+  },
+  "doc-5d55d44f25265c54469eaa8333ead2a4": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-03\n- WSTG title: Test File Extensions Handling for Sensitive Information\n- WSTG category...",
+    "content_length": 12741,
+    "created_at": "2026-08-01T09:47:24.163191+00:00",
+    "updated_at": "2026-08-01T09:57:41.560925+00:00",
+    "file_path": "wstg-conf-03-methodology.md",
+    "track_id": "upload_20260801_094724_c6fa3eb3",
+    "content_hash": "c49a6ad0fb747009cd89f94a97c1b7a2",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785577956,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785577956,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578061,
+      "processing_end_time": 1785578261,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-5d55d44f25265c54469eaa8333ead2a4-chunk-000",
+      "doc-5d55d44f25265c54469eaa8333ead2a4-chunk-001",
+      "doc-5d55d44f25265c54469eaa8333ead2a4-chunk-002"
+    ]
+  },
+  "doc-7e4dbed88f64fa7cde685ea3eeba6062": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-05\n- WSTG title: Enumerate Infrastructure and Application Admin Interfaces\n- WSTG catego...",
+    "content_length": 12596,
+    "created_at": "2026-08-01T09:47:24.179401+00:00",
+    "updated_at": "2026-08-01T09:58:17.315394+00:00",
+    "file_path": "wstg-conf-05-methodology.md",
+    "track_id": "upload_20260801_094724_d5c524bd",
+    "content_hash": "cc7daa45e999d3271ca4785a9db9dd4e",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785577956,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785577956,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578262,
+      "processing_end_time": 1785578297,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-7e4dbed88f64fa7cde685ea3eeba6062-chunk-000",
+      "doc-7e4dbed88f64fa7cde685ea3eeba6062-chunk-001",
+      "doc-7e4dbed88f64fa7cde685ea3eeba6062-chunk-002"
+    ]
+  },
+  "doc-4fc774259228cd414282425d0a281e37": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-06\n- WSTG title: Test HTTP Methods\n- WSTG category: Configuration and Deployment Managem...",
+    "content_length": 23368,
+    "created_at": "2026-08-01T10:02:08.039085+00:00",
+    "updated_at": "2026-08-01T10:02:56.246701+00:00",
+    "file_path": "wstg-conf-06-methodology.md",
+    "track_id": "upload_20260801_100208_9d9c3be8",
+    "content_hash": "9f730ecb45bf7684c894492b81511c18",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578528,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578528,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578528,
+      "processing_end_time": 1785578576,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 6,
+    "chunks_list": [
+      "doc-4fc774259228cd414282425d0a281e37-chunk-000",
+      "doc-4fc774259228cd414282425d0a281e37-chunk-001",
+      "doc-4fc774259228cd414282425d0a281e37-chunk-002",
+      "doc-4fc774259228cd414282425d0a281e37-chunk-003",
+      "doc-4fc774259228cd414282425d0a281e37-chunk-004",
+      "doc-4fc774259228cd414282425d0a281e37-chunk-005"
+    ]
+  },
+  "doc-e3d35387f319064504857847281b5d15": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-07\n- WSTG title: Test HTTP Strict Transport Security\n- WSTG category: Configuration and ...",
+    "content_length": 9214,
+    "created_at": "2026-08-01T10:02:08.080100+00:00",
+    "updated_at": "2026-08-01T10:03:23.378469+00:00",
+    "file_path": "wstg-conf-07-methodology.md",
+    "track_id": "upload_20260801_100208_fd9709db",
+    "content_hash": "29f25349fca180fd217522eee403c47e",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578576,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578576,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578576,
+      "processing_end_time": 1785578603,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-e3d35387f319064504857847281b5d15-chunk-000",
+      "doc-e3d35387f319064504857847281b5d15-chunk-001"
+    ]
+  },
+  "doc-c6e1e52bc078e006b0a0f978d9a199bc": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-09\n- WSTG title: Test File Permission\n- WSTG category: Configuration and Deployment Mana...",
+    "content_length": 7704,
+    "created_at": "2026-08-01T10:02:08.089344+00:00",
+    "updated_at": "2026-08-01T10:04:09.542884+00:00",
+    "file_path": "wstg-conf-09-methodology.md",
+    "track_id": "upload_20260801_100208_3eb22a7a",
+    "content_hash": "8426102a33cf0cf5a93c028d085456cb",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578576,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578576,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578603,
+      "processing_end_time": 1785578649,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-c6e1e52bc078e006b0a0f978d9a199bc-chunk-000",
+      "doc-c6e1e52bc078e006b0a0f978d9a199bc-chunk-001"
+    ]
+  },
+  "doc-c13f010c37aa825f16fd20fc693f2648": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-10\n- WSTG title: Test for Subdomain Takeover\n- WSTG category: Configuration and Deployme...",
+    "content_length": 11483,
+    "created_at": "2026-08-01T10:02:08.104717+00:00",
+    "updated_at": "2026-08-01T10:04:48.662795+00:00",
+    "file_path": "wstg-conf-10-methodology.md",
+    "track_id": "upload_20260801_100208_bec37fe9",
+    "content_hash": "e4997698c4290ce32b88726ca879ac2b",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578576,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578576,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578649,
+      "processing_end_time": 1785578688,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-c13f010c37aa825f16fd20fc693f2648-chunk-000",
+      "doc-c13f010c37aa825f16fd20fc693f2648-chunk-001",
+      "doc-c13f010c37aa825f16fd20fc693f2648-chunk-002"
+    ]
+  },
+  "doc-09090bb3d2c328e6a03a33f47fdb7c40": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-11\n- WSTG title: Test Cloud Storage\n- WSTG category: Configuration and Deployment Manage...",
+    "content_length": 12779,
+    "created_at": "2026-08-01T10:02:08.119207+00:00",
+    "updated_at": "2026-08-01T10:05:16.498999+00:00",
+    "file_path": "wstg-conf-11-methodology.md",
+    "track_id": "upload_20260801_100208_e2c1d173",
+    "content_hash": "7a7f72ec84335305b7ec5e46dadde9ff",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578576,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578576,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578689,
+      "processing_end_time": 1785578716,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-09090bb3d2c328e6a03a33f47fdb7c40-chunk-000",
+      "doc-09090bb3d2c328e6a03a33f47fdb7c40-chunk-001",
+      "doc-09090bb3d2c328e6a03a33f47fdb7c40-chunk-002"
+    ]
+  },
+  "doc-3ef7e3d50def7213b8e53e2fc6ca96f9": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-12\n- WSTG title: Testing for Content Security Policy\n- WSTG category: Configuration and ...",
+    "content_length": 15939,
+    "created_at": "2026-08-01T10:07:55.780694+00:00",
+    "updated_at": "2026-08-01T10:08:36.901724+00:00",
+    "file_path": "wstg-conf-12-methodology.md",
+    "track_id": "upload_20260801_100755_e9c26aa9",
+    "content_hash": "640e07a09914c0743d0a69930b2a7e3c",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578875,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578875,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578875,
+      "processing_end_time": 1785578916,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-3ef7e3d50def7213b8e53e2fc6ca96f9-chunk-000",
+      "doc-3ef7e3d50def7213b8e53e2fc6ca96f9-chunk-001",
+      "doc-3ef7e3d50def7213b8e53e2fc6ca96f9-chunk-002",
+      "doc-3ef7e3d50def7213b8e53e2fc6ca96f9-chunk-003"
+    ]
+  },
+  "doc-29898427405fc044501f82e30c15f855": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-13\n- WSTG title: Test Path Confusion\n- WSTG category: Configuration and Deployment Manag...",
+    "content_length": 7425,
+    "created_at": "2026-08-01T10:07:55.817776+00:00",
+    "updated_at": "2026-08-01T10:09:04.470708+00:00",
+    "file_path": "wstg-conf-13-methodology.md",
+    "track_id": "upload_20260801_100755_8c764543",
+    "content_hash": "14d4e28ab5b5b9721234977d6b0591e5",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578917,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578917,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578917,
+      "processing_end_time": 1785578944,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-29898427405fc044501f82e30c15f855-chunk-000",
+      "doc-29898427405fc044501f82e30c15f855-chunk-001"
+    ]
+  },
+  "doc-1b26bd7d333a38ea2e920cfcff406e89": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CONF-14\n- WSTG title: Test Other HTTP Security Header Misconfigurations\n- WSTG category: Conf...",
+    "content_length": 15429,
+    "created_at": "2026-08-01T10:07:55.833701+00:00",
+    "updated_at": "2026-08-01T10:09:46.054801+00:00",
+    "file_path": "wstg-conf-14-methodology.md",
+    "track_id": "upload_20260801_100755_815b5d93",
+    "content_hash": "3aeda76b51d92a29ed633e5467d20fb9",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578917,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578917,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578944,
+      "processing_end_time": 1785578986,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-1b26bd7d333a38ea2e920cfcff406e89-chunk-000",
+      "doc-1b26bd7d333a38ea2e920cfcff406e89-chunk-001",
+      "doc-1b26bd7d333a38ea2e920cfcff406e89-chunk-002"
+    ]
+  },
+  "doc-0ebda215dbd761aff6a4d8bfb5c054ba": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CRYP-01\n- WSTG title: Testing for Weak Transport Layer Security\n- WSTG category: Weak Cryptog...",
+    "content_length": 13747,
+    "created_at": "2026-08-01T10:07:55.848750+00:00",
+    "updated_at": "2026-08-01T10:10:35.877542+00:00",
+    "file_path": "wstg-cryp-01-methodology.md",
+    "track_id": "upload_20260801_100755_293b1d72",
+    "content_hash": "d09c96f5ea9a871ef3086b686915b759",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578917,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578917,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785578986,
+      "processing_end_time": 1785579035,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-0ebda215dbd761aff6a4d8bfb5c054ba-chunk-000",
+      "doc-0ebda215dbd761aff6a4d8bfb5c054ba-chunk-001",
+      "doc-0ebda215dbd761aff6a4d8bfb5c054ba-chunk-002"
+    ]
+  },
+  "doc-64484ad07200f36fca3770e675986ebd": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CRYP-02\n- WSTG title: Testing for Padding Oracle\n- WSTG category: Weak Cryptography (CRYP)\n- ...",
+    "content_length": 13075,
+    "created_at": "2026-08-01T10:07:55.862405+00:00",
+    "updated_at": "2026-08-01T10:11:07.753238+00:00",
+    "file_path": "wstg-cryp-02-methodology.md",
+    "track_id": "upload_20260801_100755_f22036ce",
+    "content_hash": "f002fa7d843afd52ffce64130b02928a",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785578917,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785578917,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579036,
+      "processing_end_time": 1785579067,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-64484ad07200f36fca3770e675986ebd-chunk-000",
+      "doc-64484ad07200f36fca3770e675986ebd-chunk-001",
+      "doc-64484ad07200f36fca3770e675986ebd-chunk-002"
+    ]
+  },
+  "doc-5a256f4ddf984161f5cbf651e65af470": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CRYP-03\n- WSTG title: Testing for Sensitive Information Sent via Unencrypted Channels\n- WSTG ...",
+    "content_length": 14294,
+    "created_at": "2026-08-01T10:14:43.709323+00:00",
+    "updated_at": "2026-08-01T10:15:14.960886+00:00",
+    "file_path": "wstg-cryp-03-methodology.md",
+    "track_id": "upload_20260801_101443_0e96abb2",
+    "content_hash": "b7a5257a3f7996a746252028ffa68e90",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579283,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579283,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579283,
+      "processing_end_time": 1785579314,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-5a256f4ddf984161f5cbf651e65af470-chunk-000",
+      "doc-5a256f4ddf984161f5cbf651e65af470-chunk-001",
+      "doc-5a256f4ddf984161f5cbf651e65af470-chunk-002"
+    ]
+  },
+  "doc-f2e78bb1690990e2e28f395d71966386": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-CRYP-04\n- WSTG title: Testing for Weak Cryptographic Primitives\n- WSTG category: Weak Cryptog...",
+    "content_length": 9921,
+    "created_at": "2026-08-01T10:14:43.749971+00:00",
+    "updated_at": "2026-08-01T10:16:05.255288+00:00",
+    "file_path": "wstg-cryp-04-methodology.md",
+    "track_id": "upload_20260801_101443_8894ebe2",
+    "content_hash": "455dd8ee539573b149b7f2fef20cba81",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579315,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579315,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579315,
+      "processing_end_time": 1785579365,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-f2e78bb1690990e2e28f395d71966386-chunk-000",
+      "doc-f2e78bb1690990e2e28f395d71966386-chunk-001",
+      "doc-f2e78bb1690990e2e28f395d71966386-chunk-002"
+    ]
+  },
+  "doc-a7d6b66fa87709205e7e043782f3a891": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-ERRH-01\n- WSTG title: Testing for Improper Error Handling\n- WSTG category: Error Handling (ER...",
+    "content_length": 13326,
+    "created_at": "2026-08-01T10:14:43.761128+00:00",
+    "updated_at": "2026-08-01T10:16:36.878306+00:00",
+    "file_path": "wstg-errh-01-methodology.md",
+    "track_id": "upload_20260801_101443_3208e045",
+    "content_hash": "585e53a4168ed3813aafa2a51dc1267c",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579315,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579315,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579365,
+      "processing_end_time": 1785579396,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-a7d6b66fa87709205e7e043782f3a891-chunk-000",
+      "doc-a7d6b66fa87709205e7e043782f3a891-chunk-001",
+      "doc-a7d6b66fa87709205e7e043782f3a891-chunk-002"
+    ]
+  },
+  "doc-33aad207eddc1c0a9cee86052fc22e74": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-IDNT-01\n- WSTG title: Test Role Definitions\n- WSTG category: Identity Management Testing (IDN...",
+    "content_length": 6619,
+    "created_at": "2026-08-01T10:14:43.776397+00:00",
+    "updated_at": "2026-08-01T10:17:01.452556+00:00",
+    "file_path": "wstg-idnt-01-methodology.md",
+    "track_id": "upload_20260801_101443_75bf49f0",
+    "content_hash": "3a41dadea0aeb367e5f4b3399353df92",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579315,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579315,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579397,
+      "processing_end_time": 1785579421,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-33aad207eddc1c0a9cee86052fc22e74-chunk-000",
+      "doc-33aad207eddc1c0a9cee86052fc22e74-chunk-001"
+    ]
+  },
+  "doc-4f85f0c27951ef680864b967dc3e321f": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-IDNT-02\n- WSTG title: Test User Registration Process\n- WSTG category: Identity Management Tes...",
+    "content_length": 8015,
+    "created_at": "2026-08-01T10:14:43.790238+00:00",
+    "updated_at": "2026-08-01T10:17:43.752496+00:00",
+    "file_path": "wstg-idnt-02-methodology.md",
+    "track_id": "upload_20260801_101443_8673eacf",
+    "content_hash": "1cfaa788e6388cf462b6fb7d095e34b6",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579315,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579315,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579421,
+      "processing_end_time": 1785579463,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-4f85f0c27951ef680864b967dc3e321f-chunk-000",
+      "doc-4f85f0c27951ef680864b967dc3e321f-chunk-001"
+    ]
+  },
+  "doc-daf891d7e745260f7213116a00466b50": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-IDNT-03\n- WSTG title: Test Account Provisioning Process\n- WSTG category: Identity Management ...",
+    "content_length": 5981,
+    "created_at": "2026-08-01T10:20:07.681023+00:00",
+    "updated_at": "2026-08-01T10:20:35.997824+00:00",
+    "file_path": "wstg-idnt-03-methodology.md",
+    "track_id": "upload_20260801_102007_628efa93",
+    "content_hash": "42669caf0c5b24986cb7cde8e404b7e6",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579607,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579607,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579607,
+      "processing_end_time": 1785579635,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-daf891d7e745260f7213116a00466b50-chunk-000",
+      "doc-daf891d7e745260f7213116a00466b50-chunk-001"
+    ]
+  },
+  "doc-92b67b99fc7587fc9af9d2208dfa4918": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-IDNT-04\n- WSTG title: Testing for Account Enumeration and Guessable User Account\n- WSTG categ...",
+    "content_length": 21184,
+    "created_at": "2026-08-01T10:20:07.715651+00:00",
+    "updated_at": "2026-08-01T10:24:20.380144+00:00",
+    "file_path": "wstg-idnt-04-methodology.md",
+    "track_id": "upload_20260801_102007_84276d12",
+    "content_hash": "4b9c9fbc069c2ffa163c4387b77919c9",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579636,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579636,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579636,
+      "processing_end_time": 1785579860,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-92b67b99fc7587fc9af9d2208dfa4918-chunk-000",
+      "doc-92b67b99fc7587fc9af9d2208dfa4918-chunk-001",
+      "doc-92b67b99fc7587fc9af9d2208dfa4918-chunk-002",
+      "doc-92b67b99fc7587fc9af9d2208dfa4918-chunk-003",
+      "doc-92b67b99fc7587fc9af9d2208dfa4918-chunk-004"
+    ]
+  },
+  "doc-bc53337769b6c693ab23b192d6458dc9": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-IDNT-05\n- WSTG title: Testing for Weak or Unenforced Username Policy\n- WSTG category: Identit...",
+    "content_length": 2074,
+    "created_at": "2026-08-01T10:20:07.735818+00:00",
+    "updated_at": "2026-08-01T10:24:42.789496+00:00",
+    "file_path": "wstg-idnt-05-methodology.md",
+    "track_id": "upload_20260801_102007_07c1234f",
+    "content_hash": "e0bc70a091b6215c23bab651a36ff2d6",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579636,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579636,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579860,
+      "processing_end_time": 1785579882,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 1,
+    "chunks_list": [
+      "doc-bc53337769b6c693ab23b192d6458dc9-chunk-000"
+    ]
+  },
+  "doc-c8b308a52fdeb6c7f9a9a2dce9ca1cae": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INFO-01\n- WSTG title: Conduct Search Engine Discovery Reconnaissance for Information Leakage\n...",
+    "content_length": 15482,
+    "created_at": "2026-08-01T10:20:07.751429+00:00",
+    "updated_at": "2026-08-01T10:25:12.661897+00:00",
+    "file_path": "wstg-info-01-methodology.md",
+    "track_id": "upload_20260801_102007_55396c07",
+    "content_hash": "818712d2501603bd59a74875b4210da9",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579636,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579636,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579883,
+      "processing_end_time": 1785579912,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-c8b308a52fdeb6c7f9a9a2dce9ca1cae-chunk-000",
+      "doc-c8b308a52fdeb6c7f9a9a2dce9ca1cae-chunk-001",
+      "doc-c8b308a52fdeb6c7f9a9a2dce9ca1cae-chunk-002"
+    ]
+  },
+  "doc-79636d7f9a295c3fa17a27c773d950df": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INFO-02\n- WSTG title: Fingerprint Web Server\n- WSTG category: Information Gathering (INFO)\n- ...",
+    "content_length": 11228,
+    "created_at": "2026-08-01T10:20:07.767713+00:00",
+    "updated_at": "2026-08-01T10:25:33.449255+00:00",
+    "file_path": "wstg-info-02-methodology.md",
+    "track_id": "upload_20260801_102007_de662365",
+    "content_hash": "f1d331c6e199abae9b60fbe0d273c1cd",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785579636,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785579636,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785579913,
+      "processing_end_time": 1785579933,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-79636d7f9a295c3fa17a27c773d950df-chunk-000",
+      "doc-79636d7f9a295c3fa17a27c773d950df-chunk-001",
+      "doc-79636d7f9a295c3fa17a27c773d950df-chunk-002"
+    ]
+  },
+  "doc-bef4f602c7766ccdd02613cff3449438": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INFO-03\n- WSTG title: Review Webserver Metafiles for Information Leakage\n- WSTG category: Inf...",
+    "content_length": 16993,
+    "created_at": "2026-08-01T10:27:43.424477+00:00",
+    "updated_at": "2026-08-01T10:28:09.612584+00:00",
+    "file_path": "wstg-info-03-methodology.md",
+    "track_id": "upload_20260801_102743_35475bee",
+    "content_hash": "79757123e659cb694847eaf894c328bd",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580063,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580063,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580063,
+      "processing_end_time": 1785580089,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-bef4f602c7766ccdd02613cff3449438-chunk-000",
+      "doc-bef4f602c7766ccdd02613cff3449438-chunk-001",
+      "doc-bef4f602c7766ccdd02613cff3449438-chunk-002",
+      "doc-bef4f602c7766ccdd02613cff3449438-chunk-003"
+    ]
+  },
+  "doc-af827feaaf7735b8242b6a751ee616fa": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INFO-04\n- WSTG title: Attack Surface Identification\n- WSTG category: Information Gathering (I...",
+    "content_length": 31075,
+    "created_at": "2026-08-01T10:27:43.466647+00:00",
+    "updated_at": "2026-08-01T10:29:12.410194+00:00",
+    "file_path": "wstg-info-04-methodology.md",
+    "track_id": "upload_20260801_102743_86c8fd25",
+    "content_hash": "274c5f3324a48336eb49c25f6070fc9b",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580090,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580090,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580090,
+      "processing_end_time": 1785580152,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 7,
+    "chunks_list": [
+      "doc-af827feaaf7735b8242b6a751ee616fa-chunk-000",
+      "doc-af827feaaf7735b8242b6a751ee616fa-chunk-001",
+      "doc-af827feaaf7735b8242b6a751ee616fa-chunk-002",
+      "doc-af827feaaf7735b8242b6a751ee616fa-chunk-003",
+      "doc-af827feaaf7735b8242b6a751ee616fa-chunk-004",
+      "doc-af827feaaf7735b8242b6a751ee616fa-chunk-005",
+      "doc-af827feaaf7735b8242b6a751ee616fa-chunk-006"
+    ]
+  },
+  "doc-355889046c6513bd655625fa66e3f822": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INFO-05\n- WSTG title: Review Web Page Content for Information Leakage\n- WSTG category: Inform...",
+    "content_length": 20753,
+    "created_at": "2026-08-01T10:27:43.477955+00:00",
+    "updated_at": "2026-08-01T10:32:39.343384+00:00",
+    "file_path": "wstg-info-05-methodology.md",
+    "track_id": "upload_20260801_102743_6c41fb10",
+    "content_hash": "a622f75bb5c04e2b2089cd8438f03d34",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580090,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580090,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580152,
+      "processing_end_time": 1785580359,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-355889046c6513bd655625fa66e3f822-chunk-000",
+      "doc-355889046c6513bd655625fa66e3f822-chunk-001",
+      "doc-355889046c6513bd655625fa66e3f822-chunk-002",
+      "doc-355889046c6513bd655625fa66e3f822-chunk-003",
+      "doc-355889046c6513bd655625fa66e3f822-chunk-004"
+    ]
+  },
+  "doc-4d9258074adf66922ee55cf68a3d1139": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INFO-06\n- WSTG title: Identify Application Entry Points\n- WSTG category: Information Gatherin...",
+    "content_length": 21517,
+    "created_at": "2026-08-01T10:27:43.493391+00:00",
+    "updated_at": "2026-08-01T10:33:32.311794+00:00",
+    "file_path": "wstg-info-06-methodology.md",
+    "track_id": "upload_20260801_102743_14131393",
+    "content_hash": "8e127542db94485cbc0ff21759239b23",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580090,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580090,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580359,
+      "processing_end_time": 1785580412,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-4d9258074adf66922ee55cf68a3d1139-chunk-000",
+      "doc-4d9258074adf66922ee55cf68a3d1139-chunk-001",
+      "doc-4d9258074adf66922ee55cf68a3d1139-chunk-002",
+      "doc-4d9258074adf66922ee55cf68a3d1139-chunk-003",
+      "doc-4d9258074adf66922ee55cf68a3d1139-chunk-004"
+    ]
+  },
+  "doc-04154921d98e923deec21047bfc2e767": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INFO-07\n- WSTG title: Map Execution Paths Through Application\n- WSTG category: Information Ga...",
+    "content_length": 8710,
+    "created_at": "2026-08-01T10:27:43.507772+00:00",
+    "updated_at": "2026-08-01T10:33:56.453967+00:00",
+    "file_path": "wstg-info-07-methodology.md",
+    "track_id": "upload_20260801_102743_46747f72",
+    "content_hash": "1d164e164c4c5edda71b8f48690ddd88",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580090,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580090,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580412,
+      "processing_end_time": 1785580436,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-04154921d98e923deec21047bfc2e767-chunk-000",
+      "doc-04154921d98e923deec21047bfc2e767-chunk-001"
+    ]
+  },
+  "doc-1fdc50b475aa40c6258b79abf9a867a6": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INFO-08\n- WSTG title: Fingerprint Web Application Framework\n- WSTG category: Information Gath...",
+    "content_length": 19076,
+    "created_at": "2026-08-01T10:39:29.049838+00:00",
+    "updated_at": "2026-08-01T10:39:56.804159+00:00",
+    "file_path": "wstg-info-08-methodology.md",
+    "track_id": "upload_20260801_103929_1aac0c6b",
+    "content_hash": "a8f388f7f003d8591f19edfc0d88d036",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580769,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580769,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580769,
+      "processing_end_time": 1785580796,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-1fdc50b475aa40c6258b79abf9a867a6-chunk-000",
+      "doc-1fdc50b475aa40c6258b79abf9a867a6-chunk-001",
+      "doc-1fdc50b475aa40c6258b79abf9a867a6-chunk-002",
+      "doc-1fdc50b475aa40c6258b79abf9a867a6-chunk-003"
+    ]
+  },
+  "doc-d2ff4b7186c17bdc52457e2c1f1dc3fe": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INFO-10\n- WSTG title: Map Application Architecture\n- WSTG category: Information Gathering (IN...",
+    "content_length": 7998,
+    "created_at": "2026-08-01T10:39:29.088578+00:00",
+    "updated_at": "2026-08-01T10:40:22.537153+00:00",
+    "file_path": "wstg-info-10-methodology.md",
+    "track_id": "upload_20260801_103929_ba7e3418",
+    "content_hash": "c4fa4b2beb8a8a614eac7120a84c3deb",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580797,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580797,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580797,
+      "processing_end_time": 1785580822,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-d2ff4b7186c17bdc52457e2c1f1dc3fe-chunk-000",
+      "doc-d2ff4b7186c17bdc52457e2c1f1dc3fe-chunk-001"
+    ]
+  },
+  "doc-40abae0a95ecce566511731ae40acbbf": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-02\n- WSTG title: Testing for Stored Cross Site Scripting\n- WSTG category: Input Validati...",
+    "content_length": 22445,
+    "created_at": "2026-08-01T10:39:29.108789+00:00",
+    "updated_at": "2026-08-01T10:40:54.769892+00:00",
+    "file_path": "wstg-inpv-02-methodology.md",
+    "track_id": "upload_20260801_103929_6de53e1f",
+    "content_hash": "77765b6542d57d6e246b21d1e0c12f30",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580797,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580797,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580823,
+      "processing_end_time": 1785580854,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-40abae0a95ecce566511731ae40acbbf-chunk-000",
+      "doc-40abae0a95ecce566511731ae40acbbf-chunk-001",
+      "doc-40abae0a95ecce566511731ae40acbbf-chunk-002",
+      "doc-40abae0a95ecce566511731ae40acbbf-chunk-003",
+      "doc-40abae0a95ecce566511731ae40acbbf-chunk-004"
+    ]
+  },
+  "doc-3be59af692385f8910776899901b815f": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-04\n- WSTG title: Testing for HTTP Parameter Pollution\n- WSTG category: Input Validation ...",
+    "content_length": 22556,
+    "created_at": "2026-08-01T10:39:29.129067+00:00",
+    "updated_at": "2026-08-01T10:41:26.821990+00:00",
+    "file_path": "wstg-inpv-04-methodology.md",
+    "track_id": "upload_20260801_103929_b90e2d8e",
+    "content_hash": "fc7dd014b9473558c7d68ea5fa4a41e4",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580797,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580797,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580855,
+      "processing_end_time": 1785580886,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-3be59af692385f8910776899901b815f-chunk-000",
+      "doc-3be59af692385f8910776899901b815f-chunk-001",
+      "doc-3be59af692385f8910776899901b815f-chunk-002",
+      "doc-3be59af692385f8910776899901b815f-chunk-003",
+      "doc-3be59af692385f8910776899901b815f-chunk-004"
+    ]
+  },
+  "doc-d49f15f997dc4e5a62d377e48dacdb8e": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-05-1\n- WSTG title: Testing for Oracle\n- WSTG category: Input Validation Testing (INPV)\n-...",
+    "content_length": 24201,
+    "created_at": "2026-08-01T10:39:29.144204+00:00",
+    "updated_at": "2026-08-01T10:41:59.667843+00:00",
+    "file_path": "wstg-inpv-05-1-methodology.md",
+    "track_id": "upload_20260801_103929_cbd5d6ef",
+    "content_hash": "96921c434e445c46eda0308c30af6426",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785580797,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785580797,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785580887,
+      "processing_end_time": 1785580919,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 7,
+    "chunks_list": [
+      "doc-d49f15f997dc4e5a62d377e48dacdb8e-chunk-000",
+      "doc-d49f15f997dc4e5a62d377e48dacdb8e-chunk-001",
+      "doc-d49f15f997dc4e5a62d377e48dacdb8e-chunk-002",
+      "doc-d49f15f997dc4e5a62d377e48dacdb8e-chunk-003",
+      "doc-d49f15f997dc4e5a62d377e48dacdb8e-chunk-004",
+      "doc-d49f15f997dc4e5a62d377e48dacdb8e-chunk-005",
+      "doc-d49f15f997dc4e5a62d377e48dacdb8e-chunk-006"
+    ]
+  },
+  "doc-df80c9fe91c3765dc83d86ba6565a823": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-05-2\n- WSTG title: Testing for MySQL\n- WSTG category: Input Validation Testing (INPV)\n- ...",
+    "content_length": 17892,
+    "created_at": "2026-08-01T10:45:46.784670+00:00",
+    "updated_at": "2026-08-01T10:46:22.075333+00:00",
+    "file_path": "wstg-inpv-05-2-methodology.md",
+    "track_id": "upload_20260801_104546_a8fdb725",
+    "content_hash": "ae83cf5c00e6a597ad50fc107bb256d3",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581146,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581146,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581146,
+      "processing_end_time": 1785581182,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-df80c9fe91c3765dc83d86ba6565a823-chunk-000",
+      "doc-df80c9fe91c3765dc83d86ba6565a823-chunk-001",
+      "doc-df80c9fe91c3765dc83d86ba6565a823-chunk-002",
+      "doc-df80c9fe91c3765dc83d86ba6565a823-chunk-003",
+      "doc-df80c9fe91c3765dc83d86ba6565a823-chunk-004"
+    ]
+  },
+  "doc-e673fd83bcb14789984668dec20fbae1": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-05-3\n- WSTG title: Testing for SQL Server\n- WSTG category: Input Validation Testing (INP...",
+    "content_length": 33766,
+    "created_at": "2026-08-01T10:45:46.824926+00:00",
+    "updated_at": "2026-08-01T10:47:11.617160+00:00",
+    "file_path": "wstg-inpv-05-3-methodology.md",
+    "track_id": "upload_20260801_104546_c76b9811",
+    "content_hash": "2ad2415fa451e933196424b39c2a9b3b",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581182,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581182,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581182,
+      "processing_end_time": 1785581231,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 8,
+    "chunks_list": [
+      "doc-e673fd83bcb14789984668dec20fbae1-chunk-000",
+      "doc-e673fd83bcb14789984668dec20fbae1-chunk-001",
+      "doc-e673fd83bcb14789984668dec20fbae1-chunk-002",
+      "doc-e673fd83bcb14789984668dec20fbae1-chunk-003",
+      "doc-e673fd83bcb14789984668dec20fbae1-chunk-004",
+      "doc-e673fd83bcb14789984668dec20fbae1-chunk-005",
+      "doc-e673fd83bcb14789984668dec20fbae1-chunk-006",
+      "doc-e673fd83bcb14789984668dec20fbae1-chunk-007"
+    ]
+  },
+  "doc-b6a59d6cd5ba7ef78db34ebfda033db4": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-05-4\n- WSTG title: Testing PostgreSQL\n- WSTG category: Input Validation Testing (INPV)\n-...",
+    "content_length": 15301,
+    "created_at": "2026-08-01T10:45:46.846573+00:00",
+    "updated_at": "2026-08-01T10:47:41.925622+00:00",
+    "file_path": "wstg-inpv-05-4-methodology.md",
+    "track_id": "upload_20260801_104546_b130a379",
+    "content_hash": "2a604e0aa13d92a2e41d49c6aac54a8e",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581182,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581182,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581232,
+      "processing_end_time": 1785581261,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-b6a59d6cd5ba7ef78db34ebfda033db4-chunk-000",
+      "doc-b6a59d6cd5ba7ef78db34ebfda033db4-chunk-001",
+      "doc-b6a59d6cd5ba7ef78db34ebfda033db4-chunk-002",
+      "doc-b6a59d6cd5ba7ef78db34ebfda033db4-chunk-003"
+    ]
+  },
+  "doc-240337c7993893650c60e2b94d64ba3c": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-05-5\n- WSTG title: Testing for MS Access\n- WSTG category: Input Validation Testing (INPV...",
+    "content_length": 15286,
+    "created_at": "2026-08-01T10:45:46.864053+00:00",
+    "updated_at": "2026-08-01T10:48:14.492729+00:00",
+    "file_path": "wstg-inpv-05-5-methodology.md",
+    "track_id": "upload_20260801_104546_c4d1359d",
+    "content_hash": "c0f4b676ec7abb951f95118baf4913a8",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581182,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581182,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581262,
+      "processing_end_time": 1785581294,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-240337c7993893650c60e2b94d64ba3c-chunk-000",
+      "doc-240337c7993893650c60e2b94d64ba3c-chunk-001",
+      "doc-240337c7993893650c60e2b94d64ba3c-chunk-002",
+      "doc-240337c7993893650c60e2b94d64ba3c-chunk-003"
+    ]
+  },
+  "doc-7a6169ed7611988c7689307fbb72ef84": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-05-7\n- WSTG title: Testing for ORM Injection\n- WSTG category: Input Validation Testing (...",
+    "content_length": 9804,
+    "created_at": "2026-08-01T10:45:46.880150+00:00",
+    "updated_at": "2026-08-01T10:48:29.981864+00:00",
+    "file_path": "wstg-inpv-05-7-methodology.md",
+    "track_id": "upload_20260801_104546_24ef14c9",
+    "content_hash": "bd9b4910f79ac50888e50f16e123f8d5",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581182,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581182,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581295,
+      "processing_end_time": 1785581309,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-7a6169ed7611988c7689307fbb72ef84-chunk-000",
+      "doc-7a6169ed7611988c7689307fbb72ef84-chunk-001",
+      "doc-7a6169ed7611988c7689307fbb72ef84-chunk-002"
+    ]
+  },
+  "doc-ea8988b320818e8e44a6d07527492e35": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-05-8\n- WSTG title: Testing for Client-side\n- WSTG category: Input Validation Testing (IN...",
+    "content_length": 6676,
+    "created_at": "2026-08-01T10:52:24.766721+00:00",
+    "updated_at": "2026-08-01T10:52:44.924240+00:00",
+    "file_path": "wstg-inpv-05-8-methodology.md",
+    "track_id": "upload_20260801_105224_ae9c92e9",
+    "content_hash": "6f5a531c18cfb1b8c50af631e1781ccc",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581544,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581544,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581544,
+      "processing_end_time": 1785581564,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-ea8988b320818e8e44a6d07527492e35-chunk-000",
+      "doc-ea8988b320818e8e44a6d07527492e35-chunk-001"
+    ]
+  },
+  "doc-8572f501a826eda55dfbb3563ca66b07": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-08\n- WSTG title: Testing for SSI Injection\n- WSTG category: Input Validation Testing (IN...",
+    "content_length": 14066,
+    "created_at": "2026-08-01T10:52:24.801582+00:00",
+    "updated_at": "2026-08-01T10:53:27.336461+00:00",
+    "file_path": "wstg-inpv-08-methodology.md",
+    "track_id": "upload_20260801_105224_bfe3c934",
+    "content_hash": "ba9a13731f3133fd8865c1eaecafdcb9",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581565,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581565,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581565,
+      "processing_end_time": 1785581607,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-8572f501a826eda55dfbb3563ca66b07-chunk-000",
+      "doc-8572f501a826eda55dfbb3563ca66b07-chunk-001",
+      "doc-8572f501a826eda55dfbb3563ca66b07-chunk-002"
+    ]
+  },
+  "doc-913dbc8a4681245bade3cc137a3a5962": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-10\n- WSTG title: Testing for IMAP SMTP Injection\n- WSTG category: Input Validation Testi...",
+    "content_length": 19677,
+    "created_at": "2026-08-01T10:52:24.817080+00:00",
+    "updated_at": "2026-08-01T10:54:03.251622+00:00",
+    "file_path": "wstg-inpv-10-methodology.md",
+    "track_id": "upload_20260801_105224_3ef3a8e9",
+    "content_hash": "e614e137f6998905353cd6a270226ef7",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581565,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581565,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581607,
+      "processing_end_time": 1785581643,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-913dbc8a4681245bade3cc137a3a5962-chunk-000",
+      "doc-913dbc8a4681245bade3cc137a3a5962-chunk-001",
+      "doc-913dbc8a4681245bade3cc137a3a5962-chunk-002",
+      "doc-913dbc8a4681245bade3cc137a3a5962-chunk-003",
+      "doc-913dbc8a4681245bade3cc137a3a5962-chunk-004"
+    ]
+  },
+  "doc-3145270b6ffe0fd7611c4610be0770a9": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-11-1\n- WSTG title: Testing for File Inclusion\n- WSTG category: Input Validation Testing ...",
+    "content_length": 20435,
+    "created_at": "2026-08-01T10:52:24.832700+00:00",
+    "updated_at": "2026-08-01T10:54:43.353378+00:00",
+    "file_path": "wstg-inpv-11-1-methodology.md",
+    "track_id": "upload_20260801_105224_4341bb46",
+    "content_hash": "702e0e4dd618a43476c171a1434d8fc3",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581565,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581565,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581643,
+      "processing_end_time": 1785581683,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-3145270b6ffe0fd7611c4610be0770a9-chunk-000",
+      "doc-3145270b6ffe0fd7611c4610be0770a9-chunk-001",
+      "doc-3145270b6ffe0fd7611c4610be0770a9-chunk-002",
+      "doc-3145270b6ffe0fd7611c4610be0770a9-chunk-003",
+      "doc-3145270b6ffe0fd7611c4610be0770a9-chunk-004"
+    ]
+  },
+  "doc-294b9877be94f50d0e74d0aa6ca0627b": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-11\n- WSTG title: Testing for Code Injection\n- WSTG category: Input Validation Testing (I...",
+    "content_length": 6064,
+    "created_at": "2026-08-01T10:52:24.848215+00:00",
+    "updated_at": "2026-08-01T10:57:57.214515+00:00",
+    "file_path": "wstg-inpv-11-methodology.md",
+    "track_id": "upload_20260801_105224_2bac62ea",
+    "content_hash": "2c44bb67b0c66d901fad3c6fa8fdd03c",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785581565,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785581565,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785581683,
+      "processing_end_time": 1785581877,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-294b9877be94f50d0e74d0aa6ca0627b-chunk-000",
+      "doc-294b9877be94f50d0e74d0aa6ca0627b-chunk-001"
+    ]
+  },
+  "doc-94f308342598cce2ab79e26439b43b5f": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-13\n- WSTG title: Testing for Format String Injection\n- WSTG category: Input Validation T...",
+    "content_length": 16258,
+    "created_at": "2026-08-01T11:00:36.515375+00:00",
+    "updated_at": "2026-08-01T11:04:02.509258+00:00",
+    "file_path": "wstg-inpv-13-13-testing-for-format-string-injection-methodology.md",
+    "track_id": "upload_20260801_110036_88a1eee8",
+    "content_hash": "e22390d824f6ad06c45fc73f68ff283c",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582036,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582036,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582036,
+      "processing_end_time": 1785582242,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-94f308342598cce2ab79e26439b43b5f-chunk-000",
+      "doc-94f308342598cce2ab79e26439b43b5f-chunk-001",
+      "doc-94f308342598cce2ab79e26439b43b5f-chunk-002",
+      "doc-94f308342598cce2ab79e26439b43b5f-chunk-003"
+    ]
+  },
+  "doc-b515367113bce44cf3564abc5019508d": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-14\n- WSTG title: Testing for Incubated Vulnerability\n- WSTG category: Input Validation T...",
+    "content_length": 17106,
+    "created_at": "2026-08-01T11:00:36.560266+00:00",
+    "updated_at": "2026-08-01T11:04:42.237035+00:00",
+    "file_path": "wstg-inpv-14-methodology.md",
+    "track_id": "upload_20260801_110036_d7cd2b11",
+    "content_hash": "d05253337a57ca1e810e1db156990ef3",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582243,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582243,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582243,
+      "processing_end_time": 1785582282,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-b515367113bce44cf3564abc5019508d-chunk-000",
+      "doc-b515367113bce44cf3564abc5019508d-chunk-001",
+      "doc-b515367113bce44cf3564abc5019508d-chunk-002",
+      "doc-b515367113bce44cf3564abc5019508d-chunk-003"
+    ]
+  },
+  "doc-1b71020ce840e0a943e1deda0b9f2c41": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-15\n- WSTG title: Testing for HTTP Response Splitting\n- WSTG category: Input Validation T...",
+    "content_length": 14163,
+    "created_at": "2026-08-01T11:00:36.575709+00:00",
+    "updated_at": "2026-08-01T11:05:37.329521+00:00",
+    "file_path": "wstg-inpv-15-methodology.md",
+    "track_id": "upload_20260801_110036_60a65d80",
+    "content_hash": "a0f8be2fe77b6cb7c9a2f53dcaa1c52f",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582243,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582243,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582282,
+      "processing_end_time": 1785582337,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-1b71020ce840e0a943e1deda0b9f2c41-chunk-000",
+      "doc-1b71020ce840e0a943e1deda0b9f2c41-chunk-001",
+      "doc-1b71020ce840e0a943e1deda0b9f2c41-chunk-002"
+    ]
+  },
+  "doc-8b6431100fb5694f9e64efa595cebe6c": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-16\n- WSTG title: Testing for HTTP Request Smuggling\n- WSTG category: Input Validation Te...",
+    "content_length": 14463,
+    "created_at": "2026-08-01T11:00:36.591821+00:00",
+    "updated_at": "2026-08-01T11:09:04.103481+00:00",
+    "file_path": "wstg-inpv-16-methodology.md",
+    "track_id": "upload_20260801_110036_b3caec7b",
+    "content_hash": "c07ca15a9298f59ddf835685aadfcffa",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582243,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582243,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582337,
+      "processing_end_time": 1785582544,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-8b6431100fb5694f9e64efa595cebe6c-chunk-000",
+      "doc-8b6431100fb5694f9e64efa595cebe6c-chunk-001",
+      "doc-8b6431100fb5694f9e64efa595cebe6c-chunk-002",
+      "doc-8b6431100fb5694f9e64efa595cebe6c-chunk-003"
+    ]
+  },
+  "doc-e4ddd30d9c938d44180c61ca6f42e47f": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-17\n- WSTG title: Testing for Host Header Injection\n- WSTG category: Input Validation Tes...",
+    "content_length": 12333,
+    "created_at": "2026-08-01T11:00:36.608695+00:00",
+    "updated_at": "2026-08-01T11:09:31.172851+00:00",
+    "file_path": "wstg-inpv-17-methodology.md",
+    "track_id": "upload_20260801_110036_b8164118",
+    "content_hash": "f2e14ee99df94b9c484201424f79f302",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582243,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582243,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582544,
+      "processing_end_time": 1785582571,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-e4ddd30d9c938d44180c61ca6f42e47f-chunk-000",
+      "doc-e4ddd30d9c938d44180c61ca6f42e47f-chunk-001",
+      "doc-e4ddd30d9c938d44180c61ca6f42e47f-chunk-002"
+    ]
+  },
+  "doc-4d1e03dc9f13b6dbccbd282894380e7e": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-18\n- WSTG title: Testing for Server-side Template Injection\n- WSTG category: Input Valid...",
+    "content_length": 10570,
+    "created_at": "2026-08-01T11:12:48.244773+00:00",
+    "updated_at": "2026-08-01T11:13:12.822245+00:00",
+    "file_path": "wstg-inpv-18-methodology.md",
+    "track_id": "upload_20260801_111248_ae576fde",
+    "content_hash": "2b7f42d3017e653d1e9d7464415f0d2b",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582768,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582768,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582768,
+      "processing_end_time": 1785582792,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-4d1e03dc9f13b6dbccbd282894380e7e-chunk-000",
+      "doc-4d1e03dc9f13b6dbccbd282894380e7e-chunk-001",
+      "doc-4d1e03dc9f13b6dbccbd282894380e7e-chunk-002"
+    ]
+  },
+  "doc-ffa6824f346bf84b31bce21c39580284": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-20\n- WSTG title: Testing for Mass Assignment\n- WSTG category: Input Validation Testing (...",
+    "content_length": 21188,
+    "created_at": "2026-08-01T11:12:48.282890+00:00",
+    "updated_at": "2026-08-01T11:13:59.377518+00:00",
+    "file_path": "wstg-inpv-20-methodology.md",
+    "track_id": "upload_20260801_111248_dc48a63a",
+    "content_hash": "354072c8124c8f89cdc8ab18aef28d56",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582793,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582793,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582793,
+      "processing_end_time": 1785582839,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-ffa6824f346bf84b31bce21c39580284-chunk-000",
+      "doc-ffa6824f346bf84b31bce21c39580284-chunk-001",
+      "doc-ffa6824f346bf84b31bce21c39580284-chunk-002",
+      "doc-ffa6824f346bf84b31bce21c39580284-chunk-003",
+      "doc-ffa6824f346bf84b31bce21c39580284-chunk-004"
+    ]
+  },
+  "doc-1fdef32ca149cd0b391b755204dc40b2": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-21\n- WSTG title: Testing for CSV Injection\n- WSTG category: Input Validation Testing (IN...",
+    "content_length": 13282,
+    "created_at": "2026-08-01T11:12:48.299043+00:00",
+    "updated_at": "2026-08-01T11:14:36.360403+00:00",
+    "file_path": "wstg-inpv-21-methodology.md",
+    "track_id": "upload_20260801_111248_41c79017",
+    "content_hash": "78cb4ce021f488ee9493370541a42ee1",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582793,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582793,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582840,
+      "processing_end_time": 1785582876,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-1fdef32ca149cd0b391b755204dc40b2-chunk-000",
+      "doc-1fdef32ca149cd0b391b755204dc40b2-chunk-001",
+      "doc-1fdef32ca149cd0b391b755204dc40b2-chunk-002"
+    ]
+  },
+  "doc-0afc271ddfef476dba107d5eebef758e": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-INPV-22\n- WSTG title: Testing for Prototype Pollution\n- WSTG category: Input Validation Testi...",
+    "content_length": 16139,
+    "created_at": "2026-08-01T11:12:48.315647+00:00",
+    "updated_at": "2026-08-01T11:15:20.422699+00:00",
+    "file_path": "wstg-inpv-22-methodology.md",
+    "track_id": "upload_20260801_111248_c84717fe",
+    "content_hash": "7b6867b4c76cbc8e78008a95f43c1444",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582793,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582793,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582877,
+      "processing_end_time": 1785582920,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-0afc271ddfef476dba107d5eebef758e-chunk-000",
+      "doc-0afc271ddfef476dba107d5eebef758e-chunk-001",
+      "doc-0afc271ddfef476dba107d5eebef758e-chunk-002",
+      "doc-0afc271ddfef476dba107d5eebef758e-chunk-003"
+    ]
+  },
+  "doc-e042301aa71030fa28c1652044efd184": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-01\n- WSTG title: Testing for Session Management Schema\n- WSTG category: Session Manageme...",
+    "content_length": 24900,
+    "created_at": "2026-08-01T11:12:48.332150+00:00",
+    "updated_at": "2026-08-01T11:18:58.751408+00:00",
+    "file_path": "wstg-sess-01-methodology.md",
+    "track_id": "upload_20260801_111248_7ef487de",
+    "content_hash": "b1869bbe0b6ae30661ccc53008624da7",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785582793,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785582793,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785582921,
+      "processing_end_time": 1785583138,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-e042301aa71030fa28c1652044efd184-chunk-000",
+      "doc-e042301aa71030fa28c1652044efd184-chunk-001",
+      "doc-e042301aa71030fa28c1652044efd184-chunk-002",
+      "doc-e042301aa71030fa28c1652044efd184-chunk-003",
+      "doc-e042301aa71030fa28c1652044efd184-chunk-004"
+    ]
+  },
+  "doc-0b5d4912d9dca5c18a19c922b0e93be4": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-02\n- WSTG title: Testing for Cookies Attributes\n- WSTG category: Session Management Test...",
+    "content_length": 19182,
+    "created_at": "2026-08-01T11:22:34.963122+00:00",
+    "updated_at": "2026-08-01T11:23:20.048569+00:00",
+    "file_path": "wstg-sess-02-methodology.md",
+    "track_id": "upload_20260801_112234_af1dc34d",
+    "content_hash": "2c0469d4a2980993629ade1ba5f07850",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583354,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583354,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785583354,
+      "processing_end_time": 1785583400,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-0b5d4912d9dca5c18a19c922b0e93be4-chunk-000",
+      "doc-0b5d4912d9dca5c18a19c922b0e93be4-chunk-001",
+      "doc-0b5d4912d9dca5c18a19c922b0e93be4-chunk-002",
+      "doc-0b5d4912d9dca5c18a19c922b0e93be4-chunk-003"
+    ]
+  },
+  "doc-2df0461e7868bf356c8b0363fdfc1a8b": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-03\n- WSTG title: Testing for Session Fixation\n- WSTG category: Session Management Testin...",
+    "content_length": 16265,
+    "created_at": "2026-08-01T11:22:34.999625+00:00",
+    "updated_at": "2026-08-01T11:23:51.147202+00:00",
+    "file_path": "wstg-sess-03-methodology.md",
+    "track_id": "upload_20260801_112234_7b6a8b6d",
+    "content_hash": "980fba14038a95f38e51480f10a18f6b",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785583400,
+      "processing_end_time": 1785583431,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-2df0461e7868bf356c8b0363fdfc1a8b-chunk-000",
+      "doc-2df0461e7868bf356c8b0363fdfc1a8b-chunk-001",
+      "doc-2df0461e7868bf356c8b0363fdfc1a8b-chunk-002",
+      "doc-2df0461e7868bf356c8b0363fdfc1a8b-chunk-003"
+    ]
+  },
+  "doc-2138db10de64fa713c14c45b2f2d6483": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-04\n- WSTG title: Testing for Exposed Session Variables\n- WSTG category: Session Manageme...",
+    "content_length": 13810,
+    "created_at": "2026-08-01T11:22:35.014455+00:00",
+    "updated_at": "2026-08-01T11:24:36.451632+00:00",
+    "file_path": "wstg-sess-04-methodology.md",
+    "track_id": "upload_20260801_112235_c5556075",
+    "content_hash": "072d4f7714c52dfe8158d55ce61203ad",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785583431,
+      "processing_end_time": 1785583476,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-2138db10de64fa713c14c45b2f2d6483-chunk-000",
+      "doc-2138db10de64fa713c14c45b2f2d6483-chunk-001",
+      "doc-2138db10de64fa713c14c45b2f2d6483-chunk-002"
+    ]
+  },
+  "doc-35af4670be2579d771f8aacc9dfbff92": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-05\n- WSTG title: Testing for Cross Site Request Forgery\n- WSTG category: Session Managem...",
+    "content_length": 34755,
+    "created_at": "2026-08-01T11:22:35.031788+00:00",
+    "updated_at": "2026-08-01T11:25:45.055830+00:00",
+    "file_path": "wstg-sess-05-methodology.md",
+    "track_id": "upload_20260801_112235_cbed8df7",
+    "content_hash": "0fcbdca38ca940faf5898a7ca9fff1d2",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785583477,
+      "processing_end_time": 1785583545,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 8,
+    "chunks_list": [
+      "doc-35af4670be2579d771f8aacc9dfbff92-chunk-000",
+      "doc-35af4670be2579d771f8aacc9dfbff92-chunk-001",
+      "doc-35af4670be2579d771f8aacc9dfbff92-chunk-002",
+      "doc-35af4670be2579d771f8aacc9dfbff92-chunk-003",
+      "doc-35af4670be2579d771f8aacc9dfbff92-chunk-004",
+      "doc-35af4670be2579d771f8aacc9dfbff92-chunk-005",
+      "doc-35af4670be2579d771f8aacc9dfbff92-chunk-006",
+      "doc-35af4670be2579d771f8aacc9dfbff92-chunk-007"
+    ]
+  },
+  "doc-4531a644aa4ee421998db21a61bc8bbe": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-06\n- WSTG title: Testing for Logout Functionality\n- WSTG category: Session Management Te...",
+    "content_length": 19555,
+    "created_at": "2026-08-01T11:22:35.049443+00:00",
+    "updated_at": "2026-08-01T11:26:12.152269+00:00",
+    "file_path": "wstg-sess-06-methodology.md",
+    "track_id": "upload_20260801_112235_fd966c7a",
+    "content_hash": "c93f44014a6830ff893ea6458e982894",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583400,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583400,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785583545,
+      "processing_end_time": 1785583572,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-4531a644aa4ee421998db21a61bc8bbe-chunk-000",
+      "doc-4531a644aa4ee421998db21a61bc8bbe-chunk-001",
+      "doc-4531a644aa4ee421998db21a61bc8bbe-chunk-002",
+      "doc-4531a644aa4ee421998db21a61bc8bbe-chunk-003"
+    ]
+  },
+  "doc-0a3e9e7d3b55a0f4286d2a3f106f4013": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-07\n- WSTG title: Testing Session Timeout\n- WSTG category: Session Management Testing (SE...",
+    "content_length": 13434,
+    "created_at": "2026-08-01T11:30:27.199153+00:00",
+    "updated_at": "2026-08-01T11:30:57.383213+00:00",
+    "file_path": "wstg-sess-07-methodology.md",
+    "track_id": "upload_20260801_113027_3fe099e1",
+    "content_hash": "045f9fe7dd3791e83353c59ae7314019",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583827,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583827,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785583827,
+      "processing_end_time": 1785583857,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-0a3e9e7d3b55a0f4286d2a3f106f4013-chunk-000",
+      "doc-0a3e9e7d3b55a0f4286d2a3f106f4013-chunk-001",
+      "doc-0a3e9e7d3b55a0f4286d2a3f106f4013-chunk-002"
+    ]
+  },
+  "doc-83827c52b87edd7a3b3969c34753607b": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-08\n- WSTG title: Testing for Session Puzzling\n- WSTG category: Session Management Testin...",
+    "content_length": 9460,
+    "created_at": "2026-08-01T11:30:27.242851+00:00",
+    "updated_at": "2026-08-01T11:31:23.899369+00:00",
+    "file_path": "wstg-sess-08-methodology.md",
+    "track_id": "upload_20260801_113027_8fef0361",
+    "content_hash": "5cec6cc018ea20d26b729eea09b7eb3f",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583858,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583858,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785583858,
+      "processing_end_time": 1785583883,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 2,
+    "chunks_list": [
+      "doc-83827c52b87edd7a3b3969c34753607b-chunk-000",
+      "doc-83827c52b87edd7a3b3969c34753607b-chunk-001"
+    ]
+  },
+  "doc-a2ab4b970856023b5f961a9117891837": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-09\n- WSTG title: Testing for Session Hijacking\n- WSTG category: Session Management Testi...",
+    "content_length": 14726,
+    "created_at": "2026-08-01T11:30:27.266591+00:00",
+    "updated_at": "2026-08-01T11:34:51.987938+00:00",
+    "file_path": "wstg-sess-09-methodology.md",
+    "track_id": "upload_20260801_113027_8eb11339",
+    "content_hash": "ccccf270713ff8486364d774a4f92bbe",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583858,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583858,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785583884,
+      "processing_end_time": 1785584091,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 4,
+    "chunks_list": [
+      "doc-a2ab4b970856023b5f961a9117891837-chunk-000",
+      "doc-a2ab4b970856023b5f961a9117891837-chunk-001",
+      "doc-a2ab4b970856023b5f961a9117891837-chunk-002",
+      "doc-a2ab4b970856023b5f961a9117891837-chunk-003"
+    ]
+  },
+  "doc-a94663073c0acb859206ca0011ed60dc": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-10\n- WSTG title: Testing JSON Web Tokens\n- WSTG category: Session Management Testing (SE...",
+    "content_length": 19869,
+    "created_at": "2026-08-01T11:30:27.284015+00:00",
+    "updated_at": "2026-08-01T11:35:47.211627+00:00",
+    "file_path": "wstg-sess-10-methodology.md",
+    "track_id": "upload_20260801_113027_1990b1e7",
+    "content_hash": "bb3abde7983858bce3f70ae59f976f9f",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583858,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583858,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785584092,
+      "processing_end_time": 1785584147,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 5,
+    "chunks_list": [
+      "doc-a94663073c0acb859206ca0011ed60dc-chunk-000",
+      "doc-a94663073c0acb859206ca0011ed60dc-chunk-001",
+      "doc-a94663073c0acb859206ca0011ed60dc-chunk-002",
+      "doc-a94663073c0acb859206ca0011ed60dc-chunk-003",
+      "doc-a94663073c0acb859206ca0011ed60dc-chunk-004"
+    ]
+  },
+  "doc-0494a6f833c36d4bb797a335271d7b57": {
+    "status": "processed",
+    "content_summary": "# Methodology Scenario\n\n## Methodology Scope\n\nThis document contains reusable web application testing methodology.\n\n## WSTG Scenario Anchor\n\n- WSTG ID: WSTG-SESS-11\n- WSTG title: Testing for Concurrent Sessions\n- WSTG category: Session Management Tes...",
+    "content_length": 15598,
+    "created_at": "2026-08-01T11:30:27.301857+00:00",
+    "updated_at": "2026-08-01T11:36:29.505561+00:00",
+    "file_path": "wstg-sess-11-methodology.md",
+    "track_id": "upload_20260801_113027_bed0ba2a",
+    "content_hash": "e18e0b1502652bbb6ee9f90263ad227e",
+    "metadata": {
+      "process_options": "R",
+      "parsing_start_time": 1785583858,
+      "parse_stage_skipped": true,
+      "analyzing_start_time": 1785583858,
+      "analyzing_stage_skipped": true,
+      "processing_start_time": 1785584147,
+      "processing_end_time": 1785584189,
+      "parse_format": "raw",
+      "parse_engine": "legacy",
+      "chunking_method": "recursive_character",
+      "chunk_opts": "size=1200, seps=['\\n\\n', '\\n', '。', '！', '？', '；', '，', ' ', ''], overlap=100"
+    },
+    "chunks_count": 3,
+    "chunks_list": [
+      "doc-0494a6f833c36d4bb797a335271d7b57-chunk-000",
+      "doc-0494a6f833c36d4bb797a335271d7b57-chunk-001",
+      "doc-0494a6f833c36d4bb797a335271d7b57-chunk-002"
+    ]
+  }
+}

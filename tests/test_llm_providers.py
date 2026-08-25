@@ -89,7 +89,8 @@ def test_hunting_roles_are_not_validated_at_app_boot(monkeypatch):
     bootstrap, never app boot. So validate_llm_config() (app boot) must not demand
     the hunting model keys, while validate_llm_config(HUNTING_ROLES) does."""
     hunting_ids = {r.role_id for r in P.HUNTING_ROLES}
-    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter"}
+    assert hunting_ids == {"hunting_orchestrator", "hunting_hunter",
+                           "pod_runner", "pod_triager"}
     assert not (hunting_ids & {r.role_id for r in P.ROLES})  # absent from app-boot ROLES
     for r in P.ROLES:
         monkeypatch.setenv(r.model_key, "swissai:x")
@@ -100,6 +101,39 @@ def test_hunting_roles_are_not_validated_at_app_boot(monkeypatch):
     with pytest.raises(P.LLMConfigError) as e:
         P.validate_llm_config(P.HUNTING_ROLES)  # hunting bootstrap: now demanded
     assert "HUNTING" in str(e.value)
+
+def test_build_chat_model_sets_generous_max_completion_tokens_budget(monkeypatch):
+    """The reasoning-token-exhaustion fix: EVERY model construction carries a
+    generous `max_completion_tokens` (the reasoning-INCLUSIVE output budget) so a
+    thinking-heavy turn still has room to emit its answer. It rides in
+    `model_kwargs` (the pinned langchain-openai ChatOpenAI has no such field) and
+    must reach the wire payload verbatim. Overridable via
+    `LLM_MAX_COMPLETION_TOKENS`."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
+    payload = m._get_request_payload([{"role": "user", "content": "hi"}], stop=None)
+    assert payload.get("max_completion_tokens") == P.DEFAULT_MAX_COMPLETION_TOKENS
+    # the reasoning-INCLUSIVE param is sent; the legacy max_tokens is NOT (the
+    # OpenAI SDK rejects sending both - the wire must carry exactly one).
+    assert "max_tokens" not in payload
+
+
+def test_build_chat_model_respects_llm_max_completion_tokens_override(monkeypatch):
+    """The budget is a config dial: `LLM_MAX_COMPLETION_TOKENS` overrides the
+    default; an unusable value (non-int or non-positive) is a config lie and
+    fails fast rather than silently degrading."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    monkeypatch.setenv("LLM_MAX_COMPLETION_TOKENS", "65536")
+    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
+    payload = m._get_request_payload([{"role": "user", "content": "hi"}], stop=None)
+    assert payload.get("max_completion_tokens") == 65536
+    for bad in ("not-a-number", "0", "-5"):
+        monkeypatch.setenv("LLM_MAX_COMPLETION_TOKENS", bad)
+        with pytest.raises(P.LLMConfigError):
+            P.max_completion_tokens()
+
 
 def test_build_chat_model_sets_base_url_and_key(monkeypatch):
     """Direct mode: the base_url is `PROVIDERS[provider]`. `LLM_GATEWAY_URL` is

@@ -1,5 +1,11 @@
 import os
+import sys
 import time
+from pathlib import Path
+
+DOCPREP_SRC = Path(__file__).resolve().parents[1] / "data" / "lightrag" / "preprocessing_pipeline" / "src"
+if DOCPREP_SRC.is_dir():
+    sys.path.insert(0, str(DOCPREP_SRC))
 
 import pytest
 

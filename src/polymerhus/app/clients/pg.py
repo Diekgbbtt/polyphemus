@@ -1,8 +1,10 @@
 import json
+from typing import Any
 
 import psycopg
 from langgraph.checkpoint.postgres.aio import AsyncPostgresSaver
 from polymerhus.app.config import config
+from polymerhus.ingestion.contracts import SourceRecord, SourceStatus
 
 def check() -> bool:
     with psycopg.connect(config.POSTGRES_DSN, connect_timeout=3) as conn, conn.cursor() as cur:
@@ -557,3 +559,232 @@ def list_projects() -> list[dict]:
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute("SELECT project_id, name, created_at FROM projects ORDER BY created_at DESC")
         return [{"project_id": r[0], "name": r[1], "created_at": r[2]} for r in cur.fetchall()]
+def _jsonable(value: Any) -> Any:
+    if hasattr(value, "model_dump"):
+        return value.model_dump(mode="json")
+    if hasattr(value, "dict"):
+        return value.dict()
+    return value
+
+
+def save_methodology_bundle(run_id: str, query, bundle) -> int | None:
+    query_payload = _jsonable(query)
+    bundle_payload = _jsonable(bundle)
+    query_id = query_payload.get("query_id") or bundle_payload.get("query_id")
+    if not query_id:
+        raise ValueError("methodology bundle persistence requires query_id")
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO methodology_bundles (run_id, query_id, query, bundle) "
+            "VALUES (%s, %s, %s, %s) RETURNING id",
+            (run_id, query_id, json.dumps(query_payload), json.dumps(bundle_payload)),
+        )
+        row = cur.fetchone()
+        return row[0] if row else None
+
+
+def get_methodology_bundles(run_id: str) -> list[dict]:
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT id, run_id, query_id, query, bundle, created_at "
+            "FROM methodology_bundles WHERE run_id = %s ORDER BY id",
+            (run_id,),
+        )
+        return [
+            {
+                "id": r[0],
+                "run_id": r[1],
+                "query_id": r[2],
+                "query": r[3],
+                "bundle": r[4],
+                "created_at": r[5],
+            }
+            for r in cur.fetchall()
+        ]
+
+
+# --- LightRAG document ingestion registry -----------------------------------
+
+_TERMINAL_INGESTION_STATUSES = {
+    SourceStatus.PROCESSED,
+    SourceStatus.FAILED,
+    SourceStatus.SKIPPED_DUPLICATE,
+    SourceStatus.FAILED_AUDIT,
+}
+
+
+def _source_select_columns() -> str:
+    return (
+        "source_key, source_kind, source_uri, content_hash, status, source_metadata, "
+        "parser, parser_version, normalization_version, lightrag_document_id, "
+        "normalized_markdown_path, normalized_json_path, "
+        "last_error_code, last_error_message"
+    )
+
+
+def get_ingestion_source(source_key: str) -> SourceRecord | None:
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"SELECT {_source_select_columns()} FROM ingestion_sources WHERE source_key = %s",
+            (source_key,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return _source_record_from_row(row)
+
+
+def get_processed_ingestion_source_by_hash(content_hash: str | None) -> SourceRecord | None:
+    if content_hash is None:
+        return None
+
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            f"SELECT {_source_select_columns()} FROM ingestion_sources "
+            "WHERE content_hash = %s AND status = %s AND content_hash IS NOT NULL "
+            "ORDER BY updated_at DESC LIMIT 1",
+            (content_hash, SourceStatus.PROCESSED.value),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return _source_record_from_row(row)
+
+
+def _source_record_from_row(row) -> SourceRecord:
+    return SourceRecord(
+        source_key=row[0],
+        source_kind=row[1],
+        source_uri=row[2],
+        content_hash=row[3],
+        status=SourceStatus(row[4]),
+        source_metadata=row[5] or {},
+        parser=row[6],
+        parser_version=row[7],
+        normalization_version=row[8],
+        lightrag_document_id=row[9],
+        normalized_markdown_path=row[10],
+        normalized_json_path=row[11],
+        last_error_code=row[12],
+        last_error_message=row[13],
+    )
+
+
+def upsert_ingestion_source(record: SourceRecord) -> None:
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO ingestion_sources ("
+            "source_key, source_kind, source_uri, content_hash, status, source_metadata, "
+            "parser, parser_version, normalization_version, lightrag_document_id, "
+            "normalized_markdown_path, normalized_json_path, last_error_code, last_error_message"
+            ") VALUES (%s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s, %s) "
+            "ON CONFLICT (source_key) DO UPDATE SET "
+            "source_kind = EXCLUDED.source_kind, "
+            "source_uri = EXCLUDED.source_uri, "
+            "content_hash = EXCLUDED.content_hash, "
+            "status = EXCLUDED.status, "
+            "source_metadata = EXCLUDED.source_metadata, "
+            "parser = EXCLUDED.parser, "
+            "parser_version = EXCLUDED.parser_version, "
+            "normalization_version = EXCLUDED.normalization_version, "
+            "lightrag_document_id = EXCLUDED.lightrag_document_id, "
+            "normalized_markdown_path = EXCLUDED.normalized_markdown_path, "
+            "normalized_json_path = EXCLUDED.normalized_json_path, "
+            "last_error_code = EXCLUDED.last_error_code, "
+            "last_error_message = EXCLUDED.last_error_message, "
+            "updated_at = now()",
+            (
+                record.source_key,
+                record.source_kind,
+                record.source_uri,
+                record.content_hash,
+                record.status.value,
+                json.dumps(record.source_metadata) if record.source_metadata else "{}",
+                record.parser,
+                record.parser_version,
+                record.normalization_version,
+                record.lightrag_document_id,
+                record.normalized_markdown_path,
+                record.normalized_json_path,
+                record.last_error_code,
+                record.last_error_message,
+            ),
+        )
+
+
+def create_ingestion_job(job_id: str, source_key: str, status: SourceStatus) -> None:
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "INSERT INTO ingestion_jobs (job_id, source_key, status) VALUES (%s, %s, %s) "
+            "ON CONFLICT (job_id) DO NOTHING",
+            (job_id, source_key, status.value),
+        )
+
+
+def get_ingestion_job(job_id: str) -> dict | None:
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "SELECT j.job_id, j.source_key, s.source_uri, j.status, s.content_hash, "
+            "s.lightrag_document_id, j.audit, j.error, j.finished_at "
+            "FROM ingestion_jobs j "
+            "JOIN ingestion_sources s ON s.source_key = j.source_key "
+            "WHERE j.job_id = %s",
+            (job_id,),
+        )
+        row = cur.fetchone()
+        if row is None:
+            return None
+        return {
+            "job_id": str(row[0]),
+            "source_key": row[1],
+            "source_uri": row[2],
+            "status": row[3],
+            "content_hash": row[4],
+            "lightrag_document_id": row[5],
+            "audit": row[6],
+            "error": row[7],
+        }
+
+
+def set_ingestion_job_status(
+    job_id: str,
+    status: SourceStatus,
+    *,
+    error: dict | None = None,
+    audit: dict | None = None,
+) -> None:
+    finished_at_expr = "now()" if status in _TERMINAL_INGESTION_STATUSES else "NULL"
+    with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
+        cur.execute(
+            "UPDATE ingestion_jobs SET status = %s, audit = %s, error = %s, "
+            f"updated_at = now(), finished_at = {finished_at_expr} WHERE job_id = %s",
+            (
+                status.value,
+                json.dumps(audit) if audit is not None else None,
+                json.dumps(error) if error is not None else None,
+                job_id,
+            ),
+        )
+
+
+# --- Milestone 4 schema migration (explicit, idempotent) --------------------
+# Existing pg-data volumes must run this before using URL ingestion.
+# init.sql only initializes a *fresh* database; this function is the migration
+# path for volumes that already have ingestion_sources without source_metadata
+# and with content_hash NOT NULL.
+
+_URL_INGESTION_MIGRATION_SQL = [
+    "ALTER TABLE ingestion_sources ADD COLUMN IF NOT EXISTS source_metadata JSONB NOT NULL DEFAULT '{}'",
+    "ALTER TABLE ingestion_sources ALTER COLUMN content_hash DROP NOT NULL",
+]
+
+def apply_url_ingestion_migrations() -> None:
+    """Idempotently migrate an existing PostgreSQL volume for Milestone 4.
+
+    Safe to run against a fresh init.sql database; each statement is a no-op
+    if the new schema is already present.
+    """
+    with psycopg.connect(config.POSTGRES_DSN) as conn:
+        with conn.cursor() as cur:
+            for statement in _URL_INGESTION_MIGRATION_SQL:
+                cur.execute(statement)

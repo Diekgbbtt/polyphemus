@@ -26,10 +26,12 @@ Contract + degradation (spec 5, spec 9):
   calls are rejected (the orchestrator's `_WRITE_SHAPED` guard).
 - `kb_query` - the LightRAG tool (R1): the args schema is a LOCAL minimal mirror
   of `QuerySpecV1` and the response a dict shaped like `AnswerBundleV1` (copied
-  from the `lightrag-probe` worktree's `query_spec.py` / `generation.py`), swapped
-  for the real types when the simultaneous LightRAG integration lands. It calls an
-  injected `kb_query` seam; empty/raising -> a denoted degraded bundle (C2/C3).
-  This module does NOT import `polymerhus.lightrag` (not on this branch/dev).
+  from the `lightrag-probe` worktree's `query_spec.py` / `generation.py`),
+  WIRED from scratch onto the real `query_lightrag` tool (the lightrag branch's
+  single KB tool, config-gated by `HUNTING_LIGHTRAG_TOOL`). When the opt-in flag
+  is off, an injected `kb_query` seam (the contract tier) is used; empty/raising
+  -> a denoted degraded bundle (C2/C3). The `polymerhus.lightrag` import is
+  lazy (no I/O at import).
 - `exec` - the Kali-container exec tool (R2): `EXEC_TIMEOUT_S` per call (the
   shared `recon.config.EXEC_TIMEOUT_S`, default 300), args `command` + optional
   `timeout_s`; calls an injected `exec_fn(command, timeout_s) -> ExecResult`
@@ -435,10 +437,12 @@ class GraphViewTool(BaseTool):
 class KbQueryTool(BaseTool):
     """The LightRAG knowledge-base tool (R1, spec 5): a typed `QuerySpecV1`-shaped
     query -> an `AnswerBundleV1`-shaped bundle, consumed directly in the author
-    lane. Calls an injected `kb_query` seam; empty/raising -> a denoted degraded
-    bundle (C2/C3), never a raise into the turn. The LightRAG integration is a
-    SIMULTANEOUS workstream - the local mirrors swap for the real types when it
-    lands."""
+    lane. WIRED from scratch onto the real `query_lightrag` tool (the lightrag
+    branch's single KB tool): when `HUNTING_LIGHTRAG_TOOL` is enabled the real
+    tool is built lazily from app config and invoked (fail-open to a degraded
+    bundle); otherwise the injected `kb_fn` seam (the contract tier) is used.
+    Empty/raising -> a denoted degraded bundle (C2/C3), never a raise into the
+    turn."""
 
     name: str = "kb_query"
     description: str = (
@@ -469,8 +473,34 @@ class KbQueryTool(BaseTool):
             "notes": "degraded",
         }
 
+    @staticmethod
+    def _lightrag_tool():
+        """The real `query_lightrag` tool, built lazily when the opt-in flag is
+        on (the lightrag branch's single KB tool). Fail-open to None."""
+        try:
+            from polymerhus.app.config import config  # noqa: PLC0415
+            if not config.HUNTING_LIGHTRAG_TOOL:
+                return None
+            from polymerhus.lightrag.tool import build_lightrag_tool  # noqa: PLC0415
+            return build_lightrag_tool()
+        except Exception:  # noqa: BLE001 - fail-open to the seam/degraded bundle
+            return None
+
     def _run(self, **kwargs: Any) -> str:
         spec = KbQuerySpec(**kwargs)
+        real = self._lightrag_tool()
+        if real is not None:
+            try:
+                # The real tool takes QuerySpecV1 kwargs and returns the
+                # AnswerBundle JSON string; keep the response inside the pod's
+                # KbAnswerBundle-shaped envelope (tolerant of the real shape).
+                text = real.invoke(spec.model_dump())
+                bundle = KbAnswerBundle.model_validate_json(text or "{}")
+                if not bundle.scenario_id or not bundle.summary:
+                    return json.dumps(self._degraded_bundle(spec, "empty bundle"))
+                return json.dumps(bundle.model_dump())
+            except Exception as exc:  # noqa: BLE001 - C2/C3: degrade, never raise
+                return json.dumps(self._degraded_bundle(spec, str(exc)))
         if self._kb_fn is None:
             return json.dumps(self._degraded_bundle(spec, "seam absent"))
         try:
@@ -481,6 +511,9 @@ class KbQueryTool(BaseTool):
         if not bundle.scenario_id or not bundle.summary:
             return json.dumps(self._degraded_bundle(spec, "empty bundle"))
         return json.dumps(bundle.model_dump())
+
+    async def _arun(self, **kwargs: Any) -> str:
+        return self._run(**kwargs)
 
 
 class ExecTool(BaseTool):
