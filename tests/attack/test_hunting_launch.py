@@ -75,12 +75,20 @@ def test_resume_pod_resumes_one_session_by_its_id(tmp_path):
     """The pod-ONLY launch seam (identity-based refactor, 2026-08-25 operator
     ruling): `resume_pod_session` resumes ONE held/paused pod session by posting
     its coroutine id to the shared control plane's per-session `resume_session`
-    - it NEVER fabricates a produced `specified` spec (no store write at all)."""
-    from polymerhus.app.runtime import RunNotRegistered
-
+    - it NEVER fabricates a produced `specified` spec (no store write at all).
+    The seam first verifies the session is REGISTERED (the shared
+    `RuntimeManager.resume_session` is a documented no-op for a never-registered
+    run and never raises - so the seam is the fail-closed check, verified live
+    2026-08-25)."""
     class _Runtime:
         def __init__(self):
             self.resumed = []
+            self.registered = {
+                "hunting:run-1:pod:Service:slug:a_fault-x_CSRF:sqli_blind",
+            }
+
+        def run_ids(self, module):
+            return list(self.registered)
 
         def resume_session(self, module, session_id):
             self.resumed.append((module, session_id))
@@ -95,12 +103,17 @@ def test_resume_pod_resumes_one_session_by_its_id(tmp_path):
 def test_resume_pod_fail_closed_when_no_session_is_registered(tmp_path):
     """FAIL-CLOSED: no stored/paused pod session by that id propagates the
     shared runtime's `RunNotRegistered` (the API tier maps it onto 404) - the
-    launch refuses rather than fabricating a dispatch input."""
+    launch refuses rather than fabricating a dispatch input. The registration
+    check is the SEAM's own (the shared `RuntimeManager.resume_session` verb
+    never raises for a never-registered id, verified live 2026-08-25)."""
     from polymerhus.app.runtime import RunNotRegistered
 
     class _EmptyRuntime:
+        def run_ids(self, module):
+            return []
+
         def resume_session(self, module, session_id):
-            raise RunNotRegistered(session_id)
+            raise AssertionError("unregistered session must not reach resume")
 
     with pytest.raises(RunNotRegistered):
         hunting_runtime.resume_pod_session(
