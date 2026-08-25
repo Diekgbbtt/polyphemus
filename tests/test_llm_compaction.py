@@ -514,6 +514,114 @@ def test_region_human_inputs_fold_into_the_summary_when_one_is_produced():
     assert [m.content for m in bare.messages] == ["only this question"]
 
 
+# --- #187: dedup + bounded tool retention -------------------------------------
+
+def test_duplicate_system_messages_are_deduped_when_summary_fires():
+    """#187: duplicate identical SystemMessages collapse to ONE in the staged trail
+    even when the pass folds the region into a summary - a legacy thread that
+    stacked per-turn skill copies never carries N stale copies forward."""
+    store = T.InMemoryToolOutputStore()
+    skill = SystemMessage(content="THE-GATE-SKILL-STATIC")
+    trail = [skill, HumanMessage(content="go"), AIMessage(content="r1"),
+             skill, HumanMessage(content="more"), AIMessage(content="r2"),
+             skill, HumanMessage(content="done")]
+    res = C.compact_pass(trail, thread_id="thr", profile=None, store=store,
+                         summariser=_good_summariser())
+    assert res.report.readability == "compacted"
+    plain_system = [m for m in res.messages
+                    if isinstance(m, SystemMessage)
+                    and not str(m.content or "").startswith("[running summary]")]
+    assert len(plain_system) == 1
+    assert plain_system[0].content == "THE-GATE-SKILL-STATIC"
+
+
+def test_duplicate_system_messages_are_deduped_without_summary():
+    """#187: the dedup also holds on a no-summary pass (nothing to fold, every
+    message otherwise verbatim): the stale skill copies still collapse to ONE."""
+    store = T.InMemoryToolOutputStore()
+    skill = SystemMessage(content="THE-GATE-SKILL-STATIC")
+    trail = [skill, HumanMessage(content="go"), skill, HumanMessage(content="more")]
+    res = C.compact_pass(trail, thread_id="thr", profile=None, store=store,
+                         summariser=_good_summariser())
+    assert res.report.readability == "unchanged"
+    plain_system = [m for m in res.messages if isinstance(m, SystemMessage)]
+    assert len(plain_system) == 1
+    assert [m.content for m in res.messages if not isinstance(m, SystemMessage)] == [
+        "go", "more"]
+
+
+def test_duplicate_system_messages_in_the_d7_tail_are_preserved():
+    """#187 safety: the dedup NEVER touches the reserved D7 byte-identical tail -
+    a tail message stays even when the region carries an identical copy."""
+    profile = CapabilityProfile(reasoning_in_response=True)
+    store = T.InMemoryToolOutputStore()
+    skill = SystemMessage(content="TAIL-STATIC-SKILL")
+    trail = [skill, AIMessage(content="reason-one"),
+             HumanMessage(content="FINAL-QUESTION-MARKER", id="tail-q")]
+    res = C.compact_pass(
+        trail, thread_id="thr", profile=profile, store=store,
+        summariser=_good_summariser(),
+        replay_keep_tokens=C.approx_tokens([trail[-1]]) + C.approx_tokens([skill]),
+    )
+    assert res.messages[-1].content == "FINAL-QUESTION-MARKER"
+    tail_skills = [m for m in res.messages
+                   if isinstance(m, SystemMessage)
+                   and m.content == "TAIL-STATIC-SKILL"
+                   and not str(m.content or "").startswith("[running summary]")]
+    assert len(tail_skills) == 1  # the tail copy survives; no stale region duplicate
+
+
+def test_bounded_tool_retention_folds_older_tools_into_the_summary():
+    """#187: a pass keeps the LAST K tool messages of the region verbatim and FOLDS
+    the OLDER ones into the running summary - the staged trail's tool-message count
+    shrinks across passes, and the folded bodies land in the summariser's input (the
+    DISCOVERED-CRUCIAL-ARTIFACT identifiers survive the fold, D5)."""
+    store = T.InMemoryToolOutputStore()
+    fake = _good_summariser()
+    trail = [
+        HumanMessage(content="go"),
+        AIMessage(content="reason-1"),
+        ToolMessage(content="first-tool-body", tool_call_id="t1"),
+        AIMessage(content="reason-2"),
+        ToolMessage(content="second-tool-body", tool_call_id="t2"),
+        AIMessage(content="reason-3"),
+        ToolMessage(content="third-tool-body", tool_call_id="t3"),
+        AIMessage(content="reason-4"),
+        ToolMessage(content="fourth-tool-body", tool_call_id="t4"),
+    ]
+    res = C.compact_pass(trail, thread_id="thr", profile=None, store=store,
+                         summariser=fake, keep_last_tools=2)
+    tool_msgs = [m for m in res.messages if isinstance(m, ToolMessage)]
+    assert [m.tool_call_id for m in tool_msgs] == ["t3", "t4"]
+    assert res.report.summarised_spans == 4
+    assert res.report.readability == "compacted"
+    assert "first-tool-body" in fake.seen["user"]
+    assert "second-tool-body" in fake.seen["user"]
+    assert "third-tool-body" not in fake.seen["user"]
+    assert "fourth-tool-body" not in fake.seen["user"]
+
+
+def test_bounded_tool_retention_keep_all_when_window_covers_everything():
+    """#187: with `keep_last_tools` at or above the region's tool count, NO tool
+    message folds - the existing retention behaviour (offload over-cut bodies, keep
+    sub-cut full) is unchanged, and the summariser still folds the AI spans."""
+    store = T.InMemoryToolOutputStore()
+    fake = _good_summariser()
+    trail = [
+        HumanMessage(content="go"),
+        AIMessage(content="reason-1"),
+        ToolMessage(content="one-body", tool_call_id="t1"),
+        AIMessage(content="reason-2"),
+        ToolMessage(content="two-body", tool_call_id="t2"),
+    ]
+    res = C.compact_pass(trail, thread_id="thr", profile=None, store=store,
+                         summariser=fake, keep_last_tools=5)
+    tool_msgs = [m for m in res.messages if isinstance(m, ToolMessage)]
+    assert [m.tool_call_id for m in tool_msgs] == ["t1", "t2"]
+    assert "one-body" not in fake.seen["user"]
+    assert "two-body" not in fake.seen["user"]
+
+
 # --- slice E: the spawn / barrier / backstop through the real loop -------------
 
 class _RecordingUsageModel(BaseChatModel):

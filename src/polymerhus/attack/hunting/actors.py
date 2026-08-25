@@ -494,6 +494,7 @@ class HuntOrchestratorActor(_TurnActor):
             NoteDecision,
             RatifyDecision,
         )
+        from polymerhus.attack.hunting.llm import _gate_skill  # noqa: PLC0415
         from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
         if self._compaction is None:
             from polymerhus.app.llm import compaction as C  # noqa: PLC0415
@@ -511,39 +512,52 @@ class HuntOrchestratorActor(_TurnActor):
                 run_id=self._run_id,
                 project_id=self.project_id,
             )
+        # The static gate skill is the run's ONE system message on this thread
+        # (#187): passed ONCE via `system_prompt`, never re-added per phase turn
+        # (the per-turn re-add used to stack a byte-identical copy on every
+        # gate/ratify/note turn - the ~145K of ~14 stale copies behind the
+        # timeout). The phase-transition verbatims stay in the tool-call
+        # responses (G1/G3), never here.
         await super()._ensure_started(
             response_format=ToolStrategy(
                 GateDecision | RatifyDecision | NoteDecision | MatchVerdict),
             tools=list(surface) or None,
             middleware_extra=middleware_extra,
+            system_prompt=_gate_skill(),
         )
 
     def _on_message(self, message, last_turn):
+        # The static gate skill rides the thread's ONE system message (set once
+        # at `_ensure_started` as `system_prompt`), so the phase branches return
+        # ONLY the phase's HumanMessage - never a per-turn SystemMessage copy
+        # (#187: the old per-turn `SystemMessage(content=_gate_skill())` stacked
+        # a byte-identical copy on every gate/ratify/note turn).
         if message.kind == _GATE_KIND:
             payload = message.payload if isinstance(message.payload, dict) else {}
-            from polymerhus.attack.hunting.llm import _compose_gate_prompt, _gate_skill  # noqa: PLC0415
-            from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415
+            from polymerhus.attack.hunting.llm import _compose_gate_prompt  # noqa: PLC0415
+            from langchain_core.messages import HumanMessage  # noqa: PLC0415
             return [
-                SystemMessage(content=_gate_skill()),
                 HumanMessage(content=_compose_gate_prompt(payload.get("input"))),
             ]
         if message.kind == _RATIFY_KIND:
             payload = message.payload if isinstance(message.payload, dict) else {}
-            from polymerhus.attack.hunting.llm import _compose_ratify_prompt, _gate_skill  # noqa: PLC0415
-            from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415
+            from polymerhus.attack.hunting.llm import _compose_ratify_prompt  # noqa: PLC0415
+            from langchain_core.messages import HumanMessage  # noqa: PLC0415
             return [
-                SystemMessage(content=_gate_skill()),
                 HumanMessage(content=_compose_ratify_prompt(payload.get("input"))),
             ]
         if message.kind == _NOTE_KIND:
             payload = message.payload if isinstance(message.payload, dict) else {}
-            from polymerhus.attack.hunting.llm import _compose_note_prompt, _gate_skill  # noqa: PLC0415
-            from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415
+            from polymerhus.attack.hunting.llm import _compose_note_prompt  # noqa: PLC0415
+            from langchain_core.messages import HumanMessage  # noqa: PLC0415
             return [
-                SystemMessage(content=_gate_skill()),
                 HumanMessage(content=_compose_note_prompt(payload.get("input"))),
             ]
         if message.kind == _REMATCH_KIND:
+            # The rematch skill is a RARE turn: a single per-turn SystemMessage
+            # on rematch is acceptable (it does not accumulate across the run's
+            # gate/ratify/note cadence), so it stays here rather than joining the
+            # gate skill's system message (#187).
             payload = message.payload if isinstance(message.payload, dict) else {}
             from polymerhus.attack.hunting.llm import _compose_rematch_prompt, _rematch_skill  # noqa: PLC0415
             from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415

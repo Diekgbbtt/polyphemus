@@ -260,7 +260,9 @@ Aim for 200-500 tokens total. Be dense: preserve meaning, not verbosity.
 
 ## Rules
 
-Never invent material that is absent from the provided spans. Condense the prior running summary TOGETHER with the new session material; the summary accumulates across passes. Every field must be grounded in the spans or the prior summary."""
+Never invent material that is absent from the provided spans. Condense the prior running summary TOGETHER with the new session material; the summary accumulates across passes. Every field must be grounded in the spans or the prior summary.
+
+Tool results older than the retention window are folded into this summary instead of staying in the trail (#187): capture each under DISCOVERED CRUCIAL ARTIFACTS with its specific identifier (file/record/id) when it is load-bearing, so the condensed artifact is not lost."""
 
 
 def _text_of(content: Any) -> str:

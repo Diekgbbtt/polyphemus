@@ -15,7 +15,7 @@ import asyncio
 import json
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -30,6 +30,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     GateInput,
     MatchVerdict,
+    PhaseTurnInput,
     Witness,
 )
 from polymerhus.lightrag.tool import LightRagQueryTool
@@ -242,6 +243,69 @@ def test_hunt_orchestrator_actor_stop_is_idempotent_without_spawn():
         await actor.stop()  # idempotent
 
     asyncio.run(_drive())  # must not raise
+
+
+def test_hunt_orchestrator_thread_keeps_one_system_message():
+    """#187: ONE gate-skill SystemMessage per hunting_orchestrator thread, added
+    once at the front (as `system_prompt`), never re-added per phase turn. A run
+    that drives several hypothesise/ratify/note turns on the SAME thread sends
+    EVERY model call the SAME single gate-skill SystemMessage at the front - the
+    old per-turn `SystemMessage(content=_gate_skill())` re-add stacked a
+    byte-identical copy into the trail on every turn (the ~145K of ~14 stale
+    copies behind the #187 timeout)."""
+    gate_args = {"directions": [
+        {"unit_id": "Service:slug:a", "fault_class": "fault-x", "carried": True,
+         "rationale": "plausible"}]}
+    ratify_args = {"configs": []}
+    note_args = {"notes": []}
+    seen: list = []
+    cursor = {"i": 0}
+    script = [
+        ("GateDecision", gate_args), ("RatifyDecision", ratify_args),
+        ("NoteDecision", note_args),
+        ("GateDecision", gate_args), ("RatifyDecision", ratify_args),
+        ("NoteDecision", note_args),
+    ]
+
+    class _Recording(_ToolFake):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            seen.append(list(messages))
+            return super()._generate(messages, stop=stop, run_manager=run_manager, **kwargs)
+
+    def factory(role_id):
+        i = cursor["i"]
+        cursor["i"] = i + 1
+        name, args = script[min(i, len(script) - 1)]
+        return _Recording(call_name=name, args=args)
+
+    async def _drive():
+        actor = HuntOrchestratorActor(
+            "run1", checkpointer=InMemorySaver(), model_factory=factory, observe=False,
+        )
+        phase_input = PhaseTurnInput(pair=_gate_input().candidates[0])
+        for _ in range(2):
+            assert await actor.hypothesise(_gate_input()) is not None
+            assert await actor.ratify(phase_input) is not None
+            assert await actor.note(phase_input) is not None
+        await actor.stop()
+        return actor
+
+    actor = asyncio.run(_drive())
+    assert len(seen) == 6  # six phase turns on the same thread
+    for model_input in seen:
+        system_messages = [m for m in model_input
+                           if isinstance(m, SystemMessage)
+                           and not str(m.content or "").startswith("[running summary]")]
+        assert len(system_messages) == 1, "exactly ONE gate-skill system message per call"
+        assert "hunt-orchestrator" in str(system_messages[0].content)
+        assert model_input[0] is system_messages[0], "the gate skill sits once at the front"
+    # The messages CHANNEL (the persisted trail) carries NO per-turn skill copies:
+    # only the six phase HumanMessages survive on the thread.
+    trail = actor._task.result().turns[-1].messages
+    plain_system = [m for m in trail if isinstance(m, SystemMessage)]
+    assert plain_system == []
+    humans = [m for m in trail if isinstance(m, HumanMessage)]
+    assert len(humans) == 6
 
 
 # --- the per-hunt hunting-hunter actor --------------------------------------------
