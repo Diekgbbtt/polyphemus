@@ -144,42 +144,30 @@ def enqueue_hunt_config(project_id: str, config, *, hunt_store=None) -> str:
     return store.write_config(project_id, payload, directory="produced")
 
 
-def enqueue_test_spec(
-    project_id: str,
-    *,
-    fault_key: str,
-    fault_keyword: str,
-    strategy_keyword: str,
-    spec: dict,
-    hunter_store=None,
-) -> str:
-    """The pod-ONLY launch seam (T5, ADR #169 Q4/Q6): enqueue ONE produced
-    SPECIFIED test spec into the project's HunterMemoryStore `produced/`
-    family - the inbox-surfer mover's pod-dispatch input. The run-scoped
-    surfer picks it up on the next tick and dispatches one pod; a spec whose
-    parent hunter (its `fault_key`'s config) was never dispatched stays in
-    produced (at-least-once) - NEVER a dependency error. `status` is forced to
-    `specified` (the mover's pod-dispatch gate). A spec whose
-    `<fault>_<strategy>` file already exists raises `DuplicateSpecError` - the
-    storage novelty gate, the at-most-once marker for the item. Returns the
-    written spec file stem.
+def resume_pod_session(runtime, session_id: str) -> None:
+    """The pod-ONLY launch seam (T5, ADR #169 Q4/Q6, identity-based refactor
+    2026-08-25 operator ruling): RESUME ONE held/paused pod session by posting
+    its coroutine id - NEVER fabricating a produced `specified` spec into the
+    HunterMemoryStore produced family (a fabricated `specified` dispatch input
+    was the reviewer's scope/ambiguity finding and the wedge's entry point).
 
-    Blocking file I/O: the API offloads via `asyncio.to_thread`. Write failure
-    raises to the caller (O3), never a silent drop. `hunter_store` injectable
-    per s6 (tests use a temp-root store)."""
-    from polymerhus.attack.hunting.hunter_memory import (  # noqa: PLC0415
-        HunterMemoryStore,
-    )
+    `session_id` is the pod's ADR Q13 session id
+    (`hunting:<run_id>:pod:<config_id>:<spec_id>` - session id = coroutine id
+    = registry run name, Q12). The seam asks the SHARED control plane to
+    release the held session (`RuntimeManager.resume_session`, module
+    "hunting"): a held session's next unit boundary at the hunting dispatch
+    gate proceeds again. A registered-but-not-held session is already running,
+    so its resume is the runtime verb's own safe no-op (idempotent - a
+    replayed resume never double-runs, preserving at-most-once).
 
-    payload = dict(spec)
-    payload["status"] = "specified"
-    store = hunter_store if hunter_store is not None else HunterMemoryStore()
-    path = store.write_spec(
-        project_id, fault_key,
-        fault_keyword=fault_keyword, strategy_keyword=strategy_keyword,
-        spec=payload, mode="create", side="produced",
-    )
-    return path.stem
+    FAIL-CLOSED when there is no stored/paused pod session to resume: it raises
+    `RunNotRegistered` (the shared runtime's own signal) when no session is
+    registered by that id - the launch endpoint maps it to 404 rather than
+    fabricating dispatch input. `runtime` is the shared control plane (injected
+    by the API tier; the endpoint's `_runtime_or_503` guarantees one)."""
+    if not session_id:
+        raise ValueError("a pod session_id is required to resume")
+    runtime.resume_session("hunting", session_id)
 
 
 async def launch_orchestrator(

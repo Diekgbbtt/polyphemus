@@ -25,8 +25,11 @@ wiring T4 owns:
   state`): after the hunt's ReAct graph ends, the session enters a simple loop
   over its mailbox - REUSING the existing `run_session_agent` machinery, never
   checkpoint-resume mechanisation. The pod->hunter verdict handling is the ADR
-  Q16 STUB: a delivered `PodExport` is consumed and recorded (a freeform note
-  on the hunter's memory), nothing more - no re-evaluation, no further dispatch.
+  Q16 STUB (identity-based refactor, 2026-08-25): the DURABLE export record is
+  authored at pod completion keyed by the parent's canonical `config_key`
+  (crash-safe, independent of a live parent), and a delivered `PodExport` in
+  the idle loop is a WITHIN-RUN LIVE FEED for the future verdict node -
+  consumed only, no re-evaluation, no further dispatch.
   The idle loop ends on a `settle` kind message (the run-terminal path posts it:
   quiesce confirmed, no more pods can deliver) or on session cancellation.
 - The quiesce predicate (`is_run_quiesced`) + the pending-work read
@@ -56,7 +59,10 @@ from dataclasses import dataclass, field
 from typing import Any, Awaitable, Callable
 
 from polymerhus.attack.hunting.hunt_store import HuntStore
-from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
+from polymerhus.attack.hunting.hunter_memory import (
+    HunterMemoryStore,
+    config_key_from_fault_key,
+)
 from polymerhus.attack.hunting.mover import (
     HuntConfigItem,
     ProducedItem,
@@ -275,10 +281,16 @@ def build_run_dispatch(
       hunt authors is always addressable.
     - `TestSpecItem` -> ONE pod session for the produced spec, ONLY when its
       persisted `status == "specified"` (the ratified-spec gate). The pod rides
-      the same mover under ADR Q13's pod session id, and its export is
-      delivered into the PARENT hunter's inbox (the experiment-log return path,
-      ADR Q16(a): the mover surfaces configs and specs; the pod export flows
-      into the hunter's mailbox, NOT through a file move).
+      the same mover under ADR Q13's pod session id. Dispatch is gated by the
+      spec's OWN persisted status - NEVER by a chain-adjacent parent's liveness
+      (identity-based refactor, 2026-08-25): a produced `specified` spec whose
+      parent config was consumed by an earlier run (no live parent inbox this
+      run) still dispatches. The parent is resolved from the spec's `fault_key`
+      folder to the canonical `config_key`, the completed export is RECORDED
+      DURABLY at pod completion keyed by that `config_key` (Q16 amendment),
+      and a within-run co-running parent MAY also receive a live inbox
+      notification (optional, best-effort - never the only record, never a
+      dispatch gate).
     - Anything else yields `None` (refused; the mover retries).
 
     The session coroutines are gate-bounded (Q15): the hunting dispatch gate is
@@ -328,22 +340,24 @@ def build_run_dispatch(
         body = _read_spec_body(hunter_store, project_id, item)
         if not body or body.get("status") != "specified":
             return None
-        inbox = state.hunter_inboxes.get(item.fault_key)
-        if inbox is None:
-            # The parent hunter was never dispatched (or its inbox was reaped):
-            # refusing keeps the spec produced - never dropped.
-            logger.warning(
-                "surfer: no hunter inbox for produced spec %s; retried",
-                item.message_id,
-            )
-            return None
+        # The spec's OWN persisted status gates the pod dispatch - NEVER the
+        # liveness of a chain-adjacent parent (identity-based refactor,
+        # 2026-08-25): a produced `specified` spec whose parent config was
+        # consumed by an earlier run (no live parent inbox in THIS run) still
+        # dispatches, so the never-disagree contract holds - run_work_remaining
+        # and build_run_dispatch gate on the same own-status and a produced
+        # spec can never wedge the quiesce.
+        config_key = config_key_from_fault_key(item.fault_key)
+        inbox = state.hunter_inboxes.get(config_key)
         return run_pod_session(
             spec=body,
             project_id=project_id,
             run_id=run_id,
             fault_key=item.fault_key,
+            config_key=config_key,
             spec_id=item.spec_file,
             inbox=inbox,
+            hunter_store=hunter_store,
             gate=gate,
             pod_builder=pod_builder,
             pod_store=pod_store,
@@ -416,10 +430,11 @@ async def _run_hunter_idle(
     """The hunt's idle stretch (ADR "Agent idle state"): the mailbox loop
     machinery (`run_session_agent`) iteratively reading the hunt's inbox on the
     hunt's own `HuntSession` thread, NOT checkpoint-resume mechanisation. The
-    verdict handling is the ADR Q16 STUB - a delivered pod export is consumed
-    and recorded, nothing more. The loop ends on the `settle` kind message the
-    run-terminal path posts once quiesce is proven, or on session cancellation
-    (stop)."""
+    verdict handling is the ADR Q16 STUB (identity-based refactor, 2026-08-25):
+    a delivered pod export is a WITHIN-RUN LIVE FEED for the future verdict
+    node, consumed only - the DURABLE parent-keyed record was authored at pod
+    completion. The loop ends on the `settle` kind message the run-terminal
+    path posts once quiesce is proven, or on session cancellation (stop)."""
     inbox = state.hunter_inboxes[config_key]
     from polymerhus.app.llm.actor import run_session_agent  # noqa: PLC0415
     from polymerhus.app.llm.checkpoints import (  # noqa: PLC0415
@@ -435,10 +450,7 @@ async def _run_hunter_idle(
                 hunt_session.role_id, hunt_session.thread_id, None,
                 checkpointer=get_session_checkpointer(),
                 inbox=inbox,
-                on_message=_verdict_stub_handler(
-                    project_id=project_id, run_id=run_id,
-                    fault_key=config_key, hunter_store=hunter_store,
-                ),
+                on_message=_verdict_stub_handler(fault_key=config_key),
             )
     except asyncio.CancelledError:
         raise
@@ -446,51 +458,59 @@ async def _run_hunter_idle(
         logger.warning("surfer: hunt %s idle loop degraded (%s)", config_key, exc)
 
 
-def _verdict_stub_handler(*, project_id, run_id, fault_key, hunter_store):
-    """The ADR Q16 verdict stub: a delivered `PodExport` is CONSUMED AND
-    RECORDED (a freeform note on the hunter's memory), nothing more - no
-    re-evaluation, no further dispatch (the verdict-processing workflow is a
-    separate future ticket). `settle` ends the loop; every other kind is
-    consumed silently (the idle loop keeps listening)."""
+def _verdict_stub_handler(*, fault_key):
+    """The ADR Q16 verdict stub (identity-based refactor, 2026-08-25): a
+    delivered `PodExport` is a WITHIN-RUN LIVE FEED for the future
+    verdict-processing node (D67-02/D11/D67-14) - CONSUMED ONLY, nothing more.
+    The DURABLE parent-keyed export record was already authored at pod
+    completion (`run_pod_session` -> `_record_durable_pod_export`), so the
+    idle loop never double-records: it acknowledges the feed and keeps
+    listening. `settle` ends the loop; every other kind is consumed silently."""
 
     async def _stub(message, last_turn):
         if message.kind == "settle":
             return STOP
         if message.kind == "pod_export":
-            _record_pod_export(
-                hunter_store=hunter_store, project_id=project_id, run_id=run_id,
-                fault_key=fault_key, message=message,
+            logger.debug(
+                "surfer: hunt %s consumed pod_export live feed from %s "
+                "(durable record already at pod completion)",
+                fault_key, message.source,
             )
         return None
 
     return _stub
 
 
-def _record_pod_export(*, hunter_store, project_id, run_id, fault_key, message) -> None:
-    """The stub's RECORD half (consume and record, nothing more): the delivered
-    export payload is appended as a freeform note on the hunter's memory under
-    the fault's key, stamped with its source session and the stub marker.
-    Fail-open (O3): a write failure warns and the export is still considered
-    consumed - the run must never wedge on the record."""
+def _record_durable_pod_export(*, hunter_store, project_id, run_id, config_key,
+                               source, export) -> None:
+    """The DURABLE parent-keyed export record (identity-based refactor,
+    2026-08-25 / ADR Q16 amendment): authored deterministically at pod
+    completion, keyed by the parent's CANONICAL `config_key` - independent of
+    any live parent session, crash-safe, never lost to a live-mailbox-only
+    path. The export envelope is appended as a freeform note on the hunter
+    memory (the verdict-stub marker), so the future verdict-processing node
+    reads it from persisted memory without a co-running parent. Fail-open
+    (O3): a write failure warns - the export is never re-fabricated or
+    dropped, and the run must never wedge on the record."""
     try:
         hunter_store.write_note(
             project_id,
             action="append",
-            fault_key=fault_key,
-            note_name=str(message.source or "pod-export"),
+            fault_key=config_key,
+            note_name=str(source or "pod-export"),
             kind="freeform",
-            body=json.dumps(message.payload or {}, sort_keys=True),
-            evidence="consumed by the verdict stub (ADR Q16): no re-evaluation",
+            body=json.dumps(export or {}, sort_keys=True),
+            evidence="durable pod-completion export record (ADR Q16): no re-evaluation",
             provenance={
                 "run_id": run_id,
-                "source": message.source,
+                "source": source,
                 "verdict_stub": True,
             },
         )
     except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
         logger.warning(
-            "surfer: verdict-stub record failed for %s/%s (%s)",
-            fault_key, message.source, exc,
+            "surfer: durable pod-export record failed for %s/%s (%s)",
+            config_key, source, exc,
         )
 
 
@@ -500,19 +520,30 @@ async def run_pod_session(
     project_id: str,
     run_id: str,
     fault_key: str,
+    config_key: str,
     spec_id: str,
-    inbox: AgentInbox,
+    inbox: AgentInbox | None,
+    hunter_store: HunterMemoryStore,
     gate: Any,
     pod_builder: Callable[..., Awaitable[dict]],
     pod_store: Any,
 ) -> dict:
     """ONE pod session (ADR Q13 pod id): run the spec through the pod (the
-    injected builder; `arun_pod` in production), then DELIVER the completed
-    export into the parent hunter's inbox - the experiment-log return path
-    (ADR Q16(a)). Gate-bounded through the shared hunting gate (Q15). The
-    export is posted with `await` (same-loop put) BEFORE the session settles,
-    so the run-terminal `settle` message can never overtake it in the hunter's
-    inbox (each exported log is consumed and recorded, never dropped)."""
+    injected builder; `arun_pod` in production), then record the completed
+    export DURABLY at pod completion keyed by the parent's canonical
+    `config_key` (identity-based refactor, 2026-08-25 / Q16 amendment -
+    crash-safe, independent of any live parent session, never lost to a crash
+    between dispatch and an in-memory inbox consumption), and finally deliver
+    the completed export to a WITHIN-RUN co-running parent's inbox (an OPTIONAL
+    live feed for the future verdict-processing node - best-effort, never the
+    only record and never a dispatch gate). Gate-bounded through the shared
+    hunting gate (Q15).
+
+    The live feed is posted with `await` (same-loop put) when an inbox is
+    present, BEFORE the session settles, so the run-terminal `settle` message
+    can never overtake it in the hunter's inbox. A missing inbox (the parent was
+    consumed by an earlier run) is not an error - the durable record has already
+    landed, so nothing is dropped."""
     async def _run() -> dict:
         try:
             return await pod_builder(
@@ -532,11 +563,23 @@ async def run_pod_session(
             export = await _run()
     else:
         export = await _run()
-    await inbox.post(AgentMessage(
-        kind="pod_export",
-        payload=export,
-        source=pod_session_id(run_id, fault_key, spec_id),
-    ))
+
+    source = pod_session_id(run_id, fault_key, spec_id)
+    # The DURABLE parent-keyed record: authored at pod completion, keyed by the
+    # parent's canonical config_key - the single crash-safe record, independent
+    # of any live parent inbox.
+    _record_durable_pod_export(
+        hunter_store=hunter_store, project_id=project_id, run_id=run_id,
+        config_key=config_key, source=source, export=export,
+    )
+    # The WITHIN-RUN live feed (optional): only when a co-running parent's inbox
+    # is live under the parent's config_key. Best-effort - never a gate.
+    if inbox is not None:
+        await inbox.post(AgentMessage(
+            kind="pod_export",
+            payload=export,
+            source=source,
+        ))
     return export
 
 

@@ -94,6 +94,13 @@ patterns (the launcher seam, repository + gateway, error mapping). At-most-once 
 launch: track created run ids server-side and refuse replayed triggers with the
 appropriate semantics; a dedicated idempotency header is rejected as over-engineering.
 
+**Amended by the identity-based refactor (2026-08-25, operator ruling):** the
+singular POD launch no longer enqueues a fabricated `specified` spec into produced/
+(that fabricated dispatch input was the ambiguity the reviewer flagged). A pod-only
+launch resumes ONE stored/paused pod session by posting its coroutine id, never
+fabricating a `specified` status; the whole-pod-component path remains the
+whole-pipeline run.
+
 ### Q9-Q11 - Sequencing, seams, and the surfer's role
 
 - Q9/A: the memory-migrated topology lands FIRST; this workstream operates on it.
@@ -116,7 +123,15 @@ lifecycle home. Session id = coroutine id = registry run name.
 - Hunter session: `hunting:<run_id>:hunt:<config_id>`.
 - Pod session: `hunting:<run_id>:pod:<config_id>:<spec_id>`.
 - `config_id` = semantic config file name `<unit_id>_<CWE_ID>_<fault_class(vulnerability)>`
-  (memory-system G4).
+  (memory-system G4) - the `_`-joined fault_key.
+- **Canonical identity (amended by the identity-based surfer refactor, 2026-08-25):**
+  the ONE logical join key is the semantic `config_key` (`<unit_id>::<CWE_ID>::<vulnerability>`
+  round-tripped by `HuntStore.semantic_key` / the `test-specs` folder's recovering
+  parser). A produced spec's parent hunter is resolved by converting its `fault_key`
+  folder to the `config_key` form - never by using the raw folder name as a hash key.
+  `hunter_inboxes` is keyed by `config_key` on BOTH the register side (hunter
+  dispatch) and the lookup side (pod dispatch): the two sides of one cross-family
+  join must agree on the SAME canonical key, or every pod dispatch misses its parent.
 - `spec_id` = semantic spec file name `<fault>_<strategy>` (164 state-graph spec 6).
   This REPLACES the pod branch's canonical-hash spec id everywhere it was identity
   (session-address spec discriminator, pod memory keys) - a reconciliation item for
@@ -138,6 +153,15 @@ in practice, so one width.
 produced/consumed; but the hunter's idle-loop handling of a `PodExport` is a STUB
 (consume and record, no re-evaluation). The verdict-processing workflow is not yet
 clear and is not wired.
+
+**Amended by the identity-based surfer refactor (2026-08-25):** the durable
+parent-keyed record is written at POD COMPLETION, keyed by the parent's `config_key`
+- independent of whether any live hunter inbox exists. The idle-loop inbox delivery
+is a within-run LIVE FEED (a notification the co-running hunter may consume for the
+future verdict-processing node, D67-02/D11/D67-14), never a dispatch gate: a
+produced `specified` spec is dispatchable on ITS OWN persisted status, even when its
+parent config was consumed by an earlier run (no live parent in this run). The export
+is never lost to a crash between dispatch and an in-memory inbox consumption.
 
 ### Q17 - Session lifecycle surface
 
@@ -163,6 +187,16 @@ lands; then it operates on it.
    the control plane.
 4. The produced->consumed move IS the at-least-once marker.
 
+**Dispatch gate (amended by the identity-based refactor, 2026-08-25):** an item's
+dispatchability is decided by ITS OWN persisted status (`ratified` config -> hunter,
+`specified` spec -> pod), never by the liveness of a chain-adjacent agent. A produced
+spec whose parent hunter is absent from the current run (parent config consumed by an
+earlier run) still dispatches and its export is recorded durably under the parent's
+`config_key`. This makes the quiesce pending-work predicate and the dispatch decision
+agree by construction - the `run_work_remaining`/`build_run_dispatch` "can never
+disagree" claim RESTORED (previously violated: a spec was counted as work but could
+never dispatch without a live parent inbox, wedging the run's quiesce).
+
 ## Agent idle state (from R7 + Q16)
 
 After an agent's workflow graph ends, the agent enters the idle state: a simple loop
@@ -178,6 +212,11 @@ a stub for now.
   rest. A coroutine returning while the run is still mid-flight must never silently
   `interrupt` the run - that is a defect in the control plane layer, not in this work.
 - Start/stop seam shapes unchanged.
+- **Quiesce/dispatch contract (restored by the identity-based refactor, 2026-08-25):**
+  the pending-work predicate and the dispatch decision gate on the SAME thing - an
+  item's own persisted status. No produced `specified` spec can wedge the quiesce:
+  it is always dispatchable on its own status. The run reaches terminal only when no
+  dispatchable produced item remains and all dispatched sessions have settled.
 
 ## Consequences
 
@@ -189,7 +228,11 @@ a stub for now.
 - The pod's spec identity moves from the canonical hash to `<fault>_<strategy>`; the
   pod reconciliation is a wiring ticket item.
 - #164's verdict-consumption detail (a hunter's idle handling of a PodExport) is
-  stubbed; a future ticket owns the real verdict processing workflow.
+  stubbed; a future ticket owns the real verdict processing workflow. The refactor
+  makes the durable export record parent-keyed and crash-safe (Q16 amendment).
+- The refactor CONVERGES identity on the semantic `config_key` (Q13): the `fault_key`
+  folder stays the physical address; the `config_key` is the JOIN key across the
+  hunter/pod families. One round-trip helper, no dual-key drift.
 
 ## Alternatives rejected
 

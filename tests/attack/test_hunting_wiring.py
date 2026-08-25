@@ -58,9 +58,20 @@ from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore
 from polymerhus.attack.hunting.surfer import surfer_session_id
 
 UNIT = "Service:slug:a"
-FAULT = "fault-x"
+# The production fault class IS a CWE id (the `_`-joined fault_key folder is
+# only parseable when the middle segment matches `CWE-\d+`, G4) - a fake
+# "fault-x" class would make the production `_`-joined form unrepresentable.
+FAULT = "CWE-352"
 CLASS = "CSRF"
-FAULT_KEY = f"{UNIT}::{FAULT}::{CLASS}"
+# The PRODUCTION fault_key folder form (G4/ADR Q13): `_`-joined
+# `<unit_id>_<CWE_ID>_<vulnerability_class>`, the config file-name stem the
+# hunter writes as its test-specs folder. The `::`-joined semantic config_key
+# is a DIFFERENT string - and the whole identity-based-refactor regression
+# exists to prove the mover joins the two sides on the canonical config_key
+# (this fixture previously used the `::` form, which masked the pod-dispatch
+# miss).
+FAULT_KEY = f"{UNIT}_{FAULT}_{CLASS}"
+CONFIG_KEY = f"{UNIT}::{FAULT}::{CLASS}"
 RUN = "wiring-run-1"
 PROJECT = "wiring-proj-1"
 SPEC_FILE = "sqli_blind"
@@ -560,11 +571,72 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
     assert record["provenance"].get("verdict_stub") is True
     assert record["provenance"].get("source") == pod_session_id(RUN, FAULT_KEY, SPEC_FILE)
     assert "the-export" in record["body"]           # the export payload was recorded
-    assert record["fault_key"] == FAULT_KEY
+    # the DURABLE parent-keyed record is keyed by the parent's canonical
+    # CONFIG_KEY (the `::`-joined join key), never the physical `_`-joined
+    # folder - the two sides of the cross-family join agree (identity refactor)
+    assert record["fault_key"] == CONFIG_KEY
     # NOTHING more: the spec was consumed only by the mover (no re-dispatch),
     # and the hunter produced no further records/specs.
     assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == []
     assert len(hunter.read_specs(PROJECT, FAULT_KEY, sides=("consumed",))) == 1
+
+
+# --- identity-based refactor: the cross-run pod-dispatch wedge regression ------
+
+def test_cross_run_specified_spec_dispatches_a_pod_without_a_parent(stores,
+                                                                    monkeypatch):
+    """The pod-dispatch WEDGE regression (identity-based refactor, 2026-08-25):
+
+    A produced `specified` spec whose parent config was consumed by an EARLIER
+    run (so NO live parent hunter inbox exists in THIS run) must still dispatch
+    a pod - the dispatch is gated on the spec's OWN persisted status, never on
+    a chain-adjacent parent's liveness. AND the move lands (produced->consumed)
+    AND the durable parent-keyed export record exists keyed by the parent's
+    canonical CONFIG_KEY, so the run can reach quiesce (never wedged).
+
+    The produced spec is written DIRECTLY into the hunter store (no hunter
+    dispatch this run) - exactly the cross-run shape that previously returned
+    `None` from `_spec_dispatch` (missing parent inbox) and hung the run."""
+    hunt, hunter, pod = stores
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+
+    # A produced SPECIFIED spec with NO produced/consumed parent config on disk
+    # at all - the parent was consumed by an earlier run, no hunter dispatches.
+    _write_spec(hunter, fault_key=FAULT_KEY, status="specified")
+    pod_calls: list[str] = []
+
+    async def record_pods(spec, **kw):
+        pod_calls.append(kw["spec_id"])
+        return {"verdict": "successful", "terminal_reason": "symptom-confirmed",
+                "evidence": {"trail": []}, "clean": True, "iterations": 1}
+
+    control = _FakeControl()
+    asyncio.run(hunting_runtime.start_hunting(
+        PROJECT, candidates=[], tools=_tools(hunt),
+        control=control, tick_interval=0.001,
+        hunt_store=hunt, hunter_store=hunter, pod_store=pod,
+        hunter_builder=_noop_hunts, pod_builder=record_pods,
+    ))
+    # the pod ran, and the spec moved produced -> consumed (the marker)
+    assert pod_calls == [SPEC_FILE]
+    assert pod_session_id(RUN, FAULT_KEY, SPEC_FILE) in control.started
+    assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == []
+    assert len(hunter.read_specs(PROJECT, FAULT_KEY, sides=("consumed",))) == 1
+    # the DURABLE parent-keyed export record exists keyed by the canonical
+    # CONFIG_KEY (no live parent; the durable note is the only record)
+    notes = hunter.read_notes(PROJECT)
+    assert len(notes) == 1
+    assert notes[0]["fault_key"] == CONFIG_KEY
+    assert notes[0]["provenance"].get("verdict_stub") is True
+    assert notes[0]["provenance"].get("source") == pod_session_id(
+        RUN, FAULT_KEY, SPEC_FILE)
+    assert "symptom-confirmed" in notes[0]["body"]
+    # the run reached quiesce - a produced `specified` spec can never wedge it
+    assert fake.statuses == [("running", RUN), (RUN, "complete")]
+    assert control.live(RUN) == set()
 
 
 # --- AC4: terminal only on quiesce; stop cancels every session. ---------------

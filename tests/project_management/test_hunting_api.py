@@ -315,34 +315,74 @@ def test_hunt_launch_enqueues_via_the_launcher_seam(monkeypatch):
     assert config.prompt_template.research_direction == "rd"
 
 
-def test_pod_launch_enqueues_via_the_launcher_seam(monkeypatch):
-    """Pod-only launch routes through the launcher seam (the recording stub):
-    the endpoint enqueues the wire spec into the project's HunterMemoryStore
-    via `enqueue_test_spec` and acks asynchronously."""
+def test_pod_launch_resumes_via_the_launcher_seam(monkeypatch):
+    """Pod-only launch (identity-based refactor, 2026-08-25 operator ruling)
+    routes through the launcher seam `resume_pod_session` (the recording stub):
+    it resumes ONE pod session by posting its coroutine id - it never
+    fabricates a produced `specified` spec - and acks asynchronously."""
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    fake_runtime = _FakeRuntime()
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    _patch_control_plane(monkeypatch, fake_runtime)
     recorded: list[tuple] = []
 
-    def record(project_id, **kw):
-        recorded.append((project_id, kw))
-        return f"{kw['fault_keyword']}_{kw['strategy_keyword']}"
+    def record(runtime, session_id):
+        recorded.append((runtime, session_id))
+        return None
 
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    monkeypatch.setattr(hunting_runtime, "enqueue_test_spec", record)
+    monkeypatch.setattr(hunting_runtime, "resume_pod_session", record)
 
     resp = client.post("/projects/p1/hunting/pod", json={
-        "fault_key": "Service:slug:a::fault-x::CSRF",
-        "fault_keyword": "sqli", "strategy_keyword": "blind",
-        "spec": {"target_identity": "http://target/"},
+        "session_id": "hunting:rt-hunt-0001:pod:Service:slug:a_fault-x_CSRF:sqli_blind",
     })
 
     assert resp.status_code == 202
     body = resp.json()
-    assert body["component"] == "pod" and body["enqueued"] is True
-    assert body["spec_file"] == "sqli_blind"
-    (pid, kw) = recorded[0]
-    assert pid == "p1"
-    assert kw["fault_key"] == "Service:slug:a::fault-x::CSRF"
-    assert kw["spec"]["target_identity"] == "http://target/"
+    assert body["component"] == "pod" and body["resumed"] is True
+    assert body["dispatched_asynchronously"] is True
+    assert body["session_id"] == "hunting:rt-hunt-0001:pod:Service:slug:a_fault-x_CSRF:sqli_blind"
+    (pid, session_id) = recorded[0]
+    assert session_id == "hunting:rt-hunt-0001:pod:Service:slug:a_fault-x_CSRF:sqli_blind"
+
+
+def test_pod_launch_resume_fail_closed_when_no_session_is_registered(monkeypatch):
+    """FAIL-CLOSED (no fabricated dispatch input): no stored/paused pod session
+    by that id maps the shared runtime's `RunNotRegistered` onto 404 - the
+    launch refuses rather than enqueueing a fabricated `specified` spec."""
+    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
+    fake_runtime = _FakeRuntime()
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    from polymerhus.app.runtime import RunNotRegistered
+    _patch_control_plane(monkeypatch, fake_runtime)
+
+    def no_session(runtime, session_id):
+        raise RunNotRegistered(session_id)
+
+    monkeypatch.setattr(hunting_runtime, "resume_pod_session", no_session)
+
+    resp = client.post("/projects/p1/hunting/pod", json={
+        "session_id": "hunting:rt-hunt-0001:pod:x:y",
+    })
+
+    assert resp.status_code == 404
+    assert "no stored/paused pod session" in resp.json()["detail"]
+
+
+def test_pod_launch_unknown_project_404(monkeypatch):
+    monkeypatch.setattr(pg, "project_exists", lambda pid: False)
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+    called = []
+    monkeypatch.setattr(
+        hunting_runtime, "resume_pod_session",
+        lambda runtime, sid: called.append(sid),
+    )
+
+    resp = client.post("/projects/nope/hunting/pod", json={
+        "session_id": "hunting:r:pod:x:y",
+    })
+
+    assert resp.status_code == 404
+    assert called == []
 
 
 def test_orchestrator_launch_schedules_the_pass_via_the_launcher_seam(monkeypatch):
@@ -432,25 +472,6 @@ def test_hunt_launch_replayed_enqueue_is_refused_409(monkeypatch):
 
     resp = client.post("/projects/p1/hunting/hunt", json={
         "unit_id": "u", "fault_class": "f", "vulnerability_class": "CSRF",
-    })
-
-    assert resp.status_code == 409
-    assert "already enqueued" in resp.json()["detail"]
-
-
-def test_pod_launch_replayed_enqueue_is_refused_409(monkeypatch):
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.hunter_memory import DuplicateSpecError
-
-    def already_enqueued(pid, **kw):
-        raise DuplicateSpecError("spec file already exists")
-
-    monkeypatch.setattr(hunting_runtime, "enqueue_test_spec", already_enqueued)
-
-    resp = client.post("/projects/p1/hunting/pod", json={
-        "fault_key": "u::f::CSRF", "fault_keyword": "sqli",
-        "strategy_keyword": "blind", "spec": {},
     })
 
     assert resp.status_code == 409

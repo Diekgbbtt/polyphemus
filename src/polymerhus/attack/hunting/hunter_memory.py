@@ -74,7 +74,7 @@ from typing import Literal
 
 import yaml
 
-from .hunt_store import ProjectMemoryStore, parse_config_file_name
+from .hunt_store import ProjectMemoryStore, parse_config_file_name, semantic_key
 from .hunter_state import FAULT_STATUSES
 
 logger = logging.getLogger(__name__)
@@ -121,6 +121,43 @@ def _lock_for(project_id: str) -> threading.Lock:
             lock = threading.Lock()
             _PROJECT_LOCKS[project_id] = lock
         return lock
+
+
+def config_key_from_fault_key(fault_key: str) -> str:
+    """The ONE canonical cross-family join key for a `fault_key` (ADR #169
+    Q13/G4, identity-based refactor 2026-08-25): return the `::`-joined
+    semantic config_key (`hunt_store.semantic_key`) that a `fault_key` folder
+    physically carries.
+
+    A `fault_key` may be stored in EITHER form - the `_`-joined
+    `<unit_id>_<CWE_ID>_<vulnerability_class>` folder name (the config
+    file-name stem), or its round-tripping `::`-joined semantic key
+    (`write_spec` accepts both, G4). The inbox surfer's two sides of one
+    cross-family join MUST agree on the SAME canonical key - `hunter_inboxes`
+    is keyed by the `::` config_key on BOTH the register (hunter dispatch)
+    and the lookup (pod dispatch) side - so this is the single source of the
+    conversion, home of the physical-folder -> logical-config_key
+    normalisation (`_validate_fault_key`'s folder rule, reused here). The
+    2-part revival key is NOT a config_key and is refused."""
+    if "::" in fault_key:
+        # The `::` semantic-key form: must be the full 3-part key (the 2-part
+        # revival key is a PREFIX of it, not a config_key - refused).
+        parts = fault_key.split("::")
+        if len(parts) != 3 or not parts[0] or not parts[1]:
+            raise ValueError(
+                f"hunter store: fault_key {fault_key!r} is not the 3-part "
+                f"config key <unit_id>::<CWE_ID>::<vulnerability_class> (or "
+                f"its `_`-joined form); the 2-part revival key is NOT accepted"
+            )
+        return fault_key
+    parsed = parse_config_file_name(f"{fault_key}.yaml")
+    if parsed is None:
+        raise ValueError(
+            f"hunter store: fault_key {fault_key!r} is not the 3-part config "
+            f"key <unit_id>::<CWE_ID>::<vulnerability_class> (or its `_`-joined "
+            f"form); the 2-part revival key is NOT a config_key"
+        )
+    return semantic_key(*parsed)
 
 
 def _validate_spec_file(spec_file: str) -> None:
@@ -634,4 +671,5 @@ __all__ = [
     "DuplicateSpecError",
     "HunterMemoryStore",
     "NOTE_KINDS",
+    "config_key_from_fault_key",
 ]

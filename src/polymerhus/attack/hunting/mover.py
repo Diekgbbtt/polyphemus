@@ -63,6 +63,18 @@ from polymerhus.app.runtime import ModuleAdmissionRefused
 logger = logging.getLogger(__name__)
 
 
+def _close_coro(coro: Any) -> None:
+    """Close a never-run coroutine best-effort: a bare coroutine has a
+    `close()` (no await needed); a non-coroutine awaitable (a task/future)
+    has nothing to reap. Never raises."""
+    close = getattr(coro, "close", None)
+    if close is not None:
+        try:
+            close()
+        except Exception:  # noqa: BLE001 - reaping is best-effort
+            pass
+
+
 # --- the ADR Q13 session-id scheme (pure) ---------------------------------------
 
 def orchestrator_session_id(run_id: str) -> str:
@@ -428,7 +440,7 @@ def run_delivery_tick(
             continue
         if coro is None:
             # The T4 seam answered "not dispatchable this tick" (a draft, a
-            # dropped config, a missing parent inbox): refused, at-least-once.
+            # dropped config): refused, at-least-once.
             feedback[item.message_id] = DispatchFeedback.REFUSED
             refused += 1
             continue
@@ -436,6 +448,11 @@ def run_delivery_tick(
             feedback[item.message_id] = DispatchFeedback.ADMITTED
             admitted += 1
         else:
+            # The coroutine the seam built will never run this tick (the
+            # at-least-once protocol retries the produced item, building a
+            # FRESH coroutine next tick): close the refused one so it is never
+            # left dangling (a bare coroutine warning / a never-started run).
+            _close_coro(coro)
             feedback[item.message_id] = DispatchFeedback.REFUSED
             refused += 1
 

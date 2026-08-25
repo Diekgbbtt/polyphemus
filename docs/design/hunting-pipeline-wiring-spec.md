@@ -1,6 +1,6 @@
 # Hunting pipeline wiring: produced/consumed inbox surfer, per-session runtime lifecycle, and the REST launch surface
 
-*Status: spec (contract). Resolved by the 2026-08-23/24 grilling (`hunting-pipeline-wiring-adr.md`), published as spec #169 with wiring tickets #170-#175. Operates on the ratified memory topology (`hunting-memory-system-spec.md`, tickets #165-#168) and the 164 state-graph hunter (#164). Sequencing per Q18-A / ADR: implementation is held off until the produced/consumed topology lands.*
+*Status: spec (contract). Resolved by the 2026-08-23/24 grilling (`hunting-pipeline-wiring-adr.md`), published as spec #169 with wiring tickets #170-#175. Operates on the ratified memory topology (`hunting-memory-system-spec.md`, tickets #165-#168) and the 164 state-graph hunter (#164). Sequencing per Q18-A / ADR: implementation is held off until the produced/consumed topology lands. AMENDED 2026-08-25 by the identity-based surfer refactor: config_key canonical identity, own-status dispatch gate, durable parent-keyed export record, and the pod-only launch resume-by-coroutine-id ruling.*
 
 ## Problem Statement
 
@@ -42,7 +42,8 @@ Wire the three components into one coherent pipeline behind a run-scoped **inbox
 - Orchestrator session id: `hunting:<run_id>:orchestrator`.
 - Hunter session id: `hunting:<run_id>:hunt:<config_id>`.
 - Pod session id: `hunting:<run_id>:pod:<config_id>:<spec_id>`.
-- `config_id` is the semantic hunt-config file name `<unit_id>_<CWE_ID>_<fault_class(vulnerability)>` (memory-system G4).
+- `config_id` is the semantic hunt-config file name `<unit_id>_<CWE_ID>_<fault_class(vulnerability)>` (memory-system G4) - the `_`-joined fault_key folder.
+- **Canonical identity (identity-based refactor, 2026-08-25):** the ONE cross-family join key is the semantic `config_key` (`<unit_id>::<CWE_ID>::<vulnerability>`, round-tripped by `HuntStore.semantic_key` and the `test-specs` folder's recovering parser). `hunter_inboxes` is keyed by `config_key` on BOTH register (hunter dispatch) and lookup (pod dispatch) - the two sides of one join agree on the same canonical key.
 - `spec_id` is the semantic spec file name `<fault>_<strategy>` (164 state-graph spec 6). This REPLACES the pod branch's `canonical_spec_id` canonical hash everywhere it was used for identity (hunt-session address spec discriminator, pod memory keying) - the pod implementation must be reconciled to the semantic spec id in this work.
 - Session addresses derive from the memory-item keys (the config file name yields the hunter's hunt-id; the spec file name yields the pod's spec discriminator), so the surfer can construct them on the fly.
 - Runtime registry lifecycles key on these same ids (session id = coroutine id).
@@ -51,13 +52,14 @@ Wire the three components into one coherent pipeline behind a run-scoped **inbox
 
 - Surfer input surfaces: the memory families' `produced/` directories for the run's project (hunt configs, test specs, experiment logs).
 - Dispatch protocol: for each produced item not yet dispatched, ask the control plane to dispatch the agent for its session id. On success feedback, move `produced -> consumed`. On refusal (gate full, module paused, run draining), leave the item in `produced/` and retry on the next tick - never dropped, at-least-once.
+- **Dispatch gate (identity-based refactor, 2026-08-25):** an item's dispatchability is decided by ITS OWN persisted status (`ratified` config -> hunter, `specified` spec -> pod), never by a chain-adjacent agent's liveness. A produced `specified` spec whose parent config was consumed by an earlier run still dispatches in a later run; its export is recorded durably under the parent's `config_key` at pod completion (Q16 amendment), and the within-run hunter inbox delivery is an optional live feed for the future verdict node, never a gate.
 - The mover logic is extracted as a pure deduction: given (produced set, session registry state, dispatch feedback) it returns (to dispatch, to move, to retry). The impure shell applies the moves and calls the control plane.
 - The produced->consumed move IS the at-least-once marker (the memory-topology pattern, G13). The crash window between dispatch and move (R3) is accepted as negligible by ruling; double-dispatch is defended by the session registry state and the file-name novelty gate downstream.
 
 ### Agent idle state
 
 - After an agent's workflow graph ends, it enters the idle state: a simple loop that iteratively reads its inbox, reusing the existing mailbox loop machinery. This is NOT checkpoint-resume mechanisation.
-- The pod->hunter verdict handling in the idle loop is a STUB for now: a delivered experiment log is consumed and recorded, with no subsequent re-evaluation of the hypothesis verdict.
+- The pod->hunter verdict handling (identity-based refactor, 2026-08-25): the DURABLE record is written at pod completion, keyed by the parent's `config_key` - crash-safe, independent of a live parent. The idle-loop inbox delivery is a within-run live feed for the future verdict-processing node (D67-02/D11/D67-14); consume-and-record only, no re-evaluation.
 
 ### Run lifecycle
 
@@ -70,6 +72,7 @@ Wire the three components into one coherent pipeline behind a run-scoped **inbox
 
 - Whole-pipeline launch: the existing hunting launch endpoint, unchanged shape, now wired through the surfer control plane.
 - Singular component launches: one endpoint per component that enqueues into the component's handoff family and moves the component to dispatch. A singular launch never fabricates a chained-dependency error; the component consumes its inbox asynchronously.
+- **Singular POD launch (identity-based refactor, 2026-08-25, operator ruling):** the pod-only endpoint does NOT fabricate a produced `specified` spec (the reviewer's ambiguity); it resumes ONE stored/paused pod session by posting its coroutine id. The whole-pod-component path remains the whole-pipeline run.
 - Per-session lifecycle verbs: pause, resume, stop for a specific session id, under the project/hunting-run namespace, in addition to the existing module-wide lifecycle verbs.
 - At-most-once on launch: the server tracks already-created run rows and refuses replayed triggers for the same id.
 - All handlers stay in the thin HTTP adapter following the existing launch seam pattern; use-case and persistence stay in the repository plus the Postgres gateway. No new persistence surface beyond what the memory topology and the run row provide.
@@ -77,6 +80,7 @@ Wire the three components into one coherent pipeline behind a run-scoped **inbox
 ## Testing Decisions
 
 - **What makes a good test**: assert external behaviour from the seams, never implementation internals. The mover is a pure function so its deduction is unit-tested in memory; the launch and lifecycle verbs are asserted through the HTTP adapter with a recording launcher stub, never a real boot; the whole pipeline is exercised through the run bootstrap coroutine with injected fakes for the agent work.
+- **Production-code-first (identity-based refactor, 2026-08-25):** tests exercise the REAL mover + surfer `build_run_dispatch` path with production stores (temp roots), NOT a `_stub_coro` that bypasses the dispatch decision. The spec-family fixture uses the PRODUCTION `_`-joined fault_key folder convention (the two test files previously disagreed: T4-mover tests used `_`, the wiring test used `::` - masking the pod-dispatch miss). Fakes are minimised to the agent seams (hunter/pod builders) and the control plane; the stores, the mover, `run_work_remaining`, `is_run_quiesced`, and `build_run_dispatch` are the code under test.
 - **Primary seam**: the run bootstrap coroutine - the whole pipeline is observable through it (orchestrator pass, produced/consumed movement, per-session dispatch, idle loops, run terminal, stop).
 - **REST mirror seam**: the HTTP launcher seam - whole/singular launches and per-session lifecycle verbs asserted with a recording stub.
 - **Unit seam**: the surfer mover as a pure function - produced set, registry state, feedback in; dispatch/move/retry deduction out.

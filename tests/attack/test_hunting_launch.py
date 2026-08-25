@@ -27,15 +27,11 @@ from polymerhus.attack.hunting.hunt_store import (
     DuplicateConfigError,
     HuntStore,
 )
-from polymerhus.attack.hunting.hunter_memory import (
-    DuplicateSpecError,
-    HunterMemoryStore,
-)
 
 UNIT = "Service:slug:a"
 FAULT = "fault-x"
 CLASS = "CSRF"
-FAULT_KEY = f"{UNIT}::{FAULT}::{CLASS}"
+FAULT_KEY = f"{UNIT}_{FAULT}_{CLASS}"
 RUN = "orchestrator-only-run"
 
 
@@ -75,43 +71,43 @@ def test_enqueue_hunt_replay_refused_by_the_novelty_gate(tmp_path):
     assert len(store.read_produced_configs("p1")) == 1  # nothing double-written
 
 
-def test_enqueue_spec_forces_specified_and_round_trips_as_dispatchable(tmp_path):
-    store = HunterMemoryStore(tmp_path / "hunter")
+def test_resume_pod_resumes_one_session_by_its_id(tmp_path):
+    """The pod-ONLY launch seam (identity-based refactor, 2026-08-25 operator
+    ruling): `resume_pod_session` resumes ONE held/paused pod session by posting
+    its coroutine id to the shared control plane's per-session `resume_session`
+    - it NEVER fabricates a produced `specified` spec (no store write at all)."""
+    from polymerhus.app.runtime import RunNotRegistered
 
-    stem = hunting_runtime.enqueue_test_spec(
-        "p1",
-        fault_key=FAULT_KEY,
-        fault_keyword="sqli",
-        strategy_keyword="blind",
-        spec={"target_identity": "http://target/"},
-        hunter_store=store,
-    )
+    class _Runtime:
+        def __init__(self):
+            self.resumed = []
 
-    assert stem == "sqli_blind"
-    assert store.produced_spec_files("p1", FAULT_KEY) == ["sqli_blind"]
-    body = store.read_spec(
-        "p1", FAULT_KEY, fault_keyword="sqli", strategy_keyword="blind",
-        side="produced",
-    )
-    # the mover's pod-dispatch gate (`status == "specified"`) is set
-    assert body is not None and body["status"] == "specified"
+        def resume_session(self, module, session_id):
+            self.resumed.append((module, session_id))
+
+    runtime = _Runtime()
+    pod_session = "hunting:run-1:pod:Service:slug:a_fault-x_CSRF:sqli_blind"
+    hunting_runtime.resume_pod_session(runtime, pod_session)
+
+    assert runtime.resumed == [("hunting", pod_session)]
 
 
-def test_enqueue_spec_replay_refused_by_the_novelty_gate(tmp_path):
-    store = HunterMemoryStore(tmp_path / "hunter")
-    hunting_runtime.enqueue_test_spec(
-        "p1", fault_key=FAULT_KEY,
-        fault_keyword="sqli", strategy_keyword="blind",
-        spec={}, hunter_store=store,
-    )
+def test_resume_pod_fail_closed_when_no_session_is_registered(tmp_path):
+    """FAIL-CLOSED: no stored/paused pod session by that id propagates the
+    shared runtime's `RunNotRegistered` (the API tier maps it onto 404) - the
+    launch refuses rather than fabricating a dispatch input."""
+    from polymerhus.app.runtime import RunNotRegistered
 
-    with pytest.raises(DuplicateSpecError):
-        hunting_runtime.enqueue_test_spec(
-            "p1", fault_key=FAULT_KEY,
-            fault_keyword="sqli", strategy_keyword="blind",
-            spec={}, hunter_store=store,
-        )
-    assert store.produced_spec_files("p1", FAULT_KEY) == ["sqli_blind"]
+    class _EmptyRuntime:
+        def resume_session(self, module, session_id):
+            raise RunNotRegistered(session_id)
+
+    with pytest.raises(RunNotRegistered):
+        hunting_runtime.resume_pod_session(
+            _EmptyRuntime(), "hunting:run-1:pod:x:y")
+
+    with pytest.raises(ValueError, match="required"):
+        hunting_runtime.resume_pod_session(_EmptyRuntime(), "")
 
 
 def _empty_report():

@@ -474,16 +474,15 @@ class HuntingHuntLaunch(BaseModel):
 
 
 class HuntingPodLaunch(BaseModel):
-    """Pod-only launch body: ONE produced SPECIFIED test spec to enqueue into
-    the project's HunterMemoryStore produced family (the mover's pod-dispatch
-    input). `fault_key` is the 3-part config key the spec lives under; the
-    `<fault>_<strategy>` keywords name the spec file; `spec` is the
-    TestImplementationSpec wire shape (status forced to `specified`)."""
+    """Pod-only launch body (identity-based refactor, 2026-08-25 operator
+    ruling): the pod's ADR Q13 session id (`hunting:<run_id>:pod:<config_id>:
+    <spec_id>`) to RESUME. The endpoint NEVER fabricates a produced `specified`
+    test spec into the HunterMemoryStore produced family - it resumes ONE
+    held/paused pod session by posting its coroutine id; the whole-pod-component
+    path remains the whole-pipeline run. No stored/paused pod session to resume
+    is a FAIL-CLOSED refusal (404), never a fabricated dispatch input."""
 
-    fault_key: str
-    fault_keyword: str
-    strategy_keyword: str
-    spec: dict = {}
+    session_id: str
 
 
 @router.post("/projects/{project_id}/hunting/orchestrator", status_code=202)
@@ -578,38 +577,44 @@ async def launch_hunt_only(project_id: str, body: HuntingHuntLaunch) -> dict:
 
 @router.post("/projects/{project_id}/hunting/pod", status_code=202)
 async def launch_pod_only(project_id: str, body: HuntingPodLaunch) -> dict:
-    """'Pod only': enqueue ONE produced SPECIFIED test spec into the project's
-    HunterMemoryStore produced family so the run's inbox surfer dispatches one
-    pod on the next tick (T5). A spec whose parent hunter was never dispatched
-    stays in produced (at-least-once), never an error - the mover refuses and
-    retries. A REPLAYED enqueue whose `<fault>_<strategy>` file already exists
-    is refused 409 - the storage novelty gate, the at-most-once marker. 404
-    unknown project."""
+    """'Pod only' (identity-based refactor, 2026-08-25 operator ruling): resume
+    ONE held/paused pod session by posting its coroutine id - NEVER fabricating
+    a produced `specified` spec (the reviewer's ambiguity; the whole-pod-component
+    path remains the whole-pipeline run). The endpoint routes through the
+    `resume_pod_session` launcher seam to the SHARED control plane's per-session
+    `resume_session` (module "hunting", keyed by the ADR Q13 session id).
+
+    FAIL-CLOSED: 503 while the control plane has not landed; 404 unknown
+    project; 404 when there is no stored/paused pod session by that id
+    (`RunNotRegistered` - nothing to resume, never a fabricated dispatch
+    input); a registered-but-not-held session resumes as the runtime verb's own
+    safe no-op (at-most-once - a replayed resume never double-runs)."""
     from polymerhus.app.clients import pg
+    from polymerhus.app.runtime import RunNotRegistered
     from polymerhus.attack.hunting import runtime as hunting_runtime
-    from polymerhus.attack.hunting.hunter_memory import DuplicateSpecError
 
     if not await asyncio.to_thread(pg.project_exists, project_id):
         raise HTTPException(status_code=404, detail="unknown project")
-
-    try:
-        spec_file = await asyncio.to_thread(
-            hunting_runtime.enqueue_test_spec,
-            project_id,
-            fault_key=body.fault_key,
-            fault_keyword=body.fault_keyword,
-            strategy_keyword=body.strategy_keyword,
-            spec=body.spec,
-        )
-    except DuplicateSpecError as exc:
+    if not hunting_runtime.hunting_control_plane_available():
         raise HTTPException(
-            status_code=409,
-            detail=f"this test spec is already enqueued (at-most-once): {exc}",
+            status_code=503,
+            detail="hunting control-plane runtime has not landed",
+        )
+    runtime = _runtime_or_503()
+    try:
+        hunting_runtime.resume_pod_session(runtime, body.session_id)
+    except RunNotRegistered as exc:
+        raise HTTPException(
+            status_code=404,
+            detail=(
+                f"no stored/paused pod session {body.session_id!r} to resume "
+                f"for project {project_id} (fail-closed: nothing fabricated)"
+            ),
         ) from exc
     return {
         "component": "pod",
-        "enqueued": True,
-        "spec_file": spec_file,
+        "resumed": True,
+        "session_id": body.session_id,
         "dispatched_asynchronously": True,
     }
 
