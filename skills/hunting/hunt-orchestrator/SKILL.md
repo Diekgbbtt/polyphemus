@@ -26,6 +26,7 @@ Each (unit, fault) pair runs three phases as graph nodes - `hypothesise -> ratif
 ### Ratify
 
 - The model may do multiple tool calls to update/delete/create configs - the proximity / too-near same-class merge, then the capabilities / assumptions / technique-primitives analysis that fills the ratification fields.
+- **adversarial_capabilities** are the capabilities the attacker must already hold when the test runs for the fault's symptoms to be reachable: an authorization level, a session context, a workflow step, access to specific application data, an interaction capability, a target application state. They are preconditions of the test - never capabilities the exploit grants. They may not currently be present; the downstream hunting agent then prunes this direction or adjusts the TestImplementationSpec to gain them beforehand.
 - A config deleted during ratification is written `status='dropped'` - it stays on disk as an orphan (G6), never deleted.
 
 ### Note (G8)
