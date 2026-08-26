@@ -1,0 +1,70 @@
+# The hunt-orchestrator full-machine e2e eval stack (operator-directed).
+#
+# Loads the BRANCH work by volume-mounting this worktree over the built
+# `polymerhus-agent:latest` image (no second Dockerfile to drift), and points
+# the eval container at the SHARED services exactly as the production agent
+# does - `neo4j`, `postgres`, `kali` by service DNS. The eval container
+# co-locates its OWN litellm gateway (the image's `gateway_entrypoint` on the
+# internal port 4000, routing the registered `LLM_MODEL_*` set from the shared
+# `polymerhus_gateway` DB), then runs the eval driver (pytest) once the proxy
+# is healthy - see `tests/e2e/hunting_eval_entrypoint.py`.
+#
+# Usage (full run):
+#   docker compose -f docker-compose.yml -f docker-compose.hunting-eval.yml \
+#     run --rm hunting-eval
+#
+# Smoke run (few LLM turns):
+#   docker compose -f docker-compose.yml -f docker-compose.hunting-eval.yml \
+#     run --rm -e HUNTING_EVAL_MAX_FAULTS=3 -e HUNTING_EVAL_MAX_UNITS_PER_FAULT=2 \
+#     hunting-eval
+
+services:
+  hunting-eval:
+    image: polymerhus-agent:latest
+    working_dir: /srv
+    volumes:
+      # the branch worktree loaded over the built image. `.` is the project dir
+      # (the main repo) by default; point it at the worktree under test:
+      #   HUNTING_EVAL_WORKTREE=/path/to/worktree docker compose ... run --rm hunting-eval
+      - ${HUNTING_EVAL_WORKTREE:-.}:/srv
+    environment:
+      # in-network view, exactly as the agent resolves (docker-compose.yml)
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+      PROJECT_ID: hunting-eval
+      PYTHONPATH: /srv/src
+      # the eval's OWN co-located gateway (ADR D1): a second litellm proxy
+      # process against the SHARED polymerhus_gateway DB, so the registered
+      # `LLM_MODEL_*` routing set is served without an internet dependency and
+      # without touching the live agent's proxy. The YAML ships
+      # `disable_prisma_schema_update: true` (the entrypoint owns migrations),
+      # so a concurrent proxy boot is a warn-only schema check, never a
+      # destructive migration.
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus_gateway
+      LITELLM_MASTER_KEY: sk-polymerhus-dev-gateway
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      LLM_GATEWAY_URL: http://127.0.0.1:4000
+    env_file:
+      # the main repo's .env (LLM_MODEL_*, API_KEY_*, LANGFUSE_*) - overridable
+      - path: ${HUNTING_EVAL_ENV:-.env}
+        required: false
+    entrypoint:
+      - sh
+      - -c
+      - 'exec python /srv/tests/e2e/hunting_eval_entrypoint.py "$@"'
+      - --
+    command:
+      - python
+      - -m
+      - pytest
+      - tests/e2e/test_hunting_orchestrator_full_machine_eval.py
+      - -q
+      - -p
+      - no:cacheprovider
+    depends_on:
+      neo4j: { condition: service_healthy }
+      postgres: { condition: service_healthy }
+    networks: [polymerhus-net]
