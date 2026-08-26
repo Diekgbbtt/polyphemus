@@ -120,6 +120,12 @@ run's `OrchestratorSession` thread, fed each phase's steering signals and replyi
 structured `RoutingDecision` per phase, so its checkpointed memory carries the
 steering reasoning across the run's phases. `decide_routing` remains as the sync
 thin wrapper seam (the injected/rollback path).
+As of #186 its turns run PER-TURN ISOLATED on the shared actor runtime: a raising
+phase turn (transport/timeout/5xx/429 retried under the bounded escalating budget,
+then degraded) posts a NO-DECISION reply - the parent's fail-open fires per-turn
+(`{}` = no routing adaptation for THAT phase) and the actor task SURVIVES, so the
+run's later phases still get real routing (the pre-#186 dead-task race made every
+later phase silently routeless).
 _Avoid_: planner.
 
 **Operator**:
@@ -131,6 +137,7 @@ Deliberately kept blind to the target's true identity (it analyses `soupmarket.s
 **Fail-open**:
 One bad delta never aborts a batch and a missing collaborator degrades rather than crashes; the accepted cost is that a dropped item is silently lost with only a log line.
 The stateful triager (and every `session`-mode structured turn) holds this invariant at the LLM seam: a structured-output PARSE failure (`StructuredOutputValidationError`, e.g. a reasoning model returning a bare `[]` / empty / prose instead of the wrapped batch object) degrades to "no observations" (`stateful_turn` returns `None`), never fails the pod - so the already-parsed assets are still curated instead of silently dropped. The triager's `_ObservationBatch` also accepts those coherent empty-artifact shapes via a pydantic `model_validator(mode="before")`.
+The MAILBOX actors hold the invariant at the turn seam as of #186: one raising LLM turn is contained per-turn (retry the retryable class under the bounded escalating budget, then degrade to a no-decision reply) and NEVER kills the actor - so the fail-open fires PER TURN, and every later phase/pair still rides a live actor (the pre-#186 actor death made each later turn fail-open through the dead-task race).
 _Avoid_: fail-safe, fail-closed.
 
 **Reasoning-token budget**:

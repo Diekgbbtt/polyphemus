@@ -111,7 +111,7 @@ def _run(store: HuntStore, candidates, *, hypothesise=None, ratify=None,
         run_id=RUN_ID,
         candidates=candidates,
         tools=tools or _tools(store),
-        hypothesise_fn=hypothesise,
+        hypothesise_fn=hypothesise or _carry_hypothesise(),
         ratify_fn=ratify or _ratify_drafts,
         note_fn=note or _note_pair,
         **kwargs,
@@ -349,24 +349,41 @@ def test_orchestration_actor_survives_the_pass_and_is_reused(tmp_path):
     reaped when the graph completes - a second pass on the same run_id reuses
     the SAME actor, so the same `hunting_orchestrator` thread serves every pair
     AND every pass of the run (monotonic statefulness). The default phase seams
-    (None -> the actor) drive both passes."""
+    (None -> the actor) drive both passes on ONE event loop (the actor task is
+    a live loop citizen - reaping must happen on that same loop)."""
     import asyncio
 
     from polymerhus.attack.hunting.hunt_orchestrator import (
         _ORCHESTRATOR_ACTORS,
         _reap_orchestrator,
+        arun_orchestration,
     )
 
     store = HuntStore(tmp_path)
-    _run(store, [_candidate(SERVICE_A, FAULT_X)],
-         hypothesise=_carry_hypothesise(), ratify=_ratify_drafts, note=_note_pair)
-    first = _ORCHESTRATOR_ACTORS.get(RUN_ID)
-    assert first is not None  # the pass registered the actor and did NOT reap it
 
-    _run(store, [_candidate(SERVICE_A, FAULT_X)],
-         hypothesise=_carry_hypothesise(), ratify=_ratify_drafts, note=_note_pair)
-    second = _ORCHESTRATOR_ACTORS.get(RUN_ID)
-    assert second is first  # a later pass on the same run reuses the SAME actor
+    async def _drive():
+        # the DEFAULT hypothesise seam resolves the run's actor (hypothesise=None);
+        # in this env the actor's turn degrades (#186: skip, never fabricated) and
+        # the actor task SURVIVES, staying registered for the run.
+        await arun_orchestration(
+            project_id="project-1", run_id=RUN_ID,
+            candidates=[_candidate(SERVICE_A, FAULT_X)],
+            tools=_tools(store),
+            ratify_fn=_ratify_drafts, note_fn=_note_pair,
+        )
+        first = _ORCHESTRATOR_ACTORS.get(RUN_ID)
+        assert first is not None  # the pass registered the actor and did NOT reap it
 
-    asyncio.run(_reap_orchestrator(RUN_ID))  # teardown: the stop path reaps it
-    assert _ORCHESTRATOR_ACTORS.get(RUN_ID) is None
+        await arun_orchestration(
+            project_id="project-1", run_id=RUN_ID,
+            candidates=[_candidate(SERVICE_A, FAULT_X)],
+            tools=_tools(store),
+            ratify_fn=_ratify_drafts, note_fn=_note_pair,
+        )
+        second = _ORCHESTRATOR_ACTORS.get(RUN_ID)
+        assert second is first  # a later pass on the same run reuses the SAME actor
+
+        await _reap_orchestrator(RUN_ID)  # teardown: the stop path reaps it
+        assert _ORCHESTRATOR_ACTORS.get(RUN_ID) is None
+
+    asyncio.run(_drive())

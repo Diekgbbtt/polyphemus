@@ -4,12 +4,13 @@ behaviours the catalogue pins only at the integration/e2e tiers.
 Pure mechanics: candidate intake (dedup by identity, malformed drop, the
 deterministic does-not-apply prune), the revival key, and the D3 HuntConfig
 minting. Seam behaviours: the store-read degradation (O4), the graph-view
-degradation (O5), the hypothesise fail-open (a raising turn carries the pair
-bare), the ratify fail-open (a raising turn keeps the drafts hypothesised),
-the note fail-open (a raising turn skips the note), and the gate-pruned
-no-write path. The hunt store and the graph view are MOCKED (no live Neo4j, no
-live LLM - testing-strategy.md section 2); the catalogue predicates live in
-tests/integration and are never repeated in this tier's red/green loop.
+degradation (O5), the hypothesise fail-open (a raising/empty turn SKIPS the
+pair, counted - the #186 anti-fabrication), the ratify fail-open (a raising
+turn keeps the drafts hypothesised), the note fail-open (a raising turn skips
+the note), and the gate-pruned no-write path. The hunt store and the graph view
+are MOCKED (no live Neo4j, no live LLM - testing-strategy.md section 2); the
+catalogue predicates live in tests/integration and are never repeated in this
+tier's red/green loop.
 """
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
@@ -498,7 +499,11 @@ def test_graph_view_query_failure_degrades_the_gate(caplog):
     assert "warning" in caplog.text.lower()
 
 
-def test_hypothesise_turn_failure_carries_the_pair_bare(caplog):
+def test_hypothesise_turn_failure_skips_the_pair_not_fabricates(caplog):
+    """#186 - a raising hypothesise turn SKIPS the pair (counted) instead of
+    minting a fully-empty draft: the actor-death fabrication (63 empty configs
+    in the confirmed eval) is dead - the pair is counted skipped, nothing is
+    written, and the pass keeps serving."""
     store = _MemoryStore()
 
     def boom(inp):
@@ -506,8 +511,10 @@ def test_hypothesise_turn_failure_carries_the_pair_bare(caplog):
 
     report = _run(store, [_candidate()], hypothesise=boom)
     assert report.pairs_processed == 1
-    assert report.configs_hypothesised == 1     # the carried-bare draft
-    assert report.configs_ratified == 1
+    assert report.configs_hypothesised == 0     # nothing fabricated on disk
+    assert report.configs_ratified == 0
+    assert report.ledger.units_skipped == 1
+    assert store.read_configs("project-1") == []
     assert "warning" in caplog.text.lower()
 
 
@@ -753,3 +760,46 @@ def test_prior_hunt_insights_never_embed_nested_configs():
     # the projection keeps the identity + hypothesise seeds for the Q11 read
     assert any(i.get("unit_id") == SERVICE_A and i.get("fault_class") == FAULT_X
                for i in insights)
+
+
+# --- #186: anti-fabrication in the canon (skip on an empty decision) -----------
+
+def test_empty_hypothesise_decision_skips_the_pair_instead_of_fabricating():
+    """#186 - the anti-fabrication canon: a None/empty hypothesise decision
+    SKIPS the pair (counted on the ledger) instead of minting a fully-empty
+    draft - the exact defect that minted 63 empty configs after the actor died
+    in the confirmed hunt-orchestrator eval. The genuine carried-bare (a model
+    direction with a rationale but no class) is preserved elsewhere (below)."""
+    store = _MemoryStore()
+    report = _run(store, [_candidate()],
+                  hypothesise=lambda inp: GateDecision(directions=[]))
+    assert report.pairs_processed == 1
+    assert report.ledger.units_skipped == 1
+    assert report.ledger.units_done == 0
+    assert report.configs_hypothesised == 0
+    assert report.configs_ratified == 0
+    assert store.read_configs("project-1") == []     # nothing fabricated on disk
+
+
+def test_carried_bare_direction_with_rationale_is_still_minted():
+    """#186 - the genuine carried-bare survives the anti-fabrication canon: a
+    direction the model EMITTED with a rationale but no elicited vulnerability
+    class still fans out to the single carried-bare hypothesised draft (the
+    mint's class-less degrade, spec 3.5)."""
+    store = _MemoryStore()
+
+    def hypothesise_fn(inp):
+        c = inp.candidates[0]
+        return GateDecision(directions=[EnvisionedDirection(
+            unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
+            rationale="plausible at this locus", research_direction="probe the flow")])
+
+    report = _run(store, [_candidate()], hypothesise=hypothesise_fn)
+    assert report.pairs_processed == 1
+    assert report.ledger.units_done == 1
+    assert report.ledger.units_skipped == 0
+    assert report.configs_hypothesised == 1
+    configs = store.read_configs("project-1")
+    assert len(configs) == 1
+    assert configs[0]["vulnerability_class"] == ""
+    assert configs[0]["prompt_template"]["rationale"] == "plausible at this locus"

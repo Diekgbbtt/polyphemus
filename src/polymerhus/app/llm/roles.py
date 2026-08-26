@@ -40,17 +40,24 @@ def structured_output_for(llm, schema, method: Method):
     return llm.with_structured_output(schema, method=method)
 
 
-def chat_model_for(role: str, *, temperature: float = 0, max_retries: int | None = None):
+def chat_model_for(role: str, *, temperature: float = 0, max_retries: int | None = None,
+                   read_timeout: float | None = None):
     """Build the ChatOpenAI configured for an agent role. Multi-turn agents
     (crawl, tool-loops) use this and keep the client's per-turn retry; the agent's
     own iteration/job budget is the outer bound. Single-shot role callers should
     use `invoke_role` instead, which owns an escalating retry (#73).
 
+    `read_timeout` bounds the client's read budget for THIS construction - the
+    per-attempt budget the escalating-turn retry (#186) passes, so a retry
+    attempt grants the call more wall-clock than the last. `None` keeps the
+    standing `request_timeout()` default (#32).
+
     The role's declared `thinking` baseline (#94) rides along, so a session/stateful
     agent built off this factory reasons at its configured effort."""
     provider, model = resolve_role(role)
     return build_chat_model(provider, model, temperature=temperature,
-                            max_retries=max_retries, thinking=thinking_for(role))
+                            max_retries=max_retries, thinking=thinking_for(role),
+                            read_timeout=read_timeout)
 
 
 def _method_for_probe(provider, model, schema, profile, messages, temperature, role) -> Method:

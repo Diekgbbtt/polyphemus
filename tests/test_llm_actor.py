@@ -10,6 +10,7 @@ from __future__ import annotations
 
 import asyncio
 
+import pytest
 from langchain_core.language_models import BaseChatModel
 from langchain_core.messages import AIMessage, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
@@ -19,6 +20,7 @@ from polymerhus.app.llm.actor import (
     STOP,
     AgentInbox,
     AgentMessage,
+    build_inbox_delivery,
     build_inbox_middleware,
     inbox_post_hook,
     run_session_agent,
@@ -40,6 +42,47 @@ class _FakeChatModel(BaseChatModel):
 
     def bind_tools(self, tools, **kwargs):
         return self
+
+
+class _AsyncFake(BaseChatModel):
+    """An async-native one-reply scripted model (the actor's `ainvoke` path)."""
+
+    content: str = ""
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=self.content))])
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        return self._generate(
+            messages,
+            stop=stop,
+            run_manager=run_manager.get_sync() if run_manager else None,
+            **kwargs,
+        )
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+class _Boom(BaseChatModel):
+    """An async-native model that raises the SAME exception on every call - the
+    raising-turn actor test's stand-in for a dead/raising LLM."""
+
+    exc: Exception = RuntimeError("llm down")
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise self.exc
+
+    async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+        raise self.exc
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake"
 
 
 def _seq_factory(*contents):
@@ -256,3 +299,229 @@ def test_aread_session_memory_matches_the_sync_read():
     assert memory is not None
     assert memory.content == "done"
     assert [m.content for m in memory.messages] == ["go", "done"]
+
+
+# --- #186: per-turn exception isolation in the mailbox-actor runtime ------------
+
+def test_build_inbox_delivery_is_inert_without_an_inbox():
+    """The delivery pair's fail-open sibling: no inbox -> no middleware AND no
+    degraded hook (a call site stays inert until a parent is wired)."""
+    assert build_inbox_delivery(None) == (None, None)
+
+
+def test_actor_survives_a_raising_turn_then_serves_the_next():
+    """#186 - per-turn isolation: one raising turn must NOT kill the mailbox
+    actor. The failed turn degrades (a no-decision reply wakes the parent so its
+    fail-open fires per-turn) and the SAME actor serves the next turn. The
+    defect was the PERMANENT actor death after one timeout - every later turn
+    fail-opened silently through the dead-task race (63 empty drafts in the
+    confirmed hunt-orchestrator eval)."""
+    saver = InMemorySaver()
+    inbox = AgentInbox()
+    replies = AgentInbox()
+    middleware, degraded = build_inbox_delivery(replies, kind="reply", source="actor")
+    cursor = {"i": 0}
+
+    def factory(role_id):
+        i = cursor["i"]
+        cursor["i"] = i + 1
+        if i == 0:
+            return _Boom(exc=RuntimeError("llm down"))
+        return _AsyncFake(content="ok")
+
+    def on_message(msg, last_turn):
+        if msg.kind == "update":
+            return [HumanMessage(content="again")]
+        return STOP
+
+    async def _drive():
+        task = asyncio.ensure_future(run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=saver, inbox=inbox, on_message=on_message,
+            middleware=[middleware], on_turn_degraded=degraded,
+            model_factory=factory, observe=False,
+        ))
+        first = await replies.get()                 # the degraded no-decision reply
+        await inbox.post(AgentMessage(kind="update"))   # drives turn 2 on the SAME actor
+        await inbox.post(AgentMessage(kind="done"))
+        return first, await task
+
+    first, result = asyncio.run(_drive())
+    assert first.kind == "reply"
+    assert first.payload.get("content") is None          # no-decision: fail-open fires
+    assert result.stop_reason == "handler_stop"
+    assert len(result.turns) == 1                        # only the successful second turn
+    assert result.turns[0].content == "ok"
+
+
+def test_actor_retries_a_transient_turn_then_serves_the_next(monkeypatch):
+    """#186 - a retryable raise (transport/timeout/5xx/429) is retried under a
+    bounded escalating budget, re-invoking the turn with the SAME messages; the
+    committed trail is idempotent (the checkpoint dedup never re-appends the
+    failed attempt's messages), and the SAME actor then serves the next turn."""
+    import openai  # noqa: PLC0415
+
+    from polymerhus.app.llm import actor as llm_actor
+    monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02))
+
+    saver = InMemorySaver()
+    inbox = AgentInbox()
+    replies = AgentInbox()
+    middleware, degraded = build_inbox_delivery(replies, kind="reply", source="actor")
+    cursor = {"i": 0}
+
+    def factory(role_id):
+        i = cursor["i"]
+        cursor["i"] = i + 1
+        if i == 0:
+            return _Boom(exc=openai.APITimeoutError("request timed out"))
+        return _AsyncFake(content=("ok1", "ok2")[min(i, 2) - 1])
+
+    def on_message(msg, last_turn):
+        if msg.kind == "update":
+            return [HumanMessage(content="again")]
+        return STOP
+
+    async def _drive():
+        task = asyncio.ensure_future(run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=saver, inbox=inbox, on_message=on_message,
+            middleware=[middleware], on_turn_degraded=degraded,
+            model_factory=factory, observe=False,
+        ))
+        await inbox.post(AgentMessage(kind="update"))
+        await inbox.post(AgentMessage(kind="done"))
+        return await task
+
+    result = asyncio.run(_drive())
+    assert result.stop_reason == "handler_stop"
+    assert len(result.turns) == 2
+    assert result.turns[0].content == "ok1"        # the retry succeeded, SAME turn
+    assert result.turns[1].content == "ok2"
+    trail = [m.content for m in result.turns[1].messages]
+    assert trail.count("start") == 1               # idempotent against the committed trail
+    assert trail.count("again") == 1
+
+
+def test_actor_degrades_after_retry_budget_exhaustion_then_serves_the_next(monkeypatch):
+    """#186 - a turn that exhausts its retry budget degrades: a no-decision
+    reply wakes the parent, the actor task SURVIVES, and the next turn still
+    runs on it."""
+    import openai  # noqa: PLC0415
+
+    from polymerhus.app.llm import actor as llm_actor
+    monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02))  # 1 retry
+
+    saver = InMemorySaver()
+    inbox = AgentInbox()
+    replies = AgentInbox()
+    middleware, degraded = build_inbox_delivery(replies, kind="reply", source="actor")
+    cursor = {"i": 0}
+
+    def factory(role_id):
+        i = cursor["i"]
+        cursor["i"] = i + 1
+        if i <= 1:                                # first attempt + the one retry both boom
+            return _Boom(exc=openai.APITimeoutError("request timed out"))
+        return _AsyncFake(content="ok")
+
+    def on_message(msg, last_turn):
+        if msg.kind == "update":
+            return [HumanMessage(content="again")]
+        return STOP
+
+    async def _drive():
+        task = asyncio.ensure_future(run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=saver, inbox=inbox, on_message=on_message,
+            middleware=[middleware], on_turn_degraded=degraded,
+            model_factory=factory, observe=False,
+        ))
+        first = await replies.get()               # exhaustion posts the no-decision reply
+        await inbox.post(AgentMessage(kind="update"))
+        await inbox.post(AgentMessage(kind="done"))
+        return first, await task
+
+    first, result = asyncio.run(_drive())
+    assert first.payload.get("content") is None
+    assert result.stop_reason == "handler_stop"
+    assert len(result.turns) == 1                 # only the post-degrade turn counted
+    assert result.turns[0].content == "ok"
+
+
+def test_actor_cancellation_propagates_and_never_degrades():
+    """#186 - the isolation handler re-raises `asyncio.CancelledError` FIRST: a
+    task cancellation (the natural way to retire an actor) is a BaseException,
+    never swallowed into a degrade, never retried - cancelling the actor task
+    mid-turn cancels it and posts NO no-decision reply."""
+    saver = InMemorySaver()
+    replies = AgentInbox()
+    middleware, degraded = build_inbox_delivery(replies, kind="reply", source="actor")
+    started = asyncio.Event()
+
+    class _Holding(BaseChatModel):
+        """Holds the turn open (`ainvoke` awaiting the model call) until the
+        task is cancelled."""
+
+        async def _agenerate(self, messages, stop=None, run_manager=None, **kwargs):
+            started.set()
+            await asyncio.sleep(30)
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="x"))])
+
+        @property
+        def _llm_type(self) -> str:
+            return "fake"
+
+    async def _drive():
+        task = asyncio.ensure_future(run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=saver, inbox=AgentInbox(),
+            middleware=[middleware], on_turn_degraded=degraded,
+            model_factory=lambda role: _Holding(), observe=False,
+        ))
+        await started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+        return task, replies
+
+    task, replies = asyncio.run(_drive())
+    assert task.cancelled()
+    assert replies.empty()          # a cancellation is not a degrade: no None reply
+
+
+def test_actor_non_retryable_raise_degrades_without_retrying(monkeypatch):
+    """#186 - a NON-retryable raise (a genuine application error, not a
+    transport/timeout/5xx/429 condition) degrades immediately: the retry budget
+    is spent only on the retryable class, so a sick-but-consistent model does
+    not burn the escalating schedule."""
+    from polymerhus.app.llm import actor as llm_actor
+    monkeypatch.setattr(llm_actor, "attempt_timeouts", lambda: (0.01, 0.02))
+    saver = InMemorySaver()
+    inbox = AgentInbox()
+    replies = AgentInbox()
+    middleware, degraded = build_inbox_delivery(replies, kind="reply", source="actor")
+    builds = {"n": 0}
+
+    def factory(role_id):
+        builds["n"] += 1
+        return _Boom(exc=ValueError("a genuine parse error, not a transport condition"))
+
+    async def _drive():
+        task = asyncio.ensure_future(run_session_agent(
+            "hunting_orchestrator", "run1:orch", [HumanMessage(content="start")],
+            checkpointer=saver, inbox=inbox,
+            middleware=[middleware], on_turn_degraded=degraded,
+            model_factory=factory, observe=False,
+        ))
+        first = await replies.get()   # the no-decision reply, posted without retries
+        await inbox.post(AgentMessage(kind="stop"))
+        result = await task           # the actor SURVIVES the raise and retires cleanly
+        return first, result
+
+    first, result = asyncio.run(_drive())
+    assert first.payload.get("content") is None
+    assert builds["n"] == 1            # exactly ONE build for the raising turn: no retry
+    assert result.stop_reason == "stop_message"

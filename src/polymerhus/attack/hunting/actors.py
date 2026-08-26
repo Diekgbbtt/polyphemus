@@ -95,7 +95,7 @@ class _TurnActor:
         from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
         from polymerhus.app.llm.actor import (  # noqa: PLC0415
             AgentInbox,
-            build_inbox_middleware,
+            build_inbox_delivery,
             run_session_agent,
         )
         if self._checkpointer is None:
@@ -107,9 +107,14 @@ class _TurnActor:
         self._address = self._address or self._make_address()
         replies = AgentInbox()
         self._replies = replies
-        middleware = [build_inbox_middleware(
+        # The delivery pair (#186): the middleware posts the turn's REAL result;
+        # the degraded_hook posts a no-decision reply when the turn exhausts its
+        # retry budget, so the caller's fail-open fires per-turn (never through
+        # the dead-task race) and the actor survives for the next turn.
+        middleware, degraded_hook = build_inbox_delivery(
             replies, kind=_REPLY_KIND, source=_REPLY_SOURCE
-        )]
+        )
+        middleware = [middleware] if middleware else []
         if middleware_extra:
             middleware = middleware + list(middleware_extra)
         kwargs = {
@@ -117,6 +122,7 @@ class _TurnActor:
             "inbox": self._inbox,
             "on_message": self._on_message,
             "middleware": middleware,
+            "on_turn_degraded": degraded_hook,
             "model_factory": self._model_factory,
             "observe": self._observe,
         }

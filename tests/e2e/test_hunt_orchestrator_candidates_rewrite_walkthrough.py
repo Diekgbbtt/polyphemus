@@ -1015,7 +1015,7 @@ def test_e2e_e14_fail_open_store_kb_graph(tmp_path, caplog):
 
 def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
     """E15 - concurrency serialised via StateGraph last-write, duplicate reads
-    idempotent, malformed hypothesise output degrades to carry-bare."""
+    idempotent, malformed hypothesise output SKIPS the pair (nothing fabricated)."""
     # a) concurrency: 2 pairs as concurrent arun_orchestration gathers on same run_id
     store = HuntStore(tmp_path)
 
@@ -1054,7 +1054,9 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
     assert first == second
     assert len(store2.read_configs("project-e15b")) == 1
 
-    # c) malformed hypothesise output degrades to carry-bare with 1 HuntConfig
+    # c) malformed hypothesise output SKIPS the pair: #186 anti-fabrication -
+    #    a raising turn mints NO fully-empty draft (the actor-death fabrication
+    #    is dead), the pair is counted skipped
     def bad_hypothesise(inp: GateInput) -> GateDecision:
         raise ValueError("unparseable GateDecision (fixture)")
 
@@ -1066,9 +1068,9 @@ def test_e2e_e15_concurrency_duplicate_malformed(tmp_path):
         note_fn=_note_pair,
     )
     assert report3.pairs_processed == 1
-    assert report3.configs_hypothesised == 1
-    configs3 = store3.read_configs("proj-e15c")
-    assert len(configs3) == 1
+    assert report3.configs_hypothesised == 0
+    assert report3.ledger.units_skipped == 1
+    assert store3.read_configs("proj-e15c") == []
 
 
 # --- E16: the recovered moodique L1 scaffold yields a valid rich projection ---
