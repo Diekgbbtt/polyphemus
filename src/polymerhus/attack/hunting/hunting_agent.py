@@ -11,8 +11,11 @@ idles at END (spec 2.4, R4/GP2-b).
 The harness is the TURN-BY-TURN DRIVER (ADR R4): per LLM step it runs ONE
 `arun_session_turn` on the per-hunt `HuntSession(run_id, hunt_id)` thread, so
 every LLM call rides the session seam and the checkpointer, compaction (#95 D9),
-and capability (#99) negotiation attach. Each step is a STRUCTURED step request
-(`HunterStep`): the model either requests one tool call or concludes the hunt.
+and capability (#99) negotiation attach. Each turn uses the STANDARD tool
+interface: the five tools are bound REQUEST-ONLY (`convert_to_openai_tool`) so
+their JSON schemas ride the generation request's `tools` body, but no ToolNode
+is created - the model emits a real tool call per turn (valid args per schema)
+and concludes with a plain answer, and the harness stays the sole executor.
 The harness executes the tool itself - the tools are bound OUTSIDE the agent
 (spec 4: the built-in session seam runs the whole model<->tool loop in ONE
 `agent.invoke`, so intermediate tool calls do NOT return control; the explicit
@@ -58,8 +61,6 @@ import json
 import logging
 from typing import Any, Awaitable, Callable, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
-
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DispatchResult,
     HuntConfig,
@@ -98,27 +99,16 @@ HypothesisVerdict = Literal[
 ]
 
 
-# --- the structured step request (Structured Output, R4) ----------------------
+# --- the turn contract (the standard tool interface, R4) ----------------------
 
-class HunterStep(BaseModel):
-    """One ReAct step the model emits per turn (the structured output contract).
-
-    `action="tool"` requests EXACTLY ONE tool call - `tool` names one of the five
-    tools and `args` carries that tool's args (the per-tool args schemas from
-    `hunter_tools.py`, `extra="forbid"`); the harness executes it and returns the
-    result (plus any injected phase-transition constant, G9) as the next turn's
-    input. `action="answer"` concludes the hunt - the harness lands the graph at
-    END (idle). `reasoning` is the step's Chain-of-Thought, never the action
-    itself. `extra="forbid"` (the pod's D84-22 discipline): an unknown field on a
-    step is a contract violation and degrades the turn."""
-
-    action: Literal["tool", "answer"]
-    reasoning: str = ""
-    tool: str = ""
-    args: dict = Field(default_factory=dict)
-    answer: str = ""
-
-    model_config = ConfigDict(extra="forbid")
+# The turn carries NO wrapper schema. The five tools are bound to the generation
+# request request-only (`tools=[convert_to_openai_tool(t) for t in tools]` - the
+# schemas ride the request's `tools` body, but the agent's ToolNode is never
+# created, so the harness remains the sole executor). The model emits a REAL
+# tool call per turn (name + args per that tool's JSON schema) and concludes
+# with a plain answer (no tool calls). The harness reads the turn's tool calls,
+# executes them, drives the passive state machine on each status write, and
+# feeds the ToolMessages back as the next turn's input.
 
 
 # --- the stable system prompt (single-sourced from the SKILL.md) ---------------
@@ -237,17 +227,17 @@ def _config_gaps(config: HuntConfig) -> list[str]:
 # surface, the state) compose the first step below and the tool results carry
 # the later steps.
 _STEP_PROTOCOL = (
-    "Each turn emit EXACTLY ONE step as a structured object with the fields "
-    "action, reasoning, tool, args, answer.\n"
-    "- In 'reasoning', think step-by-step before deciding the action.\n"
-    "- action='tool': request exactly one tool call. Set 'tool' to one of the "
-    "tool names below and 'args' to that tool's args (a JSON object). The "
-    "harness executes the tool and returns its result as the next message. A "
-    "result may carry a <phase-transition-hint> - follow it as the next "
-    "reasoning phase.\n"
-    "- action='answer': conclude the hunt when the candidate set is exhausted "
-    "or you judge every candidate processed; put the final rationale in "
-    "'answer'.\n"
+    "Each turn you either call one or more of the tools below, or conclude the "
+    "hunt.\n"
+    "- A tool call is a standard function call: 'name' is one of the tool names "
+    "below and 'args' is a JSON object conforming EXACTLY to that tool's JSON "
+    "schema (the schemas are supplied with this request; unknown fields are "
+    "rejected). The harness executes the tool and returns its result as the "
+    "next message. A result may carry a <phase-transition-hint> - follow it as "
+    "the next reasoning phase.\n"
+    "- Conclude the hunt when the candidate set is exhausted or you judge every "
+    "candidate processed: reply with a plain message carrying the final "
+    "rationale (no tool call).\n"
     "Never invent tool results. Never declare a hypothesis verified without "
     "evidence you actually hold. PARTITION GUARD: the exec tool never produces "
     "the hypothesis verdict - the pod remains the only source of experimental "
@@ -266,19 +256,35 @@ def _tool_surface(tools) -> str:
 
 
 def _compose_grounding(config: HuntConfig) -> str:
-    """The HuntConfig's five-part parameter set rendered once, ahead of the
-    first step (the #83 authoring template, reused verbatim in shape)."""
+    """The HuntConfig's parameter set rendered once, ahead of the first step:
+    the orchestrator's stretch (rationale, research direction, vulnerability
+    class, the ratification-phase capabilities / assumptions / technique
+    primitives) plus the five-part surface (adapted index card, caveats, prior
+    insights, tool registry). Rendered from the current declarative shape
+    (#165 typing rework): the concrete-fault slots that the old template
+    carried (`extension_points` / `supposed_payload_vectors`) are removed - the
+    #164 hunter owns that stretch."""
     tpl = config.prompt_template
     surface = config.surface_context or {}
+    # The surface context is the adapted index-card: the ratified configs carry
+    # it DIRECTLY (kind/key/label/spine/data_items/system_edges/aggregated_endpoints);
+    # the `{"cards": [...]}` wrapper is the legacy/scripted shape. Render either.
+    cards = surface.get("cards") or ([surface] if surface.get("kind") else [])
+    surface_text = _fmt_list(cards) if cards else "(no adapted index cards)"
     return (
         f"You are dispatched to hunt {config.unit_id} for fault class "
         f"{config.fault_class}.\n"
         f"Orchestrator's fault-matching rationale: {tpl.rationale or '(none)'}\n"
-        f"Adversarial-capability and environmental-precondition assumptions: "
+        f"Class-level research direction: {tpl.research_direction or '(none)'}\n"
+        f"Vulnerability class: {config.vulnerability_class or '(none)'}\n"
+        f"Orchestrator's ratification-phase adversarial capabilities: "
+        f"{_fmt_list(config.adversarial_capabilities)}\n"
+        f"Environmental-precondition assumptions: "
         f"{_fmt_list(config.assumptions)}\n"
+        f"Technique primitives: {_fmt_list(config.technique_primitives)}\n"
         f"L0 fault-applicability evidence: {_fmt_list(tpl.l0_evidence)}\n"
         f"Adapted surface context (index card of {config.unit_id}): "
-        f"{_fmt_list(surface.get('cards') or []) if surface.get('cards') else '(no adapted index cards)'}\n"
+        f"{surface_text}\n"
         f"Target caveats: {_fmt_list(config.target_caveats)}\n"
         f"Prior-hunt insights: {_fmt_list(config.prior_hunt_insights)}\n"
         f"Fault-targeting tool registry: {_fmt_list(config.tool_registry)}"
@@ -337,15 +343,17 @@ def _status_write(args: Any) -> tuple[str, dict] | None:
     return status, dict(spec)
 
 
-def _last_tool_call_id(messages) -> str | None:
-    """The tool_call id of the step's AIMessage (the structured `HunterStep`
-    call), so the harness can close it with the ToolMessage the next turn reads.
-    None when the turn carried no tool call (a degraded step, fail-open)."""
-    for message in reversed(messages or ()):
-        tool_calls = getattr(message, "tool_calls", None) or []
-        if tool_calls:
-            return tool_calls[0].get("id")
-    return None
+def _last_tool_calls(messages) -> list[dict]:
+    """The tool_calls of the CURRENT turn's AIMessage - the standard function-call
+    contract. The agent returns right after the model node (no ToolNode), so the
+    last message is this turn's AIMessage: [] means the model concluded with a
+    plain answer. Never scans the history - a prior turn's resolved tool call
+    must not be mistaken for a fresh one."""
+    last = messages[-1] if messages else None
+    if last is None:
+        return []
+    tool_calls = getattr(last, "tool_calls", None) or []
+    return [dict(tc) for tc in tool_calls]
 
 
 def _terminal_feedback(state: dict, answer: str) -> str:
@@ -428,37 +436,32 @@ def build_hunting_agent(
         tools_by_name = {tool.name: tool for tool in tools}
         state: dict = {"phase": "grounding", "trail": []}
 
-        from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
         from langchain_core.messages import HumanMessage, ToolMessage  # noqa: PLC0415
+        from langchain_core.utils.function_calling import (  # noqa: PLC0415
+            convert_to_openai_tool,
+        )
         from polymerhus.app.llm.session import arun_session_turn  # noqa: PLC0415
         from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415
 
         thread_id = HuntSession(run_id, hunt_id).thread_id
         new_messages = [HumanMessage(
             content=_compose_first_step(config, state, _tool_surface(tools)))]
+        # The five tools ride the generation request REQUEST-ONLY (the standard
+        # tool interface): each `convert_to_openai_tool` dict carries its JSON
+        # schema in the request's `tools` body - the model emits valid args per
+        # schema - but no ToolNode is created (all five are `built_in_tools`), so
+        # the agent never executes them and the harness stays the sole executor
+        # between turns (option B, the R4 turn-by-turn driver). Capability (#99)
+        # still attaches natively via the session seam (A1 negotiation + A5
+        # adaptor); every turn rides `arun_session_turn`.
+        request_tools = [convert_to_openai_tool(t) for t in tools]
 
         for _step in range(_MAX_STEPS):
-            # Capability (#99) attaches NATIVELY via the session seam, not as an
-            # explicit middleware (verified against `app/llm/session.py` +
-            # `app/llm/capability.py`): no capability `AgentMiddleware` exists in
-            # the codebase - #99 is the A1 method negotiation
-            # (`_structured_response_format`, used by `stateful_turn(schema=...)`)
-            # plus the A5 thinking-effort adaptor in `build_chat_model`. This
-            # `response_format=ToolStrategy(HunterStep)` IS the A1 rung-2 result
-            # for a tool-bound session (a tool loop has no method-swap), so
-            # passing it directly is exactly what the negotiation would pick, and
-            # the negotiation + middleware still attach because every turn rides
-            # `arun_session_turn`.
-            # The HunterStep type is persisted in the session checkpoint (via the
-            # `structured_response` channel) - langgraph's "unregistered type"
-            # msgpack advisory is the ACCEPTED codebase pattern, identical to the
-            # orchestrator's `ToolStrategy(GateDecision | MatchVerdict)` on
-            # `run_session_agent` (verified: same advisory, same working turns).
             try:
                 turn = await arun_session_turn(
                     _HUNTER_ROLE, thread_id, new_messages,
                     checkpointer=checkpointer,
-                    response_format=ToolStrategy(HunterStep),
+                    tools=request_tools,
                     middleware=middleware,
                     model_factory=model_factory,
                     observe=observe,
@@ -469,62 +472,60 @@ def build_hunting_agent(
                 break
             trace_span("hunter-step", input={"step": _step + 1})
 
-            step = turn.content
-            if not isinstance(step, HunterStep):
-                # A degraded turn (unparseable / None content): the model did not
-                # emit a structured step - fail-open, keep the hunt's state.
-                feedback.append("hunter step degraded: no structured step returned")
-                break
-
-            if step.action != "tool":
-                # The model concluded the hunt: the hypothesis list is exhausted
-                # -> END -> idle. The terminal phase is `concluded` (spec 2.4's
-                # deterministic surface): the harness lands the state, derives NO
-                # verdict (the verdict-consumption graph is OUT OF SCOPE and
-                # derives it from the pod-verdict messages the surfer feeds the
-                # idle hunt), and the dispatch result reports the terminal state.
+            tool_calls = _last_tool_calls(turn.messages)
+            if not tool_calls:
+                # The model concluded the hunt with a plain answer: the
+                # hypothesis list is exhausted -> END -> idle. The terminal phase
+                # is `concluded` (spec 2.4's deterministic surface): the harness
+                # lands the state, derives NO verdict (the verdict-consumption
+                # graph is OUT OF SCOPE and derives it from the pod-verdict
+                # messages the surfer feeds the idle hunt), and the dispatch
+                # result reports the terminal state.
                 state["phase"] = "concluded"
-                feedback.append(_terminal_feedback(state, step.answer))
+                feedback.append(_terminal_feedback(state, str(turn.content or "")))
                 return _assemble(state, feedback)
 
-            call_id = _last_tool_call_id(turn.messages)
-            if call_id is None:
-                feedback.append("hunter step degraded: no tool call id on the step")
+            if not all(tc.get("id") for tc in tool_calls):
+                feedback.append("hunter step degraded: a tool call carries no id")
                 break
 
-            result = await _invoke_tool(tools_by_name, step.tool, step.args)
-            observed = _status_write(step.args) if step.tool == "hunts_store" else None
-            if observed is not None:
-                status, fault = observed
-                try:
-                    # DETECTION + PUSH (R4, GP8c): the state tracker moves the
-                    # lists and injects the phase-transition constant (G9).
-                    driven = await compiled.ainvoke({
-                        **state, "observed_status": status, "observed_fault": fault,
-                    })
-                    state = driven
-                except Exception as exc:  # noqa: BLE001 - fail-open, keep serving
-                    logger.warning("hunt %s state tracking degraded (%s)", hunt_id, exc)
-                    feedback.append(f"state tracking degraded ({exc})")
-            elif step.tool == "kb_query" and state.get("phase") == "grounding":
-                # The grounding-phase D3 prompt (spec 2.3): a kb_query call
-                # while the harness is still grounded prompts the D3
-                # retrieval-gap check - first and subsequent kb_query calls
-                # ride the grounding phase. Not a transition (no status
-                # write), so it injects here, never through the graph.
-                state["injected_constant"] = D3_HINT
-            # The constant rides THIS tool-call response and is consumed:
-            # it must never leak onto a later, unrelated tool result.
-            hint = state.get("injected_constant")
-            if hint:
-                result = (
-                    f"{result}\n\n<phase-transition-hint>\n{hint}\n"
-                    f"</phase-transition-hint>"
-                )
-                state["injected_constant"] = None
-            trace_span("hunter-tool", input={"tool": step.tool, "args": step.args},
-                       output=result[:500])
-            new_messages = [ToolMessage(tool_call_id=call_id, content=result)]
+            results: list[ToolMessage] = []
+            for tc in tool_calls:
+                tool_name = str(tc.get("name") or "")
+                tool_args = tc.get("args") or {}
+                result = await _invoke_tool(tools_by_name, tool_name, tool_args)
+                observed = _status_write(tool_args) if tool_name == "hunts_store" else None
+                if observed is not None:
+                    status, fault = observed
+                    try:
+                        # DETECTION + PUSH (R4, GP8c): the state tracker moves
+                        # the lists and injects the phase-transition constant (G9).
+                        driven = await compiled.ainvoke({
+                            **state, "observed_status": status, "observed_fault": fault,
+                        })
+                        state = driven
+                    except Exception as exc:  # noqa: BLE001 - fail-open, keep serving
+                        logger.warning("hunt %s state tracking degraded (%s)", hunt_id, exc)
+                        feedback.append(f"state tracking degraded ({exc})")
+                elif tool_name == "kb_query" and state.get("phase") == "grounding":
+                    # The grounding-phase D3 prompt (spec 2.3): a kb_query call
+                    # while the harness is still grounded prompts the D3
+                    # retrieval-gap check. Not a transition (no status write),
+                    # so it injects here, never through the graph.
+                    state["injected_constant"] = D3_HINT
+                # The constant rides THIS tool-call response and is consumed:
+                # it must never leak onto a later, unrelated tool result.
+                hint = state.get("injected_constant")
+                if hint:
+                    result = (
+                        f"{result}\n\n<phase-transition-hint>\n{hint}\n"
+                        f"</phase-transition-hint>"
+                    )
+                    state["injected_constant"] = None
+                trace_span("hunter-tool", input={"tool": tool_name, "args": tool_args},
+                           output=result[:500])
+                results.append(ToolMessage(tool_call_id=tc.get("id"), content=result))
+            new_messages = results
         else:
             # A natural loop end (no break) is genuine budget exhaustion; the
             # break paths above already reported their own degradation, so a
