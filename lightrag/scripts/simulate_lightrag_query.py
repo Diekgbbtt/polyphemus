@@ -37,7 +37,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--scenario",
-        default="examples/lightrag-query-simulation/P6B-EASY-01.json",
+        default="lightrag/examples/lightrag-query-simulation/P6B-EASY-01.json",
     )
     parser.add_argument("--config", choices=["R-A", "R-B"], default="R-A")
     parser.add_argument("--mock", action="store_true", help="deterministic offline stand-ins")

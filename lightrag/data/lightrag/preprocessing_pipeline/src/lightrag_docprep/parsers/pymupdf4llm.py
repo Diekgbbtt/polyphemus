@@ -19,7 +19,7 @@ class PyMuPDF4LLMParser(ParserAdapter):
 
     @staticmethod
     def _convert(path: Path) -> str:
-        import pymupdf4llm
+        import lightrag.data.lightrag.preprocessing_pipeline.src.lightrag_docprep.parsers.pymupdf4llm as pymupdf4llm
 
         return pymupdf4llm.to_markdown(
             str(path),

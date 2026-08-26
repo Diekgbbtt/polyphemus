@@ -25,7 +25,7 @@ wants to exercise the LightRAG integration.
 
 ## 1. Prerequisites
 
-- Docker (compose `lightrag` profile) and network access to
+- Docker (baseline compose stack) and network access to
   `https://api.swissai.svc.cscs.ch/v1`.
 - A `.env` with the standard platform vars
   (`NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `POSTGRES_DSN`, `KALI_MCP_URL`)
@@ -59,7 +59,7 @@ export QUERY_LLM_MAX_TOKENS=16384
 Start LightRAG and wait for healthy:
 
 ```bash
-docker compose --profile lightrag up -d lightrag
+docker compose up -d lightrag
 docker inspect --format '{{.State.Health.Status}}' polymerhus-lightrag-1   # healthy
 ```
 
@@ -100,7 +100,7 @@ If you want only the integration-critical tests:
 ## 4. T1 — stream smoke (LightRAG + SwissAI)
 
 ```bash
-.venv/bin/python examples/lightrag-tool/stream_demo.py
+.venv/bin/python lightrag/examples/lightrag-tool/stream_demo.py
 ```
 
 What you should see:

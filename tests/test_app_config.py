@@ -16,7 +16,7 @@ def test_lightrag_config_defaults(monkeypatch):
         module = importlib.reload(config_module)
 
         assert module.config.LIGHTRAG_APPROVED_SOURCES == (
-            "data/lightrag/inputs",
+            "lightrag/data/lightrag/inputs",
             "docs/design/lightrag",
         )
         assert module.config.LIGHTRAG_WORK_DIR == "/tmp/polyphemus-lightrag"

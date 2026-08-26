@@ -24,6 +24,6 @@ Field provenance contract (who supplies what):
 Run one through the simulator:
 
 ```bash
-.venv/bin/python scripts/simulate_lightrag_query.py \
-  --scenario examples/lightrag-query-simulation/P6B-EASY-01.json --mock --direct
+.venv/bin/python lightrag/scripts/simulate_lightrag_query.py \
+  --scenario lightrag/examples/lightrag-query-simulation/P6B-EASY-01.json --mock --direct
 ```

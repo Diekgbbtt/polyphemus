@@ -79,7 +79,7 @@ def test_experiment_tracker_persists_ingestion_batches(tmp_path):
         event_id = tracker.log_ingestion_batch(
             batch_number=2,
             run_label="clean-rebuild",
-            input_dir="data/lightrag/inputs/wstg_preprocessed",
+            input_dir="lightrag/data/lightrag/inputs/wstg_preprocessed",
             uploaded_files=["wstg-apit-99-methodology.md"],
             upload_responses=[
                 {

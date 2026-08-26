@@ -20,7 +20,7 @@ from lightrag.preprocess import (
 
 
 DEFAULT_0XDF_BASE_URL = "https://0xdf.gitlab.io/"
-DEFAULT_WRITEUP_RAW_DIR = Path("data/lightrag/inputs/writeups_raw/0xdf")
+DEFAULT_WRITEUP_RAW_DIR = Path("lightrag/data/lightrag/inputs/writeups_raw/0xdf")
 SUPPORTED_SOURCES = ("0xdf",)
 
 

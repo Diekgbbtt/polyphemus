@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 
-DEFAULT_HISTORY_DB = Path("data/lightrag/benchmarks/wstg_benchmark_history.sqlite3")
+DEFAULT_HISTORY_DB = Path("lightrag/data/lightrag/benchmarks/wstg_benchmark_history.sqlite3")
 
 
 @dataclass(frozen=True)

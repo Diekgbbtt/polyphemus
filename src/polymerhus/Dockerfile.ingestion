@@ -7,7 +7,8 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 
 COPY src/ /srv/src/
-COPY data/lightrag/preprocessing_pipeline/ /srv/lightrag_docprep/
+COPY lightrag/*.py /srv/lightrag/
+COPY lightrag/data/lightrag/preprocessing_pipeline/ /srv/lightrag_docprep/
 
 RUN pip install --no-cache-dir \
     "fastapi==0.115.6" \
@@ -20,6 +21,9 @@ RUN pip install --no-cache-dir \
     "langgraph-checkpoint-postgres==3.1.0"
 RUN pip install --no-cache-dir /srv/lightrag_docprep
 
-ENV PYTHONPATH="/srv/src"
+# /srv itself is on the path so `lightrag` resolves as a package; never put
+# /srv/lightrag on the path directly - its `types.py` would shadow the stdlib
+# `types`.
+ENV PYTHONPATH="/srv/src:/srv"
 EXPOSE 8080
 CMD ["uvicorn", "polymerhus.ingestion.app:app", "--host", "0.0.0.0", "--port", "8080"]

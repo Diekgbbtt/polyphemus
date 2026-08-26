@@ -10,9 +10,9 @@ from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
 
-DEFAULT_OUTPUT_DIR = Path("data/lightrag/inputs/__preprocessed__")
-DEFAULT_WSTG_OUTPUT_DIR = Path("data/lightrag/inputs/wstg_preprocessed")
-DEFAULT_WRITEUP_OUTPUT_DIR = Path("data/lightrag/inputs/writeups_overlay")
+DEFAULT_OUTPUT_DIR = Path("lightrag/data/lightrag/inputs/__preprocessed__")
+DEFAULT_WSTG_OUTPUT_DIR = Path("lightrag/data/lightrag/inputs/wstg_preprocessed")
+DEFAULT_WRITEUP_OUTPUT_DIR = Path("lightrag/data/lightrag/inputs/writeups_overlay")
 
 _HEADING_RE = re.compile(r"^(#{1,6})\s+(.+?)\s*$")
 _LIST_RE = re.compile(r"^\s*(?:[-*+]|\d+[.)])\s+")

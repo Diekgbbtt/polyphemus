@@ -6,7 +6,7 @@ from lightrag.generation import AnswerBundleV1
 
 
 def _golden() -> GoldenSetV1:
-    path = Path("examples/evaluation/golden-answers.v1.json")
+    path = Path("lightrag/examples/evaluation/golden-answers.v1.json")
     return GoldenSetV1.model_validate_json(path.read_text(encoding="utf-8"))
 
 

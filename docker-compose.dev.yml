@@ -18,6 +18,7 @@ services:
   agent:
     volumes:
       - ./src:/srv/src
+      - ./lightrag:/srv/lightrag   # live-edit the lightrag module (data rides along)
       - ./db:/srv/db
       - ./skills:/srv/skills   # triager loads writing-observations SKILL.md at runtime
       - ./gateway:/srv/gateway   # live-edit the litellm proxy config without a rebuild
@@ -38,7 +39,7 @@ services:
       # gains `--reload`; the litellm proxy NEVER reloads (ADR D1: the two
       # ASGI processes have independent reload policies; the proxy is the
       # routing substrate, not the live-edited surface).
-      AGENT_UVICORN_ARGS: "--reload --reload-dir /srv/src"
+      AGENT_UVICORN_ARGS: "--reload --reload-dir /srv/src --reload-dir /srv/lightrag"
 
   # The live-tier test runner.
   #
@@ -74,7 +75,7 @@ services:
       POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
       KALI_MCP_URL: http://kali:8000/mcp
       PROJECT_ID: test
-      PYTHONPATH: /srv/src
+      PYTHONPATH: /srv/src:/srv
     env_file:
       - path: .env
         required: false

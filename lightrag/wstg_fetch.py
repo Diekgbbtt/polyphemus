@@ -11,7 +11,7 @@ from typing import Callable, Iterable, Sequence
 from lightrag.preprocess import DEFAULT_WSTG_OUTPUT_DIR, preprocess_wstg_for_lightrag
 
 
-DEFAULT_WSTG_RAW_DIR = Path("data/lightrag/inputs/wstg_raw")
+DEFAULT_WSTG_RAW_DIR = Path("lightrag/data/lightrag/inputs/wstg_raw")
 DEFAULT_WSTG_REF = "master"
 DEFAULT_WSTG_RAW_BASE = "https://raw.githubusercontent.com/OWASP/wstg"
 WSTG_DOCUMENT_ROOT = "document"

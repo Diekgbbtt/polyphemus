@@ -11,8 +11,8 @@ from typing import Any, Mapping, Sequence
 from lightrag.experiment_tracker import DEFAULT_HISTORY_DB, ExperimentTracker
 
 
-DEFAULT_TEST_CASES = Path("data/lightrag/benchmarks/wstg_test_cases.json")
-DEFAULT_WSTG_MANIFEST = Path("data/lightrag/inputs/wstg_preprocessed/.manifest.json")
+DEFAULT_TEST_CASES = Path("lightrag/data/lightrag/benchmarks/wstg_test_cases.json")
+DEFAULT_WSTG_MANIFEST = Path("lightrag/data/lightrag/inputs/wstg_preprocessed/.manifest.json")
 DEFAULT_TEMPLATE_TYPES = (
     "ontology_feature_to_wstg",
     "feature_to_threat",

@@ -44,7 +44,7 @@ class Config:
     WORKER_THREADS = int(os.environ.get("WORKER_THREADS", "64"))
     LIGHTRAG_APPROVED_SOURCES = _csv_env(
         "LIGHTRAG_APPROVED_SOURCES",
-        "data/lightrag/inputs,docs/design/lightrag",
+        "lightrag/data/lightrag/inputs,docs/design/lightrag",
     )
     LIGHTRAG_WORK_DIR = os.environ.get("LIGHTRAG_WORK_DIR", "/tmp/polyphemus-lightrag")
     LIGHTRAG_STORAGE_DIR = os.environ.get(

@@ -6,8 +6,8 @@ import subprocess
 from pathlib import Path
 
 
-URL_WORKFLOW = Path("workflows/n8n/lightrag-url-ingestion.json")
-FILE_WORKFLOW = Path("workflows/n8n/lightrag-file-ingestion.json")
+URL_WORKFLOW = Path("lightrag/workflows/n8n/lightrag-url-ingestion.json")
+FILE_WORKFLOW = Path("lightrag/workflows/n8n/lightrag-file-ingestion.json")
 ENV_EXAMPLE = Path(".env.example")
 MILESTONE_4_DOCS = Path("docs/ingestion-pipeline-milestone-4.md")
 

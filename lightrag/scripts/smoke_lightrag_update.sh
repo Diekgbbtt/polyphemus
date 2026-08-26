@@ -7,12 +7,12 @@ STAMP="$(date +%Y%m%d%H%M%S)"
 NAME="update-smoke-${STAMP}.md"
 SOURCE_KEY="file:inbox/${NAME}"
 
-mkdir -p data/ingestion/inbox data/ingestion/processed data/ingestion/failed
+mkdir -p lightrag/data/ingestion/inbox lightrag/data/ingestion/processed lightrag/data/ingestion/failed
 
 write_version() {
   version="$1"
   marker="$2"
-  cat > "data/ingestion/inbox/${NAME}" <<EOF
+  cat > "lightrag/data/ingestion/inbox/${NAME}" <<EOF
 # Polyphemus Update Smoke ${version}
 
 This Markdown document verifies safe replacement of an already indexed source.
@@ -71,14 +71,14 @@ poll_status() {
 wait_for_processed_file() {
   attempts=12
   while [ "$attempts" -gt 0 ]; do
-    if [ -f "data/ingestion/processed/${NAME}" ]; then
+    if [ -f "lightrag/data/ingestion/processed/${NAME}" ]; then
       return 0
     fi
-    echo "waiting for processed file: data/ingestion/processed/${NAME}"
+    echo "waiting for processed file: lightrag/data/ingestion/processed/${NAME}"
     sleep 5
     attempts=$((attempts - 1))
   done
-  echo "Timed out waiting for processed file data/ingestion/processed/${NAME}" >&2
+  echo "Timed out waiting for processed file lightrag/data/ingestion/processed/${NAME}" >&2
   return 1
 }
 

@@ -35,7 +35,7 @@ def test_normalized_entity_key_rejects_blank_name():
 
 
 def test_entity_prompt_forbids_fallback_types():
-    prompt = Path("data/lightrag/prompts/entity_type/methodology_entities.yml").read_text(
+    prompt = Path("lightrag/data/lightrag/prompts/entity_type/methodology_entities.yml").read_text(
         encoding="utf-8"
     )
 

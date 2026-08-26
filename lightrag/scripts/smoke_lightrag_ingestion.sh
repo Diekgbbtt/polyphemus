@@ -9,9 +9,9 @@ DUP_NAME="smoke-${STAMP}-duplicate.md"
 SOURCE_KEY="file:inbox/${NAME}"
 DUP_SOURCE_KEY="file:inbox/${DUP_NAME}"
 
-mkdir -p data/ingestion/inbox data/ingestion/processed data/ingestion/failed
+mkdir -p lightrag/data/ingestion/inbox lightrag/data/ingestion/processed lightrag/data/ingestion/failed
 
-cat > "data/ingestion/inbox/${NAME}" <<'EOF'
+cat > "lightrag/data/ingestion/inbox/${NAME}" <<'EOF'
 # Polyphemus Smoke Ingestion
 
 This Markdown document verifies watched-folder ingestion.
@@ -23,7 +23,7 @@ Host: example.test
 
 The content mentions SQL injection payload methodology and authentication bypass.
 EOF
-printf '\nSmoke run id: %s\n' "$STAMP" >> "data/ingestion/inbox/${NAME}"
+printf '\nSmoke run id: %s\n' "$STAMP" >> "lightrag/data/ingestion/inbox/${NAME}"
 
 poll_status() {
   key="$1"
@@ -58,10 +58,10 @@ wait_for_file() {
 }
 
 poll_status "$SOURCE_KEY" "PROCESSED"
-wait_for_file "data/ingestion/processed/${NAME}"
+wait_for_file "lightrag/data/ingestion/processed/${NAME}"
 
-cp "data/ingestion/processed/${NAME}" "data/ingestion/inbox/${DUP_NAME}"
+cp "lightrag/data/ingestion/processed/${NAME}" "lightrag/data/ingestion/inbox/${DUP_NAME}"
 poll_status "$DUP_SOURCE_KEY" "SKIPPED_DUPLICATE"
-wait_for_file "data/ingestion/processed/${DUP_NAME}"
+wait_for_file "lightrag/data/ingestion/processed/${DUP_NAME}"
 
 echo "smoke ok: ${SOURCE_KEY} processed and ${DUP_SOURCE_KEY} skipped duplicate"

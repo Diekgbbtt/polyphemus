@@ -27,7 +27,7 @@ from lightrag.types import (
 )
 
 
-DEFAULT_OUTPUT_DIR = Path("data/lightrag/benchmarks")
+DEFAULT_OUTPUT_DIR = Path("lightrag/data/lightrag/benchmarks")
 DEFAULT_OUTPUT_NAME = "wstg_writeup_generation_benchmark.json"
 DEFAULT_BASE_URL = "http://127.0.0.1:9621"
 DEFAULT_WRITEUP_URL = "http://127.0.0.1:9622"

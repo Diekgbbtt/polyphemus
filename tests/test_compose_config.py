@@ -8,24 +8,26 @@ def test_compose_config_is_valid():
     assert r.returncode == 0, r.stderr
     assert "polymerhus-net" in r.stdout
 
-def test_lightrag_profile_config_is_valid():
-    r = subprocess.run(
-        ["docker", "compose", "--profile", "lightrag", "config"],
-        capture_output=True,
-        text=True,
-        cwd=".",
-    )
+
+def test_lightrag_is_baseline_config():
+    r = subprocess.run(["docker", "compose", "config"], capture_output=True, text=True, cwd=".")
     assert r.returncode == 0, r.stderr
-    assert "ghcr.io/hkuds/lightrag:v1.5.0rc3" in r.stdout
-    assert "ENTITY_TYPE_PROMPT_FILE" in r.stdout
-    assert "ENTITY_TYPES" not in r.stdout
-    assert "LIGHTRAG_PARSER" in r.stdout
-    assert "127.0.0.1" in r.stdout
+
+    config = yaml.safe_load(r.stdout)
+    lightrag = config["services"]["lightrag"]
+
+    assert lightrag["image"] == "ghcr.io/hkuds/lightrag:v1.5.0rc3"
+    assert lightrag["environment"]["ENTITY_TYPE_PROMPT_FILE"] == "methodology_entities.yml"
+    assert "ENTITY_TYPES" not in lightrag["environment"]
+    assert "LIGHTRAG_PARSER" in lightrag["environment"]
+    assert "lightrag-writeups" not in config["services"]
+    assert "ingestion" not in config["services"]
+    assert "n8n" not in config["services"]
 
 
-def test_lightrag_profile_includes_isolated_writeup_overlay():
+def test_ingestion_overlay_config_is_valid():
     r = subprocess.run(
-        ["docker", "compose", "--profile", "lightrag", "config"],
+        ["docker", "compose", "-f", "docker-compose.yml", "-f", "docker-compose.ingestion.yml", "config"],
         capture_output=True,
         text=True,
         cwd=".",
@@ -33,13 +35,10 @@ def test_lightrag_profile_includes_isolated_writeup_overlay():
     assert r.returncode == 0, r.stderr
 
     config = yaml.safe_load(r.stdout)
-    base = config["services"]["lightrag"]
-    overlay = config["services"]["lightrag-writeups"]
-
-    assert overlay["environment"]["WORKSPACE"] == "writeups_0xdf"
-    assert overlay["environment"]["WORKING_DIR"] != base["environment"]["WORKING_DIR"]
-    assert overlay["environment"]["INPUT_DIR"] != base["environment"]["INPUT_DIR"]
-    assert any(port["published"] == "9622" for port in overlay["ports"])
+    assert "ingestion" in config["services"]
+    assert "n8n" in config["services"]
+    assert config["services"]["ingestion"]["build"]["dockerfile"] == "src/polymerhus/Dockerfile.ingestion"
+    assert "lightrag-writeups" not in config["services"]
 
 
 def test_dev_overlay_config_is_valid():

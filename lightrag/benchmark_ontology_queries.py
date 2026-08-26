@@ -14,7 +14,7 @@ from lightrag.retriever import RoutedMethodologyRetriever
 from lightrag.types import FaultContext, KnowledgeQuery, RetrievalOptions
 
 
-DEFAULT_OUTPUT_DIR = Path("data/lightrag/benchmarks")
+DEFAULT_OUTPUT_DIR = Path("lightrag/data/lightrag/benchmarks")
 DEFAULT_BASE_URL = "http://127.0.0.1:9621"
 DEFAULT_WRITEUP_URL = "http://127.0.0.1:9622"
 CANONICAL_ENTITY_TYPES = tuple(ENTITY_TYPES)

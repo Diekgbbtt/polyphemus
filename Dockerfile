@@ -16,6 +16,7 @@ RUN apt-get update \
     && rm -rf /var/lib/apt/lists/*
 WORKDIR /srv
 COPY src/ /srv/src/
+COPY lightrag/*.py /srv/lightrag/
 COPY db/ /srv/db/
 COPY skills/ /srv/skills/
 COPY gateway/ /srv/gateway/
@@ -49,10 +50,13 @@ RUN pip install --no-cache-dir -r /srv/requirements-gateway.txt
 # engine binaries at build time, so runtime containers need no network for it.
 # Schema path is the one baked in by the pip install above (litellm 1.96.0).
 RUN prisma generate --schema=/usr/local/lib/python3.11/site-packages/litellm/proxy/schema.prisma
-# src/ layout: the polymerhus package is under /srv/src, and the skills/ mount
-# sits at /srv/skills - a sibling of src/, exactly as skills.py resolves it
-# (Path(__file__).parents[4] / "skills").
-ENV PYTHONPATH="/srv/src:/app"
+# src/ layout: the polymerhus package is under /srv/src, the lightrag module at
+# /srv/lightrag (a sibling of src/, imported top-level as `lightrag`), and the
+# skills/ mount sits at /srv/skills - a sibling of src/, exactly as skills.py
+# resolves it (Path(__file__).parents[4] / "skills"). `/srv` itself is on the
+# path so `lightrag` resolves as a package; never put /srv/lightrag on the path
+# directly - its `types.py` would shadow the stdlib `types`.
+ENV PYTHONPATH="/srv/src:/srv:/app"
 # The gateway proxy's config path - litellm loads this on boot. See
 # `gateway/litellm_config.yaml` (empty model_list filled by T2 via the mgmt API
 # + the D8 auto-inject stanza + store_model_in_db). Secrets stay env-only.

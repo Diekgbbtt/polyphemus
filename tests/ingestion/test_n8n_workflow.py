@@ -3,7 +3,7 @@ from pathlib import Path
 
 
 def test_n8n_workflow_uses_local_trigger_and_no_code_nodes():
-    workflow = json.loads(Path("workflows/n8n/lightrag-file-ingestion.json").read_text(encoding="utf-8"))
+    workflow = json.loads(Path("lightrag/workflows/n8n/lightrag-file-ingestion.json").read_text(encoding="utf-8"))
 
     node_types = {node["type"] for node in workflow["nodes"]}
     assert "n8n-nodes-base.localFileTrigger" in node_types
@@ -17,7 +17,7 @@ def test_n8n_workflow_uses_local_trigger_and_no_code_nodes():
 
 
 def test_n8n_workflow_calls_agent_ingestion_api_and_moves_terminal_files():
-    workflow = json.loads(Path("workflows/n8n/lightrag-file-ingestion.json").read_text(encoding="utf-8"))
+    workflow = json.loads(Path("lightrag/workflows/n8n/lightrag-file-ingestion.json").read_text(encoding="utf-8"))
     serialized = json.dumps(workflow)
 
     assert "http://ingestion:8080/v1/ingestions" in serialized
@@ -31,7 +31,7 @@ def test_n8n_workflow_calls_agent_ingestion_api_and_moves_terminal_files():
 
 
 def test_n8n_workflow_terminates_and_routes_failed_audit_to_failed_folder():
-    workflow = json.loads(Path("workflows/n8n/lightrag-file-ingestion.json").read_text(encoding="utf-8"))
+    workflow = json.loads(Path("lightrag/workflows/n8n/lightrag-file-ingestion.json").read_text(encoding="utf-8"))
 
     terminal = next(node for node in workflow["nodes"] if node["name"] == "Terminal state?")
     success = next(node for node in workflow["nodes"] if node["name"] == "Success or duplicate?")
@@ -56,7 +56,7 @@ def test_n8n_workflow_terminates_and_routes_failed_audit_to_failed_folder():
 
 
 def test_n8n_workflow_does_not_execute_audit_logic():
-    workflow = json.loads(Path("workflows/n8n/lightrag-file-ingestion.json").read_text(encoding="utf-8"))
+    workflow = json.loads(Path("lightrag/workflows/n8n/lightrag-file-ingestion.json").read_text(encoding="utf-8"))
     serialized = json.dumps(workflow)
 
     assert "critical_issues" not in serialized

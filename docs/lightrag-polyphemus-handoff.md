@@ -76,9 +76,9 @@ The two generation surfaces that matter:
 | File | Role |
 | --- | --- |
 | `src/polymerhus/app/config.py` | `HUNTING_LIGHTRAG_TOOL` flag; `QUERY_LLM_*` config (max tokens default now **16384**) |
-| `src/polymerhus/lightrag/generation.py` | `DeepSeekClient.complete/stream`; `build_external_payload(stream=...)`; `max_tokens` default 16384 |
-| `src/polymerhus/lightrag/tool.py` | `LightRagQueryTool` (LangChain tool) + `build_lightrag_tool()`; **fail-open** on retrieval/LLM errors; docstring explains why it does not call `run_query_pipeline` |
-| `src/polymerhus/lightrag/pipeline.py` | batch path (`run_query_pipeline`) — unchanged |
+| `lightrag/generation.py` | `DeepSeekClient.complete/stream`; `build_external_payload(stream=...)`; `max_tokens` default 16384 |
+| `lightrag/tool.py` | `LightRagQueryTool` (LangChain tool) + `build_lightrag_tool()`; **fail-open** on retrieval/LLM errors; docstring explains why it does not call `run_query_pipeline` |
+| `lightrag/pipeline.py` | batch path (`run_query_pipeline`) — unchanged |
 | `src/polymerhus/attack/hunting/actors.py` | `HuntingActorRegistry` default resolves the flag → `_lightrag_author_tools()`; `_TurnActor` threads `tools` to `run_session_agent` only when non-empty |
 | `src/polymerhus/attack/hunting/hunting_agent.py` | D4 prompt with optional `query_lightrag` guidance; typed `SymptomTechniqueQuery(fault_id, technological_axis)`; harness converts the typed result to the prompt dict |
 | `src/polymerhus/attack/hunting/llm.py` | `build_actor_hunting_agent` (production dispatch seam); `_parse_json_object` tolerant of prose + fenced JSON |
@@ -125,15 +125,15 @@ and are **not** part of this work:
 
 ### 4.2 Services
 
-- LightRAG runs under the compose `lightrag` profile:
+- LightRAG is part of the baseline compose stack (no profile):
 
   ```bash
-  docker compose --profile lightrag up -d lightrag
+  docker compose up -d lightrag
   ```
 
   Healthcheck: `http://127.0.0.1:9621/health` (or `http://lightrag:9621`
   inside the compose network). The KB is the mounted
-  `./data/lightrag/rag_storage` corpus.
+  `./lightrag/data/lightrag/rag_storage` corpus.
 - The SwissAI DeepSeek endpoint must be reachable from the environment running
   the tool (the hunting agent container in production).
 
@@ -282,7 +282,7 @@ Highlights pinned by tests:
 Executed during development against LightRAG at `http://127.0.0.1:9621` and
 SwissAI DeepSeek Flash:
 
-- `examples/lightrag-tool/stream_demo.py`: SSE deltas printed, final
+- `lightrag/examples/lightrag-tool/stream_demo.py`: SSE deltas printed, final
   `accepted: True` (observed ~28 s end-to-end). After raising max tokens to
   16384 the same flow consistently produced **validated** answers (10
   ontology explanations) instead of truncated `schema_error` fallbacks.
@@ -332,7 +332,7 @@ SwissAI DeepSeek Flash:
 
 - [ ] Branch checked out: `polyphemus-lightrag_union`
 - [ ] `.env` configured per §4.1 (keys only in `.env`/environment)
-- [ ] LightRAG up and healthy (compose `lightrag` profile)
+- [ ] LightRAG up and healthy (baseline compose stack)
 - [ ] Unit suites green (§6.1)
 - [ ] Stream smoke green (§T1 of the handbook)
 - [ ] Author-lane live smoke green (§T2 of the handbook)

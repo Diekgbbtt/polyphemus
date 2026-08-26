@@ -16,8 +16,8 @@ from lightrag.graph_audit import (
 )
 from lightrag.experiment_tracker import DEFAULT_HISTORY_DB, ExperimentTracker
 
-DEFAULT_GRAPHML_PATH = Path("data/lightrag/rag_storage/graph_chunk_entity_relation.graphml")
-DEFAULT_WSTG_INPUT_DIR = Path("data/lightrag/inputs/wstg_preprocessed")
+DEFAULT_GRAPHML_PATH = Path("lightrag/data/lightrag/rag_storage/graph_chunk_entity_relation.graphml")
+DEFAULT_WSTG_INPUT_DIR = Path("lightrag/data/lightrag/inputs/wstg_preprocessed")
 
 WSTG_SMOKE_FILES: tuple[str, ...] = (
     "wstg-athz-01-methodology.md",

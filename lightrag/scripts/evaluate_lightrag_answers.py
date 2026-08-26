@@ -2,8 +2,8 @@
 """Score saved pipeline results against the hand-marked golden set.
 
 Rehearsal loop:
-  .venv/bin/python scripts/simulate_lightrag_query.py --direct --out answer.json
-  .venv/bin/python scripts/evaluate_lightrag_answers.py --result answer.json
+  .venv/bin/python lightrag/scripts/simulate_lightrag_query.py --direct --out answer.json
+  .venv/bin/python lightrag/scripts/evaluate_lightrag_answers.py --result answer.json
 """
 
 from __future__ import annotations
@@ -23,7 +23,7 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument(
         "--golden",
-        default="examples/evaluation/golden-answers.v1.json",
+        default="lightrag/examples/evaluation/golden-answers.v1.json",
     )
     parser.add_argument("--result", action="append", required=True)
     args = parser.parse_args()

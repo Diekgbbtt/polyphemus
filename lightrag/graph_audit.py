@@ -1785,7 +1785,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     parser.add_argument(
         "graphml_path",
         nargs="?",
-        default="data/lightrag/rag_storage/graph_chunk_entity_relation.graphml",
+        default="lightrag/data/lightrag/rag_storage/graph_chunk_entity_relation.graphml",
     )
     parser.add_argument(
         "--fail-on-blocking-issues",
