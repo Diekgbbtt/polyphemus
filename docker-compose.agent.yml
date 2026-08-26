@@ -1,0 +1,75 @@
+# Main-worktree agent stack (D-HS fix for cross-worktree container clobbering).
+#
+# The sibling worktrees reuse the base `docker-compose.yml` `name: polymerhus`,
+# so `docker compose up -d --build` from any of them recreates the SAME
+# `polymerhus-agent-1` container (and postgres/neo4j/kali) under their tree's
+# code and env - clobbering whatever the main worktree had running. This file
+# gives the main worktree its OWN project (`polymerhus-main`) and therefore its
+# own `polymerhus-main-agent-1`, built from THIS worktree's Dockerfile, joined
+# to the SHARED `polymerhus_polymerhus-net` network so it reaches the already-
+# running postgres/neo4j/kali by service DNS exactly like production.
+#
+# `name:` overrides the project name; the default would derive `polymerhus` from
+# the compose file's directory, which is what the sibling clobbers.
+name: polymerhus-main
+
+services:
+  agent:
+    build: { context: ., dockerfile: Dockerfile }
+    image: polymerhus-agent-main:latest
+    environment:
+      # in-network defaults so a clean clone runs without .env (I2)
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+      PROJECT_ID: default
+      # --- LLM API gateway (#100) - the co-located litellm proxy (#104 T1) ----
+      # The proxy is the SECOND ASGI process in this container; it starts BEFORE
+      # the agent uvicorn and is polled on /health/liveliness before the agent
+      # starts (ADR D10 ordering, see `gateway_entrypoint.py`).
+      #
+      # `DATABASE_URL` is litellm's own DB pointer. litellm's prisma schema
+      # machinery assumes it OWNS its target database: pointed at the agent's
+      # database it refuses to migrate (P3005, non-empty schema) or drops the
+      # agent's tables (the db push path, verified live 2026-08-17). So the
+      # gateway gets its OWN database on the SAME shared postgres instance
+      # (STAR_MODEL_IN_DB=True under litellm's own tables) - the instance is
+      # shared with the agent's checkpoints (POSTGRES_DSN above), the database
+      # is not; the env var names differ between litellm and the agent's own
+      # stack, hence the two keys. `polymerhus_gateway` is created by
+      # db/postgres/init.sql on first volume init.
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus_gateway
+      # `LITELLM_MASTER_KEY` is the service token authing the management API
+      # the T2 sync uses to register models. A dev default ships here so a
+      # clean clone runs; the operator's .env overrides it for any non-dev
+      # env. NEVER a real production key in the repo (ADR D10).
+      LITELLM_MASTER_KEY: sk-polymerhus-dev-gateway
+      # The proxy listens on the internal port 4000 (D1); the client seam (T4,
+      # #107) will set `LLM_GATEWAY_URL=http://127.0.0.1:4000` to route through
+      # it. The port is NOT published to the host - it is intra-container only.
+      #
+      # Boot determinism: the proxy otherwise fetches the remote model cost map
+      # from raw.githubusercontent.com at boot, which added up to 150 s of
+      # network variance (and a silent hang on throttled networks) before the
+      # proxy even bound its port (verified 2026-08-17). The gateway does NOT
+      # use litellm's cost map - models.dev is the capability source (ADR D11)
+      # - so we pin litellm to its bundled local copy.
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+    env_file:
+      - path: .env
+        required: false
+    # Host 8080 is taken by the sibling worktree's polymerhus-agent-1; publish
+    # this agent on 8081. The agent itself listens on 8080 in-container.
+    ports: ["8081:8080"]
+    # Join the SHARED network the base stack already created, so `postgres`,
+    # `neo4j`, and `kali` resolve by service DNS. Declared external because
+    # those services are owned by the base `polymerhus` project, not this one.
+    networks:
+      - polymerhus-net
+
+networks:
+  polymerhus-net:
+    external: true
+    name: polymerhus_polymerhus-net

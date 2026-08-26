@@ -41,6 +41,8 @@ docs/.DS_Store
 # worktrees (never nest those in a commit); the lock is per-machine runtime.
 .claude/worktrees/
 .claude/scheduled_tasks.lock
+.agents/*
+.control-plane/*
 
 # Recon run artifacts (multi-MB per-target graph dumps), reproducible by re-running.
 .recon-exports/
@@ -49,5 +51,6 @@ tests/e2e/fixtures/eval-targets.yaml
 # Hunting run artifacts (per-project memory-store files), reproducible by
 # re-running. The store root is `data/`; each project gets
 # `data/<project_id>/orchestration/` (the legacy `data/hunts/` tree is gone).
-src/polymerhus/attack/hunting/data/*/orchestration/
-src/polymerhus/attack/hunting/data/hunts/
+src/polymerhus/attack/hunting/data/*
+!src/polymerhus/attack/hunting/data/fault-kb.yaml
+!src/polymerhus/attack/hunting/data/__init__.py
