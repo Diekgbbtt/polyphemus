@@ -16,6 +16,15 @@ The ratified topology:
   and reaches `stopped`; `shutdown` walks every module through the same settle
   (the `ShutdownFanOut`), closes the one shared executor, and stops the worker
   loop.
+- PER-SESSION lifecycle (ADR #169 Q12/Q14): every registered run also owns a
+  per-run hold event. `hold_session`/`resume_session` pause and release ONE run
+  by its session id - its next unit boundary at the module gate waits, sibling
+  runs of the same module are unaffected. Session id = coroutine id = registry
+  run name: `schedule` keys the run by its `name` argument, and every lifecycle
+  verb addresses the same key. `cancel_run` is already per-run by id.
+- The hunting dispatch width (ADR #169 Q15): a configurable width, default 20,
+  bounds concurrently running hunting sessions through the hunting module's
+  `ModuleGate`.
 
 Why this topology (the CORE ticket's rationale): the previous design gave each
 module its own dedicated asyncio loop and thread, which multiplied thread counts
@@ -27,6 +36,7 @@ from __future__ import annotations
 
 import asyncio
 import concurrent.futures
+import contextvars
 import enum
 import logging
 import threading
@@ -38,6 +48,15 @@ _ACTIVE_RUNTIME: "RuntimeManager | None" = None
 _ACTIVE_RUNTIME_LOCK = threading.Lock()
 
 _FANOUT_TIMEOUT = 30.0
+
+# The current run's per-session hold signal (ADR #169 Q14), bound by `_tracked`
+# for the run's full duration. The shared `ModuleGate` reads it at the unit
+# boundary so a dispatch point honours BOTH the module-wide pause AND the
+# current run's own hold; child tasks inherit it, so every unit of the run is
+# held together (session id = coroutine id = registry run name).
+_CURRENT_RUN_HOLD: contextvars.ContextVar[asyncio.Event | None] = (
+    contextvars.ContextVar("current-run-hold", default=None)
+)
 
 
 def get_active_runtime() -> "RuntimeManager | None":
@@ -77,6 +96,21 @@ def resume(module: str) -> None:
     return _require_runtime().resume(module)
 
 
+def hold_session(module: str, run_id: str) -> None:
+    """The module-level per-session HOLD verb (ADR #169 Q14): pause ONE
+    registered run by its session id - its next unit boundary waits until
+    `resume_session`. Per-session, never module-wide: siblings keep running.
+    Raises unless a manager is active."""
+    return _require_runtime().hold_session(module, run_id)
+
+
+def resume_session(module: str, run_id: str) -> None:
+    """The module-level per-session RESUME verb (ADR #169 Q14): release a held
+    run by its session id. A resume of a not-held run is a no-op. Raises unless
+    a manager is active."""
+    return _require_runtime().resume_session(module, run_id)
+
+
 def drain(module: str, *, timeout: float = _FANOUT_TIMEOUT) -> None:
     return _require_runtime().drain(module, timeout=timeout)
 
@@ -106,6 +140,13 @@ class ModuleGate:
     the worker loop on first use: the semaphore and the event are only ever
     awaited inside module runs, which execute on the worker loop, and `clear` /
     `set` are only ever delivered via `call_soon_threadsafe`.
+
+    Since the wiring workstream (ADR #169 Q12/Q14) a unit is admitted only when
+    BOTH the module-wide `_running` signal AND the CURRENT run's per-session
+    hold signal (the `_CURRENT_RUN_HOLD` ContextVar, set by `_tracked` for the
+    run's duration) are SET: a held run's next unit waits like a module pause
+    would, but ONLY that run - siblings of the same module (each with their own
+    hold event) pass through unchanged.
     """
 
     def __init__(self, width: int):
@@ -126,15 +167,30 @@ class ModuleGate:
     async def __aenter__(self) -> "ModuleGate":
         await self._sem.acquire()
         try:
-            await self._running.wait()
+            await self._await_admission()
         except BaseException:
-            # A cancel/error while waiting on the pause event must not leak the
-            # just-acquired permit: __aexit__ is never reached when __aenter__
-            # raises, so release here and re-raise (no permit leak on
+            # A cancel/error while waiting on the pause/hold events must not
+            # leak the just-acquired permit: __aexit__ is never reached when
+            # __aenter__ raises, so release here and re-raise (no permit leak on
             # cancel-while-waiting, #121 AC (c)).
             self._sem.release()
             raise
         return self
+
+    async def _await_admission(self) -> None:
+        # The next unit starts only when the module is running AND the current
+        # run is not held. Re-checked in a loop so a pause/hold landing while
+        # the other signal resolves still gates the unit (Q14: the NEXT unit).
+        while True:
+            hold = _CURRENT_RUN_HOLD.get()
+            running_ok = self._running.is_set()
+            hold_ok = hold is None or hold.is_set()
+            if running_ok and hold_ok:
+                return
+            if not running_ok:
+                await self._running.wait()
+            if hold is not None and not hold.is_set():
+                await hold.wait()
 
     async def __aexit__(self, *exc: Any) -> None:
         self._sem.release()
@@ -146,6 +202,13 @@ class ModuleHandle:
     The registry is a plain dict guarded by a lock; every mutation happens on the
     worker loop (the run's `finally`), every read from the API thread. `_idle` is
     the emptiness signal the drain / shutdown settle waits on.
+
+    Each registered run also carries a per-session hold event (ADR #169 Q14),
+    SET by default: `hold_session` CLEARs it, `resume_session` SETs it. The run
+    awaits it at the module gate's unit boundary, so holding one run stops only
+    ITS next unit - sibling runs of the module are unaffected. The hold is
+    created and reaped on the worker loop (register/unregister), set/cleared via
+    `call_soon_threadsafe`, exactly like the gate's `_running` event.
     """
 
     def __init__(self, name: str, gate: ModuleGate, hooks: dict[str, Any] | None):
@@ -154,18 +217,24 @@ class ModuleHandle:
         self.hooks = hooks or {}
         self.state = ModuleState.RUNNING
         self._runs: dict[str, asyncio.Task] = {}
+        self._holds: dict[str, asyncio.Event] = {}
         self._runs_lock = threading.Lock()
         self._idle = threading.Event()
         self._idle.set()
 
-    def register_run(self, run_id: str, task: asyncio.Task) -> None:
+    def register_run(self, run_id: str, task: asyncio.Task) -> asyncio.Event:
+        hold = asyncio.Event()
+        hold.set()
         with self._runs_lock:
             self._runs[run_id] = task
+            self._holds[run_id] = hold
         self._idle.clear()
+        return hold
 
     def unregister_run(self, run_id: str, task: asyncio.Task) -> None:
         with self._runs_lock:
             self._runs.pop(run_id, None)
+            self._holds.pop(run_id, None)
             empty = not self._runs
         if empty:
             self._idle.set()
@@ -173,6 +242,10 @@ class ModuleHandle:
     def get_task(self, run_id: str) -> asyncio.Task | None:
         with self._runs_lock:
             return self._runs.get(run_id)
+
+    def get_hold(self, run_id: str) -> asyncio.Event | None:
+        with self._runs_lock:
+            return self._holds.get(run_id)
 
     def live_tasks(self) -> list[asyncio.Task]:
         with self._runs_lock:
@@ -198,6 +271,7 @@ class RuntimeManager:
 
         self._gate_widths: dict[str, int] = {
             "analysis": app_config.ANALYSIS_PASS_GATE_WIDTH,
+            "hunting": app_config.HUNTING_DISPATCH_GATE_WIDTH,
         }
         if gate_widths:
             self._gate_widths.update(gate_widths)
@@ -334,11 +408,16 @@ class RuntimeManager:
         from polymerhus.app.llm.checkpoints import module_context
 
         current = asyncio.current_task()
-        handle.register_run(name, current)
+        hold = handle.register_run(name, current)
+        # The run's per-session hold signal rides the task context for the whole
+        # run: every unit-boundary gate acquisition of THIS run (including child
+        # tasks) honours it, and no other run sees it (Q14 per-session scope).
+        token = _CURRENT_RUN_HOLD.set(hold)
         try:
             with module_context(handle.name):
                 return await coro
         finally:
+            _CURRENT_RUN_HOLD.reset(token)
             handle.unregister_run(name, current)
 
     def cancel_run(self, module: str, run_id: str) -> None:
@@ -348,6 +427,32 @@ class RuntimeManager:
         if task is None:
             raise RunNotRegistered(run_id)
         self._loop.call_soon_threadsafe(task.cancel)
+
+    def hold_session(self, module: str, run_id: str) -> None:
+        """Hold ONE registered run by its session id (ADR #169 Q14): the run's
+        NEXT unit boundary at the module gate waits until `resume_session`.
+        Per-session, NOT module-wide: sibling runs of the same module keep
+        dispatching. Mirrors `cancel_run` on an unregistered run id."""
+        handle = self.handle(module)
+        hold = handle.get_hold(run_id)
+        if hold is None:
+            raise RunNotRegistered(run_id)
+        self._loop.call_soon_threadsafe(hold.clear)
+
+    def resume_session(self, module: str, run_id: str) -> None:
+        """Release a held run by its session id (ADR #169 Q14). A resume of a
+        not-held (or never registered) run is a no-op with a logged warning,
+        mirroring `resume` on a non-paused module."""
+        handle = self.handle(module)
+        hold = handle.get_hold(run_id)
+        if hold is None or hold.is_set():
+            logger.warning(
+                "resume_session: run %s of module %s is not held (no-op)",
+                run_id,
+                module,
+            )
+            return
+        self._loop.call_soon_threadsafe(hold.set)
 
     # --- per-module flow control ---------------------------------------------
 

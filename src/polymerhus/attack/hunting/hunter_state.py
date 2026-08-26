@@ -71,6 +71,8 @@ class FaultItem(TypedDict):
 class SpecItem(TypedDict):
     """The ratified spec (spec 3): the completed, commit-specification spec.
 
+    `fault_key` is the 3-part config key (the config's identity, G4, the
+    memory `test-specs/<fault_key>` folder it was authored under).
     `spec_ref` links the produced spec file and `experiment_ref` the pod
     result (spec 6), both other stores."""
 

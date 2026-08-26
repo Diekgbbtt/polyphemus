@@ -18,6 +18,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     run_orchestration,
 )
 from polymerhus.attack.hunting.hunt_store import HUNT_STORE_ROOT, HuntStore
+from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 
 SERVICE_A = "Service:slug:a"
 FAULT_X = "fault-x"
@@ -94,18 +95,93 @@ class _FakePg:
             raise OSError("pg down (fixture)")
         self.statuses.append((hunting_run_id, status))
 
+    def list_hunting_runs(self, project_id: str) -> list[dict]:
+        """The ONE-live-run-per-project guard read: every run the fake opened
+        or stamped, mapped to a pg-shaped row (create records status-first,
+        set_status records id-first - both unpacked here)."""
+        state: dict[str, dict] = {}
+        for first, second in self.statuses:
+            if first == "running":
+                state[second] = {"hunting_run_id": second, "status": "running"}
+            else:
+                state[first] = {"hunting_run_id": first, "status": second}
+        return list(state.values())
+
+
+class _FakeControl:
+    """The T4 session-capable control-plane fake: RUNS the dispatched/started
+    sessions as tasks on the current loop (so the whole pipeline is observable
+    through the bootstrap with no live runtime), mirrors the real manager's
+    registry through the live-task set, and can refuse/close unadmitted
+    sessions. Implements the mover's `DispatchControlPlane` verbs and the run
+    bootstrap's session verbs (`start_session` / `cancel_session` / `gate`)."""
+
+    def __init__(self, refuse: set[str] | None = None, *, gate=None):
+        self._refuse = set(refuse or ())
+        self._gate = gate
+        self._tasks: dict[str, asyncio.Task] = {}
+        self.started: list[str] = []
+
+    def live_session_ids(self):
+        return {sid for sid, task in self._tasks.items() if not task.done()}
+
+    def start_session(self, session_id, coro):
+        self.started.append(session_id)
+        if session_id in self._refuse or coro is None:
+            if coro is not None:
+                try:
+                    coro.close()
+                except Exception:
+                    pass
+            return None
+        task = asyncio.get_running_loop().create_task(coro)
+        self._tasks[session_id] = task
+        return task
+
+    def dispatch(self, session_id, coro):
+        return self.start_session(session_id, coro) is not None
+
+    def cancel_session(self, session_id):
+        task = self._tasks.get(session_id)
+        if task is not None and not task.done():
+            task.cancel()
+
+    def gate(self):
+        return self._gate
+
+
+async def _noop_hunter_dispatch(config):
+    """The fake hunt-session graph: concludes immediately (no specs
+    authored), so the run quiesces without producing pods."""
+    return None
+
+
+def _noop_hunter_builder(*, run_id, project_id, hunt_store, hunter_store, **kw):
+    return _noop_hunter_dispatch, None
+
+
+async def _noop_pod_builder(spec, **kw):
+    return {"verdict": "successful", "terminal_reason": "symptom-confirmed",
+            "evidence": {"trail": []}, "clean": True, "iterations": 0}
+
 
 def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
-    """The entry point opens the run `running`, runs an orchestration pass
-    (here: one candidate, the fixture phase seams), and lands `complete`."""
+    """The entry point opens the run `running`, schedules the orchestrator
+    pass and the run-scoped surfer as sessions, drives them to quiesce (the
+    fixture phase seams write one ratified config; the fake hunt session
+    concludes without specs), and lands `complete`."""
     fake = _FakePg()
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
     h, r, n = _phase_seams()
     hid = asyncio.run(hunting_runtime.start_hunting(
         "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
         hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        control=_FakeControl(),
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
     ))
 
     assert hid == "rt-hunt-0001"
@@ -127,13 +203,17 @@ def test_failing_orchestration_still_lands_a_terminal_status(monkeypatch):
     fake = _FakePg()
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
     async def boom(*args, **kwargs):
         raise RuntimeError("orchestration blew up (fixture)")
 
     monkeypatch.setattr("polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration", boom)
 
-    hid = asyncio.run(hunting_runtime.start_hunting("rt-project", candidates=[_candidate()]))
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()],
+        control=_FakeControl(), tick_interval=0.001,
+    ))
     assert hid == "rt-hunt-0001"
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "failed")]
 
@@ -157,13 +237,17 @@ def test_start_hunting_fail_open_when_pg_is_unavailable(monkeypatch, caplog):
     fake = _FakePg(fail_create=True, fail_status=True)
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
     async def recording(*args, **kwargs):
         return None
 
     monkeypatch.setattr("polymerhus.attack.hunting.hunt_orchestrator.arun_orchestration", recording)
 
-    hid = asyncio.run(hunting_runtime.start_hunting("rt-project", candidates=[_candidate()]))
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()],
+        control=_FakeControl(), tick_interval=0.001,
+    ))
     assert hid  # an id still keyed the run despite the PG outage
     assert fake.statuses == []
 
@@ -174,11 +258,15 @@ def test_pinned_run_id_keys_the_run(tmp_path, monkeypatch):
     fake.create_hunting_run = lambda project_id: fake.next_id  # recording running in create
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
     h, r, n = _phase_seams()
     hid = asyncio.run(hunting_runtime.start_hunting(
         "rt-project", run_id="pinned-run", candidates=[_candidate()],
         tools=_tools(HuntStore(tmp_path)), hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        control=_FakeControl(),
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
     ))
     assert hid == "pinned-run"
 
@@ -191,13 +279,15 @@ def test_stop_hunting_persists_stopped(monkeypatch):
     assert fake.statuses == [("rt-hunt-0001", "stopped")]
 
 
-def test_stop_hunting_cancels_a_running_run(monkeypatch):
-    """The phase-1 hard stop: stop_hunting cancels the running task (registered
-    on the module runtime), and the run lands `stopped` - the task's own
-    cancellation never re-stamps a status over the stop."""
+def test_stop_hunting_cancels_a_running_run(tmp_path, monkeypatch):
+    """The run stop: stop_hunting cancels EVERY session of the run (the outer
+    bootstrap task, the orchestrator pass, the surfer), and the run lands
+    `stopped` - the task's own cancellation never re-stamps a status over the
+    stop."""
     fake = _FakePg()
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
     async def slow(*args, **kwargs):
         await asyncio.sleep(30)
@@ -214,7 +304,13 @@ def test_stop_hunting_cancels_a_running_run(monkeypatch):
         hunting_run_id = fake.create_hunting_run("rt-project")
         rm.schedule(
             "hunting",
-            hunting_runtime.start_hunting("rt-project", run_id=hunting_run_id),
+            hunting_runtime.start_hunting(
+                "rt-project", run_id=hunting_run_id,
+                hunt_store=HuntStore(tmp_path / "hunts"),
+                hunter_store=HunterMemoryStore(tmp_path / "hunter"),
+                pod_store=None,
+                hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+            ),
             name=hunting_run_id,
         )
         asyncio.run(hunting_runtime.stop_hunting(hunting_run_id))
@@ -251,14 +347,16 @@ def test_hunting_module_context_sets_the_shared_module_seam():
 
 
 def test_hunting_pg_calls_offload_via_asyncio_to_thread(tmp_path, monkeypatch):
-    """#123 AC: the three blocking-sync-pg calls (create_hunting_run in
-    start_hunting; set_hunting_run_status in start_hunting's finally and in
-    stop_hunting) route through `asyncio.to_thread` onto the shared executor -
-    a spied to_thread proves the pg accessors are ONLY reached from the worker
-    loop through the offload, never as direct sync calls."""
+    """#123 AC: the blocking-sync-pg calls (create_hunting_run,
+    set_hunting_run_status - and the guard's list_hunting_runs - in
+    start_hunting; set_hunting_run_status in stop_hunting) route through
+    `asyncio.to_thread` onto the shared executor - a spied to_thread proves the
+    pg accessors are ONLY reached from the worker loop through the offload,
+    never as direct sync calls."""
     fake = _FakePg()
     monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
     monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
 
     offloaded: list[tuple[object, tuple]] = []
     orig_to_thread = hunting_runtime.asyncio.to_thread
@@ -273,17 +371,23 @@ def test_hunting_pg_calls_offload_via_asyncio_to_thread(tmp_path, monkeypatch):
     hid = asyncio.run(hunting_runtime.start_hunting(
         "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
         hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        control=_FakeControl(),
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
     ))
+    assert hid == "rt-hunt-0001"
     asyncio.run(hunting_runtime.stop_hunting(hid))
 
     pg_offloads = [
         fn for fn, _ in offloaded
-        if fn in (fake.create_hunting_run, fake.set_hunting_run_status)
+        if fn in (fake.create_hunting_run, fake.set_hunting_run_status,
+                  fake.list_hunting_runs)
     ]
     assert pg_offloads == [
+        fake.list_hunting_runs,          # the ONE-live-run guard read first
         fake.create_hunting_run,
-        fake.set_hunting_run_status,
-        fake.set_hunting_run_status,
+        fake.set_hunting_run_status,     # complete (quiesce)
+        fake.set_hunting_run_status,     # stopped (stop_hunting)
     ]
     assert fake.statuses == [
         ("running", "rt-hunt-0001"),

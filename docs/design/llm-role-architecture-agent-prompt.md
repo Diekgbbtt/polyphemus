@@ -41,7 +41,7 @@ Three INDEPENDENT axes (do not conflate them):
 | `assigner`, `mechanism_typist`, `data_modeller` | **session** (corrected) | sync leaf, inside the async supervisor actor | `run:{role}` — serialized (`ANALYSER_PASS_SEMAPHORE=1`, one graph/run), so run+role is already unique |
 | `hunting_hunter` (hunting agent) | session | **async actor** | `run:{hunt_id}:hunting_hunter` — per hunt |
 | `hunting_orchestrator`, analysis supervisor, recon-orchestrator, recon-phase agent | session | **async actor** | keyed by the coordinator's own run/instance |
-| `pod_runner` / `pod_triager` (test-executor pod, #84 regrounded) | session | async leaf (stateful turn) | `run:{hunt_id}:{spec_hash}:pod_runner` / `run:{hunt_id}:{spec_hash}:pod_triager` - per spec/variant, per role (D84-1/2) |
+| `pod_runner` / `pod_triager` (test-executor pod, #84 regrounded) | session | async leaf (stateful turn) | `run:{hunt_id}:{spec_id}:pod_runner` / `run:{hunt_id}:{spec_id}:pod_triager` - per spec, per role, `spec_id` = the semantic `<fault>_<strategy>` (D84-1/2, ADR #169 Q13) |
 | `bootstrapper`, `anatomy`, `curation`, `sweep`, `anti_cluttering` | one_shot | sync leaf | n/a — stateless post-processing, stays on `invoke_role` |
 | `crawler` | session/tool-loop | sync leaf | kept on its tuned `crawl_agentic.py` loop (a `create_agent` rewrite would drop the manifest-drain); its accumulator is the MCP `crawl_id` |
 
@@ -91,7 +91,7 @@ Where a call site cannot pass the instance identity through its seam contract (t
 
 ### Remaining
 
-- The hunter's production DRIVER (which calls `build_hunting_agent` with the actor-backed `author`/`judge`) is #83's; the seam is stateful-ready and the async lane is built (`build_actor_hunting_agent`, `build_sync_hunting_agent` for sync callers). Test-executor pod roles are LANDED since the #84 regrounding (T1, D84-1/2): `pod_runner`/`pod_triager` registered `session`/`high` in `HUNTING_ROLES`, and the previously reserved pod key resolves per role (`run:{hunt_id}:{spec_hash}:pod_runner` / `:pod_triager`) - the reservation is released.
+- The hunter's production DRIVER (which calls `build_hunting_agent` with the actor-backed `author`/`judge`) is #83's; the seam is stateful-ready and the async lane is built (`build_actor_hunting_agent`, `build_sync_hunting_agent` for sync callers). Test-executor pod roles are LANDED since the #84 regrounding (T1, D84-1/2): `pod_runner`/`pod_triager` registered `session`/`high` in `HUNTING_ROLES`, and the previously reserved pod key resolves per role (`run:{hunt_id}:{spec_id}:pod_runner` / `:pod_triager`, spec_id = the semantic `<fault>_<strategy>` per ADR #169 Q13) - the reservation is released.
 - Robustness follow-up: port the #73 escalating-timeout retry onto the session path so a migrated agent keeps it (today the session path uses the client per-turn retry).
 - Compaction of the now-growing stateful context is #98/#99 (the `middleware` seam is exposed for it).
 

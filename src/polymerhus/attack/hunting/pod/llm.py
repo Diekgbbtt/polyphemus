@@ -52,7 +52,8 @@ class PodHarnessContext:
     """The run-scoped pieces the production ReAct seams need beyond the session
     address (D84-7 extension, T7): the injected terminal (exec_fn), the pod
     memory store + its spec key (spec_id = the #164 hunter's `<fault>_<strategy>`
-    memory key - D84-34 - NOT the session hash), the D6 log, the CURRENT
+    spec id - D84-34/ADR #169 Q13 - the SAME value `bind_pod_session` threads as
+    `HuntSession.spec`, never a content hash), the D6 log, the CURRENT
     variant_ref for dedup scope, and the session model factory (None = the
     role's real model). The KB query capability is the single `query_lightrag`
     tool (lightrag branch, config-gated); the former `kb_fn` symptom-technique
@@ -123,17 +124,18 @@ def pod_harness():
     return _pod_h_ctx().get()
 
 
-def pod_session_address(run_id: str, hunt_id: str, spec: dict, *, role_id: str):
-    """The typed session address of one pod agent (D84-2, rehomed from
-    `pod.py::_pod_session_address`): the parent's canonical spec hash
-    discriminates concurrent pod sessions on one hunt, so the checkpointer never
-    routes one variant's memory into another; an absent hunt_id defaults to ""
-    (empty discriminators are dropped, never shifting the address)."""
+def pod_session_address(run_id: str, hunt_id: str, spec_id: str, *, role_id: str):
+    """The typed session address of one pod agent (D84-2/Q13, rehomed from
+    `pod.py::_pod_session_address`): the #164 hunter's SEMANTIC spec id
+    (`<fault>_<strategy>`, the `SpecItem.spec_id` - ADR #169 Q13, never a
+    content hash) discriminates concurrent pod sessions on one hunt, so the
+    checkpointer never routes one spec's memory into another; an absent
+    hunt_id defaults to "" (empty discriminators are dropped, never shifting
+    the address)."""
     from polymerhus.app.llm.session_address import HuntSession
-    from polymerhus.attack.hunting.pod.context import canonical_spec_hash
 
     return HuntSession(run_id=run_id, hunt_id=hunt_id or "",
-                       role_id=role_id, spec=canonical_spec_hash(spec))
+                       role_id=role_id, spec=spec_id or "")
 
 
 def _parent_hunt_session():
@@ -149,7 +151,7 @@ def _parent_hunt_session():
         return None
 
 
-def bind_pod_session(run_id: str, hunt_id: str, spec: dict, *, role_id: str,
+def bind_pod_session(run_id: str, hunt_id: str, spec_id: str, *, role_id: str,
                      middleware: Sequence = (), harness: PodHarnessContext | None = None):
     """Context manager the pod graph's `runner_agent` / `triager` nodes wrap their
     seam calls in (D84-7): binds the pod role's typed session for the duration of
@@ -157,6 +159,11 @@ def bind_pod_session(run_id: str, hunt_id: str, spec: dict, *, role_id: str,
     role (T5) and the T7 `PodHarnessContext` (exec/kb/store/log/variant_ref/
     model_factory) - the default seams read all THREE via `pod_session()` /
     `pod_middleware()` / `pod_harness()`.
+
+    `spec_id` is the #164 hunter's SEMANTIC spec id (`<fault>_<strategy>`, the
+    `SpecItem.spec_id` - ADR #169 Q13), the SAME value the pod-memory store
+    keys on: `HuntSession.spec` must equal the pod-memory key, so the session
+    thread discriminator and the memory identity can never drift apart.
 
     When the parent `hunt_session` ContextVar is present, the derived session
     takes its run_id/hunt_id; otherwise it falls back to the caller's `run_id`
@@ -185,7 +192,7 @@ def bind_pod_session(run_id: str, hunt_id: str, spec: dict, *, role_id: str,
                 eff_run_id = parent.address.run_id
                 eff_hunt_id = parent.address.hunt_id
             _token = _pod_ctx().set(
-                SessionContext(pod_session_address(eff_run_id, eff_hunt_id, spec,
+                SessionContext(pod_session_address(eff_run_id, eff_hunt_id, spec_id,
                                                    role_id=role_id),
                                get_session_checkpointer()))
             _mw_token = _pod_mw_ctx().set(tuple(middleware))

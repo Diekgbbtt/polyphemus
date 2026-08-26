@@ -17,7 +17,8 @@ Contract + degradation (spec 5, spec 9):
   `HunterMemoryStore` (G8): `write` carries the fault/spec object with the
   `status` verbatim; a duplicate `create` FAILS with the denoted `duplicate_spec`
   dedup signal the model interprets (G4); re-authoring `update`s in place (G5);
-  `read` is by the config identifier (`fault_key`) + optional filters/projection,
+  `read` is by the config identifier (`fault_key` - the 3-part config key of
+  the hunt's own config) + optional filters/projection,
   never the whole surface. Reads degrade to an empty set on failure (O4); genuine
   write failures raise to the harness, which warns and keeps serving (O3).
 - `graph_view` - the read-only L0/L1 view tool: a TYPED SEAM (the injected
@@ -165,8 +166,10 @@ class HuntsStoreArgs(BaseModel):
     `write` takes the fault/spec object carrying the `status` verbatim
     (`hypothesised | verified | dropped | specified`); `mode="create"` FAILS on
     a duplicate (the novelty gate, G4), `mode="update"` overwrites in place
-    (G5). `read` is by the config identifier (`fault_key`) + optional
-    `statuses`/`attributes`, never the whole surface (spec 5)."""
+    (G5). `read` is by the config identifier (`fault_key` - the 3-part config
+    key of the hunt's own config, e.g. the `_`-joined
+    `<unit_id>_<CWE_ID>_<vulnerability_class>` file-name stem, G4/ADR Q13) +
+    optional `statuses`/`attributes`, never the whole surface (spec 5)."""
 
     command: Literal["read", "write"]
     # -- read path -----------------------------------------------------------
@@ -185,8 +188,8 @@ class HuntsStoreArgs(BaseModel):
 class NotesArgs(BaseModel):
     """The `notes` tool's ARGS contract: `read` / `write` cmds, the SAME data
     contract as `hunts_store` (G6). Write options `append` / `update` / `delete`;
-    read is the grep-match read (by the fault_key parent / key / body keyword),
-    read-latest."""
+    read is the grep-match read (by the fault_key - the 3-part config key -
+    parent / key / body keyword), read-latest."""
 
     command: Literal["read", "write"]
     # -- read path -----------------------------------------------------------
@@ -243,7 +246,9 @@ class HuntsStoreTool(BaseTool):
         "The hunt's status-bearing memory seam. Commands: read / write.\n"
         "write takes the fault/spec object carrying the status verbatim "
         "(hypothesised | verified | dropped | specified), plus the fault_key "
-        "(the config identity) and the fault_keyword / strategy_keyword that "
+        "(the config identity: the 3-part config key "
+        "<unit_id>_<CWE_ID>_<vulnerability_class> of the hunt's own config) "
+        "and the fault_keyword / strategy_keyword that "
         "name the produced spec file. mode=create FAILS with a duplicate_spec "
         "dedup signal when the spec file already exists (reflect on overlap and "
         "merge or refresh - do not duplicate); mode=update re-authors the "
@@ -335,7 +340,9 @@ class NotesTool(BaseTool):
     description: str = (
         "The hunt's notes seam - one note per fault covering all decisions that "
         "concern it, more detailed than the rationale. Commands: read / write.\n"
-        "write takes an action (append | update | delete), the fault_key, a "
+        "write takes an action (append | update | delete), the fault_key "
+        "(the 3-part config key <unit_id>_<CWE_ID>_<vulnerability_class> of "
+        "the hunt's own config), a "
         "note_name, the note kind (hypothesis_refusal | implicit_test_primitive "
         "| freeform), and the body (plus optional evidence / provenance); "
         "update/delete on a missing note returns a denoted note_missing. read "

@@ -1083,8 +1083,11 @@ async def arun_orchestration(
         phase) writes the status="hypothesised" drafts into produced/. The
         `hunts_store` tool's write response carried the NEXT_RATIFY_HINT
         constant (G1/G3); the loop state HYPOTHESISED is the graph's own (the
-        wrapper sets it, G2). Fail-open: a raising/empty turn carries the pair
-        bare (a class-less draft) - the old gate-carry."""
+        wrapper sets it, G2). Fail-open (amended #186): a raising/empty turn
+        SKIPS the pair (counted `units_skipped`) instead of minting a
+        fully-empty draft - the actor-death fabrication is dead; a GENUINE
+        carried-bare direction (the model emitted it: rationale present, class
+        absent) still fans out to the carried-bare draft."""
         pair = state.get("current_pair")
         if pair is None:
             return {"trail": []}
@@ -1153,13 +1156,14 @@ async def arun_orchestration(
                         } for d in directions],
                         "prior_minted_keys": list(gate_input.prior_minted_keys),
                     })
-                except Exception as exc:  # noqa: BLE001 - fail-open: carry bare
-                    logger.warning("hypothesise turn failed for %s, carrying (%s)",
+                except Exception as exc:  # noqa: BLE001 - fail-open: skip the pair
+                    logger.warning("hypothesise turn failed for %s, skipping (%s)",
                                    key, exc)
-        if not directions:
-            directions = [
-                EnvisionedDirection(unit_id=pair.unit_id, fault_class=fault_class)
-            ]
+        # #186 anti-fabrication: an empty decision (a failed/None turn) NEVER
+        # mints a harness-fabricated fully-empty draft - the pair flows to the
+        # skip branch below (counted `units_skipped`). Only a direction the
+        # model genuinely EMITTED (carried, with a rationale) reaches the mint;
+        # its class-less degrade is the legit carried-bare draft (spec 3.5).
 
         # --- the hypothesise write (spec 3.3, the mint called at this phase) --
         carried = [d for d in directions if d.carried]

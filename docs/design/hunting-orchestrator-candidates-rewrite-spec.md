@@ -301,6 +301,14 @@ projection stays silent-and-counted; every tool seam degrades fail-open. The min
 fan-out - it is the model-driven hypothesise/ratify writes under harness state tracking, and the O9 envelope BUDGET
 stage is REMOVED (G7): budget and the hard stop are the runtime plane's and the pod's (D67-09).
 
+**Anti-fabrication (amended by #186, 2026-08-25).** A raising/empty hypothesise decision NEVER fabricates a
+fully-empty draft: the pair is SKIPPED and counted on the ledger (`units_skipped`), so an actor-runtime turn
+failure degrades to a skipped pair, never to a dead-weight draft in `produced/`. The genuine carried-bare (a
+direction the model emitted with a rationale but no elicited vulnerability class) is PRESERVED - it still fans out
+to the single carried-bare hypothesised draft (section 3.5). The underlying turn degradation is per-turn on the
+shared actor runtime: the retryable class (transport/timeout/5xx/429) is retried under a bounded escalating
+per-attempt budget, then the turn degrades to a no-decision reply and the actor survives for the next pair/pass.
+
 ## 6. User stories (amended)
 
 1. As a FaultSource consumer, I want the orchestrator to reason **once per fault over all its matched units**, so that

@@ -20,6 +20,18 @@ This module has two halves, both BUILT:
                        next turn on the SAME `thread_id` so checkpointed memory carries
                        across the agent's whole active lifetime. Ends on `STOP`, an
                        idle timeout, a turn cap, or task cancellation.
+                       **Per-turn exception isolation (#186)**: `_turn` is the single
+                       choke point every mailbox actor rides. A raising turn is
+                       CONTAINED - a retryable raise (transport/timeout/5xx/429) is
+                       retried under a bounded, escalating per-attempt budget, and on
+                       exhaustion (or a non-retryable raise) the turn DEGRADES: a
+                       no-decision reply wakes the parent (its fail-open fires
+                       per-turn) and the actor task survives for the next turn.
+                       `asyncio.CancelledError` is re-raised first - a task
+                       cancellation is a BaseException, never degraded, never
+                       retried. The degradation is delivered through the optional
+                       `on_turn_degraded` hook (the caller's `build_inbox_delivery`
+                       posts the None reply).
 
   BUILT - the DELIVERY of sub-agent updates into a parent's inbox via post-call hooks.
   A sub-agent run through the session seam with the middleware below notifies its
@@ -53,6 +65,7 @@ from typing import Any, Awaitable, Callable, Sequence
 
 from langchain_core.messages import BaseMessage
 
+from polymerhus.app.llm.providers import attempt_timeouts
 from polymerhus.app.llm.session import SessionTurn, arun_session_turn
 
 logger = logging.getLogger(__name__)
@@ -152,6 +165,39 @@ async def _coerce(value):
     return await value if inspect.isawaitable(value) else value
 
 
+def _is_retryable(exc: BaseException) -> bool:
+    """Classify a turn raise as retryable: the transport/timeout/5xx/429 class
+    (#186). Lazy-imports the provider SDKs so this module's import stays I/O- and
+    env-var-free (CODING_STANDARD section 6); a raise that matches none of the
+    known classes is treated as non-retryable (a genuine application error
+    degrades immediately rather than burning the escalating budget)."""
+    if isinstance(exc, asyncio.TimeoutError):  # builtin: a wait_for-wrapped model call
+        return True
+    try:
+        import httpx  # noqa: PLC0415
+
+        if isinstance(exc, (httpx.TimeoutException, httpx.TransportError)):
+            return True
+    except Exception:  # noqa: BLE001 - httpx unavailable: fall through to openai
+        pass
+    try:
+        import openai  # noqa: PLC0415
+
+        if isinstance(exc, openai.APITimeoutError):
+            return True
+        if isinstance(exc, openai.APIConnectionError):
+            return True
+        if isinstance(exc, openai.RateLimitError):  # 429
+            return True
+        if isinstance(exc, openai.APIStatusError):
+            status = getattr(exc, "status_code", None)
+            if status is not None and status >= 500:  # 5xx (500/502/503/504)
+                return True
+    except Exception:  # noqa: BLE001 - openai unavailable: nothing matches
+        pass
+    return False
+
+
 async def run_session_agent(
     role_id: str,
     thread_id: str,
@@ -169,6 +215,7 @@ async def run_session_agent(
     store=None,
     model_factory=None,
     observe: bool = True,
+    on_turn_degraded: Callable[[str, Exception], Awaitable[None] | None] | None = None,
 ) -> AgentRunResult:
     """Run an async-native agent that stays ACTIVE after its turn, listening on `inbox`.
 
@@ -183,7 +230,12 @@ async def run_session_agent(
 
     Stops on: `STOP` from the handler, `idle_timeout` seconds with an empty inbox,
     `max_turns` reached, or task cancellation (propagated - the natural way to retire an
-    actor). The turn kwargs mirror `arun_session_turn` one-for-one."""
+    actor). The turn kwargs mirror `arun_session_turn` one-for-one.
+
+    `on_turn_degraded(thread_id, exc)` (default None) is the #186 degradation hook: a
+    turn that exhausts its retry budget (or raises non-retryably) does NOT kill the
+    actor - the hook is called so the caller can wake its parent with a no-decision
+    (`None`) reply, and the loop keeps listening for the next message."""
     inbox = inbox or AgentInbox()
     result = AgentRunResult(thread_id=thread_id)
 
@@ -193,10 +245,52 @@ async def run_session_agent(
         model_factory=model_factory, observe=observe,
     )
 
-    async def _turn(messages: Sequence[BaseMessage]) -> SessionTurn:
-        turn = await arun_session_turn(role_id, thread_id, list(messages), **turn_kwargs)
-        result.turns.append(turn)
-        return turn
+    async def _run_turn_attempt(messages: Sequence[BaseMessage], *,
+                                read_timeout_s: float | None = None) -> SessionTurn:
+        return await arun_session_turn(
+            role_id, thread_id, list(messages), read_timeout_s=read_timeout_s,
+            **turn_kwargs,
+        )
+
+    async def _turn(messages: Sequence[BaseMessage]) -> SessionTurn | None:
+        """Take ONE turn on the thread, isolated against a raising LLM (#186):
+        retry the retryable class (transport/timeout/5xx/429) under the bounded
+        escalating per-attempt budget, then DEGRADE - wake the parent with a
+        no-decision reply via `on_turn_degraded` - so the actor task survives
+        for the next turn. A `CancelledError` is re-raised first (a task
+        cancellation is the natural retirement, never a degrade). The retry
+        re-invokes `arun_session_turn` with the SAME `new_messages`; langgraph
+        commits only successful super-steps and `add_messages` dedups by message
+        id, so the committed trail stays idempotent across the attempts."""
+        try:
+            turn = await _run_turn_attempt(messages)
+            result.turns.append(turn)
+            return turn
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:  # noqa: BLE001 - the isolation boundary
+            last_exc = exc
+            if _is_retryable(exc):
+                for budget in attempt_timeouts()[1:]:
+                    try:
+                        turn = await _run_turn_attempt(messages, read_timeout_s=budget)
+                        result.turns.append(turn)
+                        return turn
+                    except asyncio.CancelledError:
+                        raise
+                    except Exception as rexc:  # noqa: BLE001 - classify, then continue
+                        last_exc = rexc
+                        if not _is_retryable(rexc):
+                            break
+            # retry budget exhausted (or a non-retryable raise): degrade. The
+            # turn never happened - it is NOT appended to `result.turns` - and
+            # the actor survives; the parent is woken so its fail-open fires
+            # per-turn, never through a dead-task race.
+            logger.warning("actor turn degraded on %s/%s: %s (the actor survives)",
+                           role_id, thread_id, last_exc)
+            if on_turn_degraded is not None:
+                await _coerce(on_turn_degraded(thread_id, last_exc))
+            return None
 
     last_turn: SessionTurn | None = None
     if initial_messages:
@@ -334,3 +428,33 @@ def build_inbox_middleware(
             return None
 
     return InboxDispatchMiddleware()
+
+
+def build_inbox_delivery(
+    inbox: AgentInbox | None,
+    *,
+    kind: str = "subagent_update",
+    source: str | None = None,
+    on: str = "after_agent",
+):
+    """Build the parent-reply delivery PAIR `(middleware, degraded_hook)` (#186).
+
+    `middleware` is the existing post-call delivery (`build_inbox_middleware`) -
+    it posts the turn's REAL result at the hook point. `degraded_hook` is the
+    fail-open sibling wired as `run_session_agent`'s `on_turn_degraded`: it posts
+    a NO-DECISION (`content=None`) reply when a turn exhausts its retry budget,
+    so the parent's fail-open fires PER TURN and the actor task survives for the
+    next turn - exactly one reply per turn, the real result OR the None. Returns
+    `(None, None)` when handed no inbox, so a call site stays inert until a parent
+    is wired."""
+    if inbox is None:
+        return None, None
+    middleware = build_inbox_middleware(inbox, kind=kind, source=source, on=on)
+    hook = inbox_post_hook(inbox, kind=kind, source=source)
+
+    def degraded_hook(thread_id: str | None, exc: Exception) -> None:
+        logger.warning("actor turn degraded on %s (%s); posting a no-decision reply",
+                       thread_id, exc)
+        hook(_turn_result_payload({}, thread_id))
+
+    return middleware, degraded_hook

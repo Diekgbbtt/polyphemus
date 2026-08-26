@@ -76,6 +76,17 @@ def _default_model_factory(role_id: str) -> Any:
     return chat_model_for(role_id)
 
 
+def _budgeted_model_factory(role_id: str, *, read_timeout_s: float) -> Any:
+    """Build the role's chat model for ONE attempt of an escalating budget
+    (#186): a FRESH client per attempt bounded by `read_timeout_s` with the
+    client's own retry disabled (`max_retries=0`), so the turn-level retry that
+    invokes it is the sole retry layer - mirroring the #73 one-shot wrapper's
+    fresh-client-per-attempt discipline (`invoke_role.call`)."""
+    from polymerhus.app.llm.roles import chat_model_for
+
+    return chat_model_for(role_id, read_timeout=read_timeout_s, max_retries=0)
+
+
 def _observe_config(config: dict, role_id: str, thread_id: str) -> dict:
     """Attach Langfuse callbacks + honest per-role_id/thread attribution (the #18
     recipe, mirrored from `analysis/supervisor._observability_config`). Empty
@@ -148,16 +159,25 @@ def _build_agent(
     store,
     checkpointer,
     model_factory: ModelFactory | None,
+    read_timeout_s: float | None = None,
 ):
     """Build the `create_agent` tool-calling agent shared by the sync/async turns.
 
     `store` (#85 long-term memory) and `middleware` (#95 compaction + the
     inference-method-config workstream) are passed straight through - inert when
-    empty. This is the ONE place tool_calling is wired, so the two turn entry
-    points can never drift."""
+    empty. An injected `model_factory` wins verbatim (tests inject a fake);
+    absent one, `read_timeout_s` builds the model through the budget-aware
+    factory (the escalating per-attempt budget, #186) and the default factory
+    is the fallback. This is the ONE place tool_calling is wired, so the two
+    turn entry points can never drift."""
     from langchain.agents import create_agent
 
-    model = (model_factory or _default_model_factory)(role_id)
+    if model_factory is not None:
+        model = model_factory(role_id)
+    elif read_timeout_s is not None:
+        model = _budgeted_model_factory(role_id, read_timeout_s=read_timeout_s)
+    else:
+        model = _default_model_factory(role_id)
     kwargs: dict = {"tools": list(tools), "checkpointer": checkpointer}
     if system_prompt is not None:
         kwargs["system_prompt"] = system_prompt
@@ -294,6 +314,7 @@ def run_session_turn(
     store=None,
     model_factory: ModelFactory | None = None,
     observe: bool = True,
+    read_timeout_s: float | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
 
@@ -301,11 +322,13 @@ def run_session_turn(
     the thread's prior messages; `new_messages` are appended; the agent runs its
     model<->tool loop (`tools` bound via tool_calling) to a final answer, which is
     persisted back so the next turn resumes from here. `response_format` returns a
-    parsed structured object as `content`."""
+    parsed structured object as `content`. `read_timeout_s` (default None) bounds
+    the turn's model calls per-attempt - the escalating-budget seam #186 rides."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
-        middleware=middleware, store=store, checkpointer=checkpointer, model_factory=model_factory,
+        middleware=middleware, store=store, checkpointer=checkpointer,
+        model_factory=model_factory, read_timeout_s=read_timeout_s,
     )
     config = _turn_config(role_id, thread_id, observe)
     if observe and checkpointer is not None:
@@ -331,16 +354,20 @@ async def arun_session_turn(
     store=None,
     model_factory: ModelFactory | None = None,
     observe: bool = True,
+    read_timeout_s: float | None = None,
 ) -> SessionTurn:
     """Async-native turn (`ainvoke`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
     and monitor child sessions without blocking its own loop. Identical contract to
     `run_session_turn`; pass an async checkpointer (`AsyncPostgresSaver`, already
-    used by the analysis supervisor) in production."""
+    used by the analysis supervisor) in production. `read_timeout_s` (default None)
+    bounds the turn's model calls per-attempt - the escalating-budget seam #186
+    rides: the actor runtime re-invokes this with the next, larger budget."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
-        middleware=middleware, store=store, checkpointer=checkpointer, model_factory=model_factory,
+        middleware=middleware, store=store, checkpointer=checkpointer,
+        model_factory=model_factory, read_timeout_s=read_timeout_s,
     )
     config = _turn_config(role_id, thread_id, observe)
     if observe and checkpointer is not None:

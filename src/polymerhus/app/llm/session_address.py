@@ -23,6 +23,11 @@ The one string the LangGraph checkpointer requires (`configurable.thread_id`) is
 by `.thread_id`; every caller builds an address and reads that, so the escape/hash logic
 is single-sourced in `_compose` and never hand-rolled.
 
+The runtime manager's registry lifecycles key on these same ids (ADR #169 Q12/Q14:
+session id = coroutine id = registry run name). The runtime's per-session lifecycle
+verbs (hold / resume / cancel by id) therefore address the exact session whose memory
+the address describes - one identity, two registries.
+
 This module imports nothing heavy and performs no I/O at import (CODING_STANDARD 6).
 """
 from __future__ import annotations
@@ -124,8 +129,10 @@ class HuntSession:
     """A hunt's stateful agent session. One thread per hunt (the hunter's author + judge
     + back-edge re-entries share it, so the judge resumes the author's reasoning), keyed
     by `hunt_id` so concurrent hunts never collide. The test-executor pod (#84) derives
-    its role threads from this same address: `spec` = the canonical spec hash, with
-    `role_id` = `pod_runner` | `pod_triager` (D84-2)."""
+    its role threads from this same address: `spec` = the semantic spec id
+    `<fault>_<strategy>` (the #164 hunter's `SpecItem.spec_id`, ADR #169 Q13 - NOT a
+    content hash, and the SAME value the pod-memory keys on), with `role_id` =
+    `pod_runner` | `pod_triager` (D84-2)."""
 
     run_id: str
     hunt_id: str

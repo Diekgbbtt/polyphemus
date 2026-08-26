@@ -190,7 +190,7 @@ class ReconOrchestratorActor:
         from polymerhus.app.llm.actor import (  # noqa: PLC0415
             AgentInbox,
             AgentMessage,
-            build_inbox_middleware,
+            build_inbox_delivery,
             run_session_agent,
         )
         from polymerhus.app.llm.session_address import OrchestratorSession  # noqa: PLC0415
@@ -203,7 +203,11 @@ class ReconOrchestratorActor:
         self._address = self._address or OrchestratorSession(run_id=self._run_id)
         replies = AgentInbox()
         self._replies = replies
-        middleware = build_inbox_middleware(
+        # The delivery pair (#186): the middleware posts the phase's REAL
+        # `RoutingDecision`; the degraded_hook posts a no-decision reply when the
+        # turn exhausts its retry budget, so the parent's fail-open fires per-turn
+        # and the actor survives for the run's next phase.
+        middleware, degraded_hook = build_inbox_delivery(
             replies, kind=_REPLY_KIND, source=_REPLY_SOURCE
         )
         if self._compaction is None:
@@ -222,6 +226,7 @@ class ReconOrchestratorActor:
                 on_message=self._on_message,
                 response_format=ToolStrategy(RoutingDecision),
                 middleware=middleware_list,
+                on_turn_degraded=degraded_hook,
                 system_prompt=ORCHESTRATOR_STEERING,
                 model_factory=self._model_factory,
                 observe=self._observe,

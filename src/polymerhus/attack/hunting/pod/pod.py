@@ -38,13 +38,14 @@ def _default_trace_fn(run_id: str):
     return get_langfuse_callbacks()
 
 
-def _pod_session_address(run_id: str, hunt_id: str, spec: dict, role_id: str):
-    """The typed session address of one pod agent (#94, D84-2): rehomed to the
-    session seam (`pod/llm.py::pod_session_address`), which owns the derivation;
-    this thin alias keeps the contract tier's import target stable."""
+def _pod_session_address(run_id: str, hunt_id: str, spec_id: str, role_id: str):
+    """The typed session address of one pod agent (#94, D84-2/Q13): rehomed to
+    the session seam (`pod/llm.py::pod_session_address`), which owns the
+    derivation on the semantic `<fault>_<strategy>` spec id; this thin alias
+    keeps the contract tier's import target stable."""
     from polymerhus.attack.hunting.pod.llm import pod_session_address
 
-    return pod_session_address(run_id, hunt_id, spec, role_id=role_id)
+    return pod_session_address(run_id, hunt_id, spec_id, role_id=role_id)
 
 
 async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,

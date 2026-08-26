@@ -1,0 +1,67 @@
+# Hunting-wiring assertions tier - distinct sibling agent container (agent-hw).
+#
+# REUSES the existing `polymerhus-agent:latest` image (never rebuilt here) and
+# brings up a SEPARATE agent container to drive the hunting-wiring
+# assertion catalogue (`docs/design/hunting-wiring-assertions.md`). Attached to
+# the existing `polymerhus_polymerhus-net` so it resolves neo4j/postgres/kali
+# by service DNS exactly as the real agent does, and published on 8082 so it
+# collides with neither the main agent (8080) nor the candidates-rewrite
+# sibling (8081).
+#
+# The container embeds the LiteLLM gateway as its FIRST ASGI process on the
+# internal port 4000 (gateway_entrypoint.py, ADR D1/D10) and boots the agent
+# ASGI on 8080 only after `/health/liveliness` answers. `LLM_GATEWAY_URL` is
+# set so the agent routes every LLM turn THROUGH that embedded gateway
+# (providers.gateway_base_url seam, ADR D3/D5) instead of direct per-provider
+# mode - the integration tier exercises the real gateway hop, real model
+# registration (T2 sync), and real LLM turns, never stubs.
+#
+# The gateway needs its OWN database on the shared postgres INSTANCE
+# (`polymerhus_gateway`, created by db/postgres/init.sql) - litellm's prisma
+# machinery owns its target DB (P3005 refusal on a shared/non-empty schema).
+# env_file `.env` supplies the real model keys / Langfuse creds; required
+# false so a clean tree still boots with the in-network defaults below
+# (missing keys fail loudly at the hunting module's bootstrap, never silently).
+#
+# Usage from this worktree:
+#   docker compose -f docker-compose.wiring.e2e.yml up -d agent-hw
+name: polymerhus-hunting-wiring-e2e
+
+services:
+  agent-hw:
+    image: polymerhus-agent:latest
+    container_name: polymerhus-hunting-wiring-e2e-agent-hw
+    # Same in-network defaults as the base compose `agent` service (layer
+    # `environment` wins over env_file), plus the LLM_GATEWAY_URL that routes
+    # the hunting LLM turns through the embedded gateway.
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+      PROJECT_ID: wiring-e2e
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus_gateway
+      LITELLM_MASTER_KEY: sk-polymerhus-dev-gateway
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      LLM_GATEWAY_URL: http://127.0.0.1:4000
+      LIGHTRAG_API_URL: http://lightrag:9621
+      LIGHTRAG_BASE_API_URL: http://lightrag:9621
+    env_file:
+      - path: .env
+        required: false
+    ports: ["8082:8080"]
+    volumes:
+      - ./src:/srv/src
+      - ./db:/srv/db
+      - ./skills:/srv/skills
+      - ./gateway:/srv/gateway
+      - ./data:/srv/data
+    networks:
+      polymerhus-net:
+        aliases: [agent-hw]
+
+networks:
+  polymerhus-net:
+    external: true
+    name: polymerhus_polymerhus-net
