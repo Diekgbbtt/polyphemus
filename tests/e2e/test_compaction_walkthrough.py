@@ -271,26 +271,31 @@ def _scripted_typing_model(summarise_state):
                     tool_calls=[{"name": "SummaryUpdate", "args": args,
                                  "id": "sum", "type": "tool_call"}]))])
             if "TASK - EXTRACT SYSTEMS" in joined:
-                return ChatResult(generations=[ChatGeneration(message=AIMessage(
-                    content="",
-                    tool_calls=[{"name": "L1DeltaBatch", "args": {"systems": [
-                        {"kind": "RESTApi", "props": {"description": "JSON REST paradigm the app exposes through."}},
-                        {"kind": "IdentificationSystem", "props": {"description": "Cookie/session identity raft."}},
-                        {"kind": "AuthenticationMechanism", "props": {"description": "Credential mint + validate."}},
-                        {"kind": "WebPresentation", "discriminator": "account::login",
-                         "props": {"pages": ["/rest/user/login", "/rest/user/register"]}},
-                    ]}, "id": "x1", "type": "tool_call"}]))])
+                # #99 negotiation: a no-tools structured session turn on the
+                # unknown profile resolves ProviderStrategy (json_schema), so the
+                # fake must return content-JSON, NOT tool_calls - the Provider
+                # strategy branch parses `output.content` and never looks at
+                # tool_calls (langchain create_agent `_handle_model_output`).
+                systems_json = json.dumps({"systems": [
+                    {"kind": "RESTApi", "props": {"description": "JSON REST paradigm the app exposes through."}},
+                    {"kind": "IdentificationSystem", "props": {"description": "Cookie/session identity raft."}},
+                    {"kind": "AuthenticationMechanism", "props": {"description": "Credential mint + validate."}},
+                    {"kind": "WebPresentation", "discriminator": "account::login",
+                     "props": {"pages": ["/rest/user/login", "/rest/user/register"]}},
+                ]})
+                return ChatResult(generations=[ChatGeneration(
+                    message=AIMessage(content=systems_json))])
             if "TASK - LINK SERVICES" in joined:
-                return ChatResult(generations=[ChatGeneration(message=AIMessage(
-                    content="",
-                    tool_calls=[{"name": "L1DeltaBatch", "args": {"system_edges": [
-                        {"service_slug": "account", "kind": "RESTApi", "rel": "EXPOSED_VIA"},
-                        {"service_slug": "account", "kind": "IdentificationSystem", "rel": "IDENTIFIED_BY"},
-                        {"service_slug": "account", "kind": "AuthenticationMechanism", "rel": "AUTHENTICATED_BY"},
-                        {"service_slug": "checkout", "kind": "RESTApi", "rel": "EXPOSED_VIA"},
-                        {"service_slug": "account", "kind": "WebPresentation", "discriminator": "account::login",
-                         "rel": "EXPOSED_VIA"},
-                    ]}, "id": "x2", "type": "tool_call"}]))])
+                edges_json = json.dumps({"system_edges": [
+                    {"service_slug": "account", "kind": "RESTApi", "rel": "EXPOSED_VIA"},
+                    {"service_slug": "account", "kind": "IdentificationSystem", "rel": "IDENTIFIED_BY"},
+                    {"service_slug": "account", "kind": "AuthenticationMechanism", "rel": "AUTHENTICATED_BY"},
+                    {"service_slug": "checkout", "kind": "RESTApi", "rel": "EXPOSED_VIA"},
+                    {"service_slug": "account", "kind": "WebPresentation", "discriminator": "account::login",
+                     "rel": "EXPOSED_VIA"},
+                ]})
+                return ChatResult(generations=[ChatGeneration(
+                    message=AIMessage(content=edges_json))])
             i = summarise_state.get("turn", 0)
             summarise_state["turn"] = i + 1
             usage = usage_plan[i % len(usage_plan)]
