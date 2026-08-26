@@ -234,7 +234,17 @@ def seed_test_spec(project_id: str, *, fault_key: str, fault_keyword: str,
                    **overrides) -> str:
     """Write ONE test-implementation spec through
     `HunterMemoryStore.write_spec` (the real store API) into the produced
-    family; returns the spec file stem. `fault_key` is the 3-part config key."""
+    family; returns the spec file stem. `fault_key` is the 3-part config key.
+
+    The seeded body MUST pass the pod's REAL INIT gate
+    (`verification.validate_spec`): a `specified` spec with an empty typed base
+    is rejected by the pod at INIT with ZERO tool calls and settles within
+    seconds - no live pod session is ever observable. The default carries a
+    minimal VALID testable surface (a target identity, one verification symptom,
+    a testing pattern), so a dispatched pod passes INIT and runs genuine ReAct
+    turns, keeping a REAL registered session live across the pause/resume/stop
+    observation windows (the per-session verbs act on a real in-flight session,
+    never a fabricated one)."""
     from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
     spec = {
         "spec_id": f"{fault_keyword}_{strategy_keyword}",
@@ -242,6 +252,11 @@ def seed_test_spec(project_id: str, *, fault_key: str, fault_keyword: str,
         "fault": {"fault_id": "f1", "mechanism": "m", "supports": [],
                   "conflicts": [], "test": "t"},
         "strategy": strategy_keyword, "spec_ref": "sr", "experiment_ref": "",
+        "target_identity": "Service:slug:a",
+        "verification_symptoms": ["the target answers the crafted probe"],
+        "testing_pattern": "baseline-refinement",
+        "assumptions": [], "payload_vector_space": {},
+        "rationale": "seeded", "interpretation_guidance": "seeded",
     }
     spec.update(overrides)
     store = HunterMemoryStore()
