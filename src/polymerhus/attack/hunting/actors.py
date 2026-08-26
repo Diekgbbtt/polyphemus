@@ -590,7 +590,13 @@ class HuntOrchestratorActor(_TurnActor):
                 AgentMessage(kind=_GATE_KIND, payload={"input": gate_input})
             )
             from polymerhus.attack.hunting.hunt_orchestrator import GateDecision  # noqa: PLC0415
-            return content if isinstance(content, GateDecision) else None
+            if not isinstance(content, GateDecision):
+                logger.warning(
+                    "hunt-orchestrator hypothesise turn returned a non-GateDecision "
+                    "member (%s); treating it as no-decision",
+                    type(content).__name__ if content is not None else "None")
+                return None
+            return content
         except Exception:  # noqa: BLE001
             logger.warning("hunt-orchestrator actor hypothesise turn failed; carrying the pair bare",
                            exc_info=True)
@@ -606,7 +612,13 @@ class HuntOrchestratorActor(_TurnActor):
                 AgentMessage(kind=_RATIFY_KIND, payload={"input": phase_input})
             )
             from polymerhus.attack.hunting.hunt_orchestrator import RatifyDecision  # noqa: PLC0415
-            return content if isinstance(content, RatifyDecision) else None
+            if not isinstance(content, RatifyDecision):
+                logger.warning(
+                    "hunt-orchestrator ratify turn returned a non-RatifyDecision "
+                    "member (%s); treating it as no-decision",
+                    type(content).__name__ if content is not None else "None")
+                return None
+            return content
         except Exception:  # noqa: BLE001
             logger.warning("hunt-orchestrator actor ratify turn failed",
                            exc_info=True)
@@ -621,7 +633,13 @@ class HuntOrchestratorActor(_TurnActor):
                 AgentMessage(kind=_NOTE_KIND, payload={"input": phase_input})
             )
             from polymerhus.attack.hunting.hunt_orchestrator import NoteDecision  # noqa: PLC0415
-            return content if isinstance(content, NoteDecision) else None
+            if not isinstance(content, NoteDecision):
+                logger.warning(
+                    "hunt-orchestrator note turn returned a non-NoteDecision "
+                    "member (%s); treating it as no-decision",
+                    type(content).__name__ if content is not None else "None")
+                return None
+            return content
         except Exception:  # noqa: BLE001
             logger.warning("hunt-orchestrator actor note turn failed",
                            exc_info=True)

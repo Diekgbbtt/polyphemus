@@ -98,7 +98,9 @@ TOOL_SURFACE = frozenset({
 # the next pair's frame (the pair end, G1).
 NEXT_RATIFY_HINT = (
     "Ratification in progress: reason on proximity and too-near same-class "
-    "merging, then run the capabilities / assumptions / technique-primitives "
+    "merging, then run the adversarial_capabilities (the test's preconditions "
+    "- the attacker's existing capabilities the test needs, never "
+    "post-exploitation capabilities) / assumptions / technique-primitives "
     "analysis. End ratification with a hunts_store write carrying "
     "status='ratified'."
 )
