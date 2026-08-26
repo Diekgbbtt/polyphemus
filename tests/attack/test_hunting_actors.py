@@ -33,7 +33,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     PhaseTurnInput,
     Witness,
 )
-from polymerhus.lightrag.tool import LightRagQueryTool
+from lightrag.tool import LightRagQueryTool
 from polymerhus.recon.control.targeted import TargetedReconResult
 
 

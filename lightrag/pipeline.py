@@ -13,15 +13,15 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from polymerhus.lightrag.client import LightRAGHttpClient
-from polymerhus.lightrag.context import (
+from lightrag.client import LightRAGHttpClient
+from lightrag.context import (
     RetrievedContextV1,
     build_reference_registry,
     from_raw_response,
     provenance_completeness,
     serialize_context,
 )
-from polymerhus.lightrag.generation import (
+from lightrag.generation import (
     AnswerBundleV1,
     BundleValidationResult,
     DeepSeekClient,
@@ -29,7 +29,7 @@ from polymerhus.lightrag.generation import (
     extract_json_object,
     validate_bundle,
 )
-from polymerhus.lightrag.query_spec import (
+from lightrag.query_spec import (
     QuerySpecV1,
     RetrievalConfigV1,
     build_retrieval_payload,

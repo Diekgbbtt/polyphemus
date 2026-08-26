@@ -8,7 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable, Iterable, Sequence
 
-from polymerhus.lightrag.preprocess import DEFAULT_WSTG_OUTPUT_DIR, preprocess_wstg_for_lightrag
+from lightrag.preprocess import DEFAULT_WSTG_OUTPUT_DIR, preprocess_wstg_for_lightrag
 
 
 DEFAULT_WSTG_RAW_DIR = Path("data/lightrag/inputs/wstg_raw")

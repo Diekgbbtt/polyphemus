@@ -8,13 +8,13 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Iterable, Mapping, Sequence
 
-from polymerhus.lightrag.client import LightRAGHttpClient
-from polymerhus.lightrag.graph_audit import (
+from lightrag.client import LightRAGHttpClient
+from lightrag.graph_audit import (
     audit_lightrag_graph,
     normalize_lightrag_entity_types,
     parse_lightrag_graphml,
 )
-from polymerhus.lightrag.experiment_tracker import DEFAULT_HISTORY_DB, ExperimentTracker
+from lightrag.experiment_tracker import DEFAULT_HISTORY_DB, ExperimentTracker
 
 DEFAULT_GRAPHML_PATH = Path("data/lightrag/rag_storage/graph_chunk_entity_relation.graphml")
 DEFAULT_WSTG_INPUT_DIR = Path("data/lightrag/inputs/wstg_preprocessed")

@@ -14,9 +14,9 @@ from typing import Any, Literal
 import httpx
 from pydantic import BaseModel, ConfigDict, Field, field_validator
 
-from polymerhus.lightrag.context import ReferenceRegistryV1, normalize_citations
-from polymerhus.lightrag.ontology import ENTITY_TYPES, validate_entity_type
-from polymerhus.lightrag.query_spec import QuerySpecV1, build_q3
+from lightrag.context import ReferenceRegistryV1, normalize_citations
+from lightrag.ontology import ENTITY_TYPES, validate_entity_type
+from lightrag.query_spec import QuerySpecV1, build_q3
 
 ANSWER_SCHEMA_VERSION = "lightrag-answer/v2"
 

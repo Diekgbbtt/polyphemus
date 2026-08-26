@@ -1,8 +1,8 @@
 import json
 from types import SimpleNamespace
 
-import polymerhus.lightrag.generation as gen
-from polymerhus.lightrag.generation import DeepSeekClient
+import lightrag.generation as gen
+from lightrag.generation import DeepSeekClient
 
 
 class _FakeStreamResponse:

@@ -1,4 +1,4 @@
-from polymerhus.lightrag.query_spec import (
+from lightrag.query_spec import (
     QuerySpecV1,
     R_A,
     R_B,

@@ -2,7 +2,7 @@
 
 import importlib
 
-from polymerhus.lightrag.types import (
+from lightrag.types import (
     AuthenticationState,
     CandidateApplicability,
     CandidateRelevance,
@@ -97,15 +97,15 @@ __all__ = [
 
 def __getattr__(name: str):
     if name == "LightRAGHttpClient":
-        from polymerhus.lightrag.client import LightRAGHttpClient
+        from lightrag.client import LightRAGHttpClient
 
         return LightRAGHttpClient
     if name == "RoutedMethodologyRetriever":
-        from polymerhus.lightrag.retriever import RoutedMethodologyRetriever
+        from lightrag.retriever import RoutedMethodologyRetriever
 
         return RoutedMethodologyRetriever
     if name == "format_methodology_context":
-        from polymerhus.lightrag.formatter import format_methodology_context
+        from lightrag.formatter import format_methodology_context
 
         return format_methodology_context
     if name in {
@@ -119,15 +119,15 @@ def __getattr__(name: str):
         "preprocess_wstg_for_lightrag",
         "qa_wstg_preprocessed_corpus",
     }:
-        preprocess = importlib.import_module("polymerhus.lightrag.preprocess")
+        preprocess = importlib.import_module("lightrag.preprocess")
 
         return getattr(preprocess, name)
     if name == "fetch_and_preprocess_wstg":
-        wstg_fetch = importlib.import_module("polymerhus.lightrag.wstg_fetch")
+        wstg_fetch = importlib.import_module("lightrag.wstg_fetch")
 
         return wstg_fetch.fetch_and_preprocess_wstg
     if name == "fetch_and_preprocess_writeups":
-        writeup_fetch = importlib.import_module("polymerhus.lightrag.writeup_fetch")
+        writeup_fetch = importlib.import_module("lightrag.writeup_fetch")
 
         return writeup_fetch.fetch_and_preprocess_writeups
     if name in {
@@ -141,7 +141,7 @@ def __getattr__(name: str):
         "normalize_lightrag_entity_types",
         "plan_entity_type_updates",
     }:
-        graph_audit = importlib.import_module("polymerhus.lightrag.graph_audit")
+        graph_audit = importlib.import_module("lightrag.graph_audit")
 
         return getattr(graph_audit, name)
     if name in {
@@ -163,7 +163,7 @@ def __getattr__(name: str):
         "wstg_required_maps_for_files",
         "wstg_staged_batches",
     }:
-        smoke = importlib.import_module("polymerhus.lightrag.smoke")
+        smoke = importlib.import_module("lightrag.smoke")
 
         return getattr(smoke, name)
     raise AttributeError(f"module {__name__!r} has no attribute {name!r}")

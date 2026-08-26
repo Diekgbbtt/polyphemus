@@ -11,8 +11,8 @@ from typing import Any
 
 from pydantic import BaseModel, Field
 
-from polymerhus.lightrag.generation import AnswerBundleV1
-from polymerhus.lightrag.query_spec import QuerySpecV1
+from lightrag.generation import AnswerBundleV1
+from lightrag.query_spec import QuerySpecV1
 
 _NEGATORS = (
     "no ",

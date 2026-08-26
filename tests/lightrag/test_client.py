@@ -1,6 +1,6 @@
 import httpx
 
-from polymerhus.lightrag.client import LightRAGHttpClient
+from lightrag.client import LightRAGHttpClient
 
 
 def _response(method: str, url: str, payload: dict) -> httpx.Response:
@@ -86,7 +86,7 @@ def test_build_lightrag_clients_uses_distinct_base_and_writeup_urls(monkeypatch)
     import importlib
 
     import polymerhus.app.config as config_module
-    import polymerhus.lightrag.client as client_module
+    import lightrag.client as client_module
 
     with monkeypatch.context() as m:
         m.setenv("LIGHTRAG_BASE_API_URL", "http://base:9621")

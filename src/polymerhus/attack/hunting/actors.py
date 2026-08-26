@@ -773,7 +773,7 @@ class HuntingHunterActor(_TurnActor):
 def _lightrag_author_tools() -> list:
     """Build the optional LightRAG query tool list for the author lane (lazy)."""
     from polymerhus.app.config import config
-    from polymerhus.lightrag.tool import build_lightrag_tool
+    from lightrag.tool import build_lightrag_tool
 
     if not config.HUNTING_LIGHTRAG_TOOL:
         return []

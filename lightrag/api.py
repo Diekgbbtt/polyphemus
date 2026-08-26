@@ -10,12 +10,12 @@ from __future__ import annotations
 
 from fastapi import APIRouter, HTTPException
 
-from polymerhus.lightrag.pipeline import (
+from lightrag.pipeline import (
     MockMode,
     QueryPipelineResultV1,
     run_query_pipeline,
 )
-from polymerhus.lightrag.query_spec import QuerySpecV1, R_A, R_B
+from lightrag.query_spec import QuerySpecV1, R_A, R_B
 
 router = APIRouter(prefix="/lightrag", tags=["lightrag"])
 

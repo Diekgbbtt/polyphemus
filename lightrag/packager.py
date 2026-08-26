@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any
 
-from polymerhus.lightrag.types import KnowledgeQuery, MethodologyBundle
+from lightrag.types import KnowledgeQuery, MethodologyBundle
 
 _NO_EVIDENCE_GAP = "No supported methodology evidence was retrieved."
 

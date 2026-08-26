@@ -67,7 +67,7 @@ def _fake_lightrag_tool(body: str):
     (the recording lives on `KbQueryTool`). Uses the real `QuerySpecV1`
     args_schema so `KbQueryTool.invoke` validates and forwards kwargs."""
     from langchain_core.tools import BaseTool as _BaseTool
-    from polymerhus.lightrag.query_spec import QuerySpecV1
+    from lightrag.query_spec import QuerySpecV1
 
     class _Fake(_BaseTool):
         name: str = "query_lightrag"
@@ -169,7 +169,7 @@ def test_kb_query_tool_records_degraded_bundle_on_raising_lightrag(tmp_path):
     degraded bundle - the empty record still lands in the log, and the
     recording never raises into the turn."""
     from langchain_core.tools import BaseTool as _BaseTool
-    from polymerhus.lightrag.query_spec import QuerySpecV1
+    from lightrag.query_spec import QuerySpecV1
 
     class _Boom(_BaseTool):
         name: str = "query_lightrag"
@@ -207,7 +207,7 @@ def test_kb_query_tool_storeless_never_records_and_never_raises():
 
 def test_kb_query_tool_async_path_records_same_shape(tmp_path):
     from langchain_core.tools import BaseTool as _BaseTool
-    from polymerhus.lightrag.query_spec import QuerySpecV1
+    from lightrag.query_spec import QuerySpecV1
 
     class _AsyncFake(_BaseTool):
         name: str = "query_lightrag"

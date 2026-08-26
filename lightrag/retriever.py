@@ -2,9 +2,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from polymerhus.lightrag.client import build_lightrag_clients
-from polymerhus.lightrag.formatter import format_methodology_context
-from polymerhus.lightrag.types import KnowledgeQuery, MethodologyBundle, SourceTier
+from lightrag.client import build_lightrag_clients
+from lightrag.formatter import format_methodology_context
+from lightrag.types import KnowledgeQuery, MethodologyBundle, SourceTier
 
 
 OVERLAY_CONCEPT_TRIGGERS: dict[str, tuple[str, ...]] = {

@@ -1,8 +1,8 @@
 import asyncio
 import json
 
-from polymerhus.lightrag.query_spec import QuerySpecV1
-from polymerhus.lightrag.tool import LightRagQueryTool
+from lightrag.query_spec import QuerySpecV1
+from lightrag.tool import LightRagQueryTool
 
 
 class _FakeClient:

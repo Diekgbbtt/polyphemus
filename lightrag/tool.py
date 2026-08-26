@@ -17,17 +17,17 @@ from typing import Any, Iterator
 
 from langchain_core.tools import BaseTool
 
-from polymerhus.lightrag.context import (
+from lightrag.context import (
     build_reference_registry,
     from_raw_response,
     serialize_context,
 )
-from polymerhus.lightrag.generation import (
+from lightrag.generation import (
     AnswerBundleV1,
     extract_json_object,
     validate_bundle,
 )
-from polymerhus.lightrag.query_spec import QuerySpecV1, RetrievalConfigV1, R_A
+from lightrag.query_spec import QuerySpecV1, RetrievalConfigV1, R_A
 
 
 class LightRagQueryTool(BaseTool):
@@ -46,8 +46,8 @@ class LightRagQueryTool(BaseTool):
     retrieval_config: RetrievalConfigV1 = R_A
 
     def _build_prompt(self, spec: QuerySpecV1, raw: dict) -> tuple[str, Any]:
-        from polymerhus.lightrag.generation import build_generation_prompt
-        from polymerhus.lightrag.query_spec import build_retrieval_payload
+        from lightrag.generation import build_generation_prompt
+        from lightrag.query_spec import build_retrieval_payload
 
         payload = build_retrieval_payload(spec, self.retrieval_config)
         context = from_raw_response(raw)
@@ -64,7 +64,7 @@ class LightRagQueryTool(BaseTool):
         result = validate_bundle(payload_obj, spec=spec, registry=registry)
         if result.is_valid and result.bundle is not None:
             return result.bundle, True
-        from polymerhus.lightrag.pipeline import _deterministic_fallback
+        from lightrag.pipeline import _deterministic_fallback
 
         return _deterministic_fallback(spec, result.errors), False
 
@@ -86,7 +86,7 @@ class LightRagQueryTool(BaseTool):
                 yield event
             bundle, accepted = self._validate_text(spec, registry, "".join(collected))
         except Exception as exc:  # noqa: BLE001 - fail-open: the author lane keeps going
-            from polymerhus.lightrag.pipeline import _deterministic_fallback  # noqa: PLC0415
+            from lightrag.pipeline import _deterministic_fallback  # noqa: PLC0415
             bundle = _deterministic_fallback(
                 spec, [f"tool_failed: {type(exc).__name__}"]
             )
@@ -107,7 +107,7 @@ class LightRagQueryTool(BaseTool):
 
 
 def _q3(spec: QuerySpecV1) -> str:
-    from polymerhus.lightrag.query_spec import build_q3
+    from lightrag.query_spec import build_q3
 
     return build_q3(spec)
 
@@ -123,8 +123,8 @@ def build_lightrag_tool(
 ) -> LightRagQueryTool:
     """Construct the production tool from app config (lazy, no I/O here)."""
     from polymerhus.app.config import config
-    from polymerhus.lightrag.client import LightRAGHttpClient
-    from polymerhus.lightrag.generation import DeepSeekClient
+    from lightrag.client import LightRAGHttpClient
+    from lightrag.generation import DeepSeekClient
 
     client = LightRAGHttpClient(
         base_url=config.LIGHTRAG_BASE_API_URL,

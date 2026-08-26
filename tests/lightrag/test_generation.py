@@ -1,11 +1,11 @@
-from polymerhus.lightrag.context import build_reference_registry, from_raw_response
-from polymerhus.lightrag.generation import (
+from lightrag.context import build_reference_registry, from_raw_response
+from lightrag.generation import (
     AnswerBundleV1,
     build_generation_prompt,
     extract_json_object,
     validate_bundle,
 )
-from polymerhus.lightrag.query_spec import QuerySpecV1
+from lightrag.query_spec import QuerySpecV1
 
 from .test_context import RAW
 

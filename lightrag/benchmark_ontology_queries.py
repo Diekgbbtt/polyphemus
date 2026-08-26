@@ -7,11 +7,11 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from polymerhus.lightrag.client import LightRAGHttpClient
-from polymerhus.lightrag.ontology import ENTITY_TYPES
-from polymerhus.lightrag.packager import package_methodology
-from polymerhus.lightrag.retriever import RoutedMethodologyRetriever
-from polymerhus.lightrag.types import FaultContext, KnowledgeQuery, RetrievalOptions
+from lightrag.client import LightRAGHttpClient
+from lightrag.ontology import ENTITY_TYPES
+from lightrag.packager import package_methodology
+from lightrag.retriever import RoutedMethodologyRetriever
+from lightrag.types import FaultContext, KnowledgeQuery, RetrievalOptions
 
 
 DEFAULT_OUTPUT_DIR = Path("data/lightrag/benchmarks")

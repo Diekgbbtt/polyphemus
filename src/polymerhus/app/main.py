@@ -9,7 +9,7 @@ from polymerhus.app.llm import validate_llm_config
 from polymerhus.app.observability import disabled_reason, get_langfuse_callbacks
 from polymerhus.project_management.api import router as recon_router
 from polymerhus.ingestion.routes import router as ingestion_router
-from polymerhus.lightrag.api import router as lightrag_router
+from lightrag.api import router as lightrag_router
 
 # Before anything else: uvicorn configures only its own loggers, so without this
 # every application log line in this process is discarded. See logging_config.

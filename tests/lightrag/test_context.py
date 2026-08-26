@@ -1,4 +1,4 @@
-from polymerhus.lightrag.context import (
+from lightrag.context import (
     build_reference_registry,
     from_raw_response,
     normalize_citations,

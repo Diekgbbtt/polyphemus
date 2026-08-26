@@ -1,4 +1,4 @@
-from polymerhus.lightrag.graph_audit import (
+from lightrag.graph_audit import (
     audit_lightrag_graph,
     canonicalize_entity_type,
     normalize_lightrag_entity_types,

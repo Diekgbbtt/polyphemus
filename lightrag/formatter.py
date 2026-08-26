@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Iterable, Mapping, Sequence
 
-from polymerhus.lightrag.types import (
+from lightrag.types import (
     CompactMethodologyBundle,
     KnowledgeQuery,
     MethodologyBundle,

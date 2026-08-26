@@ -1,5 +1,5 @@
 import polymerhus.app.config as config_module
-from polymerhus.lightrag.tool import build_lightrag_tool
+from lightrag.tool import build_lightrag_tool
 
 
 def test_factory_uses_configured_endpoints(monkeypatch):

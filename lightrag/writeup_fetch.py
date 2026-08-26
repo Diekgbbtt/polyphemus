@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Callable, Iterable, Sequence
 from urllib.parse import urljoin, urlparse
 
-from polymerhus.lightrag.preprocess import (
+from lightrag.preprocess import (
     DEFAULT_WRITEUP_OUTPUT_DIR,
     preprocess_writeups_for_lightrag,
 )

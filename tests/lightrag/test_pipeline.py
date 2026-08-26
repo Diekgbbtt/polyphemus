@@ -1,5 +1,5 @@
-from polymerhus.lightrag.pipeline import MockMode, run_query_pipeline
-from polymerhus.lightrag.query_spec import QuerySpecV1, R_A
+from lightrag.pipeline import MockMode, run_query_pipeline
+from lightrag.query_spec import QuerySpecV1, R_A
 
 
 def _spec() -> QuerySpecV1:

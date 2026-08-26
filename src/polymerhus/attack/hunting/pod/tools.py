@@ -172,7 +172,7 @@ class KbQueryTool(BaseTool):
             self._tool = tool
             self.args_schema = tool.args_schema
         else:
-            from polymerhus.lightrag.tool import build_lightrag_tool  # noqa: PLC0415
+            from lightrag.tool import build_lightrag_tool  # noqa: PLC0415
 
             self._tool = build_lightrag_tool()
             self.args_schema = self._tool.args_schema

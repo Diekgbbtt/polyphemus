@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pytest
 
-from polymerhus.lightrag import ontology
+from lightrag import ontology
 
 
 def test_ontology_allows_only_ten_entity_types():

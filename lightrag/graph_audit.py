@@ -10,7 +10,7 @@ from typing import Iterable, Mapping, Sequence
 from urllib import error as urlerror
 from urllib import request as urlrequest
 
-from polymerhus.lightrag.ontology import ENTITY_TYPES
+from lightrag.ontology import ENTITY_TYPES
 
 
 _GRAPHML_NS = {"g": "http://graphml.graphdrawing.org/xmlns"}

@@ -7,18 +7,18 @@ from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from polymerhus.lightrag.benchmark_ontology_queries import (
+from lightrag.benchmark_ontology_queries import (
     extract_context_payload,
     extract_response_text,
 )
-from polymerhus.lightrag.client import LightRAGHttpClient
-from polymerhus.lightrag.formatter import (
+from lightrag.client import LightRAGHttpClient
+from lightrag.formatter import (
     FORMATTER_SYSTEM_PROMPT,
     _formatter_human_prompt,
     format_methodology_context,
     normalize_source_chunks,
 )
-from polymerhus.lightrag.types import (
+from lightrag.types import (
     CompactMethodologyBundle,
     FaultContext,
     KnowledgeQuery,

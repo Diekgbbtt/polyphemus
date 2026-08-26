@@ -1,8 +1,8 @@
 import json
 from pathlib import Path
 
-from polymerhus.lightrag.evaluation import GoldenSetV1, evaluate_answer
-from polymerhus.lightrag.generation import AnswerBundleV1
+from lightrag.evaluation import GoldenSetV1, evaluate_answer
+from lightrag.generation import AnswerBundleV1
 
 
 def _golden() -> GoldenSetV1:

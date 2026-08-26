@@ -1,8 +1,8 @@
 import pytest
 from fastapi import HTTPException
 
-from polymerhus.lightrag.api import query_lightrag
-from polymerhus.lightrag.query_spec import QuerySpecV1
+from lightrag.api import query_lightrag
+from lightrag.query_spec import QuerySpecV1
 
 
 def _spec() -> QuerySpecV1:

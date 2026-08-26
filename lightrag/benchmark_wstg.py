@@ -8,7 +8,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any, Mapping, Sequence
 
-from polymerhus.lightrag.experiment_tracker import DEFAULT_HISTORY_DB, ExperimentTracker
+from lightrag.experiment_tracker import DEFAULT_HISTORY_DB, ExperimentTracker
 
 
 DEFAULT_TEST_CASES = Path("data/lightrag/benchmarks/wstg_test_cases.json")
@@ -626,7 +626,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     )
     args = parser.parse_args(argv)
 
-    from polymerhus.lightrag.client import LightRAGHttpClient
+    from lightrag.client import LightRAGHttpClient
 
     test_cases = load_test_cases(args.cases)
     if args.limit_cases is not None:

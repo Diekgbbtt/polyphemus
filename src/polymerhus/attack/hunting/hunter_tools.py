@@ -31,7 +31,7 @@ Contract + degradation (spec 5, spec 9):
   WIRED from scratch onto the real `query_lightrag` tool (the lightrag branch's
   single KB tool, config-gated by `HUNTING_LIGHTRAG_TOOL`). When the opt-in flag
   is off, an injected `kb_query` seam (the contract tier) is used; empty/raising
-  -> a denoted degraded bundle (C2/C3). The `polymerhus.lightrag` import is
+  -> a denoted degraded bundle (C2/C3). The `lightrag` import is
   lazy (no I/O at import).
 - `exec` - the Kali-container exec tool (R2): `EXEC_TIMEOUT_S` per call (the
   shared `recon.config.EXEC_TIMEOUT_S`, default 300), args `command` + optional
@@ -74,9 +74,9 @@ _WRITE_SHAPED = re.compile(r"\b(?:MERGE|CREATE|DELETE|SET|REMOVE|FOREACH|LOAD\s+
 # --- the kb_query local mirrors of the LightRAG types (R1) --------------------
 
 # Local minimal mirrors of `lightrag-probe`'s `QuerySpecV1` / `AnswerBundleV1`
-# (`src/polymerhus/lightrag/query_spec.py` / `generation.py`). The `lightrag`
-# package is NOT on this branch/dev - the integration is a SIMULTANEOUS
-# workstream; the W5 harness swaps these for the real types when it lands. The
+# (`lightrag/query_spec.py` / `generation.py`). The `lightrag` package lives at
+# the repo root; the mirror stays the local args/response contract - when the
+# opt-in flag is on, `KbQueryTool` invokes the real `build_lightrag_tool`. The
 # mirror copies the field shapes verbatim so the swap is mechanical.
 
 
@@ -488,7 +488,7 @@ class KbQueryTool(BaseTool):
             from polymerhus.app.config import config  # noqa: PLC0415
             if not config.HUNTING_LIGHTRAG_TOOL:
                 return None
-            from polymerhus.lightrag.tool import build_lightrag_tool  # noqa: PLC0415
+            from lightrag.tool import build_lightrag_tool  # noqa: PLC0415
             return build_lightrag_tool()
         except Exception:  # noqa: BLE001 - fail-open to the seam/degraded bundle
             return None

@@ -18,10 +18,10 @@ sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 import httpx  # noqa: E402
 
 from polymerhus.app.config import config  # noqa: E402
-from polymerhus.lightrag.client import LightRAGHttpClient  # noqa: E402
-from polymerhus.lightrag.generation import DeepSeekClient  # noqa: E402
-from polymerhus.lightrag.pipeline import MockMode, run_query_pipeline  # noqa: E402
-from polymerhus.lightrag.query_spec import QuerySpecV1, R_A, R_B  # noqa: E402
+from lightrag.client import LightRAGHttpClient  # noqa: E402
+from lightrag.generation import DeepSeekClient  # noqa: E402
+from lightrag.pipeline import MockMode, run_query_pipeline  # noqa: E402
+from lightrag.query_spec import QuerySpecV1, R_A, R_B  # noqa: E402
 
 
 def load_spec(path: Path) -> QuerySpecV1:

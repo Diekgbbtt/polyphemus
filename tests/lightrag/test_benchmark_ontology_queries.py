@@ -1,6 +1,6 @@
 import json
 
-from polymerhus.lightrag.benchmark_ontology_queries import (
+from lightrag.benchmark_ontology_queries import (
     OntologyBenchmarkConfig,
     build_ontology_prompt,
     extract_context_payload,

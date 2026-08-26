@@ -8,7 +8,7 @@ from typing import Any, Collection, Iterator, Literal
 
 from pydantic import BaseModel, Field
 
-from polymerhus.lightrag.ontology import ENTITY_TYPES
+from lightrag.ontology import ENTITY_TYPES
 
 
 class AuditIssue(BaseModel):

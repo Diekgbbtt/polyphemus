@@ -1,5 +1,5 @@
-from polymerhus.lightrag.service import retrieve_methodology
-from polymerhus.lightrag.types import KnowledgeQuery
+from lightrag.service import retrieve_methodology
+from lightrag.types import KnowledgeQuery
 
 
 class FakeRetriever:

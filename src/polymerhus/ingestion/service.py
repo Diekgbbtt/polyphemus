@@ -37,8 +37,8 @@ from polymerhus.ingestion.source_identity import (
     validate_source_path,
 )
 from polymerhus.ingestion.url_downloader import URLDownloadError, UrlDownloadResult, UrlDownloader
-from polymerhus.lightrag.client import LightRAGHttpClient
-from polymerhus.lightrag.ontology import ENTITY_TYPES
+from lightrag.client import LightRAGHttpClient
+from lightrag.ontology import ENTITY_TYPES
 
 
 logger = logging.getLogger(__name__)

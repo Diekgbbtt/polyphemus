@@ -5,8 +5,8 @@ import sys
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[2] / "src"))
 
-from polymerhus.lightrag.query_spec import QuerySpecV1
-from polymerhus.lightrag.tool import build_lightrag_tool
+from lightrag.query_spec import QuerySpecV1
+from lightrag.tool import build_lightrag_tool
 
 spec = QuerySpecV1.model_validate_json(
     Path("examples/lightrag-query-simulation/P6B-EASY-01.json").read_text()

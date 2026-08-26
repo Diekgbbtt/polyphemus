@@ -15,8 +15,8 @@ from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from polymerhus.lightrag.evaluation import GoldenSetV1, evaluate_answer  # noqa: E402
-from polymerhus.lightrag.generation import AnswerBundleV1  # noqa: E402
+from lightrag.evaluation import GoldenSetV1, evaluate_answer  # noqa: E402
+from lightrag.generation import AnswerBundleV1  # noqa: E402
 
 
 def main() -> int:

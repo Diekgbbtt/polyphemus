@@ -2,8 +2,8 @@ from __future__ import annotations
 
 from typing import Any
 
-from polymerhus.lightrag.packager import package_methodology
-from polymerhus.lightrag.types import KnowledgeQuery, MethodologyBundle
+from lightrag.packager import package_methodology
+from lightrag.types import KnowledgeQuery, MethodologyBundle
 
 
 def _coerce_query(query: KnowledgeQuery | dict) -> KnowledgeQuery:
@@ -48,7 +48,7 @@ def retrieve_methodology(
         raise ValueError("run_id must not be blank")
     validated_query = _coerce_query(query)
     if retriever is None:
-        from polymerhus.lightrag.retriever import RoutedMethodologyRetriever  # noqa: PLC0415
+        from lightrag.retriever import RoutedMethodologyRetriever  # noqa: PLC0415
 
         retriever = RoutedMethodologyRetriever.from_config()
     retriever_output = _call_retriever(retriever, validated_query)
