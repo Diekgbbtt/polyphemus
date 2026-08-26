@@ -266,6 +266,11 @@ def _compose_grounding(config: HuntConfig) -> str:
     #164 hunter owns that stretch."""
     tpl = config.prompt_template
     surface = config.surface_context or {}
+    # The surface context is the adapted index-card: the ratified configs carry
+    # it DIRECTLY (kind/key/label/spine/data_items/system_edges/aggregated_endpoints);
+    # the `{"cards": [...]}` wrapper is the legacy/scripted shape. Render either.
+    cards = surface.get("cards") or ([surface] if surface.get("kind") else [])
+    surface_text = _fmt_list(cards) if cards else "(no adapted index cards)"
     return (
         f"You are dispatched to hunt {config.unit_id} for fault class "
         f"{config.fault_class}.\n"
@@ -279,7 +284,7 @@ def _compose_grounding(config: HuntConfig) -> str:
         f"Technique primitives: {_fmt_list(config.technique_primitives)}\n"
         f"L0 fault-applicability evidence: {_fmt_list(tpl.l0_evidence)}\n"
         f"Adapted surface context (index card of {config.unit_id}): "
-        f"{_fmt_list(surface.get('cards') or []) if surface.get('cards') else '(no adapted index cards)'}\n"
+        f"{surface_text}\n"
         f"Target caveats: {_fmt_list(config.target_caveats)}\n"
         f"Prior-hunt insights: {_fmt_list(config.prior_hunt_insights)}\n"
         f"Fault-targeting tool registry: {_fmt_list(config.tool_registry)}"
