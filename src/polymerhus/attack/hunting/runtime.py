@@ -712,14 +712,36 @@ async def stop_hunting(hunting_run_id: str) -> None:
     orchestrator pass, the run-scoped surfer - itself a session - and every
     hunter and pod, plus the outer bootstrap task) - then reap the run's
     actor and persist `stopped`. The per-project store preserves the partial
-    config/notes trail. Fail-open: never raises through the control plane."""
+    config/notes trail. Fail-open: never raises through the control plane.
+
+    Cancellation is ASYNC (a session receives `CancelledError` only at its
+    next `await` point), so BEFORE persisting `stopped` the run must WAIT for
+    its component sessions to leave the registry - the same drain the normal
+    terminal path performs (`_wait_no_run_sessions`). Otherwise the run row
+    is stamped `stopped` while a mid-graph hunter is still registered, and a
+    per-session verb on that namespace still answers (live-stack finding,
+    2026-08-26)."""
     async with hunting_module_context():
         from polymerhus.app.clients import pg  # noqa: PLC0415
         from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
             _reap_orchestrator,
         )
+        from polymerhus.attack.hunting.mover import (  # noqa: PLC0415
+            RuntimeControlPlane,
+        )
 
         _cancel_run_sessions(hunting_run_id)
+        try:
+            await asyncio.wait_for(
+                _wait_no_run_sessions(
+                    RuntimeControlPlane(), hunting_run_id, interval=0.5),
+                timeout=30.0,
+            )
+        except Exception:  # noqa: BLE001 - fail-open: the drain is best-effort
+            logger.warning(
+                "stop_hunting: session-drain wait for %s did not settle within "
+                "30s (fail-open)", hunting_run_id,
+            )
         try:
             await _reap_orchestrator(hunting_run_id)
         except Exception:  # noqa: BLE001 - fail-open

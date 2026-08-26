@@ -120,7 +120,7 @@ def ensure_sibling_timeout(timeout: int = 240) -> bool | None:
     return None
 
 
-def restart_sibling(timeout: int = 300) -> bool:
+def restart_sibling(timeout: int = 600) -> bool:
     """Restart the live target to a clean module state (`up -d --force-recreate`
     on `WIRING_SERVICE`) and wait for `/health`.
 
@@ -128,7 +128,12 @@ def restart_sibling(timeout: int = 300) -> bool:
     predicate that drains hunting leaves the shared target's module `stopped`,
     which would poison every subsequent launch on that process. Restarting the
     live container is the honest "operator restarts the module" restoration
-    (a real spike of availability, acceptable in the integration tier)."""
+    (a real spike of availability, acceptable in the integration tier).
+
+    The poll window must accommodate a REAL gateway boot on a loaded host
+    (prisma migrate deploy + the litellm proxy bind measured at 3-8 min here),
+    so the default is generous; a recovery that exceeds it is reported, never
+    silently swallowed."""
     try:
         _run(WIRING_COMPOSE + ["up", "-d", "--force-recreate", WIRING_SERVICE], timeout=90)
     except Exception:
@@ -214,7 +219,11 @@ def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
     (the surfer refuses an unratifiable ratified config and the run wedges on
     the retained produced item - the at-least-once contract), so the required
     `hunt_id` and `prompt_template` slots ship by default, mirroring the
-    orchestrator mint."""
+    orchestrator mint. It also carries a real adapted surface card + caveats
+    + a tool-registry entry so a dispatched HUNTER runs genuine multi-turn
+    research (a bare 4-key config makes the graph short-circuit in ~1-2s and
+    no live hunter session is ever observable - the same INIT defect the pod
+    seeds were fixed for)."""
     from polymerhus.attack.hunting.hunt_store import HuntStore
     data = {
         "hunt_id": f"{unit_id}::{fault_class}",
@@ -223,6 +232,15 @@ def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
         "prompt_template": {
             "rationale": "seeded", "l0_evidence": [], "research_direction": "",
         },
+        "surface_context": {
+            "cards": [
+                f"{unit_id}: spine service for {vulnerability_class} probing; "
+                "exposes the parameterised endpoint under test",
+            ],
+        },
+        "target_caveats": ["the target is the kali sandbox; probe the seeded "
+                           "service surface"],
+        "tool_registry": [{"name": "exec", "scope": "run the probe chain"}],
     }
     data.update(overrides)
     store = HuntStore()
