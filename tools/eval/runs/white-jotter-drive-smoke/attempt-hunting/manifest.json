@@ -1,0 +1,17 @@
+{
+ "target": "white-jotter-drive-smoke",
+ "project_id": "c7eb42e4-3ade-4e64-aef4-b9cc475ea592",
+ "hunting_run_id": "c1570de8-3159-49da-a0d2-3e49968b9f05",
+ "orchestrator_stopped_at_ratified": true,
+ "stall_watchdog_fired": true,
+ "candidates_delivered": 2,
+ "faults_batch": [
+  "CWE-1220",
+  "CWE-266"
+ ],
+ "units_batch": [
+  "Service:account-registration"
+ ],
+ "stop_after": 3,
+ "run_status": "stopped"
+}

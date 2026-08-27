@@ -78,7 +78,7 @@ pick_url() {
         printf '%s' "$ui"
         return
     fi
-    printf '%s' "$1" | grep -oE 'https?://[^ ]+' | grep -vE 'https?://[^/]+/' | head -n1 || true
+    printf '%s' "$1" | grep -oE 'https?://[^ ]+' | grep -vE 'https?://[^/]+/[^/]' | head -n1 || true
 }
 
 url_port() {

@@ -1,0 +1,69 @@
+{
+ "whole-pipeline launch (empty pass)": {
+  "status": 503,
+  "response": {
+   "detail": "module not accepting new work: module 'hunting' is stopped; admission refused"
+  }
+ },
+ "orchestrator-only": {
+  "status": 503,
+  "response": {
+   "detail": "module not accepting new work: module 'hunting' is stopped; admission refused"
+  }
+ },
+ "hunt-only enqueue": {
+  "status": 202,
+  "response": {
+   "component": "hunt",
+   "enqueued": true,
+   "enqueued_key": "Service:__probe__::CWE-000::Probe",
+   "dispatched_asynchronously": true
+  }
+ },
+ "hunt-only enqueue (409 at-most-once replay)": {
+  "status": 409,
+  "response": {
+   "detail": "this hunt config is already enqueued (at-most-once): a config for Service:__probe__::CWE-000::Probe already exists in produced/ or consumed/; the write is the deduplication signal, not a second file"
+  }
+ },
+ "pod-only resume (404 fail-closed path)": {
+  "status": 404,
+  "response": {
+   "detail": "no stored/paused pod session 'hunting:probe:pod:probe:probe' to resume for project e05cac7c-930d-420c-811f-8661eae21911 (fail-closed: nothing fabricated)"
+  }
+ },
+ "session stop (404 path)": {
+  "status": 404,
+  "response": {
+   "detail": "no hunting run for that hunting_run_id"
+  }
+ },
+ "module pause": {
+  "status": 200,
+  "response": {
+   "module": "hunting",
+   "state": "stopped"
+  }
+ },
+ "module resume": {
+  "status": 200,
+  "response": {
+   "module": "hunting",
+   "state": "stopped"
+  }
+ },
+ "module drain": {
+  "status": 200,
+  "response": {
+   "module": "hunting",
+   "state": "stopped"
+  }
+ },
+ "module resume (restore)": {
+  "status": 200,
+  "response": {
+   "module": "hunting",
+   "state": "stopped"
+  }
+ }
+}
