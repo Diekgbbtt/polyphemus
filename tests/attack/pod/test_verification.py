@@ -40,6 +40,28 @@ def test_empty_payload_vector_space_is_valid_o12():
     assert validate_spec(spec) == []
 
 
+def test_dict_with_arbitrary_unknown_layer_keys_passes_init():
+    # Contract (#191): payload_vector_space is ONE open dict - typed canonical
+    # attributes (method/path/parameter/body) plus ANY per-attack-layer keys
+    # (origin, headers, cookies, ...). There is NO validation layer: the pod
+    # must not reject for missing canonical keys nor restrict unknown keys -
+    # the ONLY shape rule is "must be a dict".
+    spec = {**VALID_SPEC, "payload_vector_space": {
+        "method": "POST",
+        "path": "/state-change",
+        "parameter": "role",
+        "body": "role=admin",
+        "origin": "attacker.site",
+        "headers": {"X-Custom": "1"},
+        "cookies": {"session": "attacker"},
+    }}
+    assert validate_spec(spec) == []
+    # a dict missing ALL canonical keys is equally valid (no validation layer)
+    spec_no_canonical = {**VALID_SPEC, "payload_vector_space": {
+        "origin": "attacker.site", "headers": {"X-Custom": "1"}}}
+    assert validate_spec(spec_no_canonical) == []
+
+
 def test_non_dict_payload_vector_space_is_a_violation():
     spec = {**VALID_SPEC, "payload_vector_space": ["not", "a", "dict"]}
     assert any("payload_vector_space" in v for v in validate_spec(spec))
