@@ -279,15 +279,22 @@ experiment. SPEC-WRITE:
     foreign origin"],
   "testing_pattern": "cross-site form submission",
   "assumptions": ["authenticated session available"],
-  "payload_vector_space": {"method": "POST",
-    "path": "/state-change", "origin": "attacker.site"},
+  "payload_vector_space": {
+    "method": "POST",
+    "path": "/state-change",
+    "parameter": "action",
+    "body": "state-changing form Z's field set (action=promote)",
+    "headers": {"Content-Type": "application/x-www-form-urlencoded"}
+  },
   "rationale": "H1: form Z carries no CSRF token (L0); a foreign-origin
     submission that is accepted confirms the missing-token specific
     fault.",
-  "interpretation_guidance": "Accepted (2xx with the state change
-    applied) = symptom present. Rejected (403/redirect with no state
-    change) = symptom absent. A WAF-looking block is the pod's call,
-    not this spec's."
+  "interpretation_guidance": "Probe as a cross-site form submission from
+    a foreign origin - the CSRF vector, the Origin of the request is the
+    attribute under test, not a fixed hostname. Accepted (2xx with the
+    state change applied) = symptom present. Rejected (403/redirect with
+    no state change) = symptom absent. A WAF-looking block is the pod's
+    call, not this spec's."
 }
 EVALUATE: pod runs its variant loop (payload encodings, HTTP methods);
 returns {successful, symptom-confirmed} with the log.
