@@ -132,7 +132,7 @@ def _spec(fault_id, spec_id, *, status, strategy="probe", **extra):
     body = {
         "fault_id": fault_id, "spec_id": spec_id, "status": status,
         "strategy": strategy, "fault_key": FAULT_KEY,
-        "spec_ref": (f"data/hunting/{PROJECT}/test-specs/{FAULT_KEY}/"
+        "spec_ref": (f"data/{PROJECT}/hunter/test-specs/{FAULT_KEY}/"
                      f"produced/{fault_id}_{strategy}.yaml"),
         "experiment_ref": "", "mechanism": "m", "supports": ["e1"],
         "conflicts": [], "test": "t",

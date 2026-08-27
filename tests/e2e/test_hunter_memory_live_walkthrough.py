@@ -86,7 +86,7 @@ result = agent(config)
 
 # the model chooses the config identifier (fault_key) itself - walk the REAL
 # topology the store persisted, whatever key it used
-project_root = root / project_id
+project_root = root / project_id / "hunter"
 specs_dir = project_root / "test-specs"
 fault_keys = sorted(p.name for p in specs_dir.glob("*")) if specs_dir.exists() else []
 produced_files = sorted(

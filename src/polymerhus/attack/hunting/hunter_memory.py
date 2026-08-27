@@ -10,12 +10,15 @@ directories, the file carrying the status lifecycle, and a duplicate-write
 novelty gate.
 
 Topology under the FIXED module root `HUNTER_MEMORY_ROOT`
-(`src/polymerhus/attack/hunting/data/hunting/`, sibling to the hunt store's
-`data/hunts/` - no env var; the explicit-root constructor is kept for tests):
+(`src/polymerhus/attack/hunting/data/`, no env var; the explicit-root
+constructor is kept for tests). The store shares the ONE per-project sibling
+scheme with the hunt store (`data/<project_id>/orchestration/`) and the pod
+memory (`data/<project_id>/test-executor-pod/`): the hunter memory is the
+`hunter/` sibling bucket under the SAME `data/<project_id>/` tree:
 
-    <project_id>/test-specs/<fault_key>/produced/<fault>_<strategy>.yaml
-    <project_id>/test-specs/<fault_key>/consumed/<fault>_<strategy>.yaml
-    <project_id>/notes.yaml
+    <project_id>/hunter/test-specs/<fault_key>/produced/<fault>_<strategy>.yaml
+    <project_id>/hunter/test-specs/<fault_key>/consumed/<fault>_<strategy>.yaml
+    <project_id>/hunter/notes.yaml
 
 - `<fault_key>` is the 3-part config key (memory-system G4, ADR #169 Q13's
   `config_id`): the `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>`
@@ -80,10 +83,13 @@ from .hunter_state import FAULT_STATUSES
 logger = logging.getLogger(__name__)
 
 # The FIXED store root (seam convention, #110): the hunter memory store lives
-# at `src/polymerhus/attack/hunting/data/hunting/`, a sibling of the hunt
-# store's `data/hunts/` - no env var. The explicit-root constructor is kept
-# for the tests/the module tests' temp stores.
-HUNTER_MEMORY_ROOT = Path(__file__).resolve().parent / "data" / "hunting"
+# under `src/polymerhus/attack/hunting/data/` - no env var. The store shares the
+# ONE per-project sibling scheme with the hunt store (`data/<project_id>/orchestration/`)
+# and the pod memory (`data/<project_id>/test-executor-pod/`): the hunter memory
+# is the `hunter/` sibling bucket under the SAME `data/<project_id>/` tree
+# (`data/<project_id>/hunter/`). The explicit-root constructor is kept for the
+# tests/the module tests' temp stores.
+HUNTER_MEMORY_ROOT = Path(__file__).resolve().parent / "data"
 
 # The produced/consumed sides and the write/note operation enums (G7, G6).
 _SPEC_SIDES = ("produced", "consumed")
@@ -207,14 +213,15 @@ class HunterMemoryStore:
 
     def __init__(self, root_dir: str | Path | None = None):
         """The hunter memory store rooted under `root_dir` (default: the FIXED
-        seam root `src/polymerhus/attack/hunting/data/hunting/`)."""
+        seam root `src/polymerhus/attack/hunting/data/`, with per-project
+        `hunter/` buckets - the ONE per-project sibling scheme)."""
         self._root = Path(root_dir) if root_dir is not None else HUNTER_MEMORY_ROOT
 
     # -- paths -------------------------------------------------------------
 
     def _project_dir(self, project_id: str) -> Path:
         self._validate_component(project_id, "project_id")
-        return self._root / str(project_id)
+        return self._root / str(project_id) / "hunter"
 
     def _spec_dir(self, project_id: str, fault_key: str) -> Path:
         self._validate_fault_key(fault_key)

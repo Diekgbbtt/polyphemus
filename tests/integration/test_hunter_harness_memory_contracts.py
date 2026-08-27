@@ -42,7 +42,7 @@ from tests.hunting_fixtures import (
 
 
 def _produced(tmp_path):
-    return tmp_path / PROJECT / "test-specs" / FAULT_KEY / "produced"
+    return tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced"
 
 
 # --- E1: the full lifecycle over the real store --------------------------------

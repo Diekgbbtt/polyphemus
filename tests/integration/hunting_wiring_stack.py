@@ -351,7 +351,7 @@ def consumed_spec_files(project_id: str, fault_key: str) -> list[str]:
     from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
     store = HunterMemoryStore()
     root = store._root  # noqa: SLF001 - physical-layout read-back
-    side_dir = root / str(project_id) / "test-specs" / str(fault_key) / "consumed"
+    side_dir = root / str(project_id) / "hunter" / "test-specs" / str(fault_key) / "consumed"
     if not side_dir.exists():
         return []
     return sorted(child.stem for child in side_dir.glob("*.yaml"))

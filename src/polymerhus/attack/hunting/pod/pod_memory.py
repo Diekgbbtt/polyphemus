@@ -2,8 +2,10 @@
 
 The hunting test-executor's OWN memory, projected onto the operator-locked
 per-project deterministic-key pattern. One store per project under the hunting
-module's data seam, sibling to the #164 hunter's `data/<project_id>/hunting/`
-tree. The store's coherent per-spec layout (operator, 2026-08-24 - re-scoped
+module's data seam, the `test-executor-pod/` sibling bucket under the SAME
+`data/<project_id>/` tree as the #164 hunter's `data/<project_id>/hunter/`
+memory and the hunt store's `data/<project_id>/orchestration/`. The store's
+coherent per-spec layout (operator, 2026-08-24 - re-scoped
 from the T1 `experiment-logs/` body so the minted TestImplementationSpec
 variants and the per-order log slice live side by side, easily mappable):
 
@@ -53,9 +55,11 @@ from pathlib import Path
 
 import yaml
 
-# The hunting module's data seam (D84-33): sibling to the #164 hunter's
-# `data/<project_id>/hunting/` tree. No env var; the explicit-root constructor
-# is kept for the tests' temp stores.
+# The hunting module's data seam (D84-33): the `test-executor-pod/` sibling
+# bucket under the SAME `data/<project_id>/` tree as the #164 hunter's
+# `data/<project_id>/hunter/` memory and the hunt store's
+# `data/<project_id>/orchestration/`. No env var; the explicit-root
+# constructor is kept for the tests' temp stores.
 HUNTING_DATA = Path(__file__).resolve().parent.parent / "data"
 
 # The closed enum of pod note kinds (D84-28): `experiment_summary` is the ONE
