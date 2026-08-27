@@ -87,6 +87,12 @@
   observable: `supports_tool_calling` true -> returns None; false/None -> returns the refusal string `"opencode:deepseek-v4-flash-free"`; reader raising -> refusal (never crash); identity unresolvable -> None (proceed)
   yields: integration test
 
+- **C15** | seam: provider API-key rotation propagation (#193, D9 snapshot) | delivery: rotation-convergent
+  input: after a synced gateway, rotate ONE provider's `API_KEY_*` in env and run the sync again
+  observable: that provider's registered records are re-pushed via the update path (`PATCH /model/{model_id}/update`) with the CURRENT key in `litellm_params.api_key` (litellm re-encrypts and persists it - `/model/info` masks the key, so it can never be diffed from the registered side); every other provider is untouched; the `__sync_snapshot__` record's `api_key_hashes` (per-provider fingerprint of the applied key) reflects the rotation; a third run with the unchanged key pushes ZERO add/update/delete
+  yields: integration test `test_provider_key_rotation_updates_that_providers_models_with_new_key`
+  note: a snapshot that predates `api_key_hashes` records no applied key, so the sync re-establishes the baseline once (every key-bearing model refreshed) and then converges - this is what repairs an already-stale DB after an upgrade.
+
 ## Walkthrough predicates (e2e tier)
 
 - **E1** | grounds: D10 ordering + #104 acceptance ("container boots two ASGI processes ... agent starts only after the proxy is healthy and the sync has run")
