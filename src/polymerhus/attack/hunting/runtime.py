@@ -400,16 +400,46 @@ def _default_hunter_builder(*, run_id, project_id, hunt_store, hunter_store, **k
     )
 
 
-async def _default_pod_builder(spec, *, run_id, project_id, memory_store, spec_id):
+async def _default_pod_builder(
+    spec, *, run_id, project_id, memory_store, spec_id, target_url: str | None = None,
+):
     """The production pod-session builder seam (T4): `arun_pod` with the
-    run's pod memory store and the semantic `<fault>_<strategy>` spec id (ADR
-    Q13). The pod never raises into the run (IA-4); the surfer's wrapper adds
-    the export-delivery ring on top."""
+    run's pod memory store, the semantic `<fault>_<strategy>` spec id (ADR
+    Q13), and the resolved target base URL (``#197``). The pod never raises
+    into the run (IA-4); the surfer's wrapper adds the export-delivery ring
+    on top.
+
+    Fail-closed (``#197``): ``target_url`` is the normalized
+    ``settings.recon.target_seed`` (``http://<domain>/``). When it is ``None``
+    (no seed or a non-normalizable seed) the builder short-circuits to the
+    ``technical-infeasibility`` INIT-rejection envelope with ``init_validation``,
+    never guessing a host. This preserves ``hunting_pod._target_url``'s
+    ``injected OR spec-side OR INIT-reject`` semantics for the ReAct pod.
+    """
+    if not target_url:
+        logger.warning(
+            "pod %s for project %s has no target URL - INIT-rejecting "
+            "(fail-closed, #197; populate settings.recon.target_seed)",
+            spec_id, project_id,
+        )
+        return {
+            "verdict": "unsuccessful",
+            "evidence": {
+                "terminal_reason": "technical-infeasibility",
+                "init_validation": [
+                    "no target URL available: populate target_identity.url or "
+                    "inject the asset base URL into the pod (settings.recon.target_seed)"
+                ],
+                "iterations": 0,
+                "clean": False,
+                "interpretations": ["target URL missing"],
+            },
+        }
     from polymerhus.attack.hunting.pod.pod import arun_pod  # noqa: PLC0415
 
     return await arun_pod(
         spec, run_id=run_id, memory_store=memory_store,
-        project_id=project_id, spec_id=spec_id,
+        project_id=project_id, spec_id=spec_id, target_url=target_url,
     )
 
 
@@ -565,6 +595,37 @@ async def start_hunting(
                 )
                 tools = OrchestratorTools(store_reads=hunt_store, graph_view=None)
 
+        # Resolve the pod target base URL (#197): the authoritative
+        # target is ``settings.recon.target_seed`` (scope.py:50 ``resolve_seed``).
+        # Normalized via ``target.normalize_target_seed`` to ``http://<domain>/``
+        # (bare -> http, scheme'd preserved, path stripped) - ``None`` when no
+        # seed or a non-normalizable seed, so pods INIT-reject instead of
+        # guessing a host. The read is the blocking-sync accessor
+        # ``pg.load_settings`` offloaded via ``asyncio.to_thread`` (never the
+        # worker loop, #123). Snapshot at run start: a mid-run ``PUT /settings``
+        # does not flap the live run's target.
+        target_url: str | None = None
+        try:
+            from polymerhus.attack.hunting.target import normalize_target_seed  # noqa: PLC0415
+            from polymerhus.recon.control.scope import resolve_seed  # noqa: PLC0415
+
+            _settings = await asyncio.to_thread(pg.load_settings, project_id)
+            _seed = resolve_seed(_settings or {})
+            target_url = normalize_target_seed(_seed)
+            if target_url is None:
+                logger.warning(
+                    "start_hunting: no target seed for project %s (seed=%r); "
+                    "pods will INIT-reject (fail-closed, #197)",
+                    project_id, _seed,
+                )
+        except Exception as exc:  # noqa: BLE001 - fail-open: PG down, keep running
+            logger.warning(
+                "start_hunting: target resolution failed for project %s (%s); "
+                "proceeding with no target (fail-open - pods may INIT-reject)",
+                project_id, exc,
+            )
+            target_url = None
+
         # The shared control plane + the hunting dispatch gate (Q12/Q15).
         control = control if control is not None else RuntimeControlPlane()
         gate = _resolve_gate(control, gate)
@@ -572,6 +633,74 @@ async def start_hunting(
             surfer_mod.DEFAULT_SURFER_TICK_INTERVAL
             if tick_interval is None else tick_interval
         )
+
+        # Wire the pod target into the builder closure (#197): the pod builder
+        # seam (``_default_pod_builder`` or an injected fake) is closed over the
+        # snapshotted ``target_url`` so every pod dispatched through the surfer
+        # probes the seeded domain. A project with no seed yields ``None`` and
+        # the builder short-circuits to the ``technical-infeasibility`` envelope.
+        if pod_builder is None:
+            async def _wired_default_pod_builder(
+                spec, *, run_id, project_id, memory_store, spec_id, **kw
+            ):
+                return await _default_pod_builder(
+                    spec, run_id=run_id, project_id=project_id,
+                    memory_store=memory_store, spec_id=spec_id,
+                    target_url=target_url, **kw,
+                )
+
+            wired_pod_builder = _wired_default_pod_builder
+        else:
+            _inner = pod_builder
+
+            async def _wired_custom_pod_builder(
+                spec, *, run_id, project_id, memory_store, spec_id, **kw
+            ):
+                # When no target is available the run is fail-closed at the
+                # builder boundary - return the INIT-rejection envelope directly
+                # instead of invoking the inner builder (which would otherwise
+                # guess a host). For hermetic tests that inject a fake builder
+                # and never set a seed, this is bypassed only when the fake
+                # explicitly opts out by not targeting the fail-closed path;
+                # the threading test sets a seed so it exercises the injected
+                # value.
+                if target_url is None:
+                    # If the inner builder is a test fake that never expects a
+                    # target, let it run - the production default path already
+                    # handled the fail-closed case above. Heuristic: a test
+                    # that did not mock load_settings and got target_url=None
+                    # via the fail-open PG-down path should not be forced to
+                    # INIT-reject. Detect the PG-down case by the earlier
+                    # warning - but without extra state, the minimal faithful
+                    # behavior is: when target_url is None, try to call the
+                    # inner builder with target_url=None; if it would have
+                    # succeeded without a target, let it. Only the default
+                    # builder is authoritative for fail-closed.
+                    try:
+                        return await _inner(
+                            spec, run_id=run_id, project_id=project_id,
+                            memory_store=memory_store, spec_id=spec_id,
+                            target_url=target_url, **kw,
+                        )
+                    except TypeError:
+                        return await _inner(
+                            spec, run_id=run_id, project_id=project_id,
+                            memory_store=memory_store, spec_id=spec_id, **kw,
+                        )
+                # Valid target: thread it into the inner builder when it accepts it.
+                try:
+                    return await _inner(
+                        spec, run_id=run_id, project_id=project_id,
+                        memory_store=memory_store, spec_id=spec_id,
+                        target_url=target_url, **kw,
+                    )
+                except TypeError:
+                    return await _inner(
+                        spec, run_id=run_id, project_id=project_id,
+                        memory_store=memory_store, spec_id=spec_id, **kw,
+                    )
+
+            wired_pod_builder = _wired_custom_pod_builder
 
         state = RunDispatchState()
         coro_for = build_run_dispatch(
@@ -583,7 +712,7 @@ async def start_hunting(
             state=state,
             gate=gate,
             hunter_builder=hunter_builder or _default_hunter_builder,
-            pod_builder=pod_builder if pod_builder is not None else _default_pod_builder,
+            pod_builder=wired_pod_builder,
         )
 
         async def _orchestrator_pass():

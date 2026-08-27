@@ -260,7 +260,7 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                     runner_middleware=(), triager_middleware=(),
                     memory_store=None, model_factory=None,
-                    project_id=None, spec_id=None):
+                    project_id=None, spec_id=None, target_url: str | None = None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
@@ -310,11 +310,18 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         log.start_run()
         log.record_variant(VariantSpec(ref="v0", parent_ref=None, spec=spec))
         violations = validate_spec(spec)
+        # #197: when a target base URL is wired (the dispatch seam), it is
+        # rendered into the runner's filtered context so the LLM does not guess
+        # a host. The validation of a missing target lives at the dispatch
+        # builder (``_default_pod_builder``) - the graph keeps the spec-only
+        # C1 gate to avoid breaking the contract tier's symbolic runner, but
+        # still surfaces the target when it is present.
         runner_messages = [{"role": "system", "content": RUNNER_SYSTEM}]
         if not violations and not production_runner:
             runner_messages.append(
                 {"role": "human",
-                 "content": log.runner_context(spec, "", 1, HUNT_POD_MAX_ITERS)})
+                 "content": log.runner_context(
+                     spec, "", 1, HUNT_POD_MAX_ITERS, target_url=target_url)})
         return {
             "log": log, "root_spec": spec, "spec": spec,
             "init_validation": violations, "iteration": 1,
@@ -341,7 +348,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                        log, spec, state.get("feedback", ""),
                                        state.get("iteration", 1), HUNT_POD_MAX_ITERS,
                                        store=memory_store,
-                                       spec_id=mem_key)}])
+                                       spec_id=mem_key,
+                                       target_url=target_url)}])
             before_obs = len(log.raw_observations)
             before_exec = len(log.executed)
             # D84-7/Q13: the graph owns the pod-session binding - the
@@ -556,8 +564,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
             # The runner_agent node composes the next lap's delta on entry and
             # clears the inbox on consumption (D84-9/11) - no deposit here.
             return out
-        opener = log.runner_context(variant_spec, decision.get("feedback", ""),
-                                    iteration, HUNT_POD_MAX_ITERS)
+        opener = log.runner_context(
+            variant_spec, decision.get("feedback", ""),
+            iteration, HUNT_POD_MAX_ITERS, target_url=target_url)
         return {**out, "runner_messages": _dicts_to_lc(
             [{"role": "human", "content": opener}])}
 

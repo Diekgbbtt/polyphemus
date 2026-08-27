@@ -58,7 +58,8 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
                    memory_store=None,
                    model_factory: Callable | None = None,
                    project_id: str | None = None,
-                   spec_id: str | None = None) -> dict:
+                   spec_id: str | None = None,
+                   target_url: str | None = None) -> dict:
     """Execute `spec` against the live target and return the IA-4 envelope.
 
     Async-only (D84-15): the graph is driven with `ainvoke`, and every injected
@@ -83,7 +84,14 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
     model). `project_id` is the store's scoping axis (D84-33); `spec_id` is the
     #164 hunter's `<fault>_<strategy>` crossed through the typed handoff -
     REQUIRED when a memory store is bound (no fallback; a missing spec_id is the
-    dispatch's failure mode, never a hash key)."""
+    dispatch's failure mode, never a hash key). `target_url` is the resolved
+    target base (``#197``; ``http://<domain>/``) the pod must probe; when
+    present it is rendered into the Runner's filtered context so the LLM
+    probes the seeded domain and never guesses ``localhost:8080``. When
+    ``None`` the dispatch seam (``_default_pod_builder``) short-circuits to the
+    INIT-rejection envelope - ``arun_pod`` itself keeps the spec-only C1 gate
+    to avoid breaking the contract tier's symbolic runner, but surfaces the
+    target when it is wired."""
     exec_fn = exec_fn or default_exec_fn
     trace_fn = trace_fn if trace_fn is not None else _default_trace_fn
 
@@ -100,7 +108,7 @@ async def arun_pod(spec: dict, *, run_id: str = POD_DEFAULT_RUN_ID,
             triager_fn=triager_fn,
             runner_middleware=runner_middleware, triager_middleware=triager_middleware,
             memory_store=memory_store, model_factory=model_factory,
-            project_id=project_id, spec_id=spec_id)
+            project_id=project_id, spec_id=spec_id, target_url=target_url)
         final = await graph.ainvoke(
             {"spec": dict(spec or {}), "run_id": run_id},
             config={"recursion_limit": RECURSION_LIMIT, "callbacks": callbacks})

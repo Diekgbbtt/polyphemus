@@ -203,14 +203,21 @@ class ExperimentLog:
         return [v.ref for v in self.variant_specs]
 
     def runner_context(self, spec: dict, feedback: str, iteration: int,
-                       budget: int) -> str:
+                       budget: int, *, target_url: str | None = None) -> str:
         """The filtered slice the Runner's session sees each lap: the current
         spec variant, the tried-probe signatures (so it does not duplicate),
-        the Triager's feedback, and the budget state."""
+        the Triager's feedback, and the budget state.
+
+        ``target_url`` (``#197``) is the resolved target base
+        (``http://<domain>/``) the pod must probe; when present it is rendered
+        as the first section so the LLM does not guess a host.
+        """
         parts = [
             f"# Lap {iteration} of at most {budget}",
-            f"## Current spec variant\n{json.dumps(spec, indent=2)}",
         ]
+        if target_url:
+            parts.append(f"## Target base URL\n{target_url}")
+        parts.append(f"## Current spec variant\n{json.dumps(spec, indent=2)}")
         if self.executed:
             parts.append("## Probe signatures already executed (do not repeat)\n"
                          + "\n".join(f"- {s}" for s in self.executed))
@@ -239,14 +246,20 @@ class ExperimentLog:
 
 
 def compose_runner_delta(log: ExperimentLog, spec: dict, feedback: str,
-                         iteration: int, budget: int, *, store, spec_id: str) -> str:
+                         iteration: int, budget: int, *, store, spec_id: str,
+                         target_url: str | None = None) -> str:
     """The Runner's lap-opener HumanMessage delta (D84-9/10/11/27): the filtered
     `runner_context` slice PLUS the per-turn indexable pod-memory key-list +
     reading guidance. `store` may be None (fail-open: the guidance renders with
-    an empty index)."""
+    an empty index).
+
+    ``target_url`` (``#197``) is the resolved target base the pod must probe;
+    it is threaded from ``start_hunting`` through the pod builder into the
+    runner delta so the LLM probes the seeded domain and never guesses.
+    """
     from polymerhus.attack.hunting.pod.pod_memory import compose_memory_guidance
 
-    base = log.runner_context(spec, feedback, iteration, budget)
+    base = log.runner_context(spec, feedback, iteration, budget, target_url=target_url)
     return f"{base}\n\n{compose_memory_guidance(store, spec_id)}"
 
 
