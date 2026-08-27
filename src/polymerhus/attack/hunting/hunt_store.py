@@ -249,7 +249,17 @@ class HuntStore:
         write is an explicit in-place amendment of a known identity, not a
         re-elicitation. Returns the config's semantic key. Raises on write
         failure - the caller warns and counts (O3). The whole write runs under
-        the project's lock (I2)."""
+        the project's lock (I2).
+
+        MOVE-AWARE (G4, #192): when the identity ALREADY lives in consumed/ (the
+        mover's produced->consumed move landed for it - its at-least-once
+        marker), a produced-target write is a NO-OP success returning the
+        semantic key. The config is already ratified and durable in consumed/,
+        and re-creating a produced/ copy would break the produced/consumed
+        mutual exclusivity - the surfer's inbox would never drain, the mover
+        would re-dispatch the identity every tick, and the run would hang in
+        `running` (the #192 race: the orchestrator's ratify harness write can
+        land after the move). A warning logs the race for observability."""
         if directory not in _CONFIG_DIRECTORIES:
             raise ValueError(
                 f"unknown config directory {directory!r}; known: {_CONFIG_DIRECTORIES}")
@@ -263,6 +273,13 @@ class HuntStore:
             consumed = self._consumed_dir(project_id)
             produced.parent.mkdir(parents=True, exist_ok=True)
             consumed.parent.mkdir(parents=True, exist_ok=True)
+            if directory == "produced" and (consumed / name).exists():
+                logger.warning(
+                    "hunt store: ratify write for %s skipped - the identity "
+                    "already lives in consumed/ (post-move write, #192); no "
+                    "produced/ copy re-created", name,
+                )
+                return semantic_key(unit_id, fault_class, vulnerability_class)
             target = produced if directory == "produced" else consumed
             self._dump_yaml_atomic(target / name, data)
             return semantic_key(unit_id, fault_class, vulnerability_class)
