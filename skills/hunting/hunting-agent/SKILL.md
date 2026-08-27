@@ -182,7 +182,7 @@ The pod will mutate flexible attributes into variants internally (payload vector
 *Done when the committed candidate and its designed experiment are clear.*
 
 **SPEC-WRITE** (`synthesize`) - *solves: integrate the committed hypothesis into an executable artifact.*
-The typed base (target identity, verification symptom(s), testing pattern from the KB's retrieved patterns, assumptions list, payload vector space) over the NL core (rationale, interpretation guidance), referencing the clear L0 evidences where present, so the pod can interpret any outcome meaningfully.
+The typed base (target identity, verification symptom(s), testing pattern from the KB's retrieved patterns, assumptions list, and the payload vector space - ONE open dict covering the whole vector space, citing the endpoint path, parameter, method, and body directly on it where applicable, with any further per-attack-layer keys (origin, headers, cookies - including the authorization/application context) as open extras) over the NL core (rationale, interpretation guidance), referencing the clear L0 evidences where present, so the pod can interpret any outcome meaningfully.
 The spec must be falsifiable - the interpretation guidance must state what symptom-absent means, so the pod can read it against its own observations.
 *Done when the spec is falsifiable and executable by the pod.*
 
@@ -279,8 +279,8 @@ experiment. SPEC-WRITE:
     foreign origin"],
   "testing_pattern": "cross-site form submission",
   "assumptions": ["authenticated session available"],
-  "payload_vector_space": [{"method": "POST",
-    "target": "/state-change", "origin": "attacker.site"}],
+  "payload_vector_space": {"method": "POST",
+    "path": "/state-change", "origin": "attacker.site"},
   "rationale": "H1: form Z carries no CSRF token (L0); a foreign-origin
     submission that is accepted confirms the missing-token specific
     fault.",
