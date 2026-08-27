@@ -11,11 +11,11 @@ import httpx
 from polymerhus.attack.hunting.hunting_pod import HuntingHttpPod
 
 
-def _spec(*, target_url: str | None = None, vectors: list[str] | None = None) -> dict:
+def _spec(*, target_url: str | None = None, payload: dict | None = None) -> dict:
     return {
         "d4_typed_base": {
             "target_identity": ({"url": target_url} if target_url else {}),
-            "payload_vector_space": vectors or ["GET /api/users/{id}"],
+            "payload_vector_space": payload or {"method": "GET", "path": "/api/users/{id}"},
         }
     }
 
@@ -66,6 +66,13 @@ def test_pod_insufficient_evidence_on_connection_error():
 
 def test_pod_rejects_unsupported_methods_with_init_validation():
     pod = HuntingHttpPod(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
-    out = pod(_spec(target_url="https://target.test", vectors=["POST /api/users"]))
+    out = pod(_spec(target_url="https://target.test", payload={"method": "POST", "path": "/api/users"}))
+    assert out["evidence"]["terminal_reason"] == "technical-infeasibility"
+    assert out["evidence"]["init_validation"]
+
+
+def test_pod_rejects_a_non_dict_payload_vector_space():
+    pod = HuntingHttpPod(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    out = pod(_spec(target_url="https://target.test", payload=["GET /api/users"]))
     assert out["evidence"]["terminal_reason"] == "technical-infeasibility"
     assert out["evidence"]["init_validation"]

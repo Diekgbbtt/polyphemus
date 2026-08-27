@@ -46,16 +46,22 @@ def _target_url(spec: dict, injected: str | None) -> str | None:
     return None
 
 
-def _vectors(spec: dict) -> list[str]:
-    vectors = ((spec.get("d4_typed_base") or {}).get("payload_vector_space") or [])
-    return [v for v in vectors if isinstance(v, str) and v.strip()]
+def _vectors(spec: dict) -> list[tuple[str, str]]:
+    """The `(method, path)` probe pairs from the authored `payload_vector_space`.
 
-
-def _split_vector(vector: str) -> tuple[str, str]:
-    parts = vector.strip().split(None, 1)
-    if len(parts) == 2 and parts[0].upper() in {"GET", "HEAD", "POST", "PUT", "DELETE", "OPTIONS"}:
-        return parts[0].upper(), parts[1].strip()
-    return "GET", vector.strip()
+    Contract (#191): `payload_vector_space` is ONE open dict per spec - the
+    typed canonical attributes (`method`, `path`) cited directly, any further
+    per-attack-layer keys open. The legacy list-of-strings shape is gone; a
+    non-dict (or a dict with no path) yields no vectors. `method` defaults to
+    GET, `path` falls back to `url`, per the deterministic symbolic reader."""
+    pvs = ((spec.get("d4_typed_base") or {}).get("payload_vector_space") or {})
+    if not isinstance(pvs, dict):
+        return []
+    method = str(pvs.get("method", "GET")).upper()
+    path = str(pvs.get("path") or pvs.get("url") or "").strip()
+    if not path:
+        return []
+    return [(method, path)]
 
 
 def _probe_url(target: str, path: str, probe_id: str) -> str:
@@ -109,9 +115,7 @@ class HuntingHttpPod:
                 init_validation=["the spec carries no payload_vector_space"],
                 interpretations=["empty vector set"],
             )
-        unsupported = [
-            v for v in vectors if _split_vector(v)[0] not in _METHODS
-        ]
+        unsupported = [m for m, _p in vectors if m not in _METHODS]
         if unsupported:
             return self._envelope(
                 "technical-infeasibility",
@@ -119,7 +123,7 @@ class HuntingHttpPod:
                 init_validation=[
                     "the pod executes GET/HEAD vectors only; re-author the spec"
                 ],
-                interpretations=[f"unsupported vector: {v}" for v in unsupported],
+                interpretations=[f"unsupported vector method: {m}" for m in unsupported],
             )
 
         requests_made = 0
@@ -131,13 +135,12 @@ class HuntingHttpPod:
             timeout=self._timeout,
             follow_redirects=False,
         ) as client:
-            for vector in vectors:
-                method, path = _split_vector(vector)
+            for method, path in vectors:
                 probes = [(_BASELINE_ID, _TAMPERED_ID)] if "{id}" in path else [(None, None)]
                 for baseline_id, tampered_id in probes:
                     if requests_made >= self._max_requests:
                         all_definitive = False
-                        interpretations.append({"vector": vector, "error": "request budget exhausted"})
+                        interpretations.append({"vector": f"{method} {path}", "error": "request budget exhausted"})
                         break
                     statuses: dict[str, int | str] = {}
                     probe_labels = (
@@ -152,10 +155,10 @@ class HuntingHttpPod:
                             response = client.request(method, url)
                             statuses[label] = response.status_code
                         except httpx.HTTPError as exc:
-                            logger.warning("hunting pod probe %s failed: %s", vector, exc)
+                            logger.warning("hunting pod probe %s failed: %s", path, exc)
                             statuses[label] = "error"
                             all_definitive = False
-                    interpretations.append({"vector": vector, **statuses})
+                    interpretations.append({"vector": f"{method} {path}", **statuses})
                     if baseline_id is not None and tampered_id is not None:
                         baseline_allowed = _allowed(statuses.get("baseline"))
                         tampered_allowed = _allowed(statuses.get("tampered"))
