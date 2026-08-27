@@ -421,6 +421,28 @@ def test_concurrent_duplicate_config_writes_are_serialised(tmp_path):
     assert len(store.read_configs(PROJECT)) == 1
 
 
+# --- #192: the ratify upsert is move-aware (G4 mutual exclusivity) -----------
+
+def test_update_config_never_recreates_produced_after_the_move(tmp_path):
+    """#192 regression: the produced->consumed single-owner invariant. After
+    the mover consumed a ratified config, the orchestrator's racing ratify
+    write (`update_config`, the ONLY writer that ignores the G4 novelty gate)
+    must NOT re-create a produced/ copy - produced/ and consumed/ stay
+    mutually exclusive per name, so the surfer's inbox drains, `consume_config`
+    stays a no-op success, and the run reaches terminal (no re-dispatch
+    churn)."""
+    store = HuntStore(tmp_path)
+    key = semantic_key(UNIT, CWE, CLASS)
+    store.update_config(PROJECT, _config(status="ratified"))
+    assert store.consume_config(PROJECT, key) is True
+    # the ratify harness write lands AFTER the move (the #192 race): the
+    # identity already lives in consumed/, so the write must not resurrect it
+    # in produced/.
+    store.update_config(PROJECT, _config(status="ratified"))
+    assert store.read_produced_configs(PROJECT) == []
+    assert store.consume_config(PROJECT, key) is True
+
+
 # --- M2: the config directory parameter is validated -------------------------
 
 def test_unknown_config_directory_is_rejected(tmp_path):
