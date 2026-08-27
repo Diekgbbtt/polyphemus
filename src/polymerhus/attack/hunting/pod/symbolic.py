@@ -21,7 +21,6 @@ import re
 
 from polymerhus.attack.hunting.pod.types import (
     INFEASIBILITY_SIGNAL_CLASS,
-    NOISE_CLASS,
     ProbeChain,
     ProbeStep,
     RawObservation,
@@ -43,12 +42,21 @@ def probe_signature(chain: ProbeChain) -> str:
 
 def default_probe_from_spec(spec: dict, variant_ref: str) -> ProbeChain | None:
     """Build the pattern's default probe from the typed `payload_vector_space`
-    (O12/C11): even an EMPTY vector still yields one default probe (a GET of the
-    target's path), so an empty payload vector never zeroes the loop. Returns
-    None only when no probe is derivable at all (no path anywhere)."""
+    (O12/C11): an EMPTY vector still yields one default probe (a GET of the
+    target's path), so an empty payload vector never zeroes the loop. For a
+    NON-EMPTY vector there is NO defaulting for any attribute (contract #191):
+    the authored `method` and `path` are read verbatim, and a vector missing
+    either yields None (no probe derivable - the loop lands space-exhausted).
+    Returns None only when no probe is derivable at all (no path anywhere)."""
     pvs = spec.get("payload_vector_space") or {}
-    method = str(pvs.get("method", "GET")).upper()
-    path = pvs.get("path") or pvs.get("url") or _path_from_identity(spec.get("target_identity", ""))
+    if isinstance(pvs, dict) and pvs:
+        method = str(pvs.get("method") or "").upper()
+        path = str(pvs.get("path") or "")
+        if not method or not path:
+            return None
+    else:
+        method = "GET"
+        path = _path_from_identity(spec.get("target_identity", ""))
     if not path:
         return None
     step = ProbeStep(role="core", method=method, url=str(path), body=str(pvs.get("body", "")))

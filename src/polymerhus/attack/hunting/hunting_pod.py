@@ -47,19 +47,19 @@ def _target_url(spec: dict, injected: str | None) -> str | None:
 
 
 def _vectors(spec: dict) -> list[tuple[str, str]]:
-    """The `(method, path)` probe pairs from the authored `payload_vector_space`.
+    """The `(method, path)` probe pair from the authored `payload_vector_space`.
 
     Contract (#191): `payload_vector_space` is ONE open dict per spec - the
     typed canonical attributes (`method`, `path`) cited directly, any further
-    per-attack-layer keys open. The legacy list-of-strings shape is gone; a
-    non-dict (or a dict with no path) yields no vectors. `method` defaults to
-    GET, `path` falls back to `url`, per the deterministic symbolic reader."""
+    per-attack-layer keys open. There is NO defaulting for any attribute: a
+    dict that does not carry BOTH a `method` and a `path` (and a non-dict)
+    yields no vectors, never an invented GET or a url-derived path."""
     pvs = ((spec.get("d4_typed_base") or {}).get("payload_vector_space") or {})
     if not isinstance(pvs, dict):
         return []
-    method = str(pvs.get("method", "GET")).upper()
-    path = str(pvs.get("path") or pvs.get("url") or "").strip()
-    if not path:
+    method = str(pvs.get("method") or "").strip().upper()
+    path = str(pvs.get("path") or "").strip()
+    if not method or not path:
         return []
     return [(method, path)]
 

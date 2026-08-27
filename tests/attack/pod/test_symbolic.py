@@ -34,6 +34,15 @@ def test_empty_payload_vector_still_yields_a_default_probe_o12():
     assert chain.steps[0].url == "/"
 
 
+def test_non_empty_vector_missing_method_or_path_yields_no_probe():
+    # contract (#191): NO defaulting for any attribute - a NON-empty vector that
+    # does not carry the authored method AND path yields None (never an invented
+    # GET, never a url/identity-derived path); only the EMPTY dict gets the O12
+    # default probe.
+    for pvs in ({"path": "/api"}, {"method": "GET"}, {"url": "/api"}):
+        assert default_probe_from_spec({**SPEC, "payload_vector_space": pvs}, "v0") is None
+
+
 def test_probe_signature_is_stable_and_variant_sensitive():
     a = default_probe_from_spec(SPEC, "v0")
     b = default_probe_from_spec(SPEC, "v0")

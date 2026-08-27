@@ -76,3 +76,14 @@ def test_pod_rejects_a_non_dict_payload_vector_space():
     out = pod(_spec(target_url="https://target.test", payload=["GET /api/users"]))
     assert out["evidence"]["terminal_reason"] == "technical-infeasibility"
     assert out["evidence"]["init_validation"]
+
+
+def test_pod_rejects_a_dict_missing_method_or_path_without_defaulting():
+    pod = HuntingHttpPod(transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    # contract (#191): NO defaulting for any attribute - a dict that does not
+    # carry BOTH a method and a path yields no vectors (an invented GET or a
+    # url-derived path is never read).
+    for payload in ({"path": "/api/users"}, {"method": "GET"}, {"url": "/api/users"}):
+        out = pod(_spec(target_url="https://target.test", payload=payload))
+        assert out["evidence"]["terminal_reason"] == "technical-infeasibility"
+        assert any("payload_vector_space" in v for v in out["evidence"]["init_validation"])
