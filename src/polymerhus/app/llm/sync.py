@@ -39,6 +39,22 @@ pseudo-model is excluded from the diff (never deleted, never counted as
 desired) and is rewritten only when count or hash actually changed, so a
 no-change re-run is fully idle.
 
+## Provider API-key rotation (#193)
+
+`/model/info` MASKs the stored `api_key` (litellm pops it from every
+deployment), so the registered side can never be diffed for the key - the
+routing trio's key is tracked independently in the snapshot's
+`api_key_hashes`: a per-provider fingerprint of the key the sync last
+successfully applied. When a provider's CURRENT env-key fingerprint differs
+from the snapshot's, that provider's key-bearing models are force-refreshed
+(update path - `PATCH /model/{id}/update` re-encrypts and persists a fresh
+`litellm_params.api_key`, then clears the router cache) on the next push.
+A snapshot that predates `api_key_hashes` (or is absent) is treated as
+"unknown applied key": the configured providers are refreshed once to
+establish the baseline, then the fingerprint is recorded and the re-run is
+idle. Deterministic and idempotent under equal inputs: a rotation fires
+exactly one update round, never churn.
+
 ## Diffable push (D9)
 
 `GET /model/info` gives the registered set; add/update/delete is computed per
@@ -254,6 +270,7 @@ def build_desired(provider_ids: dict[str, set[str]], catalog: dict, *,
 class Snapshot:
     desired_count: int
     desired_hash: str
+    api_key_hashes: dict[str, str] | None = None
 
 
 def desired_hash(model_names: list[str]) -> str:
@@ -265,6 +282,33 @@ def desired_hash(model_names: list[str]) -> str:
         digest.update(name.encode("utf-8"))
         digest.update(b"\n")
     return digest.hexdigest()
+
+
+def _key_hash(api_key: str) -> str:
+    """A deterministic, collision-resistant fingerprint of a provider API key.
+
+    The plaintext key is NEVER persisted or logged - only this digest, which
+    the sync compares to detect a rotation (#193). The gateway cannot help
+    here: `/model/info` masks the stored key, so the applied key is known
+    only to the sync that wrote it."""
+    return hashlib.sha256(api_key.encode("utf-8")).hexdigest()
+
+
+def _providers_needing_refresh(snapshot: Snapshot | None,
+                               current_hashes: dict[str, str]) -> set[str]:
+    """The providers whose CURRENT env key differs from the key the sync last
+    applied (the snapshot's `api_key_hashes`) and therefore need a forced
+    refresh of their key-bearing models.
+
+    A snapshot that predates `api_key_hashes` (or is absent) records no
+    applied key, so the safe default is to refresh every configured provider
+    once - the baseline is (re)established and recorded; the next re-run
+    converges to a no-op. This is what repairs an already-stale DB after an
+    upgrade, and what a fresh gateway (nothing registered yet) makes inert."""
+    if snapshot is None or snapshot.api_key_hashes is None:
+        return set(current_hashes)
+    return {provider for provider, current in current_hashes.items()
+            if snapshot.api_key_hashes.get(provider) != current}
 
 
 def read_snapshot(registered: list[dict]) -> Snapshot | None:
@@ -280,7 +324,11 @@ def read_snapshot(registered: list[dict]) -> Snapshot | None:
         count = info.get("desired_count")
         digest = info.get("desired_hash")
         if isinstance(count, int) and isinstance(digest, str):
-            return Snapshot(desired_count=count, desired_hash=digest)
+            hashes = info.get("api_key_hashes")
+            if not isinstance(hashes, dict):
+                hashes = None
+            return Snapshot(desired_count=count, desired_hash=digest,
+                            api_key_hashes=hashes)
         return None
     return None
 
@@ -313,14 +361,21 @@ class Diff:
         return not (self.adds or self.updates or self.deletes)
 
 
-def diff_desired(desired: list[DesiredModel], registered: list[dict]) -> Diff:
+def diff_desired(desired: list[DesiredModel], registered: list[dict], *,
+                 force_update: set[str] | None = None) -> Diff:
     """Compute add/update/delete against the registered set.
 
     The comparison ignores (a) registered keys the desired record does not
     author (litellm's own bundled cost-map defaults are NEVER trusted or
     compared - Rule 1) and (b) the volatile `capability_synced_at` timestamp.
     An update pushes the FULL desired `model_info` (D9: never a partial
-    merge). The snapshot pseudo-model is excluded from the registered set."""
+    merge). The snapshot pseudo-model is excluded from the registered set.
+
+    `force_update` (a set of registered `model_name`s) bypasses the authored
+    comparison: a forced model is updated even when its authored surface
+    matches, because its provider's API key rotated - the key is masked in
+    `/model/info`, so the rotation is invisible to `_registered_matches` and
+    must be pushed (#193)."""
     registered_by_name: dict[str, dict] = {}
     for entry in registered:
         if not isinstance(entry, dict):
@@ -329,12 +384,13 @@ def diff_desired(desired: list[DesiredModel], registered: list[dict]) -> Diff:
         if name == SNAPSHOT_MODEL_NAME or name is None:
             continue
         registered_by_name[name] = entry
+    force_update = force_update or set()
     diff = Diff()
     for model in desired:
         entry = registered_by_name.pop(model.model_name, None)
         if entry is None:
             diff.adds.append(model)
-        elif not _registered_matches(entry, model):
+        elif model.model_name in force_update or not _registered_matches(entry, model):
             diff.updates.append((_registered_model_id(entry), model))
     diff.deletes = [_registered_model_id(entry) for entry in registered_by_name.values()]
     return diff
@@ -358,6 +414,13 @@ def _registered_matches(entry: dict, desired: DesiredModel) -> bool:
     authored surface: desired model_info keys (minus the volatile synced-at
     timestamp) and the routing params the desired record authors (minus the
     masked api_key).
+
+    The api_key is MASKED by litellm in `/model/info`, so it is never
+    comparable on this surface; the sync tracks it independently - a rotation
+    is detected via the snapshot's `api_key_hashes` fingerprint and forced
+    through `diff_desired(..., force_update=...)`, never by comparing keys
+    here (#193). A key change therefore never shows up as a diff here, by
+    design.
 
     Rule 1 holds on BOTH surfaces: keys litellm adds on its own - cost-map
     defaults, pydantic-defaulted params like `use_in_pass_through` that
@@ -590,7 +653,19 @@ def run_sync(*,
         snapshot = read_snapshot(registered)
         validate_desired(desired, snapshot)  # raises SyncCollapseError (hard)
 
-        diff = diff_desired(desired, registered)
+        # #193: the routing trio's api_key is masked in /model/info, so a
+        # provider key rotation is invisible to the authored-surface diff. It
+        # is tracked via the snapshot's per-provider key fingerprint: when a
+        # provider's CURRENT env key differs from the key last applied, its
+        # key-bearing models are force-refreshed (update path) so the gateway
+        # re-encrypts and persists the new key.
+        current_key_hashes = {provider: _key_hash(key)
+                              for provider, key in api_keys.items()}
+        providers_to_refresh = _providers_needing_refresh(snapshot,
+                                                          current_key_hashes)
+        force_update = {m.model_name for m in desired
+                        if m.model_name.split("/", 1)[0] in providers_to_refresh}
+        diff = diff_desired(desired, registered, force_update=force_update)
         unknown = [m.model_name for m in desired if not m.known]
         logger.info(
             "sync diff: %d add(s), %d update(s), %d delete(s); "
@@ -618,13 +693,17 @@ def run_sync(*,
 
         new_snapshot = Snapshot(
             desired_count=len(desired),
-            desired_hash=desired_hash([m.model_name for m in desired]))
+            desired_hash=desired_hash([m.model_name for m in desired]),
+            api_key_hashes=current_key_hashes)
         if snapshot is None or (
-                snapshot.desired_count, snapshot.desired_hash) != (
-                new_snapshot.desired_count, new_snapshot.desired_hash):
+                (snapshot.desired_count, snapshot.desired_hash,
+                 snapshot.api_key_hashes) != (
+                new_snapshot.desired_count, new_snapshot.desired_hash,
+                new_snapshot.api_key_hashes)):
             gateway.upsert_snapshot({
                 "desired_count": new_snapshot.desired_count,
                 "desired_hash": new_snapshot.desired_hash,
+                "api_key_hashes": new_snapshot.api_key_hashes,
                 PROVENANCE_SOURCE_KEY: DEFAULT_REGISTRY_URL,
                 PROVENANCE_SYNCED_AT_KEY: synced_at,
                 PROVENANCE_STALENESS_KEY: STALENESS_FRESH,

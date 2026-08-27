@@ -280,6 +280,62 @@ def test_second_run_with_changed_catalog_pushes_full_update_only():
     assert info["capability_source"] == "models.dev/opencode/deepseek-v4-flash-free"
 
 
+def test_key_rotation_forces_update_of_that_providers_models():
+    # #193: a provider API-key rotation in env must re-push that provider's
+    # key-bearing models (update path) so the gateway's persisted
+    # litellm_params.api_key is refreshed. The masked-key diff treated a
+    # rotation as a no-op, leaving the stale encrypted key after a restart.
+    gw = _gateway_after_first_run()  # registered with sk-opencode-key
+    rc = S.run_sync(**_default_run_args(
+        gateway=gw,
+        read_api_key=lambda provider: ("sk-opencode-key-NEW"
+                                       if provider == "opencode" else "sk-openai-key")))
+    assert rc == S.SYNC_OK
+    updates = [c for c in gw.calls if c[0] == "update"]
+    assert len(updates) == 2, f"both opencode models must be refreshed, got {gw.calls}"
+    for _kind, _rid, name, params, _info in updates:
+        assert name.startswith("opencode/")
+        assert params["api_key"] == "sk-opencode-key-NEW"
+    # The unchanged provider is untouched by the rotation.
+    assert all(c[2].startswith("opencode/") for c in updates)
+
+
+def test_key_rotation_is_idempotent_then_converges_to_noop():
+    # After the rotation is applied, a further run with the same (new) key is
+    # a fully idle no-op - the key fingerprint converges (D9/C9), never churns.
+    gw = _gateway_after_first_run()
+    rotated = lambda p: ("sk-opencode-key-NEW" if p == "opencode" else "sk-openai-key")  # noqa: E731
+    S.run_sync(**_default_run_args(gateway=gw, read_api_key=rotated))
+    gw2 = FakeGateway(registered=gw.registered, keys=dict(gw._keys))
+    rc = S.run_sync(**_default_run_args(gateway=gw2, read_api_key=rotated))
+    assert rc == S.SYNC_OK
+    assert gw2.calls == [], f"a converged re-run after rotation must push nothing, got {gw2.calls}"
+
+
+def test_legacy_snapshot_without_key_hashes_refreshes_once_then_converges():
+    # A snapshot that predates #193's api_key_hashes records no applied key,
+    # so the sync cannot know whether the stored keys are current. It
+    # re-establishes the baseline ONCE (every model refreshed with the current
+    # env keys - which also repairs an already-stale DB after an upgrade),
+    # records the hashes, and the next re-run is a fully idle no-op.
+    gw = _gateway_after_first_run()
+    for r in gw.registered:
+        if r["model_name"] == S.SNAPSHOT_MODEL_NAME:
+            r["model_info"].pop("api_key_hashes", None)
+    rc = S.run_sync(**_default_run_args(gateway=gw))
+    assert rc == S.SYNC_OK
+    updates = [c for c in gw.calls if c[0] == "update"]
+    assert len(updates) == 4, f"the baseline must be re-established once, got {gw.calls}"
+    snapshot = next(r for r in gw.registered
+                    if r["model_name"] == S.SNAPSHOT_MODEL_NAME)
+    assert "api_key_hashes" in snapshot["model_info"], \
+        "the re-established baseline must record the applied key hashes"
+    gw2 = FakeGateway(registered=gw.registered, keys=dict(gw._keys))
+    rc2 = S.run_sync(**_default_run_args(gateway=gw2))
+    assert rc2 == S.SYNC_OK
+    assert gw2.calls == [], f"the converged re-run must push nothing, got {gw2.calls}"
+
+
 def test_second_run_model_disappeared_from_existence_is_deleted():
     gw = _gateway_after_first_run()
     # openai/gpt-4o-2024-08-06 drops off /v1/models.
@@ -347,9 +403,15 @@ def test_provider_without_configured_key_is_skipped_not_soft(caplog):
 # ---------------------------------------------------------------------------
 
 def _snapshot_registered(count=4, names=None):
+    # A converged, current-format snapshot: api_key_hashes records the key
+    # fingerprints the sync last applied (the D9 last-known-good surface,
+    # extended for #193 - the masked key cannot be diffed from the registered
+    # side, so the snapshot carries it). Matches the default run keys below.
     names = names or ["openai/gpt-4o"]
     info = {"desired_count": count,
             "desired_hash": S.desired_hash(names),
+            "api_key_hashes": {"opencode": S._key_hash("sk-opencode-key"),
+                               "openai": S._key_hash("sk-openai-key")},
             "capability_source": "models.dev",
             "capability_synced_at": SYNCED_AT,
             "capability_staleness": "fresh"}
