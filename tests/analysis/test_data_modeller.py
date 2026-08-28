@@ -62,7 +62,7 @@ def _chunk(assets, observations=()):
 def test_narrow_strips_non_data_lists():
     raw = L1DeltaBatch(
         services=[ServiceProposal(business_function_slug="a")] * 2,
-        aggregates=[AggregatesProposal(service_slug="a", l0=L0Ref(label="Endpoint", identity={"path": "/x"}))] * 3,
+        aggregates=[AggregatesProposal(service_slug="a", confidence=0.9, l0=L0Ref(label="Endpoint", identity={"path": "/x"}))] * 3,
         systems=[SystemProposal(kind="CDN")],
         system_edges=[SystemEdgeProposal(service_slug="a", kind="CDN", rel="FRONTED_BY")],
         data_items=[DataItemProposal(item_key="a"), DataItemProposal(item_key="b")],

@@ -54,11 +54,20 @@ class AggregatesProposal(BaseModel):
     """One assignment judgment (L1D-25): the Service `service_slug` aggregates the
     L0 element `l0`, with the analyser's `confidence` and `evidence_refs`. The MVP
     commits every assignment (status='committed'); the envelope's provenance is
-    injected by the curate boundary, not the LLM."""
+    injected by the curate boundary, not the LLM.
+
+    `confidence` is REQUIRED (no default): an omission previously defaulted to
+    0.0 and silently cleared the withholding gate (the 2026-08-28 defect - the
+    model emitted `service_slug`/`l0` but skipped the then-optional confidence,
+    the default 0.0 filled it, and the 0.75 bar withheld every aggregate). The
+    withholding gate is correct in principle but its calibration is NOT yet
+    backed by empirical test evidence (`evaluation.bar_sweep` over real
+    confidences); making the field required forces the model to emit a value so
+    the sweep can eventually run on real data."""
 
     service_slug: str
     l0: L0Ref
-    confidence: float = 0.0
+    confidence: float
     evidence_refs: list[str] = Field(default_factory=list)
 
 

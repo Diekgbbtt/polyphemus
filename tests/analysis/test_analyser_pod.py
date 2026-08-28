@@ -133,6 +133,7 @@ def test_default_curate_with_enrichment_writes_core_and_enrichment(monkeypatch):
         services=[ServiceProposal(business_function_slug="sales-analysis")],
         systems=[SystemProposal(kind="RESTApi")],
         aggregates=[AggregatesProposal(service_slug="sales-analysis",
+                                       confidence=0.9,
                                        l0=L0Ref(label="Endpoint", identity={"path": "/s", "method": "GET", "baseurl": "https://a"}))],
         data_items=[DataItemProposal(item_key="sales_figure")],
         data_flows=[DataFlowProposal(service_slug="sales-analysis", item_key="sales_figure", direction="consumes",
