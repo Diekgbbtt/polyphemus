@@ -124,6 +124,7 @@ The direction is kept, reasoned over the evidences alone; the dispatch still hap
 
 O1 - Empty candidate set: FaultSource delivers zero candidates (all pruned, or LLM match exhaustion per fault).
 The run performs an empty orchestration pass: zero dispatches, the store records the empty pass, the run terminates normally; this is a valid result, not an error.
+**AMENDED by #200 (spec 4.1):** the empty candidate set now arises ONLY from the platform's OWN selection (an empty `candidates` launch runs the internal FaultSource stage, which may legitimately prune everything on an unenriched L1) or from a caller-supplied batch that normalized to nothing - the two are distinguishable via the selection summary (`trace_gate_step` + log line), so an all-pruned empty pass is never a silent vacuous pass.
 O2 - Partial LLM-match exhaustion: the match for one fault exhausts.
 That fault contributes an empty candidate set, the exhaustion is counted, the other faults proceed.
 O3 - Store write failure at S7: the hunt-record write fails.
@@ -149,6 +150,7 @@ Delivery canon (merged spec section 3): all delivery is synchronous and in-proce
 
 - IA-1 (FaultSource -> orchestrator): synchronous at run start.
   A fault whose LLM match exhausts yields an empty candidate set for that fault, counted; nothing raises.
+  **AMENDED by #200 (spec 4.1):** FaultSource is an INTERNAL stage, not a caller contract - when the caller supplies no candidate batch the platform runs its own selection over the live L1 (`materialize_candidates` in `fault_source.py`), and a caller-supplied batch stays the override. The intake's O10 malformed check keys on ANY witness half (the llm half is optional), so the deterministic-only output of the internal selection is never discarded.
 - IA-2 (orchestrator -> hunting agent): synchronous in-process dispatch, one per carried-forward direction.
   A failing agent yields the recorded degraded outcome; the run never blocks and no call raises.
 - IA-6 (orchestrator <-> recon): `request_targeted_recon`, synchronous MVP, fail-open, never raises.
