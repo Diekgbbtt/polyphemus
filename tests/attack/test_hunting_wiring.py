@@ -575,6 +575,13 @@ def test_idle_loop_consumes_and_records_a_delivered_pod_export(stores, monkeypat
     # CONFIG_KEY (the `::`-joined join key), never the physical `_`-joined
     # folder - the two sides of the cross-family join agree (identity refactor)
     assert record["fault_key"] == CONFIG_KEY
+    # the record is keyed <config_key>:pod-export:<spec_id> with action update:
+    # the note key carries NO `:`-session-id path, and the pod session id is
+    # recoverable ONLY from provenance["source"] (#199)
+    assert record["note_name"] == f"pod-export:{SPEC_FILE}"
+    assert record["key"] == f"{CONFIG_KEY}:pod-export:{SPEC_FILE}"
+    assert "hunting:" not in record["key"]
+    assert pod_session_id(RUN, FAULT_KEY, SPEC_FILE) not in record["key"]
     # NOTHING more: the spec was consumed only by the mover (no re-dispatch),
     # and the hunter produced no further records/specs.
     assert hunter.produced_spec_files(PROJECT, FAULT_KEY) == []
@@ -634,6 +641,11 @@ def test_cross_run_specified_spec_dispatches_a_pod_without_a_parent(stores,
     assert notes[0]["provenance"].get("source") == pod_session_id(
         RUN, FAULT_KEY, SPEC_FILE)
     assert "symptom-confirmed" in notes[0]["body"]
+    # the record is keyed <config_key>:pod-export:<spec_id>: the note key
+    # carries NO `:`-session-id path, the session id lives only in provenance
+    assert notes[0]["note_name"] == f"pod-export:{SPEC_FILE}"
+    assert notes[0]["key"] == f"{CONFIG_KEY}:pod-export:{SPEC_FILE}"
+    assert "hunting:" not in notes[0]["key"]
     # the run reached quiesce - a produced `specified` spec can never wedge it
     assert fake.statuses == [("running", RUN), (RUN, "complete")]
     assert control.live(RUN) == set()

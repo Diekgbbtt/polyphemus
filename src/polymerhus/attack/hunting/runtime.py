@@ -706,6 +706,7 @@ def build_production_hunting_agent(*, store, run_id, project_id="",
         run_id=run_id,
         project_id=project_id,
         memory_store=memory_store,
+        hunt_store=store,
         graph_view_fn=graph_view_fn,
         kb_fn=None,  # the KB seam: the harness binds the always-bound query_lightrag tool (#197)
         exec_fn=exec_fn,  # None -> the harness's default fail-open exec seam (the Kali container is a sibling workstream)

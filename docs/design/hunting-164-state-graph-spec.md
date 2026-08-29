@@ -194,6 +194,28 @@ data/<project_id>/hunting/test-specs/
 - **Experiment logs live in a DIFFERENT store** on the file system, linked via an identifier (the spec id /
   pod result ref) - not in this tree.
 
+**The `fault_key` contract (pinned, #199):** the fault_key is the hunt's own config identity, model-emitted
+through the tool surface but never model-trusted (the write boundary is a harness-owned gate).
+
+- **Canonical form**: the `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>` config file-name stem with the
+  class's spaces preserved - example `Service:account-registration_CWE-1220_Privilege Escalation` (the config's
+  own identity, G4/ADR Q13 `config_id`).
+- **The `::`-joined semantic twin** (`hunt_store.semantic_key`) is accepted by the store's form rule and by the
+  gate; the model is instructed to emit the canonical `_`-joined form.
+- **The harness-owned validation gate** (a deterministic, tool-bound gate embedded in the typed layer of
+  `hunts_store` / `notes`, applied to writes AND reads): the model-emitted `fault_key` must follow the naming
+  convention (a well-formed 3-part config key) AND its `:`-split parts must match the parts of a persisted
+  hunt-config identity (the config ids living in the `HuntStore`).
+- **No canonical-form resolution**: the parts are matched literally - never resolved through a cross-form
+  conversion of the model's string.
+- **A mismatch is a denoted error**: a key that fails convention or existence returns the `fault_key_mismatch`
+  denoted error (mirroring the `invalid_args` / `duplicate_spec` convention; never a raise into the turn, never
+  a fabricated folder); the model reflects on it like the G4 dedup signal and corrects its key.
+- **The note-key rule**: a note is keyed `<config_key>:<note_name>`; the durable pod-export note is keyed
+  `<config_key>:pod-export:<spec_id>` with action `update` (one current record per (config, spec) - one
+  TestImplementationSpec yields at most one PodExport), and the pod session id lives ONLY in
+  `provenance["source"]`, never in the key.
+
 ## 7. The ReAct host and runtime integration
 
 - **Turn-by-turn driver** through the session seam: every LLM step is one `arun_session_turn` on the per-hunt

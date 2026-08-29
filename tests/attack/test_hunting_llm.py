@@ -187,7 +187,7 @@ def test_render_projection_renders_rich_slots_sorted():
     carries - the exploded DataItems (name/type/sensitivity), the fully-unpacked
     target System on each edge, the DataRelationship kind chains, and the D3
     cooperating-systems adjacency - IN ADDITION to the compat facets (kind,
-    spine, edges target_kind+role), sorted deterministically throughout. The
+spine, edges target_kind+role), sorted deterministically throughout. The
     data-edge counts and the DataRelationship kinds are NOT rendered: they are
     redundant with the exploded DataItems and the relationship chains
     (the operator ruling 2026-08-28)."""
@@ -227,7 +227,7 @@ def test_render_projection_renders_rich_slots_sorted():
     # the compat facets survive unchanged
     assert "unit kind: Service" in text
     assert "spine (present keys): ['exposure']" in text
-    # the data-edge counts / data-rel kinds are NOT rendered (4326958 ruling:
+# the data-edge counts / data-rel kinds are NOT rendered (4326958 ruling:
     # redundant with the exploded data items + relationship chains)
     assert "data edges:" not in text
     assert "data-relationship kinds:" not in text

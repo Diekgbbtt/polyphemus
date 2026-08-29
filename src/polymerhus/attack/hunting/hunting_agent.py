@@ -65,6 +65,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     DispatchResult,
     HuntConfig,
 )
+from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_graph import build_hunter_graph
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 from polymerhus.attack.hunting.hunter_state import D3_HINT, FAULT_STATUSES
@@ -381,6 +382,7 @@ def build_hunting_agent(
     run_id: str,
     project_id: str = "",
     memory_store: HunterMemoryStore | None = None,
+    hunt_store: HuntStore | None = None,
     graph_view_fn: GraphViewFn | None = None,
     kb_fn: KbQueryFn | None = None,
     exec_fn: ExecFn | None = None,
@@ -393,7 +395,10 @@ def build_hunting_agent(
 
     `run_id` / `project_id` are the hunt's run and project (the project keys the
     per-project `HunterMemoryStore`); `memory_store` is that per-project store
-    and `graph_view_fn` / `kb_fn` / `exec_fn` the injected tool seams (each
+    and `hunt_store` the per-project `HuntStore` whose persisted config
+    identities the fault_key gate validates against (#199 - absent degrades the
+    gate to convention-only, fail-open); `graph_view_fn` / `kb_fn` / `exec_fn`
+    the injected tool seams (each
     absent degrades fail-open, O3/O4/C2/C3). `checkpointer` defaults to
     `get_session_checkpointer()` under `module_context("hunting")`; `middleware`
     defaults to the R5 compaction middleware (`build_hunter_compaction_middleware`,
@@ -439,7 +444,7 @@ def build_hunting_agent(
         hunt_id = config.hunt_id
         compiled = build_hunter_graph().compile()
         tools = build_hunter_tools(
-            store=memory_store, project_id=project_id,
+            store=memory_store, project_id=project_id, hunt_store=hunt_store,
             graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
         )
         tools_by_name = {tool.name: tool for tool in tools}

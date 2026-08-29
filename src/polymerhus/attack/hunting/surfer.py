@@ -482,22 +482,34 @@ def _verdict_stub_handler(*, fault_key):
 
 
 def _record_durable_pod_export(*, hunter_store, project_id, run_id, config_key,
-                               source, export) -> None:
+                               spec_id, source, export) -> None:
     """The DURABLE parent-keyed export record (identity-based refactor,
-    2026-08-25 / ADR Q16 amendment): authored deterministically at pod
-    completion, keyed by the parent's CANONICAL `config_key` - independent of
-    any live parent session, crash-safe, never lost to a live-mailbox-only
-    path. The export envelope is appended as a freeform note on the hunter
-    memory (the verdict-stub marker), so the future verdict-processing node
-    reads it from persisted memory without a co-running parent. Fail-open
-    (O3): a write failure warns - the export is never re-fabricated or
-    dropped, and the run must never wedge on the record."""
+    2026-08-25 / ADR Q16 amendment, note key pinned by #199): authored
+    deterministically at pod completion, keyed by the parent's CANONICAL
+    `config_key` - independent of any live parent session, crash-safe, never
+    lost to a live-mailbox-only path. The export envelope is recorded as a
+    freeform note on the hunter memory (the verdict-stub marker), keyed
+    `<config_key>:pod-export:<spec_id>` (the parent's config key + the
+    `pod-export:` marker + the semantic `<fault>_<strategy>` spec id), with
+    ONE current record per (config, spec): a re-export UPDATES the same key
+    (one TestImplementationSpec yields at most one PodExport), and the first
+    export APPENDS (the store's update-on-missing is a denoted miss, never a
+    silent drop). The pod session id lives ONLY in `provenance["source"]`,
+    never in the key. Fail-open (O3): a write failure warns - the export is
+    never re-fabricated or dropped, and the run must never wedge on the
+    record."""
+    note_name = f"pod-export:{spec_id}"
+    key = hunter_store.note_key(config_key, note_name)
     try:
+        existing = [
+            r for r in hunter_store.read_notes(project_id, parent_key=config_key)
+            if r.get("key") == key
+        ]
         hunter_store.write_note(
             project_id,
-            action="append",
+            action="update" if existing else "append",
             fault_key=config_key,
-            note_name=str(source or "pod-export"),
+            note_name=note_name,
             kind="freeform",
             body=json.dumps(export or {}, sort_keys=True),
             evidence="durable pod-completion export record (ADR Q16): no re-evaluation",
@@ -510,7 +522,7 @@ def _record_durable_pod_export(*, hunter_store, project_id, run_id, config_key,
     except Exception as exc:  # noqa: BLE001 - O3: warn and keep serving
         logger.warning(
             "surfer: durable pod-export record failed for %s/%s (%s)",
-            config_key, source, exc,
+            config_key, note_name, exc,
         )
 
 
@@ -566,11 +578,11 @@ async def run_pod_session(
 
     source = pod_session_id(run_id, fault_key, spec_id)
     # The DURABLE parent-keyed record: authored at pod completion, keyed by the
-    # parent's canonical config_key - the single crash-safe record, independent
-    # of any live parent inbox.
+    # parent's canonical config_key + the pod-export:<spec_id> marker (#199) -
+    # the single crash-safe record, independent of any live parent inbox.
     _record_durable_pod_export(
         hunter_store=hunter_store, project_id=project_id, run_id=run_id,
-        config_key=config_key, source=source, export=export,
+        config_key=config_key, spec_id=spec_id, source=source, export=export,
     )
     # The WITHIN-RUN live feed (optional): only when a co-running parent's inbox
     # is live under the parent's config_key. Best-effort - never a gate.
