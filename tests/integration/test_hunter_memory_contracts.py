@@ -15,7 +15,11 @@ from pathlib import Path
 
 import pytest
 
-from polymerhus.attack.hunting.hunt_store import semantic_key
+from polymerhus.attack.hunting.hunt_store import (
+    HuntStore,
+    config_file_name,
+    semantic_key,
+)
 from polymerhus.attack.hunting.hunter_memory import (
     DuplicateSpecError,
     HunterMemoryStore,
@@ -411,3 +415,94 @@ def test_C22_read_failure_degrades_to_empty_set(tmp_path):
     out = json.loads(tool.invoke({"command": "read", "fault_key": FAULT_KEY}))
     assert out["specs"] == []
     assert out["error"] == "read_failed"
+
+
+# --- the fault_key validation gate (C23-C24, #199) -----------------------------
+
+# The canonical dispatched config the gate validates against: the production
+# `_`-joined fault_key form and its `::`-semantic twin (G4/ADR Q13).
+_CANON_UNIT = "Service:account-registration"
+_CANON_FAULT = "CWE-1220"
+_CANON_CLASS = "Privilege Escalation"
+_CANON_KEY = f"{_CANON_UNIT}_{_CANON_FAULT}_{_CANON_CLASS}"
+_CANON_TWIN = semantic_key(_CANON_UNIT, _CANON_FAULT, _CANON_CLASS)
+
+
+def _gate_store(tmp_path):
+    """A hunter store + a hunt store whose produced config is the canonical
+    (Service:account-registration, CWE-1220, Privilege Escalation) identity -
+    the persisted config the tool's harness-owned gate validates against."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    hunt = HuntStore(root_dir=tmp_path)
+    hunt.write_config(PROJECT, {
+        "unit_id": _CANON_UNIT, "fault_class": _CANON_FAULT,
+        "vulnerability_class": _CANON_CLASS, "status": "ratified",
+    })
+    return store, hunt
+
+
+def test_C23_fault_key_gate_rejects_a_non_canonical_identity(tmp_path):
+    """The harness-owned gate (write AND read, #199): a model-emitted fault_key
+    that follows the naming convention but does not `:`-split-match a persisted
+    hunt-config identity is rejected with the denoted `fault_key_mismatch`
+    error - never a raise, never a fabricated folder."""
+    store, hunt = _gate_store(tmp_path)
+    tool = HuntsStoreTool(store=store, hunt_store=hunt, project_id=PROJECT)
+    for bad in (
+        # space STRIPPED out of the class name
+        "Service:account-registration_CWE-1220_PrivilegeEscalation",
+        # space replaced with `_` in the class name
+        "Service:account-registration_CWE-1220_Privilege_Escalation",
+        # the `Service:` kind prefix dropped
+        "account-registration_CWE-1220_Privilege Escalation",
+    ):
+        out = json.loads(tool.invoke({
+            "command": "write", "fault_key": bad, "mode": "create",
+            "fault_keyword": "f1", "strategy_keyword": "probe",
+            "spec": _fault("F1", status="hypothesised"),
+        }))
+        assert out["ok"] is False
+        assert out["error"] == "fault_key_mismatch"
+        assert out["fault_key"] == bad
+        # reads reject the same way
+        out = json.loads(tool.invoke({"command": "read", "fault_key": bad}))
+        assert out["specs"] == []
+        assert out["error"] == "fault_key_mismatch"
+    # NO folder was fabricated for any rejected identity
+    assert not (tmp_path / PROJECT / "hunter" / "test-specs").exists()
+
+
+def test_C24_fault_key_gate_accepts_the_canonical_identity(tmp_path):
+    """The gate accepts the canonical `_`-joined form and its `::`-semantic
+    twin (both split `:`-wise to the persisted config identity, #199), writes
+    the spec under the emitted key, and a read by the canonical returns it."""
+    store, hunt = _gate_store(tmp_path)
+    tool = HuntsStoreTool(store=store, hunt_store=hunt, project_id=PROJECT)
+    for good, folder in ((_CANON_KEY, _CANON_KEY), (_CANON_TWIN, _CANON_TWIN)):
+        out = json.loads(tool.invoke({
+            "command": "write", "fault_key": good, "mode": "create",
+            "fault_keyword": "f1", "strategy_keyword": "probe",
+            "spec": _fault("F1", status="hypothesised"),
+        }))
+        assert out["ok"] is True, out
+        assert out["path"].endswith(
+            f"{PROJECT}/hunter/test-specs/{folder}/produced/f1_probe.yaml")
+        assert Path(out["path"]).is_file()
+    out = json.loads(tool.invoke({"command": "read", "fault_key": _CANON_KEY}))
+    assert len(out["specs"]) == 1
+    assert out["specs"][0]["fault_id"] == "F1"
+
+
+def test_C24b_notes_tool_gate_rejects_a_non_canonical_identity(tmp_path):
+    """The same harness-owned gate rides the `notes` write (the fault_key the
+    note is scoped to must match a persisted config identity, #199)."""
+    store, hunt = _gate_store(tmp_path)
+    tool = NotesTool(store=store, hunt_store=hunt, project_id=PROJECT)
+    out = json.loads(tool.invoke({
+        "command": "write", "action": "append",
+        "fault_key": "Service:account-registration_CWE-1220_PrivilegeEscalation",
+        "note_name": "decision", "kind": "freeform", "body": "x",
+    }))
+    assert out["ok"] is False
+    assert out["error"] == "fault_key_mismatch"
+    assert store.read_notes(PROJECT) == []

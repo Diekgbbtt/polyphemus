@@ -132,6 +132,16 @@ lifecycle home. Session id = coroutine id = registry run name.
   `hunter_inboxes` is keyed by `config_key` on BOTH the register side (hunter
   dispatch) and the lookup side (pod dispatch): the two sides of one cross-family
   join must agree on the SAME canonical key, or every pod dispatch misses its parent.
+- **The model-facing `fault_key` contract (amended by #199):** the model-emitted
+  `fault_key` is validated by a harness-owned gate in the typed layer of the
+  `hunts_store` / `notes` tools (writes AND reads) against the persisted config
+  ids in the `HuntStore` - the naming convention (a well-formed 3-part config key,
+  canonical `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>` with the class's
+  spaces preserved, or its `::`-semantic twin) plus a literal `:`-split match of
+  the parts against a persisted config identity, with no cross-form resolution.
+  A violation returns the denoted `fault_key_mismatch` error (never a raise, never
+  a fabricated folder); the model reflects and corrects, mirroring the G4 dedup
+  signal's interpretation.
 - `spec_id` = semantic spec file name `<fault>_<strategy>` (164 state-graph spec 6).
   This REPLACES the pod branch's canonical-hash spec id everywhere it was identity
   (session-address spec discriminator, pod memory keys) - a reconciliation item for
@@ -162,6 +172,14 @@ future verdict-processing node, D67-02/D11/D67-14), never a dispatch gate: a
 produced `specified` spec is dispatchable on ITS OWN persisted status, even when its
 parent config was consumed by an earlier run (no live parent in this run). The export
 is never lost to a crash between dispatch and an in-memory inbox consumption.
+
+**The durable-record note key (amended by #199):** the durable pod-export note is
+keyed `<config_key>:pod-export:<spec_id>` (the parent's canonical `config_key` +
+the `pod-export:` marker + the semantic `<fault>_<strategy>` spec id) with action
+`update` - one current record per (config, spec), since one TestImplementationSpec
+yields at most one PodExport. The pod session id lives ONLY in `provenance["source"]`,
+never in the note key, so the key stays round-trippable (`config_key_from_fault_key`
+and the parent-read filters line up on the canonical config identity).
 
 ### Q17 - Session lifecycle surface
 

@@ -320,12 +320,14 @@ def seed_parent_note(project_id: str, *, config_key: str, run_id: str,
                      source: str, verdict: dict | None = None) -> None:
     """Write the durable parent-keyed verdict note through
     `HunterMemoryStore.write_note` (the Q16 record the identifier refactor
-    writes at pod completion), mirroring `_record_durable_pod_export`."""
+    writes at pod completion), mirroring `_record_durable_pod_export` - keyed
+    `<config_key>:pod-export:<spec_id>`, action=update (#199)."""
     from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
     store = HunterMemoryStore()
+    spec_id = str(source).rsplit(":", 1)[-1]
     store.write_note(
-        project_id, action="append", fault_key=config_key,
-        note_name=source, kind="freeform",
+        project_id, action="update", fault_key=config_key,
+        note_name=f"pod-export:{spec_id}", kind="freeform",
         body=str(verdict or {}), evidence="verdict-stub",
         provenance={"run_id": run_id, "source": source},
     )

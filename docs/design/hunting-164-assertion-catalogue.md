@@ -105,6 +105,15 @@ are designed and accounted as validated, but blocked on that workstream.
 - **C22 - read failure degrades (O4).** A store whose produced spec is corrupt
   -> the tool returns `{"specs": [], "error": "read_failed", ...}` (degrades to
   an empty set, never raises into the turn).
+- **C23 - the fault_key gate rejects a non-canonical key (harness-owned, #199).**
+  A `hunts_store` tool bound with the persisted hunt-config identities rejects a
+  model-emitted fault_key that follows the naming convention but does not match a
+  persisted config identity (space-stripped class, space->underscore class, missing
+  kind prefix) -> the denoted `fault_key_mismatch` error, and NO folder is created.
+- **C24 - the gate accepts the canonical identity (both renderings, #199).** The
+  same bound tool accepts the canonical `_`-joined form and its `::`-semantic twin
+  (each splits `:`-wise to a persisted config identity) -> `{"ok": true, ...}`,
+  never a mismatch, the spec file lands under the fault_key the model emitted.
 
 ### The harness seam (deterministic, scripted live edge - integration, not e2e)
 
