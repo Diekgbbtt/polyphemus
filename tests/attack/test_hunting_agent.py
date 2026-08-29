@@ -107,6 +107,73 @@ def test_axis_empty_card_defaults():
 
 # --- the hunting roles join the LLM role registry (Q1, #93/#94) --------------
 
+def test_compose_grounding_renders_aggregated_endpoints_in_both_shapes():
+    """#201: the hunter's grounding render spells the aggregated L0 endpoints
+    coherently in BOTH the canonical {"cards": [...]} wrapper and the legacy
+    direct flat shape; an absent slot degrades, never a raise."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        HuntConfig,
+        HuntPromptTemplate,
+    )
+    from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
+        _compose_grounding,
+    )
+
+    template = HuntPromptTemplate(rationale="r", research_direction="d")
+    eps = [
+        {"method": "GET", "path": "/cart", "baseurl": "https://a"},
+        {"method": "POST", "path": "/pay", "baseurl": "https://a",
+         "service_slug": "sign-in"},
+    ]
+    wrapper = HuntConfig(
+        hunt_id="h-1", unit_id="Service:slug:a", fault_class="fault-x",
+        prompt_template=template,
+        surface_context={"cards": [{"kind": "Service", "aggregated_endpoints": eps}]},
+    )
+    text = _compose_grounding(wrapper)
+    assert "aggregated endpoints:" in text
+    assert "GET /cart (baseurl: https://a)" in text
+    assert "POST /pay (baseurl: https://a) [service: sign-in]" in text
+    flat = HuntConfig(
+        hunt_id="h-2", unit_id="Service:slug:a", fault_class="fault-x",
+        prompt_template=template,
+        surface_context={"kind": "Service", "aggregated_endpoints": eps},
+    )
+    text = _compose_grounding(flat)
+    assert "aggregated endpoints:" in text
+    assert "GET /cart (baseurl: https://a)" in text
+    bare = HuntConfig(
+        hunt_id="h-3", unit_id="Service:slug:a", fault_class="fault-x",
+        prompt_template=template, surface_context={},
+    )
+    assert "no adapted index cards" in _compose_grounding(bare)
+
+
+def test_config_gaps_does_not_flag_the_direct_flat_shape():
+    """#201: the O3 gap flag accepts the direct flat shape (no 'cards' key) -
+    it only flags a genuinely absent surface context."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        HuntConfig,
+        HuntPromptTemplate,
+    )
+    from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
+        _config_gaps,
+    )
+
+    template = HuntPromptTemplate(rationale="r", research_direction="d")
+    flat = HuntConfig(
+        hunt_id="h-1", unit_id="Service:slug:a", fault_class="fault-x",
+        prompt_template=template,
+        surface_context={"kind": "Service", "aggregated_endpoints": []},
+    )
+    assert all("surface context" not in g for g in _config_gaps(flat))
+    bare = HuntConfig(
+        hunt_id="h-2", unit_id="Service:slug:a", fault_class="fault-x",
+        prompt_template=template, surface_context={},
+    )
+    assert any("surface context missing" in g for g in _config_gaps(bare))
+
+
 def test_hunting_roles_are_registered_off_app_boot():
     """The hunting agents are their own role_ids in HUNTING_ROLES (validated at the
     hunting module bootstrap), never in the app-boot ROLES (operator ruling

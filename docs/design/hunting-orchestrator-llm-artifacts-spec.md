@@ -61,6 +61,10 @@ The reason stretch (`_reason_node`) assembles the per-pair `GateInput` BEFORE th
   `match_verdict`;
 - the **unit projection** (`unit_projection.build_projection`): the unit's typed spine, kind, per-family outgoing
   Service->System edges, data-edge counts, DataRelationship kinds - absence surfaced as UNKNOWN, never FALSE;
+- the **aggregated L0 Endpoints** (as of #201): the projection carries the unit's `aggregated_endpoints` slot (a
+  Service's own `AGGREGATES`-bound Endpoints; a System's linked services' with the owning service slug), rendered as
+  typed observed artifacts inside the unit's own section - the gate's first user message spells them, never a
+  separate prose dump; L0 Headers out of scope; each slot fail-open (a failing read degrades only that slot);
 - the **fault materialisation** (`fault_kb.load_materialisation(fault_class)`): the CWE's rich NL content (extended
   description, alternate terms, related attack patterns, likelihood, consequences, mitigations, functional areas);
 - the **sub-fault fold family** (`fault_kb.load_fold_families`): for the parent `fault_class`, the sorted tuple of

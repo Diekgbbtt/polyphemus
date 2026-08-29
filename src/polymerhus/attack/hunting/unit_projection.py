@@ -26,9 +26,12 @@ The reader is pure mapping over the injectable raw read seam
 lazily on first call like every read seam in this codebase (CODING_STANDARD
 section 6). Traversal-then-fetch, one unit at a time: one read for the unit
 row + its outgoing edges, one for the DataRelationship kind chains among the
-unit's items, and (System units only) one for the D3 cooperating-systems
-adjacency. Every rich slot degrades independently to empty (never a raise,
-never a prune signal - the #63/135 fail-open discipline).
+unit's items, (System units only) one for the D3 cooperating-systems
+adjacency, and one for the unit's aggregated L0 Endpoints over the native
+`AGGREGATES` edge (#201 - a Service's own, a System's linked services' with
+the owning service slug; L0 Headers out of scope). Every rich slot degrades
+independently to empty (never a raise, never a prune signal - the #63/135
+fail-open discipline).
 """
 from __future__ import annotations
 
@@ -123,6 +126,21 @@ class DataRelationship:
 
 
 @dataclass(frozen=True)
+class AggregatedEndpoint:
+    """One L0 Endpoint a unit aggregates via the native `AGGREGATES` edge
+    (#201): the typed identity props (method/path/baseurl, present ones only)
+    plus the owning service slug when the aggregate resolves through a System
+    unit's LINKED services. Absent props stay None - absence is not-yet-filled,
+    never a prune signal. L0 Headers are out of scope (they ride the BaseURLs
+    linked to endpoints, never AGGREGATES)."""
+
+    method: str | None = None
+    path: str | None = None
+    baseurl: str | None = None
+    service_slug: str | None = None
+
+
+@dataclass(frozen=True)
 class UnitProjection:
     """The unit's typed facet surface (spec 2.2; rich slots per 3.6).
 
@@ -149,6 +167,7 @@ class UnitProjection:
     data_items: Mapping[str, tuple[DataItem, ...]] = field(default_factory=dict)
     data_relationships: tuple[DataRelationship, ...] = ()
     cooperating_systems: Mapping[str, tuple[SystemInfo, ...]] = field(default_factory=dict)
+    aggregated_endpoints: tuple[AggregatedEndpoint, ...] = ()
     diagnostics: tuple[str, ...] = ()
 
 
@@ -196,6 +215,17 @@ def _system_info_from(tprops: dict) -> SystemInfo:
         exposure=props.get("exposure"),
         description=props.get("description"),
         props=props,
+    )
+
+
+def _aggregated_endpoint_from(tprops: dict) -> AggregatedEndpoint:
+    """Pure: one AggregatedEndpoint from an L0 Endpoint node's props (the
+    typed identity props, present ones only - absence is not-yet-filled)."""
+    props = dict(tprops)
+    return AggregatedEndpoint(
+        method=props.get("method"),
+        path=props.get("path"),
+        baseurl=props.get("baseurl"),
     )
 
 
@@ -344,6 +374,59 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
                 cooperating_systems.setdefault(family, []).append(
                     _neighbor_info(nlabels, nprops))
 
+    # #201: the unit's aggregated L0 Endpoints over the native `AGGREGATES`
+    # edge (the L0 expansion for the agent). A Service unit aggregates its OWN
+    # Endpoints; a System unit surfaces the Endpoints its LINKED services
+    # aggregate (the system contract - each entry carries the owning service
+    # slug). Scoped to the target unit's identity only - never the whole
+    # surface (DD-4); L0 Headers are out of scope (they ride the BaseURLs
+    # linked to endpoints, never AGGREGATES). A failing read degrades ONLY this
+    # slot to empty + a diagnostic - never a raise, never a prune signal.
+    aggregated_endpoints: list[AggregatedEndpoint] = []
+    try:
+        if unit_kind == "Service":
+            agg_rows = read_fn(
+                "MATCH (s:L1Service {business_function_slug: $key, "
+                "project_id: $project_id})-[:AGGREGATES]->(e:Endpoint) "
+                "RETURN e {.*} AS props "
+                "ORDER BY e.baseurl, e.method, e.path",
+                {"project_id": project_id, "kind": kind, "key": key},
+            )
+            aggregated_endpoints = [
+                _aggregated_endpoint_from(row.get("props") or {})
+                for row in agg_rows
+            ]
+        else:
+            agg_rows = read_fn(
+                "MATCH (:L1System {kind: $kind, discriminator: $key, "
+                "project_id: $project_id})<-[r]-(s:L1Service)"
+                "-[:AGGREGATES]->(e:Endpoint) "
+                "WHERE type(r) IN $sys_rels "
+                "RETURN s.business_function_slug AS slug, e {.*} AS props "
+                "ORDER BY s.business_function_slug, e.baseurl, e.method, e.path",
+                {"project_id": project_id, "kind": kind, "key": key,
+                 "sys_rels": sorted(_SYSTEM_EDGE_RELS)},
+            )
+            aggregated_endpoints = [
+                AggregatedEndpoint(
+                    method=props.get("method"),
+                    path=props.get("path"),
+                    baseurl=props.get("baseurl"),
+                    service_slug=row.get("slug"),
+                )
+                for row in agg_rows
+                for props in [dict(row.get("props") or {})]
+            ]
+    except Exception as exc:  # noqa: BLE001 - fail-open: degrade the slot only
+        diagnostics.append(f"aggregated_endpoints read degraded: {exc}")
+
+    # Deterministic render ordering regardless of DB ordering: sort the slot by
+    # (baseurl, method, path, service_slug) so the projection's aggregates are
+    # stable across reads.
+    aggregated_endpoints.sort(
+        key=lambda ep: (ep.baseurl or "", ep.method or "", ep.path or "",
+                        ep.service_slug or ""))
+
     return UnitProjection(
         unit_id=unit_id,
         kind=unit_kind,
@@ -354,6 +437,7 @@ def build_projection(project_id: str, unit_id: str, *, read_fn=None) -> UnitProj
         data_items={f: tuple(items) for f, items in data_items.items()},
         data_relationships=tuple(data_relationships),
         cooperating_systems={f: tuple(s) for f, s in cooperating_systems.items()},
+        aggregated_endpoints=tuple(aggregated_endpoints),
         diagnostics=tuple(diagnostics),
     )
 

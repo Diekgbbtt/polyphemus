@@ -206,13 +206,40 @@ def _fmt_list(items) -> str:
     return "; ".join(str(i) for i in items)
 
 
+def _fmt_aggregated_endpoints(endpoints) -> str:
+    """Deterministic render of the aggregated L0 endpoints a card carries
+    (#201): `METHOD path (baseurl: X)` plus `[service: slug]` when the entry
+    carries an owning service (a System card's linked-services aggregates) -
+    the typed identity props, sorted. An absent or empty slot renders
+    '(none)'; a malformed entry is skipped, never a raise."""
+    lines = []
+    for entry in endpoints:
+        if not isinstance(entry, dict):
+            continue
+        parts = []
+        if entry.get("method"):
+            parts.append(entry["method"])
+        if entry.get("path"):
+            parts.append(entry["path"])
+        if entry.get("baseurl"):
+            parts.append(f"(baseurl: {entry['baseurl']})")
+        if entry.get("service_slug"):
+            parts.append(f"[service: {entry['service_slug']}]")
+        if parts:
+            lines.append(" ".join(parts))
+    return "; ".join(sorted(lines)) or "(none)"
+
+
 def _config_gaps(config: HuntConfig) -> list[str]:
     """The O3 gap flags for a degraded HuntConfig: the agent still authors from
     the present parts (C4) and flags each missing part in the feedback. The
     #202 shape: the renamed `observed_defences` and the merged `preconditions`
     (both G1) are flagged on their new names, never the old vocabulary."""
     gaps: list[str] = []
-    if not (config.surface_context or {}).get("cards"):
+    sc = config.surface_context or {}
+    # both the canonical {"cards": [...]} wrapper and the legacy direct flat
+    # shape (a card carrying `kind`) count as present (#201)
+    if not (sc.get("cards") or sc.get("kind")):
         gaps.append("surface context missing (no adapted index cards); grounding degraded")
     if not config.prompt_template.rationale:
         gaps.append("orchestrator rationale missing; grounding degraded")
@@ -279,6 +306,12 @@ def _compose_grounding(config: HuntConfig) -> str:
     # the `{"cards": [...]}` wrapper is the legacy/scripted shape. Render either.
     cards = surface.get("cards") or ([surface] if surface.get("kind") else [])
     surface_text = _fmt_list(cards) if cards else "(no adapted index cards)"
+    aggregated: list[dict] = []
+    for card in cards:
+        if isinstance(card, dict):
+            aggregated.extend(card.get("aggregated_endpoints") or [])
+    if aggregated:
+        surface_text += f"; aggregated endpoints: {_fmt_aggregated_endpoints(aggregated)}"
     return (
         f"You are dispatched to hunt {config.unit_id} for fault class "
         f"{config.fault_class}.\n"

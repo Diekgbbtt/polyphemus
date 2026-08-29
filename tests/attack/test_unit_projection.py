@@ -20,6 +20,7 @@ evaluation stage maps that to UNKNOWN (default-open), never FALSE (C12).
 """
 
 from polymerhus.attack.hunting.unit_projection import (
+    AggregatedEndpoint,
     DataItem,
     DataRelationship,
     EdgeInfo,
@@ -56,6 +57,8 @@ class FakeL1:
 
     def read(self, cypher, params):
         self.calls.append(cypher)
+        if "AGGREGATES" in cypher:
+            return self._aggregated_rows(params)
         if "cooperating_outs" in cypher:
             return self._adj_rows(params)
         if "type(dr) AS family" in cypher:
@@ -72,6 +75,14 @@ class FakeL1:
 
     def __call__(self, cypher, params):
         return self.read(cypher, params)
+
+    def _aggregated_rows(self, params):
+        unit_id = f"{params['kind']}:{params['key']}"
+        unit = self.units.get(unit_id)
+        rows = (unit or {}).get("aggregated")
+        if rows is not None:
+            return rows
+        return []
 
     def _data_rel_rows(self, params):
         unit_id = f"{params['kind']}:{params['key']}"
@@ -193,8 +204,97 @@ def test_build_projection_reads_are_scoped_and_deterministic():
     first = _projection("Service:checkout", fake)
     second = _projection("Service:checkout", fake)
     assert first == second
-    assert len(fake.calls) == 4  # two reads per build, twice - no cache, pure
-    assert all("$project_id" in c for c in fake.calls[::2])
+    # three reads per build (unit row + data-rel chains + AGGREGATES), twice -
+    # no cache, pure
+    assert len(fake.calls) == 6
+    assert all("$project_id" in c for c in fake.calls[::3])
+
+
+def test_build_projection_service_aggregates_endpoints():
+    """#201: a Service's AGGREGATES-bound L0 Endpoints land on the projection
+    as `aggregated_endpoints` (method/path/baseurl from the L0 identity props);
+    the aggregate read is scoped to the target unit, never the whole surface."""
+    fake = FakeL1({
+        "Service:checkout": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "checkout"},
+            "edges": [],
+            "aggregated": [
+                {"props": {"path": "/pay", "method": "POST", "baseurl": "https://a",
+                           "url": "https://a/pay"}},
+                {"props": {"path": "/cart", "method": "GET", "baseurl": "https://a",
+                           "url": "https://a/cart"}},
+            ],
+        },
+    })
+    projection = _projection("Service:checkout", fake)
+    assert projection.aggregated_endpoints == (
+        AggregatedEndpoint(method="GET", path="/cart", baseurl="https://a"),
+        AggregatedEndpoint(method="POST", path="/pay", baseurl="https://a"),
+    )
+    agg_cyphers = [c for c in fake.calls if "AGGREGATES" in c]
+    assert len(agg_cyphers) == 1
+    assert "business_function_slug: $key" in agg_cyphers[0]
+
+
+def test_build_projection_system_aggregates_linked_services_endpoints():
+    """#201 system contract: a System unit surfaces the Endpoints its LINKED
+    services aggregate, each entry carrying the owning service slug."""
+    fake = FakeL1({
+        "System:auth:auth-1": {
+            "labels": ["L1System"],
+            "props": {"kind": "auth", "discriminator": "auth-1"},
+            "edges": [],
+            "aggregated": [
+                {"slug": "sign-in", "props": {"path": "/login", "method": "POST",
+                                              "baseurl": "https://a"}},
+                {"slug": "sign-in", "props": {"path": "/token", "method": "GET",
+                                              "baseurl": "https://a"}},
+            ],
+        },
+    })
+    projection = _projection("System:auth:auth-1", fake)
+    assert projection.aggregated_endpoints == (
+        AggregatedEndpoint(method="GET", path="/token", baseurl="https://a",
+                           service_slug="sign-in"),
+        AggregatedEndpoint(method="POST", path="/login", baseurl="https://a",
+                           service_slug="sign-in"),
+    )
+
+
+def test_build_projection_unbound_unit_has_empty_aggregates():
+    """#201 / #200 interaction: an unenriched L1 (zero AGGREGATES edges) yields
+    an empty aggregated_endpoints slot - fail-open, never a raise."""
+    fake = FakeL1({
+        "Service:ghost": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "ghost"},
+            "edges": [],
+        },
+    })
+    projection = _projection("Service:ghost", fake)
+    assert projection.aggregated_endpoints == ()
+
+
+def test_build_projection_aggregates_read_failure_degrades_the_slot():
+    """#201 fail-open: a raising AGGREGATES read degrades ONLY the
+    aggregated_endpoints slot (the projection survives, never a raise)."""
+    fake = FakeL1({
+        "Service:checkout": {
+            "labels": ["L1Service"],
+            "props": {"business_function_slug": "checkout"},
+            "edges": [],
+        },
+    })
+
+    def read(cypher, params):
+        if "AGGREGATES" in cypher:
+            raise RuntimeError("aggregates read failed (fixture)")
+        return fake.read(cypher, params)
+
+    projection = _projection("Service:checkout", read)
+    assert projection.aggregated_endpoints == ()
+    assert any("aggregated" in d for d in projection.diagnostics)
 
 
 def test_build_projection_ignores_non_system_targets():
@@ -355,7 +455,7 @@ def test_d3_system_cooperating_systems_adjacency():
     })
     s = _projection("Service:checkout", service_fake)
     assert s.cooperating_systems == {}
-    assert len(service_fake.calls) == 2  # no D3 read for a Service unit
+    assert len(service_fake.calls) == 3  # unit row + data-rel + AGGREGATES, no D3
 
 
 # --- per-slot degrade: absent rich data -> empty slot, never a raise -----------

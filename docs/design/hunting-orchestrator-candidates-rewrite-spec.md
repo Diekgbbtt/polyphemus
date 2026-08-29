@@ -226,6 +226,19 @@ config, status="hypothesised")` at elicitation, producing a **draft config** wit
   - **`edge_degree` transformed to the connected DataItems** (operator correction): in the config's `surface_context`,
     a Service's `edge_degree` counts are replaced by the detailed specification of the DataItems it is connected to
     (name, type, sensitivity, fields, notes) - mirroring the rich projection.
+  - **L0 aggregates expanded under the parent unit (#201):** in the config's `surface_context`, the target unit card
+    is expanded with its aggregated L0 Endpoints (`aggregated_endpoints`: method/path/baseurl from the native
+    `AGGREGATES` edge) under the parent unit.
+    A System card carries the Endpoints its LINKED services aggregate, each entry with the owning service slug.
+    L0 Headers are out of scope (they ride the BaseURLs linked to endpoints, never `AGGREGATES`).
+    The `surface_context` is a **deterministic typed assembly**: the renamed `service_card_projection` renders the
+    typed cards (spine + connected DataItems + aggregated endpoints + linked systems), the ratified config carries
+    them, and the ratify upsert re-injects the minted shape (the model stops re-authoring it).
+    The L0 expansion fires ONLY for the config's target unit - `index_cards` stays the L1-only token-light surface
+    (DD-4), and an unbound L1 (zero `AGGREGATES` edges, the #200 interaction) degrades to the card unchanged, never
+    a raise, never a prune signal (C16).
+    One aggregated endpoint entry is the L0 Endpoint's typed identity props, present ones only (absence is
+    not-yet-filled, never a marker), rendered in deterministic sorted order.
 
   **#202 removals and re-sourcings.** `technique_primitives[]` is **removed**: the vulnerability-class naming
   already IS the initial concretisation, the field was redundant with a class-level `research_direction` that
@@ -266,6 +279,10 @@ schema already supports:
 - **System-to-System adjacency (D3) read added (Q5)**: the System-adjacency read lands (currently the inverse hop),
   so System-targeting hunts can see cooperating systems. This is the one L1-read gap; everything else the projection
   needs is already present (verified in the impact map - no schema blocker).
+- **Aggregated L0 Endpoints read added (#201)**: the projection gains an `aggregated_endpoints` slot - a Service
+  unit's own `(:L1Service)-[:AGGREGATES]->(:L0Endpoint)` read, a System unit's LINKED services' aggregates (each
+  entry carrying the owning service slug) - one per-unit read over the existing `read_fn` seam, fail-open to an empty
+  slot (a raising read degrades ONLY that slot, never the projection). L0 Headers are out of scope.
 
 Each slot degrades independently to UNKNOWN (never FALSE, never a prune signal) - the #63/135 fail-open discipline
 unchanged.
@@ -276,6 +293,10 @@ unchanged.
   Service's section spells its surface - its edged DataItems and Systems; a System's section outlines the System
   distinctly even for `Both` faults. The #69 implicit-coverage **minting** carve-out stays parked (prompt-split only in
   this change-set; target typing stays heuristic for minting).
+- **Aggregated L0 endpoints render inside the unit sections (#201)**: the unit's aggregated Endpoints render as typed
+  observed artifacts inside ITS OWN section (a Service spells its own, a System spells its linked services' with the
+  owning slug) - coherent with the L1 units, never a separate prose dump; the L0 ontology primer is extended with the
+  service->aggregated-endpoint relationship (G9, #201).
 - **Cooperating-systems instruction (Q5):** the skill/fallback gains the operator's verbatim prose: "consider
   cooperating systems when creating a HuntConfig targeting a system" - plus the new System-adjacency projection read.
   No structured `cooperating_systems` field yet.
@@ -314,7 +335,9 @@ spec'd in `docs/design/hunting-memory-system-spec.md`).
   `adversarial_capabilities` / `assumptions` / `tool_registry` removed; `prior_hunt_insights` re-sourced
   downstream (hunter TestImplementationSpecs + Q16 pod exports by `config_key`, shallow-projected I3);
   `concrete_fault_candidates` / `fault_hypothesis` / `extension_points` / `supposed_payload_vectors` removed;
-  `edge_degree` in the surface context transformed to the connected DataItems. The config's role is oriented by
+  `edge_degree` in the surface context transformed to the connected DataItems; the aggregated L0 Endpoints
+  expanded under the parent unit in `surface_context` (#201, a deterministic typed assembly, the System card
+  carrying its linked services' endpoints with the owning service slug). The config's role is oriented by
   the three goals: G1 feasibility / G2 the vulnerability-class naming (the initial concretisation) / G3
   further-concretisation material (`sub_fault_ids`, `prior_hunt_insights`).
 - **match verdict** - unchanged three-valued prune signal (level 1); the gate no longer **is** the verdict - it is the
@@ -417,8 +440,10 @@ Prior art: `tests/attack/test_unit_projection.py`, `tests/integration/test_orche
   responses - never part of the skill (defect 3).
 - The `CONTEXT.md` hunting glossary updates: "HuntCandidate" (no longer the schedule unit), "schedule unit / REASON
   pass" (fault-level), "config status lifecycle" (`hypothesised -> ratified | dropped`), "vulnerability class",
-  "hunts_store", "notes", the tool surface entry, and the produced/consumed memory topology - all land with this
-  change (per the repo's living-document rule).
+  "hunts_store", "notes", the tool surface entry, the produced/consumed memory topology, and the #201 HuntConfig
+  parameter-set sharpening ("aggregates expanded for the agent": the aggregated L0 Endpoints render under the parent
+  unit in `surface_context` as a deterministic typed assembly; L0 Headers out of scope) - all land with this change
+  (per the repo's living-document rule).
 - The memory topology itself (produced/consumed configs + `memory.yaml`, `_seq`/`_ref` removal, run/hunt/dispatch
   file removal, file-naming convention) is specified in `docs/design/hunting-memory-system-spec.md`; the ADR
   `docs/design/hunting-orchestrator-memory-workflow-adr.md` is the authority on the 2026-08-23 dispositions.
