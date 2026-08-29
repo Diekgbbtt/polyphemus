@@ -103,8 +103,7 @@ def _candidate(unit_id: str = SERVICE_A, fault_class: str = FAULT_X, *,
 def _carry(candidate: DeliveredCandidate) -> EnvisionedDirection:
     return EnvisionedDirection(
         unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=True,
-        rationale="r", assumptions=["a"],
-        envisioned_test_primitives=["p"],
+        rationale="r", research_direction="",
     )
 
 
@@ -115,9 +114,8 @@ def _ratify_drafts(inp) -> RatifyDecision:
     for draft in inp.configs:
         amended = draft.model_copy(deep=True)
         amended.status = "ratified"
-        amended.adversarial_capabilities = ["forge a cross-origin request"]
-        amended.assumptions = ["the session is cookie-bound"]
-        amended.technique_primitives = ["token-missing probe"]
+        amended.preconditions = ["an authenticated session is obtainable"]
+        amended.observed_defences = ["WAF blocks XSS payloads"]
         configs.append(amended)
     return RatifyDecision(configs=configs)
 
@@ -214,15 +212,15 @@ def test_does_not_apply_is_pruned_and_never_reaches_the_gate():
 # --- Pure mechanics: the D3 HuntConfig minting --------------------------------
 
 def test_mint_hunt_config_mints_a_hypothesised_draft():
-    # the rework (spec 3.5): a direction with no elicited vulnerability classes
-    # degrades to ONE carried-bare draft - status="hypothesised", rationale +
-    # research_direction filled, the ratification-phase fields empty
+    # the rework (spec 3.5, #202): a direction with no elicited vulnerability
+    # classes degrades to ONE carried-bare draft - status="hypothesised",
+    # rationale + research_direction filled, the ratification-phase fields
+    # (preconditions / observed_defences) empty
     candidate = _candidate(deterministic_witness=None)
     config = mint_hunt_config(
         direction=_carry(candidate), candidate=candidate, hunt_id="hunt-1",
         surface_context={"card": {"kind": "Service", "spine": {}}},
-        prior_hunt_insights=[{"insight": "form Z carries no CSRF token"}],
-        tool_registry=[{"tool": "csrf-probe"}],
+        prior_hunt_insights=[{"kind": "prior_verdict", "verdict": "unsuccessful"}],
     )[0]
     assert config.hunt_id == "hunt-1"
     assert config.unit_id == SERVICE_A
@@ -234,13 +232,11 @@ def test_mint_hunt_config_mints_a_hypothesised_draft():
     assert template.research_direction == ""
     assert template.l0_evidence == ["llm: witness"]
     # the ratification-phase fields are empty in the hypothesised draft
-    assert config.adversarial_capabilities == []
-    assert config.assumptions == []
-    assert config.technique_primitives == []
+    assert config.preconditions == []
+    assert config.observed_defences == []
     assert config.surface_context["card"]["kind"] == "Service"
-    assert config.target_caveats == []
-    assert config.prior_hunt_insights == [{"insight": "form Z carries no CSRF token"}]
-    assert config.tool_registry == [{"tool": "csrf-probe"}]
+    assert config.prior_hunt_insights == [
+        {"kind": "prior_verdict", "verdict": "unsuccessful"}]
     assert config.sub_fault_ids == []  # folded recipes, filled by the graph logic
 
 
@@ -253,7 +249,6 @@ def test_hunt_config_carries_the_sub_fault_ids_slot():
         hunt_id="hunt-1",
         surface_context={},
         prior_hunt_insights=[],
-        tool_registry=[],
     )[0]
     config.sub_fault_ids = ["CWE-24", "CWE-35"]
     assert config.sub_fault_ids == ["CWE-24", "CWE-35"]
@@ -292,7 +287,7 @@ def test_mint_fans_out_one_config_per_distinct_class():
     configs = mint_hunt_config(
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
-        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+        surface_context={}, prior_hunt_insights=[],
         sub_fault_ids=["CWE-520", "CWE-9"],
     )
     assert len(configs) == 3
@@ -317,7 +312,7 @@ def test_mint_collapses_same_class_duplicates_deterministically():
     configs = mint_hunt_config(
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
-        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+        surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 2
     assert [c.vulnerability_class for c in configs] == ["csrf", "idor"]
@@ -331,7 +326,7 @@ def test_mint_without_classes_is_the_carried_bare_fallback():
     configs = mint_hunt_config(
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
-        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+        surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 1
     config = configs[0]
@@ -349,7 +344,7 @@ def test_mint_with_only_empty_classes_is_the_carried_bare_fallback():
     configs = mint_hunt_config(
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
-        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+        surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 1
     assert configs[0].vulnerability_class == ""
@@ -365,7 +360,7 @@ def test_mint_passes_research_direction_and_preserves_the_identity_slots():
     configs = mint_hunt_config(
         direction=direction, candidate=_candidate(deterministic_witness=None),
         hunt_id="hunt-1",
-        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+        surface_context={}, prior_hunt_insights=[],
     )
     assert [c.hunt_id for c in configs] == ["hunt-1", "hunt-1-1"]
     assert [c.vulnerability_class for c in configs] == ["idor", "csrf"]
@@ -375,9 +370,8 @@ def test_mint_passes_research_direction_and_preserves_the_identity_slots():
         assert template.l0_evidence == ["llm: witness"]
         assert template.research_direction == "enumerating the receipts resource"
         assert config.status == "hypothesised"
-        assert config.adversarial_capabilities == []
-        assert config.assumptions == []
-        assert config.technique_primitives == []
+        assert config.preconditions == []
+        assert config.observed_defences == []
 
 
 def test_surface_context_replaces_edge_degree_with_connected_data_items():
@@ -731,34 +725,47 @@ def test_arun_orchestration_does_not_block_the_event_loop():
 
 # --- I3: prior_hunt_insights never embed nested configs (no snowball) ---------
 
-def test_prior_hunt_insights_never_embed_nested_configs():
-    """I3 - the recursive prior_hunt_insights snowball is broken: a minted
-    config's prior_hunt_insights carries a shallow PROJECTION of each prior
-    config (identity + hypothesise seeds), never the full dump - so a persisted
-    config never embeds another config's prior_hunt_insights (the nesting
-    would grow unbounded across passes)."""
-    store = _MemoryStore()
-    # pass N-1's persisted config carried ITS prior-hunt insights (the old
-    # full-dump merge); the projection must strip that baggage
-    store.write_config("project-1", {
-        "unit_id": SERVICE_A, "fault_class": FAULT_X,
-        "vulnerability_class": "CSRF", "status": "hypothesised",
-        "hunt_id": "prior",
-        "prompt_template": {"rationale": "r", "research_direction": "rd"},
-        "prior_hunt_insights": [{"unit_id": "ancient"}],
-    })
+def test_prior_hunt_insights_never_embed_nested_records(tmp_path):
+    """I3 + #202 - the downstream prior_hunt_insights are shallow-projected: a
+    minted config's prior_hunt_insights carry identity/status/summary only,
+    never the full downstream record (the evidence trail is never embedded), so
+    the nesting never snowballs across passes."""
+    from polymerhus.attack.hunting.hunt_store import (  # noqa: PLC0415
+        HuntStore,
+        semantic_key,
+    )
+    from polymerhus.attack.hunting.hunter_memory import (  # noqa: PLC0415
+        HunterMemoryStore,
+    )
+
+    store = HuntStore(tmp_path)
+    hunter = HunterMemoryStore(tmp_path)
+    config_key = semantic_key(SERVICE_A, FAULT_X, "csrf")
+    # a downstream spec whose record carries a sizeable evidence trail
+    hunter.write_spec(
+        "project-1", config_key, fault_keyword="f1", strategy_keyword="probe",
+        spec={
+            "fault_id": "F1", "spec_id": "S1", "status": "specified",
+            "strategy": "probe", "fault_key": config_key, "spec_ref": "r",
+            "mechanism": "m",
+            "supports": ["evidence-1", "evidence-2", "evidence-3"],
+            "conflicts": [], "test": "t",
+        },
+    )
     report = _run(store, [_candidate()])
     assert report.pairs_processed == 1
-    minted = [c for c in store.read_configs("project-1")
-              if c.get("hunt_id") != "prior"]
-    assert len(minted) == 1
+    minted = store.read_configs("project-1")
     insights = minted[0]["prior_hunt_insights"]
-    assert insights, "the second pass should have read the prior config as an insight"
-    # never a nested prior_hunt_insights key (the snowball is cut)
+    assert insights, "the second pass should have read the downstream spec as an insight"
+    # never a nested full record (the snowball is cut): the evidence trail and
+    # the full spec body are not embedded
     for insight in insights:
+        assert "supports" not in insight
+        assert "conflicts" not in insight
+        assert "mechanism" not in insight
         assert "prior_hunt_insights" not in insight
-    # the projection keeps the identity + hypothesise seeds for the Q11 read
-    assert any(i.get("unit_id") == SERVICE_A and i.get("fault_class") == FAULT_X
+    # the projection keeps the identity + status for the G3 read
+    assert any(i.get("spec_id") == "S1" and i.get("status") == "specified"
                for i in insights)
 
 
@@ -803,3 +810,119 @@ def test_carried_bare_direction_with_rationale_is_still_minted():
     assert len(configs) == 1
     assert configs[0]["vulnerability_class"] == ""
     assert configs[0]["prompt_template"]["rationale"] == "plausible at this locus"
+
+
+# --- #202: the lean HuntConfig (three-goal, no redundant slots) --------------
+
+def test_hunt_config_shape_is_the_lean_three_goal_config():
+    """#202 - the HuntConfig type reflects the grilling rulings: the merged
+    `preconditions` list and the renamed `observed_defences` survive, and the
+    redundant slots (`tool_registry`, `adversarial_capabilities`, `assumptions`,
+    `technique_primitives`, `target_caveats`) are gone."""
+    config = mint_hunt_config(
+        direction=_carry(_candidate(deterministic_witness=None)),
+        candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={},
+        prior_hunt_insights=[],
+        observed_defences=["WAF on /api/* blocks XSS payloads"],
+        preconditions=["an authenticated session is obtainable"],
+    )[0]
+    # the merged G1 preconditions list (capabilities + assumptions unified)
+    assert config.preconditions == ["an authenticated session is obtainable"]
+    # the renamed, re-oriented target_caveats slot
+    assert config.observed_defences == ["WAF on /api/* blocks XSS payloads"]
+    # the redundant slots are REMOVED from the type
+    for gone in ("tool_registry", "adversarial_capabilities", "assumptions",
+                 "technique_primitives", "target_caveats"):
+        assert not hasattr(config, gone)
+
+
+def test_mint_never_assembles_a_tool_registry():
+    """#202 - the mint's tool_registry assembly is retired: the source
+    (`_registry_from_kb`) no longer exists and a minted config carries no
+    tool_registry slot."""
+    import polymerhus.attack.hunting.hunt_orchestrator as ho  # noqa: PLC0415
+    assert not hasattr(ho, "_registry_from_kb")
+    config = mint_hunt_config(
+        direction=_carry(_candidate(deterministic_witness=None)),
+        candidate=_candidate(deterministic_witness=None),
+        hunt_id="hunt-1",
+        surface_context={},
+        prior_hunt_insights=[],
+    )[0]
+    assert not hasattr(config, "tool_registry")
+
+
+def test_direction_carrier_no_longer_carries_the_old_ratification_fields():
+    """#202 - the EnvisionedDirection carrier drops the dead
+    `assumptions` / `envisioned_test_primitives` fields (traced-only, never
+    minted; their config-level mirrors are cut/merged)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        EnvisionedDirection,
+    )
+    direction = EnvisionedDirection(
+        unit_id=SERVICE_A, fault_class=FAULT_X, carried=True,
+        rationale="r", research_direction="rd", vulnerability_classes=["csrf"],
+    )
+    assert direction.vulnerability_classes == ["csrf"]
+    assert not hasattr(direction, "assumptions")
+    assert not hasattr(direction, "envisioned_test_primitives")
+
+
+def test_prior_hunt_insights_read_the_downstream_hunter_records(tmp_path):
+    """#202 - `_read_prior_insights` reads the DOWNSTREAM hunter memory (the
+    TestImplementationSpecs + the Q16 durable PodExport verdicts, keyed by the
+    config_key) instead of the orchestrator's own prior configs+notes, and
+    projects each shallowly (I3 - never a full config/spec embedded)."""
+    import json  # noqa: PLC0415
+
+    from polymerhus.attack.hunting.hunt_store import (  # noqa: PLC0415
+        HuntStore,
+        semantic_key,
+    )
+    from polymerhus.attack.hunting.hunter_memory import (  # noqa: PLC0415
+        HunterMemoryStore,
+    )
+
+    store = HuntStore(tmp_path)
+    hunter = HunterMemoryStore(tmp_path)
+    config_key = semantic_key(SERVICE_A, FAULT_X, "csrf")
+    # a downstream produced TestImplementationSpec
+    hunter.write_spec(
+        "project-1", config_key, fault_keyword="f1", strategy_keyword="probe",
+        spec={
+            "fault_id": "F1", "spec_id": "S1", "status": "specified",
+            "strategy": "probe", "fault_key": config_key,
+            "spec_ref": f"data/project-1/hunter/test-specs/{config_key}/produced/f1_probe.yaml",
+            "mechanism": "m", "supports": ["e1"], "conflicts": [],
+            "test": "submit a tokenless foreign-origin request and observe the response",
+        },
+    )
+    # the Q16 durable pod-export record (verdict-stub note)
+    hunter.write_note(
+        "project-1", action="append", fault_key=config_key,
+        note_name="pod-1", kind="freeform",
+        body=json.dumps({"verdict": "unsuccessful",
+                         "terminal_reason": "no-symptom-evidence", "clean": True}),
+        provenance={"run_id": "prior-run", "source": "pod-src", "verdict_stub": True},
+    )
+    report = run_orchestration(
+        "project-1", "run-1", [_candidate()], _tools(store),
+        hypothesise_fn=lambda inp: GateDecision(
+            directions=[_carry(inp.candidates[0])]),
+        ratify_fn=_ratify_drafts,
+        note_fn=_note_pair,
+    )
+    assert report.configs_ratified == 1
+    minted = store.read_configs("project-1")
+    insights = minted[0]["prior_hunt_insights"]
+    kinds = {i.get("kind") for i in insights}
+    assert "prior_spec" in kinds and "prior_verdict" in kinds
+    # shallow projection: identity/status/summary only, never the full records
+    spec_insight = next(i for i in insights if i.get("kind") == "prior_spec")
+    assert spec_insight["spec_id"] == "S1" and spec_insight["status"] == "specified"
+    assert "supports" not in spec_insight  # the evidence trail is not embedded
+    verdict_insight = next(i for i in insights if i.get("kind") == "prior_verdict")
+    assert verdict_insight["verdict"] == "unsuccessful"
+    assert verdict_insight["terminal_reason"] == "no-symptom-evidence"

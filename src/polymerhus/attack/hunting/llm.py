@@ -200,13 +200,15 @@ _GATE_SKILL_FALLBACK = (
     "reflection - no module-side parsing. The hypothesise write: "
     "hunts_store(write, config, status='hypothesised'), one draft per "
     "surviving class with only rationale + research_direction filled - the "
-    "capabilities / assumptions / technique-primitives analysis is the "
-    "RATIFICATION phase's work (adversarial_capabilities are the attacker's "
-    "pre-existing testing preconditions - an authorization level, a session "
-    "context, a workflow step, data access, an interaction capability, a "
-    "target state - never post-exploitation capabilities; the hunting agent "
-    "prunes the direction or gains them beforehand). Consider cooperating "
-    "systems when creating a "
+    "preconditions / observed-defences analysis is the RATIFICATION phase's "
+    "work (preconditions are the test's preconditions - the attacker's "
+    "pre-existing capabilities AND the environment conditions the test needs, "
+    "an authorization level, a session context, a workflow step, data access, "
+    "an interaction capability, a target state - never post-exploitation "
+    "capabilities; observed_defences are the observed target characteristics "
+    "that hinder the tests and support a falsification; the hunting agent "
+    "prunes the direction or gains the preconditions beforehand). Consider "
+    "cooperating systems when creating a "
     "HuntConfig targeting a system. Tools are exactly three: hunts_store, "
     "notes, graph_view (no back-edge-to-recon tool, no budget tool). Return "
     "the directions, each marked carried or pruned; the deterministic mint "
@@ -526,15 +528,15 @@ def _compose_gate_prompt(inp: GateInput) -> str:
         "Pure LLM reflection - no module-side parsing.",
         "  The hypothesise write (spec 3.3): call hunts_store(write, config, "
         "status='hypothesised') with ONE draft per surviving class, carrying "
-        "rationale + research_direction ONLY. The capability/assumption/"
-        "technique-primitive analysis is the RATIFICATION phase's work (the next "
+        "rationale + research_direction ONLY. The preconditions / "
+        "observed-defences analysis is the RATIFICATION phase's work (the next "
         "phase) - never filled at this hypothesise turn.",
         "",
         "Return one direction per candidate: set carried true/false, and for a "
         "carried direction fill rationale, research_direction, and "
-        "vulnerability_classes ONLY. The capabilities / assumptions / "
-        "technique-primitives are the RATIFICATION phase's work (a later "
-        "phase) - never a seed you fill at this hypothesise turn.",
+        "vulnerability_classes ONLY. The preconditions / observed_defences "
+        "are the RATIFICATION phase's work (a later phase) - never a seed you "
+        "fill at this hypothesise turn.",
     ]
     return "\n".join(lines)
 
@@ -547,7 +549,7 @@ def _compose_ratify_prompt(inp: PhaseTurnInput) -> str:
     (NEXT_RATIFY_HINT on the hypothesised write, ONLY NEXT_NOTE_HINT on the
     ratified write - G1), never this prompt: the prompt carries the pair data
     and the ratification contract (must END with a status='ratified' write
-    carrying the filled capabilities / assumptions / technique-primitives)."""
+    carrying the filled preconditions / observed_defences, #202)."""
     pair = inp.pair
     lines = [L1_ONTOLOGY_PRIMER, ""]
     lines += [
@@ -568,11 +570,12 @@ def _compose_ratify_prompt(inp: PhaseTurnInput) -> str:
         "Ratification contract: you may call hunts_store(write, config) "
         "multiple times to update/delete/create configs. End ratification by a "
         "hunts_store write carrying status='ratified' and, very likely, the "
-        "filled adversarial_capabilities (the test's preconditions - the "
-        "attacker's existing capabilities the test needs, never "
-        "post-exploitation capabilities) / assumptions / technique_primitives. "
-        "A config you delete during ratification is written status='dropped' "
-        "(it stays on disk, G6).",
+        "filled preconditions (the test's preconditions - the attacker's "
+        "existing capabilities AND the environment conditions the test needs, "
+        "never post-exploitation capabilities) / observed_defences (the "
+        "observed target characteristics that hinder the tests and support a "
+        "falsification). A config you delete during ratification is written "
+        "status='dropped' (it stays on disk, G6).",
         "",
         "Return the pair's configs at their final status.",
     ]

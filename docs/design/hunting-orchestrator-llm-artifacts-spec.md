@@ -76,15 +76,17 @@ The gate turn is a MEDIUM-reasoning-effort turn (role `hunting_orchestrator`, Th
 prompt must demand a reasoning flow, not a format:
 
 1. **Orient from the end goal (work backward).** State the deliverable first: a CARRIED `EnvisionedDirection` whose
-   `rationale`, `assumptions`, `envisioned_test_primitives` and `supposed_payload_vectors` must be concrete enough that
-   a later hunting agent can turn them into a test hypothesis. From that end, ask which minuscule amount of evidence
-   each backward step needs - never answer a sub-problem before the one it depends on.
+   `rationale`, `research_direction` (G1 feasibility prose, never technique words) and `vulnerability_classes[]` must
+   be concrete enough that a later hunting agent can turn them into a test hypothesis. From that end, ask which
+   minuscule amount of evidence each backward step needs - never answer a sub-problem before the one it depends on.
 2. **Decompose into consecutive sub-problems, address each sequentially.** The fixed decomposition of the per-pair
    analysis: (a) what does this fault-class MEAN at this unit's typed locus (structure + materialisation + fold family
-   as consideration); (b) which adversarial-capability and environmental assumptions must hold for it to be exploitable
-   here; (c) which test primitives would DISCRIMINATE it (make the hypothesis's absence observable, not merely let it
-   pass); (d) which payload vectors would exercise those primitives. Address (a) -> (b) -> (c) -> (d) in order; a skip
-   is a stated assumption, not a silent omission.
+   as consideration); (b) which preconditions - the attacker's existing capabilities AND the environment conditions -
+   must hold for the fault's symptoms to be reachable; (c) which observed characteristics of the target would HINDER
+   the tests and consequently support a falsification of the hypothesised fault; (d) how the class-level direction
+   reads as feasibility reasoning. Address (a) -> (b) -> (c) -> (d) in order; a skip is a stated precondition, not a
+   silent omission. (The test-primitive / payload-vector stretch is the hunter's spec-writing ownership, never the
+   orchestrator's - #202.)
 3. **Hypothesise, then verify against evidence (mechanism-typist discipline, embeddable verbatim).** For each reading
    that would justify CARRYING the direction, hold at least one competing reading that would justify PRUNING it, and
    settle between them on the evidence actually present: the unit projection, the fault materialisation, the
@@ -98,7 +100,7 @@ prompt must demand a reasoning flow, not a format:
    sub-fault family): degrade to the evidence you hold and carry. This reflects D67-11 and the Q8 three-level model,
    level 1.
 6. **Emit the structured `GateDecision`** (one `EnvisionedDirection` per candidate, `carried` true/false) with the
-   four seed fields filled for every carried direction.
+   three seed fields (`rationale`, `research_direction`, `vulnerability_classes[]`) filled for every carried direction.
 
 ### 3.3 Prompt composition (patterns)
 
@@ -120,15 +122,19 @@ Exactly D67-04's three tools, bound onto the orchestrator's session agent (the `
 2. **`graph_view`** - the read-only L0/L1 view (`attack/hunting/hunt_orchestrator.py::ReadOnlyGraphView`): read
    index cards / typed facets; write-shaped calls rejected (C5). Real body; fail-open when no graph is reachable
    (degrades to an empty view, O5).
-3. **`store_reads`** - the hunt-store reads (prior-hunt insights by revival key, #70/#68; retrieve-before-re-dispatch
-   for the reuse gate footing). Real body; fail-open when no store is configured (empty insights, O4).
+3. **`store_reads`** - the store reads (#202): the hunt-config reads (prior configs by revival key, #70/#68;
+   retrieve-before-re-dispatch for the reuse gate footing) AND the **sibling hunter-memory reads** - the downstream
+   TestImplementationSpecs + the Q16 durable PodExport insights by the `::` `config_key`, shallow-projected (I3),
+   feeding the config's `prior_hunt_insights`. Real body; fail-open when no store is configured (empty insights, O4).
+   The tool's description carries this extended capability.
 
 Tool-availability degradation mirrors the #108 capability gate: when a seam body is unavailable, the tool is either
 not bound (the surface shrinks) or returns a fail-open stub result - it never aborts the turn.
 
 **NO HuntConfig-writing tool.** Confirmed against the current graph logic: `GateDecision` returns only `directions`
 (`EnvisionedDirection`); `mint_hunt_config` (D3) is called deterministically from the dispatch stretch on the carried
-direction. The LLM seeds the config through the four direction fields, never writes the config object.
+direction. The LLM seeds the config through the three direction fields (`rationale`, `research_direction`,
+`vulnerability_classes`), never writes the config object.
 
 **Relation to the #110 seam note ("NO LLM-facing store tool").** The #110 ticket's seam-wiring section stated the hunt
 store stays the append-only audit trail with "NO LLM-facing store tool (fault attributes are rendered in the per-fault

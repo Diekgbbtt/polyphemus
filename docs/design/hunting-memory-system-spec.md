@@ -36,7 +36,11 @@ A **per-project, status-lifecycle memory store** for the hunt-orchestrator, comp
 knowledge under one project folder:
 
 - **Hunt configs** - the accumulated set of research directions for a project; the overlap-prevention memory. One
-  YAML file per config, in `produced/` while it lives and `consumed/` once dispatched.
+  YAML file per config, in `produced/` while it lives and `consumed/` once dispatched. **Oriented by the three goals
+  (#202):** each config covers (G1) the technical feasibility of that fault at that unit, (G2) the initial
+  concretisation (the vulnerability-class naming), and (G3) synergistic further-concretisation material
+  (`sub_fault_ids` + the downstream prior-hunt insights). Every config attribute serves one of the three goals;
+  nothing more - the config is the minimal set that still covers all three.
 - **Notes** - per-config reasoning artifacts: the observations drawn from tool calls (graph_view / memory reads)
   that drove the rationale, refusal reasons, and forward-useful insights. One `memory.yaml` notes file per project.
 
@@ -94,8 +98,11 @@ hypothesised -> ratified | dropped
 
 - `hypothesised` - the draft written at the hypothesis-elicitation phase: only `rationale` and `research_direction`
   filled; ratification-phase fields empty.
-- `ratified` - the terminal working state: the config has passed the ratification phase with its
-  `adversarial_capabilities` / `assumptions` / `technique_primitives` filled. **The config itself stops here.**
+- `ratified` - the terminal working state: the config has passed the ratification phase with its `preconditions`
+  (the merged G1 preconditions-of-the-test list) and `observed_defences` (the observed target characteristics that
+  hinder the tests) filled. **The config itself stops here.** (#202: the old `adversarial_capabilities` /
+  `assumptions` / `technique_primitives` ratified fields are removed - capabilities and assumptions merged into the
+  single `preconditions` list, technique primitives cut as redundant with the vulnerability-class naming.)
 - `dropped` - the orphaned state: a config deleted during ratification (pruned by proximity/too-near same-class
   merge or novelty). Orphaned configs are NOT deleted from disk - they are statused `dropped` (G6).
 
@@ -119,7 +126,11 @@ Contract: `read` / `write` cmds over the produced/consumed config files.
 - **`read`** needs the config identifier (the semantic file id) and accepts optionally specific attributes. The
   WHOLE surface context of a projected unit may NEVER be read through it - only the service keys, which may later be
   inspected with `graph_view` (G3). A missing or failing read degrades to a denoted error, never into the turn
-  (O4 fail-open, unchanged).
+  (O4 fail-open, unchanged). **Sibling-bucket reads (#202):** the store-reading contract is extended with the
+  capability to read the DOWNSTREAM hunter-memory sibling bucket under the same `data/<project_id>/` tree (the
+  `hunter/test-specs/<config_key>/` TestImplementationSpecs + the Q16 durable PodExport notes) - the prior-hunt
+  insights of a config read those downstream records by the `::` `config_key`, shallow-projected (I3), never the
+  orchestrator's own prior configs. The tool description carries this extended capability.
 - **`write`** takes the hunt config object. Any attribute specification is optional; internal schema validation
   never rejects on missing attributes (the hypothesised draft has only `rationale` + `research_direction`). The
   `status` attribute (`hypothesised | ratified | dropped`) is carried BY the config object (operator correction:

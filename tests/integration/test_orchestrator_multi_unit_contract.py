@@ -55,8 +55,6 @@ def _carry(candidate: DeliveredCandidate) -> EnvisionedDirection:
         fault_class=candidate.fault_class,
         carried=True,
         rationale="carried from the fixture gate",
-        assumptions=["fixture assumption"],
-        envisioned_test_primitives=["fixture probe"],
         vulnerability_classes=["CSRF"],
     )
 

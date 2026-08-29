@@ -238,9 +238,9 @@ def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
                 "exposes the parameterised endpoint under test",
             ],
         },
-        "target_caveats": ["the target is the kali sandbox; probe the seeded "
-                           "service surface"],
-        "tool_registry": [{"name": "exec", "scope": "run the probe chain"}],
+        "observed_defences": ["the kali sandbox is the target; the probe surface is the "
+                           "seeded service"],
+        "preconditions": ["network egress from the pod to the target is allowed"],
     }
     data.update(overrides)
     store = HuntStore()

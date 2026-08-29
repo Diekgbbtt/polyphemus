@@ -282,7 +282,11 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
         '<unit>::<fault>' or a full semantic key '<unit>::<CWE>::<class>') and
         optionally the specific `attributes` you want; the service keys are
         always returned - the projected surface context is NEVER readable
-        through this tool (inspect it with graph_view). cmd='write': pass the
+        through this tool (inspect it with graph_view). The read surface
+        extends to the DOWNSTREAM sibling hunter-memory bucket (#202): the
+        same `key` also surfaces the hunter's TestImplementationSpecs + the
+        Q16 durable PodExport verdicts (the prior-hunt insights of a config).
+        cmd='write': pass the
         `hunt_config` object; its `status` attribute ('hypothesised' |
         'ratified' | 'dropped') drives the write - hypothesised creates the
         draft (a duplicate identity FAILS as the deduplication signal, G4),

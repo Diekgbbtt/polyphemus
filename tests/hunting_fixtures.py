@@ -106,15 +106,12 @@ def _hunt_config(**overrides) -> HuntConfig:
         prompt_template=HuntPromptTemplate(
             rationale=f"{FAULT_CLASS} applies to {UNIT_ID} because ...",
             l0_evidence=["GET /api/a answers 200"],
-            research_direction="probe the state-changing form for token verification",
+            research_direction="CSRF feasibility reasoning at the state-changing form locus",
         ),
         surface_context={"cards": []},
-        target_caveats=["perimeter WAF on /api/*"],
+        observed_defences=["perimeter WAF on /api/*"],
+        preconditions=["an authenticated session is obtainable"],
         prior_hunt_insights=[],
-        tool_registry=[{"technique": "csrf-probe"}],
-        adversarial_capabilities=["authenticated session obtainable"],
-        assumptions=["public exposure"],
-        technique_primitives=["foreign-origin tokenless submission"],
     )
     return base.model_copy(update=overrides)
 

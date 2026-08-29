@@ -206,25 +206,46 @@ config, status="hypothesised")` at elicitation, producing a **draft config** wit
   concrete-fault stretch (DECOMPOSE/GENERATE) is the #164 hunter's, never the orchestrator's.
 - **No mint disambiguator** (Q12 correction): the earlier "mint disambiguator" concept is removed as ambiguous and
   overlapping with the same-class merge; per-class distinctness is the fan-out criterion.
-- **HuntConfig type rework (operator-confirmed, amended):** the concretisation slots are **removed** -
-  `concrete_fault_candidates[]`, `fault_hypothesis` (redundant: one config per class), `extension_points`
-  (redundant with `research_direction`), and `supposed_payload_vectors` (moves into the hunter's GENERATE stretch)
-  all leave the type. `HuntConfig` gains:
+- **HuntConfig type rework (operator-confirmed, amended 2026-08-29 by #202):** the concretisation slots are
+  **removed** - `concrete_fault_candidates[]`, `fault_hypothesis` (redundant: one config per class),
+  `extension_points` (redundant with `research_direction`), and `supposed_payload_vectors` (moves into the hunter's
+  GENERATE stretch) all leave the type. `HuntConfig` gains:
 
   - `status` - `hypothesised | ratified | dropped` (explicit on the config; operator correction). `noted` is a loop
     state, never a config status; `consumed` is expressed by the produced/consumed topology, not a status member.
-  - `vulnerability_class` - the config's identity axis (the elicited class).
-  - `adversarial_capabilities[]` (+ the assumption/blocker analysis) **raised one level** into the config - no
-    longer nested under a concrete-fault candidate.
-  - `technique_primitives[]` - the capability/assumption/technique-primitive analysis output of the ratification
-    phase.
+  - `vulnerability_class` - the config's identity axis (the elicited class). **The naming of the class IS the
+    initial concretisation** (G2), so no separate concretisation slot exists.
+  - `preconditions[]` - the merged G1 preconditions-of-the-test list (the old `adversarial_capabilities[]` +
+    `assumptions[]` unified): attacker-side AND environment-side conditions that must hold for the fault's symptoms
+    to be reachable when the test runs. Filled ONCE by the ratification phase; never post-exploitation capabilities.
+  - `observed_defences[]` - the renamed and re-oriented `target_caveats`: **observed** characteristics of the
+    target that hinder the tests and consequently support a falsification of the hypothesised fault (e.g. a WAF for
+    XSS payloads, an anti-bot gate for request-based hunting, an assertion of a hardened OAuth2 authentication
+    mechanism for JWT-token forging). May be left empty when the target shows no such characteristics. Filled by
+    the ratification phase.
   - **`edge_degree` transformed to the connected DataItems** (operator correction): in the config's `surface_context`,
     a Service's `edge_degree` counts are replaced by the detailed specification of the DataItems it is connected to
     (name, type, sensitivity, fields, notes) - mirroring the rich projection.
 
-  `HuntConfig`'s other parameter-set slots (`surface_context`, `target_caveats`, `prior_hunt_insights`,
-  `tool_registry`, `sub_fault_ids`) are unchanged (`sub_fault_ids` keeps feeding each class-config, #66
+  **#202 removals and re-sourcings.** `technique_primitives[]` is **removed**: the vulnerability-class naming
+  already IS the initial concretisation, the field was redundant with a class-level `research_direction` that
+  pre-specified the technique, and the concrete probing techniques belong to the hunter's spec-writing stretch.
+  `tool_registry` is **retired**: its KB source (`_registry_from_kb`) is dead (the KB retriever is retired and
+  `kb_evidences` is empty), and the ratification model authored a generic agent-tool list with no fault-targeting
+  discrimination - the hunter owns its tool surface and `kb_query`. `prior_hunt_insights` is **re-sourced
+  downstream**: it reads the hunter memory's TestImplementationSpecs + the Q16 durable PodExport insights
+  (`test-specs/<config_key>/` + the verdict-stub notes, joined by the `::` `config_key`), shallow-projected (I3:
+  never a full config/spec embedded), instead of the orchestrator's own prior configs+notes by revival key.
+  `research_direction` is **tightened to G1 feasibility prose**: verbatim reasoning WHY the fault is feasible at
+  this locus (surface, preconditions), never technique words ("probe X with Y"). The remaining parameter-set slots
+  (`surface_context`, `sub_fault_ids`) are unchanged (`sub_fault_ids` keeps feeding each class-config, #66
   non-conflation, G14).
+
+  **The three-goal orientation (#202).** The config carries the orchestrator's stretch only, mapped to the three
+  goals: (G1) the technical feasibility of that fault at that specific unit - `rationale`, `research_direction`,
+  `vulnerability_class`, `surface_context`, `l0_evidence`, `preconditions`, `observed_defences`; (G2) the initial
+  concretisation - the `vulnerability_class` naming itself; (G3) synergistic further-concretisation material -
+  `sub_fault_ids` and `prior_hunt_insights`. Every attribute serves one of the three goals; nothing more.
 - **Novelty (Q11)** is enforced by the LLM reflection directly before the hypothesise write; a config the model
   asserts duplicate is **never written** (prune-side only). A duplicate write attempt FAILS (no file with the same
   name can be created, G4) and the error is the deduplication signal the model interprets - the module does not
@@ -286,10 +307,16 @@ spec'd in `docs/design/hunting-memory-system-spec.md`).
   the **fault**; the candidate is the unit-level atom the pass reasons over internally.
 - **revival key** - `<unit_id>::<fault_class>`; keys the config identity and the notes (the shared key survives the
   Q14 split, amended: the config file id is `<unit_id>_<CWE_ID>_<vulnerability_class>`, G4).
-- **HuntConfig** - reworked (2026-08-23): `status` (`hypothesised | ratified | dropped`), `vulnerability_class`
-  identity axis, `research_direction`, `adversarial_capabilities` / `assumptions` / `technique_primitives` raised one
-  level; `concrete_fault_candidates` / `fault_hypothesis` / `extension_points` / `supposed_payload_vectors` removed;
-  `edge_degree` in the surface context transformed to the connected DataItems.
+- **HuntConfig** - reworked (2026-08-23, #202): `status` (`hypothesised | ratified | dropped`),
+  `vulnerability_class` identity axis, `research_direction` (tightened to G1 feasibility prose, no technique
+  words), `preconditions` (the merged G1 preconditions list, ratification-filled), `observed_defences` (the
+  renamed, re-oriented `target_caveats`, ratification-filled); `technique_primitives` /
+  `adversarial_capabilities` / `assumptions` / `tool_registry` removed; `prior_hunt_insights` re-sourced
+  downstream (hunter TestImplementationSpecs + Q16 pod exports by `config_key`, shallow-projected I3);
+  `concrete_fault_candidates` / `fault_hypothesis` / `extension_points` / `supposed_payload_vectors` removed;
+  `edge_degree` in the surface context transformed to the connected DataItems. The config's role is oriented by
+  the three goals: G1 feasibility / G2 the vulnerability-class naming (the initial concretisation) / G3
+  further-concretisation material (`sub_fault_ids`, `prior_hunt_insights`).
 - **match verdict** - unchanged three-valued prune signal (level 1); the gate no longer **is** the verdict - it is the
   per-fault vulnerability-class elicitation + ratification.
 - **implicit-coverage rule** - the minting carve-out stays parked (Q4); prompt-split only.
@@ -336,9 +363,12 @@ per-attempt budget, then the turn degrades to a no-decision reply and the actor 
 10. As the operator, I want the **rich projection** (DataItem lists, full System unpack, DataRelationship chaining,
     D3 System adjacency), so that the gate reasons over the live L1 rather than counts and collapsed triples.
 11. As the operator, I want the **HuntConfig type reworked** (`status`, `vulnerability_class`,
-    `adversarial_capabilities` raised, `technique_primitives`; `concrete_fault_candidates` /
-    `fault_hypothesis` / `extension_points` / `supposed_payload_vectors` removed; `edge_degree` -> connected
-    DataItems), so that the config carries the orchestrator's stretch only and the hunter owns the rest.
+    `preconditions` + `observed_defences` ratification-filled, `prior_hunt_insights` re-sourced downstream;
+    `technique_primitives` / `adversarial_capabilities` / `assumptions` / `tool_registry` removed;
+    `concrete_fault_candidates` / `fault_hypothesis` / `extension_points` / `supposed_payload_vectors` removed;
+    `edge_degree` -> connected DataItems), so that the config carries the orchestrator's stretch only, oriented by
+    the three goals (G1 feasibility / G2 the vulnerability-class naming / G3 further-concretisation material),
+    and the hunter owns the rest.
 12. As the operator, I want the graph envelope to **end at the REASON stretch** (no dispatch node), so that dispatch
     state belongs to the runtime plane (G12).
 

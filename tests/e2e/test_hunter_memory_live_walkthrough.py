@@ -71,9 +71,9 @@ config = HuntConfig(
         "edge_degree": {"EXPOSED_VIA": 1},
         "nl_handles": {},
     }]},
-    target_caveats=["perimeter WAF on /api/*"],
+    observed_defences=["perimeter WAF on /api/*"],
+    preconditions=["an authenticated session is obtainable"],
     prior_hunt_insights=[],
-    tool_registry=[{"technique": "csrf-probe"}, {"technique": "parameter-tampering"}],
 )
 
 agent = build_sync_hunting_agent(

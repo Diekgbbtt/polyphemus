@@ -229,8 +229,7 @@ def _carry(candidate: DeliveredCandidate, *, research_direction: str = "probe CS
            classes: list[str] | None = None) -> EnvisionedDirection:
     return EnvisionedDirection(
         unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=True,
-        rationale="fixture rationale", assumptions=["fixture assumption"],
-        envisioned_test_primitives=["fixture probe"],
+        rationale="fixture rationale",
         research_direction=research_direction,
         vulnerability_classes=classes or [],
     )
@@ -238,14 +237,13 @@ def _carry(candidate: DeliveredCandidate, *, research_direction: str = "probe CS
 
 def _ratify_drafts(inp) -> RatifyDecision:
     """The fixture ratify turn: every draft ends ratified with the filled
-    ratification fields."""
+    ratification fields (preconditions + observed_defences, #202)."""
     configs = []
     for draft in inp.configs:
         amended = draft.model_copy(deep=True)
         amended.status = "ratified"
-        amended.adversarial_capabilities = ["forge a cross-origin request"]
-        amended.assumptions = ["the session is cookie-bound"]
-        amended.technique_primitives = ["token-missing probe"]
+        amended.preconditions = ["an authenticated session is obtainable"]
+        amended.observed_defences = ["WAF blocks XSS payloads"]
         configs.append(amended)
     return RatifyDecision(configs=configs)
 
@@ -737,9 +735,7 @@ def test_e2e_e9_q3_detail_depth(tmp_path):
         for c in inp.candidates:
             dirs.append(EnvisionedDirection(
                 unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-                rationale="r", research_direction="probe state-changing form for missing anti-CSRF token verification at WebPresentation boundary",
-                envisioned_test_primitives=["probe form"],
-                assumptions=["assumption holds"],
+                rationale="r", research_direction="CSRF feasibility reasoning at the state-changing WebPresentation locus",
                 vulnerability_classes=["CSRF"],
             ))
         return GateDecision(directions=dirs)

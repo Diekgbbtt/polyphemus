@@ -97,8 +97,6 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True) -> Envisioned
         fault_class=candidate.fault_class,
         carried=carried,
         rationale="fixture rationale from the spec's H1 gate",
-        assumptions=["fixture assumption"],
-        envisioned_test_primitives=["fixture probe"],
     )
 
 
@@ -225,8 +223,12 @@ def test_rematch_skill_mount_serves_the_d2_discipline():
 
 
 def test_actor_composes_system_message_plus_turn():
-    """The composed-turn pattern (spec 5): the actor serves each gate / re-match
-    turn as [SystemMessage(skill), HumanMessage(per-pair render)]."""
+    """The composed-turn pattern (spec 5, #187): the gate skill is the thread's
+    ONE static system prompt (set once at `_ensure_started`), so the gate/ratify/
+    note phase turns return ONLY the phase's HumanMessage - never a per-turn
+    SystemMessage copy (the #187 fix that stopped stacking byte-identical skill
+    copies). The rematch turn keeps the per-turn [SystemMessage, HumanMessage]
+    shape (the rematch judge is not a phase node of the static thread)."""
     from langchain_core.messages import HumanMessage, SystemMessage
 
     from polymerhus.attack.hunting.actors import _GATE_KIND, _REMATCH_KIND
@@ -235,11 +237,9 @@ def test_actor_composes_system_message_plus_turn():
     actor = HuntOrchestratorActor("c14-run-1", tools=_tools(HuntStore("/tmp/irrelevant")))
     inp = _gate_input()
     gate_turn = actor._on_message(AgentMessage(kind=_GATE_KIND, payload={"input": inp}), None)
-    assert len(gate_turn) == 2
-    assert isinstance(gate_turn[0], SystemMessage)
-    assert gate_turn[0].content == _gate_skill()
-    assert isinstance(gate_turn[1], HumanMessage)
-    assert gate_turn[1].content == _compose_gate_prompt(inp)
+    assert len(gate_turn) == 1
+    assert isinstance(gate_turn[0], HumanMessage)
+    assert gate_turn[0].content == _compose_gate_prompt(inp)
 
     rematch_turn = actor._on_message(AgentMessage(kind=_REMATCH_KIND, payload={
         "unit_id": SERVICE_A, "fault_class": "CWE-352",
@@ -650,7 +650,7 @@ def test_hunts_store_write_ratified_upserts_and_carries_only_the_note_hint(tmp_p
     }
     by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": draft})
     ratified = {**draft, "status": "ratified",
-                "adversarial_capabilities": ["forge a request"]}
+                "preconditions": ["an authenticated session is obtainable"]}
     out = by_name["hunts_store"].invoke({"cmd": "write", "hunt_config": ratified})
     assert out["acknowledged"] is True
     assert out["status"] == "ratified"
@@ -659,7 +659,7 @@ def test_hunts_store_write_ratified_upserts_and_carries_only_the_note_hint(tmp_p
     configs = store.read_configs("project-1")
     assert len(configs) == 1               # upserted in place, not a second file
     assert configs[0]["status"] == "ratified"
-    assert configs[0]["adversarial_capabilities"] == ["forge a request"]
+    assert configs[0]["preconditions"] == ["an authenticated session is obtainable"]
 
 
 def test_hunts_store_write_dropped_marks_the_orphan_on_disk(tmp_path):
@@ -972,8 +972,6 @@ def test_gate_step_records_pair_and_degraded_slots(monkeypatch):
                 "pair": revival_key(SERVICE_A, "CWE-352"),
                 "carried": True,
                 "rationale": "plausible",
-                "assumptions": [],
-                "envisioned_test_primitives": [],
                 "vulnerability_classes": [],
             }],
         })
@@ -1080,29 +1078,27 @@ def test_structured_schemas_and_tool_surface_unchanged():
 
     direction = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class="CWE-352", carried=True,
-        rationale="r", assumptions=["a"],
-        envisioned_test_primitives=["p"], vulnerability_classes=["CSRF"],
+        rationale="r", vulnerability_classes=["CSRF"],
     )
     decision = GateDecision(directions=[direction])
     verdict = MatchVerdict(unit_id=SERVICE_A, fault_class="CWE-352", verdict="applies")
     dumped = decision.model_dump()
     assert dumped["directions"][0]["carried"] is True
-    assert dumped["directions"][0]["assumptions"] == ["a"]
+    assert "assumptions" not in dumped["directions"][0]  # #202: the carrier is stripped
     assert dumped["directions"][0]["vulnerability_classes"] == ["CSRF"]
     assert verdict.model_dump()["verdict"] == "applies"
 
     config = mint_hunt_config(
         direction, _candidate(SERVICE_A, "CWE-352"), "hunt-1",
-        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+        surface_context={}, prior_hunt_insights=[],
         sub_fault_ids=["CWE-520", "CWE-9"],
     )[0]
     assert config.sub_fault_ids == ["CWE-520", "CWE-9"]
     assert config.status == "hypothesised"
     assert config.vulnerability_class == "CSRF"
     assert config.prompt_template.rationale == "r"
-    assert config.adversarial_capabilities == []
-    assert config.assumptions == []
-    assert config.technique_primitives == []
+    assert config.preconditions == []
+    assert config.observed_defences == []
 
 
 class _ToolFake(BaseChatModel):

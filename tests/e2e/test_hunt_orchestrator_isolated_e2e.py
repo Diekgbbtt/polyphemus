@@ -134,8 +134,7 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True,
            classes: list[str] | None = None) -> EnvisionedDirection:
     return EnvisionedDirection(
         unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=carried,
-        rationale="fixture rationale", assumptions=["fixture assumption"],
-        envisioned_test_primitives=["fixture probe"],
+        rationale="fixture rationale",
         research_direction="probe CSRF token verification",
         vulnerability_classes=classes or ["CSRF"],
     )
@@ -216,8 +215,8 @@ def test_E3_full_run_grounds_in_real_graph_and_never_writes(session, project, tm
     configs = store.read_configs(project)
     assert len(configs) == 2
     assert all(cfg["surface_context"]["cards"] == seen["surface"] for cfg in configs)
-    # The KB probing techniques become the fault-targeting tool registry (D10).
-    assert all(cfg["tool_registry"] == [{"technique": "csrf-probe"}] for cfg in configs)
+    # #202: the tool_registry slot is retired - no minted config carries it.
+    assert all("tool_registry" not in cfg for cfg in configs)
 
     # The full lifecycle landed in the REAL per-project store (memory-system
     # spec #166): the ratified configs in produced/, one note per pair in
@@ -430,10 +429,10 @@ def test_E10_store_write_failure_degrades_to_warning(project, tmp_path, caplog):
 # --- E11: O4 store read failure degrades prior insights ------------------------
 
 class _RaisingReadStore(HuntStore):
-    def read_configs_by_key(self, project_id, key):
+    def read_hunter_specs(self, project_id, key):
         raise OSError("store read failed (fixture)")
 
-    def read_notes(self, project_id, key=None):
+    def read_hunter_notes(self, project_id, key):
         raise OSError("store read failed (fixture)")
 
 
@@ -531,15 +530,21 @@ def test_E14_budget_stage_is_removed(project, tmp_path):
     assert len(store.read_notes(project)) == 2
 
 
-# --- E15: cross-pass memory by revival key (the #166 per-project store) ---------
+# --- E15: cross-pass memory by config_key (the #202 downstream read) ----------
 
-def test_E15_cross_run_memory_by_revival_key(project, tmp_path):
-    """Two passes over the same project + revival key: the first pass's
-    persisted config (produced/) + note (memory.yaml) become the second pass's
-    prior-hunt insights, read back out of the REAL per-project store - the
-    cross-run memory.md (and its dispatch-feedback insight) is removed (#166),
-    the store is per-project and per-pass durable (memory-system spec 10)."""
+def test_E15_cross_run_memory_by_config_key(project, tmp_path):
+    """Two passes over the same project: the DOWNSTREAM hunter records (the
+    TestImplementationSpecs + the Q16 durable PodExport verdicts, keyed by the
+    `config_key`) become the later pass's prior-hunt insights, read back out of
+    the REAL per-project stores (#202 - the orchestrator's own prior configs +
+    notes are no longer the insight source)."""
+    import json  # noqa: PLC0415
+
+    from polymerhus.attack.hunting.hunt_store import semantic_key  # noqa: PLC0415
+    from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore  # noqa: PLC0415
+
     store = HuntStore(tmp_path)
+    hunter = HunterMemoryStore(tmp_path)
     seen_first: dict = {}
     seen_second: dict = {}
 
@@ -554,6 +559,24 @@ def test_E15_cross_run_memory_by_revival_key(project, tmp_path):
     assert len(store.read_configs(project)) == 1
     assert len(store.read_notes(project)) == 1
 
+    # a downstream hunter authored a specified spec + the pod's durable export
+    # record under the ratified config's config_key (the Q16 record)
+    config_key = semantic_key(SERVICE_A, FAULT_X, "CSRF")
+    hunter.write_spec(
+        project, config_key, fault_keyword="f1", strategy_keyword="probe",
+        spec={"fault_id": "F1", "spec_id": "S1", "status": "specified",
+              "strategy": "probe", "fault_key": config_key, "spec_ref": "r",
+              "mechanism": "m", "supports": [], "conflicts": [],
+              "test": "submit a tokenless foreign-origin request"},
+    )
+    hunter.write_note(
+        project, action="append", fault_key=config_key, note_name="pod-1",
+        kind="freeform",
+        body=json.dumps({"verdict": "unsuccessful",
+                         "terminal_reason": "no-symptom-evidence", "clean": True}),
+        provenance={"run_id": "run-e15a", "source": "pod-src", "verdict_stub": True},
+    )
+
     run_orchestration(
         project_id=project, run_id="run-e15b",
         candidates=[_candidate(SERVICE_A, FAULT_X)],
@@ -562,12 +585,13 @@ def test_E15_cross_run_memory_by_revival_key(project, tmp_path):
         ratify_fn=_ratify_drafts,
         note_fn=_note_pair,
     )
-    # The second pass's prior-hunt insights read the first pass's persisted
-    # config and note back out of the real per-project store.
+    # The second pass's prior-hunt insights read the DOWNSTREAM hunter records
+    # (spec + verdict) by config_key, shallow-projected.
     insights = store.read_configs(project)[-1]["prior_hunt_insights"]
-    assert any(i.get("unit_id") == SERVICE_A and i.get("fault_class") == FAULT_X
-               for i in insights)
-    assert any(i.get("note") for i in insights)
+    kinds = {i.get("kind") for i in insights}
+    assert "prior_spec" in kinds and "prior_verdict" in kinds
+    assert any(i.get("spec_id") == "S1" for i in insights)
+    assert any(i.get("verdict") == "unsuccessful" for i in insights)
 
 
 # --- E16 (#110): the graph engine's actor lives past a completed pass ----------

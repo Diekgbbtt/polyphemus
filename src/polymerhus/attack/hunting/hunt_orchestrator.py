@@ -98,11 +98,12 @@ TOOL_SURFACE = frozenset({
 # the next pair's frame (the pair end, G1).
 NEXT_RATIFY_HINT = (
     "Ratification in progress: reason on proximity and too-near same-class "
-    "merging, then run the adversarial_capabilities (the test's preconditions "
-    "- the attacker's existing capabilities the test needs, never "
-    "post-exploitation capabilities) / assumptions / technique-primitives "
-    "analysis. End ratification with a hunts_store write carrying "
-    "status='ratified'."
+    "merging, then run the preconditions (the test's preconditions - the "
+    "attacker's existing capabilities AND the environment conditions the test "
+    "needs, never post-exploitation capabilities) / observed_defences (the "
+    "observed target characteristics that hinder the tests and support a "
+    "falsification) analysis. End ratification with a hunts_store write "
+    "carrying status='ratified'."
 )
 NEXT_NOTE_HINT = (
     "Ratification complete. Strongly take notes: write ONE note per config "
@@ -167,23 +168,22 @@ class DeliveredCandidate(BaseModel):
 
 class EnvisionedDirection(BaseModel):
     """One gate output: a carried (or pruned) direction, seeded with the
-    rationale, assumptions, and envisioned test primitives that stub the
-    hunting agent's later, more concrete hypothesis (Q8), plus the
-    candidates-rewrite class-level `research_direction` (verbatim prose, never
-    narrowed to a surface locale / payload / vector / symptom). As of the
-    HuntConfig typing rework the direction is the ELICITATION CARRIER: it rides
-    the `vulnerability_classes` the mint fans out into ONE `HuntConfig` per
-    distinct class (the class is the config's identity axis); the concrete-fault
-    stretch (`supposed_payload_vectors`, per-candidate capability/blocker
-    analysis) is the #164 hunter's DECOMPOSE/GENERATE ownership, never this
-    carrier's."""
+    rationale and the candidates-rewrite class-level `research_direction`
+    (verbatim feasibility prose, never narrowed to a surface locale / payload /
+    vector / symptom - #202), plus the elicited `vulnerability_classes`. As of
+    the HuntConfig typing rework the direction is the ELICITATION CARRIER: it
+    rides the `vulnerability_classes` the mint fans out into ONE `HuntConfig`
+    per distinct class (the class is the config's identity axis); the
+    concrete-fault stretch (test primitives, payload vectors, per-candidate
+    capability/blocker analysis) is the #164 hunter's DECOMPOSE/GENERATE
+    ownership, never this carrier's (#202: the old `assumptions` /
+    `envisioned_test_primitives` carrier slots are removed - traced-only, never
+    minted)."""
 
     unit_id: str
     fault_class: str
     carried: bool = True
     rationale: str = ""
-    assumptions: list[str] = Field(default_factory=list)
-    envisioned_test_primitives: list[str] = Field(default_factory=list)
     research_direction: str = ""
     vulnerability_classes: list[str] = Field(default_factory=list)
 
@@ -279,11 +279,12 @@ class NoteDecision(BaseModel):
 class HuntPromptTemplate(BaseModel):
     """Part 1 of the five-part HuntConfig parameter set (Q8/D3): the fault-matching
     rationale, the L0 fault-applicability evidence, and the class-level
-    `research_direction` - the hypothesise-phase content of the config. The
-    capability/assumption/technique-primitive analysis is NOT a template slot
-    anymore: it rides the config level (`HuntConfig.adversarial_capabilities` /
-    `assumptions` / `technique_primitives`, the ratification-phase fields), and
-    the concrete-fault slots (`extension_points`, `supposed_payload_vectors`,
+    `research_direction` (G1 feasibility prose - verbatim reasoning WHY the fault
+    is feasible at this locus, never technique words, #202) - the hypothesise-
+    phase content of the config. The preconditions / observed-defences analysis
+    is NOT a template slot: it rides the config level (`HuntConfig.preconditions`
+    / `observed_defences`, the ratification-phase fields, #202), and the
+    concrete-fault slots (`extension_points`, `supposed_payload_vectors`,
     per-class candidates) are removed - the #164 hunter owns that stretch."""
 
     rationale: str = ""
@@ -292,20 +293,28 @@ class HuntPromptTemplate(BaseModel):
 
 
 class HuntConfig(BaseModel):
-    """The declarative config the hunting agent consumes (D3): the five-part
-    parameter set - prompt template, wide surface context (adapted index-card,
-    a Service's edge_degree transformed to its connected DataItems), target
-    caveats, prior-hunt insights (by revival key), tool registry - plus the
+    """The declarative config the hunting agent consumes (D3): the parameter
+    set - prompt template, wide surface context (adapted index-card, a
+    Service's edge_degree transformed to its connected DataItems), the
+    ratification-phase `preconditions` + `observed_defences`, and the
+    downstream prior-hunt insights (the hunter memory's TestImplementationSpecs
+    + Q16 pod exports by config_key, shallow-projected, #202) - plus the
     orchestrator's stretch as of the typing rework: `status` (the config
     lifecycle `hypothesised -> ratified | dropped`; the mint writes
     hypothesised drafts), `vulnerability_class` (the config's identity axis,
-    one config per elicited class), and the ratification-phase fields
-    (`adversarial_capabilities` / `assumptions` / `technique_primitives`,
-    empty on the hypothesised draft). `sub_fault_ids` carries the folded
-    fault_ids (the sub-faults / reflection material) captured under the parent
-    `fault_class` from the fold-family relation
-    (`fault_kb.load_fold_families`): the hunting agent bounds the parent fault,
-    the sub-faults are consideration material."""
+    one config per elicited class; the naming IS the initial concretisation).
+    `sub_fault_ids` carries the folded fault_ids (the sub-faults / reflection
+    material) captured under the parent `fault_class` from the fold-family
+    relation (`fault_kb.load_fold_families`): the hunting agent bounds the
+    parent fault, the sub-faults are consideration material.
+
+    The config is oriented by the three goals (#202): (G1) feasibility of that
+    fault at that unit - `rationale`, `research_direction`, `vulnerability_class`,
+    `surface_context`, `l0_evidence`, `preconditions`, `observed_defences`;
+    (G2) the initial concretisation - the `vulnerability_class` naming itself;
+    (G3) further-concretisation material - `sub_fault_ids`, `prior_hunt_insights`.
+    `tool_registry` / `adversarial_capabilities` / `assumptions` /
+    `technique_primitives` / `target_caveats` are removed (#202)."""
 
     hunt_id: str
     unit_id: str
@@ -315,12 +324,9 @@ class HuntConfig(BaseModel):
     sub_fault_ids: list[str] = Field(default_factory=list)
     prompt_template: HuntPromptTemplate
     surface_context: dict = Field(default_factory=dict)
-    target_caveats: list[str] = Field(default_factory=list)
+    observed_defences: list[str] = Field(default_factory=list)
+    preconditions: list[str] = Field(default_factory=list)
     prior_hunt_insights: list[dict] = Field(default_factory=list)
-    tool_registry: list[dict] = Field(default_factory=list)
-    adversarial_capabilities: list[str] = Field(default_factory=list)
-    assumptions: list[str] = Field(default_factory=list)
-    technique_primitives: list[str] = Field(default_factory=list)
 
 
 class DispatchResult(BaseModel):
@@ -471,11 +477,12 @@ class PhaseContext:
 class OrchestratorTools:
     """The orchestrator's tool seams (spec 3.4, amended by #167/G3): the
     per-project memory store (`store_reads` - the read/write surface both
-    `hunts_store` and `notes` bind to, plus the prior-config/notes reads), the
-    read-only graph view (`graph_view` - the surface `graph_view` defers to
-    for the projected context: the store tools only ever read service keys),
-    and the run-local `phase_context` the note phase node sets so the notes
-    tool's response carries the next pair's frame (G1). `back_edge` is
+    `hunts_store` and `notes` bind to, plus the prior-config/notes reads and
+    the sibling hunter-memory reads `read_hunter_specs` / `read_hunter_notes`,
+    #202), the read-only graph view (`graph_view` - the surface `graph_view`
+    defers to for the projected context: the store tools only ever read service
+    keys), and the run-local `phase_context` the note phase node sets so the
+    notes tool's response carries the next pair's frame (G1). `back_edge` is
     retained for the runtime plane's dispatch ownership (G12) but is NOT part
     of the model surface anymore."""
 
@@ -492,30 +499,6 @@ def revival_key(unit_id: str, fault_class: str) -> str:
     `KEY_SEPARATOR` (M1), so it can never drift from being the 2-part prefix
     of a config's semantic key."""
     return f"{unit_id}{KEY_SEPARATOR}{fault_class}"
-
-
-def _prior_config_insight(config: dict) -> dict:
-    """The shallow projection of a prior persisted config embedded as a
-    prior-hunt insight (I3): identity + the hypothesise-phase seeds only
-    (`unit_id`, `fault_class`, `vulnerability_class`, `status`,
-    `sub_fault_ids`, and the `prompt_template` rationale / research_direction),
-    never the full `model_dump`. A persisted config's `prior_hunt_insights`
-    must never contain a nested `prior_hunt_insights` key - the full-dump
-    merge would embed pass N-1's config inside pass N's config and snowball
-    without bound. Present keys only; absent seeds stay absent (a carried-bare
-    degrade has no class)."""
-    template = config.get("prompt_template")
-    if not isinstance(template, dict):
-        template = {}
-    out: dict = {}
-    for key in ("unit_id", "fault_class", "vulnerability_class",
-                "status", "sub_fault_ids"):
-        if config.get(key) is not None:
-            out[key] = config[key]
-    for key in ("rationale", "research_direction"):
-        if template.get(key) is not None:
-            out[key] = template[key]
-    return out
 
 
 def normalize_candidates(
@@ -635,8 +618,8 @@ def mint_hunt_config(
     *,
     surface_context: dict,
     prior_hunt_insights: Sequence[dict],
-    tool_registry: Sequence[dict],
-    target_caveats: Sequence[str] = (),
+    observed_defences: Sequence[str] = (),
+    preconditions: Sequence[str] = (),
     sub_fault_ids: Sequence[str] = (),
     status: ConfigStatus = "hypothesised",
 ) -> list[HuntConfig]:
@@ -647,12 +630,14 @@ def mint_hunt_config(
     draft (default `status`): the prompt template maps the direction's
     hypothesise-phase seeds verbatim (rationale -> rationale, the L0
     fault-applicability evidence from the candidate's witnesses, research_direction
-    passes through), while the ratification-phase fields - `adversarial_capabilities`,
-    `assumptions`, `technique_primitives` - stay empty. The remaining
-    parameter-set slots - the wide surface context (adapted index-card), the
-    target caveats, the prior-hunt insights, and the fault-targeting tool
-    registry - and `sub_fault_ids` (the folded fault_ids captured under the
-    parent `fault_class` by the fold-family relation, #135) are unchanged.
+    passes through), while the ratification-phase fields - `preconditions`,
+    `observed_defences` - stay empty (the ratification phase fills them, R3.4).
+    The remaining parameter-set slots - the wide surface context (adapted
+    index-card), the downstream prior-hunt insights (the hunter memory's specs
+    + Q16 pod exports by config_key, #202) - and `sub_fault_ids` (the folded
+    fault_ids captured under the parent `fault_class` by the fold-family
+    relation, #135) are unchanged. `tool_registry` is retired and
+    `target_caveats` is renamed `observed_defences` (#202).
 
     The mint stays deterministic given the emitted set (no LLM, no I/O): the
     distinct-class grouping preserves first-emission order, and config hunt_ids
@@ -686,9 +671,9 @@ def mint_hunt_config(
                 research_direction=direction.research_direction,
             ),
             surface_context=surface_context,
-            target_caveats=list(target_caveats),
+            observed_defences=list(observed_defences),
+            preconditions=list(preconditions),
             prior_hunt_insights=list(prior_hunt_insights),
-            tool_registry=list(tool_registry),
         ))
     return configs
 
@@ -711,15 +696,6 @@ def build_back_edge_request(
         correlation_id=uuid.uuid4().hex,
         requester_id=requester_id,
     )
-
-
-def _registry_from_kb(kb_entry: dict) -> list[dict]:
-    """The fault-targeting tool registry from a KB retrieval (D10): the entry's
-    probing techniques, one registry row each."""
-    techniques = (kb_entry or {}).get("probing_techniques", [])
-    if isinstance(techniques, list):
-        return [{"technique": t} for t in techniques if t]
-    return []
 
 
 async def _reap_orchestrator(run_id: str) -> None:
@@ -992,24 +968,26 @@ async def arun_orchestration(
         return sorted(items, key=lambda item: risk_tier(item.fault_class))
 
     async def _read_prior_insights(key: str) -> list[dict]:
-        """Prior configs + notes by revival key (O4: a read failure degrades
-        to an empty insight set, never aborts the hunt). The store's
-        `read_configs_by_key` (produced/ + consumed/) and `read_notes`
-        (memory.yaml) both key on the revival key; the merged list feeds the
-        minted configs' `prior_hunt_insights` slot. Each prior config is
-        embedded as its shallow projection (`_prior_config_insight`), NEVER the
-        full dump - so a persisted config never embeds another config's
-        `prior_hunt_insights` (the nesting would snowball across passes, I3)."""
+        """The downstream prior-hunt insights (G3, #202): the hunter memory's
+        TestImplementationSpecs + the Q16 durable PodExport verdicts for the
+        config key (a revival key or a semantic config_key), shallow-projected
+        (I3 - never a full config/spec embedded). The read crosses to the
+        hunter-memory SIBLING bucket under the same `data/<project_id>/` tree
+        through the extended `store_reads` contract (`read_hunter_specs` /
+        `read_hunter_notes`); O4 fail-open: a missing seam or a failing read
+        degrades to an empty insight set, never aborts the hunt."""
         if tools.store_reads is None:
             return []
         try:
-            configs = await _await_seam(
-                tools.store_reads.read_configs_by_key, project_id, key)
-            notes = await _await_seam(
-                tools.store_reads.read_notes, project_id, key)
-            return [_prior_config_insight(c) for c in configs] + list(notes)
+            specs_fn = getattr(tools.store_reads, "read_hunter_specs", None)
+            notes_fn = getattr(tools.store_reads, "read_hunter_notes", None)
+            specs = await _await_seam(specs_fn, project_id, key) \
+                if callable(specs_fn) else []
+            notes = await _await_seam(notes_fn, project_id, key) \
+                if callable(notes_fn) else []
+            return list(specs) + list(notes)
         except Exception as exc:  # noqa: BLE001
-            logger.warning("hunt store read degraded for %s (%s)", key, exc)
+            logger.warning("hunt store sibling read degraded for %s (%s)", key, exc)
             return []
 
     def _mint_for_direction(
@@ -1027,10 +1005,10 @@ async def arun_orchestration(
         transformed at the mint: a Service card's edge_degree counts become the
         detailed connected DataItems from the unit's rich projection when the
         projection resolved them; an absent projection degrades to the counts
-        card (fail-open)."""
-        caveats: list[str] = []
-        if candidate.match_verdict != "applies":
-            caveats.append("yellow match re-matched after back-edge")
+        card (fail-open). The ratification-phase fields (`preconditions`,
+        `observed_defences`) stay empty on the hypothesised draft (R3.4); the
+        old `target_caveats` yellow-match caveat is dropped (#202 - it is a
+        harness provenance note, not an observed defence)."""
         return mint_hunt_config(
             direction,
             candidate,
@@ -1039,8 +1017,6 @@ async def arun_orchestration(
                 "cards": _surface_cards_with_connected_data_items(surface, projection),
             },
             prior_hunt_insights=prior_insights,
-            tool_registry=_registry_from_kb(kb_evidences.get(direction.fault_class, {})),
-            target_caveats=caveats,
             sub_fault_ids=fold_families.get(direction.fault_class) or (),
             status="hypothesised",
         )
@@ -1149,9 +1125,6 @@ async def arun_orchestration(
                             "pair": revival_key(d.unit_id, d.fault_class),
                             "carried": bool(d.carried),
                             "rationale": d.rationale,
-                            "assumptions": list(d.assumptions),
-                            "envisioned_test_primitives": list(
-                                d.envisioned_test_primitives),
                             "research_direction": d.research_direction,
                             "vulnerability_classes": list(
                                 d.vulnerability_classes),

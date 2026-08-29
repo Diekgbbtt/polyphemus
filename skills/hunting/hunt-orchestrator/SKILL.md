@@ -19,13 +19,14 @@ Each (unit, fault) pair runs three phases as graph nodes - `hypothesise -> ratif
 - **Prior-hunt reflection:** the prior minted-config keys are listed in the prompt (revival keys). You NEVER write a config that duplicates a prior one. Before writing you MAY call `hunts_store(read)` to inspect a prior key's config and assess overlap; a config you assert as a duplicate is never written.
 - **Knowledge-sufficiency decision point:** Given this fault class and unit type, do I have sufficient knowledge of the previous dispatched hunts and all potentially useful insights collected? If not, loop the memory reads (`hunts_store(read)` / `notes(read)`).
 - **Target-knowledge loop:** against the materialised unit (projection + surface), ask: do I have enough technical knowledge of this unit to concretise the abstract fault at this locus? If not, query the attack-surface / L1 graph via `graph_view`, iterating until sufficient (multiple queries allowed).
-- **Hypothesis elicitation:** elicit one or more vulnerability classes - at the grain of a web-vulnerability CLASS with a research-direction rationale (e.g. CSRF, IDOR) - never narrowed to a surface locale, payload profile, vector, or symptom. These become `vulnerability_classes[]`; the class-level research direction becomes `research_direction`; the reasoned case becomes `rationale`.
+- **Hypothesis elicitation:** elicit one or more vulnerability classes - at the grain of a web-vulnerability CLASS with a research-direction rationale (e.g. CSRF, IDOR) - never narrowed to a surface locale, payload profile, vector, or symptom; the narrowing belongs to the #164 hunting agent at spec-writing. These become `vulnerability_classes[]`; the class-level research direction becomes `research_direction`; the reasoned case becomes `rationale`.
 - **Same-class merge:** if multiple elicited vulnerability classes at one locus are the SAME web-vulnerability class, merge them into one; only fundamentally discriminable classes survive as distinct configs. Pure LLM reflection - no module-side parsing.
-- **The hypothesise write:** call `hunts_store(write, config, status='hypothesised')` - ONE draft per surviving class, carrying ONLY `rationale` + `research_direction` (+ the class identity). The capabilities / assumptions / technique-primitives analysis is the RATIFICATION phase's work - never filled at this hypothesise turn.
+- **The hypothesise write:** call `hunts_store(write, config, status='hypothesised')` - ONE draft per surviving class, carrying ONLY `rationale` + `research_direction` (+ the class identity). The preconditions / observed-defences analysis is the RATIFICATION phase's work - never filled at this hypothesise turn.
 
 ### Ratify
 
-- **adversarial_capabilities** are the capabilities the attacker must already hold when the test runs for the fault's symptoms to be reachable: an authorization level, a session context, a workflow step, access to specific application data, an interaction capability, a target application state. They are preconditions of the test - never capabilities the exploit grants. They may not currently be present; the downstream hunting agent then prunes this direction or adjusts the TestImplementationSpec to gain them beforehand.
+- **`preconditions`** (the merged G1 test-condition list, #202) - the test's preconditions, stated ONCE: the capabilities the attacker must already hold when the test runs for the fault's symptoms to be reachable (an authorization level, a session context, a workflow step, access to specific application data, an interaction capability, a target application state) AND the environment-side conditions the test needs (e.g. an endpoint accepting a specific field, an exposed surface). They are preconditions of the test - never capabilities the exploit grants. They may not currently be present; the downstream hunting agent then prunes this direction or adjusts the TestImplementationSpec to gain them beforehand.
+- **`observed_defences`** (the renamed `target_caveats`, #202) - the **observed** characteristics of the target that hinder the tests and consequently support a falsification of the hypothesised fault: e.g. a WAF that blocks XSS payloads, an anti-bot gate for request-based hunting, an assertion of a hardened OAuth2 authentication mechanism for JWT-token forging. Only what you OBSERVE on the target surface (the projection / graph_view / back-edge evidence), never a hypothesised defence; may be empty when the target shows no such characteristics.
 - A config deleted during ratification is written `status='dropped'` - it stays on disk as an orphan (G6), never deleted.
 
 ### Note
@@ -59,11 +60,21 @@ The composed user prompt opens with the L1 ontology primer constant - what a Ser
 
 ## Emit the structured output per phase
 
-Each phase turn returns its phase's schema: the hypothesise turn returns a `GateDecision` (one `EnvisionedDirection` per candidate, `carried` true/false, with `rationale`, `research_direction`, and `vulnerability_classes[]` filled for a carried direction - ONLY these; the capability/assumption/technique-primitive analysis is the ratification phase's work); the ratify turn returns the pair's configs at their final status (`ratified` or `dropped`) with the ratification fields filled; the note turn returns the notes, one per config. Your tools are exactly three - `hunts_store`, `notes`, `graph_view` - and the config is written through `hunts_store(write)`, never fabricated by the harness.
+Each phase turn returns its phase's schema: the hypothesise turn returns a `GateDecision` (one `EnvisionedDirection` per candidate, `carried` true/false, with `rationale`, `research_direction`, and `vulnerability_classes[]` filled for a carried direction - ONLY these; the preconditions / observed-defences analysis is the ratification phase's work); the ratify turn returns the pair's configs at their final status (`ratified` or `dropped`) with the ratification fields filled; the note turn returns the notes, one per config. Your tools are exactly three - `hunts_store`, `notes`, `graph_view` - and the config is written through `hunts_store(write)`, never fabricated by the harness.
+
+## The NL attributes you author (per-attribute spec, #202)
+
+Every NL field of the config means exactly this - produce it by walking the stated reasoning, never by filling a label:
+
+- **`rationale`** (G1) - the reasoned case WHY this fault class applies at this unit's locus, grounded in the applies-witnesses, the materialisation, the projection, and the graph surface. Walk: what the fault means at the typed locus, which evidence discriminates it, which competing reading was settled and on what evidence.
+- **`research_direction`** (G1, tightened #202) - verbatim feasibility prose: WHY the fault is technically feasible at this locus (which surface, which preconditions plausibly hold), NEVER technique words (no "probe X with Y", no payloads, vectors, or symptoms - the technique stretch is the hunter's). The direction is the class-level reasoning a later hunting agent turns into test hypotheses without re-deriving it.
+- **`preconditions`** (G1, ratification-filled) - the test's preconditions stated ONCE (see the Ratify section): the attacker-side and environment-side conditions that must hold for the symptoms to be reachable. Walk: what must the attacker already hold, and what must the environment expose, for this class to bite here.
+- **`observed_defences`** (G1, ratification-filled) - the OBSERVED target characteristics that hinder the tests and support a falsification (see the Ratify section), possibly empty. Walk: what did you actually observe on the surface that would make the test hard or the fault less likely.
+- **`l0_evidence`** (G1) - the candidate's applies-witnesses (deterministic + LLM match evidence), carried over verbatim.
 
 ## What a hypothesised draft carries (the HuntConfig format)
 
-The hypothesise write submits a draft config per surviving vulnerability class: `status="hypothesised"`, `vulnerability_class` (the identity axis), and the hypothesise-phase seeds - `prompt_template.rationale` + `research_direction` and the candidate's `l0_evidence` - ONLY (S7). The draft as written by the model via the tool is bare; the parameter-set slots (`surface_context` with a Service's edge_degree replaced by its connected DataItems, `target_caveats`, `prior_hunt_insights`, `tool_registry`, `sub_fault_ids`) are filled when the ratification upsert wholesale-replaces the draft with the rich config. The ratification-phase fields (`adversarial_capabilities`, `assumptions`, `technique_primitives`) are EMPTY on the hypothesised draft - the ratification phase fills them. Never write a `HuntConfig` yourself outside `hunts_store(write)`.
+The hypothesise write submits a draft config per surviving vulnerability class: `status="hypothesised"`, `vulnerability_class` (the identity axis), and the hypothesise-phase seeds - `prompt_template.rationale` + `research_direction` and the candidate's `l0_evidence` - ONLY (S7). The draft as written by the model via the tool is bare; the parameter-set slots (`surface_context` with a Service's edge_degree replaced by its connected DataItems, `observed_defences`, `preconditions`, `prior_hunt_insights`, `sub_fault_ids`) are filled when the ratification upsert wholesale-replaces the draft with the rich config (#202: `observed_defences` + `preconditions` are the ratification-filled G1 slots; `prior_hunt_insights` carries the DOWNSTREAM hunter specs + pod verdicts by config_key; `tool_registry` is retired). Never write a `HuntConfig` yourself outside `hunts_store(write)`.
 
 ## Worked example (few-shot)
 
@@ -99,12 +110,14 @@ HYPOTHESISE (brief; the crucial matching point)
       characterise the application at this locus. A second IDOR-flavoured class
       was considered but merged away (same locus, not discriminable from the
       CSRF reading - Q16).
-  (c) Research direction: "probe the state-changing form for missing anti-CSRF
-      token verification at the WebPresentation boundary".
+  (c) Research direction (G1 feasibility prose, #202): "the state-changing
+      WebPresentation surface at this locus is feasible to test for missing
+      per-form token verification - the sibling asymmetry shows per-form
+      rendering, not perimeter protection" (never "probe X with Y").
   (d) Rationale: the per-form token asymmetry witness (form Y carries the token,
       form Z does not) plus CAPEC-111 ground the missing-token specific fault
       at this locus.
-  (The capability/assumption/technique-primitive analysis is the RATIFICATION
+  (The preconditions / observed-defences analysis is the RATIFICATION
   phase's work - a later phase, not this hypothesise turn.)
   Competing prune reading: the token gap is a rendering quirk and a global
   middleware validates anyway. SETTLE on the witness actually present: a
@@ -119,14 +132,14 @@ CARRIED direction (hypothesise-phase seeds)
     WebPresentation surface (POST /state-change via form Z) whose render lacks
     the anti-CSRF token sibling form Y carries; CAPEC-111 and the per-form
     asymmetry witness support the missing-token specific fault."
-  research_direction: "probe the state-changing form for missing anti-CSRF token verification at the WebPresentation boundary"
+  research_direction: "the state-changing WebPresentation surface at this locus is feasible to test for missing per-form token verification - the sibling asymmetry shows per-form rendering, not perimeter protection"
   vulnerability_classes: ["CSRF"]
   -> hunts_store(write, config, status='hypothesised') at the hypothesise phase.
 
 RATIFY (the next phase, a later turn)
   The draft is amended through hunts_store(write) calls - the proximity /
-  too-near same-class merge, then the capabilities / assumptions /
-  technique-primitives analysis that fills the ratification fields. A config
+  too-near same-class merge, then the preconditions / observed-defences
+  analysis that fills the ratification fields. A config
   deleted during ratification is written status='dropped' and stays on disk
   (G6).
 

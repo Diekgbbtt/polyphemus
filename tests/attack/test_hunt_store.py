@@ -38,9 +38,9 @@ def _config(**overrides) -> dict:
         "vulnerability_class": CLASS,
         "prompt_template": {"rationale": "r", "l0_evidence": [], "research_direction": "rd"},
         "surface_context": {},
-        "target_caveats": [],
+        "observed_defences": [],
+        "preconditions": [],
         "prior_hunt_insights": [],
-        "tool_registry": [],
     }
     data.update(overrides)
     return data
@@ -146,16 +146,14 @@ def test_update_config_overwrites_the_existing_identity_in_place(tmp_path):
     store.write_config(PROJECT, _config())
     store.update_config(PROJECT, _config(
         status="ratified",
-        adversarial_capabilities=["forge a cross-origin request"],
-        assumptions=["the session is cookie-bound"],
-        technique_primitives=["token-missing probe"],
+        preconditions=["an authenticated session is obtainable"],
+        observed_defences=["WAF blocks XSS payloads"],
     ))
     configs = store.read_configs(PROJECT)
     assert len(configs) == 1                       # still ONE file at the identity
     assert configs[0]["status"] == "ratified"
-    assert configs[0]["adversarial_capabilities"] == ["forge a cross-origin request"]
-    assert configs[0]["assumptions"] == ["the session is cookie-bound"]
-    assert configs[0]["technique_primitives"] == ["token-missing probe"]
+    assert configs[0]["preconditions"] == ["an authenticated session is obtainable"]
+    assert configs[0]["observed_defences"] == ["WAF blocks XSS payloads"]
 
 
 def test_update_config_marks_dropped_and_stays_on_disk(tmp_path):

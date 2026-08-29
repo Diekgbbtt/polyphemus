@@ -58,8 +58,6 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True) -> Envisioned
         fault_class=candidate.fault_class,
         carried=carried,
         rationale="fixture rationale from the spec's H1 gate",
-        assumptions=["fixture assumption"],
-        envisioned_test_primitives=["fixture probe"],
     )
 
 
@@ -77,14 +75,13 @@ def _carry_hypothesise(calls: list | None = None):
 
 def _ratify_drafts(inp) -> RatifyDecision:
     """The fixture ratify turn: amends every draft to ratified with the filled
-    ratification fields."""
+    ratification fields (preconditions + observed_defences, #202)."""
     configs = []
     for draft in inp.configs:
         amended = draft.model_copy(deep=True)
         amended.status = "ratified"
-        amended.adversarial_capabilities = ["forge a cross-origin request"]
-        amended.assumptions = ["the session is cookie-bound"]
-        amended.technique_primitives = ["token-missing probe"]
+        amended.preconditions = ["an authenticated session is obtainable"]
+        amended.observed_defences = ["WAF blocks XSS payloads"]
         configs.append(amended)
     return RatifyDecision(configs=configs)
 

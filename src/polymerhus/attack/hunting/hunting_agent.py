@@ -208,14 +208,18 @@ def _fmt_list(items) -> str:
 
 def _config_gaps(config: HuntConfig) -> list[str]:
     """The O3 gap flags for a degraded HuntConfig: the agent still authors from
-    the present parts (C4) and flags each missing part in the feedback."""
+    the present parts (C4) and flags each missing part in the feedback. The
+    #202 shape: the renamed `observed_defences` and the merged `preconditions`
+    (both G1) are flagged on their new names, never the old vocabulary."""
     gaps: list[str] = []
     if not (config.surface_context or {}).get("cards"):
         gaps.append("surface context missing (no adapted index cards); grounding degraded")
     if not config.prompt_template.rationale:
         gaps.append("orchestrator rationale missing; grounding degraded")
-    if not config.target_caveats:
-        gaps.append("target caveats missing; grounding degraded")
+    if not config.observed_defences:
+        gaps.append("observed target defences missing; falsification grounding degraded")
+    if not config.preconditions:
+        gaps.append("test preconditions missing; feasibility grounding degraded")
     return gaps
 
 
@@ -257,13 +261,17 @@ def _tool_surface(tools) -> str:
 
 def _compose_grounding(config: HuntConfig) -> str:
     """The HuntConfig's parameter set rendered once, ahead of the first step:
-    the orchestrator's stretch (rationale, research direction, vulnerability
-    class, the ratification-phase capabilities / assumptions / technique
-    primitives) plus the five-part surface (adapted index card, caveats, prior
-    insights, tool registry). Rendered from the current declarative shape
-    (#165 typing rework): the concrete-fault slots that the old template
-    carried (`extension_points` / `supposed_payload_vectors`) are removed - the
-    #164 hunter owns that stretch."""
+    the orchestrator's stretch (rationale, the G1 feasibility research
+    direction, the vulnerability class - the initial concretisation, the L0
+    evidence, the surface context, the ratification-phase `observed_defences`
+    and `preconditions`) plus the further-concretisation material (sub-fault
+    reflection ids, the downstream prior-hunt insights). Rendered from the
+    current declarative shape (#165 typing rework + #202 lean config): ordered
+    by the three goals (G1 feasibility -> G2 the vulnerability-class naming ->
+    G3 further directions); the redundant slots (`technique_primitives`,
+    `adversarial_capabilities`, `assumptions`, `tool_registry`, the renamed
+    `target_caveats`) are gone - the #164 hunter owns the concrete-fault
+    stretch."""
     tpl = config.prompt_template
     surface = config.surface_context or {}
     # The surface context is the adapted index-card: the ratified configs carry
@@ -275,19 +283,20 @@ def _compose_grounding(config: HuntConfig) -> str:
         f"You are dispatched to hunt {config.unit_id} for fault class "
         f"{config.fault_class}.\n"
         f"Orchestrator's fault-matching rationale: {tpl.rationale or '(none)'}\n"
-        f"Class-level research direction: {tpl.research_direction or '(none)'}\n"
-        f"Vulnerability class: {config.vulnerability_class or '(none)'}\n"
-        f"Orchestrator's ratification-phase adversarial capabilities: "
-        f"{_fmt_list(config.adversarial_capabilities)}\n"
-        f"Environmental-precondition assumptions: "
-        f"{_fmt_list(config.assumptions)}\n"
-        f"Technique primitives: {_fmt_list(config.technique_primitives)}\n"
+        f"Vulnerability class (the initial concretisation): "
+        f"{config.vulnerability_class or '(none)'}\n"
+        f"Class-level research direction (feasibility): "
+        f"{tpl.research_direction or '(none)'}\n"
         f"L0 fault-applicability evidence: {_fmt_list(tpl.l0_evidence)}\n"
         f"Adapted surface context (index card of {config.unit_id}): "
         f"{surface_text}\n"
-        f"Target caveats: {_fmt_list(config.target_caveats)}\n"
-        f"Prior-hunt insights: {_fmt_list(config.prior_hunt_insights)}\n"
-        f"Fault-targeting tool registry: {_fmt_list(config.tool_registry)}"
+        f"Observed target defences (hinder the tests / support falsification): "
+        f"{_fmt_list(config.observed_defences)}\n"
+        f"Test preconditions (attacker + environment): "
+        f"{_fmt_list(config.preconditions)}\n"
+        f"Sub-fault reflection material: {_fmt_list(config.sub_fault_ids)}\n"
+        f"Prior-hunt insights (downstream specs + pod verdicts): "
+        f"{_fmt_list(config.prior_hunt_insights)}"
     )
 
 

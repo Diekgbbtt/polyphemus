@@ -497,8 +497,7 @@ def test_full_pass_canon_unchanged_with_new_artifacts(session, project, tmp_path
         return GateDecision(directions=[
             EnvisionedDirection(
                 unit_id=c.unit_id, fault_class=c.fault_class, carried=True,
-                rationale="fixture rationale", assumptions=["assumption"],
-                envisioned_test_primitives=["probe"],
+                rationale="fixture rationale",
                 research_direction="probe CSRF",
                 vulnerability_classes=["CSRF"],
             ) for c in inp.candidates])

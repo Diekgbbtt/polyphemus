@@ -122,3 +122,67 @@ def test_hypothesis_verdict_vocabulary_is_four_valued():
     assert set(HypothesisVerdict.__args__) == {
         "successful", "unsuccessful", "insufficient-evidence", "underspecified-spec",
     }
+
+
+# --- #202: the lean hunter render (surviving fields only, three-goal order) ---
+
+def test_compose_grounding_renders_only_surviving_fields_goal_ordered():
+    """#202 - the hunter render (`_compose_grounding`) shows ONLY the surviving
+    fields, ordered by the three goals (feasibility -> the initial
+    concretisation -> further directions); the redundant slots' lines are gone."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        HuntConfig,
+        HuntPromptTemplate,
+    )
+    from polymerhus.attack.hunting.hunting_agent import _compose_grounding  # noqa: PLC0415
+
+    config = HuntConfig(
+        hunt_id="hunt-1", unit_id="Service:slug:a", fault_class="fault-x",
+        status="ratified",
+        prompt_template=HuntPromptTemplate(
+            rationale="r", l0_evidence=["llm: witness"],
+            research_direction="CSRF feasibility reasoning"),
+        vulnerability_class="CSRF",
+        surface_context={"kind": "Service"},
+        observed_defences=["WAF blocks XSS payloads"],
+        preconditions=["authenticated session obtainable"],
+        sub_fault_ids=["CWE-24"],
+        prior_hunt_insights=[{"kind": "prior_verdict", "verdict": "unsuccessful"}],
+    )
+    text = _compose_grounding(config)
+    # the surviving fields render
+    assert "Orchestrator's fault-matching rationale: r" in text
+    assert "Vulnerability class (the initial concretisation): CSRF" in text
+    assert "research direction (feasibility): CSRF feasibility reasoning" in text
+    assert "L0 fault-applicability evidence: llm: witness" in text
+    assert "Observed target defences" in text and "WAF blocks XSS payloads" in text
+    assert "Test preconditions" in text and "authenticated session obtainable" in text
+    assert "Sub-fault reflection material" in text and "CWE-24" in text
+    assert "Prior-hunt insights" in text
+    # the redundant slots never render
+    for gone in ("technique_primitives", "adversarial_capabilities",
+                 "tool_registry", "assumptions", "target caveats"):
+        assert gone not in text.lower()
+    # the three-goal order: the feasibility fields precede the further-directions ones
+    assert text.index("research direction") < text.index("Prior-hunt insights")
+
+
+def test_config_gaps_matches_the_new_shape():
+    """#202 - `_config_gaps` flags the renamed `observed_defences` and the
+    merged `preconditions` on their new names, never the old vocabulary."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        HuntConfig,
+        HuntPromptTemplate,
+    )
+    from polymerhus.attack.hunting.hunting_agent import _config_gaps  # noqa: PLC0415
+
+    config = HuntConfig(
+        hunt_id="hunt-1", unit_id="Service:slug:a", fault_class="fault-x",
+        prompt_template=HuntPromptTemplate(rationale="", research_direction=""),
+        surface_context={}, observed_defences=[], preconditions=[],
+    )
+    gaps = _config_gaps(config)
+    assert any("observed" in g for g in gaps)
+    assert any("preconditions" in g for g in gaps)
+    # the renamed slot's gap fires on the new field, never the old name
+    assert not any("caveats" in g for g in gaps)

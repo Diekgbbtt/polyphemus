@@ -83,8 +83,7 @@ def _carry(candidate: DeliveredCandidate, *, carried: bool = True,
            classes: list[str] | None = None) -> EnvisionedDirection:
     return EnvisionedDirection(
         unit_id=candidate.unit_id, fault_class=candidate.fault_class, carried=carried,
-        rationale="fixture rationale", assumptions=["fixture assumption"],
-        envisioned_test_primitives=["fixture probe"],
+        rationale="fixture rationale",
         research_direction=research_direction,
         vulnerability_classes=classes or [],
     )
@@ -567,9 +566,9 @@ def test_integration_c9_store_append_and_split_reads(tmp_path):
 def test_integration_c10_store_read_degrades_empty(tmp_path, caplog):
     """C10 - a raising prior-insight read degrades to empty prior insights."""
     class _RaisingStore(HuntStore):
-        def read_configs_by_key(self, project_id, key):
+        def read_hunter_specs(self, project_id, key):
             raise OSError("disk (fixture)")
-        def read_notes(self, project_id, key=None):
+        def read_hunter_notes(self, project_id, key):
             raise OSError("disk (fixture)")
 
     store = _RaisingStore(tmp_path)
@@ -613,7 +612,7 @@ def test_integration_c11_mint_fanout_per_distinct_class():
     )
     configs = mint_hunt_config(
         direction, candidate, "abc123",
-        surface_context={}, prior_hunt_insights=[], tool_registry=[],
+        surface_context={}, prior_hunt_insights=[],
     )
     assert len(configs) == 2
     assert configs[0].hunt_id == "abc123"
@@ -622,8 +621,8 @@ def test_integration_c11_mint_fanout_per_distinct_class():
     assert all(c.status == "hypothesised" for c in configs)
     assert all(c.prompt_template.research_direction == "probe CSRF vs IDOR" for c in configs)
     assert all("llm: form Z no token" in c.prompt_template.l0_evidence for c in configs)
-    assert all(c.adversarial_capabilities == [] for c in configs)
-    assert all(c.technique_primitives == [] for c in configs)
+    assert all(c.preconditions == [] for c in configs)
+    assert all(c.observed_defences == [] for c in configs)
     # oracle is the class not the raw string count: adding a third emission of
     # the same class does not increase the fan-out
     direction2 = EnvisionedDirection(
@@ -631,7 +630,7 @@ def test_integration_c11_mint_fanout_per_distinct_class():
         research_direction="probe CSRF vs IDOR",
         vulnerability_classes=["CSRF", "CSRF", "IDOR"],
     )
-    configs2 = mint_hunt_config(direction2, candidate, "abc123", surface_context={}, prior_hunt_insights=[], tool_registry=[])
+    configs2 = mint_hunt_config(direction2, candidate, "abc123", surface_context={}, prior_hunt_insights=[])
     assert len(configs2) == 2  # collapsed to 2 distinct classes
 
 
@@ -650,7 +649,7 @@ def test_integration_c12_mint_collapse_and_bare_degrade():
         research_direction="probe CSRF",
         vulnerability_classes=["CSRF", "CSRF"],
     )
-    configs_dup = mint_hunt_config(direction_dup, candidate, "base", surface_context={}, prior_hunt_insights=[], tool_registry=[])
+    configs_dup = mint_hunt_config(direction_dup, candidate, "base", surface_context={}, prior_hunt_insights=[])
     assert len(configs_dup) == 1
     assert configs_dup[0].hunt_id == "base"
     assert configs_dup[0].vulnerability_class == "CSRF"
@@ -660,29 +659,26 @@ def test_integration_c12_mint_collapse_and_bare_degrade():
         research_direction="probe bare",
         vulnerability_classes=[],
     )
-    configs_bare = mint_hunt_config(direction_empty, candidate, "base", surface_context={}, prior_hunt_insights=[], tool_registry=[])
+    configs_bare = mint_hunt_config(direction_empty, candidate, "base", surface_context={}, prior_hunt_insights=[])
     assert len(configs_bare) == 1
     assert configs_bare[0].vulnerability_class == ""
     assert configs_bare[0].prompt_template.research_direction == "probe bare"
-    # the reworked 5-part fields + the new typing slots all present
+    # the reworked fields + the #202 lean shape all present
     for cfg in configs_dup + configs_bare:
         assert hasattr(cfg, "status") and cfg.status == "hypothesised"
         assert hasattr(cfg, "vulnerability_class")
         assert hasattr(cfg.prompt_template, "research_direction")
         assert hasattr(cfg, "surface_context")
-        assert hasattr(cfg, "target_caveats")
+        assert hasattr(cfg, "observed_defences")
+        assert hasattr(cfg, "preconditions")
         assert hasattr(cfg, "prior_hunt_insights")
-        assert hasattr(cfg, "tool_registry")
-        assert hasattr(cfg, "adversarial_capabilities")
-        assert hasattr(cfg, "assumptions")
-        assert hasattr(cfg, "technique_primitives")
     # empty class string degrades same as empty list
     direction_blank = EnvisionedDirection(
         unit_id=SERVICE_A, fault_class=FAULT_352, carried=True,
         research_direction="probe bare",
         vulnerability_classes=[""],
     )
-    configs_blank = mint_hunt_config(direction_blank, candidate, "base", surface_context={}, prior_hunt_insights=[], tool_registry=[])
+    configs_blank = mint_hunt_config(direction_blank, candidate, "base", surface_context={}, prior_hunt_insights=[])
     assert len(configs_blank) == 1
     assert configs_blank[0].vulnerability_class == ""
 
