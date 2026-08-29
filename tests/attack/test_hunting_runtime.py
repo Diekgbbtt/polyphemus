@@ -12,6 +12,7 @@ import pytest
 from polymerhus.attack.hunting import runtime as hunting_runtime
 from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
+    OrchestratorReport,
     OrchestratorTools,
     ReadOnlyGraphView,
     Witness,
@@ -186,6 +187,141 @@ def test_start_hunting_persists_running_then_complete(tmp_path, monkeypatch):
 
     assert hid == "rt-hunt-0001"
     assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "complete")]
+
+
+def test_empty_candidate_launch_reasons_over_platform_selection(monkeypatch):
+    """#200: an empty `candidates` launch runs the platform's OWN FaultSource
+    selection over the live L1 - the pass reasons over the selected candidate,
+    never a vacuous empty pass. This is the red loop: before the wiring
+    `start_hunting` feeds `candidates or ()` straight into the pass, so an
+    empty launch reasons over NOTHING."""
+    from tests.hunting_fixtures import build_graphql_fault, build_hunting_l1
+
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+
+    received: list[list] = []
+
+    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
+        received.append(list(candidates))
+        return OrchestratorReport(pairs_processed=len(candidates))
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=(),
+        fault_entries=(build_graphql_fault(),), read_fn=build_hunting_l1(),
+        orchestrator_fn=capturing_orchestrator,
+        control=_FakeControl(),
+        tick_interval=0.001,
+    ))
+    assert received, "the orchestrator pass must be reached on an empty launch"
+    assert received[0], "an empty launch must reason over the platform's own selected candidates, not a vacuous set"
+    assert {c.unit_id for c in received[0]} == {
+        "Service:s1",              # GraphQLApi-fronted -> deterministic pass
+        "GraphQLApi:__singleton__",  # IS the presupposed System -> pass
+        "RESTApi:__singleton__",   # no outgoing edge -> UNKNOWN -> pass
+    }
+    assert all(c.match_verdict == "applies" for c in received[0])
+
+
+def test_empty_candidate_launch_all_pruned_is_a_meaningful_empty_pass(
+        monkeypatch, caplog):
+    """#200: an L1 whose units are ALL pruned by the deterministic stage (an
+    enum-kinds fault with no linked Systems) is a MEANINGFUL empty pass - the
+    selection ran and reported, never a silent vacuous pass. The selection
+    summary surfaces via the log line."""
+    from tests.hunting_fixtures import build_hunting_l1
+    from polymerhus.attack.hunting.fault_source import FaultEntry
+
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+
+    received: list[list] = []
+
+    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
+        received.append(list(candidates))
+        return OrchestratorReport(pairs_processed=len(candidates))
+
+    with caplog.at_level("INFO", logger="polymerhus.attack.hunting.fault_source"):
+        asyncio.run(hunting_runtime.start_hunting(
+            "rt-project", candidates=(),
+            fault_entries=(FaultEntry(fault_id="waf-bypass",
+                                      enum_kinds=frozenset({"WAF"})),),
+            read_fn=build_hunting_l1(),
+            orchestrator_fn=capturing_orchestrator,
+            control=_FakeControl(),
+            tick_interval=0.001,
+        ))
+    assert received and received[0] == []
+    assert any("selection" in record.message and "pruned_by_tag" in record.message
+               for record in caplog.records), \
+        "the all-pruned empty pass must surface the selection summary"
+
+
+def test_empty_candidate_launch_reasons_through_the_real_pass(tmp_path,
+                                                              monkeypatch):
+    """#200 end-to-end: an empty launch runs the REAL `arun_orchestration`
+    over the platform-selected candidates - the phase machine hypothesises /
+    ratifies / notes the selected pairs, the configs land in the store, and
+    the run completes (pairs_processed > 0, never the vacuous 0)."""
+    from tests.hunting_fixtures import build_graphql_fault, build_hunting_l1
+
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+
+    h, r, n = _phase_seams()
+    store = HuntStore(tmp_path)
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=(),
+        fault_entries=(build_graphql_fault(),), read_fn=build_hunting_l1(),
+        tools=_tools(store),
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        control=_FakeControl(),
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+    assert fake.statuses == [("running", "rt-hunt-0001"), ("rt-hunt-0001", "complete")]
+    ratified = [c for c in store.read_configs("rt-project")
+                if c.get("status") == "ratified"]
+    assert {c.get("unit_id") for c in ratified} == {
+        "Service:s1", "GraphQLApi:__singleton__", "RESTApi:__singleton__"}
+    assert all(c.get("fault_class") == "graphql-introspection" for c in ratified)
+
+
+def test_callersupplied_candidates_stay_the_override(monkeypatch):
+    """#200: a non-empty caller batch is consumed as-is, never re-selected (the
+    harness / integration / eval seams keep driving selection externally)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import Witness
+
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+
+    supplied = [
+        DeliveredCandidate(
+            unit_id=SERVICE_A, fault_class=FAULT_X,
+            applies_witnesses=Witness(deterministic="w", llm="w"),
+            match_verdict="applies"),
+    ]
+    received: list[list] = []
+
+    async def capturing_orchestrator(project_id, run_id, candidates, tools, **kw):
+        received.append(list(candidates))
+        return OrchestratorReport(pairs_processed=len(candidates))
+
+    asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=supplied,
+        orchestrator_fn=capturing_orchestrator,
+        control=_FakeControl(),
+        tick_interval=0.001,
+    ))
+    assert received and received[0] == supplied
 
 
 def test_default_tools_ground_on_the_fixed_store_root():

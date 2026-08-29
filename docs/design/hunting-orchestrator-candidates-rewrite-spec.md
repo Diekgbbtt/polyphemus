@@ -280,6 +280,29 @@ spec'd in `docs/design/hunting-memory-system-spec.md`).
 
 ## 4. Domain-ontology mapping (provisional terms, ratified where noted)
 
+### 4.1 FaultSource: an internal stage, with a caller override (AMENDED by #200)
+
+FaultSource is an INTERNAL stage of the production hunting path, never a caller
+contract.
+The platform runs its own selection over the live L1 when the caller supplies
+no candidate batch - `start_hunting` / `launch_orchestrator` with an
+omitted/empty `candidates` body invoke `select` over the project's
+kind-qualified units (the L1 inventory's Services + Systems) with the
+deterministic stage (the typed applies-if predicate + the fail-open
+enum-of-system-kinds tag) and the pass-through match.
+Caller-supplied candidates remain a valid override: a non-empty caller batch
+is consumed as-is, never re-selected (the harness / integration / eval seams
+still drive selection externally).
+The selection's survivors are translated by the pure mapper into the
+`DeliveredCandidate` intake - `pruned-by-predicate` / `pruned-by-tag` outcomes
+are dropped, `passed` + `matched` map to `match_verdict="applies"` with the
+deterministic witness.
+The `match verdict`'s LLM witness half is OPTIONAL: a deterministic-only
+witness (the deterministic stage's clause, or its pass marker) is a valid
+delivered candidate - the intake's O10 malformed check keys on the presence of
+ANY witness half, never the llm half alone (amended by #200).
+The real LLM match stays #71/#64 scope; `match_fn` is the injectable seam.
+
 - **testable unit** - the L1 `Service` or `System` a hunt anchors on, kind-qualified identity `<kind>:<key>`. The
   REASON body iterates units **within** one per-fault pass (rich projection, Q3).
 - **HuntCandidate** - the `(testable-unit, fault-class)` pair; **no longer the schedule unit**. The schedule unit is
@@ -291,7 +314,9 @@ spec'd in `docs/design/hunting-memory-system-spec.md`).
   level; `concrete_fault_candidates` / `fault_hypothesis` / `extension_points` / `supposed_payload_vectors` removed;
   `edge_degree` in the surface context transformed to the connected DataItems.
 - **match verdict** - unchanged three-valued prune signal (level 1); the gate no longer **is** the verdict - it is the
-  per-fault vulnerability-class elicitation + ratification.
+  per-fault vulnerability-class elicitation + ratification. **AMENDED by #200**: the verdict's LLM witness half is
+  OPTIONAL - the deterministic stage's witness alone (clause or pass marker) is a valid delivered candidate, so the
+  platform's own internal selection (4.1) is never dropped by the intake's O10 malformed check.
 - **implicit-coverage rule** - the minting carve-out stays parked (Q4); prompt-split only.
 
 ## 5. Delivery semantics and degradation (amended 2026-08-23)

@@ -20,10 +20,31 @@ the spec's three seams:
     declaration (the #69 joint seam - System-strict faults mint no Service
     candidates), evaluates per unit, degrades per-entry (predicate -> the
     enum-of-system-kinds tag -> default-open, spec 2.6), and passes survivors
-    to the LLM `match_fn` (the real match is #71/#64 scope; tests inject a
-    counting stub). The stage never emits `insufficient-evidence` - the yellow
+    to the LLM `match_fn` (the real LLM match is #71/#64 scope; the production
+    path uses the pass-through match until then - tests inject a counting
+    stub). The stage never emits `insufficient-evidence` - the yellow
     verdict is an evidence-sufficiency judgment structure-checking cannot make
     (D-D).
+
+As of ticket #200 this module is ALSO the PRODUCTION selection seam: the
+platform plays the FaultSource role when a launch supplies no candidate batch.
+
+  * `delivered_candidates` - the PURE mapper from the selection's
+    `FaultSelectionReport` outcomes to the orchestrator's `DeliveredCandidate`
+    intake: `pruned-by-predicate` / `pruned-by-tag` outcomes are dropped,
+    `passed` + `matched` map to `match_verdict="applies"` with the
+    deterministic witness (the clause, a fail-open diagnostic, or the pass
+    marker). The llm witness half stays optional (spec 4.1): a
+    deterministic-only witness is a valid delivered candidate.
+  * `materialize_candidates` - the IMPURE wiring seam `start_hunting` /
+    `launch_orchestrator` call on an empty candidate batch: enumerate the
+    project's kind-qualified units (reusing the L1 inventory read, Systems
+    kind-qualified `<kind>:<discriminator>` with the `L1_SINGLETON` elision
+    handled), load the fault-KB matching facet, run `select` with the
+    pass-through match, and translate the survivors via the pure mapper. A
+    non-empty caller batch is returned unchanged (the caller override). Fails
+    open to an empty candidate set - a degraded KB / L1 read never raises into
+    the pass.
 
 This module imports no driver and performs no I/O at import; the default read
 seam resolves lazily on first call (CODING_STANDARD section 6).
@@ -33,7 +54,12 @@ from __future__ import annotations
 import logging
 from dataclasses import dataclass
 from enum import Enum
-from typing import Callable, Literal, Sequence
+from typing import TYPE_CHECKING, Callable, Literal, Sequence
+
+if TYPE_CHECKING:  # the orchestrator's intake type; resolved lazily at runtime
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        DeliveredCandidate,
+    )
 
 from polymerhus.attack.hunting.predicate import (
     Clause,
@@ -297,3 +323,147 @@ def select(faults: Sequence[FaultEntry], unit_ids: Sequence[str], *,
         reports.append(FaultSelectionReport(fault.fault_id, tuple(outcomes),
                                             predicates_evaluated))
     return tuple(reports)
+
+
+_PASS_WITNESS_MARKER = "deterministic-stage pass"
+
+
+@dataclass(frozen=True)
+class SelectionSummary:
+    """The selection-run report (#200, spec 4.1; surfaced via `trace_gate_step`
+    + a log line, the minimal observability ruling): what the production
+    selection step did, so an all-pruned empty launch is distinguishable from
+    "nothing supplied and nothing ran"."""
+
+    faults_evaluated: int = 0
+    units_minted: int = 0
+    pruned_by_predicate: int = 0
+    pruned_by_tag: int = 0
+    passed: int = 0
+    caller_supplied: bool = False
+
+
+def _project_unit_ids(project_id: str, *, read_fn=None) -> tuple[str, ...]:
+    """The deterministic project-scoped unit enumeration (#200, spec 4.1):
+    the L1 inventory's Services kind-qualified `Service:<slug>` and its
+    Systems kind-qualified `<kind>:<discriminator>`. The inventory render
+    ELIDES the `__singleton__` discriminator (`_render_system`), so the
+    singleton's discriminator is re-attached from `L1_SINGLETON` here - the
+    identity the projection reader resolves. Fail-open: a read error degrades
+    to the empty enumeration (the inventory's own contract)."""
+    from polymerhus.analysis.l1_inventory import read_l1_inventory  # noqa: PLC0415
+    from polymerhus.analysis.l1_types import L1_SINGLETON  # noqa: PLC0415
+
+    inventory = read_l1_inventory(project_id, read_fn=read_fn)
+    ids: list[str] = [f"Service:{slug}" for slug in inventory["services"]]
+    for system in inventory["systems"]:
+        if ":" in system:
+            kind, discriminator = system.split(":", 1)
+        else:
+            kind, discriminator = system, L1_SINGLETON
+        ids.append(f"{kind}:{discriminator}")
+    return tuple(ids)
+
+
+def delivered_candidates(
+    reports: Sequence[FaultSelectionReport],
+) -> tuple["DeliveredCandidate", ...]:
+    """The PURE mapper (#200, spec 4.1): the selection's `FaultSelectionReport`
+    outcomes into the orchestrator's `DeliveredCandidate` intake. A
+    `pruned-by-predicate` / `pruned-by-tag` outcome is dropped (the prune
+    signal is preserved); a `passed` + `matched` outcome maps to
+    `match_verdict="applies"` with the deterministic witness - the fail-open
+    diagnostic when the pass degraded, else the deterministic pass marker. The
+    llm witness half stays None (OPTIONAL, spec 4.1): the intake's O10
+    malformed check keys on ANY witness half, so the platform's own
+    deterministic-only selection is never discarded."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        DeliveredCandidate,
+        Witness,
+    )
+
+    out: list[DeliveredCandidate] = []
+    for report in reports:
+        for outcome in report.outcomes:
+            if outcome.verdict != "passed" or not outcome.matched:
+                continue
+            deterministic = outcome.witness or outcome.diagnostic \
+                or _PASS_WITNESS_MARKER
+            out.append(DeliveredCandidate(
+                unit_id=outcome.unit_id,
+                fault_class=report.fault_id,
+                applies_witnesses=Witness(deterministic=deterministic),
+                match_verdict="applies",
+            ))
+    return tuple(out)
+
+
+def _summarize(reports: Sequence[FaultSelectionReport]) -> SelectionSummary:
+    """Pure: one `SelectionSummary` over the selection reports."""
+    pruned_predicate = 0
+    pruned_tag = 0
+    passed = 0
+    for report in reports:
+        for outcome in report.outcomes:
+            if outcome.verdict == "pruned-by-predicate":
+                pruned_predicate += 1
+            elif outcome.verdict == "pruned-by-tag":
+                pruned_tag += 1
+            elif outcome.verdict == "passed":
+                passed += 1
+    return SelectionSummary(
+        faults_evaluated=len(reports),
+        units_minted=sum(len(r.outcomes) for r in reports),
+        pruned_by_predicate=pruned_predicate,
+        pruned_by_tag=pruned_tag,
+        passed=passed,
+    )
+
+
+def materialize_candidates(
+    project_id: str,
+    candidates: Sequence["DeliveredCandidate"] | None,
+    *,
+    fault_entries: Sequence[FaultEntry] | None = None,
+    read_fn=None,
+    match_fn: Callable[[str, str], bool] | None = None,
+    unit_ids_fn=None,
+) -> tuple[tuple["DeliveredCandidate", ...], SelectionSummary]:
+    """The production selection seam (#200, spec 4.1): `start_hunting` /
+    `launch_orchestrator` call it on the launch's candidate batch. A non-empty
+    caller batch is the override - returned unchanged, never re-selected (the
+    harness / integration / eval seams still drive selection externally). An
+    empty batch triggers the platform's OWN FaultSource selection: enumerate
+    the project's kind-qualified units (the L1 inventory), load the fault-KB
+    matching facet, run `select` with the pass-through match, and translate
+    the survivors via `delivered_candidates`.
+
+    Returns `(candidates, summary)`; the summary records what the selection
+    step did (faults evaluated / units minted / pruned-by-predicate /
+    pruned-by-tag / passed / caller-supplied), so an all-pruned empty launch
+    is a MEANINGFUL empty pass. Fail-open: a degraded KB or L1 read degrades
+    to the empty candidate set with the zeroed summary - never raises into
+    the pass."""
+    if candidates:
+        return tuple(candidates), SelectionSummary(caller_supplied=True)
+    try:
+        if fault_entries is None:
+            from polymerhus.attack.hunting.fault_kb import (  # noqa: PLC0415
+                load_fault_entries,
+            )
+            fault_entries = load_fault_entries()
+        unit_ids = (
+            unit_ids_fn(project_id, read_fn=read_fn)
+            if unit_ids_fn is not None
+            else _project_unit_ids(project_id, read_fn=read_fn)
+        )
+        reports = select(fault_entries, unit_ids, project_id=project_id,
+                         read_fn=read_fn, match_fn=match_fn)
+        selected = delivered_candidates(reports)
+        summary = _summarize(reports)
+        log.info("hunting selection for %s: %s", project_id, summary)
+        return selected, summary
+    except Exception as exc:  # noqa: BLE001 - fail-open is the contract
+        log.warning("hunting selection for %s degraded (fail-open): %s",
+                    project_id, exc)
+        return (), SelectionSummary()
