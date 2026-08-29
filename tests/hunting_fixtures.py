@@ -160,3 +160,85 @@ def build_hunter_agent(memory_store, *, run_id="run-1", project_id=PROJECT,
         middleware=[],
         observe=False,
     )
+
+
+class _HuntingL1:
+    """The #200 fixture L1 read seam: serves the L1 INVENTORY cyphers
+    (`read_l1_inventory`'s services/systems reads) AND the per-unit projection
+    reads, so `materialize_candidates` -> `select` -> `build_projection` run
+    against one deterministic in-memory model."""
+
+    def __init__(self, *, services=(), systems=(), units=()):
+        self.services = list(services)
+        self.systems = list(systems)
+        self.units = dict(units)
+
+    def __call__(self, cypher, params):
+        if "L1TestableUnit" in cypher:
+            if "type(dr) AS family" in cypher:
+                unit = self.units.get(f"{params['kind']}:{params['key']}")
+                return [{"family": f} for f in (unit or {}).get("data_rel_families", [])]
+            unit = self.units.get(f"{params['kind']}:{params['key']}")
+            if unit is None:
+                return []
+            return [{"labels": unit["labels"], "props": unit["props"],
+                     "edges": unit.get("edges", [])}]
+        if "L1Service" in cypher:
+            return [{"slug": s["slug"], "contract": s.get("contract")}
+                    for s in self.services]
+        if "L1System" in cypher:
+            return [{"kind": s["kind"], "disc": s.get("disc", "__singleton__"),
+                     "description": s.get("description")}
+                    for s in self.systems]
+        return []
+
+
+def build_hunting_l1():
+    """The #200 fixture L1: s1 fronted by a GraphQLApi System, s3 fronted by a
+    RESTApi System, plus the two Systems themselves (kind-qualified singleton
+    identities, the projection reader's convention)."""
+    return _HuntingL1(
+        services=[{"slug": "s1"}, {"slug": "s3"}],
+        systems=[{"kind": "GraphQLApi", "disc": "__singleton__"},
+                 {"kind": "RESTApi", "disc": "__singleton__"}],
+        units={
+            "Service:s1": {"labels": ["L1Service"],
+                           "props": {"business_function_slug": "s1",
+                                     "exposure": "public"},
+                           "edges": [{"family": "EXPOSED_VIA",
+                                      "tlabels": ["L1System"],
+                                      "tprops": {"kind": "GraphQLApi"},
+                                      "rprops": {}}]},
+            "Service:s3": {"labels": ["L1Service"],
+                           "props": {"business_function_slug": "s3"},
+                           "edges": [{"family": "EXPOSED_VIA",
+                                      "tlabels": ["L1System"],
+                                      "tprops": {"kind": "RESTApi"},
+                                      "rprops": {}}]},
+            "GraphQLApi:__singleton__": {"labels": ["L1System"],
+                                         "props": {"kind": "GraphQLApi",
+                                                   "discriminator": "__singleton__"},
+                                         "edges": []},
+            "RESTApi:__singleton__": {"labels": ["L1System"],
+                                      "props": {"kind": "RESTApi",
+                                                "discriminator": "__singleton__"},
+                                      "edges": []},
+        },
+    )
+
+
+def build_graphql_fault():
+    """The #200 fixture matching fault: a hardened predicate that passes any
+    unit reachable via a GraphQLApi System (the deterministic stage)."""
+    from polymerhus.attack.hunting.fault_source import FaultEntry
+    from polymerhus.attack.hunting.predicate import (  # noqa: PLC0415
+        Clause,
+        ClauseForm,
+        TypedPredicate,
+    )
+    return FaultEntry(
+        fault_id="graphql-introspection",
+        predicate=TypedPredicate(target="Both", clauses=(
+            Clause(ClauseForm.REACHABLE_VIA, key="EXPOSED_VIA",
+                   values=("GraphQLApi",)),)),
+    )
