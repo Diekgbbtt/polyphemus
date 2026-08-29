@@ -200,7 +200,7 @@
 ### E5 - malformed + does-not-apply + UNKNOWN degrade never abort (O1/O7/O10)
 - **grounds:** spec 5 O1/O7/O10 fail-open
 - **entry seam:** `arun_orchestration`
-- **input:** `candidates` in fixed order [0] `DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm=None), "applies")` malformed, [1] `DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="x"),"applies")` duplicate key of [0], [2] `DeliveredCandidate("System:cache:1","CWE-639",Witness(llm="x"),"does-not-apply")`
+- **input:** `candidates` in fixed order [0] `DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm=None), "applies")` malformed (a witness with BOTH halves absent - the O10 malformed criterion; **as of #200 the llm half alone is OPTIONAL**, a deterministic-only witness is accepted, spec 4.1), [1] `DeliveredCandidate("Service:slug:a","CWE-352",Witness(llm="x"),"applies")` duplicate key of [0], [2] `DeliveredCandidate("System:cache:1","CWE-639",Witness(llm="x"),"does-not-apply")`
 - **live edge:** none
 - **path:** `normalize_candidates` processes in order: [0] malformed `malformed_dropped=1`, [1] duplicate of a dropped key still counts as duplicate `duplicates_dropped=1`, [2] pruned `pruned_by_verdict=1` before the hypothesise phase -> empty intake -> O1 empty pass, no phase machine
 - **terminal:** `report.pairs_processed==0`; `report.malformed_dropped==1`; `report.duplicates_dropped==1`; `report.pruned_by_verdict==1`; `report.store_write_failures==0`; the empty pass persists nothing in the memory topology - `read_configs("proj-e5")==[]` and `read_notes("proj-e5")==[]` (the per-run `run.md` with `candidates_received` is removed, #166)
