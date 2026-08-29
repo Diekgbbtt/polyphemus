@@ -283,6 +283,84 @@ def test_render_projection_absent_rich_slots_degrade_fail_open():
     assert "cooperating systems: (none)" in text
 
 
+def test_render_projection_renders_aggregated_endpoints():
+    """#201: `_render_projection` renders the unit's aggregated L0 Endpoints as
+    a typed slot (method/path/baseurl, sorted; the owning service slug for a
+    System unit's linked-services aggregates); an absent slot renders
+    '(none)' - never a raise, never a prune signal."""
+    from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
+        AggregatedEndpoint,
+        UnitProjection,
+    )
+
+    proj = UnitProjection(
+        unit_id="Service:checkout", kind="Service", spine={"exposure": "public"},
+        edges={}, data_edges={}, data_rel_kinds=frozenset(),
+        aggregated_endpoints=(
+            AggregatedEndpoint(method="GET", path="/cart", baseurl="https://a"),
+            AggregatedEndpoint(method="POST", path="/pay", baseurl="https://a"),
+        ),
+    )
+    text = HL._render_projection(proj)
+    assert "aggregated endpoints:" in text
+    assert "- method=GET; path=/cart; baseurl=https://a" in text
+    assert "- method=POST; path=/pay; baseurl=https://a" in text
+    assert text.index("method=GET") < text.index("method=POST")
+
+    sys_proj = UnitProjection(
+        unit_id="System:auth:auth-1", kind="auth", spine={}, edges={},
+        data_edges={}, data_rel_kinds=frozenset(),
+        aggregated_endpoints=(
+            AggregatedEndpoint(method="POST", path="/login", baseurl="https://a",
+                               service_slug="sign-in"),
+        ),
+    )
+    text = HL._render_projection(sys_proj)
+    assert "service_slug=sign-in" in text
+
+    sparse = UnitProjection(
+        unit_id="Service:ghost", kind="Service", spine={}, edges={},
+        data_edges={}, data_rel_kinds=frozenset(),
+    )
+    assert "aggregated endpoints: (none)" in HL._render_projection(sparse)
+    assert "FALSE" not in HL._render_projection(sparse)
+
+
+def test_gate_frame_renders_aggregated_endpoints_inside_unit_sections():
+    """#201: the orchestrator's first user message (the gate frame) renders the
+    pair's unit's aggregated L0 endpoints as typed observed artifacts inside
+    the Services/Systems sections - not just System-card prose."""
+    from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
+        AggregatedEndpoint,
+        UnitProjection,
+    )
+
+    gate_input = GateInput(
+        candidates=[
+            DeliveredCandidate(unit_id="Service:checkout", fault_class="CWE-639",
+                               applies_witnesses=Witness(llm="x"),
+                               match_verdict="applies"),
+        ],
+        unit_projection={
+            "Service:checkout": UnitProjection(
+                unit_id="Service:checkout", kind="Service",
+                spine={"exposure": "public"}, edges={}, data_edges={},
+                data_rel_kinds=frozenset(),
+                aggregated_endpoints=(
+                    AggregatedEndpoint(method="GET", path="/orders",
+                                       baseurl="https://a"),
+                ),
+            ),
+        },
+        materialisation={"CWE-639": type("M", (), {"name": "IDOR"})()},
+        fold_family={"CWE-639": ()},
+    )
+    prompt = HL._compose_gate_prompt(gate_input)
+    assert "Services:" in prompt
+    assert "method=GET; path=/orders; baseurl=https://a" in prompt
+    assert "aggregated endpoints:" in prompt
+
+
 # --- _parse_json_object: free-text D4/D5 replies -------------------------------
 
 

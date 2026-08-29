@@ -160,7 +160,11 @@ L1_ONTOLOGY_PRIMER = (
     "capability rides - the typed locus where the fault may bite, identified "
     "by kind and discriminator. A DataItem is the logical data-flow "
     "abstraction - the data a Service produces or consumes, carrying its "
-    "name, type, and sensitivity. The L1 is a judged abstraction over the "
+    "name, type, and sensitivity. An L0 Endpoint is the observed reachability "
+    "fact - a path that responded - and a Service AGGREGATES the Endpoints "
+    "that serve its business function; those aggregated endpoints are part of "
+    "the Service's surface (a System's surface includes the Endpoints its "
+    "linked services aggregate). The L1 is a judged abstraction over the "
     "observed L0 graph: every node here is an inference licensed by "
     "observations, never direct evidence. The projection is the typed facet surface "
     "you reason over - a proxy for the full characterisation, not an "
@@ -278,6 +282,25 @@ def _data_item_render(item) -> str:
     return "; ".join(parts) or "(data item without typed slots)"
 
 
+def _aggregated_endpoint_render(ep) -> str:
+    """Deterministic one-line render of an aggregated L0 Endpoint (#201): the
+    typed identity props (method/path/baseurl, present ones only) plus the
+    owning service slug when the aggregate resolves through a System unit's
+    LINKED services. An absent slot is omitted - absence is not-yet-filled,
+    never a marker; an absent item renders a marker, never a raise."""
+    if ep is None:
+        return "(absent)"
+    parts = []
+    for attr in ("method", "path", "baseurl"):
+        val = getattr(ep, attr, None)
+        if val is not None:
+            parts.append(f"{attr}={val}")
+    slug = getattr(ep, "service_slug", None)
+    if slug:
+        parts.append(f"service_slug={slug}")
+    return "; ".join(parts) or "(aggregated endpoint without typed slots)"
+
+
 def _render_projection(projection) -> str:
     """Deterministic render of the unit's typed projection (spec 3.1/3.7): the
     typed spine keys present, per-family outgoing Service->System edges (target
@@ -351,6 +374,13 @@ def _render_projection(projection) -> str:
             out.append(f"  - {family}: {', '.join(rendered) or '(none)'}")
     else:
         out.append("cooperating systems: (none)")
+    aggregated_endpoints = getattr(projection, "aggregated_endpoints", None) or ()
+    if aggregated_endpoints:
+        out.append("aggregated endpoints:")
+        rendered = sorted(_aggregated_endpoint_render(i) for i in aggregated_endpoints)
+        out += [f"  - {line}" for line in rendered or ["(none)"]]
+    else:
+        out.append("aggregated endpoints: (none)")
     return "\n".join(out)
 
 

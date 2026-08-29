@@ -393,7 +393,7 @@ def test_surface_context_replaces_edge_degree_with_connected_data_items():
     an absent projection, a non-matching card, or a malformed card degrades
     unchanged (fail-open)."""
     from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
-        _surface_cards_with_connected_data_items,
+        service_card_projection,
     )
     from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
         DataItem,
@@ -420,7 +420,7 @@ def test_surface_context_replaces_edge_degree_with_connected_data_items():
             ),
         },
     )
-    cards = _surface_cards_with_connected_data_items([card], proj)
+    cards = service_card_projection([card], proj)
     transformed = cards[0]
     assert "edge_degree" not in transformed
     # families render sorted (render determinism, M1)
@@ -433,23 +433,101 @@ def test_surface_context_replaces_edge_degree_with_connected_data_items():
     # a non-matching card degrades to its counts card
     other = {"kind": "System", "key": {"kind": "cache", "discriminator": "1"},
              "edge_degree": {"DEPENDS_ON": 2}}
-    assert _surface_cards_with_connected_data_items([other], proj) == [other]
+    assert service_card_projection([other], proj) == [other]
     # an absent projection degrades to the counts card (fail-open)
-    assert _surface_cards_with_connected_data_items([card], None) == [card]
+    assert service_card_projection([card], None) == [card]
     # a projection whose unit does not match the card degrades to the counts card
     other_proj = UnitProjection(
         unit_id="Service:slug:b", kind="Service", spine={}, edges={},
         data_edges={}, data_rel_kinds=frozenset(),
         data_items={"PRODUCES": (DataItem(item_key="k", name="x"),)},
     )
-    assert _surface_cards_with_connected_data_items([card], other_proj) == [card]
+    assert service_card_projection([card], other_proj) == [card]
     # a malformed card (a non-dict element) degrades unchanged, never a raise
     malformed = ["not-a-dict"]
-    assert _surface_cards_with_connected_data_items(malformed, proj) == malformed
+    assert service_card_projection(malformed, proj) == malformed
     # a Service card whose key is not a dict degrades unchanged, never a raise
     broken_key = {"kind": "Service", "key": "not-a-dict",
                   "edge_degree": {"EXPOSED_VIA": 1}}
-    assert _surface_cards_with_connected_data_items([broken_key], proj) == [broken_key]
+    assert service_card_projection([broken_key], proj) == [broken_key]
+
+
+def test_service_card_projection_surfaces_aggregated_endpoints_under_parent_unit():
+    """#201: the renamed service-card projection expands the config's target
+    unit card WITH its aggregated L0 Endpoints (method/path/baseurl from the
+    projection's AGGREGATES slot) under the parent unit, sorted; a System card
+    carries its linked services' endpoints with the owning service slug; the
+    expansion fires ONLY for the target unit (a sibling card stays unchanged -
+    the DD-4 token-light budget is load-bearing)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+        service_card_projection,
+    )
+    from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
+        AggregatedEndpoint,
+        UnitProjection,
+    )
+
+    card = {
+        "kind": "Service",
+        "key": {"business_function_slug": "checkout"},
+        "edge_degree": {"AGGREGATES": 2},
+        "spine": {"exposure": "public"},
+    }
+    sibling = {
+        "kind": "Service",
+        "key": {"business_function_slug": "orders"},
+        "edge_degree": {"AGGREGATES": 9},
+        "spine": {"exposure": "internal"},
+    }
+    proj = UnitProjection(
+        unit_id="Service:checkout", kind="Service", spine={}, edges={},
+        data_edges={}, data_rel_kinds=frozenset(),
+        aggregated_endpoints=(
+            AggregatedEndpoint(method="POST", path="/pay", baseurl="https://a"),
+            AggregatedEndpoint(method="GET", path="/cart", baseurl="https://a"),
+        ),
+    )
+    cards = service_card_projection([card, sibling], proj)
+    transformed = cards[0]
+    assert transformed["aggregated_endpoints"] == [
+        {"method": "GET", "path": "/cart", "baseurl": "https://a"},
+        {"method": "POST", "path": "/pay", "baseurl": "https://a"},
+    ]
+    assert "edge_degree" not in transformed
+    # the sibling card is never expanded (target-unit-only expansion)
+    assert cards[1] == sibling
+
+    # the system contract: a System card surfaces its linked services'
+    # endpoints with the owning service slug
+    sys_card = {
+        "kind": "System",
+        "key": {"kind": "auth", "discriminator": "auth-1"},
+        "edge_degree": {"DEPENDS_ON": 2},
+        "spine": {"exposure": "internal"},
+    }
+    sys_proj = UnitProjection(
+        unit_id="auth:auth-1", kind="auth", spine={}, edges={},
+        data_edges={}, data_rel_kinds=frozenset(),
+        aggregated_endpoints=(
+            AggregatedEndpoint(method="POST", path="/login", baseurl="https://a",
+                               service_slug="sign-in"),
+        ),
+    )
+    cards = service_card_projection([sys_card], sys_proj)
+    assert cards[0]["aggregated_endpoints"] == [
+        {"method": "POST", "path": "/login", "baseurl": "https://a",
+         "service_slug": "sign-in"},
+    ]
+
+    # an unbound L1 (no AGGREGATES) degrades to the card unchanged - no
+    # aggregate slot, never a raise, never a prune signal
+    unbound = UnitProjection(
+        unit_id="Service:checkout", kind="Service", spine={}, edges={},
+        data_edges={}, data_rel_kinds=frozenset(),
+    )
+    cards = service_card_projection([card], unbound)
+    assert "aggregated_endpoints" not in cards[0]
+    assert cards[0]["edge_degree"] == {"AGGREGATES": 2}
 
 
 def test_fanned_out_direction_ratifies_each_config_and_notes_the_pair():
@@ -473,6 +551,53 @@ def test_fanned_out_direction_ratifies_each_config_and_notes_the_pair():
     assert len(configs) == 2
     assert all(c["status"] == "ratified" for c in configs)
     assert len(store.read_notes("project-1")) == 1
+
+
+def test_ratify_upsert_reinjects_the_deterministic_surface_context():
+    """#201 (Q3 ruling): the ratify upsert re-injects the minted surface_context
+    (the deterministic typed assembly) - a model-authored surface_context is
+    replaced, so the ratified config carries the aggregated L0 endpoints under
+    the parent unit and the model never re-authors the shape."""
+    store = _MemoryStore()
+
+    def read_fn(cypher, params):
+        if "AGGREGATES" in cypher:
+            return [
+                {"props": {"path": "/pay", "method": "POST", "baseurl": "https://a"}},
+                {"props": {"path": "/cart", "method": "GET", "baseurl": "https://a"}},
+            ]
+        if "type(dr) AS family" in cypher:
+            return []
+        if "AS edges" in cypher:
+            return [{"labels": ["L1Service"],
+                     "props": {"business_function_slug": "slug:a"},
+                     "edges": []}]
+        return [{"labels": ["L1Service"],
+                 "props": {"business_function_slug": "slug:a", "exposure": "public"},
+                 "rels": ["AGGREGATES", "AGGREGATES"]}]
+
+    def ratify_fn(inp):
+        configs = []
+        for draft in inp.configs:
+            amended = draft.model_copy(deep=True)
+            amended.status = "ratified"
+            amended.surface_context = {"model": "authored", "freeform": True}
+            configs.append(amended)
+        return RatifyDecision(configs=configs)
+
+    report = _run(store, [_candidate()], tools=_tools(store, read_fn=read_fn),
+                  ratify=ratify_fn)
+    assert report.configs_ratified == 1
+    configs = store.read_configs("project-1")
+    assert len(configs) == 1
+    assert configs[0]["status"] == "ratified"
+    assert "model" not in configs[0]["surface_context"]
+    cards = configs[0]["surface_context"]["cards"]
+    transformed = cards[0]
+    assert transformed["aggregated_endpoints"] == [
+        {"method": "GET", "path": "/cart", "baseurl": "https://a"},
+        {"method": "POST", "path": "/pay", "baseurl": "https://a"},
+    ]
 
 
 # --- Seam behaviours: fail-open degradations ----------------------------------

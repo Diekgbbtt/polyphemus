@@ -576,22 +576,66 @@ def _data_item_detail(item) -> dict:
     return detail
 
 
-def _surface_cards_with_connected_data_items(
+def _aggregated_endpoint_detail(endpoint) -> dict:
+    """Pure: one aggregated L0 Endpoint detail dict for the surface-context
+    transform (#201): the typed identity props (method/path/baseurl) plus the
+    owning service slug when the aggregate resolves through a System unit's
+    LINKED services. An absent slot stays absent - absence is not-yet-filled,
+    never a marker."""
+    detail: dict = {}
+    for attr in ("method", "path", "baseurl"):
+        val = getattr(endpoint, attr, None)
+        if val is not None:
+            detail[attr] = val
+    slug = getattr(endpoint, "service_slug", None)
+    if slug:
+        detail["service_slug"] = slug
+    return detail
+
+
+def _unit_matches_card(card: dict, unit_id) -> bool:
+    """Pure: True when `card` is the projection's own unit's card (the config's
+    target). A Service card keyed on `business_function_slug` matches
+    `"Service:<slug>"`; a System card keyed on `(kind, discriminator)` matches
+    `"<kind>:<discriminator>"` - the kind-qualified unit identities both carry.
+    A malformed key or an absent unit_id never matches (fail-open)."""
+    if not unit_id:
+        return False
+    key = card.get("key")
+    if not isinstance(key, dict):
+        return False
+    if card.get("kind") == "Service":
+        slug = key.get("business_function_slug")
+        return bool(isinstance(slug, str) and slug
+                    and unit_id == f"Service:{slug}")
+    kind = key.get("kind")
+    discriminator = key.get("discriminator")
+    return bool(isinstance(kind, str) and isinstance(discriminator, str)
+                and kind and discriminator and unit_id == f"{kind}:{discriminator}")
+
+
+def service_card_projection(
     surface: Sequence[Any], projection,
 ) -> list[Any]:
-    """The config surface-context transform (ADR G5, operator correction): a
-    Service card's `edge_degree` counts are replaced by the detailed connected
-    DataItems (name/type/sensitivity/fields/notes) of the unit's rich
-    projection, mirroring the projection reader - the slot becomes
-    `connected_data_items` (family -> the item details, families and fields
-    sorted for render determinism). The transform applies only to the card of
-    the projection's own unit (the config's target); an absent projection, a
-    non-matching card, a projection that resolved no data items, or a malformed
-    card (a non-dict surface element) degrades to the card unchanged - fail-open
-    per the canon, never a raise, never a prune signal."""
+    """The config surface-context transform (ADR G5, operator correction;
+    renamed for #201): the target unit card's `edge_degree` counts are replaced
+    by the detailed connected DataItems (name/type/sensitivity/fields/notes) of
+    the unit's rich projection AND the card is expanded with its aggregated L0
+    Endpoints (`aggregated_endpoints`: method/path/baseurl from the projection's
+    AGGREGATES slot) under the parent unit - a System card carries its linked
+    services' endpoints with the owning service slug. The L0 expansion fires
+    ONLY for the card of the projection's own unit (the config's target) -
+    never for the whole surface (DD-4 token-light budget); the surface itself
+    stays the L1-only index-cards. An absent projection, a non-matching card, a
+    projection that resolved no data items / aggregates, or a malformed card (a
+    non-dict surface element) degrades to the card unchanged - fail-open per the
+    canon, never a raise, never a prune signal (the #200 unbound-L1 interaction
+    yields zero AGGREGATES to surface)."""
     unit_id = getattr(projection, "unit_id", None)
     data_items = getattr(projection, "data_items", None) if projection is not None \
         else None
+    aggregated = getattr(projection, "aggregated_endpoints", None) \
+        if projection is not None else None
     cards: list[dict] = []
     for raw_card in surface:
         if not isinstance(raw_card, dict):
@@ -599,21 +643,34 @@ def _surface_cards_with_connected_data_items(
             cards.append(raw_card)
             continue
         card = raw_card
-        key = card.get("key")
-        key = key if isinstance(key, dict) else {}
-        slug = key.get("business_function_slug")
-        if not (card.get("kind") == "Service" and isinstance(slug, str) and slug
-                and unit_id == f"Service:{slug}" and data_items):
+        if not (_unit_matches_card(card, unit_id) and (data_items or aggregated)):
             cards.append(card)
             continue
         transformed = dict(card)
         transformed.pop("edge_degree", None)
         transformed["connected_data_items"] = {
             family: [_data_item_detail(item) for item in items]
-            for family, items in sorted(data_items.items())
+            for family, items in sorted((data_items or {}).items())
         }
+        if aggregated:
+            transformed["aggregated_endpoints"] = sorted(
+                (_aggregated_endpoint_detail(ep) for ep in aggregated),
+                key=lambda d: (d.get("baseurl") or "", d.get("method") or "",
+                               d.get("path") or "", d.get("service_slug") or ""),
+            )
         cards.append(transformed)
     return cards
+
+
+def _surface_context_for(surface, projection) -> dict:
+    """The deterministic config surface-context assembly (#201): the adapted
+    index-card list (the `{"cards": [...]}` wrapper shape) with the config's
+    target unit card expanded - `edge_degree` -> connected DataItems AND the
+    aggregated L0 Endpoints under the parent unit. Owned by the HARNESS (the
+    deterministic typed-assembly ruling): the hypothesise mint and the ratify
+    upsert both use it, so the model never re-authors the shape. An absent
+    projection degrades to the card unchanged (fail-open)."""
+    return {"cards": service_card_projection(surface, projection)}
 
 
 def mint_hunt_config(
@@ -1018,9 +1075,7 @@ async def arun_orchestration(
             direction,
             candidate,
             uuid.uuid4().hex,
-            surface_context={
-                "cards": _surface_cards_with_connected_data_items(surface, projection),
-            },
+            surface_context=_surface_context_for(surface, projection),
             prior_hunt_insights=prior_insights,
             sub_fault_ids=fold_families.get(direction.fault_class) or (),
             status="hypothesised",
@@ -1220,16 +1275,25 @@ async def arun_orchestration(
             except Exception as exc:  # noqa: BLE001 - fail-open: keep serving
                 logger.warning("ratify turn failed for %s (%s)", key, exc)
 
+        # #201 (Q3 ruling): the surface_context is a deterministic typed assembly
+        # owned by the harness - the ratify upsert re-injects the minted shape
+        # (spine + connected data items + aggregated L0 endpoints under the
+        # parent unit) so the model's re-authoring never clobbers the aggregates.
+        ratify_projection = (state.get("projections") or {}).get(pair.unit_id)
+        deterministic_context = _surface_context_for(surface, ratify_projection)
+
         trail: list[dict] = []
         ratified_configs: list[HuntConfig] = []
         ratified = dropped = unratified = 0
         for config in decision.configs:
             if config.status == "ratified":
+                config.surface_context = deterministic_context
                 _update_config(config)
                 ratified += 1
                 ratified_configs.append(config)
                 trail.append({"kind": "ratified", "revival_key": key})
             elif config.status == "dropped":
+                config.surface_context = deterministic_context
                 _update_config(config)
                 dropped += 1
                 trail.append({"kind": "dropped", "revival_key": key})
