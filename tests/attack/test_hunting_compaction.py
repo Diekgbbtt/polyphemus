@@ -36,7 +36,7 @@ RESUME_POINT = "resume from the login-flow patch on endpoint three"
 
 # The author's reply is a long JSON body so the compact pass reclaims real tokens.
 AUTHOR_BODY = json.dumps({
-    "target_identity": {"unit": "a"},
+    "target_identity": {"url": "http://a/", "unit_id": "Service:slug:a"},
     "rationale": "spec " + ("long-reasoning-trail " * 400),
 })
 JUDGE_BODY = json.dumps({"meaningful_insight": False, "next_step": "end", "rationale": "r"})

@@ -94,6 +94,5 @@ class Config:
     # of concurrently running hunting agent sessions per project. One width (the
     # operator's ruling: effectively single-project execution, so one width).
     HUNTING_DISPATCH_GATE_WIDTH = int(os.environ.get("HUNTING_DISPATCH_GATE_WIDTH", "20"))
-    HUNTING_LIGHTRAG_TOOL = os.environ.get("HUNTING_LIGHTRAG_TOOL", "") == "1"
 
 config = Config()

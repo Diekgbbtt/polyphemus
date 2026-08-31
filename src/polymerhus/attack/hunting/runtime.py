@@ -392,10 +392,10 @@ def _default_hunter_builder(*, run_id, project_id, hunt_store, hunter_store, **k
     """The production hunt-session builder seam (T4): the #164 W5 harness
     (`build_actor_hunting_agent`'s dispatch) with the real memory store, the
     project's live read-only graph view, the real Kali-container exec seam
-    (the pod's `default_exec_fn`, reused verbatim), and the config-gated
-    `query_lightrag` KB tool (binds inside when `HUNTING_LIGHTRAG_TOOL` is
-    on). Returns `(dispatch_fn, registry)`; the caller reaps the registry at
-    the session's end."""
+    (the pod's `default_exec_fn`, reused verbatim), and the always-bound
+    `query_lightrag` KB tool (binds inside; as of #197 the
+    `HUNTING_LIGHTRAG_TOOL` gate is REMOVED). Returns `(dispatch_fn, registry)`;
+    the caller reaps the registry at the session's end."""
     from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
     from polymerhus.attack.hunting.pod.tools import default_exec_fn
 
@@ -687,13 +687,14 @@ async def start_hunting(
 
 
 def build_production_hunting_agent(*, store, run_id, project_id="",
-                                   target_url=None, graph_view_fn=None,
+                                   graph_view_fn=None,
                                    memory_store=None, checkpointer=None,
                                    model_factory=None, observe: bool = True,
                                    exec_fn=None):
     """The production default hunting-agent dispatch seam (as of #164 W5): the
     turn-by-turn ReAct harness wired to the real `query_lightrag` KB tool (the
-    lightrag branch's single KB tool, config-gated by `HUNTING_LIGHTRAG_TOOL`),
+    lightrag branch's single KB tool, always-bound as of #197 - the
+    `HUNTING_LIGHTRAG_TOOL` gate is REMOVED),
     the real Kali-container exec seam, and the per-project hunter memory store.
     Construction performs no I/O (everything heavy resolves on first use).
 
@@ -706,7 +707,7 @@ def build_production_hunting_agent(*, store, run_id, project_id="",
         project_id=project_id,
         memory_store=memory_store,
         graph_view_fn=graph_view_fn,
-        kb_fn=None,  # the KB seam: the harness binds the config-gated query_lightrag tool
+        kb_fn=None,  # the KB seam: the harness binds the always-bound query_lightrag tool (#197)
         exec_fn=exec_fn,  # None -> the harness's default fail-open exec seam (the Kali container is a sibling workstream)
         checkpointer=checkpointer,
         model_factory=model_factory,

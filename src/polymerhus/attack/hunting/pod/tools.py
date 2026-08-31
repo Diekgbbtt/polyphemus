@@ -9,7 +9,7 @@ One core tool, injectable so the contract tier runs without a live target:
 
 The KB query capability is the single `query_lightrag` tool from the lightrag
 branch (the pod runner can be configured with it, exactly like the hunting
-agent's author lane, gated by `HUNTING_LIGHTRAG_TOOL`); the former
+agent's author lane, always-bound as of #197); the former
 `symptom-technique` typed seam (surface B) is retired.
 
 As of T7 (#157) `exec` is ALSO surfaced as a bound `BaseTool` (D84-16/26).
@@ -143,8 +143,9 @@ class KbQueryTool(BaseTool):
     records every response as a first-class `KbObservation` into the variant's
     experiment-log file (T3/#179). The former `kb_retrieve` symptom-technique
     typed seam (surface B) is RETIRED; the KB capability is `query_lightrag`
-    (config-gated by `HUNTING_LIGHTRAG_TOOL`), and the pod runner/triager bind
-    it exactly like the hunting agent's author lane.
+    (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` gate is REMOVED),
+    and the pod runner/triager bind it exactly like the hunting agent's author
+    lane.
 
     Fail-open (O13): an empty/raising KB degrades to a denoted degraded bundle,
     never raises into the turn. A tool with no log bound (the contract tier)

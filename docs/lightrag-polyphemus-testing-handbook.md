@@ -15,8 +15,8 @@ wants to exercise the LightRAG integration.
    `stream: false`).
 2. The **tool**: `query_lightrag` retrieves methodology from LightRAG and
    returns a validated `AnswerBundle` (fail-open on errors).
-3. The **hunting wiring**: with `HUNTING_LIGHTRAG_TOOL=1` the author lane
-   receives the tool, the D4 prompt instructs the model to use it, and the
+3. The **hunting wiring**: the author lane ALWAYS receives the `query_lightrag` tool
+   (as of #197 the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED), the D4 prompt instructs the model to use it, and the
    model's final spec is parsed robustly.
 4. The **execution seam**: `HuntingHttpPod` turns the spec's payload vectors
    into bounded HTTP probes and returns a verdict envelope.
@@ -48,7 +48,6 @@ environment):
 export API_KEY_SWISSAI="$LLM_BINDING_API_KEY"
 export LLM_MODEL_HUNTING_HUNTER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
 export LLM_MODEL_HUNTING_ORCHESTRATOR=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
-export HUNTING_LIGHTRAG_TOOL=1
 export LIGHTRAG_BASE_API_URL=http://127.0.0.1:9621
 export QUERY_LLM_API_KEY="$LLM_BINDING_API_KEY"
 export QUERY_LLM_BASE_URL=https://api.swissai.svc.cscs.ch/v1
@@ -127,7 +126,6 @@ set -a; source .env; set +a
 export API_KEY_SWISSAI="$LLM_BINDING_API_KEY"
 export LLM_MODEL_HUNTING_HUNTER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
 export LLM_MODEL_HUNTING_ORCHESTRATOR=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
-export HUNTING_LIGHTRAG_TOOL=1
 export LIGHTRAG_BASE_API_URL=http://127.0.0.1:9621
 export QUERY_LLM_API_KEY="$LLM_BINDING_API_KEY"
 export QUERY_LLM_BASE_URL=https://api.swissai.svc.cscs.ch/v1
@@ -249,7 +247,7 @@ What to inspect:
 
 | Symptom | Likely cause | Action |
 | --- | --- | --- |
-| `actor_tools: []` | flag off, or actor built directly (not via registry) | export `HUNTING_LIGHTRAG_TOOL=1`; use `HuntingActorRegistry` |
+| `actor_tools: []` | actor built directly (not via registry) | use `HuntingActorRegistry` (the registry ALWAYS binds the KB tool as of #197) |
 | no deltas, `accepted: False` in seconds | streaming payload regressed (`stream: false`) | check `build_external_payload` / `DeepSeekClient.stream()` |
 | `accepted: False` with full JSON | answer failed validation (rare) | retry; it is the designed fallback; consider raising `QUERY_LLM_MAX_TOKENS` |
 | `502 Bad Gateway` from SwissAI | transient endpoint error | retry; the tool now fails open (no crash) |
@@ -263,8 +261,8 @@ What to inspect:
 
 ## 9. Rollback / notes
 
-- Disable the integration entirely: unset/`export HUNTING_LIGHTRAG_TOOL=0` —
-  the author lane runs exactly as before (no tool bound, prompt unchanged).
+- The `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED as of #197 - the author
+  lane and pod runner bind the KB tool unconditionally (fail-open).
 - The batch pipeline (`run_query_pipeline`) is untouched: `complete()` still
   sends `stream: false`.
 - Never commit secrets. Keys live in `.env` (gitignored) or the environment.

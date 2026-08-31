@@ -36,7 +36,7 @@ def _terminate_space(spec, obs, messages, log):
 
 
 VALID_SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
@@ -105,7 +105,7 @@ def test_async_seams_are_awaited_natively_by_the_graph():
 
 def test_init_rejection_makes_no_tool_call():
     calls = []
-    env = _run(arun_pod({"target_identity": "", "verification_symptoms": [],
+    env = _run(arun_pod({"target_identity": {"url": ""}, "verification_symptoms": [],
                          "testing_pattern": "", "payload_vector_space": {}},
                         exec_fn=_exec(_OK, calls=calls),
                         runner_step_fn=symbolic_runner_step_fn, triager_fn=None,

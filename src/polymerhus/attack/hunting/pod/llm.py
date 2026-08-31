@@ -54,10 +54,11 @@ class PodHarnessContext:
     memory store + its spec key (spec_id = the #164 hunter's `<fault>_<strategy>`
     spec id - D84-34/ADR #169 Q13 - the SAME value `bind_pod_session` threads as
     `HuntSession.spec`, never a content hash), the D6 log, the CURRENT
-    variant_ref for dedup scope, and the session model factory (None = the
-    role's real model). The KB query capability is the single `query_lightrag`
-    tool (lightrag branch, config-gated); the former `kb_fn` symptom-technique
-    seam (surface B) is retired."""
+    variant_ref for dedup scope, the session model factory (None = the
+    role's real model), and the read-only graph view seam (#197,
+    `ReadOnlyGraphView(project_id).read`) the shared `graph_view` tool rides.
+    The KB query capability is the single `query_lightrag` tool (always-bound as
+    of #197); the former `kb_fn` symptom-technique seam (surface B) is retired."""
 
     exec_fn: Callable
     memory_store: Any = None
@@ -66,6 +67,7 @@ class PodHarnessContext:
     variant_ref: str = ""
     model_factory: Callable | None = None
     cap: int = 200  # the harness cap for the ReAct loop (D84-22: default 200)
+    graph_view_fn: Callable | None = None
 
 
 def _pod_ctx():

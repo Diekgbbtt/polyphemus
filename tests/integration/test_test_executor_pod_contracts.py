@@ -47,7 +47,7 @@ from polymerhus.attack.hunting.pod.types import RunnerStep, TERMINAL_REASONS
 from polymerhus.recon.domain.types import ExecResult
 
 VALID_SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
@@ -106,7 +106,7 @@ def test_arun_pod_is_the_async_entry_and_run_pod_is_gone():
 
 def test_init_rejects_invalid_spec():
     calls = []
-    env = _run(arun_pod({"target_identity": "", "verification_symptoms": [],
+    env = _run(arun_pod({"target_identity": {"url": ""}, "verification_symptoms": [],
                          "testing_pattern": "", "payload_vector_space": {}},
                         exec_fn=_exec(_OK, calls=calls),
                         runner_step_fn=symbolic_runner_step_fn, triager_fn=None,

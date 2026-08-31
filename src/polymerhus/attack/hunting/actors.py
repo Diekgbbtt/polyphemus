@@ -237,7 +237,6 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
         NEXT_NOTE_HINT,
         NEXT_PAIR_HINT,
         NEXT_RATIFY_HINT,
-        ReadOnlyGraphViewError,
     )
 
     graph_view_seam = getattr(tools, "graph_view", None)
@@ -251,27 +250,15 @@ def build_orchestrator_tool_surface(tools, *, run_id: str, project_id: str | Non
     _SERVICE_KEYS = ("unit_id", "fault_class", "vulnerability_class",
                      "status", "hunt_id")
 
-    @tool
-    def graph_view(cypher: str, params: dict | None = None) -> dict:
-        """Read the live L0/L1 graph through the run's read-only view (D67-04):
-        read index cards / typed facets with read-only cypher. Write-shaped
-        cypher is rejected (surfaces ReadOnlyGraphViewError, never writes); a
-        read failure degrades to an empty denoted-error result (O5)."""
-        if graph_view_seam is None:
-            return {"error": "no graph view configured; reading degraded"}
-        read_fn = getattr(graph_view_seam, "read", None)
-        if not callable(read_fn):
-            return {"error": "graph view misconfigured; reading degraded"}
-        try:
-            rows = read_fn(cypher, params or {})
-            if not isinstance(rows, list):
-                return {"rows": [rows] if rows is not None else []}
-            return {"rows": rows}
-        except ReadOnlyGraphViewError:
-            raise  # surfaced to the model by the tool runtime - never a write
-        except Exception as exc:  # noqa: BLE001 - fail-open (O5)
-            logger.warning("graph_view tool degraded (%s)", exc)
-            return {"error": f"graph_view degraded: {exc}"}
+    # The ONE shared graph_view tool (#197): bound at all three seams, the
+    # usage contract (schema + query-language primitives + read-only guard +
+    # return shape + example) rides its description verbatim.
+    from polymerhus.attack.hunting.graph_view_tool import (  # noqa: PLC0415
+        build_graph_view_tool,
+    )
+
+    read_fn = getattr(graph_view_seam, "read", None) if graph_view_seam is not None else None
+    graph_view = build_graph_view_tool(read_fn if callable(read_fn) else None)
 
     @tool
     def hunts_store(cmd: str, *, hunt_config: dict | None = None,
@@ -775,13 +762,15 @@ class HuntingHunterActor(_TurnActor):
 
 
 def _lightrag_author_tools() -> list:
-    """Build the optional LightRAG query tool list for the author lane (lazy)."""
-    from polymerhus.app.config import config
-    from lightrag.tool import build_lightrag_tool
-
-    if not config.HUNTING_LIGHTRAG_TOOL:
+    """Build the LightRAG query tool list for the author lane (lazy). Always
+    attempted as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED.
+    Fail-open to `[]` when the lightrag tool is unavailable (the author lane
+    then grounds on the HuntConfig alone)."""
+    try:
+        from lightrag.tool import build_lightrag_tool  # noqa: PLC0415
+        return [build_lightrag_tool()]
+    except Exception:  # noqa: BLE001 - fail-open to no KB tool
         return []
-    return [build_lightrag_tool()]
 
 
 class HuntingActorRegistry:

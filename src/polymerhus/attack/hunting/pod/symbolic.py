@@ -56,7 +56,7 @@ def default_probe_from_spec(spec: dict, variant_ref: str) -> ProbeChain | None:
             return None
     else:
         method = "GET"
-        path = _path_from_identity(spec.get("target_identity", ""))
+        path = _path_from_identity(spec.get("target_identity") or {})
     if not path:
         return None
     step = ProbeStep(role="core", method=method, url=str(path), body=str(pvs.get("body", "")))
@@ -65,9 +65,13 @@ def default_probe_from_spec(spec: dict, variant_ref: str) -> ProbeChain | None:
     return chain
 
 
-def _path_from_identity(identity: str) -> str:
-    """Best-effort path from a target identity like `service:web:soupmarket` or
-    a full URL. Falls back to `/` so a bare service identity still probes root."""
+def _path_from_identity(identity) -> str:
+    """Best-effort path/url from a `target_identity` dict (`{"url": ..., "unit_id": ...}`, #197)
+    or a legacy bare identity string like `service:web:soupmarket`. Falls back to `/` so a
+    bare service identity still probes root."""
+    if isinstance(identity, dict):
+        url = (identity.get("url") or "").strip()
+        return url or "/"
     if not identity:
         return ""
     if identity.startswith("http://") or identity.startswith("https://"):
