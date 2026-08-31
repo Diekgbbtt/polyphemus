@@ -307,7 +307,9 @@ def _hunting_candidates(body_candidates) -> list:
 
 class HuntingLaunch(BaseModel):
     """The hunting launch body (#110): the optional initial candidate batch. An
-    omitted/empty batch launches an empty pass (O1) to be fed later."""
+    omitted/empty batch triggers the platform's OWN FaultSource selection over the
+    live L1 (#200, spec 4.1) - a meaningful pass, never the vacuous O1 empty pass;
+    a supplied batch stays the caller override."""
     candidates: list[_HuntingCandidateIn] = []
 
 
