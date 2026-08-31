@@ -27,7 +27,7 @@ Two source types are live in the MVP: **`openapi`/`graphql`** (target API contra
 | Concern | Choice | Notes |
 |---|---|---|
 | Vector store | **pgvector** (`pgvector/pgvector:pg16`, already in the stack for LangGraph checkpoints) | `doc_chunks` table + HNSW index; single stateful backend, **no FAISS** |
-| Embedding | Reuse `knowledge_base/embedder.Embedder` (local `e5-large-v2`, 1024-d) **default**, pluggable to `knowledge_base/api_embedder.APIEmbedder` | `EMBED_MODEL`/`EMBED_DIM` config; **local default** to avoid egress of target docs/code (D-a) |
+| Embedding | The **LightRAG runtime** embeds at insert time (the agent-side `knowledge_base` embedder, local `e5-large-v2`, was never built) | `EMBEDDING_BINDING` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` config, consumed by the `lightrag` container (`.env`) |
 | Chunking | Reuse `knowledge_base/chunking.ChunkStrategy` | `chunk_structured()` for OpenAPI/GraphQL JSON; `chunk_markdown()`/text for crawled pages |
 | Document loading | Reuse `knowledge_base/document_store.load_document()` | source normalization |
 | Static fetch | `execute_command` via `KALI_MCP_URL` (curl/httpx in Kali) | robots.txt, sitemap.xml, OpenAPI URL, GraphQL introspection |
@@ -72,7 +72,7 @@ CREATE TABLE doc_chunks (
     anchor      JSONB NOT NULL,             -- { node_type, identity{...} } — node IDENTITY, not a locator
     chunk_text  TEXT NOT NULL,
     ordinal     INT  NOT NULL,              -- chunk order within doc_ref
-    embedding   vector(D) NOT NULL,         -- D = EMBED_DIM (1024 for e5-large-v2)
+    embedding   vector(D) NOT NULL,         -- D = the embedding dimension
     provenance  JSONB NOT NULL,             -- { source_ref, tool, ingest_id, fetched_at }
     project_id  TEXT NOT NULL,
     created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
@@ -195,7 +195,7 @@ operator → POST /ingest {sources:[…]} → {ingest_id}     (returns immediate
 2. **Anchors bind to node identity, never to a locator string** (paradigm principle 2). `anchor` is `{node_type, identity}`; the binder MERGEs on the identity predicate.
 3. **Provenance is mandatory** on every chunk and every run (paradigm principle 4): `{source_ref, tool, ingest_id, fetched_at}`.
 4. **`doc_chunks` is append-only / immutable**; re-ingest versions via a new `doc_ref` (never mutate/delete in the MVP).
-5. **`EMBED_DIM` must match** the `doc_chunks.embedding` column and the HNSW index; changing the model requires a coordinated re-ingest.
+5. **The embedding dimension must match** the `doc_chunks.embedding` column and the HNSW index; changing the model requires a coordinated re-ingest.
 6. **Single vector backend** — pgvector only; no FAISS artifacts.
 7. **Per-source isolation** — one source's failure degrades to a partial corpus, never aborts the run (mirrors recon best-effort semantics).
 8. **Steel budgets are enforced** (`max_pages/llm_calls/seconds/depth`); the crawl is bounded, not open-ended.
@@ -214,7 +214,7 @@ operator → POST /ingest {sources:[…]} → {ingest_id}     (returns immediate
 ## 9. Risks
 
 - **R-I1 — Steel dependency.** External SaaS: availability, cost, and egress of auth-gated docs. *Mitigation:* bounded budgets; deterministic sitemap.xml tier-1 union as a partial fallback; conscious egress boundary (§7.10).
-- **R-I2 — Embedding-model drift.** Changing `EMBED_MODEL` invalidates stored vectors (dim mismatch / semantic incomparability). *Mitigation:* `EMBED_DIM` pinned to the column/index; model change ⇒ coordinated re-ingest; `doc_ref` versioning makes it clean.
+- **R-I2 — Embedding-model drift.** Changing the embedding model invalidates stored vectors (dim mismatch / semantic incomparability). *Mitigation:* the dimension pinned to the column/index; model change ⇒ coordinated re-ingest; `doc_ref` versioning makes it clean.
 - **R-I3 — Anchor mis-binding.** A doc bound to a wrong/absent node degrades iteration-2 retrieval (the identity-error risk, paradigm R-5). *Mitigation:* existence-validate explicit anchors; default-to-Domain; provenance recorded.
 - **R-I4 — Crawl incompleteness (coverage).** The agent may miss doc sections. *Mitigation:* union with sitemap.xml; nav/TOC-oriented traversal; budget tuning; coverage is an accepted MVP soft-edge.
 - **R-I5 — Anti-bot / heavy JS on doc sites.** Rare for developer docs, possible for gated portals. *Mitigation:* Steel proxies/stealth (defer to steel-reliability if hit); deterministic fallback.
@@ -230,7 +230,7 @@ operator → POST /ingest {sources:[…]} → {ingest_id}     (returns immediate
 | Scope | **Write-only** for the MVP; retrieval deferred to iteration 2 with an explicit seam (§8) |
 | Backend | **pgvector-native**; reuse embedder + chunker + document_store; replace `faiss_indexer` with a thin `DocStore` |
 | Sources | MVP = `openapi` + `graphql` + `web_map`; **`oss_codebase`/`target_codebase` deferred to iteration 2** (attack-surface analysis + Layer 1) |
-| D-a | Embedding default = **local `e5-large-v2` (1024-d)**, pluggable to API; local by default to avoid target-doc/code egress |
+| D-a (superseded) | Embedding default = **local `e5-large-v2` (1024-d)**, pluggable to API; local by default to avoid target-doc/code egress. **Superseded:** the agent-side `knowledge_base` embedder was never built; the LightRAG runtime embeds at insert time via the `EMBEDDING_*` binding (`.env`) |
 | D-b (rev) | Execution boundary **split**: static fetch via `execute_command` (Kali); **agentic doc crawl via Steel cloud browser** |
 | D-c | Ingestion is a **plain async pipeline**, not a LangGraph subgraph; status via `ingest_runs` polling |
 | D-d | Anchor = explicit `{node_type, identity}`, **default to project Domain**; resolver validates existence (400 on miss) |

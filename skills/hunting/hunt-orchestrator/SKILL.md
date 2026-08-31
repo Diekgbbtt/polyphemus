@@ -16,20 +16,19 @@ Each (unit, fault) pair runs three phases as graph nodes - `hypothesise -> ratif
 ### Hypothesise (Q8/Q11/Q16)
 
 - Read the unit's applies-witnesses and three-valued match verdict, the fault's materialisation (the CWE NL content), the sub-fault fold family (consideration material), the read-only graph surface, and the unit's rich typed projection (spine keys, per-family Service->System edges with fully-unpacked target Systems, exploded DataItems per family, DataRelationship kind chains, cooperating-systems adjacency). Absent or UNKNOWN facets are evidence you do not hold, never evidence of absence.
-- **Prior-hunt reflection (Q11):** the prior minted-config keys are listed in the prompt (revival keys). You NEVER write a config that duplicates a prior one. Before writing you MAY call `hunts_store(read)` to inspect a prior key's config and assess overlap; a config you assert as a duplicate is never written.
-- **Knowledge-sufficiency decision point (Q9):** Given this fault class and unit type, do I have sufficient knowledge of the previous dispatched hunts and all potentially useful insights collected? If not, loop the memory reads (`hunts_store(read)` / `notes(read)`).
-- **Target-knowledge loop (Q9):** against the materialised unit (projection + surface), ask: do I have enough technical knowledge of this unit to concretise the abstract fault at this locus? If not, query the attack-surface / L1 graph via `graph_view`, iterating until sufficient (multiple queries allowed).
-- **Hypothesis elicitation (Q8):** elicit one or more vulnerability classes - at the grain of a web-vulnerability CLASS with a research-direction rationale (e.g. CSRF, IDOR) - never narrowed to a surface locale, payload profile, vector, or symptom; the narrowing belongs to the #164 hunting agent at spec-writing. These become `vulnerability_classes[]`; the class-level research direction becomes `research_direction`; the reasoned case becomes `rationale`.
-- **Same-class merge (Q16):** if multiple elicited vulnerability classes at one locus are the SAME web-vulnerability class, merge them into one; only fundamentally discriminable classes survive as distinct configs. Pure LLM reflection - no module-side parsing.
+- **Prior-hunt reflection:** the prior minted-config keys are listed in the prompt (revival keys). You NEVER write a config that duplicates a prior one. Before writing you MAY call `hunts_store(read)` to inspect a prior key's config and assess overlap; a config you assert as a duplicate is never written.
+- **Knowledge-sufficiency decision point:** Given this fault class and unit type, do I have sufficient knowledge of the previous dispatched hunts and all potentially useful insights collected? If not, loop the memory reads (`hunts_store(read)` / `notes(read)`).
+- **Target-knowledge loop:** against the materialised unit (projection + surface), ask: do I have enough technical knowledge of this unit to concretise the abstract fault at this locus? If not, query the attack-surface / L1 graph via `graph_view`, iterating until sufficient (multiple queries allowed).
+- **Hypothesis elicitation:** elicit one or more vulnerability classes - at the grain of a web-vulnerability CLASS with a research-direction rationale (e.g. CSRF, IDOR) - never narrowed to a surface locale, payload profile, vector, or symptom. These become `vulnerability_classes[]`; the class-level research direction becomes `research_direction`; the reasoned case becomes `rationale`.
+- **Same-class merge:** if multiple elicited vulnerability classes at one locus are the SAME web-vulnerability class, merge them into one; only fundamentally discriminable classes survive as distinct configs. Pure LLM reflection - no module-side parsing.
 - **The hypothesise write:** call `hunts_store(write, config, status='hypothesised')` - ONE draft per surviving class, carrying ONLY `rationale` + `research_direction` (+ the class identity). The capabilities / assumptions / technique-primitives analysis is the RATIFICATION phase's work - never filled at this hypothesise turn.
 
 ### Ratify
 
-- The model may do multiple tool calls to update/delete/create configs - the proximity / too-near same-class merge, then the capabilities / assumptions / technique-primitives analysis that fills the ratification fields.
 - **adversarial_capabilities** are the capabilities the attacker must already hold when the test runs for the fault's symptoms to be reachable: an authorization level, a session context, a workflow step, access to specific application data, an interaction capability, a target application state. They are preconditions of the test - never capabilities the exploit grants. They may not currently be present; the downstream hunting agent then prunes this direction or adjusts the TestImplementationSpec to gain them beforehand.
 - A config deleted during ratification is written `status='dropped'` - it stays on disk as an orphan (G6), never deleted.
 
-### Note (G8)
+### Note
 
 - The note phase writes the notes: one note per config, more detailed than the config's `rationale`, walking the reasoning that yielded it - the observations drawn from your tool calls (`graph_view` or memory reads) that drove each choice, plus anything you account as potentially insightful moving forward.
 
@@ -54,9 +53,9 @@ A direction is pruned only when the evidence positively establishes the fault ca
 
 Consider cooperating systems when creating a HuntConfig targeting a system. The System-adjacency projection read (D3) surfaces each System's cooperating systems as a dedicated projection slot (family -> unpacked System list); inspect it when the fault targets a System so the hunt reasons over the System's neighbours, not just its own surface.
 
-## Prompt rendering: Services vs Systems
+## Services vs Systems
 
-The composed user prompt opens with the L1 ontology primer constant (G9) - what a Service, a System, and a DataItem are conceived for, plus the philosophy of the domain model - rendered at the top of every pair's frame; read every part of the graph through it. The prompt then splits matched units into Services and Systems with distinct adversarial-reasoning intros (Q4): a Service's section spells its surface - its edged DataItems and Systems; a System's section outlines the System distinctly - its kind, exposure, and props - even for Both faults. Your phase discipline runs identically for both sections.
+The composed user prompt opens with the L1 ontology primer constant - what a Service, a System, and a DataItem are conceived for, plus the philosophy of the domain model - rendered at the top of every pair's frame; read every part of the graph through it. The prompt then splits matched units into Services and Systems with distinct adversarial-reasoning intros: a Service's section spells its surface - its edged DataItems and Systems; a System's section outlines the System distinctly - its kind, exposure, and props - even for Both faults. Your phase discipline runs identically for both sections.
 
 ## Emit the structured output per phase
 

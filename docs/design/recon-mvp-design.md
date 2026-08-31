@@ -368,7 +368,7 @@ Volumes: `neo4j-data`, `pg-data`, `seclists`, `resolvers`, `work` (per-session w
 - `pgvector/pgvector:pg16`; `CREATE EXTENSION IF NOT EXISTS vector;`
 - App schema: `projects`, `settings` (**holds `recon.auth_context`**), `recon_runs`, `recon_jobs` (registry: `id, run_id, phase, job, status, started_at, finished_at, stats, error`). LangGraph checkpoint tables via `AsyncPostgresSaver.setup()`.
 - Doc store: `doc_chunks(id, doc_ref, source_type, anchor, chunk_text, embedding vector(D), created_at)` + HNSW index; immutable.
-- Embeddings: provider-pluggable; `EMBED_MODEL` + `EMBED_DIM=D` match the column/index.
+- Embeddings: the LightRAG runtime embeds at insert time (`EMBEDDING_MODEL` / `EMBEDDING_DIM`, `.env`); the `doc_chunks` pgvector path is dormant (schema present, no writer).
 
 ### 11.6 Configuration / env matrix
 
@@ -381,7 +381,7 @@ Volumes: `neo4j-data`, `pg-data`, `seclists`, `resolvers`, `work` (per-session w
 | `LLM_MODEL_TRIAGER` / `_CONFIGURATOR` | agent | per-role model ids |
 | `EXEC_TIMEOUT_S` / `OUTPUT_BYTE_CAP` | agent/kali | execution + context bounds |
 | `LANGGRAPH_STRICT_MSGPACK=true` | agent | safe checkpoint deserialization |
-| `EMBED_MODEL` / `EMBED_DIM` | agent | doc embedding + index dimension |
+| `EMBEDDING_BINDING` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | lightrag | runtime embedding at insert time |
 | `PROJECT_ID` | agent | single-project tenancy (`admin:admin`) |
 
 *Note — authN cookies are **not** env vars: they are per-project runtime settings written via `PUT /projects/{id}/settings` and stored in Postgres, loaded into `ReconState.settings` at run start.*

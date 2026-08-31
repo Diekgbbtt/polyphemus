@@ -39,8 +39,7 @@ docs/.DS_Store
 
 # Agent-harness working state, not source. `.claude/worktrees/` holds live git
 # worktrees (never nest those in a commit); the lock is per-machine runtime.
-.claude/worktrees/
-.claude/scheduled_tasks.lock
+.claude/*
 .agents/*
 .control-plane/*
 

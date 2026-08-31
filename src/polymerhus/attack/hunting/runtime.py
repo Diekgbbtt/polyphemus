@@ -390,13 +390,20 @@ def _resolve_gate(control, gate_seam) -> object:
 
 def _default_hunter_builder(*, run_id, project_id, hunt_store, hunter_store, **kw):
     """The production hunt-session builder seam (T4): the #164 W5 harness
-    (`build_actor_hunting_agent`'s dispatch) with the real memory store, no
-    KB tool (the config-gated `query_lightrag` tool binds inside), and the
-    fail-open exec seam. Returns `(dispatch_fn, registry)`; the caller reaps
-    the registry at the session's end."""
+    (`build_actor_hunting_agent`'s dispatch) with the real memory store, the
+    project's live read-only graph view, the real Kali-container exec seam
+    (the pod's `default_exec_fn`, reused verbatim), and the config-gated
+    `query_lightrag` KB tool (binds inside when `HUNTING_LIGHTRAG_TOOL` is
+    on). Returns `(dispatch_fn, registry)`; the caller reaps the registry at
+    the session's end."""
+    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
+    from polymerhus.attack.hunting.pod.tools import default_exec_fn
+
     return build_production_hunting_agent(
         store=hunt_store, run_id=run_id, project_id=project_id,
         memory_store=hunter_store,
+        graph_view_fn=ReadOnlyGraphView(project_id).read,
+        exec_fn=default_exec_fn,
     )
 
 
@@ -682,7 +689,8 @@ async def start_hunting(
 def build_production_hunting_agent(*, store, run_id, project_id="",
                                    target_url=None, graph_view_fn=None,
                                    memory_store=None, checkpointer=None,
-                                   model_factory=None, observe: bool = True):
+                                   model_factory=None, observe: bool = True,
+                                   exec_fn=None):
     """The production default hunting-agent dispatch seam (as of #164 W5): the
     turn-by-turn ReAct harness wired to the real `query_lightrag` KB tool (the
     lightrag branch's single KB tool, config-gated by `HUNTING_LIGHTRAG_TOOL`),
@@ -699,7 +707,7 @@ def build_production_hunting_agent(*, store, run_id, project_id="",
         memory_store=memory_store,
         graph_view_fn=graph_view_fn,
         kb_fn=None,  # the KB seam: the harness binds the config-gated query_lightrag tool
-        exec_fn=None,  # None -> the harness's default fail-open exec seam (the Kali container is a sibling workstream)
+        exec_fn=exec_fn,  # None -> the harness's default fail-open exec seam (the Kali container is a sibling workstream)
         checkpointer=checkpointer,
         model_factory=model_factory,
         observe=observe,
