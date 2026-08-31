@@ -182,7 +182,7 @@ The memory-read/write surface is **two store tools plus `graph_view`**; the earl
    must be explicit on the config).
 2. **`notes`** - contract: `read` / `write` cmds, same data contract as `hunts_store`; write options are `append`,
    `update`, `delete` (G3).
-3. **`graph_view`** - unchanged (read-only L0/L1 view, write-shaped calls rejected).
+3. **`graph_view`** - unchanged (read-only L0/L1 view, write-shaped calls rejected). **As of #197**: rides the ONE shared tool `graph_view_tool.py::build_graph_view_tool` with the single-source usage contract (schema, query-language primitives, read-only guard, `{"rows":[...]}` shape, worked example) - the SAME tool bound at the orchestrator, hunter, and pod runner + triager.
 
 There is no back-edge-to-recon tool (standing operator ruling 2026-08-22); the target-knowledge loop rides
 `graph_view`. There is no budget tool (below).

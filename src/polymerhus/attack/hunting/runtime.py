@@ -391,7 +391,7 @@ def _resolve_gate(control, gate_seam) -> object:
 def _default_hunter_builder(*, run_id, project_id, hunt_store, hunter_store, **kw):
     """The production hunt-session builder seam (T4): the #164 W5 harness
     (`build_actor_hunting_agent`'s dispatch) with the real memory store, no
-    KB tool (the config-gated `query_lightrag` tool binds inside), and the
+    KB tool (the always-bound `query_lightrag` tool binds inside, #197), and the
     fail-open exec seam. Returns `(dispatch_fn, registry)`; the caller reaps
     the registry at the session's end."""
     return build_production_hunting_agent(
@@ -680,12 +680,13 @@ async def start_hunting(
 
 
 def build_production_hunting_agent(*, store, run_id, project_id="",
-                                   target_url=None, graph_view_fn=None,
+                                   graph_view_fn=None,
                                    memory_store=None, checkpointer=None,
                                    model_factory=None, observe: bool = True):
     """The production default hunting-agent dispatch seam (as of #164 W5): the
     turn-by-turn ReAct harness wired to the real `query_lightrag` KB tool (the
-    lightrag branch's single KB tool, config-gated by `HUNTING_LIGHTRAG_TOOL`),
+    lightrag branch's single KB tool, always-bound as of #197 - the
+    `HUNTING_LIGHTRAG_TOOL` gate is REMOVED),
     the real Kali-container exec seam, and the per-project hunter memory store.
     Construction performs no I/O (everything heavy resolves on first use).
 

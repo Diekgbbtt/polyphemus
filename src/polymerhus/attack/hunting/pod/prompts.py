@@ -27,8 +27,9 @@ triager primitives from `critical-thinking-logical-reasoning` (evaluation) and
 from __future__ import annotations
 
 # The placeholder name the prompts bind to; the real NL retrieval tool is the
-# lightrag branch's `query_lightrag` (config-gated by HUNTING_LIGHTRAG_TOOL;
-# the former symptom-technique typed seam is retired).
+# lightrag branch's `query_lightrag` (always-bound as of #197 - the
+# HUNTING_LIGHTRAG_TOOL gate is REMOVED; the former symptom-technique typed
+# seam is retired).
 KB_TOOL = "query_lightrag"
 
 

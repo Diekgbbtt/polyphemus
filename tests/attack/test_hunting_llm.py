@@ -119,13 +119,13 @@ def test_author_fn_invokes_hunter_and_parses_json(monkeypatch):
     def fake_invoke_role(role, messages, *, schema=None, **kw):
         seen["role"] = role
         seen["schema"] = schema
-        return '{"target_identity": "u1", "rationale": "r"}'
+        return '{"target_identity": {"url": "http://u1/", "unit_id": "u1"}, "rationale": "r"}'
 
     monkeypatch.setattr("polymerhus.app.llm.roles.invoke_role", fake_invoke_role)
     spec = HL.build_author_fn()("compose the D4 spec ...")
     assert seen["role"] == "hunting_hunter"
     assert seen["schema"] is None            # free-text, not a pydantic schema
-    assert spec == {"target_identity": "u1", "rationale": "r"}
+    assert spec == {"target_identity": {"url": "http://u1/", "unit_id": "u1"}, "rationale": "r"}
 
 
 def test_author_fn_parses_fenced_json_block(monkeypatch):
@@ -288,10 +288,10 @@ def test_parse_json_object_extracts_fenced_block_after_prose():
     reply = (
         "The LightRAG retrieval returned a fallback, so I ground the spec in "
         "the rationale.\n\n"
-        '```json\n{"target_identity": {"unit": "a"}, "rationale": "spec"}\n```\n'
+        '```json\n{"target_identity": {"url": "http://a/", "unit_id": "Service:slug:a"}, "rationale": "spec"}\n```\n'
     )
     assert HL._parse_json_object(reply) == {
-        "target_identity": {"unit": "a"},
+        "target_identity": {"url": "http://a/", "unit_id": "Service:slug:a"},
         "rationale": "spec",
     }
 

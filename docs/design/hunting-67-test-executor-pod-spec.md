@@ -29,7 +29,7 @@ Execute the `TestImplementationSpec` against the live target, drive the feedback
 INIT -> (validate spec + environment contract; an invalid spec is rejected here, landing `unsuccessful` with the validation evidence in the trail - the pod never silently executes a malformed spec)
      -> RUNNER STRETCH (ONE `stateful_turn`: a `create_agent` ReAct loop over the probe phase)
           * plan: the kill-chain's probe phase - feasibility validation (P0), concretization (P1), execute (P2), confirm exhaustion (P3)
-          * tools bound: `exec`, `note`, plus the config-gated `query_lightrag` KB tool (when `HUNTING_LIGHTRAG_TOOL` is on)
+          * tools bound: `exec`, `note`, the always-bound `query_lightrag` KB tool, and the shared `graph_view` L0/L1 tool (#197)
           * bounded by `HUNT_POD_MAX_TOOL_CALLS` (default 200, inner cap) and the compaction barrier
           * on P3 exhaustion, uses the `note` tool (writes ONE consolidated experiment-summary NOTE to the pod experiment-memory store) as its FINAL tool call
      -> TRIAGER (reads the note + `triager_context`; classify + terminate or mine a variant)
@@ -43,7 +43,8 @@ The plan itself lives in the Runner's ReAct session thread, preserved across lap
 ### 1.4 Tools
 
 - **`exec`** - the general-purpose terminal (curl, package managers, any tool the pod lacks), bounded by `EXEC_TIMEOUT_S`, non-zero exit retried up to `MAX_POD_ITERS = 3` (O2/C7).
-- **`query_lightrag` (`KbQueryTool`)** - the single knowledge-base tool from the `lightrag` branch, config-gated by `HUNTING_LIGHTRAG_TOOL` (D84-26, resolved when the `lightrag` merge landed). Bound as a LangChain `BaseTool` into the Runner's `create_agent` `tools=[...]` - the SAME pattern the hunting agent's author lane uses. The former `kb_retrieve` symptom-technique typed seam (surface B) is **retired**; the pod binds `KbQueryTool`, which wraps the real `query_lightrag` and - T3/#179 - records every KB response as a first-class `KbObservation` into the variant's experiment-log file (distinct from the exec `RawObservation`). Fail-open (empty/raising -> a denoted degraded bundle, O13).
+- **`query_lightrag` (`KbQueryTool`)** - the single knowledge-base tool from the `lightrag` branch, **always-bound as of #197** (the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED; D84-26, resolved when the `lightrag` merge landed). Bound as a LangChain `BaseTool` into the Runner's `create_agent` `tools=[...]` - the SAME pattern the hunting agent's author lane uses. The former `kb_retrieve` symptom-technique typed seam (surface B) is **retired**; the pod binds `KbQueryTool`, which wraps the real `query_lightrag` and - T3/#179 - records every KB response as a first-class `KbObservation` into the variant's experiment-log file (distinct from the exec `RawObservation`). Fail-open (empty/raising -> a denoted degraded bundle, O13).
+- **`graph_view` (#197)** - the shared read-only L0/L1 tool (`graph_view_tool.py::build_graph_view_tool`, the SAME single-source contract the orchestrator and hunter bind), riding `ReadOnlyGraphView(project_id).read` and bound into the Runner's AND the Triager's `tools=[...]` - always-on, never gated.
 - **`note_tool`** - the note write/read tool (D84-17/20/27): the Runner writes ONE consolidated experiment-summary note at P3 exhaustion (prompt-verbatim); the Triager reads it per lap as its primary reasoning artifact. Bound into the respective agents' `tools=[...]` (Runner: write; Triager: read).
 - **Tool-call validation is the tool's own contract** (D84-22): a wrong parameter fails as a tool-call request REJECTED with an error message + code describing the semantic explicitly - the harness does not re-validate arguments, it only enforces the cap, raw recording (G4), and dedup (O7).
 
@@ -106,7 +107,7 @@ Langfuse is fail-open and never a gate (C12).
 Builds:
 
 - The minimal LangGraph scaffold: the HIGH-LEVEL workflow map (`INIT -> RUNNER STRETCH -> TRIAGER -> decide -> TERMINAL`), general tool-calling (`create_agent` ReAct), the pod experiment-memory store + note tool, Langfuse observability with the full tool-call/reason graph, the communication interface with the parent HuntingAgent, the `build_harness_middleware` (cap G1, raw recording G4, dedup O7) and the compaction middleware on the agent.
-- The tools (`exec`, `note`, plus the config-gated `query_lightrag` KB tool) with retry and timeout enforcement and the tool-contract validation semantics (D84-22).
+- The tools (`exec`, `note`, the always-bound `query_lightrag` KB tool, and the shared `graph_view` tool) with retry and timeout enforcement and the tool-contract validation semantics (D84-22).
 - INIT validation against the D4 typed base schema.
 - Variant derivation with provenance and the experiment log (D6).
 - The six-way termination with the `terminal_reason` vocabulary (D5) + `clean` + `init_validation`.
@@ -185,7 +186,7 @@ C9 - Variant provenance: given a declined attribute, exercising success, the exp
 C10 - Duplicate probe: given the same variant + payload re-decided, exercising duplicate-idempotent, exactly one execution is recorded in the log.
 C11 - Empty payload vector: given a spec with an empty payload vector space, exercising empty-valid, the Runner still probes once (or the run lands `space-exhausted` when no probe is derivable).
 C12 - Langfuse stub failure: given the observability stub raising, exercising degradation, the run completes unaffected.
-C13 - KB tool bound: given a spec whose concretization needs a KB query, exercising tool-surface, the Runner's `create_agent` is bound with `exec` + `note` (+ the config-gated `query_lightrag` tool when `HUNTING_LIGHTRAG_TOOL` is on), and a query returns through the seam fail-open. The KB tool's fail-open + `KbObservation` recording (T3/#179) is asserted at the unit tier (`tests/attack/pod/test_tools.py`).
+C13 - KB tool bound: given a spec whose concretization needs a KB query, exercising tool-surface, the Runner's `create_agent` is bound with `exec` + `note` (+ the always-bound `query_lightrag` tool and the shared `graph_view` tool as of #197), and a query returns through the seam fail-open. The KB tool's fail-open + `KbObservation` recording (T3/#179) is asserted at the unit tier (`tests/attack/pod/test_tools.py`).
 C14 - Note written on P3: given a space-exhausted run, exercising success, the pod experiment-memory store holds ONE consolidated experiment-summary note keyed by the spec id + variant, and the Triager reads it.
 C15 - Tool-contract validation: given a tool call with a wrong parameter, exercising degradation, the call is REJECTED with an error message + code (never executed, never harness-revalidated).
 

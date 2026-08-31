@@ -39,6 +39,18 @@ NOISE_CLASS = "noise"
 INFEASIBILITY_SIGNAL_CLASS = "infeasibility-signal"
 
 
+class TargetIdentity(BaseModel):
+    """The D4 target identity (#197): the probe base `url` plus the L1
+    service/system `unit_id`. `url` is the base URL the pod probes (authored by
+    the hunter from the projected L0 surface); `unit_id` is the kind-qualified
+    L1 identity (e.g. `service:web:soupmarket`) that surfaces alongside the url
+    for provenance - carried, never INIT-gated. Fields default lenient so an
+    INIT rejection collects violations gracefully rather than raising."""
+
+    url: str = ""
+    unit_id: str = ""
+
+
 class TestImplementationSpec(BaseModel):
     """The D4 handoff (spec section 7): a core NL body over a fundamental typed
     base. The typed base (mandatory) is everything except the two NL fields
@@ -47,7 +59,7 @@ class TestImplementationSpec(BaseModel):
     harness verification component (`verification.validate_spec`) is the gate."""
 
     # Typed base (D67-10) - the INIT schema gate ranges over these.
-    target_identity: str = ""
+    target_identity: TargetIdentity = Field(default_factory=TargetIdentity)
     verification_symptoms: list[str] = Field(default_factory=list)
     testing_pattern: str = ""
     assumptions: list[str] = Field(default_factory=list)

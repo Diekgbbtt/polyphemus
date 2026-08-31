@@ -8,7 +8,8 @@ from polymerhus.attack.hunting.pod.verification import (
 )
 
 VALID_SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/",
+                        "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
@@ -28,9 +29,31 @@ def test_missing_verification_symptoms_is_a_violation():
     assert any("verification_symptoms" in v for v in violations)
 
 
-def test_empty_target_identity_is_a_violation():
-    spec = {**VALID_SPEC, "target_identity": "  "}
+def test_empty_target_identity_url_is_a_violation():
+    spec = {**VALID_SPEC, "target_identity": {"url": "  ", "unit_id": "svc"}}
     assert any("target_identity" in v for v in validate_spec(spec))
+
+
+def test_target_identity_without_url_key_is_a_violation():
+    spec = {**VALID_SPEC, "target_identity": {"unit_id": "service:web:soupmarket"}}
+    assert any("target_identity" in v for v in validate_spec(spec))
+
+
+def test_target_identity_non_dict_is_a_violation():
+    spec = {**VALID_SPEC, "target_identity": "service:web:soupmarket"}
+    assert any("target_identity" in v for v in validate_spec(spec))
+
+
+def test_target_identity_carries_the_l1_unit_id():
+    # The L1 service/system identifier must surface alongside the url (#197).
+    spec = {**VALID_SPEC,
+            "target_identity": {"url": "http://soupmarket.shop/",
+                                "unit_id": "service:web:soupmarket"}}
+    assert validate_spec(spec) == []
+    # unit_id is carried but NOT init-gated: absence degrades, never rejects.
+    spec_no_unit = {**VALID_SPEC,
+                    "target_identity": {"url": "http://soupmarket.shop/"}}
+    assert validate_spec(spec_no_unit) == []
 
 
 def test_empty_payload_vector_space_is_valid_o12():

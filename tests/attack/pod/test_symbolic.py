@@ -13,7 +13,7 @@ from polymerhus.attack.hunting.pod.types import (
 )
 
 SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "payload_vector_space": {"method": "GET", "path": "/"},
 }
@@ -28,8 +28,18 @@ def test_default_probe_built_from_vector_space():
 
 def test_empty_payload_vector_still_yields_a_default_probe_o12():
     # O12: an empty payload vector must not zero the loop - a default probe of
-    # the target root is still derived.
+    # the target's base url (from target_identity.url, #197) is still derived.
     chain = default_probe_from_spec({**SPEC, "payload_vector_space": {}}, "v0")
+    assert chain is not None
+    assert chain.steps[0].url == "http://soupmarket.shop/"
+
+
+def test_empty_payload_vector_without_url_identity_probes_root():
+    # A target_identity without a url (unit-id only) falls back to "/" so a bare
+    # service identity still probes root (fail-open).
+    spec = {**SPEC, "target_identity": {"unit_id": "service:web:soupmarket"},
+            "payload_vector_space": {}}
+    chain = default_probe_from_spec(spec, "v0")
     assert chain is not None
     assert chain.steps[0].url == "/"
 

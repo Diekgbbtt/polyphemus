@@ -143,7 +143,9 @@ Contract: `read` / `write` cmds over `memory.yaml`, **same data contract as `hun
 ### 6.3 `graph_view`
 
 As-is (read-only L0/L1 view; write-shaped cypher rejected; read failure degrades to a denoted error, O5). The
-service-key read of `hunts_store` defers surface inspection to `graph_view` (G3).
+service-key read of `hunts_store` defers surface inspection to `graph_view` (G3). **As of #197**: rides the ONE shared tool
+`graph_view_tool.py::build_graph_view_tool` with the single-source usage contract (schema, query-language primitives,
+read-only guard, `{"rows":[...]}` shape, worked example) - the same tool the orchestrator, hunter, and pod bind.
 
 ## 7. The phase-transition constants (G1/G8/G9)
 

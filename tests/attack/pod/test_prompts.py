@@ -60,7 +60,7 @@ def test_runner_prompt_instructs_the_note_final_step():
 
 
 def test_runner_prompt_names_the_full_three_tool_surface():
-    # D84-16/27: exec + kb_retrieve + note all bound and all described.
+    # D84-16/27: exec + query_lightrag + note all bound and all described.
     assert "exec" in POD_RUNNER_SYSTEM
     assert KB_TOOL in POD_RUNNER_SYSTEM and "note" in POD_RUNNER_SYSTEM
     assert "exhausted" in POD_RUNNER_SYSTEM.lower()

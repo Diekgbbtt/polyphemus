@@ -24,7 +24,7 @@ from polymerhus.attack.hunting.pod.pod_memory import (
 from polymerhus.attack.hunting.pod.types import RawObservation, VariantSpec
 
 SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],

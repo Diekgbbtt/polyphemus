@@ -43,8 +43,11 @@ def validate_spec(spec: dict | TestImplementationSpec) -> list[str]:
             return [f"spec is not a valid TestImplementationSpec: {exc}"]
 
     violations: list[str] = []
-    if not model.target_identity.strip():
-        violations.append("target_identity is empty")
+    if not model.target_identity.url.strip():
+        violations.append(
+            "target_identity.url is empty (the base URL the pod probes; "
+            "author it as {'url': <base url>, 'unit_id': <L1 identity>})"
+        )
     if not [s for s in model.verification_symptoms if str(s).strip()]:
         violations.append(
             "verification_symptoms is empty (the load-bearing predicate the "

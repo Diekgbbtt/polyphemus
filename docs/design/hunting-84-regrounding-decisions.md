@@ -5,9 +5,10 @@ Companion to `docs/design/hunting-67-test-executor-pod-spec.md` and `docs/design
 Records are operator-authoritative where marked VERDICTED; pushed-back items are deferred to distinct passes.
 
 **Merged-state note (lightrag merge, 2026-08-24):** the `kb_retrieve` symptom-technique typed seam referenced
-throughout these decisions is RETIRED. The pod's KB tool is the single config-gated
-`query_lightrag`/`KbQueryTool` from the `lightrag` branch (`HUNTING_LIGHTRAG_TOOL`), bound on the Runner's
-`create_agent` `tools=[exec, note, (query_lightrag)]` with the T3/#179 `KbObservation` recording. The decision
+throughout these decisions is RETIRED. The pod's KB tool is the single always-bound
+`query_lightrag`/`KbQueryTool` from the `lightrag` branch (the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED as of
+#197), bound on the Runner's `create_agent` `tools=[exec, note, query_lightrag, graph_view]` with the T3/#179
+`KbObservation` recording. The decision
 records below stand for what was decided; the tool name and the "simultaneous workstream" framing reflect the
 pre-merge state.
 
@@ -202,7 +203,7 @@ The pod binding reads the parent's `hunt_session` ContextVar to derive `run_id` 
 
 **Decision:** The runner is NOT a static decision-tree machine. It is a pure plan designer running as a `create_agent` ReAct loop: perceive a tool result, interpret, reason on the next step, repeat. The workflow graph outlines only a HIGH-LEVEL map; the plan is the kill-chain's probe phase (a procedure local to the vuln-testing domain, validating whether the hypothesised vulnerability is present), NOT a probe list.
 
-**KB wiring hole (defect found in grilling):** `kb_retrieve` exists in `pod/tools.py` and in the prompt text, but the regrounding to `stateful_turn`/`create_agent` binds no tools (`tools=()` default). The runner must bind the KB tool on its agent - otherwise the adversarial-knowledge concretization step is impossible. Must-fix. **RESOLVED in the merged tree**: the pod binds `tools=[exec, note]` plus the config-gated `query_lightrag`/`KbQueryTool` (the single KB tool from the `lightrag` branch; the former `kb_retrieve` symptom-technique seam is retired) on the Runner's `create_agent`.
+**KB wiring hole (defect found in grilling):** `kb_retrieve` exists in `pod/tools.py` and in the prompt text, but the regrounding to `stateful_turn`/`create_agent` binds no tools (`tools=()` default). The runner must bind the KB tool on its agent - otherwise the adversarial-knowledge concretization step is impossible. Must-fix. **RESOLVED in the merged tree**: the pod binds `tools=[exec, note]` plus the always-bound `query_lightrag`/`KbQueryTool` (the single KB tool from the `lightrag` branch; the former `kb_retrieve` symptom-technique seam is retired) on the Runner's `create_agent`.
 
 **Plan (vuln-testing probe phase), fixed sub-problem decomposition** (in the hunt-orchestrator a->b->c->d style):
 - P0 Feasibility validation: falsify the load-bearing assumptions (contradicted -> infeasible; unconfirmed-but-uncontradicted holds, default-open); target reachable; capability/instrument obtainable (install if needed); authorization level + request context from the spec.
@@ -347,10 +348,10 @@ X1-X6 all verdicted. Remaining: (a) the spec re-write itself (from `hunting-67-t
 3. D84-22 contract compliance: `args_schema` (pydantic) rejects a wrong parameter with a parse error before `_run` - the tool's OWN contract is the validator, matching "tool-call request rejected with explicit error" (needs prototype confirmation of the error shape).
 
 **Boundary:** the lightrag BRANCH's tool module is now MERGED: the pod consumes the seam directly as
-`query_lightrag`/`KbQueryTool` (config-gated by `HUNTING_LIGHTRAG_TOOL`). The `kb_retrieve` symptom-technique
+`query_lightrag`/`KbQueryTool` (always-bound as of #197, no `HUNTING_LIGHTRAG_TOOL` gate). The `kb_retrieve` symptom-technique
 seam is retired.
 
-**Files:** pod `agents.py` / `tools.py` (bind `exec` + `note` + the config-gated `query_lightrag`/`KbQueryTool`).
+**Files:** pod `agents.py` / `tools.py` (bind `exec` + `note` + the always-bound `query_lightrag`/`KbQueryTool` + the shared `graph_view` tool, as of #197).
 
 ---
 

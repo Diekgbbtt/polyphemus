@@ -20,7 +20,7 @@ from polymerhus.attack.hunting.pod.types import PodState, RawObservation
 from polymerhus.recon.domain.types import ExecResult
 
 VALID_SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
@@ -75,9 +75,9 @@ def test_exported_raw_observations_carry_no_differential():
 
 def test_context_slices_carry_no_differential():
     log = ExperimentLog()
-    ctx = log.runner_context({"target_identity": "svc"}, feedback="vary the encoding",
+    ctx = log.runner_context({"target_identity": {"url": "http://svc/", "unit_id": "svc"}}, feedback="vary the encoding",
                              iteration=2, budget=8)
-    tctx = log.triager_context({"target_identity": "svc"},
+    tctx = log.triager_context({"target_identity": {"url": "http://svc/", "unit_id": "svc"}},
                                RawObservation(status=200, body="hi"))
     assert "differential" not in ctx.lower()
     assert "differential" not in tctx.lower()

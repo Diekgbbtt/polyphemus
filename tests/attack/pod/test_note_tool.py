@@ -32,7 +32,7 @@ from polymerhus.attack.hunting.pod.note_tool import (
 from polymerhus.attack.hunting.pod.pod_memory import PodMemoryStore, note_key
 
 SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "payload_vector_space": {"method": "GET", "path": "/"},
 }

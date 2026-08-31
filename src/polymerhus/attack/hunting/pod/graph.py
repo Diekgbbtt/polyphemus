@@ -26,7 +26,7 @@ The FSM (production):
 
   INIT-schema (deterministic gate; C1: reject with no tool call)
     -> runner_agent     (ONE `arun_session_turn` per stretch: the ReAct loop with
-                         tools=[exec, kb_retrieve, note], system_prompt = the
+                         tools=[exec, note, query_lightrag, graph_view], system_prompt = the
                          P0-P3 plan, new_messages = the consumed inbox delta;
                          the P3 note write is the runner's FINAL tool call)
     -> triager (symbolic fast-path, else the critic's note-reading stateful turn)
@@ -239,28 +239,28 @@ def _variant_order(state: PodState) -> int:
 
 
 def _harness_ctx(state: PodState, *, exec_fn, memory_store,
-                 model_factory, spec_id) -> PodHarnessContext:
+                 model_factory, spec_id, graph_view_fn=None) -> PodHarnessContext:
     """The run-scoped harness the production seams read (T7): exec/store/log/
     variant/model factory, with the memory key on the #164 spec id (D84-34) -
     resolved through `_mem_key`, the SAME value `bind_pod_session` threads as
     `HuntSession.spec` (ADR #169 Q13). The memory key is required ONLY when a
     store is bound (a real persist path) - the contract tier with no store
     never persists, so no spec_id is demanded and the note tool degrades
-    fail-open (O10). The KB query capability is the single `query_lightrag`
-    tool (lightrag branch, config-gated); the former `kb_fn` symptom-technique
-    seam (surface B) is retired."""
+    fail-open (O10). `graph_view_fn` is the read-only L0/L1 view seam (#197) the
+    shared `graph_view` tool rides (absent -> the tool's own fail-open error)."""
     mem_key = _mem_key(state, spec_id, memory_store)
     return PodHarnessContext(
         exec_fn=exec_fn, memory_store=memory_store,
         spec_id=mem_key, log=state.get("log"),
         variant_ref=state.get("current_variant_ref", "v0"),
-        model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS)
+        model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS,
+        graph_view_fn=graph_view_fn)
 
 
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                     runner_middleware=(), triager_middleware=(),
                     memory_store=None, model_factory=None,
-                    project_id=None, spec_id=None):
+                    project_id=None, spec_id=None, graph_view_fn=None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
@@ -286,6 +286,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
       crossed through the typed handoff; REQUIRED when a memory store is bound
       (no fallback - a missing spec_id is the dispatch's failure mode, never a
       hash key), optional only for a fully-injected store-less contract tier.
+    - `graph_view_fn` - the read-only L0/L1 view seam (#197); when None AND a
+      project_id is given, resolved to `ReadOnlyGraphView(project_id).read` so
+      the production pod always binds the shared `graph_view` tool.
     """
     if runner_step_fn is None:
         runner_step_fn = default_runner_step_fn
@@ -299,6 +302,12 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
         production_triager = False
     if memory_store is None and (production_runner or production_triager) and project_id:
         memory_store = PodMemoryStore(project_id=project_id)
+    if graph_view_fn is None and project_id:
+        from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
+            ReadOnlyGraphView,
+        )
+
+        graph_view_fn = ReadOnlyGraphView(project_id).read
 
     def init(state: PodState) -> dict:
         spec = dict(state["spec"])
@@ -357,7 +366,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                       state, exec_fn=exec_fn,
                                       memory_store=memory_store,
                                       model_factory=model_factory,
-                                      spec_id=spec_id)):
+                                      spec_id=spec_id,
+                                      graph_view_fn=graph_view_fn)):
                 step = await _await_seam(runner_step_fn, spec, delta,
                                          state.get("tool_calls", 0))
             if not isinstance(step, RunnerStep):
@@ -501,8 +511,9 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                   harness=_harness_ctx(
                                       state, exec_fn=exec_fn,
                                       memory_store=memory_store,
-                                       model_factory=model_factory,
-                                       spec_id=spec_id)):
+                                      model_factory=model_factory,
+                                      spec_id=spec_id,
+                                      graph_view_fn=graph_view_fn)):
                 raw = await _await_seam(triager_fn, spec, obs, seam_view, log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":
