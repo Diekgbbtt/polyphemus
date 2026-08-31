@@ -88,6 +88,18 @@ class _MemoryStore:
     def read_configs(self, project_id):
         return list(self._configs)
 
+    def read_hunter_specs(self, project_id, key):
+        self.read_attempts += 1
+        if self.fail_reads:
+            raise OSError("store read failed (fixture)")
+        return []
+
+    def read_hunter_notes(self, project_id, key):
+        self.read_attempts += 1
+        if self.fail_reads:
+            raise OSError("store read failed (fixture)")
+        return []
+
 
 def _candidate(unit_id: str = SERVICE_A, fault_class: str = FAULT_X, *,
                verdict: str = "applies", llm_witness: str | None = "witness",
