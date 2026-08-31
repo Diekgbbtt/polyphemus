@@ -187,8 +187,10 @@ def test_render_projection_renders_rich_slots_sorted():
     carries - the exploded DataItems (name/type/sensitivity), the fully-unpacked
     target System on each edge, the DataRelationship kind chains, and the D3
     cooperating-systems adjacency - IN ADDITION to the compat facets (kind,
-    spine, edges target_kind+role, data_edges counts, data_rel_kinds), sorted
-    deterministically throughout."""
+    spine, edges target_kind+role), sorted deterministically throughout. The
+    data-edge counts and the DataRelationship kinds are NOT rendered: they are
+    redundant with the exploded DataItems and the relationship chains
+    (the operator ruling 2026-08-28)."""
     from polymerhus.attack.hunting.unit_projection import (  # noqa: PLC0415
         DataItem,
         DataRelationship,
@@ -225,8 +227,10 @@ def test_render_projection_renders_rich_slots_sorted():
     # the compat facets survive unchanged
     assert "unit kind: Service" in text
     assert "spine (present keys): ['exposure']" in text
-    assert "data edges: CONSUMES=1, PRODUCES=1" in text
-    assert "data-relationship kinds: DERIVED_FROM" in text
+    # the data-edge counts / data-rel kinds are NOT rendered (4326958 ruling:
+    # redundant with the exploded data items + relationship chains)
+    assert "data edges:" not in text
+    assert "data-relationship kinds:" not in text
     # the rich slots render, each sorted
     assert "data items:" in text
     assert "- PRODUCES: name=order; type=record; sensitivity=high" in text
