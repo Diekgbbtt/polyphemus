@@ -1,13 +1,15 @@
 """Unit tier: T7 (#157) - the pod's bound-tool surface (D84-16/22/26/27).
 
-The ReAct Runner binds `tools=[exec, note]` plus - when `HUNTING_LIGHTRAG_TOOL`
-is enabled - the single `query_lightrag` KB tool (the lightrag branch's tool,
-wrapped as `KbQueryTool` with the T3/#179 `KbObservation` recording). The former
-`kb_retrieve` symptom-technique seam (surface B) is retired. Every KB response
-is recorded as a first-class `KbObservation` into the D6 log + the variant's
-experiment-log file (T3), and the `exec` tool stays the raw-recording terminal
-(G4) with retry and dedup-marking. Hermetic: fake terminal, no live KB, no
-live LLM (the `query_lightrag` tool is faked at the tool seam).
+The ReAct Runner binds `tools=[exec, note]` plus - always-bound as of #197 (the
+`HUNTING_LIGHTRAG_TOOL` gate is REMOVED) - the single `query_lightrag` KB tool
+(the lightrag branch's tool, wrapped as `KbQueryTool` with the T3/#179
+`KbObservation` recording) AND the shared read-only `graph_view` L0/L1 tool.
+The former `kb_retrieve` symptom-technique seam (surface B) is retired. Every
+KB response is recorded as a first-class `KbObservation` into the D6 log + the
+variant's experiment-log file (T3), and the `exec` tool stays the
+raw-recording terminal (G4) with retry and dedup-marking. Hermetic: fake
+terminal, no live KB, no live LLM (the `query_lightrag` tool is faked at the
+tool seam).
 """
 from __future__ import annotations
 
@@ -33,7 +35,7 @@ SPEC_ID = spec_identifier("sqli", "blind")
 
 
 SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "payload_vector_space": {"method": "GET", "path": "/"},
 }
@@ -83,36 +85,62 @@ def _fake_lightrag_tool(body: str):
     return _Fake()
 
 
-def test_runner_binds_exec_and_note_without_a_kb_tool_by_default(tmp_path):
-    """With `HUNTING_LIGHTRAG_TOOL` off (the default) the Runner's tool set
-    carries `exec` + `note` and NO KB tool (the former `kb_retrieve` seam is
-    retired)."""
+def test_runner_binds_exec_note_kb_and_graph_view(tmp_path):
+    """The Runner's tool set always carries `exec` + `note` + the always-bound
+    `query_lightrag` KB tool (as of #197 the `HUNTING_LIGHTRAG_TOOL` gate is
+    REMOVED) + the shared `graph_view` read-only L0/L1 tool. The former
+    `kb_retrieve` seam is retired."""
     tools = runner_react_tools(exec_fn=_exec(), memory_store=PodMemoryStore(tmp_path),
                                spec_id=SPEC_ID, log=ExperimentLog(),
                                variant_ref="v0")
     names = {t.name for t in tools}
-    assert {"exec", "note"} <= names
+    assert {"exec", "note", "query_lightrag", "graph_view"} <= names
     assert "kb_retrieve" not in names
-    assert "query_lightrag" not in names
 
 
-def test_runner_binds_query_lightrag_when_the_flag_is_on(tmp_path, monkeypatch):
-    """With `HUNTING_LIGHTRAG_TOOL=1` the Runner's tool set carries the single
-    `query_lightrag` tool (the lightrag branch's KB tool)."""
-    import polymerhus.app.config as config_module
-
-    monkeypatch.setattr(config_module.config, "HUNTING_LIGHTRAG_TOOL", True)
+def test_runner_graph_view_carries_the_contract_and_is_read_only(tmp_path):
+    """The runner's `graph_view` is the ONE shared tool: the full usage contract
+    in its description, `cypher` argument, and the single-sourced write-shape
+    guard (fail-open on an absent seam)."""
     tools = runner_react_tools(exec_fn=_exec(), memory_store=PodMemoryStore(tmp_path),
                                spec_id=SPEC_ID, log=ExperimentLog(),
                                variant_ref="v0")
-    names = {t.name for t in tools}
-    assert {"exec", "note", "query_lightrag"} <= names
+    gv = [t for t in tools if t.name == "graph_view"][0]
+    assert "QUERY LANGUAGE" in gv.description and "EXAMPLE" in gv.description
+    # absent seam -> the tool's own fail-open error, never a raise into the turn
+    out = gv.invoke({"cypher": "MATCH (s) RETURN s", "params": {}})
+    assert "error" in out
+    from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphViewError
+    try:
+        gv.invoke({"cypher": "MATCH (s) MERGE (x)"})
+        raise AssertionError("write-shaped cypher not rejected")
+    except ReadOnlyGraphViewError:
+        pass
 
 
-def test_triager_binds_note_and_no_exec(tmp_path):
+def test_runner_graph_view_rides_the_injected_seam(tmp_path):
+    """With a `graph_view_fn` seam injected, the runner's `graph_view` returns
+    the seam's rows (the pod reads the target surface through it, #197)."""
+    seen = {}
+
+    def fake_read(cypher, params):
+        seen["cypher"] = cypher
+        return [{"url": "http://soupmarket.shop/", "method": "GET", "path": "/"}]
+
+    tools = runner_react_tools(exec_fn=_exec(), memory_store=PodMemoryStore(tmp_path),
+                               spec_id=SPEC_ID, log=ExperimentLog(),
+                               variant_ref="v0", graph_view_fn=fake_read)
+    gv = [t for t in tools if t.name == "graph_view"][0]
+    out = gv.invoke({"cypher": "MATCH (s)-[:AGGREGATES]->(e) RETURN e LIMIT 5"})
+    assert out == {"rows": [{"url": "http://soupmarket.shop/", "method": "GET",
+                             "path": "/"}]}
+    assert "AGGREGATES" in seen["cypher"]
+
+
+def test_triager_binds_note_kb_and_graph_view_no_exec(tmp_path):
     tools = triager_react_tools(PodMemoryStore(tmp_path), SPEC_ID)
     names = {t.name for t in tools}
-    assert {"note"} <= names
+    assert {"note", "query_lightrag", "graph_view"} <= names
     assert "exec" not in names
     assert "kb_retrieve" not in names
 

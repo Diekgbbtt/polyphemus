@@ -21,16 +21,18 @@ Contract + degradation (spec 5, spec 9):
   the hunt's own config) + optional filters/projection,
   never the whole surface. Reads degrade to an empty set on failure (O4); genuine
   write failures raise to the harness, which warns and keeps serving (O3).
-- `graph_view` - the read-only L0/L1 view tool: a TYPED SEAM (the injected
-  `graph_view` callable; the live L0/L1 wiring is a separate workstream). Absent
-  or raising -> a denoted fail-open error, never a raise into the turn; write-shaped
-  calls are rejected (the orchestrator's `_WRITE_SHAPED` guard).
+- `graph_view` - the read-only L0/L1 view tool: the ONE shared tool
+  (`graph_view_tool.py`), bound via `build_graph_view_tool(graph_view_fn)`
+  with the full usage contract in its description. Absent or raising -> a
+  denoted fail-open error, never a raise into the turn; write-shaped calls are
+  rejected (the single-sourced `_WRITE_SHAPED` guard).
 - `kb_query` - the LightRAG tool (R1): the args schema is a LOCAL minimal mirror
   of `QuerySpecV1` and the response a dict shaped like `AnswerBundleV1` (copied
   from the `lightrag-probe` worktree's `query_spec.py` / `generation.py`),
   WIRED from scratch onto the real `query_lightrag` tool (the lightrag branch's
-  single KB tool, config-gated by `HUNTING_LIGHTRAG_TOOL`). When the opt-in flag
-  is off, an injected `kb_query` seam (the contract tier) is used; empty/raising
+  single KB tool, always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in
+  flag is REMOVED). An injected `kb_query` seam (the contract tier) is used when
+  the real tool is unavailable; empty/raising
   -> a denoted degraded bundle (C2/C3). The `lightrag` import is
   lazy (no I/O at import).
 - `exec` - the Kali-container exec tool (R2): `EXEC_TIMEOUT_S` per call (the
@@ -41,15 +43,15 @@ Contract + degradation (spec 5, spec 9):
   The PARTITION GUARD (Q8): exec never produces the hypothesis verdict; the pod
   remains the only source of experimental evidence for the committed hypothesis.
 
-Exposed as the five `BaseTool` subclasses `HuntsStoreTool` / `NotesTool` /
-`GraphViewTool` / `KbQueryTool` / `ExecTool`; `build_hunter_tools(...)` returns the
+Exposed as the `BaseTool` subclasses `HuntsStoreTool` / `NotesTool` /
+`KbQueryTool` / `ExecTool` (plus the shared `graph_view` tool from
+`graph_view_tool.py`); `build_hunter_tools(...)` returns the
 bound `HUNTER_TOOLS` list for the W5 `create_agent` binding. This module imports
 no driver and performs no I/O at import (CODING_STANDARD section 6).
 """
 from __future__ import annotations
 
 import json
-import re
 from typing import Any, Callable, Literal
 
 from langchain_core.tools import BaseTool
@@ -65,10 +67,6 @@ from polymerhus.recon.domain.types import ExecResult
 # hunter never drifts from the pod's cap. The pod's caps are pod-internal
 # (D67-09); the hunter exposes an optional per-call `timeout_s` defaulting
 # here, while the HARNESS-level probe frequency stays unbounded (R2b).
-
-# The write-shaped tokens the read-only `graph_view` refuses to pass through,
-# replicated from the orchestrator's `ReadOnlyGraphView` guard (D67-04).
-_WRITE_SHAPED = re.compile(r"\b(?:MERGE|CREATE|DELETE|SET|REMOVE|FOREACH|LOAD\s+CSV)\b")
 
 
 # --- the kb_query local mirrors of the LightRAG types (R1) --------------------
@@ -169,7 +167,14 @@ class HuntsStoreArgs(BaseModel):
     (G5). `read` is by the config identifier (`fault_key` - the 3-part config
     key of the hunt's own config, e.g. the `_`-joined
     `<unit_id>_<CWE_ID>_<vulnerability_class>` file-name stem, G4/ADR Q13) +
-    optional `statuses`/`attributes`, never the whole surface (spec 5)."""
+    optional `statuses`/`attributes`, never the whole surface (spec 5).
+
+    The authored `spec` carries a `TestImplementationSpec` (the D4 handoff).
+    Its `target_identity` is the target's identity object - `{"url": <base
+    url>, "unit_id": <L1 identity>}` (#197): the `url` is the base URL the pod
+    probes (author it from the projected L0 attack surface), `unit_id` the
+    kind-qualified L1 service/system identity that surfaces alongside it.
+    A spec whose `target_identity.url` is absent is INIT-rejected by the pod."""
 
     command: Literal["read", "write"]
     # -- read path -----------------------------------------------------------
@@ -209,16 +214,6 @@ class NotesArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class GraphViewArgs(BaseModel):
-    """The `graph_view` tool's ARGS contract: a read-only L0/L1 inspection query.
-    Write-shaped calls are rejected (spec 5)."""
-
-    query: str
-    params: dict = Field(default_factory=dict)
-
-    model_config = ConfigDict(extra="forbid")
-
-
 class ExecArgs(BaseModel):
     """The `exec` tool's ARGS contract: the exact command + an optional per-call
     `timeout_s` (defaults to `EXEC_TIMEOUT_S`, R2). The harness-level probe
@@ -249,7 +244,11 @@ class HuntsStoreTool(BaseTool):
         "(the config identity: the 3-part config key "
         "<unit_id>_<CWE_ID>_<vulnerability_class> of the hunt's own config) "
         "and the fault_keyword / strategy_keyword that "
-        "name the produced spec file. mode=create FAILS with a duplicate_spec "
+        "name the produced spec file. The authored spec's target_identity is "
+        "the target identity object: {'url': <base url>, 'unit_id': <L1 "
+        "service/system identity>} - author the url from the projected L0 "
+        "attack surface (read via graph_view); the pod probes that url and "
+        "INIT-rejects a spec without it. mode=create FAILS with a duplicate_spec "
         "dedup signal when the spec file already exists (reflect on overlap and "
         "merge or refresh - do not duplicate); mode=update re-authors the "
         "existing file in place. read takes the fault_key plus optional "
@@ -403,51 +402,14 @@ class NotesTool(BaseTool):
         return json.dumps({"ok": True, "key": key})
 
 
-class GraphViewTool(BaseTool):
-    """The read-only L0/L1 view tool (G8a, spec 5): the hunter's target-knowledge
-    inspection. A TYPED SEAM - the injected `graph_view` callable; the live
-    L0/L1 wiring is a separate workstream. Absent or raising -> a denoted
-    fail-open error, never a raise into the turn; write-shaped calls rejected."""
-
-    name: str = "graph_view"
-    description: str = (
-        "The read-only L0/L1 target-knowledge view: inspect the modelled target "
-        "surface (services, systems, edges) to ground your hypotheses. Takes a "
-        "read-only Cypher query plus optional params. Write-shaped calls "
-        "(MERGE / CREATE / DELETE / SET / REMOVE / FOREACH / LOAD CSV) are "
-        "rejected - this tool can never write the graph. An unavailable or "
-        "failing view returns a denoted error; the hunt keeps serving."
-    )
-    args_schema: type[BaseModel] = GraphViewArgs
-
-    def __init__(self, *, graph_view: GraphViewFn | None = None, **kwargs):
-        super().__init__(**kwargs)
-        self._graph_view = graph_view
-
-    def _run(self, **kwargs: Any) -> str:
-        args = GraphViewArgs(**kwargs)
-        if self._graph_view is None:
-            return json.dumps({"error": "graph_view_unavailable", "degraded": True,
-                               "query": args.query[:200]})
-        if _WRITE_SHAPED.search(args.query.upper()):
-            return json.dumps({"error": "write_shaped_rejected",
-                               "detail": f"the graph view is read-only; refusing "
-                                         f"write-shaped cypher {args.query[:120]!r}"})
-        try:
-            rows = self._graph_view(args.query, args.params)
-        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
-            return json.dumps({"error": "graph_view_failed", "degraded": True,
-                               "detail": str(exc)})
-        return json.dumps({"rows": list(rows or [])})
-
-
 class KbQueryTool(BaseTool):
     """The LightRAG knowledge-base tool (R1, spec 5): a typed `QuerySpecV1`-shaped
     query -> an `AnswerBundleV1`-shaped bundle, consumed directly in the author
     lane. WIRED from scratch onto the real `query_lightrag` tool (the lightrag
-    branch's single KB tool): when `HUNTING_LIGHTRAG_TOOL` is enabled the real
-    tool is built lazily from app config and invoked (fail-open to a degraded
-    bundle); otherwise the injected `kb_fn` seam (the contract tier) is used.
+    branch's single KB tool, ALWAYS attempted as of #197 - the
+    `HUNTING_LIGHTRAG_TOOL` opt-in flag is REMOVED): the real tool is built
+    lazily and invoked (fail-open to a degraded bundle); when unavailable the
+    injected `kb_fn` seam (the contract tier) is used.
     Empty/raising -> a denoted degraded bundle (C2/C3), never a raise into the
     turn."""
 
@@ -482,12 +444,11 @@ class KbQueryTool(BaseTool):
 
     @staticmethod
     def _lightrag_tool():
-        """The real `query_lightrag` tool, built lazily when the opt-in flag is
-        on (the lightrag branch's single KB tool). Fail-open to None."""
+        """The real `query_lightrag` tool, built lazily (the lightrag branch's
+        single KB tool). ALWAYS attempted as of #197 - the `HUNTING_LIGHTRAG_TOOL`
+        opt-in gate is REMOVED. Fail-open to None (the injected `kb_fn` seam or
+        the degraded bundle then serves)."""
         try:
-            from polymerhus.app.config import config  # noqa: PLC0415
-            if not config.HUNTING_LIGHTRAG_TOOL:
-                return None
             from lightrag.tool import build_lightrag_tool  # noqa: PLC0415
             return build_lightrag_tool()
         except Exception:  # noqa: BLE001 - fail-open to the seam/degraded bundle
@@ -578,11 +539,18 @@ def build_hunter_tools(
     project (both bound here - the tool surface is per-hunt, W5); `graph_view_fn`
     / `kb_fn` / `exec_fn` are the injected seam bodies (each absent degrades
     fail-open). Returns the five tools in the spec's surface order: `hunts_store`
-    / `notes` / `graph_view` / `kb_query` / `exec`."""
+    / `notes` / `graph_view` / `kb_query` / `exec`. `graph_view` is the ONE
+    shared read-only L0/L1 tool (#197, `graph_view_tool.build_graph_view_tool`)
+    whose contract (schema + query-language primitives + guard + return shape +
+    example) rides its description - the old local `GraphViewTool` is REMOVED."""
+    from polymerhus.attack.hunting.graph_view_tool import (  # noqa: PLC0415
+        build_graph_view_tool,
+    )
+
     return [
         HuntsStoreTool(store=store, project_id=project_id),
         NotesTool(store=store, project_id=project_id),
-        GraphViewTool(graph_view=graph_view_fn),
+        build_graph_view_tool(graph_view_fn),
         KbQueryTool(kb_fn=kb_fn),
         ExecTool(exec_fn=exec_fn),
     ]
@@ -599,11 +567,9 @@ __all__ = [
     "KbAnswerBundle",
     "HuntsStoreArgs",
     "NotesArgs",
-    "GraphViewArgs",
     "ExecArgs",
     "HuntsStoreTool",
     "NotesTool",
-    "GraphViewTool",
     "KbQueryTool",
     "ExecTool",
     "build_hunter_tools",

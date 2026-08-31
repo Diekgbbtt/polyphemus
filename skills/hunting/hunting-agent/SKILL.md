@@ -274,7 +274,10 @@ H3 third.
 Sub-loop: [G] H1 testable. COMMIT: foreign-origin submission as the
 experiment. SPEC-WRITE:
 {
-  "target_identity": "Service:slug:a",
+  "target_identity": {
+    "url": "http://soupmarket.shop/",
+    "unit_id": "Service:slug:a"
+  },
   "verification_symptoms": ["state-changing request accepted from a
     foreign origin"],
   "testing_pattern": "cross-site form submission",

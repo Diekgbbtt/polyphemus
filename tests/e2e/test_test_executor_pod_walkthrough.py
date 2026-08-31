@@ -2,15 +2,17 @@
 
 E1 is a REAL pod run via `arun_pod` with the PRODUCTION lane: the compiled
 production graph (no `tool_exec` node - D84-29), the production ReAct Runner
-seam (ONE `create_agent` turn per stretch with `tools=[exec, kb_retrieve,
-note]`), the symbolic fast path, and the terminals. It exercises the ReAct
-runner, the KB tool binding (D84-16/26), and the `exec` tool against a
-HERMETIC, deterministic substrate: the live LLM is a scripted `BaseChatModel`
-fake injected through the `model_factory` seam (the established fake-model /
-ToolStrategy pattern - `tests/attack/pod/test_react_seams.py`), the terminal is
-a fake `exec_fn` returning a fixed synthetic curl trailer
-(`__POD_HTTP_STATUS__` / `__POD_HTTP_TIME__` markers), and the KB is a fail-open
-empty `kb_fn`. No live network target, no live LLM, no docker, no neo4j.
+seam (ONE `create_agent` turn per stretch with `tools=[exec, note,
+query_lightrag, graph_view]`), the symbolic fast path, and the terminals. It
+exercises the ReAct runner, the KB tool binding (D84-16/26, always-bound
+`query_lightrag` as of #197 - fail-open to a degraded bundle in this hermetic
+env, O13), and the `exec` tool against a HERMETIC, deterministic substrate: the
+live LLM is a scripted `BaseChatModel` fake injected through the `model_factory`
+seam (the established fake-model / ToolStrategy pattern -
+`tests/attack/pod/test_react_seams.py`), the terminal is a fake `exec_fn`
+returning a fixed synthetic curl trailer (`__POD_HTTP_STATUS__` /
+`__POD_HTTP_TIME__` markers). No live network target, no live LLM, no docker,
+no neo4j.
 
 The spec's E1 live edge (`soupmarket.shop` in `eval-targets.yaml`, live HTTP
 mode) is mechanised by the fixed synthetic observation: the runner still issues
@@ -20,7 +22,7 @@ symbolic symptom recogniser terminates the trivial run with no LLM (spec 2:
 "the E1 walkthrough symptom is symbolically decidable, so the trivial real run
 needs no live LLM"). The drop-to-fake-model is exactly the ticket's mandate
 (#158): "inject the production lane but with a FAKE model, a fake `exec_fn`,
-and a fake/empty `kb_fn`".
+and a fake/empty KB tool".
 
 Assertion catalogue (bounded, spec 6.2 E1 + H1/H2):
 
@@ -64,7 +66,7 @@ from polymerhus.recon.domain.types import ExecResult
 # assumptions ["network egress allowed"], payload vector space {method: GET,
 # path: "/"}.
 VALID_SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
@@ -119,11 +121,14 @@ def _factory(by_role):
 # --- the runner's ReAct scripts (one `create_agent` loop per stretch) ---------
 
 # P1 kb query (concretization, D84-16/26), P2 default probe, then conclude: the
-# KB tool binding is EXERCISED (empty result -> degrade to the spec's own
-# primitives, O13) and the symbolic recogniser reads the 200 trailer.
+# KB tool binding is EXERCISED (a degraded/empty bundle -> degrade to the spec's
+# own primitives, O13 - the always-bound `query_lightrag` tool fails open in this
+# hermetic env) and the symbolic recogniser reads the 200 trailer.
 _REACT_KB_EXEC_CONCLUDE = [
     AIMessage(content="", tool_calls=[
-        {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
+        {"name": "query_lightrag", "args": {"scenario_id": "SIM-01",
+                                            "attack_goal": "identify a bounded comparison hypothesis",
+                                            "concern": "csrf patterns on form posts"},
          "id": "c0"}]),
     AIMessage(content="", tool_calls=[
         {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
@@ -135,7 +140,9 @@ _REACT_KB_EXEC_CONCLUDE = [
 # experiment_summary note as its FINAL tool call (D84-17/19), then concludes.
 _REACT_KB_EXEC_NOTE_CONCLUDE = [
     AIMessage(content="", tool_calls=[
-        {"name": "kb_retrieve", "args": {"query": "csrf patterns on form posts"},
+        {"name": "query_lightrag", "args": {"scenario_id": "SIM-01",
+                                            "attack_goal": "identify a bounded comparison hypothesis",
+                                            "concern": "csrf patterns on form posts"},
          "id": "c0"}]),
     AIMessage(content="", tool_calls=[
         {"name": "exec", "args": {"command": "curl -k -sS https://t/"}, "id": "c1"}]),
@@ -169,14 +176,6 @@ def _exec(stdout=_OK, returncode=0, calls=None):
     return fake
 
 
-def _kb_empty(calls=None):
-    def fake(query, *, fault_id="", technological_axis=()):
-        if calls is not None:
-            calls.append(query)
-        return {"symptoms": [], "techniques": [], "source": None}
-    return fake
-
-
 def _negotiation_for_pod_triager(monkeypatch):
     """Thread the #99 negotiation seam for a hermetic pod-triager schema turn
     (#147): the no-tools `stateful_turn(schema=TriagerDecision)` resolves the
@@ -206,15 +205,15 @@ def _run(coro):
 
 def test_trivial_real_run(tmp_path):
     """The trivial real run: the production lane - fake model, fake exec (the
-    fixed 200 trailer), fail-open empty kb - lands exactly one verdict
+    fixed 200 trailer), fail-open KB (the always-bound `query_lightrag` tool
+    degrades in this hermetic env, O13) - lands exactly one verdict
     `{successful, symptom-confirmed, iterations >= 1}` with an experiment log
     holding the variant spec, the raw observation (status read back from the
-    tool-call log), and the interpretation (D6)."""
+    tool-call log), the KB observation, and the interpretation (D6)."""
     exec_calls = []
-    kb_calls = []
     store = PodMemoryStore(tmp_path)
     env = _run(arun_pod(
-        VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls), kb_fn=_kb_empty(kb_calls),
+        VALID_SPEC, exec_fn=_exec(_OK, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: _REACT_KB_EXEC_CONCLUDE})))
 
@@ -224,9 +223,12 @@ def test_trivial_real_run(tmp_path):
     assert env["evidence"]["iterations"] >= 1
     assert env["evidence"]["clean"] is True
 
-    # The KB tool binding ran end-to-end (D84-16) and the default probe was
-    # executed exactly once through the ReAct runners exec tool.
-    assert len(kb_calls) == 1
+    # The KB tool binding ran end-to-end (D84-16; a degraded bundle was
+    # recorded as a first-class KbObservation, T3/#179) and the default probe
+    # was executed exactly once through the ReAct runners exec tool.
+    slice = store.read_experiment_log(SPEC_ID, 0)
+    assert len(slice["kb_observations"]) == 1
+    assert slice["kb_observations"][0]["query"] == "csrf patterns on form posts"
     assert len(exec_calls) == 1
 
     # The experiment log (D6): the v0 variant spec, at least one raw
@@ -252,7 +254,7 @@ def test_space_exhausted_run_writes_the_p3_note(tmp_path, monkeypatch):
     exec_calls = []
     store = PodMemoryStore(tmp_path)
     env = _run(arun_pod(
-        VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls), kb_fn=_kb_empty(),
+        VALID_SPEC, exec_fn=_exec(_ABSENT, calls=exec_calls),
         trace_fn=_no_trace, memory_store=store, spec_id=SPEC_ID,
         model_factory=_factory({POD_RUNNER_ROLE: _REACT_KB_EXEC_NOTE_CONCLUDE,
                                 POD_TRIAGER_ROLE: _TRIAGER_ABSENT})))

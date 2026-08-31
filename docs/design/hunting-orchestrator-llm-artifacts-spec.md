@@ -120,13 +120,13 @@ Exactly D67-04's three tools, bound onto the orchestrator's session agent (the `
    `origin="hunting"` (IA-6). Real body; fail-open when the recon seam is absent (returns a denoted error, never
    raises into the turn).
 2. **`graph_view`** - the read-only L0/L1 view (`attack/hunting/hunt_orchestrator.py::ReadOnlyGraphView`): read
-   index cards / typed facets; write-shaped calls rejected (C5). Real body; fail-open when no graph is reachable
-   (degrades to an empty view, O5).
-3. **`store_reads`** - the store reads (#202): the hunt-config reads (prior configs by revival key, #70/#68;
-   retrieve-before-re-dispatch for the reuse gate footing) AND the **sibling hunter-memory reads** - the downstream
-   TestImplementationSpecs + the Q16 durable PodExport insights by the `::` `config_key`, shallow-projected (I3),
-   feeding the config's `prior_hunt_insights`. Real body; fail-open when no store is configured (empty insights, O4).
-   The tool's description carries this extended capability.
+    index cards / typed facets; write-shaped calls rejected (C5). Real body; fail-open when no graph is reachable
+    (degrades to an empty view, O5). **As of #197**: bound via the ONE shared tool `graph_view_tool.py::build_graph_view_tool` with the single-source usage contract (schema, query-language primitives, read-only guard, `{"rows":[...]}` shape, worked example) - the same tool the hunter and pod bind.
+ 3. **`store_reads`** - the store reads (#202): the hunt-config reads (prior configs by revival key, #70/#68;
+    retrieve-before-re-dispatch for the reuse gate footing) AND the **sibling hunter-memory reads** - the downstream
+    TestImplementationSpecs + the Q16 durable PodExport insights by the `::` `config_key`, shallow-projected (I3),
+    feeding the config's `prior_hunt_insights`. Real body; fail-open when no store is configured (empty insights, O4).
+    The tool's description carries this extended capability.
 
 Tool-availability degradation mirrors the #108 capability gate: when a seam body is unavailable, the tool is either
 not bound (the surface shrinks) or returns a fail-open stub result - it never aborts the turn.

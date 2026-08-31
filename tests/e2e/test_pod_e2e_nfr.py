@@ -58,8 +58,8 @@ def score_n1_prompt_materialization(spec: dict, trace: dict | None) -> int:
 
 def score_n2_react_trajectory(trace: dict | None,
                               evidence: dict | None) -> int:
-    """P0-P3 traversal: the trace's tool calls (kb_retrieve/exec/note) and the
-    evidence's raw observations. Hermetic floor: >= 1 observation with the
+    """P0-P3 traversal: the trace's tool calls (query_lightrag/exec/note) and
+    the evidence's raw observations. Hermetic floor: >= 1 observation with the
     tools present => 2."""
     if not evidence:
         return 0
@@ -69,10 +69,10 @@ def score_n2_react_trajectory(trace: dict | None,
     trace_steps = []
     if trace:
         trace_steps = trace.get("tool_calls") or []
-    tools = {"exec", "kb_retrieve", "note"} & (
+    tools = {"exec", "query_lightrag", "note"} & (
         set(trace_steps) if trace_steps else set())
     if trace_steps:
-        return 3 if tools == {"exec", "kb_retrieve", "note"} else (
+        return 3 if tools == {"exec", "query_lightrag", "note"} else (
             2 if tools else 1)
     return 2 if len(raw) >= 1 else 1
 
@@ -193,7 +193,7 @@ def score_run(artifacts: dict) -> dict:
 # --- unit-proofs: the rubric on the HERMETIC E1 artifacts ----------------------
 
 def _hermetic_e1_spec():
-    return {"target_identity": "service:web:soupmarket",
+    return {"target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
             "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
             "testing_pattern": "blind-boolean",
             "assumptions": ["network egress allowed"],

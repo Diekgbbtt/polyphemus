@@ -113,7 +113,7 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
         raise RuntimeError("the production runner harness needs the D6 log")
     before_obs = len(hc.log.raw_observations)
     tools = runner_react_tools(hc.exec_fn, hc.memory_store, hc.spec_id, hc.log,
-                               hc.variant_ref or "")
+                               hc.variant_ref or "", graph_view_fn=hc.graph_view_fn)
     harness_mw = build_harness_middleware(log=hc.log,
                                           variant_ref=hc.variant_ref or "",
                                           cap=hc.cap)
@@ -152,7 +152,8 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
             raise RuntimeError(
                 "no bound pod session/harness for the stateful triager turn (D84-14)")
         tools = triager_react_tools(hc.memory_store, hc.spec_id,
-                                    log=hc.log, variant_ref=hc.variant_ref or "")
+                                    log=hc.log, variant_ref=hc.variant_ref or "",
+                                    graph_view_fn=hc.graph_view_fn)
         delta = _dicts_to_lc(list(messages))
         result = stateful_turn(
             ctx.address.role_id, ctx.address, delta,
@@ -200,51 +201,51 @@ TRIAGER_SYSTEM = POD_TRIAGER_SYSTEM
 
 
 def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
-                       kb_fn=None, kb_lookup=None):
+                       kb_fn=None, kb_lookup=None, graph_view_fn=None):
     """The Runner's bound-tool set (D84-16/27): `exec` (raw-recording terminal),
-    `note` (pod memory write/read), and - when `HUNTING_LIGHTRAG_TOOL` is
-    enabled - the single `query_lightrag` KB tool from the lightrag branch (the
-    pod runner can be configured with it, exactly like the hunting agent's
-    author lane), with the T3 (#179) `KbObservation` recording bound to the SAME
-    log + variant the exec tool records into. The former `kb_retrieve`
-    symptom-technique typed seam (surface B) is retired. Constructed PER
-    STRETCH because `exec` carries the current variant's dedup scope."""
+    `note` (pod memory write/read), the single `query_lightrag` KB tool from the
+    lightrag branch (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` gate
+    is REMOVED, fail-open to a degraded bundle), and the ONE shared `graph_view`
+    read-only L0/L1 tool (#197) the runner uses to locate the target's surface.
+    The T3 (#179) `KbObservation` recording is bound to the SAME log + variant
+    the exec tool records into. The former `kb_retrieve` symptom-technique typed
+    seam (surface B) is retired. Constructed PER STRETCH because `exec` carries
+    the current variant's dedup scope."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
-    from polymerhus.attack.hunting.pod.tools import ExecTool  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.tools import ExecTool, KbQueryTool  # noqa: PLC0415
 
     tools = [
         ExecTool(exec_fn=exec_fn, log=log, variant_ref=variant_ref),
         PodNoteTool(store=memory_store, spec_id=spec_id),
     ]
-    tools += _lightrag_query_tools(log=log, variant_ref=variant_ref)
+    tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
+    tools += _graph_view_tools(graph_view_fn)
     return tools
 
 
 def triager_react_tools(memory_store, spec_id, *, kb_fn=None, kb_lookup=None,
-                        log=None, variant_ref=""):
-    """The Triager's bound-tool set (D84-27): note read + (when enabled) the
-    `query_lightrag` KB tool - NEVER exec (the critic never touches the target).
-    The triager's KB reads are CONTEXT reads (D84-27), so `log`/`variant_ref`
-    may be unbound - a logless KB tool records nothing (fail-open); when the
-    harness provides them, the reads are recorded against the current variant
-    (T3/#179)."""
+                        log=None, variant_ref="", graph_view_fn=None):
+    """The Triager's bound-tool set (D84-27): note read + the always-bound
+    `query_lightrag` KB tool + the shared `graph_view` L0/L1 tool (#197) - NEVER
+    exec (the critic never touches the target). The triager's KB reads are
+    CONTEXT reads (D84-27), so `log`/`variant_ref` may be unbound - a logless KB
+    tool records nothing (fail-open); when the harness provides them, the reads
+    are recorded against the current variant (T3/#179)."""
     from polymerhus.attack.hunting.pod.note_tool import PodNoteTool  # noqa: PLC0415
+    from polymerhus.attack.hunting.pod.tools import KbQueryTool  # noqa: PLC0415
 
     tools = [PodNoteTool(store=memory_store, spec_id=spec_id)]
-    tools += _lightrag_query_tools(log=log, variant_ref=variant_ref)
+    tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
+    tools += _graph_view_tools(graph_view_fn)
     return tools
 
 
-def _lightrag_query_tools(*, log=None, variant_ref="") -> list:
-    """The optional `query_lightrag` tool for the pod's ReAct turns, gated by
-    `HUNTING_LIGHTRAG_TOOL` (the lightrag branch's single KB tool; fail-open to
-    an empty list when disabled or the config is unavailable). Bound with the
-    T3 (#179) `KbObservation` recording seam when a D6 log is present."""
-    try:
-        from polymerhus.app.config import config  # noqa: PLC0415
-        if not config.HUNTING_LIGHTRAG_TOOL:
-            return []
-        from polymerhus.attack.hunting.pod.tools import KbQueryTool  # noqa: PLC0415
-        return [KbQueryTool(log=log, variant_ref=variant_ref)]
-    except Exception:  # noqa: BLE001 - fail-open to no KB tool
-        return []
+def _graph_view_tools(graph_view_fn=None) -> list:
+    """The shared read-only L0/L1 `graph_view` tool (#197), always bound for the
+    pod roles (runner + triager) over the injected `ReadOnlyGraphView(project_id)
+    .read` seam. Absent/raising -> the tool's own fail-open `{"error": ...}`."""
+    from polymerhus.attack.hunting.graph_view_tool import (  # noqa: PLC0415
+        build_graph_view_tool,
+    )
+
+    return [build_graph_view_tool(graph_view_fn)]

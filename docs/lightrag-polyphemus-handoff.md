@@ -5,6 +5,12 @@
 **Audience:** a Polyphemus maintainer who has run real end-to-end tests and
 wants to exercise the LightRAG methodology-KB integration for the first time.
 
+> **Merged-state note (#197, 2026-08-31):** the `HUNTING_LIGHTRAG_TOOL` opt-in
+> flag documented below is **REMOVED**. The `query_lightrag` KB tool is now
+> ALWAYS bound (author lane + pod runner + triager, fail-open), and the shared
+> `graph_view` tool is bound at the orchestrator / hunter / pod seams. The
+> historical descriptions below stand for what the branch carried at merge.
+
 ---
 
 ## 1. Purpose

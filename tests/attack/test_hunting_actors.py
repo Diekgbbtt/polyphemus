@@ -95,6 +95,12 @@ class _TextFake(BaseChatModel):
     def _llm_type(self) -> str:
         return "fake"
 
+    def bind_tools(self, tools, **kwargs):
+        # As of #197 the author lane ALWAYS binds the lightrag tool, so a plain-
+        # text fake must tolerate `bind_tools` (returns self - a tool-free reply
+        # concludes the turn exactly like a real model declining the tool).
+        return self
+
 
 class _ToolLoopFake(BaseChatModel):
     """A per-instance two-reply scripted model: the first model call emits a
@@ -313,7 +319,7 @@ def test_hunt_orchestrator_thread_keeps_one_system_message():
 def test_hunting_hunter_actor_authors_and_judges_on_one_thread():
     """ONE actor per hunt: the author (D4) and judge (D5) turns on the SAME
     `HuntSession` thread, free-text JSON replies parsed back, stop() clean."""
-    body_a = json.dumps({"target_identity": {"unit": "a"}, "rationale": "spec"})
+    body_a = json.dumps({"target_identity": {"url": "http://a/", "unit_id": "Service:slug:a"}, "rationale": "spec"})
     body_j = json.dumps({"meaningful_insight": False, "next_step": "end", "rationale": "r"})
     cursor = {"i": 0}
 
@@ -333,7 +339,7 @@ def test_hunting_hunter_actor_authors_and_judges_on_one_thread():
         return spec, verdict
 
     spec, verdict = asyncio.run(_drive())
-    assert spec == {"target_identity": {"unit": "a"}, "rationale": "spec"}
+    assert spec == {"target_identity": {"url": "http://a/", "unit_id": "Service:slug:a"}, "rationale": "spec"}
     assert verdict == {"meaningful_insight": False, "next_step": "end", "rationale": "r"}
 
 
@@ -505,11 +511,11 @@ def test_hunting_hunter_actor_runs_query_lightrag_tool_loop_hermetically():
     assert "Object-level authorization comparison" in tool_msgs[0].content
 
 
-def test_lightrag_tool_enabled_by_flag(monkeypatch):
-    import polymerhus.app.config as config_module
+def test_lightrag_tool_always_bound(monkeypatch):
+    # As of #197 the HUNTING_LIGHTRAG_TOOL gate is REMOVED: the lightrag tool is
+    # always bound into the author lane (fail-open when the KB is unavailable).
     import polymerhus.attack.hunting.actors as actors
 
-    monkeypatch.setattr(config_module.config, "HUNTING_LIGHTRAG_TOOL", True)
     monkeypatch.setattr(
         actors,
         "_lightrag_author_tools",

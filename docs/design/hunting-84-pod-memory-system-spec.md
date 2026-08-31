@@ -219,8 +219,8 @@ data/<project_id>/test-executor-pod/
 
 ### 8. KB-retrieve response recording (implemented T3/#179)
 
-- The KB tool is `KbQueryTool` - the single `query_lightrag` tool from the `lightrag` branch, config-gated by
-  `HUNTING_LIGHTRAG_TOOL` (the former `kb_retrieve` symptom-technique typed seam is RETIRED). It has a
+- The KB tool is `KbQueryTool` - the single `query_lightrag` tool from the `lightrag` branch, always-bound as of
+  #197 (the `HUNTING_LIGHTRAG_TOOL` config gate is REMOVED; the former `kb_retrieve` symptom-technique typed seam is RETIRED). It has a
   deterministic `_record` step mirroring the exec tool's: every KB response (the query's scenario/concern, the
   returned answer bundle) is appended to the variant's experiment-log file as a KB observation (`KbObservation`).
 - The log domain model is extended so a KB observation is a first-class record (`types.py::KbObservation`,

@@ -31,7 +31,7 @@ from polymerhus.attack.hunting.pod.llm import (
 from polymerhus.recon.domain.types import ExecResult
 
 VALID_SPEC = {
-    "target_identity": "service:web:soupmarket",
+    "target_identity": {"url": "http://soupmarket.shop/", "unit_id": "service:web:soupmarket"},
     "verification_symptoms": ["HTTP 200 with a non-empty body on GET /"],
     "testing_pattern": "blind-boolean",
     "assumptions": ["network egress allowed"],
