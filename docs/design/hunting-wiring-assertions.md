@@ -64,14 +64,14 @@ States: `registered` -> `executing` (`arun_pod`) -> `settled` (export persisted 
 ## Contract predicates (integration)
 
 ### REST perimeter - hunting run lifecycle
-- C1 - `POST /projects/{p}/hunting` canonical: body `{candidates: []}` (empty batch, O1) -> 201 `{hunting_run_id}`; a follow-up `GET /projects/{p}/hunting/{id}` returns the row `status == "running"`. Observable: exactly one row; id echoes.
+- C1 - `POST /projects/{p}/hunting` canonical: body `{candidates: []}` -> 201 `{hunting_run_id}`; a follow-up `GET /projects/{p}/hunting/{id}` returns the row `status == "running"`. Observable: exactly one row; id echoes. **AMENDED by #200 (spec 4.1):** the empty batch is NOT the O1 vacuous pass anymore - it triggers the platform's OWN FaultSource selection over the live L1 (`materialize_candidates`), and only an all-pruned selection yields an empty candidate set (the meaningful empty pass).
 - C2 - same endpoint, unknown project `{p}` -> 404 `unknown project`; NO row created.
 - C3 - second live launch, same project, while the first is `running` -> 409 (the `running` row is the guard); both ids distinct, but only the first row stays `running`.
 - C4 - control plane absent (`runtime` not landed) -> 503 `hunting control-plane runtime has not landed`; no row opened.
 - C5 - malformed body (candidates not a list / a candidate missing `unit_id`) -> 422 (pydantic); no row opened.
 - C6 - `POST /projects/{p}/hunting/{id}/stop` canonical (row exists) -> `{"stopping": True}`; `GET` then returns terminal `stopped`.
 - C7 - stop unknown id -> 404 `no hunting run for that hunting_run_id`.
-- C8 - `GET /projects/{p}/hunting/{id}` canonical returns the exact terminal status after quiesce: `complete` (empty-batch run with no produced items reaches quiesce immediately).
+- C8 - `GET /projects/{p}/hunting/{id}` canonical returns the exact terminal status after quiesce: `complete` (an empty-batch run - the platform's own selection - with no produced items reaches quiesce immediately).
 - C9 - GET unknown id -> 404.
 
 ### REST perimeter - singular component launches

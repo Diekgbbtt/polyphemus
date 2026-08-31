@@ -523,10 +523,14 @@ def normalize_candidates(
     known_faults: Sequence[str] | None = None,
 ) -> CandidateIntake:
     """Dedup by `(unit_id, fault_class)` identity (O7), drop malformed
-    candidates counted (O10: a candidate with no witness - or an unknown fault
-    class when a registry is given), and apply the match-verdict prune signal
-    (Q8 level 1): a does-not-apply candidate is pruned before the gate - never
-    pruned on a rejection, only a missing witness drops it."""
+    candidates counted (O10: a candidate with NO witness half at all - neither
+    deterministic nor llm - or an unknown fault class when a registry is
+    given), and apply the match-verdict prune signal (Q8 level 1): a
+    does-not-apply candidate is pruned before the gate - never pruned on a
+    rejection, only a witness-less candidate drops it. As of #200 (spec 4.1)
+    the LLM witness half is OPTIONAL: a deterministic-only witness is a valid
+    delivered candidate, so the platform's own internal selection is never
+    discarded here."""
     seen: set[tuple[str, str]] = set()
     intake = CandidateIntake()
     known = set(known_faults) if known_faults is not None else None
@@ -537,7 +541,8 @@ def normalize_candidates(
             continue
         seen.add(identity)
         witnesses = candidate.applies_witnesses
-        if witnesses is None or witnesses.llm is None:
+        if witnesses is None or (
+                witnesses.deterministic is None and witnesses.llm is None):
             intake.malformed_dropped += 1
             continue
         if known is not None and candidate.fault_class not in known:

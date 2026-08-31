@@ -18,8 +18,10 @@ from typing import Any, cast
 
 from polymerhus.attack.hunting.fault_source import (
     FaultEntry,
+    delivered_candidates,
     evaluate,
     evaluate_unit,
+    materialize_candidates,
     mint_candidates,
     select,
 )
@@ -406,3 +408,210 @@ def test_select_outputs_are_deterministic():
                     project_id="p", read_fn=_model(), match_fn=CountingMatch())
     assert first == second
     assert first[0].outcomes[0].unit_id == "Service:s3"  # authoring order kept
+
+
+# --- the production wiring seam (#200): the pure mapper -------------------------
+
+def test_delivered_candidates_maps_passed_matched_to_applies():
+    """The pure mapper (spec 4.1): a `passed` + `matched` outcome becomes one
+    `DeliveredCandidate` with `match_verdict="applies"` and the deterministic
+    witness, and its llm half stays None (a deterministic-only witness is a
+    valid delivered candidate)."""
+    from polymerhus.attack.hunting.fault_source import (
+        FaultSelectionReport,
+        UnitOutcome,
+    )
+
+    reports = (
+        FaultSelectionReport(
+            fault_id="graphql-introspection",
+            outcomes=(
+                UnitOutcome("Service:s1", "passed", matched=True),
+                UnitOutcome("Service:s3", "passed", matched=True),
+            ),
+        ),
+    )
+    candidates = delivered_candidates(reports)
+    assert [c.unit_id for c in candidates] == ["Service:s1", "Service:s3"]
+    assert all(c.fault_class == "graphql-introspection" for c in candidates)
+    assert all(c.match_verdict == "applies" for c in candidates)
+    assert all(c.applies_witnesses.llm is None for c in candidates)
+    assert all(c.applies_witnesses.deterministic for c in candidates)
+
+
+def test_delivered_candidates_drops_pruned_and_unmatched_outcomes():
+    """`pruned-by-predicate` / `pruned-by-tag` and a `passed` but NOT matched
+    outcome produce no candidate (the prune signal is preserved)."""
+    from polymerhus.attack.hunting.fault_source import (
+        FaultSelectionReport,
+        UnitOutcome,
+    )
+
+    reports = (
+        FaultSelectionReport(
+            fault_id="fault-x",
+            outcomes=(
+                UnitOutcome("Service:a", "pruned-by-predicate",
+                            witness="reachable-via(EXPOSED_VIA, {GraphQLApi})"),
+                UnitOutcome("Service:b", "pruned-by-tag"),
+                UnitOutcome("Service:c", "passed", matched=False),
+                UnitOutcome("Service:d", "passed", matched=True),
+            ),
+        ),
+    )
+    candidates = delivered_candidates(reports)
+    assert [c.unit_id for c in candidates] == ["Service:d"]
+
+
+def test_delivered_candidates_survivors_carry_the_deterministic_witness():
+    """A passed outcome's deterministic half carries the outcome's diagnostic
+    when present (the fail-open pass surfaces its diagnostic), else the pass
+    marker - never a blank witness that the intake would drop as malformed."""
+    from polymerhus.attack.hunting.fault_source import (
+        FaultSelectionReport,
+        UnitOutcome,
+    )
+
+    reports = (
+        FaultSelectionReport(
+            fault_id="fault-x",
+            outcomes=(
+                UnitOutcome("Service:a", "passed", matched=True,
+                            diagnostic="projection read failed for Service:a"),
+                UnitOutcome("Service:b", "passed", matched=True),
+            ),
+        ),
+    )
+    candidates = delivered_candidates(reports)
+    by_unit = {c.unit_id: c for c in candidates}
+    assert by_unit["Service:a"].applies_witnesses.deterministic == \
+        "projection read failed for Service:a"
+    assert by_unit["Service:b"].applies_witnesses.deterministic  # the pass marker
+
+
+class InventoryL1(FakeL1):
+    """Serves the L1 INVENTORY read (the `read_l1_inventory` cyphers) AND the
+    per-unit projection reads (FakeL1's unit lookup)."""
+
+    def __init__(self, units, *, services=(), systems=()):
+        super().__init__(units)
+        self.services = list(services)
+        self.systems = list(systems)
+
+    def __call__(self, cypher, params):
+        if "L1TestableUnit" in cypher:
+            return super().__call__(cypher, params)
+        if "L1Service" in cypher:
+            return [{"slug": s["slug"], "contract": s.get("contract")}
+                    for s in self.services]
+        if "L1System" in cypher:
+            return [{"kind": s["kind"], "disc": s.get("disc", "__singleton__"),
+                     "description": s.get("description")}
+                    for s in self.systems]
+        return []
+
+
+def _inventory_model():
+    """A fixture L1 with a linked Service+System (s1 fronted by a GraphQLApi
+    System) plus an unlinked System and an unlinked Service."""
+    return InventoryL1(
+        {
+            "Service:s1": {"labels": ["L1Service"],
+                           "props": {"business_function_slug": "s1",
+                                     "exposure": "public"},
+                           "edges": [{"family": "EXPOSED_VIA",
+                                      "tlabels": ["L1System"],
+                                      "tprops": {"kind": "GraphQLApi"},
+                                      "rprops": {}}]},
+            "Service:s3": {"labels": ["L1Service"],
+                           "props": {"business_function_slug": "s3"},
+                           "edges": [{"family": "EXPOSED_VIA",
+                                      "tlabels": ["L1System"],
+                                      "tprops": {"kind": "RESTApi"},
+                                      "rprops": {}}]},
+            "GraphQLApi:__singleton__": {"labels": ["L1System"],
+                                         "props": {"kind": "GraphQLApi",
+                                                   "discriminator": "__singleton__"},
+                                         "edges": []},
+            "RESTApi:__singleton__": {"labels": ["L1System"],
+                                      "props": {"kind": "RESTApi",
+                                                "discriminator": "__singleton__"},
+                                      "edges": []},
+        },
+        services=[{"slug": "s1"}, {"slug": "s3"}],
+        systems=[{"kind": "GraphQLApi", "disc": "__singleton__"},
+                 {"kind": "RESTApi", "disc": "__singleton__"}],
+    )
+
+
+def test_materialize_candidates_empty_batch_selects_over_the_live_l1():
+    """#200: an empty caller batch triggers the platform's OWN selection: the
+    project's units are enumerated from the L1 inventory, the matching fault
+    is selected over them (the deterministic predicate prunes the unlinked
+    Service), and the survivors map to the intake - never a vacuous set."""
+    candidates, summary = materialize_candidates(
+        "p", (), fault_entries=(_graphql_fault(),), read_fn=_inventory_model())
+    assert [c.unit_id for c in candidates] == [
+        "Service:s1",                      # GraphQLApi-fronted -> passed+matched
+        "GraphQLApi:__singleton__",        # IS the presupposed System (UNKNOWN -> pass)
+        "RESTApi:__singleton__",           # no outgoing edge (UNKNOWN -> pass)
+    ]
+    assert all(c.match_verdict == "applies" for c in candidates)
+    assert all(c.fault_class == "graphql-introspection" for c in candidates)
+    assert summary.caller_supplied is False
+    assert summary.faults_evaluated == 1
+    assert summary.units_minted == 4
+    assert summary.pruned_by_predicate == 1
+    assert summary.pruned_by_tag == 0
+    assert summary.passed == 3
+
+
+def test_materialize_candidates_enum_kinds_fault_prunes_unlinked_units():
+    """The phase-1 enum-of-system-kinds tag prunes deterministically: a fault
+    presupposing WAF Systems yields NO candidate when no unit is WAF-linked -
+    the meaningful all-pruned empty selection."""
+    waf_fault = FaultEntry(fault_id="waf-bypass", enum_kinds=frozenset({"WAF"}))
+    candidates, summary = materialize_candidates(
+        "p", (), fault_entries=(waf_fault,), read_fn=_inventory_model())
+    assert candidates == ()
+    assert summary.faults_evaluated == 1
+    assert summary.units_minted == 4
+    assert summary.pruned_by_tag == 4
+    assert summary.passed == 0
+
+
+def test_materialize_candidates_caller_batch_is_the_override():
+    """A non-empty caller batch is returned unchanged - never re-selected (the
+    harness / integration / eval seams still drive selection externally)."""
+    from polymerhus.attack.hunting.hunt_orchestrator import (
+        DeliveredCandidate,
+        Witness,
+    )
+    caller = (
+        DeliveredCandidate(
+            unit_id="Service:caller", fault_class="caller-fault",
+            applies_witnesses=Witness(deterministic="w", llm="w"),
+            match_verdict="applies",
+        ),
+    )
+    candidates, summary = materialize_candidates(
+        "p", caller, fault_entries=(_graphql_fault(),), read_fn=_inventory_model())
+    assert candidates == caller
+    assert summary.caller_supplied is True
+    assert summary.faults_evaluated == 0
+
+
+def test_materialize_candidates_fails_open_to_an_empty_set():
+    """A raising L1 read degrades to the empty candidate set - the selection
+    seam never raises into the pass (fail-open). The inventory's own
+    fail-open yields the empty enumeration, so the selection loop ran over the
+    fault entries with zero units minted (the honest zeroed counts)."""
+    def boom(cypher, params):
+        raise RuntimeError("neo4j is down")
+
+    candidates, summary = materialize_candidates(
+        "p", (), fault_entries=(_graphql_fault(),), read_fn=boom)
+    assert candidates == ()
+    assert summary.faults_evaluated == 1  # the loop ran over the fault entry
+    assert summary.units_minted == 0
+    assert summary.passed == 0

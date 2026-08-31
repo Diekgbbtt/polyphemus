@@ -169,10 +169,22 @@ def test_duplicate_candidates_are_deduped_by_identity():
     assert intake.malformed_dropped == 0
 
 
-def test_applies_without_llm_witness_is_malformed():
+def test_applies_without_any_witness_is_malformed():
     intake = normalize_candidates([_candidate(llm_witness=None)])
     assert len(intake.accepted) == 0
     assert intake.malformed_dropped == 1
+
+
+def test_deterministic_only_witness_is_accepted_not_malformed():
+    """#200 (spec 4.1): the llm witness half is OPTIONAL - a candidate carrying
+    a deterministic witness alone is accepted, never dropped as malformed (the
+    platform's own internal selection emits deterministic-only witnesses)."""
+    intake = normalize_candidates([_candidate(
+        llm_witness=None,
+        deterministic_witness="reachable-via(EXPOSED_VIA, {GraphQLApi})")])
+    assert len(intake.accepted) == 1
+    assert intake.malformed_dropped == 0
+    assert intake.accepted[0].applies_witnesses.llm is None
 
 
 def test_does_not_apply_with_llm_witness_is_pruned_not_malformed():

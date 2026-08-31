@@ -645,7 +645,7 @@ def test_C41b_the_withholding_gate_actually_bites_after_rescaling():
         AggregatesProposal(service_slug="checkout", l0=L0Ref(label="GET /a", identity={}),
                            confidence=30.0),     # -> 0.30, withheld
     ])
-    outcome = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(ep,))
+    outcome = shape_proposal(raw, existing_slugs=SLUGS, endpoints=(ep,), bar=0.75)
     assert outcome.stats.rescaled == 2
     assert outcome.stats.withheld == 1
     assert outcome.stats.kept == 1

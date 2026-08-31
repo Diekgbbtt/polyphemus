@@ -279,21 +279,20 @@ def _data_item_render(item) -> str:
 def _render_projection(projection) -> str:
     """Deterministic render of the unit's typed projection (spec 3.1/3.7): the
     typed spine keys present, per-family outgoing Service->System edges (target
-    kind + role presence + the fully-unpacked target System), the data-edge
-    counts, the DataRelationship kinds among the unit's items - and, as of T5,
+    kind + role presence + the fully-unpacked target System), and - as of T5 -
     the RICH slots the T2 projection carries: the exploded DataItems (family ->
-    name/type/sensitivity), the DataRelationship kind chains, and the D3
-    cooperating-systems adjacency. The compat facets are never removed; each
-    slot is read via getattr and a missing facet degrades that slot only -
-    absence renders as UNKNOWN/(none) (never FALSE, never a prune signal -
-    C16)."""
+    name/type/sensitivity) and the DataRelationship kind chains, and the D3
+    cooperating-systems adjacency. The data-edge counts and the DataRelationship
+    kinds are NOT rendered separately: they are redundant with the exploded
+    DataItems and the relationship chains (the operator ruling 2026-08-28). The
+    compat facets are never removed from the projection itself; each slot is
+    read via getattr and a missing facet degrades that slot only - absence
+    renders as UNKNOWN/(none) (never FALSE, never a prune signal - C16)."""
     if projection is None:
         return "UNKNOWN (projection read failed or absent)"
     kind = getattr(projection, "kind", None) or "UNKNOWN"
     spine = getattr(projection, "spine", None) or {}
     edges = getattr(projection, "edges", None) or {}
-    data_edges = getattr(projection, "data_edges", None) or {}
-    data_rel = getattr(projection, "data_rel_kinds", None) or frozenset()
     data_items = getattr(projection, "data_items", None) or {}
     data_relationships = getattr(projection, "data_relationships", None) or ()
     cooperating_systems = getattr(projection, "cooperating_systems", None) or {}
@@ -319,13 +318,6 @@ def _render_projection(projection) -> str:
         out += [f"  - {line}" for line in families]
     else:
         out.append("outgoing edges: (none)")
-    if data_edges:
-        out.append("data edges: " + ", ".join(
-            f"{fam}={data_edges[fam]}" for fam in sorted(data_edges)))
-    else:
-        out.append("data edges: (none)")
-    out.append("data-relationship kinds: " +
-               ("; ".join(sorted(data_rel)) if data_rel else "(none)"))
     if data_items:
         out.append("data items:")
         for family in sorted(data_items):

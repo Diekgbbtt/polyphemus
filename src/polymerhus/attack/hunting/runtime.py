@@ -188,6 +188,10 @@ async def launch_orchestrator(
     tools=None,
     hunt_store=None,
     orchestrator_fn=None,
+    fault_entries=None,
+    read_fn=None,
+    match_fn=None,
+    unit_ids_fn=None,
     **orchestration_kwargs,
 ) -> Any:
     """The orchestrator-ONLY launch coroutine (T5, spec #169 "Singular
@@ -201,6 +205,12 @@ async def launch_orchestrator(
     Q13 orchestrator session id (`hunting:<run_id>:orchestrator`), so the
     per-session verbs (hold/resume/cancel, ADR Q13/Q17) address it like any
     orchestrator session.
+
+    #200 selection wiring (shared with `start_hunting`): an EMPTY candidate
+    batch triggers the platform's OWN FaultSource selection over the live L1
+    (`materialize_candidates`, the deterministic stage + pass-through match);
+    a non-empty caller batch is the override. The selection summary is
+    recorded via `trace_gate_step` + a log line.
 
     The produced/consumed topology carries the orchestrator's OUTPUT (hunt
     configs) but never its INPUT (the candidate batch is in-memory at
@@ -233,16 +243,43 @@ async def launch_orchestrator(
                 )
                 tools = OrchestratorTools(store_reads=hunt_store, graph_view=None)
         try:
+            from polymerhus.attack.hunting.fault_source import (  # noqa: PLC0415
+                materialize_candidates,
+            )
+            from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
+                orchestrator_gate_span,
+                trace_gate_step,
+            )
+
+            with orchestrator_gate_span(run_id):
+                selected, summary = await asyncio.to_thread(
+                    materialize_candidates,
+                    project_id, candidates,
+                    fault_entries=fault_entries, read_fn=read_fn,
+                    match_fn=match_fn, unit_ids_fn=unit_ids_fn,
+                )
+                trace_gate_step(
+                    "selection",
+                    input={"project_id": project_id,
+                           "caller_supplied": summary.caller_supplied},
+                    output={
+                        "faults_evaluated": summary.faults_evaluated,
+                        "units_minted": summary.units_minted,
+                        "pruned_by_predicate": summary.pruned_by_predicate,
+                        "pruned_by_tag": summary.pruned_by_tag,
+                        "passed": summary.passed,
+                    },
+                )
             if orchestrator_fn is not None:
                 return await orchestrator_fn(
-                    project_id, run_id, candidates or (), tools,
+                    project_id, run_id, selected, tools,
                     **orchestration_kwargs,
                 )
             from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
                 arun_orchestration,
             )
             return await arun_orchestration(
-                project_id, run_id, candidates or (), tools,
+                project_id, run_id, selected, tools,
                 **orchestration_kwargs,
             )
         except asyncio.CancelledError:
@@ -428,6 +465,10 @@ async def start_hunting(
     hunter_builder=None,
     pod_builder=None,
     orchestrator_fn=None,
+    fault_entries=None,
+    read_fn=None,
+    match_fn=None,
+    unit_ids_fn=None,
     **orchestration_kwargs,
 ) -> str | None:
     """The hunting bootstrap entry point (seam 3.1) - rewired by T4 (#173).
@@ -457,8 +498,20 @@ async def start_hunting(
     control plane (`RuntimeControlPlane` default), `gate` the hunting dispatch
     gate (Q15), `hunt_store` / `hunter_store` / `pod_store` the memory stores,
     `hunter_builder` / `pod_builder` / `orchestrator_fn` the produce seams,
-    and `tick_interval` the surfer's lap period - the contract-tier tests
-    inject fakes for all of them and never touch a live driver.
+    `fault_entries` / `read_fn` / `match_fn` / `unit_ids_fn` the #200
+    selection seams (injected by tests; the production defaults load the
+    real fault-KB and read the live L1), and `tick_interval` the surfer's lap
+    period - the contract-tier tests inject fakes for all of them and never
+    touch a live driver.
+
+    #200 selection wiring: an EMPTY `candidates` batch (the `POST /hunting`
+    default) triggers the platform's OWN FaultSource selection over the live
+    L1 - `materialize_candidates` enumerates the project's kind-qualified
+    units, loads the fault-KB matching facet, runs the deterministic stage
+    with the pass-through match, and translates the survivors into the pass's
+    intake. A non-empty caller batch is the override, never re-selected. The
+    selection summary is recorded via `trace_gate_step` + a log line, so an
+    all-pruned empty launch is a MEANINGFUL empty pass - never a vacuous one.
 
     Returns the `hunting_run_id`, or `None` when the ONE-live-run-per-project
     guard refused the launch. The run id keys both the `hunting_runs` row and
@@ -587,16 +640,43 @@ async def start_hunting(
         )
 
         async def _orchestrator_pass():
+            from polymerhus.attack.hunting.fault_source import (  # noqa: PLC0415
+                materialize_candidates,
+            )
+            from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
+                orchestrator_gate_span,
+                trace_gate_step,
+            )
+
+            with orchestrator_gate_span(hunting_run_id):
+                selected, summary = await asyncio.to_thread(
+                    materialize_candidates,
+                    project_id, candidates,
+                    fault_entries=fault_entries, read_fn=read_fn,
+                    match_fn=match_fn, unit_ids_fn=unit_ids_fn,
+                )
+                trace_gate_step(
+                    "selection",
+                    input={"project_id": project_id,
+                           "caller_supplied": summary.caller_supplied},
+                    output={
+                        "faults_evaluated": summary.faults_evaluated,
+                        "units_minted": summary.units_minted,
+                        "pruned_by_predicate": summary.pruned_by_predicate,
+                        "pruned_by_tag": summary.pruned_by_tag,
+                        "passed": summary.passed,
+                    },
+                )
             if orchestrator_fn is not None:
                 return await orchestrator_fn(
-                    project_id, hunting_run_id, candidates or (), tools,
+                    project_id, hunting_run_id, selected, tools,
                     **orchestration_kwargs,
                 )
             from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
                 arun_orchestration,
             )
             return await arun_orchestration(
-                project_id, hunting_run_id, candidates or (), tools,
+                project_id, hunting_run_id, selected, tools,
                 **orchestration_kwargs,
             )
 

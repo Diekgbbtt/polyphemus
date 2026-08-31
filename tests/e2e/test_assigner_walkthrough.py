@@ -143,6 +143,7 @@ def test_E2_assigner_through_the_supervisor_reports_written():
     body = make_assigner_body(
         invoke_fn=lambda messages: _proposal(),
         inventory_fn=lambda project_id: INVENTORY,
+        bar=0.75,
     )
     graph = build_supervisor_graph(
         proposer_bodies={"assigner": body}, write_fn=write_fn,
