@@ -411,7 +411,21 @@ class HunterMemoryStore:
         already exists (the novelty gate, G4); `mode="update"` overwrites the
         existing file in place (the G5 re-authoring pass). Returns the
         written `Path`. Raises on write failure - the caller degrades to a
-        warning and keeps serving (O3)."""
+        warning and keeps serving (O3).
+
+        MOVE-AWARE (G4, #205): when the identity ALREADY lives in consumed/
+        (the mover's produced->consumed move landed for it - its at-least-once
+        marker), a produced-target write is a NO-OP success returning the
+        `consumed` Path (the durable location). The spec is already durable in
+        consumed/, and re-creating a produced/ copy would break the
+        produced/consumed mutual exclusivity - the surfer's inbox would never
+        drain, the mover would re-dispatch the identity every tick, and the run
+        would hang in `running` (the #205 race: the hunter's `specified`
+        harness write can land after the mover consumed the spec). A warning
+        logs the race for observability. The `mode="create"` novelty gate sits
+        AFTER this check: a consumed-side existence short-circuits before the
+        novelty check (a post-move create write is a no-op success, never a
+        `DuplicateSpecError`)."""
         if mode not in _SPEC_MODES:
             raise ValueError(f"hunter store: unknown spec write mode {mode!r}; known: {_SPEC_MODES}")
         if not isinstance(spec, dict):
@@ -429,6 +443,17 @@ class HunterMemoryStore:
         # is not TOCTOU and a concurrent produced->consumed rename (the mover,
         # #172) can never race the write.
         with _lock_for(project_id):
+            consumed_path = self._spec_file(
+                project_id, fault_key, fault_keyword, strategy_keyword,
+                side="consumed",
+            )
+            if side == "produced" and consumed_path.exists():
+                logger.warning(
+                    "hunter store: produced write for %s skipped - the "
+                    "identity already lives in consumed/ (post-move write, "
+                    "#205); no produced/ copy re-created", path.name,
+                )
+                return consumed_path
             if mode == "create" and path.exists():
                 raise DuplicateSpecError(
                     f"hunter store: spec file already exists (novelty gate): {path}")
