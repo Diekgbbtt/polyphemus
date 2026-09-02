@@ -490,12 +490,31 @@ def run_post_ingestion_audit(
                     {"document_id": document_id, "chunk_id": chunk_id},
                 )
 
-    # Graph checks (independent of the audited document id)
+    # Graph checks — per-document when a document_id is present, otherwise global
+    # (prevents a single UNKNOWN writeup from polluting every future audit).
     allowed_set = set(allowed_entity_types)
+    allowed_lower = {t.lower() for t in allowed_set}
 
-    for node in storage_snapshot.graph.nodes:
+    if document_id:
+        def _belongs_to_doc(source_id: str) -> bool:
+            if not source_id:
+                return False
+            for chunk in source_id.split("<SEP>"):
+                if chunk.strip().startswith(document_id):
+                    return True
+            return False
+
+        relevant_nodes = [n for n in storage_snapshot.graph.nodes if _belongs_to_doc(n.source_id)]
+        relevant_edges = [e for e in storage_snapshot.graph.edges if _belongs_to_doc(e.source_id)]
+        relevant_node_ids = {n.id for n in relevant_nodes}
+    else:
+        relevant_nodes = list(storage_snapshot.graph.nodes)
+        relevant_edges = list(storage_snapshot.graph.edges)
+        relevant_node_ids = {n.id for n in relevant_nodes}
+
+    for node in relevant_nodes:
         entity_type = node.entity_type.strip()
-        if entity_type and entity_type not in allowed_set:
+        if entity_type and entity_type.lower() not in allowed_lower:
             add_issue(
                 "ENTITY_TYPE_NOT_ALLOWED",
                 f"Graph node {node.id!r} uses disallowed entity type {entity_type!r}.",
@@ -506,24 +525,23 @@ def run_post_ingestion_audit(
                 },
             )
 
-    node_ids = {node.id for node in storage_snapshot.graph.nodes}
-
-    for edge in storage_snapshot.graph.edges:
+    # Orphan checks only against the relevant node set for the audited doc
+    for edge in relevant_edges:
         edge_label = f"{edge.source}->{edge.target}"
-        if edge.source not in node_ids:
+        if edge.source not in relevant_node_ids:
             add_issue(
                 "ORPHAN_RELATION_ENDPOINT",
                 f"Graph edge {edge_label!r} has source node not present in the graph.",
                 {"edge": edge_label, "endpoint": "source", "node_id": edge.source},
             )
-        if edge.target not in node_ids:
+        if edge.target not in relevant_node_ids:
             add_issue(
                 "ORPHAN_RELATION_ENDPOINT",
                 f"Graph edge {edge_label!r} has target node not present in the graph.",
                 {"edge": edge_label, "endpoint": "target", "node_id": edge.target},
             )
 
-    for node in storage_snapshot.graph.nodes:
+    for node in relevant_nodes:
         if node.entity_type.strip() and not node.source_id:
             add_issue(
                 "GRAPH_NODE_WITHOUT_PROVENANCE",
@@ -531,7 +549,7 @@ def run_post_ingestion_audit(
                 {"node_id": node.id, "entity_type": node.entity_type},
             )
 
-    for edge in storage_snapshot.graph.edges:
+    for edge in relevant_edges:
         if not edge.source_id:
             edge_label = f"{edge.source}->{edge.target}"
             add_issue(
