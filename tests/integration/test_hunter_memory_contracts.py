@@ -506,3 +506,50 @@ def test_C24b_notes_tool_gate_rejects_a_non_canonical_identity(tmp_path):
     assert out["ok"] is False
     assert out["error"] == "fault_key_mismatch"
     assert store.read_notes(PROJECT) == []
+
+
+# --- #209: the coded teaching rejection + typed provenance (C25-C26) -----------
+
+def test_C25_notes_missing_command_is_a_coded_teaching_rejection(tmp_path):
+    """#209: a `notes` call with write-intent fields but NO `command` returns
+    the coded `notes_args_rejected` teaching rejection (never a bare raise into
+    the turn), nothing is persisted, and the corrected shape lands."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    tool = NotesTool(store=store, project_id=PROJECT)
+    out = json.loads(tool.invoke({
+        "action": "append", "fault_key": FAULT_KEY,
+        "note_name": "decision", "kind": "freeform", "body": "x",
+    }))
+    assert out["ok"] is False
+    assert out["error"] == "notes_args_rejected"
+    assert "command" in out["detail"]
+    assert store.read_notes(PROJECT) == []
+    # the corrected shape lands: command + prose evidence + typed provenance
+    out = json.loads(tool.invoke({
+        "command": "write", "action": "append", "fault_key": FAULT_KEY,
+        "note_name": "decision", "kind": "freeform", "body": "x",
+        "evidence": "prose", "provenance": {"source": "pod-export",
+                                            "probe_refs": ["exec:probe"]},
+    }))
+    assert out["ok"] is True, out
+    notes = store.read_notes(PROJECT)
+    assert len(notes) == 1
+    assert notes[0]["evidence"] == "prose"
+    assert notes[0]["provenance"]["probe_refs"] == ["exec:probe"]
+
+
+def test_C26_dict_evidence_is_a_coded_teaching_rejection(tmp_path):
+    """#209: a dict-valued `evidence` (the model's structured-ref attempt) is a
+    coded teaching rejection naming `provenance` - the structured slot - and
+    never persists."""
+    store = HunterMemoryStore(root_dir=tmp_path)
+    tool = NotesTool(store=store, project_id=PROJECT)
+    out = json.loads(tool.invoke({
+        "command": "write", "action": "append", "fault_key": FAULT_KEY,
+        "note_name": "decision", "kind": "freeform", "body": "x",
+        "evidence": {"probe_refs": ["exec:SPA shell"]},
+    }))
+    assert out["ok"] is False
+    assert out["error"] == "notes_args_rejected"
+    assert "provenance" in out["detail"]
+    assert store.read_notes(PROJECT) == []

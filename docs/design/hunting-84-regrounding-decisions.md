@@ -296,6 +296,14 @@ The pod binding reads the parent's `hunt_session` ContextVar to derive `run_id` 
 
 **Files:** `src/polymerhus/attack/hunting/pod/config.py` (`HUNT_POD_MAX_TOOL_CALLS="200"`), a `build_harness_middleware` factory, spec re-write (G2 defined as tool-contract rejection, not harness validation).
 
+**#209 refinement - coded teaching rejection:** the D84-22 "rejected call" is refined to TEACH the correction
+instead of surfacing a bare validation error. A call that omits a required discriminator (e.g. `command` with
+write-intent fields present) or passes a parameter of the wrong type (e.g. a dict-valued `evidence`) returns a
+CODED rejection - a JSON error object with a machine code (mirroring `fault_key_mismatch` / `duplicate_spec` /
+`invalid_args`) and a detail naming the exact fix - so the model self-corrects on the retry. Applied to the
+hunter `notes` / `hunts_store` tools and the pod `note` tool (#209). The typed parameter structure rides the
+tool-calling protocol's own schema (a typed sub-model for `provenance`), never prose-only description.
+
 ---
 
 ## D84-23 - X4 Triager input = note + triager_context + variant_refs, no RunnerStep (VERDICTED; answer to X4's question)

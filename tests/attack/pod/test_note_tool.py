@@ -341,3 +341,17 @@ def test_create_agent_loop_write_wrong_param_and_read(store, spec_id):
 
 def test_notes_args_rejected_code_is_declared():
     assert NOTES_ARGS_REJECTED.startswith("NOTES_ARGS_REJECTED")
+
+
+# --- #209: the coded teaching rejection ---------------------------------------
+
+def test_malformed_write_is_a_coded_teaching_rejection(store, spec_id):
+    """#209: a malformed note call is a CODED teaching rejection (the D84-22
+    'rejected call' refinement) - the loop sees the code and self-corrects,
+    never a silent degrade. A write without the variant order is rejected with
+    `NOTES_ARGS_REJECTED` naming the missing field."""
+    out = _tool(store=store, spec_id=spec_id).invoke(
+        {"operation": "write", "note_name": "n", "kind": "freeform", "body": "x"})
+    assert out.startswith(NOTES_ARGS_REJECTED)
+    assert "order" in out  # the detail names the missing variant order
+    assert store.read_notes(spec_id) == []  # nothing persisted

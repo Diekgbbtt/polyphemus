@@ -155,7 +155,7 @@ no back-edge tool, no budget tool. Tool names are reused verbatim. The hunter's 
 | Tool | Contract | Notes |
 |---|---|---|
 | `hunts_store` | `read` / `write` cmds; `write` takes the fault/spec object carrying the `status` attribute (`hypothesised | verified | dropped | specified`); `read` by id + optional attributes, never the whole surface | The status-bearing write seam; the transition verbatim lives here. Duplicate-id write FAILS as a *very rare* novelty gate (G4/G5); re-authoring UPDATES the existing file in place. `graph_view` is the surface-inspection tool, never this tool |
-| `notes` | `read` / `write` cmds, same data contract; write options `append`, `update`, `delete` | One note per fault covering all decisions that concern it, more detailed than the rationale |
+| `notes` | `read` / `write` cmds, same data contract; write options `append`, `update`, `delete` | One note per fault covering all decisions that concern it, more detailed than the rationale. **As of #209**: `provenance` is a TYPED `NoteProvenance` (`source` / `run_id` / `verdict_stub` / `probe_refs`, `extra="forbid"`) riding the tool-calling schema; `evidence` is prose `str`; a call omitting the required `command` or passing a dict-valued `evidence` gets a CODED teaching rejection (see `hunting-tools-design.md`) |
 | `graph_view` | read-only L0/L1 view; write-shaped calls rejected | The hunter's target-knowledge inspection (G8a). **As of #197**: the ONE shared tool (`graph_view_tool.py::build_graph_view_tool`) with the single-source usage contract (schema, query-language primitives, read-only guard, `{"rows":[...]}` shape, worked example) - the hunter's bespoke `GraphViewTool` is REMOVED |
 | `kb_query` | LightRAG `QuerySpecV1` -> `AnswerBundleV1` | Retires `symptom_kb.py`'s typed seams (R1). Consumed directly in the author lane. Fail-open (empty/raising -> degraded grounding, C2/C3). **WIRED from scratch onto the lightrag branch's single `query_lightrag` tool** (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in gate is REMOVED): the `KbQueryTool` keeps the local `QuerySpecV1`/`AnswerBundleV1` mirror as its args/response contract; it invokes the real `build_lightrag_tool` and the injected `kb_fn` seam (contract tier) is used only when the real tool is unavailable. The `lightrag` import is lazy (no I/O at import) |
 | `exec` | Kali-container exec, `EXEC_TIMEOUT_S` per call | Unbounded at the harness level - the model decides (R2b). NEVER produces the hypothesis verdict; the pod remains the only source of experimental evidence for the committed hypothesis (partition guard) |
@@ -214,7 +214,11 @@ through the tool surface but never model-trusted (the write boundary is a harnes
 - **The note-key rule**: a note is keyed `<config_key>:<note_name>`; the durable pod-export note is keyed
   `<config_key>:pod-export:<spec_id>` with action `update` (one current record per (config, spec) - one
   TestImplementationSpec yields at most one PodExport), and the pod session id lives ONLY in
-  `provenance["source"]`, never in the key.
+  `provenance["source"]`, never in the key. **As of #209, `provenance` is a TYPED `NoteProvenance` sub-model**
+  (the JSON schema the model sees declares it): `source` (the pod-session-id home, pinned here), `run_id`,
+  `verdict_stub` (the surfer's durable-export trio, `surfer.py::_record_durable_pod_export`), and `probe_refs`
+  (the model's structured evidence refs, ratified by #209). `evidence` is prose `str`; structured refs never go
+  there - a dict-valued `evidence` is a coded teaching rejection.
 
 ## 7. The ReAct host and runtime integration
 

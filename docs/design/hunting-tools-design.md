@@ -44,7 +44,67 @@ The contract is a single constant rendered into the tool's description, so no ag
 - **Hunter** (`attack/hunting/hunter_tools.py`): `GraphViewTool` is removed; `build_hunter_tools` binds the shared tool over the injected `graph_view_fn` seam.
 - **Pod** (`attack/hunting/pod/agents.py`): the shared tool is bound into the Runner's `runner_react_tools` AND the Triager's `triager_react_tools`, always-on, threaded via the pod harness context (`ReadOnlyGraphView(project_id).read`).
 
+## The store/notes tool contracts: typed structure + coded teaching rejection (#209)
+
+*Status: DRAFT (records the #209 disposition; the authoritative spec sections are
+`docs/design/hunting-164-state-graph-spec.md` §5/§6 and
+`docs/design/hunting-67-test-executor-pod-spec.md` §2, amended by the same change).*
+
+The store-writing tools (`hunts_store` / `notes` on the hunter surface,
+`note` on the pod surface) share a contract pattern. The #209 defects surfaced
+two ways the pattern drifted, and the fix is a shared contract discipline for
+all three tools:
+
+1. **Each parameter's typed structure rides the tool-calling protocol's own
+   schema** (the JSON schema `convert_to_openai_tool` sends in the request's
+   `tools` body), never prose-only description. A parameter the code itself
+   writes must be a typed sub-model with the SAME field set, so the schema and
+   the store-writer's record cannot drift. The one exception is a genuinely
+   arbitrary parameter (the hunter's `spec` dict - the author adds arbitrary
+   fields by design); it stays untyped.
+2. **A required discriminator stays required.** When the model emits a call
+   that omits it (write-intent fields present but no `command`, or a parameter
+   of the wrong type), the tool returns a CODED teaching rejection - a JSON
+   error object with a machine code (mirroring `fault_key_mismatch` /
+   `duplicate_spec` / `invalid_args`) and a detail that names the exact fix -
+   instead of the generic validation error. The model self-corrects on the
+   retry instead of burning the turn on a bare `tool_failed`. This refines the
+   D84-22 canon (the tool's OWN contract is the validator): a wrong parameter
+   still FAILS as a rejected call, but the rejection TEACHES the correction.
+
+### NotesArgs (hunter `notes` tool)
+
+- `command: Literal["read","write"]` stays REQUIRED. `action` (the write
+  option) is NOT the command: a write call must carry `command="write"` with
+  `action` in `append|update|delete`. A call with write-intent fields
+  (`action` / `fault_key` / `note_name` / `body`) but no `command` returns the
+  coded rejection teaching `command="write"`.
+- `evidence: str|None` stays PROSE. `provenance` is the structured slot and
+  becomes a TYPED `NoteProvenance` sub-model with `extra="forbid"`:
+  `source: str=""` (the design-pinned pod-session-id home, spec §6), `run_id:
+  str=""`, `verdict_stub: bool=False` (the surfer's durable-export trio,
+  `surfer.py::_record_durable_pod_export`) plus `probe_refs: list[str]=[]`
+  (the model's structured evidence refs, e.g. `exec:SPA shell`, ratified by
+  #209). A residual dict-valued `evidence` call returns the coded rejection
+  teaching that structured refs go in `provenance` and `evidence` is prose.
+
+### HuntsStoreArgs (hunter `hunts_store` tool)
+
+- `command` stays REQUIRED with the SAME coded teaching rejection on omission.
+- `spec: dict` stays UNTYPED (design intent: the author adds arbitrary fields).
+
+### NoteToolSpec (pod `note` tool)
+
+- `operation: str = "write"` already defaults to write (a tolerated
+  discriminator); the SAME coded teaching rejection applies to a malformed
+  call so the pod loop self-corrects instead of degrading silently.
+
 ## Open / not yet designed
 
-- The other tools' contracts (`hunts_store` / `notes` / `kb_query` / `exec` / `note`) - future sections of this draft.
-- Whether the orchestrator's `hunts_store` / `notes` closures migrate into this shared module.
+- The `kb_query` / `exec` tool contracts (`hunts_store` / `notes` / `kb_query`
+  / `exec` remain partially future sections).
+- Whether the orchestrator's `hunts_store` / `notes` closures migrate into this
+  shared module. The orchestrator closures (`actors.py::hunts_store` /
+  `::notes`) already use a required positional `cmd` + a coded `unknown cmd`
+  rejection - a stricter contract than the hunter's - and are left as-is by
+  #209.

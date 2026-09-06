@@ -55,7 +55,7 @@ import json
 from typing import Any, Callable, Literal
 
 from langchain_core.tools import BaseTool
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .hunter_memory import (
     DuplicateSpecError,
@@ -215,6 +215,64 @@ def _fault_key_violation(
     )
 
 
+# --- the coded teaching rejection (#209) --------------------------------------
+
+# The D84-22 refinement: a schema failure on the store/notes tools is a CODED
+# teaching rejection (never a bare ValidationError the harness turns into
+# `tool_failed`). The helper inspects the raw call + the pydantic error list and
+# translates the known drift shapes; anything else re-raises (the D84-22
+# rejected-call canon for an unknown parameter).
+
+_WRITE_INTENT_FIELDS = {
+    "notes": ("action", "fault_key", "note_name", "kind", "body"),
+    "hunts_store": ("mode", "spec", "fault_keyword", "strategy_keyword"),
+}
+
+
+def _coded_teaching_rejection(
+    name: str, tool_input: Any, exc: ValidationError,
+) -> str | None:
+    """Translate a known schema-drift `ValidationError` into a coded teaching
+    rejection JSON, else None (the call keeps failing as a rejected call)."""
+    if not isinstance(tool_input, dict):
+        return None
+    errors = exc.errors()
+    missing_command = any(
+        e.get("type") == "missing" and list(e.get("loc") or ()) == ["command"]
+        for e in errors
+    )
+    if missing_command and any(
+        k in tool_input for k in _WRITE_INTENT_FIELDS[name]
+    ):
+        return json.dumps({
+            "ok": False, "error": f"{name}_args_rejected",
+            "detail": "command is required: a write needs command=\"write\" "
+                      f"(action {tool_input.get('action', '')!r} is the write "
+                      f"option, not the command); a read needs command=\"read\"",
+        })
+    evidence_error = any(
+        e.get("type") == "string_type" and list(e.get("loc") or ()) == ["evidence"]
+        for e in errors
+    )
+    if evidence_error:
+        return json.dumps({
+            "ok": False, "error": "notes_args_rejected",
+            "detail": "evidence must be a string (prose); put structured refs "
+                      "in provenance (source/run_id/verdict_stub/probe_refs)",
+        })
+    provenance_error = any(
+        list(e.get("loc") or ())[:1] == ["provenance"] for e in errors
+    )
+    if provenance_error:
+        return json.dumps({
+            "ok": False, "error": "notes_args_rejected",
+            "detail": "provenance is the typed NoteProvenance "
+                      "(source/run_id/verdict_stub/probe_refs, extra=forbid): "
+                      + "; ".join(e.get("msg", "") for e in errors),
+        })
+    return None
+
+
 # --- the tool args schemas (extra="forbid", the pod's D84-22 discipline) -------
 
 
@@ -254,11 +312,36 @@ class HuntsStoreArgs(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class NoteProvenance(BaseModel):
+    """The TYPED provenance slot of a notes write (#209).
+
+    Mirrors the canonical record the code itself writes
+    (`surfer.py::_record_durable_pod_export`: `source` / `run_id` /
+    `verdict_stub`) plus `probe_refs` (the model's structured evidence refs,
+    e.g. `exec:SPA shell`, ratified by #209) - so the tool-calling schema and
+    the store-writer's record cannot drift. `extra="forbid"` (D84-22): a stray
+    key is a rejected call, never silently stored. `source` is the
+    design-pinned home of the pod session id (`hunting-164-state-graph-spec.md`
+    §6); `evidence` stays PROSE and structured refs never go there.
+    """
+
+    source: str = ""
+    run_id: str = ""
+    verdict_stub: bool = False
+    probe_refs: list[str] = Field(default_factory=list)
+
+    model_config = ConfigDict(extra="forbid")
+
+
 class NotesArgs(BaseModel):
     """The `notes` tool's ARGS contract: `read` / `write` cmds, the SAME data
     contract as `hunts_store` (G6). Write options `append` / `update` / `delete`;
     read is the grep-match read (by the fault_key - the 3-part config key -
-    parent / key / body keyword), read-latest."""
+    parent / key / body keyword), read-latest.
+
+    #209: `command` is the REQUIRED discriminator - `action` is the write
+    option, never the command. `evidence` is prose `str`; `provenance` is the
+    TYPED `NoteProvenance` structured slot."""
 
     command: Literal["read", "write"]
     # -- read path -----------------------------------------------------------
@@ -273,7 +356,7 @@ class NotesArgs(BaseModel):
     kind: str = "freeform"
     body: str = ""
     evidence: str | None = None
-    provenance: dict | None = None
+    provenance: NoteProvenance | None = None
 
     model_config = ConfigDict(extra="forbid")
 
@@ -298,7 +381,8 @@ class HuntsStoreTool(BaseTool):
     FAILS with the denoted `duplicate_spec` dedup signal the model reflects on
     (G4); `update` re-authors in place (G5). Reads degrade to an empty set (O4);
     genuine write failures raise to the harness (O3); an absent store degrades
-    fail-open."""
+    fail-open. #209: a call omitting the required `command` with write-intent
+    fields is a CODED teaching rejection (never a bare validation error)."""
 
     name: str = "hunts_store"
     description: str = (
@@ -333,6 +417,18 @@ class HuntsStoreTool(BaseTool):
         self._store = store
         self._project_id = project_id
         self._hunt_store = hunt_store
+
+    def invoke(self, input, config=None, **kwargs):
+        """#209: translate the known schema drift (missing `command` with
+        write-intent) into a coded teaching rejection; everything else keeps
+        the D84-22 rejected-call canon."""
+        try:
+            return super().invoke(input, config=config, **kwargs)
+        except ValidationError as exc:
+            coded = _coded_teaching_rejection("hunts_store", input, exc)
+            if coded is not None:
+                return coded
+            raise
 
     def _run(self, **kwargs: Any) -> str:
         args = HuntsStoreArgs(**kwargs)
@@ -414,19 +510,27 @@ class NotesTool(BaseTool):
     """The notes body read/write over the store's `notes.yaml` (G6, spec 5): the
     SAME data contract as `hunts_store`, write options `append` / `update` /
     `delete`. Reads degrade to an empty set (O4); genuine write failures raise
-    to the harness (O3); an absent store degrades fail-open."""
+    to the harness (O3); an absent store degrades fail-open. #209: a call
+    omitting the required `command` with write-intent, passing a dict-valued
+    `evidence`, or a stray provenance key is a CODED teaching rejection."""
 
     name: str = "notes"
     description: str = (
         "The hunt's notes seam - one note per fault covering all decisions that "
         "concern it, more detailed than the rationale. Commands: read / write.\n"
+        "A write MUST set command=\"write\" (action is the write option - "
+        "append | update | delete - not the command); a read sets "
+        "command=\"read\".\n"
         "write takes an action (append | update | delete), the fault_key "
         "- the hunt's OWN config identity, the 3-part config key "
         "<unit_id>_<CWE_ID>_<vulnerability_class> of "
         "the hunt's own config (spaces preserved; a fault_key that does not "
         "reference a persisted config returns the fault_key_mismatch error), a "
         "note_name, the note kind (hypothesis_refusal | implicit_test_primitive "
-        "| freeform), and the body (plus optional evidence / provenance); "
+        "| freeform), and the body. evidence is a plain string (prose); "
+        "structured refs go in provenance, the typed object with source, run_id, "
+        "verdict_stub, and probe_refs (extra=forbid - a stray provenance key is "
+        "rejected). "
         "update/delete on a missing note returns a denoted note_missing. read "
         "is the grep-match read, latest-first, by the fault_key parent / key / "
         "body keyword, optionally projected onto attributes."
@@ -440,6 +544,19 @@ class NotesTool(BaseTool):
         self._store = store
         self._project_id = project_id
         self._hunt_store = hunt_store
+
+    def invoke(self, input, config=None, **kwargs):
+        """#209: translate the known schema drift (missing `command` with
+        write-intent, dict-valued `evidence`, stray provenance key) into a coded
+        teaching rejection; everything else keeps the D84-22 rejected-call
+        canon."""
+        try:
+            return super().invoke(input, config=config, **kwargs)
+        except ValidationError as exc:
+            coded = _coded_teaching_rejection("notes", input, exc)
+            if coded is not None:
+                return coded
+            raise
 
     def _run(self, **kwargs: Any) -> str:
         args = NotesArgs(**kwargs)
@@ -486,7 +603,9 @@ class NotesTool(BaseTool):
                 self._project_id,
                 action=args.action, fault_key=args.fault_key,
                 note_name=args.note_name, kind=args.kind, body=args.body,
-                evidence=args.evidence, provenance=args.provenance,
+                evidence=args.evidence,
+                provenance=(args.provenance.model_dump()
+                            if args.provenance is not None else None),
             )
         except ValueError as exc:
             return json.dumps({"ok": False, "error": "invalid_args",
@@ -668,6 +787,7 @@ __all__ = [
     "KbQuerySpec",
     "KbAnswerBundle",
     "HuntsStoreArgs",
+    "NoteProvenance",
     "NotesArgs",
     "ExecArgs",
     "HuntsStoreTool",

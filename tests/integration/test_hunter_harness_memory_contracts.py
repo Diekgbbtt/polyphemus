@@ -107,7 +107,9 @@ def test_H2_fault_and_note_share_the_identifier_over_the_real_pipeline(tmp_path)
             "command": "write", "action": "append", "fault_key": FAULT_KEY,
             "note_name": "decision", "kind": "freeform",
             "body": "the trailing support hint", "evidence": "evidence-1",
-            "provenance": {"step": 2}}),
+            "provenance": {"source": "pod-export", "run_id": "r1",
+                           "verdict_stub": True,
+                           "probe_refs": ["exec:probe-1"]}}),
         _answer("concluded"),
     ]
     agent = build_hunter_agent(store, steps=steps)
@@ -122,7 +124,11 @@ def test_H2_fault_and_note_share_the_identifier_over_the_real_pipeline(tmp_path)
     assert notes[0]["key"] == f"{FAULT_KEY}:decision"
     assert notes[0]["body"] == "the trailing support hint"
     assert notes[0]["evidence"] == "evidence-1"
-    assert notes[0]["provenance"] == {"step": 2}
+    # #209: provenance is the TYPED NoteProvenance (extra="forbid") - the ratified
+    # shape round-trips verbatim, never a free-form dict.
+    assert notes[0]["provenance"] == {"source": "pod-export", "run_id": "r1",
+                                      "verdict_stub": True,
+                                      "probe_refs": ["exec:probe-1"]}
     # ONE identifier walks both bodies: the spec under test-specs/<fault_key>/,
     # the note key embedding <fault_key>
     assert store.read_specs(PROJECT, FAULT_KEY)[0]["fault_id"] == "F1"

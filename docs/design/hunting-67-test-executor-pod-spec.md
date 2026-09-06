@@ -92,6 +92,11 @@ Langfuse is fail-open and never a gate (C12).
   5. Symptom absent but coverage partial or observations impaired -> `unsuccessful`, terminal_reason `no-symptom-evidence`.
   6. Budget/timeout reached -> `unsuccessful`, terminal_reason `budget-timeout`, partial evidence.
   `clean` True = clean completed observations; False = blocked/unreachable or a mid-flight cut. `init_validation` present only on an INIT rejection.
+  **As of #209 - presentation rule**: the triager prompt presents `verdict` and `terminal_reason` as SEPARATE
+  outputs (e.g. "verdict successful, terminal_reason symptom-confirmed"), NEVER slash-joined shorthand
+  (`successful / symptom-confirmed`). A slash-joined string is copied verbatim by the model into `verdict`, fails
+  the `validate_decision` binary guard, and the degradation then mis-records a confirmed symptom as
+  `unsuccessful`.
 - The fixed caps (D67-09): `MAX_POD_ITERS = 3`, `EXEC_TIMEOUT_S = 300`, `HUNT_POD_MAX_TOOL_CALLS = 200`, `HUNT_POD_MAX_ITERS = 8`; all env-overridable, all pod-internal, never spec fields.
 - The testing pattern is an OPEN NL pattern inside the typed envelope (D67-07): the engine treats it as guidance over the generic loop.
   The closed-enum pattern engine is deferred to [#81](https://github.com/Diekgbbtt/polyphemus/issues/81).

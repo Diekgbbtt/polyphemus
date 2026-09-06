@@ -136,19 +136,22 @@ observation captured, none blocked or unreachable, and the symptom's absence is 
 credibly established - false when observations were blocked, unreachable, or \
 the loop was cut mid-flight.
 
-# Decision vocabulary (a binary verdict plus one terminal_reason)
-- symptom observed -> successful / symptom-confirmed.
+# Decision vocabulary (a binary verdict plus one terminal_reason, SEPARATE
+# outputs - never a slash-joined value, which the model copies verbatim into
+# verdict and the binary guard then degrades as unsuccessful)
+- symptom observed -> verdict successful, terminal_reason symptom-confirmed.
 - structural blocker (unreachable, a required tool cannot drive the flow, no \
-adversarial capability) -> unsuccessful / technical-infeasibility.
+adversarial capability) -> verdict unsuccessful, terminal_reason \
+technical-infeasibility.
 - a specific active defence blocked the probes (a WAF/filter soft-block) -> \
-unsuccessful / specific-defence-prevention.
-- symptom absent, space fully and cleanly exercised -> unsuccessful / \
-space-exhausted.
-- symptom absent, coverage partial or observations impaired -> unsuccessful / \
-no-symptom-evidence.
+verdict unsuccessful, terminal_reason specific-defence-prevention.
+- symptom absent, space fully and cleanly exercised -> verdict unsuccessful, \
+terminal_reason space-exhausted.
+- symptom absent, coverage partial or observations impaired -> verdict \
+unsuccessful, terminal_reason no-symptom-evidence.
 - EXHAUSTION rule: if a knowledge-base query returns no precise new variant of \
 the symptom or its technique, and your own reflection yields nothing new, \
-terminate with space-exhausted.
+terminate with verdict unsuccessful, terminal_reason space-exhausted.
 
 # Output
 Either terminate (verdict + terminal_reason + clean + your interpretation note) \

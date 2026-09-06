@@ -101,6 +101,21 @@ def test_triager_prompt_keeps_the_binary_vocabulary():
         assert token in POD_TRIAGER_SYSTEM
 
 
+def test_triager_prompt_presents_verdict_and_terminal_reason_separately():
+    """#209: the decision-vocabulary block presents `verdict` and
+    `terminal_reason` as SEPARATE outputs - never slash-joined shorthand. A
+    slash-joined string (`successful / symptom-confirmed`) is copied verbatim
+    by the model into `verdict`, fails the binary guard, and the degradation
+    mis-records a confirmed symptom as unsuccessful."""
+    vocab = POD_TRIAGER_SYSTEM.split("Decision vocabulary", 1)[1]
+    # the vocabulary names BOTH fields as separate outputs
+    assert "verdict" in vocab
+    assert "terminal_reason" in vocab
+    # no slash-joined "X / Y" shorthand anywhere in the block
+    for line in vocab.splitlines():
+        assert " / " not in line, line
+
+
 def test_triager_prompt_keeps_the_exhaustion_rule():
     lc = POD_TRIAGER_SYSTEM.lower()
     assert "exhaustion" in lc
