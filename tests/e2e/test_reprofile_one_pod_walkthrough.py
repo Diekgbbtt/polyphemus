@@ -37,9 +37,28 @@ _REPROFILE_PATHS = [
     ).split(",") if p.strip()
 ]
 
+# The key the live triager model needs, resolved the way the app does
+# (`providers._key_env`: `API_KEY_<PROVIDER>`, hyphens as underscores). The
+# stack's triager is `opencode:opencode/muse-spark-...` -> `API_KEY_OPENCODE`;
+# the legacy OPENROUTER/OPENAI names cover host-side runs predating the
+# per-provider convention.
+_LLM_KEY_ENVS = ("API_KEY_OPENROUTER", "OPENAI_API_KEY")
+
+
+def _triager_key_present() -> bool:
+    if any(os.environ.get(k) for k in _LLM_KEY_ENVS):
+        return True
+    model = os.environ.get("LLM_MODEL_TRIAGER", "")
+    provider = model.split(":", 1)[0] if ":" in model else ""
+    return bool(provider) and bool(
+        os.environ.get("API_KEY_" + provider.upper().replace("-", "_"))
+    )
+
+
 pytestmark = pytest.mark.skipif(
-    not (os.environ.get("OPENAI_API_KEY") or os.environ.get("API_KEY_OPENROUTER")),
-    reason="live OpenRouter key required (OPENAI_API_KEY or API_KEY_OPENROUTER)",
+    not _triager_key_present(),
+    reason="live triager model key required (the LLM_MODEL_TRIAGER provider's "
+    "API_KEY_<PROVIDER>, or OPENAI_API_KEY / API_KEY_OPENROUTER)",
 )
 
 
@@ -51,11 +70,20 @@ def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
         return False
 
 
+def _in_network() -> bool:
+    """True when running inside the compose network / the agent container: the
+    co-located gateway (ADR D1) answers on the container's own loopback. A
+    host-side run never has a gateway on localhost:4000."""
+    return bool(os.environ.get("LLM_GATEWAY_URL")) and _port_open("localhost", 4000)
+
+
 def _bridge_env_to_localhost() -> None:
-    """Bridge the operator's .env for a host-side run: OpenRouter key ->
+    """Bridge the operator's .env for a HOST-side run: OpenRouter key ->
     API_KEY_OPENROUTER, per-role models, and localhost service URLs. Then
     reload config + neo4j_client so they bind to the live stack (conftest may
-    have frozen dummy values at collection)."""
+    have frozen dummy values at collection). Skipped in-network: the stack env
+    already carries the service-DNS targets (neo4j/postgres/kali) and the
+    co-located gateway."""
     key = os.environ.get("API_KEY_OPENROUTER") or os.environ.get("OPENAI_API_KEY")
     os.environ["API_KEY_OPENROUTER"] = key
     os.environ["LLM_MODEL_TRIAGER"] = os.environ.get(
@@ -74,11 +102,17 @@ def _bridge_env_to_localhost() -> None:
 
 
 def test_e1_reprofile_dispatches_one_pod_and_stamps_every_profile():
-    if not (_port_open("localhost", 7687) and _port_open("localhost", 5432)
-            and _port_open("localhost", 8000)):
-        pytest.skip("live stack (neo4j:7687 / postgres:5432 / kali:8000) not reachable")
-
-    _bridge_env_to_localhost()
+    in_network = _in_network()
+    if in_network:
+        # Service-DNS targets, exactly as the agent resolves them.
+        if not (_port_open("neo4j", 7687) and _port_open("postgres", 5432)
+                and _port_open("kali", 8000)):
+            pytest.skip("live stack (neo4j/postgres/kali) not reachable in-network")
+    else:
+        if not (_port_open("localhost", 7687) and _port_open("localhost", 5432)
+                and _port_open("localhost", 8000)):
+            pytest.skip("live stack (neo4j:7687 / postgres:5432 / kali:8000) not reachable")
+        _bridge_env_to_localhost()
 
     import asyncio
 
@@ -95,10 +129,20 @@ def test_e1_reprofile_dispatches_one_pod_and_stamps_every_profile():
 
     neo4j_client.ensure_schema()
     pg.create_project(project_id, "reprofile-one-pod-e1")
-    pg.save_settings(project_id, {"target_seed": _REPROFILE_BASEURL})
+    # The seed must be the BARE HOST, never a URL: `parse_scope` reads it verbatim
+    # and the pipeline threads it as `scope_domain` into `curate`'s D14 filter
+    # (`host_in_scope(host, scope_domain)` compares hostnames). A `https://`
+    # seed never equals the parsed `soupmarket.shop` host, so the filter drops
+    # EVERY parsed asset and no profile is ever stamped.
+    seed_host = _REPROFILE_BASEURL.split("://", 1)[-1].rstrip("/")
+    pg.save_settings(project_id, {"target_seed": seed_host})
 
     # Seed the surface as if the crawlers had produced it: one BaseURL with
     # root `/` plus the known endpoint paths (the reprofile phase's input).
+    # The Endpoints carry `method` because the curator's Endpoint identity is
+    # `{path, method, baseurl}` - a seed without it would be a DIFFERENT node
+    # than the parse deltas, so the reprofile pass would mint duplicates and
+    # the seeded node would never receive its `profile`.
     with neo4j_client._driver.session() as s:
         s.run(
             "MERGE (b:BaseURL {url: $base, project_id: $pid}) "
@@ -109,14 +153,22 @@ def test_e1_reprofile_dispatches_one_pod_and_stamps_every_profile():
             url = _REPROFILE_BASEURL.rstrip("/") + path
             s.run(
                 "MERGE (e:Endpoint {url: $url, project_id: $pid}) "
-                "SET e.baseurl = $base, e.path = $path "
+                "SET e.baseurl = $base, e.path = $path, e.method = 'GET' "
                 "SET e.last_seen = datetime()",
                 url=url, base=_REPROFILE_BASEURL, path=path, pid=project_id,
             )
 
     asyncio.run(
         pipeline.run_pipeline(
-            project_id, run_id=run_id, job_subset=["httpx_reprofile"],
+            project_id, run_id=run_id,
+            # `validate_job_subset` requires a job's consumed type to be produced
+            # by an earlier SELECTED job, so a bare `["httpx_reprofile"]` is
+            # rejected (Endpoint is not produced by any earlier selected job).
+            # httpx is the minimal producer: one `-u <seed>` probe that re-mints
+            # the already-seeded root (MERGE, idempotent - no probe-set growth).
+            # The walkthrough still asserts ONLY the reprofile pod's O(1) shape;
+            # httpx's own outcome is fail-open and never asserted.
+            job_subset=["httpx", "httpx_reprofile"],
         )
     )
 
