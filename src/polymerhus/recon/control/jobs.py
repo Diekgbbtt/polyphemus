@@ -106,20 +106,36 @@ JOBS: dict[str, JobSpec] = {
     "httpx_reprofile": JobSpec(
         tool="httpx_reprofile",
         skill="http_probe",
-        # Same httpx probe as the phase-3 job, but pointed at ENDPOINTS instead of
-        # Subdomains. Reuses parse_httpx (registered under this tool name in
-        # PARSERS), so each Endpoint's profile is assigned via the identical
-        # noise_filter.classify_profile path - no duplicated classify logic.
-        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_header}",
+        # #208 one-pod reprofile: the pass is ONE pod running ONE httpx exec over
+        # the FULL dedup'd endpoint set (no per-endpoint fan-out, O(1) triager
+        # turns per job). The URL list is written to the per-pod workdir and fed
+        # via `-l`; the `-o` JSONL file is cat'd to stdout for parse_httpx - the
+        # established `/work/{session}` file + cat persistence pattern (cf.
+        # ffuf/arjun/subdomain_takeover). The empty seed guarantees a zero-finding
+        # run still exits 0 (httpx -o may not create the file when nothing
+        # responds - the arjun `printf '{}'` lesson). Reuses parse_httpx
+        # (registered under this tool name in PARSERS), so each Endpoint's profile
+        # is assigned via the identical noise_filter.classify_profile path - no
+        # duplicated classify logic. `{auth_header}` threads the pod's
+        # `extra["auth_context"]` exactly as the per-endpoint probe did - one auth
+        # shape for the whole surface for now; per-endpoint auth shaping is the
+        # authN-first-class forward work (operator, #208 grilling).
+        command_template=(
+            "printf '' > /work/{session}/reprofile.json && "
+            "printf '%s\\n' {endpoints} > /work/{session}/endpoints.txt && "
+            "httpx -l /work/{session}/endpoints.txt -sc -title -server -td -fr "
+            "-silent -json -irh {auth_header} -o /work/{session}/reprofile.json "
+            ">/dev/null && cat /work/{session}/reprofile.json"
+        ),
         produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
-        # D16 per-endpoint split: profile EVERY produced Endpoint, not just
-        # BaseURL roots. `{target}` resolves to the Endpoint's own `url`, so httpx
-        # probes each endpoint (incl. crawler/JS-minted `/api/...` under a webapp
-        # root) and parse_httpx stamps that Endpoint's own `profile`; the root `/`
-        # probe additionally mirrors onto `BaseURL.profile`. The input set is
-        # prepared by `batching.prepare_endpoint_profile_assets` (dedup dynamic
-        # routes + materialise a root `/` per BaseURL) via the endpoint_profiling
-        # flag - the same seam `batch` uses for jsluice.
+        # #208 one-pod reprofile (D16 per-endpoint split, superseded dispatch):
+        # profile EVERY produced Endpoint, not just BaseURL roots. `{endpoints}`
+        # is the dedup'd probe set prepared by
+        # `batching.prepare_endpoint_profile_assets` (dedup dynamic routes +
+        # materialise a root `/` per BaseURL), packed into ONE pod_input by the
+        # `endpoint_profiling` preprocess branch. parse_httpx stamps each probed
+        # Endpoint's own `profile`; the root `/` probe additionally mirrors onto
+        # `BaseURL.profile`. Enrichment only - fills gaps, never re-discovers.
         consumes="Endpoint",
         endpoint_profiling=True,
         use_auth=True,

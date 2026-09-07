@@ -61,11 +61,13 @@ def test_phases_run_in_order_behind_a_barrier():
     run_job has returned. Enforced by holding the sole phase-0 job open on
     an asyncio.Event the test controls."""
     call_order = []
+    phase0_started = asyncio.Event()
     phase0_gate = asyncio.Event()
 
     async def run_job(job, input_assets, *, run_id, phase, extra):
         call_order.append((phase, job.tool))
         if phase == 0:
+            phase0_started.set()
             await phase0_gate.wait()
         return [PodExport(input_asset={}, verdict="success")]
 
@@ -84,7 +86,11 @@ def test_phases_run_in_order_behind_a_barrier():
                 read_assets=make_read_assets(),
             )
         )
-        await asyncio.sleep(0.05)
+        # Deterministic barrier, not a sleep: wait until phase-0's run_job has
+        # actually started (the old fixed 50ms sleep was a timing race - under
+        # load the pipeline might not have reached run_job yet and the assertion
+        # flaked on an empty call_order).
+        await phase0_started.wait()
         # Phase 1 (dnsx) must not have started while phase 0 is still gated.
         assert call_order == [(0, "subfinder")]
 
@@ -384,6 +390,43 @@ def test_job_stats_records_consumed_and_produced_lineage():
     assert dnsx["stats"]["produced_observations"] == 5
     # Existing pod counts still present (not regressed).
     assert dnsx["stats"]["pods"] == 2
+
+
+def test_reprofile_job_stats_surface_endpoints_total():
+    """#208: the reprofile pod is ONE pod for the WHOLE pass - the export's
+    `endpoints_total` (the probe-set size) must surface into recon_jobs.stats
+    so the phase's lineage is verifiable from persisted state (the D12
+    `consumed` count is the pre-dedup endpoint population)."""
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        if job.tool == "httpx_reprofile":
+            return [PodExport(
+                input_asset={"endpoints": [{"url": "https://h/a"}, {"url": "https://h/b"}]},
+                verdict="success",
+                stats={"command": "httpx -l ...", "endpoints_total": 2},
+            )]
+        return [PodExport(input_asset={}, verdict="success")]
+
+    registry = FakeRegistry()
+    settings = {"target_domain": "*.t.com"}
+    def read_assets(node_type, project_id):
+        return [{"url": "https://h/a"}, {"url": "https://h/b"}]
+
+    asyncio.run(
+        pipeline.run_pipeline(
+            "proj1",
+            run_id="run-rp",
+            job_subset=["subfinder", "httpx", "httpx_reprofile"],
+            run_job=run_job,
+            load_settings=make_load_settings(settings),
+            registry=registry,
+            read_assets=read_assets,
+        )
+    )
+
+    rp = [c for c in registry.upsert_job_calls
+          if c["job"] == "httpx_reprofile" and c["stats"] is not None][-1]
+    assert rp["stats"]["pods"] == 1
+    assert rp["stats"]["endpoints_total"] == 2
 
 
 def test_batched_jsluice_job_gets_filtered_read_and_apex_for_downstream_batching():

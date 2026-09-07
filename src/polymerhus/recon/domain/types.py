@@ -54,11 +54,13 @@ class JobSpec(BaseModel):
     consumes: str
     consumes_where: AssetSelector | None = None
     batch: bool = False
-    # D16 per-endpoint split: this job re-probes the Endpoint population to
-    # stamp each Endpoint's own `profile`. Its input set is prepared by
+    # #208 one-pod reprofile (D16 per-endpoint split, superseded dispatch): this
+    # job re-probes the Endpoint population to stamp each Endpoint's own
+    # `profile`. Its probe SET is prepared by
     # `batching.prepare_endpoint_profile_assets` (dedup dynamic routes +
-    # materialise a root `/` per BaseURL), mirroring how `batch` gates jsluice's
-    # `build_batch_assets`.
+    # materialise a root `/` per BaseURL) and packed into ONE pod_input by the
+    # `endpoint_profiling` preprocess branch - the pass dispatches exactly one
+    # pod regardless of endpoint count, paying O(1) triager turns per job.
     endpoint_profiling: bool = False
     # D16 per-endpoint split: this job (kiterunner) fuzzes under an evidence-
     # derived API-root prefix. Its input Endpoints (profile==restapi) are grouped

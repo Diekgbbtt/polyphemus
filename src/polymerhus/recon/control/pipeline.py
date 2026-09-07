@@ -569,6 +569,18 @@ async def run_pipeline(
                 ]
                 if commands:
                     job_stats["commands"] = commands
+                # #208: the reprofile pass is ONE pod for the whole dedup'd probe
+                # set - surface the probe-set size from the export so the phase's
+                # lineage is verifiable from persisted state (the D12 `consumed`
+                # count is the pre-dedup endpoint population; this is the actual
+                # number of URLs the single pod probed).
+                endpoints_total = next(
+                    (e.stats.get("endpoints_total") for e in pod_exports
+                     if e.stats and e.stats.get("endpoints_total") is not None),
+                    None,
+                )
+                if endpoints_total is not None:
+                    job_stats["endpoints_total"] = endpoints_total
                 # Surface a crawl job's Steel viewer URL (interactive
                 # steel_await_auth MVP path, see crawl_pod.py) so
                 # GET /recon/{run_id} lets the operator complete manual login -

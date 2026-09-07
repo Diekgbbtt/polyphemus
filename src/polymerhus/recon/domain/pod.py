@@ -122,6 +122,7 @@ def fill_template(
     *,
     session_id: str = "",
     tool: str = "",
+    endpoints: list[str] | None = None,
 ) -> str:
     """Deterministic placeholder fill for a job's command_template.
 
@@ -129,6 +130,9 @@ def fill_template(
     - {domain}: input_asset["name"] or ["domain"], falling back to {target}.
     - {baseurl}: input_asset["url"] or ["baseurl"], falling back to {target}.
     - {session}: the pod's session_id (per-pod `/work/{session}` workdir key).
+    - {endpoints} (#208): the reprofile pod's full endpoint list, shell-quoted
+      and space-joined, so ONE httpx exec can be fed the whole probe set via a
+      `printf ... > file && httpx -l file` command. Empty when not provided.
     - {auth_header}: empty unless extra["auth_context"] is present, in which
       case it is serialized to the tool-appropriate cookie flag via
       `_auth_header`. Auth-eligibility is decided ONCE, upstream: the pipeline
@@ -152,6 +156,9 @@ def fill_template(
     result = result.replace("{session}", str(session_id))
     result = result.replace("{auth_header}", auth_header)
     result = result.replace("{rate_flags}", rate_flags)
+    if "{endpoints}" in result:
+        quoted = " ".join(shlex.quote(u) for u in endpoints or [])
+        result = result.replace("{endpoints}", quoted)
     return result
 
 
@@ -240,6 +247,22 @@ def _auth_header(auth_context: dict, tool: str) -> str:
     return " ".join(f"-H {shlex.quote(f'{name}: {value}')}" for name, value in pairs)
 
 
+def _best_effort_triage(triage_fn, exec_result, assets, job) -> list:
+    """Structural decoupling (#208): production (exec -> parse -> curate of the
+    asset deltas) and consumption (the triager's Observations) are separate
+    concerns. A raising triage_fn degrades to no-observations instead of failing
+    the pod, so the already-parsed profiles still reach the curator. The live
+    `default_triage_fn` already fail-opens internally (None -> []); this node-level
+    guard extends the same contract to any injected triage_fn."""
+    try:
+        return list(triage_fn(exec_result, assets, job))
+    except Exception:  # noqa: BLE001 - the triager is a proposer; it must never fail a pod
+        logger.warning(
+            "triager failed for job %s; degrading to no observations "
+            "(parsed assets still curated)", getattr(job, "tool", ""), exc_info=True)
+        return []
+
+
 def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
     """Build the compiled recon-pod subgraph, injecting the side-effecting
     collaborators: exec_fn(command, session_id, timeout_s) -> ExecResult,
@@ -297,6 +320,30 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
             from polymerhus.recon.control.batching import build_batch_command
 
             command = build_batch_command(job, input_asset["batch"])
+        elif job.endpoint_profiling:
+            # #208 one-pod reprofile: the pod runs ONE httpx exec over the FULL
+            # dedup'd endpoint set (the whole reprofile pass in a single pod).
+            # The command writes the shell-quoted URL list to the per-pod
+            # workdir and probes it via `httpx -l`, then cats the `-o` JSON
+            # file - the established `/work/{session}` file + cat persistence
+            # pattern. `endpoints` extracts each asset's probe URL via the
+            # shared bundle_url helper (url, else baseurl+path). The dispatch
+            # is TOTAL: an endpoint_profiling job MUST arrive with its packed
+            # `endpoints` set (the preprocess packs it into ONE pod_input); a
+            # mis-shaped dispatch raises rather than silently probing nothing.
+            if "endpoints" not in input_asset:
+                raise ValueError(
+                    f"endpoint_profiling job {job.tool} dispatched without an "
+                    "'endpoints' set - default_preprocess_fn must pack the dedup'd "
+                    "probe set into ONE pod_input (#208)"
+                )
+            from polymerhus.recon.control.batching import bundle_url
+
+            urls = [u for u in (bundle_url(e) for e in input_asset["endpoints"]) if u is not None]
+            command = fill_template(
+                job.command_template, input_asset, extra,
+                session_id=state["session_id"], tool=job.tool, endpoints=urls,
+            )
         else:
             command = fill_template(
                 job.command_template,
@@ -351,13 +398,13 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
                                   state.get("input_asset", {}), role_id="triager")
             token = _pod_ctx().set(SessionContext(address, get_session_checkpointer()))
             try:
-                observations = list(
-                    triage_fn(state["exec_result"], state.get("assets", []), job))
+                observations = _best_effort_triage(
+                    triage_fn, state["exec_result"], state.get("assets", []), job)
             finally:
                 _pod_ctx().reset(token)
         else:
-            observations = list(
-                triage_fn(state["exec_result"], state.get("assets", []), job))
+            observations = _best_effort_triage(
+                triage_fn, state["exec_result"], state.get("assets", []), job)
 
         parser_module = _FINDINGS_MODULES.get(job.tool)
         parse_findings_fn = getattr(parser_module, "parse_findings", None)
@@ -376,6 +423,7 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
         return {"observations": observations}
 
     def curator_node(state: PodState) -> dict:
+        job = state["job"]
         assets = state.get("assets", [])
         observations = state.get("observations", [])
         # The seed scope domain (D14) and the exact-mode seed_domain (D28) ride
@@ -394,6 +442,14 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
             assets, observations, state["project_id"], **curate_kwargs
         )
         invocation = state.get("invocation")
+        stats = {"command": invocation.command} if invocation is not None else None
+        if job.endpoint_profiling:
+            # #208: the reprofile pod is ONE pod for the WHOLE pass - record how
+            # many endpoints it probed so the phase's lineage is recoverable from
+            # the export (the D12 `consumed` count is the pre-dedup population).
+            if stats is None:
+                stats = {}
+            stats["endpoints_total"] = len((state.get("input_asset") or {}).get("endpoints") or [])
         export = PodExport(
             input_asset=state["input_asset"],
             verdict="success",
@@ -403,7 +459,7 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
             assets=merged_assets,
             observations=merged_observations,
             iterations=state.get("iteration", 0),
-            stats={"command": invocation.command} if invocation is not None else None,
+            stats=stats,
         )
         return {"export": export}
 

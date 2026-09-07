@@ -2,19 +2,21 @@
 
 Two-level nesting (design §3): `build_job_agent` compiles a
 `StateGraph(JobState)` with two nodes - `preprocess` (maps a job's
-`input_assets` 1:1 into `pod_inputs`, up to the MAX_JOB_ASSETS budget) and
-`pod_runner` (invokes the Foundation pod subgraph once per pod_input, fanned
-out via `Send`). `run_job` invokes the graph with `max_concurrency=MAX_PODS`,
-so ALL assets are covered but only MAX_PODS pods run at once (MAX_PODS is a
-concurrency ceiling, not an asset cap). Results accumulate into `pod_exports`
-through an `operator.add` reducer so the parallel `pod_runner` Sends don't
-clobber each other.
+`input_assets` into `pod_inputs`, up to the MAX_JOB_ASSETS budget; the
+per-endpoint reprofile pass collapses its whole probe set into ONE pod_input -
+#208) and `pod_runner` (invokes the Foundation pod subgraph once per pod_input,
+fanned out via `Send`). `run_job` invokes the graph with
+`max_concurrency=MAX_PODS`, so ALL assets are covered but only MAX_PODS pods
+run at once (MAX_PODS is a concurrency ceiling, not an asset cap). Results
+accumulate into `pod_exports` through an `operator.add` reducer so the parallel
+`pod_runner` Sends don't clobber each other.
 
 `pod_invoke` and `preprocess_fn` are injected - production wires
 `default_pod_invoke` (wraps Foundation `polymerhus.recon.domain.pod.pod_graph`) and
 `default_preprocess_fn` (deterministic 1:1 asset->pod_input mapping up to the
-MAX_JOB_ASSETS budget; `extra` - including the orchestration-level
-`extra["steering"]` signals - is threaded through verbatim). The per-asset
+MAX_JOB_ASSETS budget, except for batched/reprofile jobs which pack; `extra` -
+including the orchestration-level `extra["steering"]` signals - is threaded
+through verbatim). The per-asset
 throttling decision that once lived here (`decide_pod_selection`, #81) moved into
 the pod graph's configurator node (#94): each pod consults a stateful per-pod
 `configurator` role turn and sets its own `rate_profile`. `notify_fn` (optional)
@@ -82,12 +84,15 @@ class JobState(TypedDict, total=False):
 def default_preprocess_fn(
     input_assets: list[dict], job: JobSpec, extra: dict, asset_context: str
 ) -> list[dict]:
-    """Deterministic fallback: 1:1 map input_assets -> pod_inputs, capped at the
+    """Deterministic fallback: map input_assets -> pod_inputs, capped at the
     MAX_JOB_ASSETS total-work budget (NOT MAX_PODS, which is the concurrency
-    ceiling applied at fan-out time). All assets up to the budget become pods and
-    are processed MAX_PODS at a time. `extra.auth_context` is threaded through
-    ONLY for `use_auth` jobs - non-auth pods must never see it, even if the
-    caller passed it in.
+    ceiling applied at fan-out time). The mapping is 1:1 for plain jobs; a
+    batched job (jsluice) reduces+pack bundles into <= MAX_PODS batch-pods; the
+    endpoint-profiling reprofile pass (#208) collapses its whole dedup'd probe
+    set into ONE pod_input - the pod pays O(1) triager turns, not O(N). All
+    assets up to the budget become pods and are processed MAX_PODS at a time.
+    `extra.auth_context` is threaded through ONLY for `use_auth` jobs - non-auth
+    pods must never see it, even if the caller passed it in.
 
     This is the seam an LLM-driven cleaning/dedup pass (chat_model_for
     ("job_orchestrator")) would replace for `configurator_mode == "agent"`
@@ -110,13 +115,23 @@ def default_preprocess_fn(
             input_assets or [], apex_registrable=apex_registrable, max_pods=MAX_PODS
         )
     elif job.endpoint_profiling:
-        # D16 per-endpoint split: dedup the Endpoint population to one probe per
-        # (baseurl, method, path-template) and materialise a root `/` per BaseURL,
-        # so the active re-probe stays bounded on the constrained host and every
-        # host still gets its root-mirror profile.
+        # #208 one-pod reprofile: the pass is an ENRICHMENT phase (it fills
+        # missing technical info - methods/parameters/headers/response shapes -
+        # on endpoints already collected by discovery). There is no per-endpoint
+        # isolation need, and the per-endpoint fan-out paid O(N) triager LLM
+        # turns per job (each failing turn burning ~5min on a reasoning model -
+        # the #206 amplifier). So the dedup'd probe set is collapsed into ONE
+        # pod_input; the pod's configurator builds a single httpx exec over the
+        # full `-l` list (the established `/work/{session}` file pattern). The
+        # dedup iteration-set semantics (`prepare_endpoint_profile_assets`:
+        # dynamic-route collapse + root `/` materialisation per BaseURL, skip
+        # already-profiled non-root endpoints) ride along unchanged - only the
+        # DISPATCH shape changes. `MAX_JOB_ASSETS` now caps the probe SET (the
+        # whole set fits one pod), not the pod count.
         from polymerhus.recon.control.batching import prepare_endpoint_profile_assets
 
-        input_assets = prepare_endpoint_profile_assets(input_assets or [])
+        prepared = prepare_endpoint_profile_assets(input_assets or [])[:MAX_JOB_ASSETS]
+        input_assets = [{"endpoints": prepared}] if prepared else []
     elif job.api_scope:
         # D16 per-endpoint split: collapse a host's `restapi` Endpoints into
         # evidence-derived API-root scan-target prefixes (one pod per target).
