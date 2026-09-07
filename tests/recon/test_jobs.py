@@ -306,16 +306,23 @@ def test_httpx_reprofile_reuses_the_httpx_parser():
 
 def test_httpx_reprofile_consumes_endpoints_for_per_endpoint_profiling():
     # D16 per-endpoint split: it consumes the ENDPOINT population (each endpoint's
-    # own URL becomes {target}), not just BaseURL roots, and flags
+    # own URL becomes a probe), not just BaseURL roots, and flags
     # endpoint_profiling so its input set gets dedup + root-`/`-materialisation
     # prep. It is an authenticated probe so behind-auth endpoints classify right.
+    # #208: the DISPATCH is now one pod over the whole dedup'd set - the command
+    # template feeds the full endpoint list via `httpx -l` and persists the JSON
+    # output to the per-pod workdir (`-o` + cat, the ffuf/arjun pattern), so it
+    # carries no single `{target}`.
     job = JOBS["httpx_reprofile"]
     assert job.consumes == "Endpoint"
     assert job.consumes_where is None
     assert job.endpoint_profiling is True
     assert job.use_auth is True
-    assert "{target}" in job.command_template
+    assert "{endpoints}" in job.command_template
+    assert "{session}" in job.command_template
     assert "{auth_header}" in job.command_template
+    assert "{target}" not in job.command_template
+    assert "httpx -l" in job.command_template
 
 
 def test_httpx_reprofile_runs_after_jsluice_and_before_the_api_phases():

@@ -396,3 +396,80 @@ def test_build_job_agent_notify_fires_also_for_failed_pods():
 
     assert len(called) == 1  # a failure is still a completion the parent must hear about
     assert called[0].verdict == "failed"
+
+
+# --- #208: httpx_reprofile is ONE pod over the dedup'd endpoint set ----------
+# The reprofile pass is an ENRICHMENT phase: it fills missing technical info for
+# endpoints already collected. There is no per-endpoint isolation need, and the
+# per-endpoint fan-out paid O(N) triager turns (each failing turn burning ~5min
+# on a reasoning model, the #206 amplifier). The one-pod shape collapses the
+# whole dedup'd probe set into a single pod; the pod's configurator builds ONE
+# httpx exec feeding the full `-l` list. `prepare_endpoint_profile_assets`
+# semantics (dynamic-route collapse + root `/` materialisation per BaseURL) are
+# the iteration set, unchanged.
+
+
+def _reprofile_assets():
+    return [
+        {"url": "https://h/api/v1/users/1", "baseurl": "https://h", "path": "/api/v1/users/1"},
+        {"url": "https://h/api/v1/users/2", "baseurl": "https://h", "path": "/api/v1/users/2"},
+        {"url": "https://h/api/v1/orders", "baseurl": "https://h", "path": "/api/v1/orders"},
+    ]
+
+
+def test_httpx_reprofile_dispatches_exactly_one_pod_regardless_of_endpoint_count(monkeypatch):
+    monkeypatch.setattr(ja, "MAX_PODS", 5)
+    monkeypatch.setattr(ja, "MAX_JOB_ASSETS", 100)
+    pod_invoke = make_recording_pod_invoke()
+    agent = ja.build_job_agent(pod_invoke=pod_invoke, preprocess_fn=ja.default_preprocess_fn)
+
+    agent.invoke(base_state(JOBS["httpx_reprofile"], _reprofile_assets()))
+
+    assert len(pod_invoke.calls) == 1  # ONE pod regardless of endpoint count
+    endpoints = pod_invoke.calls[0]["input_asset"]["endpoints"]
+    # the dedup iteration set rides along: /users/1 and /users/2 collapse to one
+    # probe, and the root `/` is materialised per BaseURL
+    paths = sorted(e.get("path") or "/" for e in endpoints)
+    assert paths == ["/", "/api/v1/orders", "/api/v1/users/1"]
+
+
+def test_httpx_reprofile_empty_endpoint_set_dispatches_no_pod(monkeypatch):
+    monkeypatch.setattr(ja, "MAX_PODS", 5)
+    monkeypatch.setattr(ja, "MAX_JOB_ASSETS", 100)
+    pod_invoke = make_recording_pod_invoke()
+    agent = ja.build_job_agent(pod_invoke=pod_invoke, preprocess_fn=ja.default_preprocess_fn)
+
+    agent.invoke(base_state(JOBS["httpx_reprofile"], []))
+
+    assert pod_invoke.calls == []  # nothing to enrich -> skipped, no pod
+
+
+def test_httpx_reprofile_asset_budget_caps_iteration_set_not_pod_count(monkeypatch):
+    monkeypatch.setattr(ja, "MAX_PODS", 5)
+    monkeypatch.setattr(ja, "MAX_JOB_ASSETS", 2)
+    pod_invoke = make_recording_pod_invoke()
+    agent = ja.build_job_agent(pod_invoke=pod_invoke, preprocess_fn=ja.default_preprocess_fn)
+
+    assets = [
+        {"url": f"https://h/p{i}", "baseurl": "https://h", "path": f"/p{i}"}
+        for i in range(10)
+    ]
+    agent.invoke(base_state(JOBS["httpx_reprofile"], assets))
+
+    assert len(pod_invoke.calls) == 1
+    endpoints = pod_invoke.calls[0]["input_asset"]["endpoints"]
+    assert len(endpoints) == 2  # the budget caps the probe SET, not the pod count
+
+
+def test_httpx_reprofile_threads_auth_context_into_the_single_pod(monkeypatch):
+    monkeypatch.setattr(ja, "MAX_PODS", 5)
+    pod_invoke = make_recording_pod_invoke()
+    agent = ja.build_job_agent(pod_invoke=pod_invoke, preprocess_fn=ja.default_preprocess_fn)
+
+    job = JOBS["httpx_reprofile"]
+    assert job.use_auth is True
+    extra = {"auth_context": {"cookies": [{"name": "s", "value": "v"}]}}
+    agent.invoke(base_state(job, _reprofile_assets(), extra=extra))
+
+    assert len(pod_invoke.calls) == 1
+    assert pod_invoke.calls[0]["extra"].get("auth_context") == extra["auth_context"]

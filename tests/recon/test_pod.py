@@ -546,6 +546,117 @@ def test_batched_jsluice_parser_emits_endpoint_and_redacted_secret():
                for e in secrets[0].edges)
 
 
+# --- #208: httpx_reprofile is ONE pod running ONE exec over the full set ----
+# The reprofile pod receives the full dedup'd endpoint list in its input asset
+# (`{"endpoints": [...]}`). The configurator builds ONE httpx exec that writes
+# the list to the per-pod workdir and probes it via `httpx -l`, then cats the
+# `-o` JSON file - the established `/work/{session}` file + cat persistence
+# pattern (cf. ffuf/arjun/subdomain_takeover). The pod pays ONE triager turn
+# over the aggregate output (O(1) per job, not O(N)); a triager failure
+# degrades to no-observations while the parsed profiles still reach the curator
+# (production/consumption structurally decoupled, fail-open).
+
+
+REPROFILE_JOB = JOBS["httpx_reprofile"]
+
+REPROFILE_ENDPOINTS = [
+    {"url": "https://h/api/v1/orders", "baseurl": "https://h", "path": "/api/v1/orders"},
+    {"url": "https://h/", "baseurl": "https://h", "path": "/"},
+]
+
+_REPROFILE_STDOUT = (
+    '{"url":"https://h/api/v1/orders","input":"https://h/api/v1/orders",'
+    '"status_code":200,"content_type":"application/json"}\n'
+    '{"url":"https://h/","input":"https://h/","status_code":200,'
+    '"content_type":"text/html"}'
+)
+
+
+def test_fill_template_fills_endpoints_as_shell_quoted_list():
+    cmd = pod.fill_template(
+        "printf '%s\\n' {endpoints} > /work/{session}/e.txt && "
+        "httpx -l /work/{session}/e.txt {auth_header}",
+        {}, {"auth_context": {"cookies": [{"name": "s", "value": "v"}]}},
+        session_id="sess-1", tool="httpx_reprofile",
+        endpoints=["https://h/a", "https://h/b c"],
+    )
+    assert "https://h/a" in cmd
+    assert "'https://h/b c'" in cmd  # shell-quoted, so a space never breaks the list
+    assert "Cookie: s=v" in cmd      # auth threaded into the single command
+
+
+def test_reprofile_configurator_builds_single_exec_over_full_endpoint_list():
+    captured = {}
+    triage_calls = []
+
+    def exec_fn(cmd, sid, t):
+        captured["cmd"] = cmd
+        return ExecResult(stdout=_REPROFILE_STDOUT, stderr="", returncode=0, duration_ms=5)
+
+    def triage_fn(er, assets, job):
+        triage_calls.append(er)
+        return []
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=triage_fn,
+    )
+    out = g.invoke({
+        "job": REPROFILE_JOB,
+        "input_asset": {"endpoints": REPROFILE_ENDPOINTS},
+        "asset_context": "",
+        "extra": {"auth_context": {"cookies": [{"name": "s", "value": "v"}]}},
+        "session_id": "run-reprofile", "iteration": 0, "project_id": "proj1",
+    })
+
+    assert out["export"].verdict == "success"
+    # ONE exec over the WHOLE endpoint set - no per-endpoint fan-out
+    assert len(captured) == 1
+    cmd = captured["cmd"]
+    assert "httpx -l /work/run-reprofile/endpoints.txt" in cmd
+    assert "https://h/api/v1/orders" in cmd
+    assert "https://h/" in cmd
+    assert "-o /work/run-reprofile/reprofile.json" in cmd
+    assert "cat /work/run-reprofile/reprofile.json" in cmd
+    assert "-H 'Cookie: s=v'" in cmd          # auth threaded into the single exec
+    # ONE triager turn over the aggregate output (O(1), not O(N))
+    assert len(triage_calls) == 1
+    assert out["export"].assets_merged >= 2   # both profiles curated
+    # lineage: the export records how many endpoints the single pod probed
+    assert out["export"].stats.get("endpoints_total") == 2
+
+
+def test_reprofile_triager_failure_degrades_but_profiles_still_curate():
+    """Production (exec+parse+curate of profiles) and consumption (triager
+    observations) are structurally decoupled: a raising triager degrades to
+    no-observations but must never lose the already-parsed profiles."""
+    captured = {}
+
+    def exec_fn(cmd, sid, t):
+        return ExecResult(stdout=_REPROFILE_STDOUT, stderr="", returncode=0, duration_ms=5)
+
+    def curate_fn(assets, obs, pid):
+        captured["assets"] = assets
+        captured["observations"] = obs
+        return (len(assets), len(obs), assets, obs)
+
+    def triage_fn(er, assets, job):
+        raise RuntimeError("triager blackloop")
+
+    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn)
+    out = g.invoke({
+        "job": REPROFILE_JOB,
+        "input_asset": {"endpoints": REPROFILE_ENDPOINTS},
+        "asset_context": "", "extra": {}, "session_id": "run-reprofile",
+        "iteration": 0, "project_id": "proj1",
+    })
+
+    assert out["export"].verdict == "success"  # the pod survives a triager failure
+    assert captured["observations"] == []       # degraded, not lost as a pod
+    assert captured["assets"]                   # profiles still reach the curator
+
+
 def test_curator_node_forwards_scope_domain_from_extra():
     """The seed scope domain rides in extra and must reach curate as a kwarg so
     out-of-scope BaseURLs are dropped (D14/curator scope gate)."""

@@ -5,6 +5,36 @@ Branch: `fix/per-endpoint-profiling` (off `dev`).
 Supersedes the D16 "Deferred (not built)" note in `recon-pipeline-forward-decisions.md` (the per-endpoint profiling split).
 Relates to AMV-16-as-mislabelled-by-operator; the true anchor is D16/D27 in `recon-pipeline-forward-decisions.md`.
 
+## #208 SUPERSESSION (2026-09-07): the per-endpoint POD DISPATCH is superseded, the iteration set is not
+
+The per-endpoint split BUILT here dispatched **one pod per dedup'd endpoint** (`default_preprocess_fn`'s
+`endpoint_profiling` branch mapped the probe set 1:1 to pod_inputs). That paid **O(N) triager LLM turns per
+reprofile run**; with a reasoning-model triager each failing turn burned ~5min before fail-opening with zero
+observations (the #206 amplifier), starving analysis (eval run `26bdaf55-87a7-4386-92d7-82b7ddfe2eca`,
+white-jotter, 2026-08-31: the recon job never reached a terminal status and was reaped `failed`).
+
+Ticket **#208** replaces the **dispatch shape only**. The iteration set - this spec's dedup semantics
+(`prepare_endpoint_profile_assets`: collapse `(baseurl, method, path-template)` dynamic routes, materialise
+a root `/` per BaseURL, skip already-profiled non-root endpoints) - is unchanged and is the single pod's
+probe list. New shape:
+
+- `httpx_reprofile` dispatches **exactly ONE pod** regardless of endpoint count; the job-agent's pod-per-asset
+  fan-out is collapsed at `default_preprocess_fn`.
+- The pod's configurator builds **ONE httpx exec** over the full `-l` list (the endpoint list written to the
+  per-pod workdir, JSON output saved via `-o` and cat'd - the ffuf/arjun `/work/{session}` file + cat
+  persistence pattern), so the phase pays **O(1) triager turns per job**.
+- **Production and consumption are structurally decoupled**: exec -> parse -> curate of the per-endpoint
+  `profile` stamps is the production side; the triager's Observations are the consumption side. A triager
+  failure degrades to no-observations and **never** loses the already-parsed profiles (fail-open; the #206
+  recovery turn, when it lands, makes the same turn converge instead).
+- **Auth threading is unchanged** (`use_auth=True` -> `{auth_header}` on the single exec - one auth shape
+  for the whole surface for now). The authN-first-class direction (per-endpoint auth shaping via the
+  job-specific configurator agent, auth memory, 401/403/404-driven re-login) is a forward work item
+  recorded in `recon-pipeline-forward-decisions.md`, NOT part of #208.
+
+Everything else in this spec (classify_profile, the kiterunner/graphql-cop gating, the API-noun prefix
+derivation, the root `/` mirror) is unaffected.
+
 ## Problem Statement
 
 Recon profiles only BaseURLs, and a BaseURL profile is really the profile of its root `/` path.

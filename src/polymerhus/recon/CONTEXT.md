@@ -27,8 +27,9 @@ Input-carrying capability is not on the Endpoint itself but on the Parameter and
 
 **profile** (`webapp` / `restapi` / `graphql_api`):
 A per-Endpoint classification of the surface an Endpoint exposes, derived from its own httpx-observed content-type (+ host-label / GraphQL-path signals) by `noise_filter.classify_profile`.
-Every produced Endpoint is profiled by the `httpx_reprofile` pass (D16 per-endpoint split, workflow #28), not just BaseURL roots - so an API mounted under a `webapp` root is visible.
+Every produced Endpoint is profiled by the `httpx_reprofile` pass (#208: the pass is ONE pod over the dedup'd probe set - `prepare_endpoint_profile_assets`' dynamic-route collapse + root `/` materialisation - paying O(1) triager turns per job, superseding the D16 per-endpoint pod fan-out; the iteration set is unchanged), not just BaseURL roots - so an API mounted under a `webapp` root is visible.
 `BaseURL.profile` is the backward-compatible mirror of its root `/` Endpoint's profile.
+The profiling pass is enrichment only: it fills gaps (methods/parameters/headers/response shapes) on already-collected endpoints, never re-discovers; production (the profile stamps) and consumption (the triager's Observations) are structurally decoupled, so a triager failure never loses the parsed profiles.
 
 **API scope** (kiterunner):
 The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_scope.derive_scan_targets` from a host's `restapi` Endpoint paths (last api-noun cut, versions left as fuzz-space, parent-dir fallback). Not a naming classifier - the gate is the content-type `profile`; the noun set only picks the cut depth.

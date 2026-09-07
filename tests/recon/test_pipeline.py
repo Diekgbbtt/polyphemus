@@ -386,6 +386,43 @@ def test_job_stats_records_consumed_and_produced_lineage():
     assert dnsx["stats"]["pods"] == 2
 
 
+def test_reprofile_job_stats_surface_endpoints_total():
+    """#208: the reprofile pod is ONE pod for the WHOLE pass - the export's
+    `endpoints_total` (the probe-set size) must surface into recon_jobs.stats
+    so the phase's lineage is verifiable from persisted state (the D12
+    `consumed` count is the pre-dedup endpoint population)."""
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        if job.tool == "httpx_reprofile":
+            return [PodExport(
+                input_asset={"endpoints": [{"url": "https://h/a"}, {"url": "https://h/b"}]},
+                verdict="success",
+                stats={"command": "httpx -l ...", "endpoints_total": 2},
+            )]
+        return [PodExport(input_asset={}, verdict="success")]
+
+    registry = FakeRegistry()
+    settings = {"target_domain": "*.t.com"}
+    def read_assets(node_type, project_id):
+        return [{"url": "https://h/a"}, {"url": "https://h/b"}]
+
+    asyncio.run(
+        pipeline.run_pipeline(
+            "proj1",
+            run_id="run-rp",
+            job_subset=["subfinder", "httpx", "httpx_reprofile"],
+            run_job=run_job,
+            load_settings=make_load_settings(settings),
+            registry=registry,
+            read_assets=read_assets,
+        )
+    )
+
+    rp = [c for c in registry.upsert_job_calls
+          if c["job"] == "httpx_reprofile" and c["stats"] is not None][-1]
+    assert rp["stats"]["pods"] == 1
+    assert rp["stats"]["endpoints_total"] == 2
+
+
 def test_batched_jsluice_job_gets_filtered_read_and_apex_for_downstream_batching():
     """D17/Q5+Q6 + C3: the jsluice job's read is filtered by its `consumes_where`
     (only `.js`/`.mjs` Endpoints reach it) - the pipeline's job - and the pipeline
