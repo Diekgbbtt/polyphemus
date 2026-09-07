@@ -36,7 +36,7 @@ import os
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from polymerhus.app.llm.capability import resolve_capability
 
@@ -633,6 +633,7 @@ def stateful_turn(
     model_factory: ModelFactory | None = None,
     middleware: Sequence = (),
     observe: bool = True,
+    reasoning_budget_chars: int | None = None,
 ):
     """The UBIQUITOUS stateful-agent invocation (#94): one turn of a sequentially
     dispatched agent that RESUMES from its OWN per-instance checkpoint and appends this
@@ -647,17 +648,47 @@ def stateful_turn(
     structured-output profile, ToolStrategy (the function_calling-equivalent, #44-safe)
     on a tool-calling-only profile. Returns the parsed `schema` object (or None), or the
     text content when no schema - the same shape the legacy `invoke_role` seam returned,
-    so a call site swaps in place."""
+    so a call site swaps in place.
+
+    T2 (#214): on the blackloop signature (the T1 stream cut), a RECOVERY generation is
+    composed on the SAME thread - prior context (already in the checkpointer) + a bounded
+    compacted rendering of the failed reasoning + the verbatim blackloop instruction -
+    instead of degrading to None. The recovery is itself streamed and single-bounded
+    (a re-blackloop is cut), and its output + the failed reasoning fold into the native
+    turn-end compaction. Fail-open preserved: recovery failure degrades to None exactly
+    as before."""
     response_format = _structured_response_format(role_id, schema) if schema is not None else None
+    thread_id = _as_thread_id(thread)
     try:
         turn = run_session_turn(
-            role_id, _as_thread_id(thread), new_messages,
+            role_id, thread_id, new_messages,
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
-            middleware=middleware,
+            middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
         )
+        if turn.blackloop:
+            return _recover_blackloop(
+                role_id, thread_id, turn.reasoning,
+                checkpointer=checkpointer, response_format=response_format,
+                system_prompt=system_prompt, model_factory=model_factory, observe=observe,
+                middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+            )
         return turn.content
     except Exception as exc:
+        # T2 (shape A): a `LengthFinishReasonError` carries the failed reasoning on
+        # `exc.completion` (the message was NOT persisted) - recover from it instead of
+        # degrading blindly. Any other exception (or a shape with no extractable
+        # reasoning) falls through to the existing fail-open.
+        failed_reasoning = _failed_reasoning_from_exception(exc)
+        if failed_reasoning:
+            recovered = _recover_blackloop(
+                role_id, thread_id, failed_reasoning,
+                checkpointer=checkpointer, response_format=response_format,
+                system_prompt=system_prompt, model_factory=model_factory, observe=observe,
+                middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+            )
+            if recovered is not None:
+                return recovered
         # FAIL-OPEN (the invariant the recon context owns, mirrored from the
         # one-shot `invoke_role` seam, which already degrades to None): a
         # structured-output PARSE failure must never kill a stateful turn. The
@@ -683,6 +714,144 @@ def stateful_turn(
                 "stateful_turn %s raised %s (%s); degrading to None (fail-open)",
                 role_id, type(exc).__name__, exc)
         return None
+
+
+# --- T2 (#214): the recovery turn --------------------------------------------
+
+# The verbatim blackloop instruction (spec decision 7 - crafted prompt content:
+# ends the step, ablates corollary thoughts, goal-oriented).
+_BLACKLOOP_RECOVERY_INSTRUCTION = (
+    "You are resuming an agent step whose previous reasoning turn entered an "
+    "unbounded thinking loop and produced no answer. Your job is to END THIS STEP "
+    "NOW, not to continue thinking. Ablate every corollary and surrounding thought "
+    "you were entertaining: they are the loop. State, in the required output format, "
+    "the single most defensible conclusion your prior reasoning converged on, with "
+    "the briefest supporting evidence, then STOP. Be goal-oriented: the workflow "
+    "needs this step's result, not more deliberation. Do not restate your loop; do "
+    "not enumerate what you considered; do not ask what to do next. Produce the "
+    "answer directly and finish."
+)
+
+# The bounded compacted-rendering cap for the failed reasoning fed to the recovery
+# turn (env `LLM_RECOVERY_REASONING_EXCERPT`, fail-open). The model needs enough of
+# its prior thinking to converge on a conclusion - not the full 131k-token loop.
+_RECOVERY_REASONING_EXCERPT_CHARS = 8_000
+
+
+def _recovery_reasoning_excerpt_chars() -> int:
+    try:
+        value = int(os.environ.get("LLM_RECOVERY_REASONING_EXCERPT", "") or "")
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return _RECOVERY_REASONING_EXCERPT_CHARS
+
+
+def _compact_reasoning(reasoning: str, *, max_chars: int | None = None) -> str:
+    """A bounded rendering of the failed reasoning for the recovery prompt: the full
+    text when window-fitting, else a truncated excerpt with a marker - never the whole
+    loop."""
+    if not reasoning:
+        return ""
+    cap = max_chars or _recovery_reasoning_excerpt_chars()
+    if len(reasoning) <= cap:
+        return reasoning
+    return (reasoning[:cap] + "\n[...] (prior reasoning truncated; the workflow "
+            "needs your conclusion, not the loop)")
+
+
+def _reasoning_span_chars(role_id: str) -> int:
+    """The window-fitting span bound for the failed reasoning's foldable units (S3:
+    deterministic bounded chunk size = the compaction window's budget). Fail-open to
+    the conservative default on any resolution failure - the session must always
+    recover."""
+    try:
+        from polymerhus.app.llm.compaction import resolve_window
+
+        return resolve_window(role_id).budget
+    except Exception:  # noqa: BLE001 - fail-open, never into the recovery path
+        return 150_000
+
+
+def _failed_reasoning_from_exception(exc: BaseException) -> str:
+    """Shape A (#206): a `LengthFinishReasonError` carries the failed reasoning on
+    `exc.completion` (an openai message with `reasoning_content`; the failed message
+    was NOT persisted). Tolerant of shape variance; "" when nothing extractable."""
+    try:
+        completion = getattr(exc, "completion", None)
+        if completion is None:
+            return ""
+        if isinstance(completion, dict):
+            value = completion.get("reasoning_content") or completion.get(
+                "provider_specific_fields", {}).get("reasoning_details")
+        else:
+            value = getattr(completion, "reasoning_content", None) or getattr(
+                getattr(completion, "provider_specific_fields", None) or {},
+                "reasoning_details", None)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):  # list-of-blocks shape some SDKs carry
+            parts = [b if isinstance(b, str) else (b.get("text") or "")
+                     for b in value]
+            return "".join(parts)
+    except Exception:  # noqa: BLE001 - fail-open: a weird exception never recovers
+        return ""
+    return ""
+
+
+def _recover_blackloop(
+    role_id: str,
+    thread_id: str,
+    reasoning: str,
+    *,
+    checkpointer,
+    response_format,
+    system_prompt: str | None,
+    model_factory: ModelFactory | None,
+    observe: bool,
+    middleware: Sequence,
+    reasoning_budget_chars: int | None,
+):
+    """T2: compose + run ONE recovery generation on the SAME thread (prior context
+    already in the checkpointer) from the failed reasoning, and return its content.
+
+    The recovery prompt message carries a bounded compacted rendering of the failed
+    reasoning + the verbatim blackloop instruction; the failed reasoning is ALSO
+    segmented into window-fitting spans (S3) and replayed as an assistant message
+    (the D11 surface - a foldable thread span the native turn-end compaction folds,
+    seam S1; never a handler-side summary). The recovery is itself a streamed
+    generation under the SAME detection bound, so a re-blackloop is cut. Fail-open:
+    a recovery that fails (re-blackloop, exception, empty) returns None, never
+    raises."""
+    if not reasoning:
+        return None
+    from polymerhus.app.llm.streaming import segment_reasoning
+
+    compacted = _compact_reasoning(reasoning)
+    spans = segment_reasoning(reasoning, max_span_chars=_reasoning_span_chars(role_id))
+    reasoning_message = AIMessage(
+        content="", additional_kwargs={"reasoning_content": "\n\n".join(spans)})
+    prompt = HumanMessage(
+        content=f"{compacted}\n\n{_BLACKLOOP_RECOVERY_INSTRUCTION}")
+    try:
+        recovery = run_session_turn(
+            role_id, thread_id, [reasoning_message, prompt],
+            checkpointer=checkpointer, response_format=response_format,
+            system_prompt=system_prompt, model_factory=model_factory, observe=observe,
+            middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+        )
+    except Exception as exc:  # noqa: BLE001 - fail-open: recovery failure degrades
+        logger.warning(
+            "stateful_turn %s recovery generation raised %s (%s); degrading to "
+            "None (fail-open)", role_id, type(exc).__name__, exc)
+        return None
+    if recovery.blackloop:
+        logger.warning(
+            "stateful_turn %s recovery re-blacklooped; degrading to None (fail-open)",
+            role_id)
+        return None
+    return recovery.content
 
 
 def _read_thread_state(checkpointer, thread_id: str) -> dict | None:
