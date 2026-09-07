@@ -195,24 +195,21 @@ def _build_agent(
     return create_agent(model, **kwargs)
 
 
-def _turn_config(role_id: str, thread_id: str, observe: bool,
-                 metadata: dict | None = None) -> dict:
+def _turn_config(role_id: str, thread_id: str, observe: bool) -> dict:
     config: dict = {"configurable": {"thread_id": thread_id}}
-    if observe:
-        config = _observe_config(config, role_id, thread_id)
-    if metadata:
-        # T5 (#217): the blackloop_recovery observability rides the D11 metadata
-        # recipe - merged onto the same trace the readability fields ride.
-        config.setdefault("metadata", {}).update(metadata)
-    return config
+    return _observe_config(config, role_id, thread_id) if observe else config
 
 
 # --- T1 (#213): streamed generation as the default session mode --------------
 
 # The default blackloop detection bound: accumulated reasoning past this many
 # characters with NO content emitted yet cuts the stream (#206). Env-overridable
-# (`LLM_BLACKLOOP_REASONING_BUDGET`, fail-open).
-_DEFAULT_REASONING_BUDGET_CHARS = 20_000
+# (`LLM_BLACKLOOP_REASONING_BUDGET`, fail-open). Tuned ABOVE the repo's observed
+# normal thinking burst (~9k tokens, recon CONTEXT.md - a blackloop burns past
+# the ceiling, a normal heavy-thinking turn must NOT be cut) - ~10k tokens at
+# ~4 chars/token. The cut is fail-open (a false positive routes to a cheap
+# recovery; a missed blackloop is caught by the empty-content signature).
+_DEFAULT_REASONING_BUDGET_CHARS = 40_000
 
 
 def _reasoning_budget_chars(override: int | None) -> int:
@@ -396,7 +393,6 @@ def run_session_turn(
     observe: bool = True,
     read_timeout_s: float | None = None,
     reasoning_budget_chars: int | None = None,
-    metadata: dict | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
 
@@ -406,7 +402,6 @@ def run_session_turn(
     persisted back so the next turn resumes from here. `response_format` returns a
     parsed structured object as `content`. `read_timeout_s` (default None) bounds
     the turn's model calls per-attempt - the escalating-budget seam #186 rides.
-    `metadata` (T5) merges D11-style fields onto the turn's trace metadata.
 
     T1 (#213): the model call is STREAMED (the operator's 2026-09-07 ruling - streamed
     generation is the DEFAULT session mode), so `reasoning_content` AND `content` are
@@ -420,12 +415,13 @@ def run_session_turn(
         middleware=middleware, store=store, checkpointer=checkpointer,
         model_factory=model_factory, read_timeout_s=read_timeout_s,
     )
-    config = _turn_config(role_id, thread_id, observe, metadata=metadata)
+    config = _turn_config(role_id, thread_id, observe)
     if observe and checkpointer is not None:
         _attach_readability_metadata(
             config, _read_thread_state(checkpointer, thread_id))
     if observe:
         _attach_compaction_metadata(config, middleware, thread_id)
+        _attach_blackloop_metadata(config, thread_id)
     budget = _reasoning_budget_chars(reasoning_budget_chars)
     capture = _StreamCapture()
     result: dict | None = None
@@ -467,9 +463,8 @@ async def arun_session_turn(
     observe: bool = True,
     read_timeout_s: float | None = None,
     reasoning_budget_chars: int | None = None,
-    metadata: dict | None = None,
 ) -> SessionTurn:
-    """Async-native turn (`astream_events`) - the entry point an async-native PARENT
+    """Async-native turn (`astream`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
     and monitor child sessions without blocking its own loop. Identical contract to
     `run_session_turn`; pass an async checkpointer (`AsyncPostgresSaver`, already
@@ -485,12 +480,13 @@ async def arun_session_turn(
         middleware=middleware, store=store, checkpointer=checkpointer,
         model_factory=model_factory, read_timeout_s=read_timeout_s,
     )
-    config = _turn_config(role_id, thread_id, observe, metadata=metadata)
+    config = _turn_config(role_id, thread_id, observe)
     if observe and checkpointer is not None:
         _attach_readability_metadata(
             config, await _aread_thread_state(checkpointer, thread_id))
     if observe:
         _attach_compaction_metadata(config, middleware, thread_id)
+        _attach_blackloop_metadata(config, thread_id)
     budget = _reasoning_budget_chars(reasoning_budget_chars)
     capture = _StreamCapture()
     result: dict | None = None
@@ -676,13 +672,18 @@ def stateful_turn(
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
             middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
         )
-        if turn.blackloop:
+        # T2 (#214): the blackloop signature - the streamed cut, or a turn that
+        # completed EMPTY-CONTENT while still emitting reasoning (the silent-empty
+        # shape - a reasoned-but-empty result is a blackloop, never a legitimate
+        # empty). Both route to the recovery generation.
+        if turn.blackloop or (_is_empty_result(turn.content) and turn.reasoning):
             return _recover_blackloop(
                 role_id, thread_id, turn.reasoning,
                 checkpointer=checkpointer, response_format=response_format,
                 system_prompt=system_prompt, model_factory=model_factory, observe=observe,
                 middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
-                shape="streamed_cut", cut_point_chars=len(turn.reasoning),
+                shape="streamed_cut" if turn.blackloop else "empty_content",
+                cut_point_chars=len(turn.reasoning),
             )
         return turn.content
     except Exception as exc:
@@ -812,6 +813,17 @@ def _failed_reasoning_from_exception(exc: BaseException) -> str:
     return ""
 
 
+def _is_empty_result(content: Any) -> bool:
+    """Whether a turn produced NO usable result: None, or an empty str/list/dict
+    (the silent-empty blackloop shape - a reasoned-but-empty output, never a
+    legitimate empty)."""
+    if content is None:
+        return True
+    if isinstance(content, (str, list, dict)):
+        return not content
+    return False
+
+
 def _recover_blackloop(
     role_id: str,
     thread_id: str,
@@ -851,32 +863,55 @@ def _recover_blackloop(
         content="", additional_kwargs={"reasoning_content": "\n\n".join(spans)})
     prompt = HumanMessage(
         content=f"{compacted}\n\n{_BLACKLOOP_RECOVERY_INSTRUCTION}")
-    recovery_metadata = {"blackloop_recovery": {
-        "shape": shape,
-        "output_produced": False,
-        "cut_point_chars": cut_point_chars,
-    }}
     try:
         recovery = run_session_turn(
             role_id, thread_id, [reasoning_message, prompt],
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
             middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
-            metadata=recovery_metadata,
         )
     except Exception as exc:  # noqa: BLE001 - fail-open: recovery failure degrades
         logger.warning(
             "stateful_turn %s recovery generation raised %s (%s); degrading to "
             "None (fail-open)", role_id, type(exc).__name__, exc)
+        _record_blackloop_recovery(thread_id, shape, False, cut_point_chars)
         return None
-    if recovery.blackloop:
+    output_produced = not recovery.blackloop
+    if not output_produced:
         logger.warning(
             "stateful_turn %s recovery re-blacklooped; degrading to None (fail-open)",
             role_id)
-        return None
-    recovery_metadata["blackloop_recovery"]["output_produced"] = True
-    _record_recovery_output(role_id, thread_id, shape, cut_point_chars)
-    return recovery.content
+    _record_blackloop_recovery(thread_id, shape, output_produced, cut_point_chars)
+    return recovery.content if output_produced else None
+
+
+# T5 (#217): the `blackloop_recovery` D11 metadata record - a per-thread record of
+# the last recovery, surfaced onto the NEXT turn's trace metadata exactly like
+# `compaction_readability` (the D11 recipe: the field rides the same
+# `langfuse_session_id`, recorded AFTER the outcome is known - a trace captured at
+# stream time can never know output_produced). Fail-open: absent/unconfigured
+# observability simply omits the field; never gating, never on the retry axis.
+_last_blackloop_recovery: dict[str, dict] = {}
+
+
+def _record_blackloop_recovery(thread_id: str, shape: str, output_produced: bool,
+                               cut_point_chars: int) -> None:
+    """T5: record the last recovery's observability for a thread. Purely
+    descriptive; never gating."""
+    _last_blackloop_recovery[thread_id] = {
+        "shape": shape,
+        "output_produced": bool(output_produced),
+        "cut_point_chars": int(cut_point_chars),
+    }
+
+
+def _attach_blackloop_metadata(config: dict, thread_id: str) -> None:
+    """T5: merge the thread's last-recovery record onto the config metadata (the D11
+    recipe). Fail-open: no record simply omits the field."""
+    record = _last_blackloop_recovery.get(thread_id)
+    if record is None:
+        return
+    config.setdefault("metadata", {})["blackloop_recovery"] = record
 
 
 def _record_recovery_output(role_id: str, thread_id: str, shape: str,

@@ -405,6 +405,8 @@ class _StreamFake(BaseChatModel):
                     content="", additional_kwargs={"reasoning_content": piece}))
         for piece in self.content_pieces:
             yield ChatGenerationChunk(message=AIMessageChunk(content=piece))
+        # a real provider always closes the stream with an empty final chunk
+        yield ChatGenerationChunk(message=AIMessageChunk(content=""))
 
     @property
     def _llm_type(self) -> str:
@@ -651,25 +653,47 @@ def test_stateful_turn_length_finish_without_reasoning_fails_open_to_none(monkey
     assert result is None
 
 
+def test_stateful_turn_recovers_on_empty_content_with_reasoning():
+    """T2 (empty-content signature): a turn that completes EMPTY-CONTENT while still
+    emitting reasoning (the silent-empty shape) is recovered, never returned empty."""
+    from polymerhus.app.llm.session import stateful_turn
+
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["brief thinking"], content_pieces=[]),
+        _StreamFake(reasoning_pieces=[], content_pieces=["recovered"]),
+    )
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result == "recovered"
+
+
+def test_stateful_turn_empty_without_reasoning_is_a_legitimate_empty():
+    """T2: empty content with NO reasoning is a legitimate empty (not a blackloop) -
+    returned as-is, never routed to recovery."""
+    from polymerhus.app.llm.session import stateful_turn
+
+    saver = InMemorySaver()
+    factory = _sequential_factory(_StreamFake(reasoning_pieces=[], content_pieces=[]))
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result == ""
+
+
 # --- T5 (#217): blackloop_recovery observability -----------------------------
 
-def test_stateful_turn_records_blackloop_recovery_metadata(monkeypatch):
-    """T5: when a blackloop is recovered, the recovery generation's trace metadata
-    carries the `blackloop_recovery` field (shape, output_produced, cut point) -
-    the D11 recipe, same `langfuse_session_id` trace. Fail-open: it never gates."""
+def test_stateful_turn_records_blackloop_recovery_metadata():
+    """T5: after a blackloop is recovered, the thread's last-recovery record carries
+    shape, output_produced and cut point - the material the D11 trace field shows."""
     from polymerhus.app.llm import session as S
     from polymerhus.app.llm.session import stateful_turn
 
-    real_run = S.run_session_turn
-    captured = {}
-
-    def fake_run(role_id, thread_id, msgs, **kwargs):
-        captured["n"] = captured.get("n", 0) + 1
-        if captured["n"] == 2:  # the recovery generation
-            captured["metadata"] = kwargs.get("metadata")
-        return real_run(role_id, thread_id, msgs, **kwargs)
-
-    monkeypatch.setattr(S, "run_session_turn", fake_run)
     saver = InMemorySaver()
     factory = _sequential_factory(
         _StreamFake(reasoning_pieces=["Need maybe mention"] * 4000, content_pieces=[]),
@@ -681,29 +705,18 @@ def test_stateful_turn_records_blackloop_recovery_metadata(monkeypatch):
         reasoning_budget_chars=8000,
     )
     assert result == "recovered"
-    assert captured["metadata"] is not None
-    recovery = captured["metadata"]["blackloop_recovery"]
-    assert recovery["shape"] == "streamed_cut"
-    assert recovery["output_produced"] is True
-    assert recovery["cut_point_chars"] > 0
+    record = S._last_blackloop_recovery["run1:assigner"]
+    assert record["shape"] == "streamed_cut"
+    assert record["output_produced"] is True
+    assert record["cut_point_chars"] > 0
 
 
-def test_stateful_turn_records_blackloop_recovery_failure_output(monkeypatch):
+def test_stateful_turn_records_blackloop_recovery_failure_output():
     """T5: a recovery that FAILS (re-blackloop, output NOT produced) still records
     the field with output_produced=False - the occurrence is never silent."""
     from polymerhus.app.llm import session as S
     from polymerhus.app.llm.session import stateful_turn
 
-    real_run = S.run_session_turn
-    captured = {}
-
-    def fake_run(role_id, thread_id, msgs, **kwargs):
-        captured["n"] = captured.get("n", 0) + 1
-        if captured["n"] == 2:
-            captured["metadata"] = kwargs.get("metadata")
-        return real_run(role_id, thread_id, msgs, **kwargs)
-
-    monkeypatch.setattr(S, "run_session_turn", fake_run)
     saver = InMemorySaver()
     factory = _sequential_factory(
         _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
@@ -715,28 +728,26 @@ def test_stateful_turn_records_blackloop_recovery_failure_output(monkeypatch):
         reasoning_budget_chars=8000,
     )
     assert result is None
-    assert captured["metadata"] is not None
-    recovery = captured["metadata"]["blackloop_recovery"]
-    assert recovery["shape"] == "streamed_cut"
-    assert recovery["output_produced"] is False
+    record = S._last_blackloop_recovery["run1:assigner"]
+    assert record["shape"] == "streamed_cut"
+    assert record["output_produced"] is False
 
 
 def test_blackloop_recovery_metadata_rides_the_trace_when_observing(monkeypatch):
-    """T5: with observability on, the `blackloop_recovery` field rides the config
-    metadata of the recovery turn - the same `langfuse_session_id` trace the D11
-    readability fields ride (never gating, never on the retry axis)."""
+    """T5: with observability on, the last-recovery record rides the config metadata
+    of the NEXT turn - the same `langfuse_session_id` trace the D11 readability
+    fields ride (recorded AFTER the outcome is known, never gating)."""
     from polymerhus.app.llm import session as S
     from polymerhus.app.llm.session import stateful_turn
 
-    seen = {}
-    real_tc = S._turn_config
+    merged = {}
+    real_attach = S._attach_blackloop_metadata
 
-    def fake_tc(role_id, thread_id, observe, metadata=None):
-        cfg = real_tc(role_id, thread_id, observe, metadata=metadata)
-        seen["meta"] = dict(cfg.get("metadata", {}))
-        return cfg
+    def fake_attach(config, thread_id):
+        real_attach(config, thread_id)
+        merged["meta"] = dict(config.get("metadata", {}))
 
-    monkeypatch.setattr(S, "_turn_config", fake_tc)
+    monkeypatch.setattr(S, "_attach_blackloop_metadata", fake_attach)
     saver = InMemorySaver()
     factory = _sequential_factory(
         _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
@@ -747,5 +758,12 @@ def test_blackloop_recovery_metadata_rides_the_trace_when_observing(monkeypatch)
         checkpointer=saver, model_factory=factory, observe=True,
         reasoning_budget_chars=8000,
     )
-    assert "blackloop_recovery" in seen["meta"]
-    assert "langfuse_session_id" in seen["meta"]
+    # a further turn on the same thread rides the record
+    stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="continue")],
+        checkpointer=saver, model_factory=_sequential_factory(
+            _StreamFake(reasoning_pieces=[], content_pieces=["next"])),
+        observe=True,
+    )
+    assert "blackloop_recovery" in merged["meta"]
+    assert "langfuse_session_id" in merged["meta"]

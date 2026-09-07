@@ -1010,6 +1010,7 @@ def test_attach_compaction_metadata_surfaces_the_last_pass():
     # No compaction middleware -> omitted.
     config3 = {"metadata": {}}
     _attach_compaction_metadata(config3, [], "t1")
+    assert "compaction_readability" not in config3["metadata"]
 
 
 # --- T4 (#216): per-message tail bound + usage_metadata repair ---------------
