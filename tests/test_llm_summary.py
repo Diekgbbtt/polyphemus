@@ -467,6 +467,29 @@ def test_summarise_spans_are_never_split_reasoning_passes_through():
     assert any("REASONING-CORE-CONCLUSION" in u for u in seen_spans)
 
 
+def test_summarise_reasoning_core_survives_the_fold():
+    """C6: per the accumulate clause, the blacklooped reasoning's conclusion
+    (rendered into a span by #206's projection) survives the progressive fold -
+    the final chainable RunningSummary carries the 'latest thought', which is
+    what the #206 actor chains on."""
+    reasoning = AIMessage(content="CONCLUSION: the attack surface is the login raft")
+    spans = [_span(), reasoning, _span()]
+    budget = _sys_tokens() + 700
+    def fake(messages, budget):
+        user = messages[-1].content
+        # the accumulate clause: the conclusion carries forward once seen
+        if "CONCLUSION" in user or "latest thought" in user:
+            return S.SummaryUpdate(
+                objective="latest thought: the attack surface is the login raft",
+                resume_point="r")
+        return S.SummaryUpdate(objective="prelude", resume_point="r")
+    outcome = S.summarise(fake, existing=None, spans=spans, chunk_budget=budget)
+    assert outcome.status == "ok"
+    assert outcome.summary is not None
+    assert outcome.summary.objective == \
+        "latest thought: the attack surface is the login raft"
+
+
 # --- the summariser construction: negotiated method (ADR A1, #210) -----------
 
 class _StructuredFake:

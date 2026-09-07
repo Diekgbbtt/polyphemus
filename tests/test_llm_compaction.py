@@ -467,6 +467,36 @@ def test_window_cap_summarise_leaves_original_unchanged():
     assert res.report.new_summary is None
 
 
+def test_partial_fold_keeps_unfolded_spans_verbatim(monkeypatch):
+    """#210 grey point 5: when a chunk aborts mid-pass, the partial summary IS
+    applied (ok-if-any-summary) BUT the un-folded spans stay verbatim in the
+    staged trail - a partial fold never silently drops material the summariser
+    never folded (the D6 fail-safe preserved under window-splitting)."""
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "0.05,0.05,0.05")
+    window = C.CompactionWindow(context_limit=1000, threshold=0.9)
+    store = T.InMemoryToolOutputStore()
+    first = AIMessage(content="FIRST-REASONING " + "x" * 3000)
+    second = AIMessage(content="UNFOLDED-REASONING " + "y" * 3000)
+    trail = [HumanMessage(content="go"), first, second]
+
+    calls = []
+    def fake(messages, budget):
+        user = messages[-1].content
+        calls.append(user)
+        if "FIRST-REASONING" in user:
+            return S.SummaryUpdate(objective="folded-first", resume_point="r")
+        return None  # the second chunk always exhausts retries -> abort
+
+    res = C.compact_pass(trail, thread_id="thr", profile=None, store=store,
+                         summariser=fake, window=window)
+    assert res.report.summary_status == "ok"  # a partial fold is still applied
+    assert res.report.new_summary is not None
+    contents = [str(m.content) for m in res.messages]
+    assert any(c.startswith("[running summary]") for c in contents)
+    assert any("UNFOLDED-REASONING" in c for c in contents), \
+        "the un-folded span must stay verbatim, never dropped"
+
+
 def test_tail_messages_stay_byte_identical_when_compaction_fires():
     """Even when the pass compacts (spans summarised, readability compacted), every
     message in the reserved tail is byte-identical to its input - the D7 unit

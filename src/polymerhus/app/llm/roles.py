@@ -1,4 +1,5 @@
 import logging
+from typing import Any
 
 from polymerhus.app.llm.capability import resolve_capability
 from polymerhus.app.llm.negotiation import (
@@ -38,6 +39,25 @@ def structured_output_for(llm, schema, method: Method):
         return llm.with_structured_output(construction, method="json_schema",
                                           strict=False)
     return llm.with_structured_output(schema, method=method)
+
+
+def structured_result_for(parsed: Any, schema: Any, method: Method) -> Any:
+    """The negotiation contract's parse-validation result, converted to the
+    form the caller consumes (ADR A1, #210).
+
+    A miss (an unmet or wrong-shape generation - `result_validates` False) is
+    None. The `json_schema` rung's DICT-form construction returns a raw dict
+    for a pydantic target, so it is converted back via `model_validate`; the
+    class-form rungs (`function_calling` / `json_mode`) pass the parsed form
+    through. This is the single conversion both `invoke_role` and the
+    compaction summariser consume - one behaviour, one implementation
+    (CODING_STANDARD section 8)."""
+    if not result_validates(parsed, schema):
+        return None
+    if method == "json_schema":
+        validate = getattr(schema, "model_validate", None)
+        return validate(parsed) if callable(validate) else parsed
+    return parsed
 
 
 def chat_model_for(role: str, *, temperature: float = 0, max_retries: int | None = None,
@@ -145,17 +165,9 @@ def invoke_role(role, messages, *, schema=None, temperature: float = 0):
         # The negotiation contract's parse validation (A1): a rung's result is
         # the PARSED form validated against the target - json_mode's silent
         # wrong-shape failure (HTTP 200, wrong JSON) is a miss that escalates,
-        # never accepted. `result_validates` never raises (class = validate,
-        # dict = shape-check).
-        if not result_validates(parsed, schema):
-            return None
-        if method == "json_schema":
-            # The dict-form construction returns a raw dict for a pydantic
-            # target; hand the one-shot callers the instance they consume (the
-            # same class-form validation the predicate just ran). A non-pydantic
-            # target's verbatim dict rides through untouched.
-            validate = getattr(schema, "model_validate", None)
-            return validate(parsed) if callable(validate) else parsed
-        return parsed
+        # never accepted. The shared conversion returns the instance the
+        # caller consumes (json_schema's dict-form construction converts back
+        # to the pydantic instance via model_validate).
+        return structured_result_for(parsed, schema, method)
 
     return invoke_with_escalating_timeout(call)

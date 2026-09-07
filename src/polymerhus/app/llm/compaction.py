@@ -571,7 +571,14 @@ def _compact_pass(
         new_summary = outcome.summary
         region_staged = [m for m in staged if id(m) not in region_humans]
         region_staged = _dedup_system_messages(region_staged)
-        staged = (region_staged
+        # A PARTIAL fold (a chunk exhausted retries, #210) never drops the
+        # un-folded suffix: the summariser's `folded` count says which input
+        # items it actually folded, and the rest stay verbatim - a later pass
+        # retries them, and a partial summary is still applied (strictly better
+        # than the over-budget original). A complete fold leaves nothing to keep.
+        folded_input = spans + folded_tools
+        unfolded = folded_input[outcome.folded:]
+        staged = (region_staged + unfolded
                   + [SystemMessage(content=new_summary.to_text())] + tail)
     else:
         staged = _dedup_system_messages(staged) + tail

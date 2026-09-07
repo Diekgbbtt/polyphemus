@@ -1,16 +1,17 @@
 """The running-summary engine (#95 slice C, realising ADR D5 + D6).
 
-The D5 summarisation half of the context-window manager: ONE atomic call per
-compact pass - no split/multi-call summarisation (operator ruling) - using the
-session role's own model via the injectable model factory. The output is
-structured (the running-summary contract: the eight core concepts - OBJECTIVE,
-WORKFLOW, ENVIRONMENT STATE, TASK STATUS, DEAD BRANCHES PROBED, DECISIONS WITH
-RATIONALE, DISCOVERED ARTIFACTS, and RESUME POINT - so the agent resumes exactly
-where it left off, goal intact). An OUTPUT-QUALITY GATE applies: a summary
-missing its mandatory objective or resume point, or carrying unparseable list
-fields, is a FAILED generation, retried under the single retry layer and counted
-toward the consecutive-pass cap (D6; the cap itself is slice D's concern - this
-module only exposes the three-way status).
+The D5 summarisation half of the context-window manager: per compact pass the
+summariser runs on the session role's own model via the injectable model factory.
+The output is structured (the running-summary contract: the eight core concepts -
+OBJECTIVE, WORKFLOW, ENVIRONMENT STATE, TASK STATUS, DEAD BRANCHES PROBED,
+DECISIONS WITH RATIONALE, DISCOVERED ARTIFACTS, and RESUME POINT - so the agent
+resumes exactly where it left off, goal intact). The in-window case is ONE atomic
+call per pass; the over-window case (#210) splits the ordered spans into
+window-fitting chunks and folds them progressively - never a terminal pass. An
+OUTPUT-QUALITY GATE applies: a summary missing its mandatory objective or resume
+point, or carrying unparseable list fields, is a FAILED generation, retried under
+the single retry layer and counted toward the consecutive-pass cap (D6; the cap
+itself is slice D's concern - this module only exposes the three-way status).
 
 The D6 failure taxonomy, on top of the existing surfaces:
 
@@ -72,8 +73,9 @@ class _TerminalWindowError(BaseException):
     catches `except Exception` and would otherwise RETRY the identical input a
     window-cap always fails - the exact self-containing loop the operator
     flagged. Deriving from BaseException lets the sentinel escape the wrapper
-    untouched so `summarise` maps it to status "terminal" immediately, having
-    invoked the summariser exactly once."""
+    untouched so the pass treats the chunk as failed immediately, having invoked
+    the summariser exactly once. The pass OUTCOME is never 'terminal' (#210) -
+    it degrades to 'failed'."""
 
     def __init__(self, cause: BaseException) -> None:
         super().__init__(str(cause))
@@ -189,10 +191,14 @@ class SummaryOutcome:
     """The pass outcome (D5/D6, #210): `ok` with the summary (even a partial fold
     from the succeeded chunk prefix), `failed` on retry exhaustion / quality-gate
     exhaustion / a window-cap. The `terminal` value is RETIRED (#210) - a window-cap
-    degrades to `failed`, never a terminal pass."""
+    degrades to `failed`, never a terminal pass. `folded` is the number of input
+    items folded into the summary (the full count on a complete fold, a prefix
+    count on a partial fold, 0 on failure) - the caller keeps the un-folded suffix
+    verbatim so a partial fold never drops material the summariser never saw."""
 
     summary: RunningSummary | None
     status: Literal["ok", "failed", "terminal"]
+    folded: int = 0
 
 
 # --- message composition (the atomic call's input) ---------------------------
@@ -505,11 +511,13 @@ def summarise(
 
     if chunk_budget is None or _composed_token_count(existing, spans) <= chunk_budget:
         folded = _attempt(existing, spans)
-        return SummaryOutcome(summary=folded, status="ok" if folded is not None else "failed")
+        return SummaryOutcome(summary=folded, status="ok" if folded is not None else "failed",
+                              folded=len(spans) if folded is not None else 0)
 
     # Window-splitting: fold the spans progressively over window-fitting chunks.
     current_existing = existing
     best: RunningSummary | None = None
+    folded_count = 0
     remaining = list(spans)
     while remaining:
         n = _largest_prefix_fitting(current_existing, remaining, chunk_budget)
@@ -518,11 +526,12 @@ def summarise(
         folded = _attempt(current_existing, chunk)
         if folded is None:
             break  # a chunk exhausted retries - abort, keep the best fold so far
+        folded_count += n
         current_existing = folded
         best = folded
     if best is None:
         return SummaryOutcome(summary=None, status="failed")
-    return SummaryOutcome(summary=best, status="ok")
+    return SummaryOutcome(summary=best, status="ok", folded=folded_count)
 
 
 def build_summariser(role_id: str):
@@ -540,50 +549,55 @@ def build_summariser(role_id: str):
         from polymerhus.app.llm.negotiation import (
             negotiate_method,
             resolve_method,
-            result_validates,
         )
         from polymerhus.app.llm.providers import (
             build_chat_model,
             resolve_role,
             thinking_for,
         )
-        from polymerhus.app.llm.roles import structured_output_for
+        from polymerhus.app.llm.roles import (
+            structured_output_for,
+            structured_result_for,
+        )
 
         provider, model = resolve_role(role_id)
-        # The negotiated structured-output method (ADR A1, #210): the summariser
-        # is a no-tools structured call, so the semantic default is json_schema
-        # on a structured-output profile, degrading per the shared chain - the
-        # str-form `task_status`-as-str drift disappears at the source instead of
-        # paying the ~26% retry tax. Resolved ONCE per pass, off the #73 axis
-        # (no invoker -> an unknown profile holds the semantic default, never an
-        # extra probe LLM call at pass time). Fail-open (D7): any resolution miss
-        # lands the semantic default and the call proceeds.
-        try:
-            profile = resolve_capability(provider, model)
-            method, _provenance = resolve_method(
-                profile, SummaryUpdate, True,
-                role=role_id, provider=provider, model=model,
-                negotiate=negotiate_method,
-            )
-        except Exception as exc:  # noqa: BLE001 - fail-open, never into the pass
-            logger.warning("summariser method negotiation failed for %s/%s (%s); "
-                           "using the semantic default", provider, model, exc)
-            method = "json_schema"
+        if _held["method"] is None:
+            # The negotiated structured-output method (ADR A1, #210): the
+            # summariser is a no-tools structured call, so the semantic default
+            # is json_schema on a structured-output profile, degrading per the
+            # shared chain - the str-form `task_status`-as-str drift disappears
+            # at the source instead of paying the ~26% retry tax. Resolved ONCE
+            # per summariser and HELD (D6 resolve-and-hold): the negotiation
+            # never sits on the #73 retry axis, exactly like `invoke_role`. No
+            # invoker -> an unknown profile holds the semantic default, never an
+            # extra probe LLM call at pass time (the session-seam Q2 behaviour).
+            # Fail-open (D7): any resolution miss lands the semantic default and
+            # the call proceeds.
+            try:
+                profile = resolve_capability(provider, model)
+                method, _provenance = resolve_method(
+                    profile, SummaryUpdate, True,
+                    role=role_id, provider=provider, model=model,
+                    negotiate=negotiate_method,
+                )
+            except Exception as exc:  # noqa: BLE001 - fail-open, never into the pass
+                logger.warning("summariser method negotiation failed for %s/%s (%s); "
+                               "using the semantic default", provider, model, exc)
+                method = "json_schema"
+            _held["method"] = method
+        method = _held["method"]
+
         llm = build_chat_model(provider, model, temperature=0,
                                read_timeout=read_timeout_s, max_retries=0,
                                thinking=thinking_for(role_id))
         parsed = structured_output_for(llm, SummaryUpdate, method).invoke(messages)
-        # The negotiation contract's parse validation (A1): a rung's result is
-        # the PARSED form validated against the target - json_mode's silent
-        # wrong-shape failure is a miss, never accepted.
-        if not result_validates(parsed, SummaryUpdate):
-            return None
-        if method == "json_schema":
-            # The dict-form construction returns a raw dict for a pydantic
-            # target; hand the pass the instance it consumes.
-            return SummaryUpdate.model_validate(parsed)
-        return parsed if isinstance(parsed, SummaryUpdate) else None
+        # The shared negotiation parse-validation + conversion (A1): a rung's
+        # result is the PARSED form validated against the target; json_schema's
+        # dict-form construction converts back to the SummaryUpdate the pass
+        # consumes. `is_quality_summary` downstream rejects a wrong-shape form.
+        return structured_result_for(parsed, SummaryUpdate, method)
 
+    _held: dict[str, Any] = {"method": None}
     return summariser
 
 
