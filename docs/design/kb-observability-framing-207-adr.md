@@ -49,7 +49,10 @@ Two defects on the same seam (`kb_query` / `query_lightrag`):
   the persisted `ReferenceRegistryV1` mapping (index -> reference_id ->
   file_path) so a cited provenance index is resolvable post-hoc (grey pt 7:
   span metadata on the retrieval span).
-- **Generation span**: prompt + raw output.
+- **Generation span**: prompt, the generator's `reasoning_content`, and the raw
+  output (`DeepSeekClient.stream` surfaces the reasoning deltas as `reasoning`
+  events; the tool records them on the span but does not forward them into its
+  own `delta`/`answer` stream contract).
 - **Validation span**: accepted/degraded, errors, rejected citations, resolved
   provenance, plus `metric.provenance_empty` (the `PROV []` soft-ack signal) and
   `metric.entity_count` (the contract-drift counter) (grey pt 9).

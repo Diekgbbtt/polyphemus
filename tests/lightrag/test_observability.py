@@ -156,6 +156,7 @@ class _FakeClient:
 
 class _FakeLlm:
     def stream(self, prompt):
+        yield {"type": "reasoning", "text": "think about object-level authz"}
         yield {"type": "delta", "text": '{"scenario_id": "SIM-01", "summary": "ok",'}
         yield {
             "type": "delta",
@@ -199,6 +200,7 @@ def test_tool_stream_records_retrieval_generation_validation_spans(otel_capture)
     generation = _span_attrs(otel_capture, "generation")
     assert "REFERENCE REGISTRY" in generation["input"]
     assert "Object-level authorization comparison" in generation["output"]
+    assert "think about object-level authz" in generation["reasoning_content"]
 
     validation = _span_attrs(otel_capture, "validation")
     assert validation["accepted"] is True

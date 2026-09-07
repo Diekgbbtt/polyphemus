@@ -29,8 +29,9 @@ observations:
   cited provenance index is resolvable post-hoc (the registry is otherwise an
   in-memory value that dies with the call).
 - **`generation`** - input = the assembled prompt (registry + retrieved
-  context); metadata = the collected raw output. (The streaming path does not
-  surface `reasoning_content`; only the non-streaming `complete` path sees it.)
+  context); metadata = the collected raw output AND the generator's
+  `reasoning_content` (the DeepSeek reasoning deltas, surfaced as `reasoning`
+  events by `DeepSeekClient.stream` and recorded on the span).
 - **`validation`** - metadata = accepted/degraded, validation errors, rejected
   citations, the resolved provenance references; numeric metrics =
   `metric.provenance_empty` (1.0 for an accepted-but-empty `PROV []` bundle)

@@ -271,7 +271,16 @@ class DeepSeekClient:
         }
 
     def stream(self, prompt: str):
-        """Yield SSE content deltas, then a finish marker. Never yields reasoning."""
+        """Yield SSE deltas (content + reasoning_content), then a finish marker.
+
+        The DeepSeek reasoning model emits ``reasoning_content`` in the SSE
+        deltas when thinking is enabled (``build_external_payload`` sets
+        ``thinking``); it is surfaced as ``{"type": "reasoning", "text": ...}``
+        events so the caller can record it (#207 criterion 1 records the
+        generation's reasoning on the span). The caller decides whether to
+        forward it; the tool's ``stream`` keeps it internal to the answer
+        assembly.
+        """
         payload = build_external_payload(
             self.model, prompt, max_tokens=self.max_tokens, stream=True
         )
@@ -297,6 +306,9 @@ class DeepSeekClient:
                 choices = event.get("choices") or []
                 choice = choices[0] if choices else {}
                 delta = choice.get("delta") or {}
+                reasoning = delta.get("reasoning_content")
+                if reasoning:
+                    yield {"type": "reasoning", "text": reasoning}
                 content = delta.get("content")
                 if content:
                     yield {"type": "delta", "text": content}

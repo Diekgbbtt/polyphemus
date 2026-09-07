@@ -115,11 +115,18 @@ class LightRagQueryTool(BaseTool):
                     registry=registry_metadata(registry),
                 )
             with stage_span("generation", input={"prompt": prompt}) as generation:
+                reasoning: list[str] = []
                 for event in self.llm.stream(prompt):
+                    if event.get("type") == "reasoning":
+                        reasoning.append(event["text"])
+                        continue
                     if event.get("type") == "delta":
                         collected.append(event["text"])
                     yield event
-                generation.record(output="".join(collected))
+                generation.record(
+                    reasoning_content="".join(reasoning),
+                    output="".join(collected),
+                )
             text = "".join(collected)
             with stage_span("validation", input={
                 "scenario_id": spec.scenario_id,
