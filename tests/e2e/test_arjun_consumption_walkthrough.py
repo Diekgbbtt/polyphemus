@@ -81,12 +81,28 @@ _ARJUN_JUNK_PATH = "/'+_(i[8])+'"
 # Seed N distinct route clusters (dynamic-pair collapses to one).
 _EXPECTED_PODS = 3  # /get, /post, /anything/*
 
-_LLM_KEYS = ("OPENAI_API_KEY", "API_KEY_OPENROUTER", "API_KEY_OPENCODE")
+# The key the live triager model needs, resolved the way the app does
+# (`providers._key_env`: `API_KEY_<PROVIDER>`, hyphens as underscores) -
+# shared convention with the #208 walkthrough. The stack's triager is
+# `opencode:...` -> `API_KEY_OPENCODE`; the legacy OPENROUTER/OPENAI names
+# cover host-side runs predating the per-provider convention.
+_LLM_KEY_ENVS = ("API_KEY_OPENROUTER", "OPENAI_API_KEY")
+
+
+def _triager_key_present() -> bool:
+    if any(os.environ.get(k) for k in _LLM_KEY_ENVS):
+        return True
+    model = os.environ.get("LLM_MODEL_TRIAGER", "")
+    provider = model.split(":", 1)[0] if ":" in model else ""
+    return bool(provider) and bool(
+        os.environ.get("API_KEY_" + provider.upper().replace("-", "_"))
+    )
+
 
 pytestmark = pytest.mark.skipif(
-    not any(os.environ.get(k) for k in _LLM_KEYS),
-    reason="live LLM key required (one of OPENAI_API_KEY, API_KEY_OPENROUTER, "
-    "API_KEY_OPENCODE - the last rides the in-network gateway)",
+    not _triager_key_present(),
+    reason="live triager model key required (the LLM_MODEL_TRIAGER provider's "
+    "API_KEY_<PROVIDER>, or OPENAI_API_KEY / API_KEY_OPENROUTER)",
 )
 
 
@@ -99,12 +115,16 @@ def _port_open(host: str, port: int, timeout: float = 1.0) -> bool:
 
 
 def _in_network() -> bool:
-    """True inside the compose network (service DNS resolves `neo4j`)."""
+    """True inside the compose network. Two topologies run this file: the
+    compose `tests` runner (service DNS resolves `neo4j`) and the agent
+    container (the co-located gateway, ADR D1, answers on the container
+    loopback - the #208 detector). Either signal counts."""
     try:
-        socket.gethostbyname("neo4j")
-        return True
+        if socket.gethostbyname("neo4j") != "127.0.0.1":
+            return True
     except OSError:
-        return False
+        pass
+    return bool(os.environ.get("LLM_GATEWAY_URL")) and _port_open("localhost", 4000)
 
 
 def _stack_reachable() -> bool:
@@ -189,7 +209,9 @@ def test_e1_arjun_pods_equal_route_clusters_junk_absent():
 
     # Seed the surface as if the crawlers had produced it: the known paths
     # (one restapi-profiled, so the restapi-first ordering has something to
-    # order) plus the dynamic pair plus the junk fragment.
+    # order) plus the dynamic pair plus the junk fragment. Seeded Endpoints
+    # carry method="GET" - the curator's Endpoint identity is
+    # {path, method, baseurl} (the #208 live-run finding).
     with neo4j_client._driver.session() as s:
         s.run(
             "MERGE (b:BaseURL {url: $base, project_id: $pid}) "
@@ -200,7 +222,7 @@ def test_e1_arjun_pods_equal_route_clusters_junk_absent():
             url = _ARJUN_BASEURL.rstrip("/") + path
             s.run(
                 "MERGE (e:Endpoint {url: $url, project_id: $pid}) "
-                "SET e.baseurl = $base, e.path = $path "
+                "SET e.baseurl = $base, e.path = $path, e.method = 'GET' "
                 "SET e.last_seen = datetime()",
                 url=url, base=_ARJUN_BASEURL, path=path, pid=project_id,
             )
