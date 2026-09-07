@@ -32,6 +32,7 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
@@ -57,11 +58,15 @@ class SessionTurn:
     """One turn's result: the model's `content` (the last message's text, or the
     parsed object when a `response_format` schema is set), and the full post-turn
     `messages` trail - the persisted short-term memory - for a caller that wants
-    to inspect it."""
+    to inspect it. `blackloop` flags a stream cut for unbounded reasoning (#206);
+    `reasoning` carries the reasoning the streamed turn emitted (the raw surface,
+    the recovery turn's material)."""
 
     content: Any
     messages: list[BaseMessage]
     thread_id: str
+    blackloop: bool = False
+    reasoning: str = ""
 
 
 # `model_factory(role_id) -> chat model`. Defaults to the session-path builder
@@ -195,13 +200,81 @@ def _turn_config(role_id: str, thread_id: str, observe: bool) -> dict:
     return _observe_config(config, role_id, thread_id) if observe else config
 
 
-def _to_turn(result: dict, response_format, thread_id: str) -> SessionTurn:
+# --- T1 (#213): streamed generation as the default session mode --------------
+
+# The default blackloop detection bound: accumulated reasoning past this many
+# characters with NO content emitted yet cuts the stream (#206). Env-overridable
+# (`LLM_BLACKLOOP_REASONING_BUDGET`, fail-open).
+_DEFAULT_REASONING_BUDGET_CHARS = 20_000
+
+
+def _reasoning_budget_chars(override: int | None) -> int:
+    if override is not None and override > 0:
+        return override
+    try:
+        value = int(os.environ.get("LLM_BLACKLOOP_REASONING_BUDGET", "") or "")
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return _DEFAULT_REASONING_BUDGET_CHARS
+
+
+class _StreamCapture:
+    """Accumulate the reasoning + content a streamed model call emits, with running
+    character counts so the blackloop cut is O(1) per chunk (a blackloop burns the
+    full 131k-token budget - never re-sum the trail)."""
+
+    __slots__ = ("reasoning_parts", "reasoning_chars", "content_parts")
+
+    def __init__(self) -> None:
+        self.reasoning_parts: list[str] = []
+        self.reasoning_chars: int = 0
+        self.content_parts: list[str] = []
+
+    def consume(self, chunk) -> None:
+        from polymerhus.app.llm.streaming import extract_content, extract_reasoning
+
+        reasoning = extract_reasoning(chunk)
+        if reasoning:
+            self.reasoning_parts.append(reasoning)
+            self.reasoning_chars += len(reasoning)
+        content = extract_content(chunk)
+        if content:
+            self.content_parts.append(content)
+
+    @property
+    def content(self) -> str:
+        return "".join(self.content_parts)
+
+    @property
+    def reasoning(self) -> str:
+        return "".join(self.reasoning_parts)
+
+
+def _blackloop_turn(thread_id: str, capture: _StreamCapture) -> SessionTurn:
+    """The cut turn's shape: no final message persisted (the cut fired mid-stream, the
+    graph's state is the pre-turn thread), no answer content - but the captured
+    reasoning (the recovery turn's material) is carried, not lost."""
+    return SessionTurn(
+        content="",
+        messages=[],
+        thread_id=thread_id,
+        blackloop=True,
+        reasoning=capture.reasoning,
+    )
+
+
+def _to_turn(result: dict, response_format, thread_id: str,
+             reasoning: str = "") -> SessionTurn:
     messages = result.get("messages", [])
     if response_format is not None:
         content = result.get("structured_response")
     else:
         content = messages[-1].content if messages else None
-    return SessionTurn(content=content, messages=list(messages), thread_id=thread_id)
+    return SessionTurn(
+        content=content, messages=list(messages), thread_id=thread_id,
+        reasoning=reasoning)
 
 
 def _resolve_reasoning_profile(role_id: str):
@@ -315,6 +388,7 @@ def run_session_turn(
     model_factory: ModelFactory | None = None,
     observe: bool = True,
     read_timeout_s: float | None = None,
+    reasoning_budget_chars: int | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
 
@@ -323,7 +397,14 @@ def run_session_turn(
     model<->tool loop (`tools` bound via tool_calling) to a final answer, which is
     persisted back so the next turn resumes from here. `response_format` returns a
     parsed structured object as `content`. `read_timeout_s` (default None) bounds
-    the turn's model calls per-attempt - the escalating-budget seam #186 rides."""
+    the turn's model calls per-attempt - the escalating-budget seam #186 rides.
+
+    T1 (#213): the model call is STREAMED (the operator's 2026-09-07 ruling - streamed
+    generation is the DEFAULT session mode), so `reasoning_content` AND `content` are
+    captured per chunk; a stream that burns reasoning past `reasoning_budget_chars`
+    (default 20k, env `LLM_BLACKLOOP_REASONING_BUDGET`) with no content emitted is
+    CUT mid-flight and surfaced as `blackloop=True` with the captured reasoning - the
+    recovery turn's material, never lost (fail-open: the cut never raises)."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
@@ -336,9 +417,30 @@ def run_session_turn(
             config, _read_thread_state(checkpointer, thread_id))
     if observe:
         _attach_compaction_metadata(config, middleware, thread_id)
-    result = agent.invoke({"messages": list(new_messages)}, config)
-    _replay_reasoning(agent, config, result, role_id, thread_id, profile)
-    return _to_turn(result, response_format, thread_id)
+    budget = _reasoning_budget_chars(reasoning_budget_chars)
+    capture = _StreamCapture()
+    result: dict | None = None
+    blackloop = False
+    stream = agent.stream(
+        {"messages": list(new_messages)}, config, stream_mode=["messages", "values"])
+    try:
+        for mode, payload in stream:
+            if mode == "messages":
+                capture.consume(payload[0])
+                if _should_cut(capture, budget):
+                    blackloop = True
+                    break
+            elif isinstance(payload, dict) and "messages" in payload:
+                result = payload
+    finally:
+        if blackloop:
+            stream.close()
+    if blackloop:
+        return _blackloop_turn(thread_id, capture)
+    if result is not None:
+        _replay_reasoning(agent, config, result, role_id, thread_id, profile)
+        return _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+    return _blackloop_turn(thread_id, capture)
 
 
 async def arun_session_turn(
@@ -355,14 +457,18 @@ async def arun_session_turn(
     model_factory: ModelFactory | None = None,
     observe: bool = True,
     read_timeout_s: float | None = None,
+    reasoning_budget_chars: int | None = None,
 ) -> SessionTurn:
-    """Async-native turn (`ainvoke`) - the entry point an async-native PARENT
+    """Async-native turn (`astream_events`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
     and monitor child sessions without blocking its own loop. Identical contract to
     `run_session_turn`; pass an async checkpointer (`AsyncPostgresSaver`, already
     used by the analysis supervisor) in production. `read_timeout_s` (default None)
     bounds the turn's model calls per-attempt - the escalating-budget seam #186
-    rides: the actor runtime re-invokes this with the next, larger budget."""
+    rides: the actor runtime re-invokes this with the next, larger budget.
+
+    T1 (#213): streamed generation is the DEFAULT mode here too - same blackloop
+    cut + reasoning capture as the sync turn, driven on the event loop."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
@@ -375,9 +481,40 @@ async def arun_session_turn(
             config, await _aread_thread_state(checkpointer, thread_id))
     if observe:
         _attach_compaction_metadata(config, middleware, thread_id)
-    result = await agent.ainvoke({"messages": list(new_messages)}, config)
-    await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
-    return _to_turn(result, response_format, thread_id)
+    budget = _reasoning_budget_chars(reasoning_budget_chars)
+    capture = _StreamCapture()
+    result: dict | None = None
+    blackloop = False
+    stream = agent.astream(
+        {"messages": list(new_messages)}, config, stream_mode=["messages", "values"])
+    try:
+        async for mode, payload in stream:
+            if mode == "messages":
+                capture.consume(payload[0])
+                if _should_cut(capture, budget):
+                    blackloop = True
+                    break
+            elif isinstance(payload, dict) and "messages" in payload:
+                result = payload
+    finally:
+        if blackloop:
+            await stream.aclose()
+    if blackloop:
+        return _blackloop_turn(thread_id, capture)
+    if result is not None:
+        await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
+        return _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+    return _blackloop_turn(thread_id, capture)
+
+
+def _should_cut(capture: _StreamCapture, budget: int) -> bool:
+    from polymerhus.app.llm.streaming import should_cut_stream
+
+    return should_cut_stream(
+        accumulated_reasoning_chars=capture.reasoning_chars,
+        accumulated_content=capture.content,
+        reasoning_budget_chars=budget,
+    )
 
 
 # Test seam for probe validation - when set, the session runs the real

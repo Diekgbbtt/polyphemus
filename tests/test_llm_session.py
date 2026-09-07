@@ -14,8 +14,8 @@ import asyncio
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -382,3 +382,123 @@ def test_arun_session_turn_carries_memory_across_turns():
     turn2 = asyncio.run(_two_turns())
     assert [m.content for m in turn2.messages] == ["hello", "a1", "again", "a2"]
     assert turn2.content == "a2"
+
+
+# --- T1 (#213): streamed generation is the DEFAULT session mode --------------
+
+class _StreamFake(BaseChatModel):
+    """A streaming chat model: `_stream` emits reasoning chunks (on
+    `additional_kwargs.reasoning_content`) then the final answer's content chunks,
+    with a selectable reasoning burn and whether content is ever emitted."""
+
+    reasoning_pieces: list = []
+    content_pieces: list = []
+    idx: dict = {}
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=""))])
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        for piece in self.reasoning_pieces:
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content="", additional_kwargs={"reasoning_content": piece}))
+        for piece in self.content_pieces:
+            yield ChatGenerationChunk(message=AIMessageChunk(content=piece))
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def _stream_factory(*, reasoning_pieces=(), content_pieces=()):
+    """A `model_factory` yielding a fresh streaming fake per turn."""
+
+    def make(role_id):
+        return _StreamFake(
+            reasoning_pieces=list(reasoning_pieces), content_pieces=list(content_pieces))
+
+    return make
+
+
+def test_run_session_turn_streams_and_captures_reasoning():
+    """T1: `run_session_turn` now STREAMS the model call (`stream_events`), so a
+    turn that emits reasoning before its answer has BOTH surfaces captured - the
+    turn returns the generated content and carries the streamed reasoning."""
+    saver = InMemorySaver()
+    turn = run_session_turn(
+        "assigner", "s1",
+        [HumanMessage(content="hello")],
+        checkpointer=saver,
+        model_factory=_stream_factory(
+            reasoning_pieces=["Need maybe mention", " the admin routes"],
+            content_pieces=["final", " answer"]),
+        observe=False,
+        reasoning_budget_chars=100_000,
+    )
+    assert turn.content == "final answer"
+    assert turn.reasoning == "Need maybe mention the admin routes"
+    assert turn.blackloop is False
+
+
+def test_arun_session_turn_streams_and_captures_reasoning():
+    """Same contract on the async path (`astream_events`), the production parent-
+    coordinator entry point."""
+    saver = InMemorySaver()
+
+    async def _one():
+        return await arun_session_turn(
+            "assigner", "s2",
+            [HumanMessage(content="hello")],
+            checkpointer=saver,
+            model_factory=_stream_factory(
+                reasoning_pieces=["deep", " deliberation"],
+                content_pieces=["answer"]),
+            observe=False,
+            reasoning_budget_chars=100_000,
+        )
+
+    turn = asyncio.run(_one())
+    assert turn.content == "answer"
+    assert turn.reasoning == "deep deliberation"
+
+
+def test_arun_session_turn_cuts_blackloop_and_thread_stays_resumable():
+    """T1: a stream that burns reasoning with NO content past the detection bound
+    is CUT mid-flight (never waiting for the full generation), surfaced as a
+    blackloop turn with the captured reasoning - and the SAME thread remains
+    resumeable for the follow-up recovery turn."""
+    saver = InMemorySaver()
+
+    async def _cut_then_recover():
+        cut = await arun_session_turn(
+            "assigner", "s3",
+            [HumanMessage(content="hello")],
+            checkpointer=saver,
+            model_factory=_stream_factory(
+                reasoning_pieces=["Need maybe mention"] * 4000,  # burns past the bound
+                content_pieces=[]),
+            observe=False,
+            reasoning_budget_chars=8000,
+        )
+        assert cut.blackloop is True
+        assert cut.content == ""
+        assert "Need maybe mention" in cut.reasoning
+        # the thread must be healthy for the recovery turn (T2):
+        recovered = await arun_session_turn(
+            "assigner", "s3",
+            [HumanMessage(content="answer now")],
+            checkpointer=saver,
+            model_factory=_stream_factory(
+                reasoning_pieces=["ok"], content_pieces=["recovered"]),
+            observe=False,
+            reasoning_budget_chars=100_000,
+        )
+        return recovered
+
+    recovered = asyncio.run(_cut_then_recover())
+    assert recovered.content == "recovered"
+    assert recovered.blackloop is False
