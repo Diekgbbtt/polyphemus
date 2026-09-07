@@ -33,8 +33,8 @@ Contract + degradation (spec 5, spec 9):
   single KB tool, always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` opt-in
   flag is REMOVED). An injected `kb_query` seam (the contract tier) is used when
   the real tool is unavailable; empty/raising
-  -> a denoted degraded bundle (C2/C3). The `lightrag` import is
-  lazy (no I/O at import).
+  -> a denoted degraded bundle (C2/C3). The `lightrag.tool` description
+  constant is imported at module top (I/O-free); the real tool is built lazily.
 - `exec` - the Kali-container exec tool (R2): `EXEC_TIMEOUT_S` per call (the
   shared `recon.config.EXEC_TIMEOUT_S`, default 300), args `command` + optional
   `timeout_s`; calls an injected `exec_fn(command, timeout_s) -> ExecResult`
@@ -55,6 +55,7 @@ import json
 from typing import Any, Callable, Literal
 
 from langchain_core.tools import BaseTool
+from lightrag.tool import QUERY_LIGHTRAG_DESCRIPTION
 from pydantic import BaseModel, ConfigDict, Field, ValidationError
 
 from .hunter_memory import (
@@ -622,7 +623,10 @@ class NotesTool(BaseTool):
 class KbQueryTool(BaseTool):
     """The LightRAG knowledge-base tool (R1, spec 5): a typed `QuerySpecV1`-shaped
     query -> an `AnswerBundleV1`-shaped bundle, consumed directly in the author
-    lane. WIRED from scratch onto the real `query_lightrag` tool (the lightrag
+    lane. The KB is a testing-METHODOLOGY knowledge base (WSTG + writeups) - the
+    tool's single canonical description (`QUERY_LIGHTRAG_DESCRIPTION`, imported
+    from `lightrag.tool`) emphasises retrieving methodology, never adjudicating
+    a bug. WIRED from scratch onto the real `query_lightrag` tool (the lightrag
     branch's single KB tool, ALWAYS attempted as of #197 - the
     `HUNTING_LIGHTRAG_TOOL` opt-in flag is REMOVED): the real tool is built
     lazily and invoked (fail-open to a degraded bundle); when unavailable the
@@ -631,16 +635,7 @@ class KbQueryTool(BaseTool):
     turn."""
 
     name: str = "kb_query"
-    description: str = (
-        "Query the fault knowledge base (LightRAG) to ground your reasoning: "
-        "the scenario's attack_goal and concern, the technology stack, target "
-        "references, input vectors, known facts, the acceptable technique "
-        "families, any unsupported claims, observed evidence, and the retrieval "
-        "config. Returns an AnswerBundleV1-shaped bundle: a summary, per-entity "
-        "explanations with provenance references, and knowledge gaps. An empty "
-        "or degraded result means the KB has nothing further - degrade to your "
-        "HuntConfig grounding and continue."
-    )
+    description: str = QUERY_LIGHTRAG_DESCRIPTION
     args_schema: type[BaseModel] = KbQuerySpec
 
     def __init__(self, *, kb_fn: KbQueryFn | None = None, **kwargs):
@@ -672,7 +667,38 @@ class KbQueryTool(BaseTool):
             return None
 
     def _run(self, **kwargs: Any) -> str:
+        from lightrag.observability import kb_observation_span
+
         spec = KbQuerySpec(**kwargs)
+        entity_names: list[str] = []
+        provenance: list[str] = []
+        with kb_observation_span(
+            query=spec.concern, scenario_id=spec.scenario_id
+        ) as observation:
+            text = self._kb_query_text(spec)
+            try:
+                bundle = json.loads(text)
+                entity_names = [
+                    str(x.get("entity_name") or x.get("entity_type") or "")
+                    for x in (bundle.get("ontology_explanations") or [])
+                    if isinstance(x, dict)
+                ]
+                provenance = [
+                    str(x) for x in (bundle.get("provenance_references") or [])
+                ]
+            except (ValueError, TypeError, AttributeError):
+                entity_names = []
+                provenance = []
+            observation.record(
+                entity_names=entity_names,
+                provenance_references=provenance,
+            )
+        return text
+
+    def _kb_query_text(self, spec: KbQuerySpec) -> str:
+        """Resolve one `kb_query` to its AnswerBundle-shaped JSON text (the real
+        tool when available, else the injected seam, else the degraded bundle).
+        Fail-open (C2/C3): never raises into the turn."""
         real = self._lightrag_tool()
         if real is not None:
             try:

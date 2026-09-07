@@ -127,6 +127,28 @@ def test_triager_prompt_names_its_tools():
     assert KB_TOOL in POD_TRIAGER_SYSTEM
 
 
+# --- #207: the KB framing (positive methodology, never a "fault KB") -----------
+
+def test_kb_bullet_is_the_neutral_methodology_signature():
+    """#207 defect 2: both `{KB_TOOL}` bullets use the neutral pointer + trigger
+    signature - the KB is a methodology KB (retrieve missing ontology concepts),
+    never a "fault knowledge base" used to verify or adjudicate a bug."""
+    sig = (
+        "the knowledge base from which you retrieve the testing ontology's "
+        "concepts when missing from your reasoning; query it when stack-shape, "
+        "payload/vector, technique, or verification-symptom knowledge is missing."
+    )
+    for prompt in (POD_RUNNER_SYSTEM, POD_TRIAGER_SYSTEM):
+        assert KB_TOOL in prompt
+        # the neutral signature is present verbatim (after the tool name)
+        idx = prompt.index(KB_TOOL)
+        assert sig in prompt[idx:].split("\n")[0] or sig in prompt[idx:]
+        # the stale "fault knowledge base" + binary ontology list is gone
+        assert "fault knowledge base" not in prompt
+        for stale in ("fault, symptom, assumption", "defence, payload, vector"):
+            assert stale not in prompt
+
+
 # --- the D84-30 guard: no differential anywhere --------------------------------
 
 def test_prompts_carry_no_differential_reference():

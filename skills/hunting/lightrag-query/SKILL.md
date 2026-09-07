@@ -1,35 +1,46 @@
 ---
 name: lightrag-query
-description: Guida operativa compatta al tool `query_lightrag` dell'hunting agent: quando usarlo, come costruire uno `QuerySpecV1` derivando i campi dall'HuntConfig, e come trattare l'`AnswerBundle` validato (metodologia e provenance, mai conferma di vulnerabilità). Caricata lazy da src/polymerhus/attack/hunting/hunting_agent.py::_load_lightrag_query_skill.
+description: Compact operational guide to the `query_lightrag` / `kb_query` tool for the hunting agent: when to use it, how to build a `QuerySpecV1` by deriving the fields from the HuntConfig, and how to treat the validated `AnswerBundle` (methodology and provenance, never a vulnerability confirmation). The KB is a testing-methodology knowledge base - retrieve concepts from it, never use it to verify or adjudicate a bug.
 ---
 
 # query_lightrag
 
-## Quando usarlo
+## When to use it
 
-Usa `query_lightrag` solo quando il grounding della KB non basta a formulare una metodologia riutilizzabile. Se la KB copre il caso, non chiamare il tool.
+Use `query_lightrag` when specific methodology knowledge is missing from your
+reasoning - the target stack's mechanisms or shape, a payload family and its
+vectors, a technique or methodology gap, or the shape of a verification
+symptom. If the KB already covers the case, do not call the tool.
 
-## Come costruire `QuerySpecV1`
+The tool is a methodology knowledge base: retrieve ontology concepts from it to
+ground your technique, payload, and verification-symptom reasoning. It is not a
+verifier - the returned bundle is methodology plus provenance references, never
+a judgment that a target response constitutes a vulnerability. Decide that on
+the target, on your own grounding.
 
-Deriva i campi dall'HuntConfig. Non introdurre testo recuperato né campi inventati.
+## How to build `QuerySpecV1`
 
-- `scenario_id`: identifica la caccia o l'ipotesi corrente.
-- `attack_goal`: obiettivo dell'attacco dichiarato dall'HuntConfig.
-- `concern`: la preoccupazione di sicurezza da indagare.
-- `technology_stack`: lo stack tecnologico dell'unità testabile.
-- `target_refs`: riferimenti al target (componenti/superfici).
-- `input_vectors`: vettori di input presunti, da `supposed_payload_vectors`.
-- `known_facts`: fatti noti e verificati (es. L0).
-- `acceptable_technique_families`: famiglie di tecniche accettabili per la metodologia.
-- `unsupported_claims`: affermazioni che il tool non deve dare per confermate.
-- `evidence`: riferimenti L0/L1 con sintesi, vincolo di provenance.
-- `expected_no_hypothesis`: true quando è attesa l'assenza di ipotesi.
+Derive the fields from the HuntConfig. Do not introduce retrieved text or
+invented fields.
 
-## Risposta
+- `scenario_id`: identifies the current hunt or hypothesis.
+- `attack_goal`: the attack objective declared by the HuntConfig.
+- `concern`: the security concern under investigation.
+- `technology_stack`: the technology stack of the testable unit.
+- `target_refs`: references to the target (components/surfaces).
+- `input_vectors`: presumed input vectors, from `supposed_payload_vectors`.
+- `known_facts`: known and verified facts (e.g. L0).
+- `acceptable_technique_families`: technique families acceptable for the methodology.
+- `unsupported_claims`: claims the tool must not treat as confirmed.
+- `evidence`: L0/L1 references with summaries, the provenance constraint.
+- `expected_no_hypothesis`: true when the absence of a hypothesis is expected.
 
-Il tool restituisce un `AnswerBundle` validato. Usalo come metodologia e come vincolo di provenance, mai come conferma di vulnerabilità.
+## Response
 
-## Fallimento
+The tool returns a validated `AnswerBundle`. Use it as methodology and as a
+provenance constraint, never as a vulnerability confirmation.
 
-Se il tool fallisce, prosegui con il grounding disponibile e segnala il gap nel feedback.
+## Failure
 
+If the tool fails, proceed with the grounding available and report the gap in
+your feedback.

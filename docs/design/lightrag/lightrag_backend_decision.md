@@ -167,4 +167,19 @@ The current practical baseline is the validated WSTG KB under
 `data/lightrag/rag_storage` plus the isolated writeup overlay under
 `data/lightrag/writeups_rag_storage`. Treat backend, workspace, embedding, or
 entity-prompt changes as re-indexing events, not runtime-only configuration
+
+## Query pipeline observability (#207)
+
+The `query_lightrag` tool (`lightrag/tool.py`) runs a 4-stage pipeline whose
+inner three stages - retrieval (`POST /query/data`), generation
+(`POST /chat/completions` via `DeepSeekClient`), and validation
+(`extract_json_object` + `validate_bundle`) - are instrumented with per-stage
+OpenTelemetry spans (`lightrag/observability.py`). The spans ride the Langfuse
+OTLP span processor already wired by `app/observability/langfuse_tracing.py`,
+so they nest under the active trace and are exported to Langfuse. Details and
+the span-by-span contract are in `docs/observability-langfuse.md` (the
+"Per-stage spans in the LightRAG query pipeline" section) and
+`docs/design/hunting-tools-design.md` (the `kb_query` / `query_lightrag`
+section). The observability is fail-open: absent opentelemetry/Langfuse, every
+span degrades to a no-op and the pipeline is never perturbed.
 changes.

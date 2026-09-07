@@ -29,6 +29,7 @@ import shlex
 from typing import Any, Callable
 
 from langchain_core.tools import BaseTool
+from lightrag.tool import QUERY_LIGHTRAG_DESCRIPTION
 from pydantic import BaseModel, ConfigDict, Field
 
 from polymerhus.attack.hunting.pod.config import EXEC_TIMEOUT_S, MAX_POD_ITERS
@@ -153,16 +154,7 @@ class KbQueryTool(BaseTool):
     (no I/O at import) from the app config."""
 
     name: str = "query_lightrag"
-    description: str = (
-        "Retrieve reusable web-application testing methodology from the "
-        "LightRAG knowledge base for one bounded testing concern, then return "
-        "a structured answer: one ontology entity (type + canonical name) with "
-        "a detailed prose explanation, grounded only in the returned "
-        "references. Use it to ground a probe or a payload family when the "
-        "spec's own primitives are not enough; an empty result means the KB "
-        "has nothing further - degrade to the spec's own primitives and "
-        "continue."
-    )
+    description: str = QUERY_LIGHTRAG_DESCRIPTION
     args_schema: type[BaseModel] = None  # set in __init__ from the lightrag tool
 
     def __init__(self, *, log=None, variant_ref: str = "", tool=None, **kwargs):
