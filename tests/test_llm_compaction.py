@@ -448,9 +448,10 @@ def test_failed_summarise_leaves_original_unchanged(monkeypatch):
     assert res.report.new_summary is None
 
 
-def test_terminal_summarise_leaves_original_unchanged():
-    """A window-cap (terminal) summariser is never retried (D6) and leaves the
-    ORIGINAL trail unchanged with the terminal status reported."""
+def test_window_cap_summarise_leaves_original_unchanged():
+    """A window-cap summariser is never retried (D6, #210) and leaves the ORIGINAL
+    trail unchanged; the retired 'terminal' status now reports 'failed' (operator
+    ruling - the window-cap degrades to the fail-safe failed path, never terminal)."""
     store = T.InMemoryToolOutputStore()
     trail = [HumanMessage(content="go"), AIMessage(content="r1"),
              AIMessage(content="r2")]
@@ -460,7 +461,7 @@ def test_terminal_summarise_leaves_original_unchanged():
 
     res = C.compact_pass(trail, thread_id="thr", profile=None, store=store, summariser=terminal)
     assert [m.content for m in res.messages] == [m.content for m in trail]
-    assert res.report.summary_status == "terminal"
+    assert res.report.summary_status == "failed"
     assert res.report.readability == "unchanged"
     assert res.report.reclaimed_tokens == 0
     assert res.report.new_summary is None

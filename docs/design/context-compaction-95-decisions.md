@@ -75,6 +75,8 @@ The summary materialises as a synthetic message in the trail, idempotently repla
 The synthetic message is what persists and is restored with the trail; the ledger is what the barrier and the observability surface read.
 The quality gate closes the gap the operator flagged: without it, an empty or weak summary silently "succeeds" and analysis-relevant material is lost while the ledger claims a compacted window.
 
+**#210 amendment (2026-09-07, window-splitting):** the "ONE atomic call" ruling is amended for the over-window input shape. When the composed input would exceed the model window, the summariser splits the ordered spans into window-fitting chunks (span-granular - a span is never split) and folds them PROGRESSIVELY: chunk k's `SummaryUpdate` becomes chunk k+1's `existing`, so the final fold is the single chainable running summary. The in-window case remains exactly one atomic call - no chunking overhead. The chunk loop lives INSIDE `summarise`; the pass assembly never sees chunks. This is the seam #206's recovery turn compacts onto (the failed reasoning's streamed chunk-capture arrives as multiple window-fitting spans the fold consumes).
+
 ## D6 - Failure taxonomy and the loop mitigation
 
 Generation failures map to existing surfaces plus three compaction-specific rules.
@@ -84,8 +86,12 @@ Consecutive failed passes are counted LOCALLY in the compaction component; at th
 On exhaustion or cap, the barrier releases on last-known-good: the current context is sent in the request, the ledger keeps the over-budget flag, and the next post-response trigger re-attempts - this is the fail-safe path, and the cap plus the terminal classification are what make the operator-flagged self-containing loop (window-cap failure -> new compaction trial -> same failure) impossible.
 A window-cap failure inside the SUMMARISATION call cannot arise from compaction's own shape: the atomic call's input is the material being compacted, bounded by the trail that itself just overflowed a window the summary request fits inside; if a provider nonetheless returns it, it is terminal (above), not looped.
 
+**#210 amendment (2026-09-07, terminal retired):** the "TERMINAL" classification for the summariser's window-cap is RETIRED. A window-cap during a summariser call still ESCAPES the escalating retry (the `_TerminalWindowError` sentinel - identical input always fails identically, never burns the retry budget), but the pass outcome now degrades to `failed`, never `terminal`. Under window-splitting (D5 amendment) the over-window input shape no longer reaches the model as one oversized call, so the terminal path is unreachable for that shape; the only residual window-cap is a single irreducible span, which degrades to `failed` (operator ruling, #210 grey point 4). The D6 consecutive-pass cap and the escalation still cover `failed` passes identically.
+
 **Rationale.**
 Fail-safe "as reliably as possible" (operator ruling) means mapping every failure class to a coverage point rather than a blanket retry: transient classes to the #73 schedule, structural classes to terminal classification, and repetition to the local consecutive cap.
+
+**#210 amendment (2026-09-07, per-chunk failure semantics):** under window-splitting a chunk that exhausts retries ABORTS the pass; the pass still reports `ok` with the best chainable summary when any chunk produced one (a partial fold is applied - strictly better than the over-budget original), and `failed` only when no summary at all. `summary_status` stays a three-value enum; the `ok`/`failed` values now cover the chunked pass, and `terminal` is unreachable.
 
 ## D7 - Replay-collision precedence: a token-bounded byte-identical tail, profile-gated
 

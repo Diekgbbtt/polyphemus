@@ -41,7 +41,7 @@ from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 
 from polymerhus.app.llm import compaction as C
-from polymerhus.app.llm.session import read_session_memory
+from polymerhus.app.llm.session import read_session_memory, run_session_turn
 from polymerhus.attack.hunting import llm as HL
 from polymerhus.attack.hunting.actors import HuntingHunterActor
 
@@ -397,3 +397,87 @@ def test_mechanism_typist_chained_lane_compacts_e2e(monkeypatch):
     # than a single time.
     assert summarise_state.get("passes", 0) >= 2, \
         f"expected multiple compaction passes, saw {summarise_state.get('passes', 0)}"
+
+
+# --- #210: an over-window thread compacts NEVER-terminal ----------------------
+#
+# The window-splitting walkthrough: a session whose summarisable spans exceed the
+# model window (the #206 blackloop shape - a failed huge reasoning turn) still
+# produces a chainable running summary via progressive chunked summarisation. The
+# tiny threshold forces the summariser's OWN composed input over the budget, so
+# `summarise` splits the ordered spans into window-fitting chunks and folds them -
+# the observable outcome is a summary (never a `terminal`/failed pass) built from
+# MULTIPLE chunk calls, with the trail carrying the synthetic summary message.
+
+
+def test_over_window_thread_compacts_never_terminal_e2e(monkeypatch):
+    """#210 C1/C2 e2e: a thread whose trail exceeds the model window (the #206
+    blackloop shape - a failed huge reasoning turn) still compacts into a single
+    chainable running summary via window-splitting. Observable outcome: the pass
+    reports ok (never terminal), the summariser was called MORE than once (chunked
+    progressive fold, not one atomic call), and the compacted trail carries the
+    synthetic running-summary message."""
+    import polymerhus.app.llm.providers as P
+    import polymerhus.app.llm.roles as R
+
+    monkeypatch.setenv("LLM_MODEL_ANALYSER", "opencode:gpt-test")
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    # A tiny threshold makes the scripted-but-huge spans cross the window budget,
+    # so the summariser's OWN composed input exceeds it and window-splitting fires.
+    monkeypatch.setenv("LLM_COMPACTION_THRESHOLD", "0.01")
+
+    summarise_state: dict = {"calls": 0}
+    # A huge reasoning span (the #206 blackloop shape) - it cannot be condensed in
+    # one atomic call, so the pass must split and fold it progressively.
+    LARGE_SPAN = "blackloop reasoning " * 5000
+
+    class _OverWindowModel(BaseChatModel):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            humans = [str(m.content or "") for m in messages if isinstance(m, HumanMessage)]
+            if any(h.startswith("Prior running summary:") for h in humans):
+                summarise_state["calls"] = summarise_state.get("calls", 0) + 1
+                return ChatResult(generations=[ChatGeneration(message=AIMessage(
+                    content="",
+                    tool_calls=[{"name": "SummaryUpdate", "args": {
+                        "objective": "The blacklooped reasoning was cut and folded.",
+                        "resume_point": "continue from the folded conclusion",
+                        "task_status": {"done": ["folded the failed reasoning"],
+                                        "in_progress": [], "remaining": []}},
+                        "id": "sum", "type": "tool_call"}]))])
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(
+                content=LARGE_SPAN, usage_metadata=_usage(120_000, output_tokens=10)))])
+
+        @property
+        def _llm_type(self) -> str:
+            return "fake"
+
+        def bind_tools(self, tools, **kwargs):
+            return self
+
+    def spy(provider, model, **kw):
+        return _OverWindowModel()
+
+    monkeypatch.setattr(P, "build_chat_model", spy)
+    monkeypatch.setattr(R, "build_chat_model", spy)
+
+    saver = InMemorySaver()
+    mw = C.build_role_compaction_middleware("assigner")
+    thread_id = "run-e2e-overwindow:assigner"
+    run_session_turn("assigner", thread_id, [HumanMessage(content="go")],
+                     checkpointer=saver, middleware=[mw],
+                     model_factory=lambda role: _OverWindowModel(), observe=False)
+    # The next turn's barrier awaits and settles the spawned over-window pass.
+    run_session_turn("assigner", thread_id, [HumanMessage(content="continue")],
+                     checkpointer=saver, middleware=[mw],
+                     model_factory=lambda role: _OverWindowModel(), observe=False)
+
+    report = mw.manager.last_report(thread_id)
+    assert report is not None, "the over-window pass must settle"
+    assert report.summary_status == "ok", "an over-window pass is never terminal"
+    assert report.new_summary is not None
+    assert summarise_state.get("calls", 0) >= 2, \
+        "window-splitting must fire multiple chunk calls (progressive fold)"
+    mem = read_session_memory(saver, thread_id)
+    assert mem is not None
+    assert any(str(m.content).startswith("[running summary]") for m in mem.messages), \
+        "the compacted trail must carry the chainable running summary"

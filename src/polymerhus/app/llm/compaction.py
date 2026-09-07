@@ -487,6 +487,7 @@ def _compact_pass(
     existing: RunningSummary | None,
     replay_keep_tokens: int,
     keep_last_tools: int | None = DEFAULT_KEEP_LAST_TOOLS,
+    window: CompactionWindow | None = None,
 ) -> CompactResult:
     """The compact pass's assembly, wrapped by `compact_pass` for fail-open."""
     original = list(messages)
@@ -550,8 +551,9 @@ def _compact_pass(
 
     new_summary: RunningSummary | None = None
     if spans or existing is not None or folded_tools:
-        outcome = summarise(summariser, existing=existing, spans=spans + folded_tools)
-        if outcome.status in ("failed", "terminal") or outcome.summary is None:
+        outcome = summarise(summariser, existing=existing, spans=spans + folded_tools,
+                            chunk_budget=window.budget if window is not None else None)
+        if outcome.status == "failed" or outcome.summary is None:
             # An "ok" without a summary is a degenerate pass - degrade the same
             # way as a failed one, never stage it (fail-open).
             return CompactResult(
@@ -602,6 +604,7 @@ def compact_pass(
     existing: RunningSummary | None = None,
     replay_keep_tokens: int = DEFAULT_REPLAY_KEEP_TOKENS,
     keep_last_tools: int | None = DEFAULT_KEEP_LAST_TOOLS,
+    window: CompactionWindow | None = None,
 ) -> CompactResult:
     """Run ONE compact pass (D7/D8, D1-staging): compose the tool-output offload
     and the running summary into a single STAGED result.
@@ -610,22 +613,24 @@ def compact_pass(
     the checkpointer (D1) - it stages. A reasoning-capable profile reserves a
     token-bounded byte-identical tail that is neither summarised nor offloaded;
     everything older is summarisable, tool bodies over the cut offload to the
-    module store (D8), and the ONE atomic running-summary call (D5) folds the prior
-    summary and new spans into a single synthetic message inserted immediately
-    before the tail. Bounded tool retention (#187): the region's tool messages
-    beyond the last `keep_last_tools` fold into that summary too, so the trail's
-    MESSAGE COUNT shrinks across passes, and duplicate identical SystemMessage
-    copies collapse to one. When a summary IS produced, older turn inputs in the
-    region before the tail fold into it too (the summary carries the user's
-    directives); when no summary fires, every message stays verbatim. A failed or
-    terminal summarisation returns the ORIGINAL trail unchanged (D6 fail-safe); a
+    module store (D8), and the running-summary call (D5, #210 window-splitting:
+    when `window` is supplied and the composed input would exceed the window, the
+    spans fold progressively over window-fitting chunks - never a terminal pass)
+    folds the prior summary and new spans into a single synthetic message inserted
+    immediately before the tail. Bounded tool retention (#187): the region's tool
+    messages beyond the last `keep_last_tools` fold into that summary too, so the
+    trail's MESSAGE COUNT shrinks across passes, and duplicate identical
+    SystemMessage copies collapse to one. When a summary IS produced, older turn
+    inputs in the region before the tail fold into it too (the summary carries the
+    user's directives); when no summary fires, every message stays verbatim. A
+    failed summarisation returns the ORIGINAL trail unchanged (D6 fail-safe); a
     bad message shape degrades (kept or summarised safely), never raises."""
     try:
         return _compact_pass(
             messages, thread_id=thread_id, profile=profile, store=store,
             summariser=summariser, existing=existing,
             replay_keep_tokens=replay_keep_tokens,
-            keep_last_tools=keep_last_tools)
+            keep_last_tools=keep_last_tools, window=window)
     except Exception:  # noqa: BLE001 - fail-open: never into the caller
         logger.warning("compact pass failed; returning the original trail unchanged",
                        exc_info=True)
@@ -980,7 +985,7 @@ class CompactionManager:
             return compact_pass(
                 messages, thread_id=thread_id, profile=self.profile, store=self.store,
                 summariser=self.summariser, existing=existing,
-                replay_keep_tokens=self.replay_keep_tokens)
+                replay_keep_tokens=self.replay_keep_tokens, window=self.window)
         except Exception:  # noqa: BLE001 - a pass never raises into the barrier
             logger.warning("compaction: out-of-band pass raised; treating it as failed",
                            exc_info=True)

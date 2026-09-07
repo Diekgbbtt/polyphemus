@@ -17,12 +17,12 @@ The D6 failure taxonomy, on top of the existing surfaces:
 - The single retry layer is reused: `invoke_with_escalating_timeout` (#73
   discipline - escalating budgets, raised attempts and None results retried,
   exhaustion fails closed to None).
-- A window-cap 4xx (the request itself exceeding `max_input_tokens`) is
-  TERMINAL for the pass - never retried with identical input. The terminal
-  signal is classified inside the attempt and translated to a BaseException
-  sentinel (`_TerminalWindowError`) so the retry wrapper (which catches
-  `Exception`) lets it ESCAPE untouched, and `summarise` maps it to status
-  "terminal" immediately.
+- A window-cap 4xx (the request itself exceeding `max_input_tokens`) escapes the
+  retry wrapper (the `_TerminalWindowError` sentinel - an identical retry always
+  fails identically) but the pass outcome is RETIRED from "terminal" (#210): it
+  degrades to "failed". Under #210's window-splitting the over-window input shape
+  never reaches the model as one oversized call; the only residual window-cap is a
+  single irreducible span, which also degrades to "failed" (operator ruling).
 - Transient failures (transport/timeout/None/weak output) retry per the
   schedule; exhaustion maps to status "failed", the caller's established
   fail-closed signal.
@@ -186,8 +186,10 @@ class SummaryUpdate(BaseModel):
 
 @dataclass(frozen=True)
 class SummaryOutcome:
-    """The three-way pass outcome (D5/D6): `ok` with the summary, `failed` on
-    retry exhaustion / quality-gate exhaustion, `terminal` on a window-cap."""
+    """The pass outcome (D5/D6, #210): `ok` with the summary (even a partial fold
+    from the succeeded chunk prefix), `failed` on retry exhaustion / quality-gate
+    exhaustion / a window-cap. The `terminal` value is RETIRED (#210) - a window-cap
+    degrades to `failed`, never a terminal pass."""
 
     summary: RunningSummary | None
     status: Literal["ok", "failed", "terminal"]
@@ -415,55 +417,112 @@ def _to_running_summary(update: SummaryUpdate) -> RunningSummary:
     )
 
 
+def _composed_token_count(existing: RunningSummary | None, spans: list) -> int:
+    """The approximate token count of the ONE atomic call's composed input for a
+    chunk - the `(prior + chunk)` messages the model actually sees (C5)."""
+    from polymerhus.app.llm.compaction import approx_tokens
+
+    return approx_tokens(build_summary_messages(existing, spans))
+
+
+def _largest_prefix_fitting(existing: RunningSummary | None, spans: list,
+                            budget: int) -> int:
+    """The largest prefix of `spans` whose composed input fits within `budget`
+    (C5/C3). Whole spans only - never splits a message. Token count is monotonic
+    in prefix length, so the bound is a greedy scan; at least ONE span is always
+    taken - even when the first span alone overflows - so a single irreducible
+    overflow still gets its one chance and the fold loop never stalls (Q4)."""
+    if not spans:
+        return 0
+    for n in range(1, len(spans) + 1):
+        if _composed_token_count(existing, spans[:n]) > budget:
+            return max(1, n - 1)
+    return len(spans)
+
+
 def summarise(
     summariser,
     *,
     existing: RunningSummary | None,
     spans: list,
+    chunk_budget: int | None = None,
 ) -> SummaryOutcome:
-    """Run the ONE atomic summarisation call under the #73 retry layer (D5/D6).
+    """Run the summarisation under the #73 retry layer (D5/D6), with #210
+    window-splitting: when the composed input would exceed the model window
+    (`chunk_budget`), the ordered spans split into window-fitting chunks (whole
+    spans, never mid-message) and fold progressively - chunk k's `SummaryUpdate`
+    becomes chunk k+1's `existing`, so the final fold is the single chainable
+    running summary (C2). The terminal path is RETIRED (C1): an over-window
+    multi-chunk input is never terminal; the only irreducible exit is a single
+    span still overflowing, which degrades to 'failed' (never 'terminal').
 
     `summariser` is injectable: `Callable[[list, float], SummaryUpdate | None]` -
     (messages, read_timeout_s) - the production caller builds it from the session
-    role's model with structured output; the unit tier injects a fake. The
-    messages are composed, then the call runs through
-    `invoke_with_escalating_timeout`: a window-cap error (D6) is classified and
-    translated to the terminal sentinel OUTSIDE the retry axis (invoked exactly
-    once, status "terminal"); a None result or a quality-gate failure is
-    translated to None so the schedule retries it; exhaustion returns status
-    "failed" with no summary; a quality pass returns status "ok" with the
-    `RunningSummary`. The consecutive-pass cap (3) is slice D's concern, never
-    this function."""
+    role's model with structured output; the unit tier injects a fake. `chunk_budget`
+    is the resolved compaction window's input bound (`window.budget`); when None
+    (the common in-window case, and the unit tier without a window) there is ONE
+    atomic call, exactly as before.
+
+    Per chunk the call runs through `invoke_with_escalating_timeout`: a window-cap
+    error (D6) is classified and translated to the terminal sentinel OUTSIDE the
+    retry axis (invoked exactly once, then treated as a chunk failure - never a
+    terminal pass); a None result or a quality-gate failure is translated to None so
+    the schedule retries it. A chunk that exhausts retries ABORTS the pass; the pass
+    returns status 'ok' with the best chainable summary (even a partial fold from
+    the succeeded prefix), 'failed' only when no summary at all. The consecutive-pass
+    cap (3) is slice D's concern, never this function."""
     from polymerhus.app.llm.providers import invoke_with_escalating_timeout
 
-    messages = build_summary_messages(existing, spans)
+    def _attempt(existing_for_chunk: RunningSummary | None, chunk: list):
+        messages = build_summary_messages(existing_for_chunk, chunk)
 
-    def _attempt(budget: float):
+        def _run(budget: float):
+            try:
+                result = summariser(messages, budget)
+            except Exception as exc:  # noqa: BLE001 - classify, then retry or abort
+                if classify_terminal(exc):
+                    raise _TerminalWindowError(exc) from None
+                raise
+            if result is None:
+                return None
+            if not is_quality_summary(result):
+                logger.warning(
+                    "running-summary pass returned a weak summary (%r); "
+                    "retrying under the escalating schedule", getattr(result, "objective", None))
+                return None
+            return result
+
         try:
-            result = summariser(messages, budget)
-        except Exception as exc:  # noqa: BLE001 - classify, then retry or terminate
-            if classify_terminal(exc):
-                raise _TerminalWindowError(exc) from None
-            raise
+            result = invoke_with_escalating_timeout(_run)
+        except _TerminalWindowError as exc:  # escaped the retry wrapper by construction
+            logger.warning(
+                "running-summary chunk hit a window-cap: %s - degraded to failed, "
+                "never retried with identical input (D6, #210)", exc.cause)
+            return None
         if result is None:
             return None
-        if not is_quality_summary(result):
-            logger.warning(
-                "running-summary pass returned a weak summary (%r); "
-                "retrying under the escalating schedule", getattr(result, "objective", None))
-            return None
-        return result
+        return _to_running_summary(result)
 
-    try:
-        result = invoke_with_escalating_timeout(_attempt)
-    except _TerminalWindowError as exc:  # escaped the retry wrapper by construction
-        logger.warning(
-            "running-summary pass is TERMINAL (window-cap): %s - never retried "
-            "with identical input (D6)", exc.cause)
-        return SummaryOutcome(summary=None, status="terminal")
-    if result is None:
+    if chunk_budget is None or _composed_token_count(existing, spans) <= chunk_budget:
+        folded = _attempt(existing, spans)
+        return SummaryOutcome(summary=folded, status="ok" if folded is not None else "failed")
+
+    # Window-splitting: fold the spans progressively over window-fitting chunks.
+    current_existing = existing
+    best: RunningSummary | None = None
+    remaining = list(spans)
+    while remaining:
+        n = _largest_prefix_fitting(current_existing, remaining, chunk_budget)
+        chunk = remaining[:n]
+        remaining = remaining[n:]
+        folded = _attempt(current_existing, chunk)
+        if folded is None:
+            break  # a chunk exhausted retries - abort, keep the best fold so far
+        current_existing = folded
+        best = folded
+    if best is None:
         return SummaryOutcome(summary=None, status="failed")
-    return SummaryOutcome(summary=_to_running_summary(result), status="ok")
+    return SummaryOutcome(summary=best, status="ok")
 
 
 def build_summariser(role_id: str):
@@ -477,19 +536,53 @@ def build_summariser(role_id: str):
     pass. Returns the `(messages, read_timeout_s) -> SummaryUpdate | None`
     contract `summarise` invokes."""
     def summariser(messages, read_timeout_s: float) -> "SummaryUpdate | None":
+        from polymerhus.app.llm.capability import resolve_capability
+        from polymerhus.app.llm.negotiation import (
+            negotiate_method,
+            resolve_method,
+            result_validates,
+        )
         from polymerhus.app.llm.providers import (
             build_chat_model,
             resolve_role,
             thinking_for,
         )
+        from polymerhus.app.llm.roles import structured_output_for
 
         provider, model = resolve_role(role_id)
+        # The negotiated structured-output method (ADR A1, #210): the summariser
+        # is a no-tools structured call, so the semantic default is json_schema
+        # on a structured-output profile, degrading per the shared chain - the
+        # str-form `task_status`-as-str drift disappears at the source instead of
+        # paying the ~26% retry tax. Resolved ONCE per pass, off the #73 axis
+        # (no invoker -> an unknown profile holds the semantic default, never an
+        # extra probe LLM call at pass time). Fail-open (D7): any resolution miss
+        # lands the semantic default and the call proceeds.
+        try:
+            profile = resolve_capability(provider, model)
+            method, _provenance = resolve_method(
+                profile, SummaryUpdate, True,
+                role=role_id, provider=provider, model=model,
+                negotiate=negotiate_method,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail-open, never into the pass
+            logger.warning("summariser method negotiation failed for %s/%s (%s); "
+                           "using the semantic default", provider, model, exc)
+            method = "json_schema"
         llm = build_chat_model(provider, model, temperature=0,
                                read_timeout=read_timeout_s, max_retries=0,
                                thinking=thinking_for(role_id))
-        result = llm.with_structured_output(
-            SummaryUpdate, method="function_calling").invoke(messages)
-        return result if isinstance(result, SummaryUpdate) else None
+        parsed = structured_output_for(llm, SummaryUpdate, method).invoke(messages)
+        # The negotiation contract's parse validation (A1): a rung's result is
+        # the PARSED form validated against the target - json_mode's silent
+        # wrong-shape failure is a miss, never accepted.
+        if not result_validates(parsed, SummaryUpdate):
+            return None
+        if method == "json_schema":
+            # The dict-form construction returns a raw dict for a pydantic
+            # target; hand the pass the instance it consumes.
+            return SummaryUpdate.model_validate(parsed)
+        return parsed if isinstance(parsed, SummaryUpdate) else None
 
     return summariser
 

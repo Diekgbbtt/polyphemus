@@ -14,10 +14,11 @@ import dataclasses
 import datetime as dt
 
 import httpx
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from openai import BadRequestError
 
 from polymerhus.app.llm import summary as S
+from polymerhus.app.llm.compaction import approx_tokens
 
 GOOD_OBJECTIVE = "Enumerate and patch the auth endpoints of the target webapp."
 GOOD_RESUME = "probe the third, still-unpatched auth endpoint"
@@ -286,16 +287,17 @@ def test_summarise_weak_result_exhausts_to_failed(monkeypatch):
     assert len(calls) == 3
 
 
-def test_summarise_terminal_window_error_never_retries(monkeypatch):
-    """A window-cap error is TERMINAL for the pass: the summariser is invoked
-    EXACTLY ONCE - an identical retry would always fail identically (D6)."""
+def test_summarise_window_error_degrades_to_failed_never_retries(monkeypatch):
+    """A window-cap error is NEVER retried (D6 - an identical retry always fails
+    identically): the summariser is invoked EXACTLY ONCE. #210 Track B retires the
+    'terminal' status - a window-cap now degrades to 'failed' (operator ruling)."""
     monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "1,1,1")
     calls = []
     def fake(messages, budget):
         calls.append(budget)
         raise _openai_window_error()
     outcome = S.summarise(fake, existing=None, spans=[])
-    assert outcome.status == "terminal"
+    assert outcome.status == "failed"
     assert outcome.summary is None
     assert len(calls) == 1
 
@@ -322,6 +324,238 @@ def test_classify_terminal_rejects_unrecognised_errors_fail_open():
     assert S.classify_terminal(Exception("429 too many requests")) is False
     assert S.classify_terminal(None) is False
     assert S.classify_terminal("not an exception") is False
+
+
+# --- window-splitting summarisation (#210 Track B, never terminal) -----------
+
+def _span(size_chars=1500, content=None):
+    return AIMessage(content=content if content is not None else "s" * size_chars)
+
+
+def _sys_tokens():
+    return approx_tokens([SystemMessage(content=S._SYSTEM_PROMPT)])
+
+
+def test_largest_prefix_fitting_is_span_granular_and_budget_bounded():
+    """C5/C3: the largest prefix fitting within the budget is WHOLE spans (never
+    mid-span), and the existing-summary growth is accounted (the bound re-measures
+    with a larger existing -> fewer spans fit)."""
+    spans = [_span(), _span(), _span()]
+    budget = _sys_tokens() + 700  # ~one span fits per chunk
+    assert S._largest_prefix_fitting(None, spans, budget) == 1
+    assert S._largest_prefix_fitting(None, spans, _sys_tokens() + 100_000) == 3
+    # a larger existing shrinks what fits - the bound accounts for the fold growth
+    small = [_span(300), _span(300), _span(300)]  # ~75 tokens each
+    two_fit = _sys_tokens() + 200  # the None case holds two small spans
+    assert S._largest_prefix_fitting(None, small, two_fit) == 2
+    big_existing = S.RunningSummary(objective="O" * 3000, resume_point="R" * 3000)
+    assert S._largest_prefix_fitting(big_existing, small, two_fit) == 1
+
+
+def test_largest_prefix_fitting_never_returns_zero_on_an_irreducible_span():
+    """Q4: even when the FIRST span alone overflows the budget, the prefix count
+    is still at least ONE (the irreducible single-span case) - the fold loop must
+    never stall on an empty chunk."""
+    from langchain_core.messages import SystemMessage
+    budget = _sys_tokens()  # the system prompt alone fills the budget
+    spans = [_span(), _span()]
+    assert S._largest_prefix_fitting(None, spans, budget) == 1
+    # an even smaller budget still returns at least one span
+    assert S._largest_prefix_fitting(None, spans, 10) == 1
+
+
+def test_summarise_splits_and_folds_progressively_never_terminal():
+    """C1/C2: when the composed input exceeds the window, the spans split into
+    window-fitting chunks and fold progressively - chunk k's summary becomes chunk
+    k+1's existing, and the final summary is the single chainable RunningSummary,
+    never a terminal pass."""
+    spans = [_span(), _span(), _span()]
+    budget = _sys_tokens() + 700  # forces chunking into ~one span per chunk
+    calls = []
+    def fake(messages, budget):
+        user = messages[-1].content
+        calls.append(user)
+        return S.SummaryUpdate(objective=f"obj-{len(calls)-1}", resume_point="r")
+    outcome = S.summarise(fake, existing=None, spans=spans, chunk_budget=budget)
+    assert outcome.status == "ok"
+    assert isinstance(outcome.summary, S.RunningSummary)
+    assert len(calls) >= 2  # chunking happened - more than one atomic call
+    # progressive fold: chunk 1's summary is the prior of chunk 2
+    assert "obj-0" in calls[1]
+    assert "obj-1" in calls[2]
+
+
+def test_summarise_keeps_the_single_atomic_call_when_it_fits():
+    """The common case is unchanged: when the composed input fits within the
+    budget there is exactly ONE atomic call - no chunking overhead."""
+    spans = [_span(50)]
+    budget = _sys_tokens() + 100_000
+    calls = []
+    def fake(messages, budget):
+        calls.append(1)
+        return S.SummaryUpdate(objective="obj", resume_point="r")
+    outcome = S.summarise(fake, existing=None, spans=spans, chunk_budget=budget)
+    assert outcome.status == "ok"
+    assert len(calls) == 1
+
+
+def test_summarise_chunk_failure_after_success_returns_partial_ok(monkeypatch):
+    """C4 + grey point 5: a weak chunk is retried under the #73 schedule; when a
+    later chunk exhausts retries the pass ABORTS but still returns the chainable
+    partial summary from the succeeded prefix as 'ok' - never terminal, and a
+    partial summary is applied (strictly better than the over-budget original)."""
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "0.05,0.05,0.05")
+    spans = [_span(), _span(), _span()]
+    budget = _sys_tokens() + 700
+    calls = []
+    def fake(messages, budget):
+        calls.append(1)
+        if len(calls) == 1:
+            return S.SummaryUpdate(objective="obj-first", resume_point="r")
+        return None  # every later chunk is weak -> exhausts retries
+    outcome = S.summarise(fake, existing=None, spans=spans, chunk_budget=budget)
+    assert outcome.status == "ok"
+    assert outcome.summary is not None
+    assert outcome.summary.objective == "obj-first"
+    assert len(calls) == 1 + 3  # 1 success + 3 retries of the failing 2nd chunk
+
+
+def test_summarise_first_chunk_failure_returns_failed(monkeypatch):
+    """C4: when NO chunk yields a summary (the first chunk fails), the pass is
+    'failed' with no summary - the whole-pass-failed case."""
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "0.05,0.05,0.05")
+    spans = [_span(), _span(), _span()]
+    budget = _sys_tokens() + 700
+    calls = []
+    def fake(messages, budget):
+        calls.append(1)
+        return None
+    outcome = S.summarise(fake, existing=None, spans=spans, chunk_budget=budget)
+    assert outcome.status == "failed"
+    assert outcome.summary is None
+    assert len(calls) == 3  # only the first chunk's retries
+
+
+def test_summarise_irreducible_single_span_overflow_degrades_to_failed(monkeypatch):
+    """Q4: a single span that still overflows is the only irreducible exit - it
+    escapes the retry (invoked once) but degrades to 'failed', never 'terminal'."""
+    monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "0.05,0.05,0.05")
+    calls = []
+    def terminal(messages, budget):
+        calls.append(1)
+        raise Exception("maximum context length exceeded")
+    outcome = S.summarise(terminal, existing=None, spans=[_span()], chunk_budget=10)
+    assert outcome.status == "failed"
+    assert outcome.summary is None
+    assert len(calls) == 1  # a window-cap never burns the escalating retry
+
+
+def test_summarise_spans_are_never_split_reasoning_passes_through():
+    """C3: a chunk is a prefix of the ordered span list - a span is never split.
+    A projected-reasoning span (the #206 fix, landing later) passes through
+    unmodified because the chunker never inspects message content."""
+    reasoning = AIMessage(content="REASONING-CORE-CONCLUSION")
+    spans = [_span(), reasoning, _span()]
+    budget = _sys_tokens() + 700
+    seen_spans: list = []
+    def fake(messages, budget):
+        user = messages[-1].content
+        seen_spans.append(user)
+        return S.SummaryUpdate(objective="obj", resume_point="r")
+    S.summarise(fake, existing=None, spans=spans, chunk_budget=budget)
+    # the reasoning span's content reaches the summariser verbatim somewhere
+    assert any("REASONING-CORE-CONCLUSION" in u for u in seen_spans)
+
+
+# --- the summariser construction: negotiated method (ADR A1, #210) -----------
+
+class _StructuredFake:
+    """A fake `with_structured_output(...).invoke` wrapper recording the method."""
+
+    def __init__(self, method, result):
+        self.method = method
+        self.result = result
+
+    def invoke(self, messages):
+        return self.result
+
+
+def _summariser_harness(monkeypatch, profile, result):
+    """Wire `build_summariser`'s lazy collaborators: role resolution, the model
+    factory, the capability profile, and the construction seam. Returns
+    (summariser, record) where record captures the negotiated method used."""
+    import polymerhus.app.llm.capability as cap
+    import polymerhus.app.llm.providers as providers
+    import polymerhus.app.llm.roles as roles
+
+    record = {}
+    monkeypatch.setattr(providers, "resolve_role", lambda role: ("opencode", "deepseek-v4-flash"))
+    monkeypatch.setattr(providers, "thinking_for", lambda role: "high")
+    monkeypatch.setattr(providers, "build_chat_model",
+                        lambda *a, **k: object())
+    monkeypatch.setattr(cap, "resolve_capability", lambda p, m: profile)
+
+    def structured_output_for(llm, schema, method):
+        record["method"] = method
+        return _StructuredFake(method, result)
+
+    monkeypatch.setattr(roles, "structured_output_for", structured_output_for)
+    summariser = S.build_summariser("triager")
+    return summariser, record
+
+
+def test_build_summariser_negotiates_json_schema_on_a_structured_profile(monkeypatch):
+    """#210 Track A: the summariser routes through the shared negotiation -
+    a structured-output profile yields the json_schema rung (not the hardcoded
+    function_calling), consistent with invoke_role (ADR A1)."""
+    profile = cap_prof(supports_structured_output=True)
+    summariser, record = _summariser_harness(
+        monkeypatch, profile,
+        {"objective": GOOD_OBJECTIVE, "resume_point": GOOD_RESUME},
+    )
+    result = summariser([HumanMessage(content="m")], 30.0)
+    assert record["method"] == "json_schema"
+    assert isinstance(result, S.SummaryUpdate)
+    assert result.objective == GOOD_OBJECTIVE
+
+
+def test_build_summariser_degrades_to_function_calling_on_tool_only_profile(monkeypatch):
+    """#210 AC: on a tool-calling-only profile the negotiated method degrades to
+    function_calling - the existing degrade chain keeps the tool-only profiles
+    on their proven rung (existing unit tests stay green)."""
+    profile = cap_prof(supports_tool_calling=True, supports_structured_output=False)
+    summariser, record = _summariser_harness(
+        monkeypatch, profile, S.SummaryUpdate(objective=GOOD_OBJECTIVE, resume_point=GOOD_RESUME),
+    )
+    result = summariser([HumanMessage(content="m")], 30.0)
+    assert record["method"] == "function_calling"
+    assert isinstance(result, S.SummaryUpdate)
+
+
+def test_build_summariser_fails_open_to_json_schema_on_resolution_error(monkeypatch):
+    """#210 D7 fail-open: a capability resolution failure lands the semantic
+    default json_schema and the call still proceeds - never a raise."""
+    import polymerhus.app.llm.capability as cap
+    import polymerhus.app.llm.roles as roles
+
+    def resolve_capability(provider, model):
+        raise ConnectionError("gateway down")
+
+    monkeypatch.setattr(cap, "resolve_capability", resolve_capability)
+    summariser, record = _summariser_harness(
+        monkeypatch, cap_prof(supports_structured_output=True),
+        {"objective": GOOD_OBJECTIVE, "resume_point": GOOD_RESUME},
+    )
+    # override the harness's working resolve_capability with the failing one
+    monkeypatch.setattr(cap, "resolve_capability", resolve_capability)
+    result = summariser([HumanMessage(content="m")], 30.0)
+    assert record["method"] == "json_schema"  # the semantic default
+    assert isinstance(result, S.SummaryUpdate)
+
+
+def cap_prof(**kwargs):
+    from polymerhus.app.llm.capability import CapabilityProfile
+    return CapabilityProfile(**kwargs)
 
 
 # --- the per-thread summary ledger (D5/D6, driven by slice D) ----------------
