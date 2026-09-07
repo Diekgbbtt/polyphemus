@@ -649,3 +649,103 @@ def test_stateful_turn_length_finish_without_reasoning_fails_open_to_none(monkey
         checkpointer=saver, observe=False,
     )
     assert result is None
+
+
+# --- T5 (#217): blackloop_recovery observability -----------------------------
+
+def test_stateful_turn_records_blackloop_recovery_metadata(monkeypatch):
+    """T5: when a blackloop is recovered, the recovery generation's trace metadata
+    carries the `blackloop_recovery` field (shape, output_produced, cut point) -
+    the D11 recipe, same `langfuse_session_id` trace. Fail-open: it never gates."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session import stateful_turn
+
+    real_run = S.run_session_turn
+    captured = {}
+
+    def fake_run(role_id, thread_id, msgs, **kwargs):
+        captured["n"] = captured.get("n", 0) + 1
+        if captured["n"] == 2:  # the recovery generation
+            captured["metadata"] = kwargs.get("metadata")
+        return real_run(role_id, thread_id, msgs, **kwargs)
+
+    monkeypatch.setattr(S, "run_session_turn", fake_run)
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["Need maybe mention"] * 4000, content_pieces=[]),
+        _StreamFake(reasoning_pieces=[], content_pieces=["recovered"]),
+    )
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result == "recovered"
+    assert captured["metadata"] is not None
+    recovery = captured["metadata"]["blackloop_recovery"]
+    assert recovery["shape"] == "streamed_cut"
+    assert recovery["output_produced"] is True
+    assert recovery["cut_point_chars"] > 0
+
+
+def test_stateful_turn_records_blackloop_recovery_failure_output(monkeypatch):
+    """T5: a recovery that FAILS (re-blackloop, output NOT produced) still records
+    the field with output_produced=False - the occurrence is never silent."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session import stateful_turn
+
+    real_run = S.run_session_turn
+    captured = {}
+
+    def fake_run(role_id, thread_id, msgs, **kwargs):
+        captured["n"] = captured.get("n", 0) + 1
+        if captured["n"] == 2:
+            captured["metadata"] = kwargs.get("metadata")
+        return real_run(role_id, thread_id, msgs, **kwargs)
+
+    monkeypatch.setattr(S, "run_session_turn", fake_run)
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
+        _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
+    )
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result is None
+    assert captured["metadata"] is not None
+    recovery = captured["metadata"]["blackloop_recovery"]
+    assert recovery["shape"] == "streamed_cut"
+    assert recovery["output_produced"] is False
+
+
+def test_blackloop_recovery_metadata_rides_the_trace_when_observing(monkeypatch):
+    """T5: with observability on, the `blackloop_recovery` field rides the config
+    metadata of the recovery turn - the same `langfuse_session_id` trace the D11
+    readability fields ride (never gating, never on the retry axis)."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session import stateful_turn
+
+    seen = {}
+    real_tc = S._turn_config
+
+    def fake_tc(role_id, thread_id, observe, metadata=None):
+        cfg = real_tc(role_id, thread_id, observe, metadata=metadata)
+        seen["meta"] = dict(cfg.get("metadata", {}))
+        return cfg
+
+    monkeypatch.setattr(S, "_turn_config", fake_tc)
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
+        _StreamFake(reasoning_pieces=[], content_pieces=["recovered"]),
+    )
+    stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=True,
+        reasoning_budget_chars=8000,
+    )
+    assert "blackloop_recovery" in seen["meta"]
+    assert "langfuse_session_id" in seen["meta"]
