@@ -627,6 +627,28 @@ def test_reprofile_configurator_builds_single_exec_over_full_endpoint_list():
     assert out["export"].stats.get("endpoints_total") == 2
 
 
+def test_reprofile_pod_without_endpoints_raises_not_silently_probes_nothing():
+    """The one-pod dispatch seam is TOTAL: an endpoint_profiling pod MUST arrive
+    with its packed `endpoints` set. A mis-shaped dispatch (no endpoints key)
+    raises loudly rather than silently running an empty `httpx -l` probe."""
+    import pytest as _pytest
+
+    def exec_fn(cmd, sid, t):
+        raise AssertionError("exec must never run for a mis-shaped dispatch")
+
+    g = pod.build_pod_graph(
+        exec_fn=exec_fn, curate_fn=lambda a, o, p: (len(a), len(o), a, o),
+        triage_fn=lambda er, a, j: [],
+    )
+    with _pytest.raises(ValueError):
+        g.invoke({
+            "job": REPROFILE_JOB,
+            "input_asset": {},  # missing 'endpoints'
+            "asset_context": "", "extra": {}, "session_id": "run-reprofile",
+            "iteration": 0, "project_id": "proj1",
+        })
+
+
 def test_reprofile_triager_failure_degrades_but_profiles_still_curate():
     """Production (exec+parse+curate of profiles) and consumption (triager
     observations) are structurally decoupled: a raising triager degrades to

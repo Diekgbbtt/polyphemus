@@ -320,14 +320,23 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
             from polymerhus.recon.control.batching import build_batch_command
 
             command = build_batch_command(job, input_asset["batch"])
-        elif job.endpoint_profiling and "endpoints" in input_asset:
+        elif job.endpoint_profiling:
             # #208 one-pod reprofile: the pod runs ONE httpx exec over the FULL
             # dedup'd endpoint set (the whole reprofile pass in a single pod).
             # The command writes the shell-quoted URL list to the per-pod
             # workdir and probes it via `httpx -l`, then cats the `-o` JSON
             # file - the established `/work/{session}` file + cat persistence
             # pattern. `endpoints` extracts each asset's probe URL via the
-            # shared bundle_url helper (url, else baseurl+path).
+            # shared bundle_url helper (url, else baseurl+path). The dispatch
+            # is TOTAL: an endpoint_profiling job MUST arrive with its packed
+            # `endpoints` set (the preprocess packs it into ONE pod_input); a
+            # mis-shaped dispatch raises rather than silently probing nothing.
+            if "endpoints" not in input_asset:
+                raise ValueError(
+                    f"endpoint_profiling job {job.tool} dispatched without an "
+                    "'endpoints' set - default_preprocess_fn must pack the dedup'd "
+                    "probe set into ONE pod_input (#208)"
+                )
             from polymerhus.recon.control.batching import bundle_url
 
             urls = [u for u in (bundle_url(e) for e in input_asset["endpoints"]) if u is not None]
