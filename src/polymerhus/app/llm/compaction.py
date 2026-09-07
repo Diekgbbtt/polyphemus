@@ -477,6 +477,84 @@ def _dedup_system_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     return out
 
 
+# --- T4 (#216): the per-message tail bound + usage_metadata repair ------------
+
+def _message_payload_tokens(message: BaseMessage) -> int:
+    """Approximate tokens of a message's FULL payload - content plus the projected
+    reasoning surfaces (#215) - so a giant reasoning payload is measured, never
+    invisible to the tail bound."""
+    from polymerhus.app.llm.summary import _span_text
+
+    return approx_tokens([HumanMessage(content=_span_text(message))])
+
+
+def _bounded_excerpt(text: str, max_chars: int) -> str:
+    """A bounded excerpt of a string with a truncation marker; unchanged when it
+    already fits."""
+    if len(text) <= max_chars:
+        return text
+    return text[:max_chars] + "\n[...] (truncated)"
+
+
+def _bound_message(message: BaseMessage, replay_keep_tokens: int) -> BaseMessage:
+    """T4: bound ONE oversized message - strip its `usage_metadata` (so
+    `compute_occupancy` walks back to the prior real usage step) and truncate its
+    reasoning/content payload to a bounded excerpt. Only AIMessages are bounded
+    (the usage repair targets the failed-reasoning assistant message; tool bodies
+    stay the D8 offload surface). Fail-open: an un-rebuildable message passes
+    through unchanged, never raises into the pass."""
+    if not isinstance(message, AIMessage):
+        return message
+    try:
+        excerpt_chars = max(512, replay_keep_tokens // 4)
+        kwargs = dict(getattr(message, "additional_kwargs", None) or {})
+        reasoning = kwargs.get("reasoning_content")
+        if isinstance(reasoning, str):
+            kwargs["reasoning_content"] = _bounded_excerpt(reasoning, excerpt_chars)
+        provider = dict(kwargs.get("provider_specific_fields") or {})
+        details = provider.get("reasoning_details")
+        if isinstance(details, str):
+            provider["reasoning_details"] = _bounded_excerpt(details, excerpt_chars)
+        if provider:
+            kwargs["provider_specific_fields"] = provider
+        content = getattr(message, "content", None)
+        if isinstance(content, str) and len(content) > excerpt_chars:
+            content = _bounded_excerpt(content, excerpt_chars)
+        return message.model_copy(update={
+            "usage_metadata": None,
+            "additional_kwargs": kwargs,
+            "content": content,
+        })
+    except Exception:  # noqa: BLE001 - fail-open: the pass degrades, never raises
+        logger.debug("tail message bounding failed; keeping the message unchanged",
+                     exc_info=True)
+        return message
+
+
+def _bound_oversized_tail(
+    tail: list[BaseMessage], replay_keep_tokens: int,
+) -> list[BaseMessage]:
+    """T4: never reserve an oversized message WHOLESALE in the replay tail. A tail
+    AIMessage whose full payload exceeds the replay budget is bounded (usage stripped
+    + payload excerpted) - so `compute_occupancy` walks back to the prior real usage
+    step and the thread converges under budget for any threshold (no compaction-loop).
+    Tool bodies pass untouched (their offload surface is D8, not the tail bound)."""
+    out: list[BaseMessage] = []
+    for message in tail:
+        if not isinstance(message, AIMessage):
+            out.append(message)
+            continue
+        try:
+            if _message_payload_tokens(message) <= replay_keep_tokens:
+                out.append(message)
+                continue
+        except Exception:  # noqa: BLE001 - an unmeasurable message is kept unchanged
+            out.append(message)
+            continue
+        out.append(_bound_message(message, replay_keep_tokens))
+    return out
+
+
 def _compact_pass(
     messages: list[BaseMessage],
     *,
@@ -493,6 +571,10 @@ def _compact_pass(
     original = list(messages)
     tail_size = _exempt_tail_size(original, profile, replay_keep_tokens)
     tail = original[len(original) - tail_size:] if tail_size else []
+    # T4 (#216): an oversized message (a failed reasoning turn's giant payload) is
+    # never reserved wholesale in the tail - it is bounded (usage stripped + payload
+    # excerpted), so post-pass occupancy walks back and the thread converges.
+    tail = _bound_oversized_tail(tail, replay_keep_tokens)
     region = original[:len(original) - tail_size] if tail_size else original
 
     # Bounded tool retention (#187): the region's tool messages beyond the last

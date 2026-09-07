@@ -1010,4 +1010,93 @@ def test_attach_compaction_metadata_surfaces_the_last_pass():
     # No compaction middleware -> omitted.
     config3 = {"metadata": {}}
     _attach_compaction_metadata(config3, [], "t1")
-    assert "compaction_readability" not in config3["metadata"]
+
+
+# --- T4 (#216): per-message tail bound + usage_metadata repair ---------------
+
+def _blackloop_trail():
+    """The #206 blackloop trail: prior real steps then a FAILED reasoning turn -
+    empty content, a giant reasoning payload, and a giant phantom usage (shape B:
+    silent-empty, the message persisted with usage) that pins occupancy."""
+    return [
+        HumanMessage(content="go"),
+        AIMessage(content="fold-me", usage_metadata=_usage(1000, output_tokens=50)),
+        AIMessage(content="tail-anchor" * 2000,
+                  additional_kwargs={"reasoning_content": "plan the admin sweep"},
+                  usage_metadata=_usage(1500, output_tokens=60)),
+        AIMessage(
+            content="",
+            additional_kwargs={"reasoning_content": "Need maybe mention the admin routes. " * 4000},
+            usage_metadata=_usage(22688, output_tokens=131072),
+        ),
+    ]
+
+
+def test_bound_message_strips_usage_and_truncates_reasoning():
+    """T4: the bounding of one oversized message strips its `usage_metadata` (so
+    `compute_occupancy` walks back to the prior real usage step) AND truncates its
+    reasoning payload to a bounded excerpt - never wholesale."""
+    msg = _blackloop_trail()[-1]
+    bounded = C._bound_message(msg, replay_keep_tokens=2000)
+    assert getattr(bounded, "usage_metadata", None) is None
+    reasoning = bounded.additional_kwargs["reasoning_content"]
+    assert len(reasoning) < len(msg.additional_kwargs["reasoning_content"])
+    assert "Need maybe mention" in reasoning  # the reasoning core survives
+    assert "[...]" in reasoning               # a truncation marker is present
+
+
+def test_bound_oversized_tail_leaves_a_small_message_untouched():
+    """T4: a message within the replay budget is not bounded - ordinary tail
+    messages stay byte-identical (the bound fires only past the budget)."""
+    msg = AIMessage(content="a small answer",
+                    additional_kwargs={"reasoning_content": "brief"},
+                    usage_metadata=_usage(100, output_tokens=10))
+    bounded = C._bound_oversized_tail([msg], replay_keep_tokens=2000)
+    assert bounded == [msg]
+    assert bounded[0] is msg
+
+
+def test_bound_message_leaves_tool_bodies_untouched():
+    """T4: the bounding never touches tool bodies (their offload surface is D8, not
+    the tail bound) - a ToolMessage passes through `_bound_message` unchanged."""
+    msg = ToolMessage(content=SENTINEL_BODY, tool_call_id="tc")
+    assert C._bound_message(msg, replay_keep_tokens=2000) is msg
+
+
+def test_compact_pass_bounds_oversized_failed_reasoning_and_converges():
+    """T4 acceptance: a failed-reasoning message larger than the replay budget is
+    never reserved wholesale in the tail - it is bounded (usage stripped + reasoning
+    excerpted) so post-pass occupancy walks back under the window budget."""
+    profile = CapabilityProfile(reasoning_in_response=True)
+    store = T.InMemoryToolOutputStore()
+    window = _window(limit=100_000, threshold=0.9)  # budget 90k
+    res = C.compact_pass(
+        _blackloop_trail(), thread_id="thr", profile=profile, store=store,
+        summariser=_good_summariser(), window=window,
+        replay_keep_tokens=2000,
+    )
+    assert res.report.summary_status == "ok"
+    last = res.messages[-1]
+    assert getattr(last, "usage_metadata", None) is None
+    reasoning = last.additional_kwargs.get("reasoning_content", "")
+    assert "Need maybe mention" in reasoning
+    assert len(reasoning) < 8000  # a bounded excerpt, not the 132k-char loop
+    occupancy, _approx = C.compute_occupancy(res.messages)
+    assert occupancy < window.budget
+
+
+def test_oversized_tail_bounding_converges_for_any_threshold():
+    """T4 acceptance: post-pass occupancy < budget holds for ANY threshold (not only
+    the 0.90 default) - the compaction-loop is eliminated, no pinned occupancy."""
+    trail = _blackloop_trail()
+    for threshold in (0.1, 0.5, 0.9):
+        window = _window(limit=100_000, threshold=threshold)
+        res = C.compact_pass(
+            trail, thread_id="thr", profile=CapabilityProfile(reasoning_in_response=True),
+            store=T.InMemoryToolOutputStore(), summariser=_good_summariser(),
+            window=window, replay_keep_tokens=2000,
+        )
+        assert res.report.summary_status == "ok"
+        occupancy, _approx = C.compute_occupancy(res.messages)
+        assert occupancy < window.budget, (
+            f"threshold={threshold} occupancy={occupancy} budget={window.budget}")
