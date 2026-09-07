@@ -61,11 +61,13 @@ def test_phases_run_in_order_behind_a_barrier():
     run_job has returned. Enforced by holding the sole phase-0 job open on
     an asyncio.Event the test controls."""
     call_order = []
+    phase0_started = asyncio.Event()
     phase0_gate = asyncio.Event()
 
     async def run_job(job, input_assets, *, run_id, phase, extra):
         call_order.append((phase, job.tool))
         if phase == 0:
+            phase0_started.set()
             await phase0_gate.wait()
         return [PodExport(input_asset={}, verdict="success")]
 
@@ -84,7 +86,11 @@ def test_phases_run_in_order_behind_a_barrier():
                 read_assets=make_read_assets(),
             )
         )
-        await asyncio.sleep(0.05)
+        # Deterministic barrier, not a sleep: wait until phase-0's run_job has
+        # actually started (the old fixed 50ms sleep was a timing race - under
+        # load the pipeline might not have reached run_job yet and the assertion
+        # flaked on an empty call_order).
+        await phase0_started.wait()
         # Phase 1 (dnsx) must not have started while phase 0 is still gated.
         assert call_order == [(0, "subfinder")]
 
