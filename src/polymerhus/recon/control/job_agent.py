@@ -84,15 +84,22 @@ class JobState(TypedDict, total=False):
 def default_preprocess_fn(
     input_assets: list[dict], job: JobSpec, extra: dict, asset_context: str
 ) -> list[dict]:
-    """Deterministic fallback: map input_assets -> pod_inputs, capped at the
-    MAX_JOB_ASSETS total-work budget (NOT MAX_PODS, which is the concurrency
-    ceiling applied at fan-out time). The mapping is 1:1 for plain jobs; a
-    batched job (jsluice) reduces+pack bundles into <= MAX_PODS batch-pods; the
-    endpoint-profiling reprofile pass (#208) collapses its whole dedup'd probe
-    set into ONE pod_input - the pod pays O(1) triager turns, not O(N). All
-    assets up to the budget become pods and are processed MAX_PODS at a time.
-    `extra.auth_context` is threaded through ONLY for `use_auth` jobs - non-auth
-    pods must never see it, even if the caller passed it in.
+    """Deterministic fallback: derive the job's pod inputs through the UNIFIED
+    consumption-set derivation (`batching.derive_consumption_set`, #37 option
+    B), capped at the MAX_JOB_ASSETS total-work budget (NOT MAX_PODS, which is
+    the concurrency ceiling applied at fan-out time).
+
+    The derivation is driven by the job's `consumption` options - one composed
+    pipeline (malformed-path exclusion, route-cluster dedup, restapi-first
+    ordering, pack into pod inputs) instead of the former per-consumer branch
+    chain. `extra.auth_context` is threaded through ONLY for `use_auth` jobs -
+    non-auth pods must never see it, even if the caller passed it in.
+    `extra["apex_registrable"]` (the orchestration datum for the batched
+    first-party filter) is popped so it never reaches a pod.
+
+    Fail-open (P6): a derivation failure degrades to the raw assets wrapped
+    in the job's pack shape (so the pod dispatch stays runnable) with a loud
+    warning - never a raised exception that kills the phase.
 
     This is the seam an LLM-driven cleaning/dedup pass (chat_model_for
     ("job_orchestrator")) would replace for `configurator_mode == "agent"`
@@ -102,44 +109,41 @@ def default_preprocess_fn(
     # auth_context into extra ONLY for use_auth jobs, so this preprocess trusts
     # extra as-is and never re-strips.
     base_extra = dict(extra or {})
-    # C3: pod DISTRIBUTION is this agent's concern. For a batched job (jsluice),
-    # reduce (first-party filter + url/basename dedup) and pack the bundles into
-    # <= MAX_PODS batch-pods here - not in the pipeline. `apex_registrable` is the
-    # orchestration datum the pipeline supplied for the first-party filter; it is
-    # popped so it never reaches a pod.
     apex_registrable = base_extra.pop("apex_registrable", None)
-    if job.batch:
-        from polymerhus.recon.control.batching import build_batch_assets
 
-        input_assets = build_batch_assets(
-            input_assets or [], apex_registrable=apex_registrable, max_pods=MAX_PODS
+    try:
+        from polymerhus.recon.control.batching import derive_consumption_set
+
+        derived = derive_consumption_set(
+            input_assets or [],
+            consumption=job.consumption,
+            apex_registrable=apex_registrable,
+            max_pods=MAX_PODS,
+            set_cap=MAX_JOB_ASSETS,
         )
-    elif job.endpoint_profiling:
-        # #208 one-pod reprofile: the pass is an ENRICHMENT phase (it fills
-        # missing technical info - methods/parameters/headers/response shapes -
-        # on endpoints already collected by discovery). There is no per-endpoint
-        # isolation need, and the per-endpoint fan-out paid O(N) triager LLM
-        # turns per job (each failing turn burning ~5min on a reasoning model -
-        # the #206 amplifier). So the dedup'd probe set is collapsed into ONE
-        # pod_input; the pod's configurator builds a single httpx exec over the
-        # full `-l` list (the established `/work/{session}` file pattern). The
-        # dedup iteration-set semantics (`prepare_endpoint_profile_assets`:
-        # dynamic-route collapse + root `/` materialisation per BaseURL, skip
-        # already-profiled non-root endpoints) ride along unchanged - only the
-        # DISPATCH shape changes. `MAX_JOB_ASSETS` now caps the probe SET (the
-        # whole set fits one pod), not the pod count.
-        from polymerhus.recon.control.batching import prepare_endpoint_profile_assets
+    except Exception:  # P6: degrade, never raise into the run (#37)
+        logger.warning(
+            "derive_consumption_set failed for %s; falling back to capped raw assets",
+            job.tool, exc_info=True,
+        )
+        # The fallback must stay DISPATCH-compatible: a packed job's pod
+        # builder demands its packed key (`endpoints` for one_pod - the #208
+        # TOTAL seam raises without it; `batch` for batches), so raw assets
+        # are wrapped in the job's pack shape instead of passed through bare.
+        # Scan-target and plain jobs run the raw assets 1:1 (a kiterunner pod
+        # fills `{target}` from the asset's own url - degraded but runnable).
+        from polymerhus.recon.control.batching import bundle_url
 
-        prepared = prepare_endpoint_profile_assets(input_assets or [])[:MAX_JOB_ASSETS]
-        input_assets = [{"endpoints": prepared}] if prepared else []
-    elif job.api_scope:
-        # D16 per-endpoint split: collapse a host's `restapi` Endpoints into
-        # evidence-derived API-root scan-target prefixes (one pod per target).
-        from polymerhus.recon.control.batching import build_api_scope_assets
+        raw = list(input_assets or [])
+        if job.consumption.pack == "one_pod":
+            derived = [{"endpoints": raw}]
+        elif job.consumption.pack == "batches":
+            urls = [u for u in (bundle_url(a) for a in raw) if u is not None]
+            derived = [{"batch": urls}] if urls else []
+        else:
+            derived = raw
 
-        input_assets = build_api_scope_assets(input_assets or [])
-
-    capped = list(input_assets or [])[:MAX_JOB_ASSETS]
+    capped = list(derived)[:MAX_JOB_ASSETS]
 
     return [
         {
