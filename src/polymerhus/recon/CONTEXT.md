@@ -35,7 +35,9 @@ The profiling pass is enrichment only: it fills gaps (methods/parameters/headers
 The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_scope.derive_scan_targets` from a host's `restapi` Endpoint paths (last api-noun cut, versions left as fuzz-space, parent-dir fallback). Not a naming classifier - the gate is the content-type `profile`; the noun set only picks the cut depth.
 
 **Parameter / Header**:
-The input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
+Parameter nodes are the input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
+Header nodes as minted today are RESPONSE headers (httpx `-irh` / katana `response.headers`), hung off their BaseURL via `HAS_HEADER` with `direction="response"` - observed surface, never replayed into requests.
+Request headers come only from the operator's `auth_context` (pod `_auth_header`, injected solely for `use_auth` jobs); no code path reads `:Header` nodes to build a request, so a `Set-Cookie` value can never become a request `Cookie`.
 
 **Service (L0)**:
 A network service discovered on a Port (the descriptive node label).

@@ -65,7 +65,10 @@ def test_parse_emits_headers_with_baseurl_edge():
     by_name = {d.identity["name"]: d for d in headers}
     assert set(by_name) == {"server", "content_type", "cf_ray"}
     assert by_name["server"].identity == {"name": "server", "baseurl": "https://h.example.com"}
-    assert by_name["server"].props == {"value": "nginx"}
+    assert by_name["server"].props == {"value": "nginx", "direction": "response"}
+    # Every minted Header is marked response-side: observed surface, never
+    # replayed into requests (request headers come only from auth_context).
+    assert all(d.props.get("direction") == "response" for d in headers)
 
     edge = by_name["server"].edges[0]
     assert edge.rel == "HAS_HEADER"
