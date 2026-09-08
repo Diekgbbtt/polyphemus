@@ -129,6 +129,9 @@ run's later phases still get real routing (the pre-#186 dead-task race made ever
 later phase silently routeless).
 _Avoid_: planner.
 
+**Run-terminal flush** (#211):
+At the pipeline's terminal (clean complete AND stop paths) `run_pipeline` archives ONLY this run's pod-session threads through the SHARED run-scoped chokepoint `flush_run_scoped("recon", run_id)` (`app/llm/checkpoints.py`) - never an inline flush block. The chokepoint returns the typed `FlushResult` (`committed/archived/dropped/dropped_thread_ids/cause`, closed cause vocabulary on the type), logs a drop loudly with the thread ids, and never raises.
+
 **Operator**:
 The only human, and the source of intent the system is blind to by design: supplies the target, scope, `operator_kb` framing, and settings.
 Deliberately kept blind to the target's true identity (it analyses `soupmarket.shop` without being told it is Juice Shop).

@@ -40,7 +40,10 @@ import contextvars
 import enum
 import logging
 import threading
-from typing import Any
+from typing import TYPE_CHECKING, Any
+
+if TYPE_CHECKING:
+    from polymerhus.app.llm.checkpoints import FlushResult
 
 logger = logging.getLogger(__name__)
 
@@ -221,6 +224,9 @@ class ModuleHandle:
         self._runs_lock = threading.Lock()
         self._idle = threading.Event()
         self._idle.set()
+        # The flush result of this module's most recent settle (TD-2): the drain HTTP
+        # surface and the shutdown fan-out read it so a dropped flush is machine-visible.
+        self.last_flush: "FlushResult | None" = None
 
     def register_run(self, run_id: str, task: asyncio.Task) -> asyncio.Event:
         hold = asyncio.Event()
@@ -482,12 +488,18 @@ class RuntimeManager:
         self, handle: ModuleHandle, *, timeout: float, graceful: bool = False
     ) -> None:
         """Stop admission and dispatch for a module, settle its runs to an empty
-        registry, archive via the flush hook, and reach `stopped`.
+        registry, archive via the flush hook, ASSERT the flush's outcome, and reach
+        `stopped`.
 
         Graceful settle: after the module's registered termination hook, unblocked
         runs get the grace period to finish naturally; whatever is still in flight
         (typically a run blocked on the now-paused gate) is then hard-cancelled.
-        Hard settle (shutdown default): cancel in-flight runs immediately."""
+        Hard settle (shutdown default): cancel in-flight runs immediately.
+
+        The teardown contract (TD-1): the flush completes, its typed result is
+        INSPECTED here - a drop is recorded on the handle (`last_flush`) and logged -
+        and only THEN is the module marked `stopped`. A drop never blocks teardown
+        (fail-open, TD-5); it is never silent (TD-4)."""
         handle.state = ModuleState.DRAINING
         self._loop.call_soon_threadsafe(handle.gate.clear_running)
         if graceful:
@@ -506,20 +518,57 @@ class RuntimeManager:
         for task in remaining:
             self._loop.call_soon_threadsafe(task.cancel)
         handle.wait_idle(timeout=timeout)
-        self._flush_module(handle)
+        flush_result = self._flush_module(handle)
+        handle.last_flush = flush_result
+        if flush_result.dropped:
+            logger.warning(
+                "module %s: flush dropped %d/%d committed thread(s) before "
+                "teardown: %s",
+                handle.name,
+                flush_result.dropped,
+                flush_result.committed,
+                flush_result.dropped_thread_ids,
+            )
         handle.state = ModuleState.STOPPED
 
-    def _flush_module(self, handle: ModuleHandle) -> None:
+    def _flush_module(self, handle: ModuleHandle) -> "FlushResult":
+        """Resolve and run the module's flush (TD-2/TD-6): the REGISTERED flush hook
+        when one is registered, else the shared `flush_module_index` fallback - the
+        same shared seam, never a bespoke second path. Returns the typed result the
+        settle asserts on; a raising hook (or a hook that returns nothing) degrades
+        to a typed `cause="hook-raised"` / `"no-result"` result - fail-open, never
+        raises, and the drain surface stays a machine-readable object (never null
+        for a flush that ran)."""
+        from polymerhus.app.llm.checkpoints import FlushResult  # noqa: PLC0415
+
+        def _degraded(cause: str) -> "FlushResult":
+            return FlushResult(
+                committed=0, archived=0, dropped=0, dropped_thread_ids=[],
+                cause=cause)
         flush = handle.hooks.get("flush")
         if flush is not None:
-            flush()
-            return
+            try:
+                result = flush()
+            except Exception:  # noqa: BLE001 - fail-open: never raise into teardown
+                logger.warning(
+                    "flush hook of module %s raised (fail-open, degraded)", handle.name,
+                    exc_info=True,
+                )
+                return _degraded("hook-raised")
+            if result is None:
+                logger.warning(
+                    "flush hook of module %s returned nothing (fail-open, degraded)",
+                    handle.name)
+                return _degraded("no-result")
+            return result
         from polymerhus.app.llm.checkpoints import flush_module_index
 
         try:
-            flush_module_index(handle.name)
-        except Exception:
-            logger.warning("flush of module %s failed", handle.name, exc_info=True)
+            return flush_module_index(handle.name)
+        except Exception:  # noqa: BLE001
+            logger.warning("flush of module %s failed (fail-open, degraded)",
+                           handle.name, exc_info=True)
+            return _degraded("hook-raised")
 
 
 class ShutdownFanOut:
@@ -542,6 +591,16 @@ class ShutdownFanOut:
             return
         for handle in list(m._handles.values()):
             m._settle_module(handle, timeout=timeout, graceful=graceful)
+            flush = handle.last_flush
+            if flush is not None:
+                logger.info(
+                    "shutdown: module %s flush: committed=%d archived=%d dropped=%d%s",
+                    handle.name,
+                    flush.committed,
+                    flush.archived,
+                    flush.dropped,
+                    f" (cause={flush.cause})" if flush.cause else "",
+                )
         executor = m._executor
         if executor is not None:
             executor.shutdown(wait=True)

@@ -342,3 +342,21 @@ def test_endpoint_reprofile_job_does_not_advance_the_analyser(monkeypatch):
 
     assert "httpx" in recording.pushed_jobs                 # ordinary producer still signals
     assert "httpx_reprofile" not in recording.pushed_jobs   # the reprofile pass does not
+
+def test_AST_TD1_analysis_supervisor_terminal_runs_the_shared_run_scoped_flush(monkeypatch):
+    """#211 C8/P7c: the analysis supervisor terminal archives THIS run's threads
+    through the SHARED run-scoped seam - a `flush_module_index("analysis", run_id)`
+    call is recorded when the queued run settles (alongside recon's own)."""
+    from polymerhus.app.llm.checkpoints import FlushResult
+    import polymerhus.app.llm.checkpoints as checkpoints
+
+    calls = []
+    monkeypatch.setattr(
+        checkpoints, "flush_module_index",
+        lambda module, run_id=None: (
+            calls.append((module, run_id)),
+            FlushResult(committed=0, archived=0, dropped=0, dropped_thread_ids=[]),
+        )[1],
+    )
+    _run_queued(_QUEUED_SETTINGS, _ok_census, monkeypatch=monkeypatch)
+    assert ("analysis", "run1") in calls

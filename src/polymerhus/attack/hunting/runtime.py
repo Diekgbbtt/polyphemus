@@ -751,7 +751,15 @@ async def start_hunting(
                     "start_hunting: actor reap failed for %s (fail-open)",
                     hunting_run_id,
                 )
-            flush_hunting_checkpointer()
+            # Run-terminal flush through the SHARED run-scoped chokepoint (#211,
+            # TD-1/TD-6, C12): the whole-index hook stays registered for the module
+            # drain/shutdown walk; this terminal archives ONLY this run's threads
+            # (bounded, siblings untouched) via `flush_run_scoped`, which logs a
+            # drop loudly and never raises.
+            from polymerhus.app.llm.checkpoints import (  # noqa: PLC0415
+                flush_run_scoped,
+            )
+            await flush_run_scoped("hunting", hunting_run_id)
             if status is not None:
                 try:
                     await asyncio.to_thread(
@@ -847,15 +855,21 @@ async def stop_hunting(hunting_run_id: str) -> None:
             )
 
 
-def flush_hunting_checkpointer() -> None:
+def flush_hunting_checkpointer() -> "FlushResult":
     """The tear-down flush hook (seam 3.1, #123): archive the hunting module's
     in-memory checkpointer index into the still-open #94 pooled saver via the
     SHARED `flush_module_index("hunting")` seam (`polymerhus.app.llm.checkpoints`),
-    never a private hunting-only path. Fail-open: never raises."""
+    never a private hunting-only path. Fail-open: never raises - a raising seam
+    degrades to a typed `cause="hook-raised"` result. Returns the typed
+    `FlushResult` the module-runtime settle asserts on (#211, TD-2)."""
     try:
         from polymerhus.app.llm.checkpoints import (  # noqa: PLC0415
+            FlushResult,
             flush_module_index,
         )
-        flush_module_index("hunting")
+        return flush_module_index("hunting")
     except Exception as exc:  # noqa: BLE001 - fail-open hook, never raises
         logger.warning("flush_hunting_checkpointer: flush failed (fail-open): %s", exc)
+        return FlushResult(
+            committed=0, archived=0, dropped=0, dropped_thread_ids=[],
+            cause="hook-raised")

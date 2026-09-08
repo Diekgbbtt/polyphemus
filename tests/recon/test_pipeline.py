@@ -745,3 +745,33 @@ def test_pipeline_default_seam_is_the_mailbox_actor_and_reaps_it(monkeypatch):
     assert spawned == ["r1"]                    # ONE actor per run (production default)
     assert stopped == ["r1:job_orchestrator"]   # actor reaped on the run's exit path
     assert captured_inputs["katana"] == [Y]     # the actor's RoutingDecision excluded X
+
+
+def test_pipeline_terminal_runs_the_shared_run_scoped_flush(monkeypatch):
+    """#211 C8/P7c: the pipeline terminal archives THIS run's threads through the
+    SHARED run-scoped seam - exactly one `flush_module_index("recon", run_id)`
+    call per terminal, never a second ad-hoc path."""
+    from polymerhus.app.llm.checkpoints import FlushResult
+    import polymerhus.app.llm.checkpoints as checkpoints
+
+    calls = []
+    monkeypatch.setattr(
+        checkpoints, "flush_module_index",
+        lambda module, run_id=None: (
+            calls.append((module, run_id)),
+            FlushResult(committed=0, archived=0, dropped=0, dropped_thread_ids=[]),
+        )[1],
+    )
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        return [PodExport(input_asset={}, verdict="success")]
+
+    asyncio.run(pipeline.run_pipeline(
+        "proj1", run_id="run1", job_subset=["subfinder"],
+        run_job=run_job,
+        load_settings=make_load_settings({"target_domain": "*.t.com"}),
+        registry=FakeRegistry(),
+        read_assets=make_read_assets(),
+    ))
+
+    assert calls == [("recon", "run1")]

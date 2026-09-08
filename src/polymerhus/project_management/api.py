@@ -776,10 +776,30 @@ def drain_module(project_id: str, module: str) -> dict:
     """Drain a module (#118): pause plus a graceful settle to `stopped` - finish
     the in-flight unit, dispatch no further, archive via the module's flush hook
     into the still-open pooled saver. The only lifecycle verb that changes run
-    state durably."""
+    state durably.
+
+    Returns the module's flush result (#211, TD-4) so a dropped flush is
+    machine-readable: `{committed, archived, dropped, dropped_thread_ids, cause}` -
+    the assert surface the eval harness / operator checks (`dropped == 0`). The
+    flush is ALWAYS an object: a drain that settled no flush yet (an already
+    stopped module that never flushed) reports the degraded `cause="never-flushed"`
+    shape, never null - so the harness reads `body["flush"]["dropped"]` without a
+    null branch. No prose report: the structural state (the store, the run rows)
+    is the teardown state."""
+    from polymerhus.app.llm.checkpoints import FlushResult  # noqa: PLC0415
+
     runtime = _runtime_or_503()
     handle = _module_handle(runtime, module)
     if handle is None:
         raise HTTPException(status_code=404, detail="unknown module")
     runtime.drain(module)
-    return {"module": module, "state": handle.state.value}
+    last = handle.last_flush
+    if last is None:
+        last = FlushResult(
+            committed=0, archived=0, dropped=0, dropped_thread_ids=[],
+            cause="never-flushed")
+    return {
+        "module": module,
+        "state": handle.state.value,
+        "flush": last.to_dict(),
+    }

@@ -684,6 +684,12 @@ async def run_pipeline(
             except Exception:  # teardown must never fail a healthy recon run
                 logger.warning("recon-orchestrator stop raised for run %s (recon continues)",
                                run_id, exc_info=True)
+        # #211 TD-1: flush the recon index for THIS run at the pipeline's terminal
+        # (clean complete AND stop paths) - the strict flush -> assert -> teardown
+        # dependency at the run surface - via the SHARED run-scoped chokepoint
+        # (loud drop, fail-open).
+        from polymerhus.app.llm.checkpoints import flush_run_scoped  # noqa: PLC0415
+        await flush_run_scoped("recon", run_id)
         hb.cancel()
         try:
             await hb

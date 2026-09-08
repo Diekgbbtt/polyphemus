@@ -607,3 +607,36 @@ def test_explicit_root_store_trail_is_written(tmp_path):
     # the per-project topology: the ratified config lands in produced/
     assert len(store.read_configs("rt-project")) == 1
     assert len(store.read_notes("rt-project")) == 1
+
+
+def test_hunting_run_terminal_invokes_exactly_one_run_scoped_flush(tmp_path, monkeypatch):
+    """#211 C12/P7d: a hunting run terminal (complete path) invokes EXACTLY ONE
+    flush path - the shared run-scoped seam with this run's id - never a second
+    ad-hoc whole-index call."""
+    from polymerhus.app.llm.checkpoints import FlushResult
+    import polymerhus.app.llm.checkpoints as checkpoints
+
+    calls = []
+    monkeypatch.setattr(
+        checkpoints, "flush_module_index",
+        lambda module, run_id=None: (
+            calls.append((module, run_id)),
+            FlushResult(committed=0, archived=0, dropped=0, dropped_thread_ids=[]),
+        )[1],
+    )
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+
+    h, r, n = _phase_seams()
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        control=_FakeControl(),
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert hid == "rt-hunt-0001"
+    assert calls == [("hunting", "rt-hunt-0001")]

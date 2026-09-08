@@ -33,9 +33,9 @@ The runtime manager owns the lifecycle verbs (`pause` / `resume` / `drain`) as i
 |---|---|---|---|---|
 | `POST` | `/projects/{project_id}/modules/{module}/pause` | - | 200 `{module, state}` | 404 unknown module; 503 runtime inactive |
 | `POST` | `/projects/{project_id}/modules/{module}/resume` | - | 200 `{module, state}` | 404 unknown module; 503 runtime inactive |
-| `POST` | `/projects/{project_id}/modules/{module}/drain` | - | 200 `{module, state}` | 404 unknown module; 503 runtime inactive |
+| `POST` | `/projects/{project_id}/modules/{module}/drain` | - | 200 `{module, state, flush: {committed, archived, dropped, dropped_thread_ids, cause}}` | 404 unknown module; 503 runtime inactive |
 
-`module` is one of `recon` / `analysis` / `hunting`. Pause of a stopped module and resume of a non-paused module are safe no-ops that still report the current state (the runtime verb's own semantics). Drain settles the module to `stopped` (archive via flush hook) and is the only lifecycle verb that changes run state durably.
+`module` is one of `recon` / `analysis` / `hunting`. Pause of a stopped module and resume of a non-paused module are safe no-ops that still report the current state (the runtime verb's own semantics). Drain settles the module to `stopped` (archive via flush hook) and is the only lifecycle verb that changes run state durably. As of #211 (TD-4) the drain response carries the module's `flush` result - `{committed, archived, dropped, dropped_thread_ids, cause}` - the machine-readable teardown-assert surface: a dropped flush is loud (`dropped > 0` names the thread ids), never a silent fail-open.
 
 ## Seam notes
 
