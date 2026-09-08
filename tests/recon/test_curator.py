@@ -17,6 +17,21 @@ def test_unknown_label_rejected():
     with pytest.raises(ValueError):
         curator.build_asset_cypher(d)
 
+def test_untyped_profile_rejected_at_the_cypher_seam():
+    import pytest
+    # The typed-literal guard sits at BOTH write seams: here the graph-write
+    # cypher builder rejects a delta whose `profile` is outside the D16 literal.
+    # `model_construct` bypasses the AssetDelta construction validator so the
+    # curator's OWN guard is exercised (defense-in-depth for a delta that
+    # arrives from a serialized/un-validated source).
+    d = AssetDelta.model_construct(
+        type="Endpoint",
+        identity={"path": "/x", "method": "GET", "baseurl": "https://a"},
+        props={"profile": "backend"},
+    )
+    with pytest.raises(ValueError):
+        curator.build_asset_cypher(d)
+
 def test_observation_anchor_allowlist_enforced():
     """Anchors are restricted to broad, well-identified assets. These cases all
     still raise, but for two distinct reasons after D8's re-anchor repair landed:

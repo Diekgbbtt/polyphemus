@@ -18,7 +18,7 @@ import json
 import logging
 
 from polymerhus.recon.domain.noise_filter import filter_deltas, filter_observations
-from polymerhus.recon.domain.types import AssetDelta, Edge, Observation
+from polymerhus.recon.domain.types import PROFILE_VALUES, AssetDelta, Edge, Observation
 
 logger = logging.getLogger(__name__)
 
@@ -123,6 +123,17 @@ def build_asset_cypher(delta: AssetDelta) -> tuple[str, dict]:
     """
     if delta.type not in ALLOWED_LABELS:
         raise ValueError(f"Unknown asset label: {delta.type!r}")
+
+    # D16 profile is a TYPED literal: a delta carrying any other value is a
+    # programmer error and must never reach the graph. Raised here so `curate`'s
+    # per-delta skip+log (fail-open) drops it rather than writing a value the
+    # kiterunner/graphql-cop selectors would silently mis-gate on.
+    profile = delta.props.get("profile")
+    if profile is not None and profile not in PROFILE_VALUES:
+        raise ValueError(
+            f"invalid {delta.type} profile {profile!r}; must be one of "
+            f"{sorted(PROFILE_VALUES)}"
+        )
 
     id_clause, params = _identity_clause("id_", delta.identity)
     params["project_id"] = _PENDING_PROJECT_ID

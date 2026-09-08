@@ -30,6 +30,7 @@ from typing import Literal
 from urllib.parse import parse_qs, unquote, urlparse
 
 from polymerhus.recon.domain.types import AssetDelta, Observation
+from polymerhus.recon.domain.types import PROFILE_VALUES, Profile
 
 # Cache-busting query keys (AMV-8 category 3): a `?v=15` / `?hash=abc` / `?t=...`
 # is a version stamp on an otherwise-identical resource, never a real request
@@ -50,7 +51,8 @@ CACHE_BUST_KEYS = frozenset({
 # hostname LABEL is a cheap secondary hint. Everything else is a web app.
 # Pure, deterministic, tolerant of missing/malformed input. Deliberately
 # high-precision + minimal - extend the hint sets as needed.
-Profile = Literal["webapp", "restapi", "graphql_api"]
+# `Profile`/`PROFILE_VALUES` are the typed literal, defined in
+# `polymerhus.recon.domain.types` (the AssetDelta/curator write seams enforce it).
 
 _RESTAPI_CONTENT_MARKERS = ("json",)  # application/json, application/*+json, ...
 _RESTAPI_HOST_LABELS = frozenset({"api", "apis", "rest", "graphql", "gateway"})
