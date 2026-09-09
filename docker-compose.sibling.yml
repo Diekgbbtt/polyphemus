@@ -1,0 +1,87 @@
+# Sibling agent for the #206 live e2e (E1 Shape A + T3/T4).
+#
+# A second agent container that mounts THIS worktree's code (the stacked
+# #210+#206 tree) under the same stack framework as docker-compose.dev.yml:
+# same shared network (service DNS identical to production), same main-tree
+# .env (gateway keys, Langfuse, thresholds), its own co-located gateway on
+# its own loopback, its own image and published port.
+#
+# The base services (postgres/neo4j/kali) stay owned by the base `polymerhus`
+# project - bring them up from the main tree FIRST (that creates the shared
+# network), then:
+#
+#   docker compose -f docker-compose.sibling.yml up -d --build agent
+#
+# `name:` gives this sibling its OWN project (`polymerhus-206`) so it never
+# clobbers the main `polymerhus-agent-1` container (the D-HS rule from
+# docker-compose.agent.yml). Only ONE agent runs during the e2e (this one),
+# so its gateway is the sole litellm writer on the shared postgres instance.
+name: polymerhus-206
+
+services:
+  agent:
+    build: { context: ., dockerfile: Dockerfile }
+    image: polymerhus-agent-206:latest
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+      PROJECT_ID: live-206
+      LIGHTRAG_API_URL: http://lightrag:9621
+      LIGHTRAG_BASE_API_URL: http://lightrag:9621
+      INGESTION_ROOT: /data/ingestion
+      INGESTION_NORMALIZED_DIR: /data/ingestion/normalized
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus_gateway
+      LITELLM_MASTER_KEY: sk-polymerhus-dev-gateway
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      # Live source like the dev overlay: edits apply without a rebuild.
+      AGENT_UVICORN_ARGS: "--reload --reload-dir /srv/src --reload-dir /srv/lightrag"
+      # Deterministic blackloop cut for the live e2e (catalogue C4/E1):
+      # measured live on the run model - the 10-strategy probe emits ~14k
+      # reasoning chars before its first content chunk, while a recovery-style
+      # short answer reasons ~4.7k. A bound of 8000 cuts the probe
+      # deterministically and lets recoveries through (200 re-blackloops
+      # every recovery on this model; the cut must sit between the two
+      # measured volumes).
+      LLM_BLACKLOOP_REASONING_BUDGET: "8000"
+      # Compaction threshold for the run (env-sanctioned knob): the capability
+      # reader has no record for this model, so the window falls back to the
+      # 150k default limit; 0.01 puts the budget at ~1500 tokens so a few live
+      # turns actually trip the native compaction (at 0.2 nothing ever would).
+      LLM_COMPACTION_THRESHOLD: "0.01"
+      # Live-edge model (see #218): the configured triager slug
+      # (swissai RCP-AIaaS DeepSeek-V4-Flash-0731) serves content-only deltas
+      # from here, the registered omlins flash route is 502 upstream, and
+      # opencode-go/deepseek-v4-flash is 429 (monthly limit). The R1-Distill
+      # fallback proved intermittently 502 as well, so the run uses this
+      # registered swissai reasoning model, verified live to emit
+      # reasoning_content deltas. Sibling-only override - main .env untouched.
+      LLM_MODEL_TRIAGER: "swissai:SwissAI-Research/zai-org/GLM-4.7-Flash"
+      # Client output budget (providers.py LLM_MAX_COMPLETION_TOKENS knob):
+      # this model serves 8192 tokens TOTAL (input+output); the standing 131072
+      # ceiling is rejected at the gateway (400). 4000 leaves input headroom;
+      # the 200-char cut fires long before it. Sibling-only override.
+      LLM_MAX_COMPLETION_TOKENS: "4000"
+    env_file:
+      # The MAIN tree .env - the sibling points at the same components with
+      # the same credentials as production (absolute path: this file lives in
+      # the worktree, the secrets live in the main checkout).
+      - path: /Users/diekgbbtt/polymerhus/.env
+        required: true
+    ports: ["8082:8080"]
+    volumes:
+      - ./src:/srv/src
+      - ./lightrag:/srv/lightrag
+      - ./db:/srv/db
+      - ./skills:/srv/skills
+      - ./gateway:/srv/gateway
+      - ./lightrag/data/ingestion:/data/ingestion
+    networks:
+      - polymerhus-net
+
+networks:
+  polymerhus-net:
+    external: true
+    name: polymerhus_polymerhus-net
