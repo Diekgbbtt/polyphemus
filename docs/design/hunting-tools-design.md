@@ -126,23 +126,24 @@ design:
    trigger-line signature, zero overlap with the description.
 2. **Observability black-box** - the pipeline's inner stages (retrieval,
    generation, validation) were untraced plain httpx; KB answers were not
-   auditable. The fix records, per call, per-stage OTel spans via
-   `lightrag/observability.py` (grey pt 6: `opentelemetry.trace`, riding the
-   Langfuse OTLP span processor already wired in
-   `app/observability/langfuse_tracing.py`). See
-   `docs/observability-langfuse.md` and the lightrag design doc for the span
-   details.
+   auditable. The fix records, per call, per-stage Langfuse observations via
+   `lightrag/observability.py` (grey pt 6: the SDK primitives, reusing the
+   wiring in `app/observability/langfuse_tracing.py` - raw OTel tracer scopes
+   are dropped by the SDK export filter, see
+   `docs/design/observability-recipe.md`). See
+   `docs/observability-langfuse.md` and the lightrag design doc for the
+   observation details.
 
 ### The author-lane recording seam (grey pt 8)
 
 The hunter has no D6 log, so its author-lane `kb_query` reads land a
-KbObservation-equivalent artifact **as span metadata** (never a filesystem
-artifact): a `kb_observation` span per call recording the query, the scenario
-id, the returned entity names, and the provenance references
+KbObservation-equivalent artifact **as observation metadata** (never a filesystem
+artifact): a `kb_observation` observation per call recording the query + scenario
+id as input and the returned entity names + provenance references as metadata
 (`lightrag/observability.py::kb_observation_span`,
 `hunter_tools.py::KbQueryTool._run`). The pod lane keeps its D6-log
 `KbObservation` recording (`pod/tools.py::_record`, T3/#179) - that lane has a
-log, so its span metadata is the same shape for consistency.
+log, so its observation metadata is the same shape for consistency.
 
 ## Open / not yet designed
 

@@ -1,109 +1,139 @@
-"""Unit tier: per-stage OTel observability for the query_lightrag pipeline (#207).
+"""Unit tier: per-stage Langfuse observations for the query_lightrag pipeline (#207).
 
-Drives the pure mechanics (span lifecycle, attribute/metric attachment, the
-reference-registry persistence mapping, fail-open) with the real OTel SDK
-behind an in-memory exporter - no live Langfuse, no live gateway, no DB. The
-test sets a process-local tracer provider so spans are captured, then restores
-a fresh no-op provider so later unit tests are unaffected.
+Drives the pure mechanics (observation lifecycle, input/output/metadata/scores,
+the reference-registry persistence mapping, fail-open) by faking the `langfuse`
+module - the helpers import it lazily - exactly like
+`tests/test_analyser_tracing.py`. No live Langfuse, no live gateway, no DB.
+
+The SDK client-layer canon (`docs/design/observability-recipe.md`) requires
+the SDK primitives (`start_as_current_observation` / `span.update` /
+`score_current_span`): raw OTel tracer scopes are silently dropped by the SDK
+processor's export filter (verified live 2026-09-09), so the OTel recording
+path must never come back.
 """
 from __future__ import annotations
 
+import sys
+import types
+from contextlib import contextmanager
+from unittest.mock import MagicMock
+
 import pytest
 
-from lightrag.observability import registry_metadata, stage_span
+from lightrag.observability import kb_observation_span, registry_metadata, stage_span
 from lightrag.context import (
     ReferenceRegistryV1,
     RetrievedReferenceV1,
 )
 
 
-@pytest.fixture(scope="session", autouse=True)
-def _configure_otel():
-    """Set the process global OTel tracer provider ONCE (a session-level, one-time
-    action - the SDK forbids re-overriding it). An in-memory exporter captures the
-    spans; each test clears it so isolation is by clear, not by re-set."""
-    from opentelemetry import trace
-    from opentelemetry.sdk.trace import TracerProvider
-    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
-    from opentelemetry.sdk.trace.export.in_memory_span_exporter import (
-        InMemorySpanExporter,
+def _fake_langfuse(monkeypatch):
+    """Install a fake `langfuse` module capturing SDK calls; return the log."""
+    calls: list = []
+    mod = types.ModuleType("langfuse")
+
+    @contextmanager
+    def _observation(name=None, as_type=None, input=None):
+        calls.append(
+            ("observation", {"name": name, "as_type": as_type, "input": input})
+        )
+        span = MagicMock()
+
+        def _update(**kw):
+            calls.append(("update", {"observation": name, **kw}))
+
+        span.update.side_effect = _update
+        yield span
+
+    client = MagicMock()
+    client.start_as_current_observation.side_effect = _observation
+    client.score_current_span.side_effect = (
+        lambda name, value: calls.append(("score", {"name": name, "value": value}))
     )
+    client.flush.side_effect = lambda: calls.append(("flush", {}))
 
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    try:
-        trace.set_tracer_provider(provider)
-    except Exception:  # noqa: BLE001 - a pre-existing provider keeps serving
-        pass
-    _SESSION_EXPORTER["exporter"] = exporter
+    mod.get_client = lambda: client
+    monkeypatch.setitem(sys.modules, "langfuse", mod)
+    return calls
 
 
-_SESSION_EXPORTER: dict = {}
+def _observations(calls, name: str) -> list:
+    return [c[1] for c in calls if c[0] == "observation" and c[1]["name"] == name]
 
 
-@pytest.fixture()
-def otel_capture():
-    """Clear the session exporter so each test captures only its own spans."""
-    exporter = _SESSION_EXPORTER["exporter"]
-    exporter.clear()
-    yield exporter
+def _updates(calls, name: str) -> list:
+    return [c[1] for c in calls if c[0] == "update" and c[1]["observation"] == name]
 
 
-def _span_attrs(otel_capture, name: str) -> dict:
-    for span in otel_capture.get_finished_spans():
-        if span.name == name:
-            return dict(span.attributes)
-    raise AssertionError(f"no finished span named {name!r}: "
-                         f"{[s.name for s in otel_capture.get_finished_spans()]}")
+# --- observation lifecycle + input/output/metadata/scores --------------------
 
 
-# --- span lifecycle + attribute/metric attachment -----------------------------
-
-
-def test_stage_span_records_input_and_output_attributes(otel_capture):
+def test_stage_span_opens_sdk_observation_with_input(monkeypatch):
+    calls = _fake_langfuse(monkeypatch)
     with stage_span("retrieval", input={"query": "q", "mode": "hybrid"}) as sink:
         sink.record(status="success", chunk_ids=["a", "b"])
         sink.metric("chunk_count", 2.0)
 
-    attrs = _span_attrs(otel_capture, "retrieval")
-    assert attrs["input"] == '{"query": "q", "mode": "hybrid"}'
-    assert attrs["status"] == "success"
-    assert attrs["chunk_ids"] == '["a", "b"]'
-    assert attrs["metric.chunk_count"] == 2.0
+    obs = _observations(calls, "retrieval")
+    assert len(obs) == 1
+    assert obs[0]["as_type"] == "span"  # the canon observation type for steps
+    assert obs[0]["input"] == {"query": "q", "mode": "hybrid"}
+
+    updates = _updates(calls, "retrieval")
+    assert updates, "record must reach the observation"
+    metadata = updates[-1]["metadata"]
+    assert metadata["status"] == "success"
+    assert metadata["chunk_ids"] == ["a", "b"]
+
+    scores = [c[1] for c in calls if c[0] == "score"]
+    assert {"name": "chunk_count", "value": 2.0} in scores
 
 
-def test_stage_span_creates_one_child_span(otel_capture):
+def test_stage_span_routes_output_to_output_field(monkeypatch):
+    calls = _fake_langfuse(monkeypatch)
+    with stage_span("generation", input={"prompt": "p"}) as sink:
+        sink.record(output="Hello world", reasoning_content="think hard")
+
+    updates = _updates(calls, "generation")
+    outputs = [u["output"] for u in updates if "output" in u]
+    assert outputs == ["Hello world"]
+    metas = [u["metadata"] for u in updates if "metadata" in u]
+    assert metas[-1]["reasoning_content"] == "think hard"
+
+
+def test_stage_span_nests_generation_under_retrieval(monkeypatch):
+    calls = _fake_langfuse(monkeypatch)
     with stage_span("retrieval", input={"q": 1}):
-        with stage_span("generation", input={"prompt": "p"}):
-            pass
-    spans = otel_capture.get_finished_spans()
-    names = sorted(s.name for s in spans)
-    assert names == ["generation", "retrieval"]
-
-
-def test_stage_span_nests_generation_under_retrieval(otel_capture):
-    with stage_span("retrieval", input={"q": 1}) as outer:
         with stage_span("generation", input={"p": 2}):
             pass
-        outer.record(done=True)
-    spans = otel_capture.get_finished_spans()
-    by_name = {s.name: s for s in spans}
-    gen = by_name["generation"]
-    ret = by_name["retrieval"]
-    assert gen.parent is not None
-    assert gen.parent.span_id == ret.context.span_id
+    names = [c[1]["name"] for c in calls if c[0] == "observation"]
+    assert names == ["retrieval", "generation"]
 
 
-def test_stage_span_fails_open_without_otel(monkeypatch):
-    """With opentelemetry unavailable, the sink is a null no-op - never raises."""
-    monkeypatch.setattr(
-        "lightrag.observability._tracer", lambda: None
-    )
+def test_stage_span_fails_open_without_langfuse(monkeypatch):
+    """With langfuse unavailable, the sink is a null no-op - never raises."""
+    monkeypatch.setattr("lightrag.observability._client", lambda: None)
     with stage_span("retrieval", input={"q": 1}) as sink:
         sink.record(status="success")
         sink.metric("n", 1.0)
     # Nothing to assert except that it did not raise.
+
+
+def test_stage_span_fails_open_when_client_raises(monkeypatch):
+    """A raising SDK client degrades to the null sink - never into the turn."""
+    import sys as _sys
+    import types as _types
+
+    mod = _types.ModuleType("langfuse")
+
+    def _boom():
+        raise RuntimeError("langfuse down")
+
+    mod.get_client = _boom
+    monkeypatch.setitem(_sys.modules, "langfuse", mod)
+    with stage_span("retrieval", input={"q": 1}) as sink:
+        sink.record(status="success")
+        sink.metric("n", 1.0)
 
 
 # --- reference-registry persistence mapping (grey pt 7) -----------------------
@@ -129,7 +159,8 @@ def test_registry_metadata_empty_registry():
     assert registry_metadata(registry) == {}
 
 
-# --- the tool stream records per-stage spans (#207 defect 1) ------------------
+# --- the tool stream records per-stage observations (#207 defect 1) -----------
+
 
 class _FakeClient:
     def query_data(self, payload):
@@ -170,10 +201,11 @@ class _FakeLlm:
         yield {"type": "finish", "finish_reason": "stop"}
 
 
-def test_tool_stream_records_retrieval_generation_validation_spans(otel_capture):
+def test_tool_stream_records_retrieval_generation_validation(monkeypatch):
     from lightrag.query_spec import QuerySpecV1
     from lightrag.tool import LightRagQueryTool
 
+    calls = _fake_langfuse(monkeypatch)
     tool = LightRagQueryTool(client=_FakeClient(), llm=_FakeLlm())
     spec = QuerySpecV1(
         scenario_id="SIM-01",
@@ -185,34 +217,43 @@ def test_tool_stream_records_retrieval_generation_validation_spans(otel_capture)
     assert events[-1]["type"] == "answer"
     assert events[-1]["accepted"] is True
 
-    spans = otel_capture.get_finished_spans()
-    names = sorted(s.name for s in spans)
+    names = sorted(
+        c[1]["name"] for c in calls if c[0] == "observation"
+    )
     assert names == ["generation", "retrieval", "validation"]
 
-    retrieval = _span_attrs(otel_capture, "retrieval")
-    # retrieval records the query + mode + chunk ids + the persisted registry
-    assert "object-level authorization" in retrieval["input"]
-    assert "doc-1" in retrieval["chunk_ids"]
+    retrieval_obs = _observations(calls, "retrieval")[0]
+    assert "object-level authorization" in str(retrieval_obs["input"])
+    retrieval_meta = _updates(calls, "retrieval")[-1]["metadata"]
+    assert "doc-1" in str(retrieval_meta["chunk_ids"])
     # registry mapping is persisted: index -> reference_id -> file_path
-    assert "1" in retrieval["registry"]
-    assert "WSTG-ATHZ/x.md" in retrieval["registry"]
+    assert retrieval_meta["registry"]["1"]["reference_id"] == "doc-1"
+    assert retrieval_meta["registry"]["1"]["file_path"] == "WSTG-ATHZ/x.md"
 
-    generation = _span_attrs(otel_capture, "generation")
-    assert "REFERENCE REGISTRY" in generation["input"]
-    assert "Object-level authorization comparison" in generation["output"]
-    assert "think about object-level authz" in generation["reasoning_content"]
+    generation_obs = _observations(calls, "generation")[0]
+    assert "REFERENCE REGISTRY" in str(generation_obs["input"])
+    generation_updates = _updates(calls, "generation")
+    generation_outputs = [u["output"] for u in generation_updates if "output" in u]
+    assert any(
+        "Object-level authorization comparison" in o for o in generation_outputs
+    )
+    generation_metas = [u["metadata"] for u in generation_updates if "metadata" in u]
+    assert any(
+        "think about object-level authz" in m.get("reasoning_content", "")
+        for m in generation_metas
+    )
 
-    validation = _span_attrs(otel_capture, "validation")
-    assert validation["accepted"] is True
-    assert "metric.provenance_empty" in validation
-    assert "metric.entity_count" in validation
-    assert validation["metric.entity_count"] == 1.0
+    validation_meta = _updates(calls, "validation")[-1]["metadata"]
+    assert validation_meta["accepted"] is True
+    scores = {c[1]["name"]: c[1]["value"] for c in calls if c[0] == "score"}
+    assert scores["provenance_empty"] == 1.0  # the fake emits no provenance refs
+    assert scores["entity_count"] == 1.0
 
 
-def test_hunter_kb_query_records_author_lane_observation_span(otel_capture, monkeypatch):
+def test_hunter_kb_query_records_author_lane_observation(monkeypatch):
     """#207 defect 1, point D: the hunter's author-lane `kb_query` records a
-    KbObservation-equivalent artifact as span metadata (the hunter has no D6
-    log; grey pt 8 = span metadata only)."""
+    KbObservation-equivalent artifact as observation I/O (the hunter has no D6
+    log; grey pt 8 = observation metadata only)."""
     import json as _json
 
     from polymerhus.attack.hunting.hunter_tools import KbQueryTool
@@ -232,6 +273,7 @@ def test_hunter_kb_query_records_author_lane_observation_span(otel_capture, monk
                 "knowledge_gaps": [],
             })
 
+    calls = _fake_langfuse(monkeypatch)
     monkeypatch.setattr(KbQueryTool, "_lightrag_tool", lambda self: _FakeRealTool())
     tool = KbQueryTool()
     out = tool._run(
@@ -241,8 +283,17 @@ def test_hunter_kb_query_records_author_lane_observation_span(otel_capture, monk
     )
     assert "CSRF methodology" in out
 
-    attrs = _span_attrs(otel_capture, "kb_observation")
-    assert attrs["scenario_id"] == "HUNT-1"
-    assert "cross-site request forgery" in attrs["query"]
-    assert "doc-9" in attrs["provenance_references"]
-    assert "CSRF" in attrs["entity_names"]
+    obs = _observations(calls, "kb_observation")
+    assert len(obs) == 1
+    assert obs[0]["input"]["scenario_id"] == "HUNT-1"
+    assert "cross-site request forgery" in obs[0]["input"]["query"]
+    meta = _updates(calls, "kb_observation")[-1]["metadata"]
+    assert "doc-9" in meta["provenance_references"]
+    assert "CSRF" in meta["entity_names"]
+
+
+def test_kb_observation_span_fails_open_without_langfuse(monkeypatch):
+    monkeypatch.setattr("lightrag.observability._client", lambda: None)
+    with kb_observation_span(query="q", scenario_id="s") as sink:
+        sink.record(entity_names=["e"])
+    # Nothing to assert except that it did not raise.

@@ -41,36 +41,43 @@ Two defects on the same seam (`kb_query` / `query_lightrag`):
 
 ### 2. Per-stage observability seam
 
-- `lightrag/observability.py` opens one OTel child span per pipeline stage via
-  the `opentelemetry.trace` API, riding the Langfuse OTLP span processor already
-  wired by `app/observability/langfuse_tracing.py` (grey pt 6: reuse the
-  processor, no new exporter infrastructure).
-- **Retrieval span**: query, mode, top_k, chunk ids + best-effort scores, and
-  the persisted `ReferenceRegistryV1` mapping (index -> reference_id ->
-  file_path) so a cited provenance index is resolvable post-hoc (grey pt 7:
-  span metadata on the retrieval span).
-- **Generation span**: prompt, the generator's `reasoning_content`, and the raw
-  output (`DeepSeekClient.stream` surfaces the reasoning deltas as `reasoning`
-  events; the tool records them on the span but does not forward them into its
-  own `delta`/`answer` stream contract).
-- **Validation span**: accepted/degraded, errors, rejected citations, resolved
-  provenance, plus `metric.provenance_empty` (the `PROV []` soft-ack signal) and
-  `metric.entity_count` (the contract-drift counter) (grey pt 9).
+- `lightrag/observability.py` opens one Langfuse child observation per pipeline
+  stage via the SDK primitives (`start_as_current_observation` /
+  `span.update` / `score_current_span`), following the client-layer canon
+  (`docs/design/observability-recipe.md`) - grey pt 6 (reuse the SDK wiring,
+  no new exporter infrastructure). Raw OTel tracer scopes were tried first and
+  REJECTED after live verification proved the SDK processor's export filter
+  silently drops them (verified 2026-09-09, see the recipe caveat).
+- **Retrieval observation**: input = query, mode, top_k; metadata = status,
+  chunk ids + best-effort scores, and the persisted `ReferenceRegistryV1`
+  mapping (index -> reference_id -> file_path) so a cited provenance index is
+  resolvable post-hoc (grey pt 7: observation metadata on the retrieval
+  observation).
+- **Generation observation**: input = the prompt; output = the raw output;
+  metadata = the generator's `reasoning_content` (`DeepSeekClient.stream`
+  surfaces the reasoning deltas as `reasoning` events; the tool records them
+  on the observation but does not forward them into its own `delta`/`answer`
+  stream contract).
+- **Validation observation**: metadata = accepted/degraded, errors, rejected
+  citations, resolved provenance; scores = `provenance_empty` (the `PROV []`
+  soft-ack signal) and `entity_count` (the contract-drift counter) via
+  `score_current_span` (grey pt 9).
 - **Author lane** (grey pt 8): the hunter has no D6 log, so each `kb_query`
-  records a `kb_observation` span with the query, scenario id, entity names, and
-  provenance as metadata - never a filesystem artifact. The pod lane keeps its
-  D6-log `KbObservation` recording.
-- **Fail-open** (CODING_STANDARD section 12): absent opentelemetry or Langfuse,
-  every span degrades to a silent no-op; observability never crashes or perturbs
-  the query pipeline.
+  records a `kb_observation` observation with the query + scenario id as input
+  and entity names + provenance as metadata - never a filesystem artifact. The
+  pod lane keeps its D6-log `KbObservation` recording.
+- **Fail-open** (CODING_STANDARD section 12): absent `langfuse`, every
+  observation degrades to a silent no-op; observability never crashes or
+  perturbs the query pipeline.
 
 ## Consequences
 
-- A `query_lightrag` call is now auditable end-to-end: per-stage spans, a
+- A `query_lightrag` call is now auditable end-to-end: per-stage observations, a
   resolvable registry mapping, and structured validation outcomes.
 - Agents are no longer steered toward "fault KB" questions; the positive framing
   emphasises methodology retrieval. (No spec-side 404 branch was added - the
   operator ruled the operative change is the framing, not widening the spec's
   binary symptom model.)
-- The unit tier exercises the mechanics with the real OTel SDK behind an
-  in-memory exporter and mocked LLM/gateway; a live walkthrough lives in e2e.
+- The unit tier exercises the mechanics with a faked `langfuse` module (the
+  `test_analyser_tracing.py` recipe); live export is verified against
+  Langfuse Cloud via the sibling-container scaffold.

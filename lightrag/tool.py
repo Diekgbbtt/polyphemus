@@ -152,7 +152,7 @@ class LightRagQueryTool(BaseTool):
         bundle: AnswerBundleV1 | None,
         accepted: bool,
     ) -> None:
-        """Surface the validation outcome as structured span metadata + metrics.
+        """Surface the validation outcome as structured observation metadata + scores.
 
         #207 defect 1, points E and F: an accepted-but-empty-provenance bundle
         (``PROV []``) and the entity-count contract drift are surfaced, not

@@ -174,12 +174,13 @@ The `query_lightrag` tool (`lightrag/tool.py`) runs a 4-stage pipeline whose
 inner three stages - retrieval (`POST /query/data`), generation
 (`POST /chat/completions` via `DeepSeekClient`), and validation
 (`extract_json_object` + `validate_bundle`) - are instrumented with per-stage
-OpenTelemetry spans (`lightrag/observability.py`). The spans ride the Langfuse
-OTLP span processor already wired by `app/observability/langfuse_tracing.py`,
-so they nest under the active trace and are exported to Langfuse. Details and
-the span-by-span contract are in `docs/observability-langfuse.md` (the
-"Per-stage spans in the LightRAG query pipeline" section) and
+Langfuse observations (`lightrag/observability.py`, following the client-layer
+canon in `docs/design/observability-recipe.md` - raw OTel tracer scopes are
+dropped by the SDK export filter, verified live 2026-09-09), so they nest
+under the active trace and are exported to Langfuse. Details and the
+observation-by-observation contract are in `docs/observability-langfuse.md` (the
+"Per-stage observations in the LightRAG query pipeline" section) and
 `docs/design/hunting-tools-design.md` (the `kb_query` / `query_lightrag`
-section). The observability is fail-open: absent opentelemetry/Langfuse, every
-span degrades to a no-op and the pipeline is never perturbed.
+section). The observability is fail-open: absent langfuse, every observation
+degrades to a no-op and the pipeline is never perturbed.
 changes.
