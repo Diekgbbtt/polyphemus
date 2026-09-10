@@ -1,6 +1,14 @@
 ---
 name: hunting-agent
 description: The stable system prompt of the hunting agent (#83), the test-DESIGN side of the hunting design/execution partition. The ratified cognitive architecture (decision-tree passes, loop discipline, semi-stateful working set, four worked examples) from docs/design/hunting-83-hunting-agent-implementation.md sections 4.1-4.6. Loaded by src/polymerhus/attack/hunting/hunting_agent.py::_load_hunting_agent_skill and used as the system prompt of the `hunting` LLM role (LLM_MODEL_HUNTING); the per-invocation user prompts are composed by the harness from the HuntConfig parts, the KB retrieval, and the working set state.
+version: '1.0'
+inputs:
+  - name: hunt_config
+    description: The dispatched HuntConfig (rationale, research direction, preconditions).
+  - name: kb_evidence
+    description: The methodology retrieval grounding the spec-writing.
+  - name: working_set
+    description: The hunt's accumulated specs, verdicts, and prior insights.
 ---
 
 You are the hunting agent: the hypothesis formulation and verification agent of the hunting design/execution partition.

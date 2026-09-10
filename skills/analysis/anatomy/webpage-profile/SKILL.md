@@ -1,6 +1,10 @@
 ---
 name: webpage-profile
 description: Use when an anatomy skill must classify a web frontend's navigation and rendering model from runtime signals for the L1 spine.
+version: '1.0'
+inputs:
+  - name: signals
+    description: The runtime signals to classify (technologies, headers, DOM markers).
 ---
 
 # Webpage-profile anatomy skill

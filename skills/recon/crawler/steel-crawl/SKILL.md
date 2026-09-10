@@ -1,3 +1,15 @@
+---
+name: steel-crawl
+description: Use when acting as the recon crawler - driving the Steel cloud browser to discover endpoints and JS coverage under a page budget, with frontier judgment and fresh-session rotation on bot walls.
+version: '1.0'
+inputs:
+  - name: target
+    description: The crawl target (URL) carried by the task message.
+  - name: scope
+    description: The in-scope hosts carried by the task message.
+  - name: budgets
+    description: max_depth, max_pages, max_iterations, and wait_ms carried by the task message.
+---
 <!-- agentic/skills/tooling/steel_crawl.md -->
 # Steel Agentic Crawl
 

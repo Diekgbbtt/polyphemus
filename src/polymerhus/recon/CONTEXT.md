@@ -136,6 +136,31 @@ _Avoid_: planner.
 The only human, and the source of intent the system is blind to by design: supplies the target, scope, `operator_kb` framing, and settings.
 Deliberately kept blind to the target's true identity (it analyses `soupmarket.shop` without being told it is Juice Shop).
 
+## Skills, the loader, and runtime loading
+
+**Skill**:
+A Markdown reasoning discipline (`skills/<path>/SKILL.md`) loaded as an LLM role's system prompt - the triager's writing-observations, the crawler's steel-crawl, the analysis proposers' skills, the hunting skills.
+_Avoid_: tool (a tool is called; a skill is read).
+
+**Skill loader (single loader)**:
+The one module (`src/polymerhus/recon/domain/skills.py::skill_for`, FR-SKILLIF) authorised to read skills: it strips the YAML frontmatter, caches the body, and degrades to a fallback on a missing mount.
+Every per-role reader retro-points here; no reader does its own file I/O.
+_Avoid_: a second skill system.
+
+**Data section**:
+The machine-readable YAML frontmatter contract every skill carries (`name`, `description`, `version`, `inputs`), so a runtime consumer can index, validate, and report what was loaded.
+_Avoid_: prose header (human-only, unvalidatable).
+
+**Runtime loading**:
+Loading a skill mid-run through the agent-callable `load_skill(name)` tool, which returns the loader-identical body.
+It decouples skill evolution from prompt bake-time; bake-time mounts and runtime loads can never diverge because both call the single loader.
+_Avoid_: bake-time mount (the prompt-composed path, still the default for static disciplines).
+
+**Phase-gating (convention)**:
+The rule that bounds runtime loading: load at phase entry, once per thread, never speculatively mid-reasoning.
+Bake-time mounts follow the same rule (the hunting gate skill mounts once per thread as the run's one system message; the crawl loop loads once at loop start).
+_Avoid_: enforcement (there is no mechanical gate; the convention is demonstrated by the reference flows, not compiled in).
+
 ## Invariants owned here
 
 **Fail-open**:

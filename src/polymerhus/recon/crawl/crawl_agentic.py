@@ -5,8 +5,9 @@ Kept in a separate file so tests can import it without pulling in the full
 FastAPI application (websockets, uvicorn, etc. not required here).
 
 Notable design points (kept minimal + marked in-line with `D23`/`SP4`):
-1. `_load_steel_crawl_skill`'s path resolves to `steel_crawl_skill.md` next to
-   this module.
+1. `_load_steel_crawl_skill` is single-sourced through the shared `skill_for`
+   loader (#222): `skills/recon/crawler/steel-crawl/SKILL.md`, frontmatter
+   stripped, cached, fail-open.
 2. `AgenticCrawlRequest.credentials` (optional) + a credentialed-login prompt
    branch in `_run_agentic_crawl` (D23): when credentials are supplied and no
    human-interactive session is precreated, the agent is instructed to log in
@@ -21,7 +22,6 @@ always injects `build_llm_fn`, so that import never fires on our host.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel
@@ -105,12 +105,14 @@ async def precreate_auth_session(mcp_manager, body) -> "tuple[str | None, dict |
 
 
 def _load_steel_crawl_skill() -> str:
-    """Load the steel_crawl skill system prompt from disk.
-
-    Adapted (SP4-T3): points at `steel_crawl_skill.md` next to this module.
+    """Load the steel_crawl skill system prompt through the shared `skill_for`
+    loader (#222): `skills/recon/crawler/steel-crawl/SKILL.md`, frontmatter
+    stripped, cached, fail-open to '' (the crawl then degrades to the empty
+    manifest through the adapter's best-effort contract).
     """
-    skill_path = Path(__file__).parent / "steel_crawl_skill.md"
-    return skill_path.read_text(encoding="utf-8")
+    from polymerhus.recon.domain.skills import skill_for  # noqa: PLC0415
+
+    return skill_for("recon/crawler/steel-crawl", fallback="")
 
 
 def _payload_from_tool_result(out) -> dict:

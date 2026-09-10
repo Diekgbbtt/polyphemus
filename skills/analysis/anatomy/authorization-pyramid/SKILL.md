@@ -1,6 +1,12 @@
 ---
 name: authorization-pyramid
 description: Use when an anatomy skill must reverse-engineer a service's role to permission structure by probing the same action under different roles.
+version: '1.0'
+inputs:
+  - name: action
+    description: The service action to re-issue under each role's credentials.
+  - name: role_probe_observations
+    description: What each role's probe of the action returned.
 ---
 
 # Authorization-pyramid anatomy skill

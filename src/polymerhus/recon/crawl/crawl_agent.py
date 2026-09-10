@@ -18,7 +18,6 @@ This module does NOT reimplement the crawl loop - it wraps `crawl_agentic.py`
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from polymerhus.recon import config
@@ -43,8 +42,11 @@ _EMPTY_MANIFEST = {"endpoints": [], "js_urls": []}
 
 
 def _load_skill() -> str:
-    """Read the steel_crawl skill prompt next to this module."""
-    return (Path(__file__).parent / "steel_crawl_skill.md").read_text(encoding="utf-8")
+    """The steel_crawl skill prompt, single-sourced through the shared
+    `skill_for` loader (#222): YAML frontmatter stripped, cached, fail-open."""
+    from polymerhus.recon.domain.skills import skill_for  # noqa: PLC0415
+
+    return skill_for("recon/crawler/steel-crawl", fallback="")
 
 
 class _ToolsManager:
