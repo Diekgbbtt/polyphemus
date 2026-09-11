@@ -27,6 +27,7 @@ Concrete settings for the live e2e targets are held in the eval dataset `tests/e
 The operator's declaration of how authenticated recon should authenticate: an optional `cookies` list, an optional autonomous-login `credentials` set, optional role/realm-tagged credential sets (FR-AUTH), and otherwise arbitrary HTTP headers emitted verbatim by the request-based tools.
 It is a **value object** - defined wholly by its attributes, replaced rather than mutated - so its contract and validation invariant live in one place (`auth_context.py`), independent of both the HTTP surface that receives it and the settings use-case that persists it.
 `cookies` (request-based crawling) and `credentials` (agentic login) are INDEPENDENT items; a partial PUT may set either without the other.
+Operator seeding of the shared auth store lives beside this entry: `PUT /projects/{project_id}/auth` (`seed_auth` -> `seed_project_auth` -> `AuthStore.replace_operator_state`, present-section replace, never 409) and `GET /projects/{project_id}/auth` (`read_auth` -> `read_project_auth`); the settings blob itself is untouched.
 
 **Run-request**:
 An operator's request to recon a project - `POST /projects/{id}/recon`.
