@@ -1,0 +1,17 @@
+# Probe overlay: scaffolded port forwarding onto the agent container network.
+#
+# The gateway binds the agent's loopback (intra-container by ADR D1, never
+# published) - a published port alone cannot reach a loopback-bound socket
+# (docker-proxy accepts, then drops: "server disconnected without sending
+# a response"). So the forwarding is two-part:
+#   1. this mapping: host 127.0.0.1:14000 -> container 0.0.0.0:14000;
+#   2. tools/gateway_relay.py running DETACHED inside the agent container,
+#      relaying 0.0.0.0:14000 -> 127.0.0.1:4000 (stdlib only).
+# Start it after every agent (re)create (it dies with the container):
+#   ... exec -d agent python -c "$(cat tools/gateway_relay.py)"
+# Then a host-side client reaches the gateway at http://127.0.0.1:14000
+# (see tools/probe_model_windows.py).
+services:
+  agent:
+    ports:
+      - "127.0.0.1:14000:14000"

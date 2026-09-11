@@ -1,24 +1,21 @@
 """Live e2e (#206 E1 Shape A + T3/T4) - the recovery capability against the REAL
 runtime, with minimal mocking.
 
-Runner: the sibling polymerhus-206 agent container (docker-compose.sibling.yml)
-mounting this worktree, on the shared network with the main-tree .env, through
-its OWN co-located gateway to the configured triager model
-(swissai DeepSeek-V4-Flash-0731), the pooled live postgres checkpointer, the
-role's live compaction middleware, and the live summariser. The ONLY test knob
-is the detection bound (LLM_BLACKLOOP_REASONING_BUDGET=200 in the sibling env),
-which deterministically trips the cut on a live reasoning-first prompt.
-
-Nothing else is substituted: no fake models, no InMemorySaver, no scripted
-summariser. Shape B (phantom usage_metadata) is NOT forgeable through a live
-provider and stays scripted by construction (see
-test_blackloop_recovery_walkthrough.py).
-
-Evidence: SessionTurn fields + the live thread read back from postgres +
-compaction last_report + the Langfuse session trace (queried host-side).
-
-Catalogue: #218 comment (C1-C5 contract live, E1-E2 walkthroughs).
-Run: pytest tests/e2e/test_blackloop_live_walkthrough.py -q (sibling up).
+Runner: the standard polymerhus agent container (docker-compose.yml +
+docker-compose.dev.yml + docker-compose.e2e.yml) built from the SAME
+polymerhus-agent:latest image, with this merged tree bind-mounted live by
+the dev overlay - no sibling image, no second build. The container runs the
+production env (main-tree .env); the test knobs below ride `exec -e` on the
+driven snippets only, so the agent/gateway processes are unperturbed.
+Knobs: LLM_BLACKLOOP_REASONING_BUDGET=12000 (measured on the run model:
+probe reasons ~43k chars before first content, recoveries ~2k),
+LLM_COMPACTION_THRESHOLD=0.01
+(capability reader has no record for the run model; 0.01 puts the ~1500-token
+budget where a short thread trips it), LLM_MODEL_TRIAGER=swissai
+GLM-5.3-Flash (registered reasoning emitter, 131k+ window - see #218; the
+configured flash slug serves content-only deltas, omlins + jiaxuzhao routes
+are 502, opencode-go 429s). No output-budget override: the 131k+ window fits
+the standing production ceiling, so the client runs unmodified.
 """
 
 from __future__ import annotations
@@ -31,8 +28,18 @@ from pathlib import Path
 import pytest
 
 WORKTREE = Path(__file__).resolve().parents[2]
-COMPOSE = ["docker", "compose", "-f", "docker-compose.sibling.yml"]
+COMPOSE = ["docker", "compose", "-f", "docker-compose.yml",
+           "-f", "docker-compose.dev.yml", "-f", "docker-compose.e2e.yml"]
 SERVICE = "agent"
+
+# Snippet-only knobs (see module docstring); the container env is production.
+# NOTE: no LLM_MAX_COMPLETION_TOKENS override - the run model's 131k+ window
+# fits the standing 131072 production ceiling, so the client runs unmodified.
+KNOBS = {
+    "LLM_BLACKLOOP_REASONING_BUDGET": "12000",
+    "LLM_COMPACTION_THRESHOLD": "0.01",
+    "LLM_MODEL_TRIAGER": "swissai:RCP-AIaaS/zai-org/GLM-5.3-Flash",
+}
 
 PROMPT = ("Consider the trade-offs of ten deployment strategies for a "
           "high-traffic API in exhaustive detail, comparing every pair, "
@@ -59,9 +66,12 @@ def sibling_running() -> bool:
 
 def live_exec(code: str, *, timeout: int = 600,
               env: dict | None = None) -> dict:
-    """Run a snippet in the sibling agent; parse its single-line JSON stdout."""
+    """Run a snippet in the agent container; parse its single-line JSON stdout.
+
+    The KNOBS always ride along (snippet-process env only)."""
     cmd = list(COMPOSE) + ["exec", "-T"]
-    for key, value in (env or {}).items():
+    merged = {**KNOBS, **(env or {})}
+    for key, value in merged.items():
         cmd += ["-e", f"{key}={value}"]
     cmd += [SERVICE, "python", "-c", code]
     result = _run(cmd, timeout=timeout)
@@ -74,7 +84,7 @@ def live_exec(code: str, *, timeout: int = 600,
 PREFLIGHT = """
 import httpx, os
 key = os.environ.get("LITELLM_MASTER_KEY")
-payload = {"model": "swissai/SwissAI-Research/zai-org/GLM-4.7-Flash",
+payload = {"model": "swissai/RCP-AIaaS/zai-org/GLM-5.3-Flash",
            "messages": [{"role": "user", "content": "Reply with exactly: OK"}],
            "stream": True, "max_completion_tokens": 50}
 ok = False
@@ -133,9 +143,10 @@ def require_upstream():
 @pytest.fixture(scope="module")
 def thread_id() -> str:
     assert sibling_running(), (
-        "the polymerhus-206 sibling agent is not running - bring it up from "
-        "this worktree (`docker compose -f docker-compose.sibling.yml up -d "
-        "--build agent`) before the live tier")
+        "the polymerhus agent is not running - bring the stack up from "
+        "this worktree (`docker compose -f docker-compose.yml -f "
+        "docker-compose.dev.yml -f docker-compose.e2e.yml up -d postgres "
+        "neo4j kali agent`) before the live tier")
     return f"live206-{int(time.time())}:triager"
 
 
@@ -202,12 +213,12 @@ print(json.dumps({"blackloop": turn.blackloop,
 
 
 def test_blackloop_cut_live(thread_id):
-    """C4: a live reasoning-only prefix past the 8000-char bound cuts the stream
+    """C4: a live reasoning-only prefix past the 12000-char bound cuts the stream
     (blackloop=True + captured reasoning), far below any ceiling."""
     require_upstream()
     out = live_exec_resilient(CUT_PROBE % (thread_id, PROMPT))
     assert out["blackloop"] is True
-    assert out["reasoning_chars"] >= 8000, "the cut must carry the reasoning"
+    assert out["reasoning_chars"] >= 12000, "the cut must carry the reasoning"
     assert out["content"] == "", "nothing answered before the cut"
 
 

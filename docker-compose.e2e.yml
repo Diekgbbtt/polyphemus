@@ -1,0 +1,19 @@
+# E2E overlay for the #206 live tier from the merged tree.
+#
+# The base `docker-compose.yml` reads `env_file: .env` (missing in a
+# worktree - .env is gitignored and lives only in the main checkout), so
+# without this overlay the agent would boot without API keys or Langfuse.
+# This file points the service at the MAIN tree .env (absolute path):
+# same credentials, same components as production. Test knobs
+# (detection bound, threshold, model override, output budget) are NOT set
+# here - they ride `docker compose exec -e` on the driven snippets only,
+# so the agent/gateway processes themselves run the production env.
+#
+# Usage (from this worktree):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#     -f docker-compose.e2e.yml up -d postgres neo4j kali agent
+services:
+  agent:
+    env_file:
+      - path: /Users/diekgbbtt/polymerhus/.env
+        required: true
