@@ -14,10 +14,13 @@ from __future__ import annotations
 import asyncio
 import logging
 import uuid
+from typing import Any
 
 from fastapi import APIRouter, HTTPException
+from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
+from polymerhus.app.auth.store import AuthInvalidError
 from polymerhus.project_management import repository
 from polymerhus.project_management.repository import (
     BootstrapBlocked,
@@ -65,6 +68,17 @@ class AnalysisLaunch(BaseModel):
     run_id: str
 
 
+class AuthSeed(BaseModel):
+    """#220 T4: the operator seed body. Both sections are optional; each
+    present section replaces the operator-owned state wholesale, absent
+    sections are untouched. Fields stay `Any` so every shape violation flows
+    to the use-case/store T1 seam and maps onto the 400 `auth_invalid`
+    envelope (a `dict`-typed field would 422 at the FastAPI parse layer)."""
+
+    overview: Any = None
+    accounts: Any = None
+
+
 class BootstrapLaunch(BaseModel):
     """Ingest the operator's knowledge base and bootstrap. `operator_kb` is optional:
     supply it to ingest-and-bootstrap in one call (the frontend's flow), or omit it to
@@ -107,6 +121,38 @@ def update_settings(project_id: str, body: SettingsUpdate) -> dict:
     except ValueError as exc:
         raise HTTPException(status_code=400, detail=str(exc)) from exc
     return {"ok": True}
+
+
+@router.put("/projects/{project_id}/auth")
+def seed_auth(project_id: str, body: AuthSeed) -> dict:
+    """#220 T4: the operator seed-replace face. Thin adapter: the use-case
+    raises the domain errors, this maps them (unknown project -> 404, shape
+    violation -> the 400 `auth_invalid` envelope naming the field). A shape
+    violation lands nothing - the store validates both sections BEFORE any
+    write. No conflict path exists: reseed replaces, never 409."""
+    try:
+        repository.seed_project_auth(
+            project_id, overview=body.overview, accounts=body.accounts
+        )
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
+    except AuthInvalidError as exc:
+        return JSONResponse(
+            status_code=400,
+            content={"ok": False, "error": "auth_invalid", "detail": str(exc)},
+        )
+    return {"ok": True}
+
+
+@router.get("/projects/{project_id}/auth")
+def read_auth(project_id: str) -> dict:
+    """#220 T4: the operator state-read face - the full `{"overview",
+    "accounts"}` state. An unseeded project reads back a valid empty state,
+    never an error."""
+    try:
+        return repository.read_project_auth(project_id)
+    except ProjectNotFound:
+        raise HTTPException(status_code=404, detail="unknown project")
 
 
 # Strong references to in-flight pipeline tasks: the module runtime manager's
