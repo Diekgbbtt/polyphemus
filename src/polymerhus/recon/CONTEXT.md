@@ -205,6 +205,48 @@ _Avoid_: the default session, an unchecked name, an orphaned session.
 Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by id only and defines no profile terms here.
 _Avoid_: duplicating #220's profile vocabulary.
 
+## Auth store (#220)
+
+**Auth store**:
+The per-project shared auth bucket served by `AuthStore` (`app/auth/store.py`) over `data/<project_id>/auth/` under `AUTH_STORE_ROOT`: `credentials.yaml` (the `{accounts: ...}` map) plus the operator-owned `overview.yaml` header, lazily created at the first write.
+Reads are `read(project_id, path)` dotted projections (empty path returns the full `{"overview": ..., "accounts": ...}` state; a missing path is a valid empty); writes are `write(project_id, path, value, origin=...)` single-field merges, every file write atomic (temp file + `os.replace`) under a per-project `threading.Lock`.
+_Avoid_: the settings blob (the `AuthContext` value object is a different bucket; the store is the agents' shared runtime state).
+
+**Account record**:
+One named bundle validated by `validate_account` (`app/auth/records.py`, mirrored never imported upward): `origin` (stamped server-side, `operator` or `agent`), optional `procedure` label, `credentials`, `tokens` (each `{value, location: cookie | header | storage, target?, expiry?}`), `steel`, `snapshot`, `notes`, plus FR-AUTH `roles` / `default_role`.
+Record identity is the account name; creating a known name fails with `DuplicateAuthError` (`duplicate_auth`) instead of forking.
+_Avoid_: forking a record (first writer wins; reflect, merge, or refresh).
+
+**Operator section vs agent section**:
+The trust split inside the bucket: the operator section (the `overview.yaml` header plus `operator`-stamped accounts) is the operator's ground truth and refuses agent-origin writes with `OperatorImmutableError` (`operator_immutable`); the agent section (`agent`-stamped accounts) is what the `auth_store` tool mints and merges.
+_Avoid_: agent writes to operator-owned state (they refuse loudly, never silently no-op).
+
+**Technical condition** (`overview.technical_conditions`):
+An optional overview-level list of `{name, check}` entries (absent by default), validated by `validate_overview`: the assertable procedure conditions to verify when a login fails unexpectedly while following the procedure in the overview.
+_Avoid_: replay-manner (the deleted enum; conditions are data, not a manner).
+
+**Browser-profile reference** (`steel: {profile}`):
+The minimal durable Steel profile key on an account record: the next agent rebinds the same profile through its browser tool, secrets never touching the store.
+_Avoid_: storing browser state itself (only the key lives here).
+
+**Concrete snapshot** (`snapshot: {headers, cookies, params, captured_at}`):
+Point-in-time captured request state on an account record, validated by `_check_snapshot`: the exact state request-based followers replay, never a stored graph query.
+_Avoid_: graph queries (no `cypher` lives in the store; static queries against a changing surface fail silently open).
+
+**Operator seed** (`PUT /projects/{project_id}/auth` -> `seed_project_auth` -> `AuthStore.replace_operator_state`):
+The operator's wholesale replace of the operator-owned state: each present section (`overview`, `accounts`) replaces wholesale (absent sections untouched), seeded accounts stamped `operator` server-side, `agent`-stamped accounts never modified or removed, both sections validated before anything lands.
+A seeded operator name colliding with a live agent record warn-drops the operator entry, preserving the agent record; there is no conflict path (replace, never 409).
+_Avoid_: extending the settings blob (the seed is a separate face over a separate bucket).
+
+**Procedure label** (`procedure`):
+The store-to-skill coupling name on an account record (optional non-empty string): it names the skill procedure that minted or serves the account; all procedural knowledge itself lives in the one future auth skill, not in the store.
+_Avoid_: procedural knowledge in the store (the store carries only the label).
+
+**Auth-store tool** (`auth_store`, built by `build_auth_store_tool`):
+The one shared read/write agent tool over the store, bound to its project id at build time; its usage contract (`AUTH_STORE_CONTRACT`) rides the tool description verbatim.
+Origin through this tool is always agent; every failure arrives as an in-band coded envelope (`operator_immutable`, `duplicate_auth`, `auth_invalid`, `store_unavailable`) - nothing raises into the turn.
+_Avoid_: a second tool face (one implementation, bound per project).
+
 ## Invariants owned here
 
 **Fail-open**:
