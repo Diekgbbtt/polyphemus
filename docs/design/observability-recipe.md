@@ -52,6 +52,18 @@ A span opened via `opentelemetry.trace.get_tracer("anything-else").start_as_curr
 This was proven live with a sibling container: provider `TracerProvider` + `LangfuseSpanProcessor` active, egress 200, `auth_check` True, manual exporter OK, yet the trace 404s on read-back and the SDK debug log shows the drop for scopes `lightrag.query` and `verify207`.
 Consequence: hand-written spans MUST use the SDK primitives above, never raw OTel.
 
+## Streamed-turn usage (#225, 2026-09-11)
+
+A streamed LLM turn records usage 0/0/0 unless the client requests the provider's terminal usage chunk.
+The pinned `langchain-openai` auto-enables `stream_usage` ONLY for the default OpenAI base URL, and every `build_chat_model` construction carries a custom base_url (provider or gateway), so `stream_options.include_usage` never reached the wire.
+Model/input/output/metadata were unaffected (they persist via the start/end callbacks); only usage was lost, on streamed turns only.
+This refines #225's hypotheses with quoted evidence: H1 (streaming broke persistence) holds for usage alone, not for the other fields; H2 (end-of-run updates never sent) is refuted - `on_llm_end` demonstrably runs on streamed Pregel turns (output + `completion_start_time` present live).
+The non-streamed path was already whole: a faithful redo of the issue's control (non-streamed direct invoke + explicit flush) yields all five fields, so no change was needed there.
+Decision: `build_chat_model` (`app/llm/providers.py`) - the single construction seam every role reaches - passes `stream_usage=True`, so every streamed request carries `stream_options: {"include_usage": true}`.
+Non-streamed calls are unaffected (the flag is consulted only on the streaming path).
+Provider compat rides the existing gateway safety net: `stream_options` is a standard OpenAI param the proxy forwards natively, and `drop_params: true` strips it per-upstream where unsupported instead of 400ing (the same net that covers `reasoning_effort`, ADR A5).
+Pinned by `test_build_chat_model_requests_stream_usage_for_streamed_calls` + `test_streamed_calls_carry_include_usage_on_the_wire` (`tests/test_llm_providers.py`); proven live by probe sessions `probe225-*-S0` (usage 0/0/0 pre-fix) vs `probe225-*-S1` (usage 40/8/48 post-fix shape).
+
 ## Witness index (mutual-mirror chain)
 
 `analysis/bootstrap.py::_bootstrap_span` is the original; `app/observability/analyser_tracing.py` replicates it for proposer dispatches; `attack/hunting/hunting_tracing.py` and `attack/hunting/orchestrator_tracing.py` mirror the analyser module exactly; `app/llm/negotiation.py::_emit_probe_span` is the minimal one-shot form; recon LangGraph runtimes use the `CallbackHandler` seam instead (`app/observability/langfuse_tracing.py`).
