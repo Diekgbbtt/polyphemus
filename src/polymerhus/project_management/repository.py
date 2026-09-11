@@ -85,6 +85,42 @@ def save_project_settings(project_id: str, recon: dict) -> None:
     pg.save_settings(project_id, recon)
 
 
+def _default_auth_store():
+    """The production auth bucket store, resolved lazily per call
+    (CODING_STANDARD §6: collaborators resolve lazily, never at import).
+    The module-level seam for tests: monkeypatch this name or pass `store=`
+    directly to the use-cases below."""
+    from polymerhus.app.auth.store import AuthStore
+
+    return AuthStore()
+
+
+def seed_project_auth(project_id: str, *, overview=None, accounts=None,
+                      store=None) -> None:
+    """Replace the operator-owned auth state wholesale (#220, T4 operator seed).
+
+    Each PRESENT section replaces via `AuthStore.replace_operator_state`
+    (absent sections untouched, seeded accounts stamped operator server-side,
+    agent-minted accounts never modified or removed); both sections validate
+    through the T1 seam BEFORE anything lands. Raises ProjectNotFound if
+    unknown, ValueError (`AuthInvalidError`) naming the field on a shape
+    violation. There is no conflict path: replace, never 409."""
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    seam = store if store is not None else _default_auth_store()
+    seam.replace_operator_state(project_id, overview=overview, accounts=accounts)
+
+
+def read_project_auth(project_id: str, *, store=None) -> dict:
+    """Read the full auth state (`{"overview": ..., "accounts": ...}`).
+    Raises ProjectNotFound if unknown; an unseeded project reads back a valid
+    empty state, never an error."""
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    seam = store if store is not None else _default_auth_store()
+    return seam.read(project_id)
+
+
 class BootstrapBlocked(Exception):
     """The Bootstrapper could not produce a skeleton and the analysis MUST NOT
     proceed (fail-closed, #26 Q6). Carries the reason for the operator."""
