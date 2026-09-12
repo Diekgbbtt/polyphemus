@@ -523,6 +523,15 @@ def _exec_result_from_artifact(artifact, *, content=None, duration_ms: int = 0) 
             stderr=str(structured.get("stderr", "")),
             returncode=int(structured.get("returncode", 1)),
             duration_ms=int(structured.get("duration_ms", duration_ms)),
+            exec_id=str(structured.get("exec_id", "") or ""),
+            http_artifact_refs=[
+                str(ref) for ref in (structured.get("http_artifact_refs") or [])
+            ],
+            capture_warning=(
+                str(structured["capture_warning"])
+                if structured.get("capture_warning")
+                else None
+            ),
         )
 
     # No structured result: treat as FAILURE, never assume success.
@@ -534,7 +543,9 @@ def _exec_result_from_artifact(artifact, *, content=None, duration_ms: int = 0) 
     )
 
 
-def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult:
+def default_exec_fn(
+    command: str, session_id: str, timeout_s: int, capture_context=None
+) -> ExecResult:
     """Real collaborator: run `command` via the kali MCP `execute_command`
     tool. Builds its MCP client lazily on each call - no client/connection is
     constructed at import time.
@@ -558,12 +569,15 @@ def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult
         # Invoke with a ToolCall (not a plain dict) so langchain-core returns
         # a ToolMessage carrying `.artifact` - a plain-dict invocation drops
         # the structured artifact and only returns the bare string content.
+        args = {"command": command, "session_id": session_id, "timeout_s": timeout_s}
+        if capture_context is not None:
+            args.update(capture_context.as_mcp_args())
         return await exec_tool.ainvoke(
             {
                 "type": "tool_call",
                 "name": "execute_command",
                 "id": session_id or "exec",
-                "args": {"command": command, "session_id": session_id, "timeout_s": timeout_s},
+                "args": args,
             },
             config={"callbacks": callbacks},
         )

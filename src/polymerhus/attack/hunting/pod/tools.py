@@ -55,13 +55,15 @@ def command_signature(variant_ref: str, command: str) -> str:
     return hashlib.sha256(blob).hexdigest()[:16]
 
 
-def default_exec_fn(command: str, timeout_s: int = EXEC_TIMEOUT_S) -> ExecResult:
+def default_exec_fn(
+    command: str, timeout_s: int = EXEC_TIMEOUT_S, capture_context=None
+) -> ExecResult:
     """Real terminal: run `command` on the kali exec surface the recon pod uses
     (`execute_command` via the kali MCP). Resolves its client lazily - no I/O at
     import. This is the pod's general-purpose terminal (curl, installers, ...)."""
     from polymerhus.recon.domain.pod import default_exec_fn as recon_exec
 
-    return recon_exec(command, "hunt-pod", timeout_s)
+    return recon_exec(command, "hunt-pod", timeout_s, capture_context)
 
 
 async def _await_seam(fn, *args):
@@ -83,7 +85,8 @@ async def _await_seam_kw(fn, *args, **kwargs):
 
 async def run_with_retry(exec_fn: ExecFn, command: str, *,
                          timeout_s: int = EXEC_TIMEOUT_S,
-                         max_iters: int = MAX_POD_ITERS) -> tuple[ExecResult, int]:
+                         max_iters: int = MAX_POD_ITERS,
+                         capture_context=None) -> tuple[ExecResult, int]:
     """Run `command`, retrying on a non-zero exit up to `max_iters` (O2/C7).
     Returns the last `ExecResult` and the attempt count. A clean exit (0) stops
     immediately; the caps are pod-internal (D67-09). Async-native (D84-15): each
@@ -91,11 +94,26 @@ async def run_with_retry(exec_fn: ExecFn, command: str, *,
     (the contract-tier fakes) is offloaded to a worker thread."""
     attempts = 0
     result = ExecResult(stdout="", stderr="no exec performed", returncode=1)
+    forward_context = capture_context is not None and _accepts_capture_context(exec_fn)
     for attempts in range(1, max(1, max_iters) + 1):
-        result = await _await_seam(exec_fn, command, timeout_s)
+        if forward_context:
+            result = await _await_seam_kw(
+                exec_fn, command, timeout_s, capture_context=capture_context
+            )
+        else:
+            result = await _await_seam(exec_fn, command, timeout_s)
         if result.returncode == 0:
             break
     return result, attempts
+
+
+def _accepts_capture_context(fn) -> bool:
+    """True only when the seam explicitly declares `capture_context`, so an
+    existing two-arg fake terminal keeps working untouched."""
+    try:
+        return "capture_context" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def curl_command(step: ProbeStep) -> str:
@@ -265,11 +283,13 @@ class ExecTool(BaseTool):
     )
     args_schema: type[BaseModel] = ExecSpec
 
-    def __init__(self, *, exec_fn: ExecFn, log, variant_ref: str, **kwargs):
+    def __init__(self, *, exec_fn: ExecFn, log, variant_ref: str,
+                 capture_context=None, **kwargs):
         super().__init__(**kwargs)
         self._exec_fn = exec_fn
         self._log = log
         self._variant_ref = variant_ref
+        self._capture_context = capture_context
 
     def _signature(self, command: str) -> str:
         """The variant-scoped dedup signature (O7/C10) - shared with the harness."""
@@ -280,10 +300,11 @@ class ExecTool(BaseTool):
         parsed = parse_curl(result)
         observation = RawObservation(
             probe_ref=sig, variant_ref=self._variant_ref,
-            request={"command": command},
+            request={"command": command, "exec_id": result.exec_id},
             status=parsed.get("status"), body=parsed.get("body", "") or result.stdout,
             stdout=result.stdout, stderr=result.stderr, returncode=result.returncode,
-            duration_ms=result.duration_ms or parsed.get("time_ms", 0))
+            duration_ms=result.duration_ms or parsed.get("time_ms", 0),
+            http_artifact_refs=list(result.http_artifact_refs or []))
         self._log.mark_executed(sig)
         self._log.record_observation(observation)
         return (f"TOOL RESULT: status={observation.status} "
@@ -294,11 +315,13 @@ class ExecTool(BaseTool):
         from polymerhus.recon.control.async_bridge import run_coro_blocking
 
         result, _attempts = run_coro_blocking(run_with_retry(
-            self._exec_fn, spec.command, timeout_s=EXEC_TIMEOUT_S, max_iters=MAX_POD_ITERS))
+            self._exec_fn, spec.command, timeout_s=EXEC_TIMEOUT_S,
+            max_iters=MAX_POD_ITERS, capture_context=self._capture_context))
         return self._record(spec.command, result)
 
     async def _arun(self, **kwargs: Any) -> str:
         spec = ExecSpec(**kwargs)
         result, _attempts = await run_with_retry(
-            self._exec_fn, spec.command, timeout_s=EXEC_TIMEOUT_S, max_iters=MAX_POD_ITERS)
+            self._exec_fn, spec.command, timeout_s=EXEC_TIMEOUT_S,
+            max_iters=MAX_POD_ITERS, capture_context=self._capture_context)
         return self._record(spec.command, result)
