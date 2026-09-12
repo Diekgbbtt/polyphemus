@@ -27,6 +27,7 @@ class NameValue(BaseModel):
 class BodyRecord(BaseModel):
     body_ref: str | None = None
     body_size: int = 0
+    body_hash: str | None = None
     body_encoding: str | None = None
     capture_state: CaptureState = "none"
     capture_reason: str | None = None
