@@ -256,6 +256,20 @@ class HttpHistoryService:
         )
         return [artifact.artifact_id for artifact in page.artifacts]
 
+    def enforce_limits(self, project_id: str) -> dict:
+        """Apply the configured retention age and per-project byte cap."""
+        store = self.store(project_id)
+        removed = 0
+        if self.config.retention_s > 0:
+            removed += store.purge_older_than(self.config.retention_s)
+        if self.config.project_max_bytes > 0:
+            removed += store.enforce_project_max_bytes(self.config.project_max_bytes)
+        return {"artifacts_removed": removed, "last_purge": store.last_purge()}
+
+    def purge_project(self, project_id: str) -> dict:
+        """Remove all rows and blobs for one project (operator recourse)."""
+        return self.store(project_id).purge()
+
     # --- status ----------------------------------------------------------------
 
     def proxy_status(self) -> dict:

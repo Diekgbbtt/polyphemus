@@ -16,6 +16,7 @@ import os
 import re
 import sqlite3
 import threading
+import time
 from base64 import urlsafe_b64decode, urlsafe_b64encode
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -343,6 +344,95 @@ class HttpHistoryStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    # --- retention / purge -----------------------------------------------------
+
+    def purge_older_than(self, retention_s: int, *, now: float | None = None) -> int:
+        """Delete artifacts older than ``retention_s`` and GC their blobs."""
+        cutoff = (now if now is not None else time.time()) - max(0, retention_s)
+        removed = self._delete_where("created_at < ?", (cutoff,))
+        self._audit("retention", removed, cutoff)
+        return removed
+
+    def enforce_project_max_bytes(self, max_bytes: int) -> int:
+        """Evict oldest artifacts until the stored body bytes fit ``max_bytes``."""
+        removed = 0
+        while max_bytes > 0 and self._body_bytes() > max_bytes:
+            row = self._conn.execute(
+                "SELECT artifact_id FROM flows ORDER BY created_at ASC, artifact_id ASC LIMIT 1"
+            ).fetchone()
+            if row is None:
+                break
+            removed += self._delete_where("artifact_id = ?", (row["artifact_id"],))
+        self._audit("project-byte-cap", removed, float(max_bytes))
+        return removed
+
+    def purge(self) -> dict:
+        """Remove every row and blob for this project (used by project purge)."""
+        removed = self._delete_where("1 = 1", ())
+        self._audit("project-purge", removed, 0.0)
+        return {"artifacts_removed": removed, "bodies_removed": self._gc_blobs()}
+
+    def _delete_where(self, where: str, params: tuple) -> int:
+        with self._lock, self._conn:
+            rows = self._conn.execute(
+                f"SELECT artifact_id FROM flows WHERE {where}", params
+            ).fetchall()
+            ids = [row["artifact_id"] for row in rows]
+            for artifact_id in ids:
+                self._conn.execute("DELETE FROM attributes WHERE artifact_id=?", (artifact_id,))
+                self._conn.execute("DELETE FROM flows_fts WHERE artifact_id=?", (artifact_id,))
+                self._conn.execute("DELETE FROM flows WHERE artifact_id=?", (artifact_id,))
+        self._gc_blobs()
+        return len(ids)
+
+    def _body_bytes(self) -> int:
+        row = self._conn.execute("SELECT COALESCE(SUM(size), 0) AS n FROM bodies").fetchone()
+        return int(row["n"] or 0)
+
+    def _gc_blobs(self) -> int:
+        """Delete blobs no live record references (content-addressed dedup)."""
+        with self._lock:
+            referenced: set[str] = set()
+            for row in self._conn.execute("SELECT record_json FROM flows"):
+                artifact = HttpArtifact.model_validate_json(row["record_json"])
+                if artifact.request.body_ref:
+                    referenced.add(_digest_of(artifact.request.body_ref))
+                if artifact.response is not None and artifact.response.body_ref:
+                    referenced.add(_digest_of(artifact.response.body_ref))
+            removed = 0
+            for blob in self.bodies_dir.glob("*.blob"):
+                if blob.stem not in referenced:
+                    blob.unlink(missing_ok=True)
+                    removed += 1
+            with self._conn:
+                for row in self._conn.execute("SELECT sha256 FROM bodies").fetchall():
+                    if row["sha256"] not in referenced:
+                        self._conn.execute(
+                            "DELETE FROM bodies WHERE sha256=?", (row["sha256"],)
+                        )
+        return removed
+
+    def _audit(self, reason: str, removed: int, threshold: float) -> None:
+        payload = json.dumps(
+            {
+                "reason": reason,
+                "artifacts_removed": removed,
+                "threshold": threshold,
+                "at": time.time(),
+            }
+        )
+        with self._lock, self._conn:
+            self._conn.execute(
+                "INSERT OR REPLACE INTO meta (key, value) VALUES ('last_purge', ?)",
+                (payload,),
+            )
+
+    def last_purge(self) -> str | None:
+        row = self._conn.execute(
+            "SELECT value FROM meta WHERE key='last_purge'"
+        ).fetchone()
+        return None if row is None else row["value"]
 
 
 def _op_sql(op: str, value: object) -> tuple[str, list[object]]:

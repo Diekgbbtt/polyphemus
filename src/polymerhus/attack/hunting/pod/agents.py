@@ -113,7 +113,8 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
         raise RuntimeError("the production runner harness needs the D6 log")
     before_obs = len(hc.log.raw_observations)
     tools = runner_react_tools(hc.exec_fn, hc.memory_store, hc.spec_id, hc.log,
-                               hc.variant_ref or "", graph_view_fn=hc.graph_view_fn)
+                               hc.variant_ref or "", graph_view_fn=hc.graph_view_fn,
+                               capture_context=hc.capture_context)
     harness_mw = build_harness_middleware(log=hc.log,
                                           variant_ref=hc.variant_ref or "",
                                           cap=hc.cap)
@@ -201,7 +202,8 @@ TRIAGER_SYSTEM = POD_TRIAGER_SYSTEM
 
 
 def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
-                       kb_fn=None, kb_lookup=None, graph_view_fn=None):
+                       kb_fn=None, kb_lookup=None, graph_view_fn=None,
+                       capture_context=None):
     """The Runner's bound-tool set (D84-16/27): `exec` (raw-recording terminal),
     `note` (pod memory write/read), the single `query_lightrag` KB tool from the
     lightrag branch (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` gate
@@ -215,7 +217,8 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     from polymerhus.attack.hunting.pod.tools import ExecTool, KbQueryTool  # noqa: PLC0415
 
     tools = [
-        ExecTool(exec_fn=exec_fn, log=log, variant_ref=variant_ref),
+        ExecTool(exec_fn=exec_fn, log=log, variant_ref=variant_ref,
+                 capture_context=capture_context),
         PodNoteTool(store=memory_store, spec_id=spec_id),
     ]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
