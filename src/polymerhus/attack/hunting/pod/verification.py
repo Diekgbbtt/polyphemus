@@ -81,7 +81,7 @@ def validate_probe_chain(chain: ProbeChain | dict | None) -> list[str]:
             f"probe chain must carry exactly one core call (found {len(cores)})"
         )
     for step in chain.steps:
-        if not (step.url or step.command):
+        if not (step.url or step.command or step.request_ref):
             violations.append("a probe step has neither a url nor a command")
     return violations
 
