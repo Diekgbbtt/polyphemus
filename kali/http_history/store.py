@@ -16,11 +16,18 @@ import os
 import re
 import sqlite3
 import threading
+from base64 import urlsafe_b64decode, urlsafe_b64encode
+from dataclasses import dataclass, field
 from pathlib import Path
 
 from kali.http_history.models import SCHEMA_VERSION, HttpArtifact
 
 _PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
+
+ALLOWED_SIDES = frozenset({"request", "response", "connection", "context", "timing"})
+ALLOWED_NAMESPACES = frozenset({"core", "header", "cookie", "query", "form", "body", "tls"})
+ALLOWED_OPS = frozenset({"eq", "contains", "prefix", "gte", "lte"})
+MIN_LIMIT, MAX_LIMIT = 1, 200
 
 _SCHEMA = """
 CREATE TABLE IF NOT EXISTS meta (
@@ -65,6 +72,12 @@ CREATE VIRTUAL TABLE IF NOT EXISTS flows_fts USING fts5 (
 
 class ArtifactImmutableError(RuntimeError):
     """Raised when a record attempts to overwrite an existing artifact id."""
+
+
+@dataclass
+class SearchPage:
+    artifacts: list[HttpArtifact] = field(default_factory=list)
+    next_cursor: str | None = None
 
 
 class HttpHistoryStore:
@@ -228,9 +241,139 @@ class HttpHistoryStore:
             "writable": writable,
         }
 
+    # --- search ---------------------------------------------------------------
+
+    def search(
+        self,
+        filters: list[dict] | None = None,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> SearchPage:
+        """Conjunctive attribute search, ordered by ``(created_at, artifact_id)``."""
+        self._validate_limit(limit)
+        where, params = self._filter_sql(filters or [])
+        return self._page(where, params, cursor=cursor, limit=limit)
+
+    def text_search(
+        self,
+        query: str,
+        *,
+        cursor: str | None = None,
+        limit: int = 50,
+    ) -> SearchPage:
+        """FTS over the URL and textual body markers."""
+        self._validate_limit(limit)
+        phrase = '"' + (query or "").replace('"', '""') + '"'
+        sql = (
+            "SELECT f.record_json, f.created_at, f.artifact_id FROM flows f "
+            "WHERE f.artifact_id IN "
+            "(SELECT artifact_id FROM flows_fts WHERE flows_fts MATCH ?) "
+            "AND f.project_id = ?"
+        )
+        params: list[object] = [phrase, self.project_id]
+        sql, params = self._append_cursor(sql, params, cursor)
+        sql += " ORDER BY f.created_at ASC, f.artifact_id ASC LIMIT ?"
+        params.append(limit + 1)
+        rows = self._conn.execute(sql, params).fetchall()
+        return self._page_from_rows(rows, limit)
+
+    def _page(
+        self, where: str, params: list[object], *, cursor: str | None, limit: int
+    ) -> SearchPage:
+        sql = (
+            "SELECT f.record_json, f.created_at, f.artifact_id FROM flows f "
+            f"WHERE f.project_id = ? {where}"
+        )
+        all_params: list[object] = [self.project_id, *params]
+        sql, all_params = self._append_cursor(sql, all_params, cursor)
+        sql += " ORDER BY f.created_at ASC, f.artifact_id ASC LIMIT ?"
+        all_params.append(limit + 1)
+        rows = self._conn.execute(sql, all_params).fetchall()
+        return self._page_from_rows(rows, limit)
+
+    def _page_from_rows(self, rows, limit: int) -> SearchPage:
+        artifacts = [HttpArtifact.model_validate_json(row["record_json"]) for row in rows[:limit]]
+        next_cursor = None
+        if len(rows) > limit and rows:
+            last = rows[limit - 1]
+            next_cursor = _encode_cursor(last["created_at"], last["artifact_id"])
+        return SearchPage(artifacts=artifacts, next_cursor=next_cursor)
+
+    def _append_cursor(
+        self, sql: str, params: list[object], cursor: str | None
+    ) -> tuple[str, list[object]]:
+        if cursor:
+            created_at, artifact_id = _decode_cursor(cursor)
+            sql += " AND (f.created_at > ? OR (f.created_at = ? AND f.artifact_id > ?))"
+            params.extend([created_at, created_at, artifact_id])
+        return sql, params
+
+    def _filter_sql(self, filters: list[dict]) -> tuple[str, list[object]]:
+        clauses: list[str] = []
+        params: list[object] = []
+        for raw in filters:
+            side = str(raw.get("side", ""))
+            namespace = str(raw.get("namespace", ""))
+            key = str(raw.get("key", ""))
+            op = str(raw.get("op", "eq"))
+            value = raw.get("value")
+            if side not in ALLOWED_SIDES:
+                raise ValueError(f"unknown side {side!r}")
+            if namespace not in ALLOWED_NAMESPACES:
+                raise ValueError(f"unknown namespace {namespace!r}")
+            if op not in ALLOWED_OPS:
+                raise ValueError(f"unknown op {op!r}")
+            if namespace == "header":
+                key = key.lower()
+            clause, clause_params = _op_sql(op, value)
+            clauses.append(
+                "EXISTS (SELECT 1 FROM attributes a WHERE a.artifact_id = f.artifact_id "
+                "AND a.side = ? AND a.namespace = ? AND a.key = ? AND " + clause + ")"
+            )
+            params.extend([side, namespace, key, *clause_params])
+        where = (" AND " + " AND ".join(clauses)) if clauses else ""
+        return where, params
+
+    @staticmethod
+    def _validate_limit(limit: int) -> None:
+        if not isinstance(limit, int) or isinstance(limit, bool) or not (MIN_LIMIT <= limit <= MAX_LIMIT):
+            raise ValueError(f"limit must be an integer in [{MIN_LIMIT}, {MAX_LIMIT}], got {limit!r}")
+
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+
+def _op_sql(op: str, value: object) -> tuple[str, list[object]]:
+    if op == "eq":
+        if isinstance(value, bool):
+            raise ValueError("eq does not accept booleans")
+        if isinstance(value, (int, float)):
+            return "a.numeric_value = ?", [float(value)]
+        return "a.text_value = ?", [str(value)]
+    if op == "contains":
+        return "a.text_value LIKE ?", [f"%{value}%"]
+    if op == "prefix":
+        return "a.text_value LIKE ?", [f"{value}%"]
+    if op == "gte":
+        return "a.numeric_value >= ?", [float(value)]
+    if op == "lte":
+        return "a.numeric_value <= ?", [float(value)]
+    raise ValueError(f"unknown op {op!r}")
+
+
+def _encode_cursor(created_at: float, artifact_id: str) -> str:
+    raw = json.dumps([created_at, artifact_id]).encode("utf-8")
+    return urlsafe_b64encode(raw).decode("ascii")
+
+
+def _decode_cursor(cursor: str) -> tuple[float, str]:
+    try:
+        created_at, artifact_id = json.loads(urlsafe_b64decode(cursor.encode("ascii")))
+        return float(created_at), str(artifact_id)
+    except Exception as exc:  # noqa: BLE001 - a bad cursor is a caller error
+        raise ValueError(f"invalid cursor: {cursor!r}") from exc
 
 
 def _digest_of(body_ref: str) -> str:
