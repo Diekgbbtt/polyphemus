@@ -53,3 +53,28 @@ kali/
 - Model-facing views are sanitized; raw bodies stay runtime-only.
 - Capture/store failure is fail-open for `execute_command`; replay is
   fail-closed.
+
+## Verification status (2026-09-12, this workspace)
+
+Verified green:
+
+- `tests/kali` (92) - ids, model, store, index/search/cursor, sanitization,
+  normalize, addon, registry, namespaces, replay, service/MCP tools, retention,
+  deployment shape.
+- `tests/attack/test_http_history_tools.py`, `tests/attack/test_hunting_pod.py`,
+  `tests/attack/pod/test_request_ref.py`, `tests/attack/pod/test_http_history_refs.py`,
+  `tests/recon/test_exec_result_http_refs.py`, `tests/app/test_kali_mcp_check.py`,
+  `tests/test_compose_config.py` - 128 passed in one run.
+- `docker compose config` exits 0; the rendered kali service matches the
+  deployment test.
+- `tests/e2e/test_http_proxy_history.py` skips cleanly with no stack running.
+
+Not verifiable in this sandbox (reported, not worked around):
+
+- `docker compose build kali` / `up -d kali`: the `redamon-kali-sandbox:latest`
+  base image is not present and cannot be pulled here (`pull access denied`).
+- The broad `tests/attack/pod` and `tests/attack` tiers stall in this sandbox:
+  any test whose sync seam crosses `asyncio.to_thread` blocks in
+  `loop.shutdown_default_executor()`. Reproduced identically on the unmodified
+  `dev` checkout (`tests/attack/pod/test_tools.py`), so it is environmental, not
+  a #196 regression. New tests avoid sync seams.
