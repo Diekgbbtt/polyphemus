@@ -1,6 +1,6 @@
 # Usage: docker compose -f docker-compose.yml -f docker-compose.dev.yml up
 # agent: live source + uvicorn --reload (edits apply instantly)
-# kali : mcp_server.py/postrun.sh already bind-mounted in base — `docker restart kali` to reload
+# kali : the whole ./kali tree is bind-mounted at /opt/kali in the base — `docker restart kali` to reload
 #
 # tests: the LIVE (integration/e2e) tier, run INSIDE the compose network so it
 #        resolves `neo4j` by service DNS exactly as the agent does. See below.

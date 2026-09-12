@@ -12,6 +12,7 @@ mkdir -p /opt/localbin /resolvers
 /opt/venv/bin/pip show fastmcp >/dev/null 2>&1 || /opt/venv/bin/pip install --no-cache-dir 'fastmcp<3'
 
 command -v whois >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq --no-install-recommends whois; }
+command -v iptables >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq --no-install-recommends iptables; }
 
 if ! command -v graphql-cop >/dev/null 2>&1; then
   if [ ! -d /opt/graphql-cop ]; then
@@ -70,5 +71,37 @@ if [ ! -c /dev/net/tun ]; then
   mkdir -p /dev/net && mknod /dev/net/tun c 10 200 && chmod 600 /dev/net/tun
 fi
 
+# --- #196 HTTP-history bootstrap (idempotent, best-effort) ---------------------
+# Owns CA trust, the namespace/veth pool prerequisites and the transparent
+# routing/NAT rules. Every step is a no-op when already applied; every step is
+# best-effort so a routing hiccup can never abort the exec server (I1).
+if command -v ip >/dev/null 2>&1; then
+  mkdir -p /run/netns /run/kali-http
+  chmod 700 /run/kali-http 2>/dev/null || true
+  sysctl -q -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+fi
+
+# Install mitmproxy's generated CA into the system trust store so interceptable
+# HTTPS clients from leased namespaces validate. Idempotent: install +
+# update-ca-certificates converge on the same file set.
+MITM_CONFDIR="${KALI_HTTP_MITM_CONFDIR:-${KALI_HTTP_HISTORY_ROOT:-/data}/mitmproxy}"
+MITM_CA="${MITM_CONFDIR}/mitmproxy-ca-cert.pem"
+if [ -f "$MITM_CA" ]; then
+  install -m 0644 "$MITM_CA" /usr/local/share/ca-certificates/mitmproxy-ca.crt 2>/dev/null || true
+  command -v update-ca-certificates >/dev/null 2>&1 && update-ca-certificates >/dev/null 2>&1 || true
+fi
+
+# Leased namespaces (172.30.0.0/24) egress through the root namespace, whose
+# VPN/Docker routes stay authoritative. HTTP/3 is explicitly NOT captured:
+# QUIC (UDP/443) from a leased namespace is rejected and disclosed as a
+# limitation rather than silently downgraded.
+if command -v iptables >/dev/null 2>&1; then
+  iptables -t nat -C POSTROUTING -s 172.30.0.0/24 -j MASQUERADE 2>/dev/null || \
+    iptables -t nat -A POSTROUTING -s 172.30.0.0/24 -j MASQUERADE 2>/dev/null || true
+  iptables -C FORWARD -s 172.30.0.0/24 -p udp --dport 443 -j REJECT 2>/dev/null || \
+    iptables -A FORWARD -s 172.30.0.0/24 -p udp --dport 443 -j REJECT 2>/dev/null || true
+fi
+
 echo "[postrun] gap-fill complete"
+echo "[postrun] http-history bootstrap complete (idempotent)"
 exit 0

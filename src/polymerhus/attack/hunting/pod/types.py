@@ -84,6 +84,10 @@ class ProbeStep(BaseModel):
     headers: dict = Field(default_factory=dict)
     body: str = ""
     command: str = ""  # a raw terminal command (exec tool) when method/url is not used
+    # #196: a recorded-baseline reference, resolved at RUNTIME (never during
+    # INIT validation). `overrides` is the closed, deterministic mutation set.
+    request_ref: str = ""
+    overrides: dict = Field(default_factory=dict)
 
 
 class ProbeChain(BaseModel):
@@ -110,6 +114,9 @@ class RawObservation(BaseModel):
     stderr: str = ""
     returncode: int | None = None
     duration_ms: int = 0
+    # #196: links this D6 record to captured HTTP artifacts by id - the artifact
+    # contents are never copied here.
+    http_artifact_refs: list[str] = Field(default_factory=list)
 
 
 class KbObservation(BaseModel):

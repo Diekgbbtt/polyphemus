@@ -1,0 +1,18 @@
+services:
+  http-e2e-target:
+    image: python:3.12-alpine
+    command: ["python", "/srv/http_e2e_target.py"]
+    environment:
+      PORT: "80"
+      KALI_HTTP_E2E_COOKIE_VALUE: "e2e-session"
+    volumes:
+      - ./tests/e2e/http_e2e_target.py:/srv/http_e2e_target.py:ro
+    networks:
+      polymerhus-net:
+        ipv4_address: 172.28.0.20
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/?q=health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 5s
