@@ -97,3 +97,30 @@ plus unconfined seccomp/apparmor, the per-lease veth gateway was on a different
 subnet than the namespace source, and `SourceRegistry` dropped `derived_from` /
 `replay_kind` during lookup. Run the gate with the commands in
 `docs/design/http-proxy-history-operations.md`; it now passes `1 passed`.
+
+## Final live integration
+
+The `redamon-kali-sandbox:latest` base image was built from the public RedAmon
+repository (`samugit83/redamon`), then `polymerhus-kali:latest` was built from
+`kali/Dockerfile`. With `docker-compose.yml` + `docker-compose.e2e.yml`, the
+following were started and left healthy:
+
+```text
+polymerhus-kali-1
+polymerhus-http-e2e-target-1
+```
+
+Final evidence on `dev` after the merge:
+
+```text
+116 passed - tests/kali + http-history tooling + request_ref/refs
+5 passed   - compose config + kali MCP check
+1 passed   - tests/e2e/test_http_proxy_history.py live gate
+```
+
+Integration commits:
+
+```text
+11c726f fix(kali): harden #196 live E2E gate and capture plane
+9fbce12 merge(kali): #196 live E2E hardening
+```
