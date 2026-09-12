@@ -239,7 +239,8 @@ def _variant_order(state: PodState) -> int:
 
 
 def _harness_ctx(state: PodState, *, exec_fn, memory_store,
-                 model_factory, spec_id, graph_view_fn=None) -> PodHarnessContext:
+                 model_factory, spec_id, graph_view_fn=None,
+                 project_id=None) -> PodHarnessContext:
     """The run-scoped harness the production seams read (T7): exec/store/log/
     variant/model factory, with the memory key on the #164 spec id (D84-34) -
     resolved through `_mem_key`, the SAME value `bind_pod_session` threads as
@@ -249,12 +250,23 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
     fail-open (O10). `graph_view_fn` is the read-only L0/L1 view seam (#197) the
     shared `graph_view` tool rides (absent -> the tool's own fail-open error)."""
     mem_key = _mem_key(state, spec_id, memory_store)
+    try:
+        from polymerhus.recon.domain.types import CaptureContext  # noqa: PLC0415
+
+        capture_context = CaptureContext(
+            project_id=project_id or "",
+            run_id=state.get("run_id") or POD_DEFAULT_RUN_ID,
+            spec_id=mem_key or "",
+            variant_ref=state.get("current_variant_ref", "v0"),
+        )
+    except Exception:  # noqa: BLE001 - capture context is additive, never a gate
+        capture_context = None
     return PodHarnessContext(
         exec_fn=exec_fn, memory_store=memory_store,
         spec_id=mem_key, log=state.get("log"),
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS,
-        graph_view_fn=graph_view_fn)
+        graph_view_fn=graph_view_fn, capture_context=capture_context)
 
 
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
@@ -367,7 +379,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                       memory_store=memory_store,
                                       model_factory=model_factory,
                                       spec_id=spec_id,
-                                      graph_view_fn=graph_view_fn)):
+                                      graph_view_fn=graph_view_fn,
+                                      project_id=project_id)):
                 step = await _await_seam(runner_step_fn, spec, delta,
                                          state.get("tool_calls", 0))
             if not isinstance(step, RunnerStep):
@@ -515,7 +528,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                       memory_store=memory_store,
                                       model_factory=model_factory,
                                       spec_id=spec_id,
-                                      graph_view_fn=graph_view_fn)):
+                                      graph_view_fn=graph_view_fn,
+                                      project_id=project_id)):
                 raw = await _await_seam(triager_fn, spec, obs, seam_view, log)
             decision = raw if isinstance(raw, dict) else {}
             if decision.get("action") == "terminate":

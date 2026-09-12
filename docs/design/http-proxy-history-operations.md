@@ -76,8 +76,10 @@ class/size/timing only - never wire content.
   rejected) and reported as a limitation, never counted as captured.
 - WebSocket message history and generic TCP are out of scope.
 - Certificate-pinned clients remain observable only as failed/incomplete flows.
-- Retention/project-byte caps are configured but the purge job is not yet
-  scheduled (see the store's `status()` counts for the current footprint).
+- Retention and project-byte caps are implemented (`HttpHistoryService
+  .enforce_limits(project_id)` / `.purge_project(project_id)`) and record a
+  deletion reason, but no scheduler invokes them yet - an operator or a future
+  cron calls them. `store.status()` reports the current footprint.
 
 ## Verification
 

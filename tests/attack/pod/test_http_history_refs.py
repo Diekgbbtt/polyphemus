@@ -93,3 +93,25 @@ def test_capture_context_is_forwarded_when_the_seam_accepts_it():
     tool.invoke({"command": "curl -k -sS https://t/"})
     assert seen["ctx"].project_id == "proj-1"
     assert seen["ctx"].run_id == "r1"
+
+
+def test_pod_harness_context_carries_the_capture_context():
+    from polymerhus.attack.hunting.pod.graph import _harness_ctx
+
+    def exec_fn(command, timeout_s):
+        return ExecResult(returncode=0)
+
+    state = {"run_id": "r1", "log": ExperimentLog(), "current_variant_ref": "v2"}
+    ctx = _harness_ctx(
+        state,
+        exec_fn=exec_fn,
+        memory_store=None,
+        model_factory=None,
+        spec_id="fault_strategy",
+        project_id="proj-1",
+    )
+    assert ctx.capture_context is not None
+    assert ctx.capture_context.project_id == "proj-1"
+    assert ctx.capture_context.run_id == "r1"
+    assert ctx.capture_context.spec_id == "fault_strategy"
+    assert ctx.capture_context.variant_ref == "v2"

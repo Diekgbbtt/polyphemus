@@ -68,6 +68,9 @@ class PodHarnessContext:
     model_factory: Callable | None = None
     cap: int = 200  # the harness cap for the ReAct loop (D84-22: default 200)
     graph_view_fn: Callable | None = None
+    # #196: the capture context propagated to the Kali exec surface, so the
+    # HTTP artifacts a probe produces are correlated with this pod run.
+    capture_context: Any = None
 
 
 def _pod_ctx():

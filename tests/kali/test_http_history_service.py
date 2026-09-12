@@ -172,3 +172,19 @@ def test_proxy_status_distinguishes_every_component(tmp_path):
     assert status["mcp"]["ok"] is True
     assert status["proxy"]["ok"] is True
     assert status["store"]["ok"] is True
+
+
+def test_enforce_limits_applies_the_configured_caps(tmp_path):
+    _seed(tmp_path)
+    service = _service(tmp_path, retention_s=0, project_max_bytes=1)
+    result = service.enforce_limits("proj-1")
+    assert result["artifacts_removed"] == 1
+    assert service.store("proj-1").status()["artifact_count"] == 0
+
+
+def test_purge_project_removes_everything(tmp_path):
+    _seed(tmp_path)
+    service = _service(tmp_path)
+    result = service.purge_project("proj-1")
+    assert result["artifacts_removed"] == 1
+    assert service.search("proj-1")["summaries"] == []
