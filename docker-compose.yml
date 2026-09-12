@@ -10,6 +10,7 @@ volumes:
   kali-tools:      # persists massdns/puredns/kr so recreation never recompiles
   resolvers:
   work:
+  http-history:    # durable per-project HTTP/HTTPS history (#196)
 
 services:
   lightrag:
@@ -89,12 +90,14 @@ services:
       start_period: 60s
 
   kali:
-    # Built in-repo from Dockerfile.kali (slim recon-tools image, ~3-5 GB).
-    # Replaces the lost prebuilt redamon-kali-sandbox (never on a registry);
-    # the tag is kept so docs/tests referencing it keep working.
-    build: { context: ., dockerfile: Dockerfile.kali }
-    image: redamon-kali-sandbox:latest
-    entrypoint: ["bash", "-lc", "/opt/postrun.sh && /opt/venv/bin/python /opt/mcp_server.py"]
+    # Base image built in-repo from Dockerfile.kali (slim recon-tools image,
+    # ~3-5 GB): it replaces the lost prebuilt redamon-kali-sandbox, and the tag
+    # is kept so docs/tests referencing it keep working.
+    # This service layers the #196 capture plane on top of that base
+    # (kali/Dockerfile) and starts the capture entrypoint (mitmdump + MCP).
+    build: { context: ., dockerfile: kali/Dockerfile }
+    image: polymerhus-kali:latest
+    entrypoint: ["/opt/kali/entrypoint.sh"]
     ports: ["8000:8000"]
     # VPN-in-container (D-HS e2e): OpenVPN needs to create a tun interface so
     # recon pods can reach a target that lives only on a VPN route. Least
@@ -105,9 +108,22 @@ services:
       - NET_ADMIN
     devices:
       - /dev/net/tun:/dev/net/tun
+    environment:
+      PYTHONPATH: /opt
+      KALI_HTTP_HISTORY_ROOT: /data
+      KALI_HTTP_CAPTURE_ENABLED: ${KALI_HTTP_CAPTURE_ENABLED:-true}
+      KALI_HTTP_MAX_BODY_BYTES: ${KALI_HTTP_MAX_BODY_BYTES:-5242880}
+      KALI_HTTP_NAMESPACE_POOL: ${KALI_HTTP_NAMESPACE_POOL:-8}
+      KALI_HTTP_LEASE_TTL_S: ${KALI_HTTP_LEASE_TTL_S:-900}
+      KALI_HTTP_ACQUIRE_TIMEOUT_S: ${KALI_HTTP_ACQUIRE_TIMEOUT_S:-30}
+      KALI_HTTP_PROXY_HOST: 127.0.0.1
+      KALI_HTTP_PROXY_PORT: ${KALI_HTTP_PROXY_PORT:-8080}
+      KALI_HTTP_REGISTRY_PATH: /run/kali-http/registry.sqlite3
+      KALI_HTTP_RETENTION_S: ${KALI_HTTP_RETENTION_S:-0}
+      KALI_HTTP_PROJECT_MAX_BYTES: ${KALI_HTTP_PROJECT_MAX_BYTES:-0}
     volumes:
-      - ./kali/mcp_server.py:/opt/mcp_server.py:ro
-      - ./kali/postrun.sh:/opt/postrun.sh:ro
+      - ./kali:/opt/kali:ro
+      - http-history:/data
       - kali-tools:/opt/localbin
       - resolvers:/resolvers
       - work:/work
@@ -116,6 +132,12 @@ services:
       # and reverse-proxies to the correct backend. host_gateway = host's gateway IP.
       - "app.onlineorders.com:host-gateway"
       - "soupmarket.shop:192.33.91.87"
+    healthcheck:
+      test: ["CMD-SHELL", "/opt/venv/bin/python /opt/kali/healthcheck.py"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+      start_period: 40s
     networks: [polymerhus-net]
 
   agent:
