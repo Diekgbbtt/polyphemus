@@ -25,6 +25,8 @@ CREATE TABLE IF NOT EXISTS leases (
     spec_id TEXT,
     variant_ref TEXT,
     exec_id TEXT,
+    derived_from TEXT,
+    replay_kind TEXT,
     created_at REAL NOT NULL,
     expires_at REAL NOT NULL
 );
@@ -51,6 +53,16 @@ class SourceRegistry:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_SCHEMA)
+            self._migrate_columns()
+
+    def _migrate_columns(self) -> None:
+        columns = {
+            row["name"]
+            for row in self._conn.execute("PRAGMA table_info(leases)").fetchall()
+        }
+        for column in ("derived_from", "replay_kind"):
+            if column not in columns:
+                self._conn.execute(f"ALTER TABLE leases ADD COLUMN {column} TEXT")
 
     def register(
         self,
@@ -66,7 +78,8 @@ class SourceRegistry:
             self._conn.execute(
                 "INSERT OR REPLACE INTO leases "
                 "(source_ip, project_id, session_id, run_id, spec_id, variant_ref,"
-                " exec_id, created_at, expires_at) VALUES (?,?,?,?,?,?,?,?,?)",
+                " exec_id, derived_from, replay_kind, created_at, expires_at) "
+                "VALUES (?,?,?,?,?,?,?,?,?,?,?)",
                 (
                     source_ip,
                     project_id,
@@ -75,6 +88,8 @@ class SourceRegistry:
                     context.spec_id,
                     context.variant_ref,
                     context.exec_id,
+                    context.derived_from,
+                    context.replay_kind,
                     now,
                     now + max(0, ttl_s),
                 ),
@@ -97,6 +112,8 @@ class SourceRegistry:
             spec_id=row["spec_id"] or "",
             variant_ref=row["variant_ref"] or "",
             exec_id=row["exec_id"] or "",
+            derived_from=row["derived_from"],
+            replay_kind=row["replay_kind"],
             source_ip=source_ip,
         )
         return row["project_id"], context
@@ -122,6 +139,8 @@ class SourceRegistry:
                     spec_id=row["spec_id"] or "",
                     variant_ref=row["variant_ref"] or "",
                     exec_id=row["exec_id"] or "",
+                    derived_from=row["derived_from"],
+                    replay_kind=row["replay_kind"],
                 ),
                 created_at=row["created_at"],
                 expires_at=row["expires_at"],

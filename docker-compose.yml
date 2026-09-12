@@ -3,6 +3,9 @@ name: polymerhus
 networks:
   polymerhus-net:
     driver: bridge
+    ipam:
+      config:
+        - subnet: 172.28.0.0/16
 
 volumes:
   neo4j-data:
@@ -96,13 +99,18 @@ services:
     ports: ["8000:8000"]
     # VPN-in-container (D-HS e2e): OpenVPN needs to create a tun interface so
     # recon pods can reach a target that lives only on a VPN route. Least
-    # privilege - NET_ADMIN + the tun device, deliberately NOT --privileged.
-    # This replaces routing pod traffic through the host's tun, which does not
-    # scale. postrun.sh self-heals the /dev/net/tun node if the host lacks it.
+    # privilege - NET_ADMIN + SYS_ADMIN (the latter is required by `ip netns
+    # add`, which mounts /run/netns), deliberately NOT --privileged. This
+    # replaces routing pod traffic through the host's tun, which does not
+    # scale. The host /dev/net/tun device is deliberately NOT mounted here:
+    # the HTTP capture plane does not need tun, and postrun.sh creates a device
+    # node in the container only when a later VPN step needs it.
     cap_add:
       - NET_ADMIN
-    devices:
-      - /dev/net/tun:/dev/net/tun
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
     environment:
       PYTHONPATH: /opt
       KALI_HTTP_HISTORY_ROOT: /data

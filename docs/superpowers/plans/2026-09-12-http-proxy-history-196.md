@@ -78,3 +78,22 @@ Not verifiable in this sandbox (reported, not worked around):
   `loop.shutdown_default_executor()`. Reproduced identically on the unmodified
   `dev` checkout (`tests/attack/pod/test_tools.py`), so it is environmental, not
   a #196 regression. New tests avoid sync seams.
+
+## E2E gate hardening (2026-09-12 follow-up)
+
+The live acceptance test is no longer allowed to skip by default. It now:
+searches method/header/cookie/query/status/body-marker conjunctively; requires
+non-empty `http_artifact_refs`; runs the real `HuntingHttpPod.request_ref`
+resolver rather than calling `replay_http_request` directly; asserts that
+untouched attributes and the replayed cookie survive while only the declared
+query mutation changes; and scans the sanitized pod/artifact boundary for raw
+secrets. The local deterministic target is in
+`tests/e2e/http_e2e_target.py` and `docker-compose.e2e.yml`; the base compose no
+longer mounts the host `/dev/net/tun`, and the entrypoint now invokes
+`/opt/kali/postrun.sh`, starts mitmproxy in transparent mode, and installs the
+pydantic dependency in the mitmproxy environment. Live verification also
+surfaced and fixed three runtime-only defects: `ip netns` requires `SYS_ADMIN`
+plus unconfined seccomp/apparmor, the per-lease veth gateway was on a different
+subnet than the namespace source, and `SourceRegistry` dropped `derived_from` /
+`replay_kind` during lookup. Run the gate with the commands in
+`docs/design/http-proxy-history-operations.md`; it now passes `1 passed`.
