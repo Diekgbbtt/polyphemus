@@ -18,7 +18,8 @@ ENV PYTHONPATH=/opt
 RUN (command -v uv >/dev/null 2>&1 || /opt/venv/bin/pip install --no-cache-dir "uv==${UV_VERSION}") \
  && uv python install "${MITMPROXY_PYTHON}" \
  && uv venv --python "${MITMPROXY_PYTHON}" /opt/mitmproxy-env \
- && uv pip install --python /opt/mitmproxy-env/bin/python "mitmproxy==${MITMPROXY_VERSION}"
+ && uv pip install --python /opt/mitmproxy-env/bin/python \
+      "mitmproxy==${MITMPROXY_VERSION}" "pydantic>=2,<3"
 
 # The runtime MCP process needs httpx[http2] for the deterministic replay path.
 RUN /opt/venv/bin/pip install --no-cache-dir "httpx[http2]==0.28.1"

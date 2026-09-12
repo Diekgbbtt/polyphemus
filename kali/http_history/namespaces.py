@@ -50,15 +50,14 @@ class SubprocessBackend:
     """Real ``ip netns``/veth backend; transparent-routing rules are installed
     by ``entrypoint.sh``/``postrun.sh`` and re-asserted per lease here."""
 
-    def __init__(self, *, proxy_port: int = 8080, gateway_prefix: str = "172.31"):
+    def __init__(self, *, proxy_port: int = 8080):
         self.proxy_port = proxy_port
-        self.gateway_prefix = gateway_prefix
 
     def create(self, namespace: str, source_ip: str) -> None:
-        slot = max(0, int(source_ip.rsplit(".", 1)[-1]) - 2)
         veth_host = f"vh{namespace[-6:]}"
         veth_ns = f"vn{namespace[-6:]}"
-        gateway_ip = f"{self.gateway_prefix}.{slot}.1"
+        last = int(source_ip.rsplit(".", 1)[-1])
+        gateway_ip = f"{source_ip.rsplit('.', 1)[0]}.{last - 1}"
         self._run("ip", "netns", "add", namespace)
         try:
             self._run("ip", "link", "add", veth_host, "type", "veth", "peer", "name", veth_ns)
@@ -127,7 +126,10 @@ class NamespaceLeaseManager:
         self._counter = 0
 
     def _source_ip(self, slot: int) -> str:
-        return f"{self.subnet}.{self.ip_start + slot}"
+        # Each lease owns a /30: .1 is the root-namespace gateway and .2 is the
+        # leased namespace source address. Slots are spaced by four so every
+        # source remains inside the single /24 that postrun.sh MASQUERADEs.
+        return f"{self.subnet}.{self.ip_start + (slot * 4)}"
 
     def acquire(
         self,

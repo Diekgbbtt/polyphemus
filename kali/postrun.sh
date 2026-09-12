@@ -12,6 +12,7 @@ mkdir -p /opt/localbin /resolvers
 /opt/venv/bin/pip show fastmcp >/dev/null 2>&1 || /opt/venv/bin/pip install --no-cache-dir 'fastmcp<3'
 
 command -v whois >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq --no-install-recommends whois; }
+command -v iptables >/dev/null 2>&1 || { apt-get update -qq && apt-get install -y -qq --no-install-recommends iptables; }
 
 if ! command -v graphql-cop >/dev/null 2>&1; then
   if [ ! -d /opt/graphql-cop ]; then

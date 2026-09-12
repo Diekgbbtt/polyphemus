@@ -22,6 +22,21 @@ The proxy's own upstream connections stay in the root namespace and are never
 redirected, so there is no routing loop. Flows that cannot be correlated land in
 the reserved `unscoped` project, which project-scoped queries refuse to read.
 
+The live end-to-end target is a separate, deterministic local service
+(`http-e2e-target`, see `docker-compose.e2e.yml`). It is addressed by the
+fixed bridge address `172.28.0.20` on port 80 rather than by Docker DNS because
+leased network namespaces carry a copied `/etc/resolv.conf` and cannot rely on
+the Docker embedded DNS resolver. Port 80 is required so the per-lease
+transparent REDIRECT rules intercept it.
+
+`/dev/net/tun` is **not** mounted by the base `docker-compose.yml`. The HTTP
+capture plane needs `NET_ADMIN`, `SYS_ADMIN`, and unconfined seccomp/apparmor
+to create and mount named network namespaces (`ip netns add`); `postrun.sh`
+installs `iptables` and creates a tun device node only when a later VPN step
+needs it. Keep host-tun mounting in a separate overlay if a VPN-in-container
+run requires it; the #196 HTTP E2E gate must not depend on `/dev/net/tun`
+existing on the host.
+
 ## Environment
 
 | Variable | Default | Meaning |
@@ -87,7 +102,22 @@ class/size/timing only - never wire content.
 .venv/bin/pytest tests/kali tests/attack/pod \
   tests/integration/test_test_executor_pod_contracts.py -q
 .venv/bin/pytest tests/test_compose_config.py tests/app/test_kali_mcp_check.py -q
-docker compose config
-docker compose build kali && docker compose up -d kali
-.venv/bin/pytest tests/e2e/test_http_proxy_history.py -v
+docker compose -f docker-compose.yml -f docker-compose.e2e.yml config
+docker compose build kali
+docker compose -f docker-compose.yml -f docker-compose.e2e.yml up -d kali http-e2e-target
+docker compose ps kali http-e2e-target
+docker compose exec kali \
+  /opt/venv/bin/python /opt/kali/healthcheck.py --require-capture
+
+KALI_MCP_URL=http://localhost:8000/mcp \
+KALI_HTTP_E2E_TARGET=http://172.28.0.20/ \
+.venv/bin/pytest tests/e2e/test_http_proxy_history.py -vv -rs
 ```
+
+The final command is the zero-skip live gate: it must produce `1 passed`, no
+skip, `proxy_status.ok=true`, and the full acceptance set (method / header /
+cookie / query / status / body marker, non-empty `http_artifact_refs`, real
+`request_ref` pod resolution, immutable lineage, cookie preservation via the
+local target, project isolation, and no raw secrets on the sanitized boundary).
+For a host-only developer run that intentionally has no stack, set
+`KALI_HTTP_E2E_ALLOW_SKIP=1`; that is not a valid issue-closing gate.

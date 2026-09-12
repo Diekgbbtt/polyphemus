@@ -16,6 +16,7 @@ PROXY_PORT="${KALI_HTTP_PROXY_PORT:-8080}"
 CAPTURE_ENABLED="${KALI_HTTP_CAPTURE_ENABLED:-true}"
 MITM_CONFDIR="${KALI_HTTP_MITM_CONFDIR:-$STORE_ROOT/mitmproxy}"
 MITMDUMP_BIN="${KALI_HTTP_MITMDUMP_BIN:-/opt/mitmproxy-env/bin/mitmdump}"
+MITMDUMP_LISTEN_HOST="${KALI_HTTP_MITMDUMP_LISTEN_HOST:-0.0.0.0}"
 MITM_LOG="${KALI_HTTP_MITM_LOG:-/var/log/kali-mitmdump.log}"
 MCP_BIN="${KALI_HTTP_MCP_BIN:-/opt/venv/bin/python}"
 
@@ -35,7 +36,7 @@ trap shutdown EXIT TERM INT
 
 # 1) gap-fill + CA + namespace/NAT bootstrap. Best-effort by design (postrun.sh
 #    never aborts), so a routing hiccup cannot stop the exec server.
-bash /opt/postrun.sh || true
+bash /opt/kali/postrun.sh || true
 
 case "$(printf '%s' "$CAPTURE_ENABLED" | tr '[:upper:]' '[:lower:]')" in
   0|false|no|off)
@@ -44,7 +45,8 @@ case "$(printf '%s' "$CAPTURE_ENABLED" | tr '[:upper:]' '[:lower:]')" in
   *)
     if [ -x "$MITMDUMP_BIN" ]; then
       "$MITMDUMP_BIN" \
-        --listen-host "$PROXY_HOST" --listen-port "$PROXY_PORT" \
+        --mode transparent \
+        --listen-host "$MITMDUMP_LISTEN_HOST" --listen-port "$PROXY_PORT" \
         --set "confdir=$MITM_CONFDIR" \
         --set block_global=false \
         -s /opt/kali/http_history/addon_entry.py \
@@ -61,7 +63,7 @@ case "$(printf '%s' "$CAPTURE_ENABLED" | tr '[:upper:]' '[:lower:]')" in
       done
       # the CA exists only after mitmdump's first run - install it now, and
       # re-run the idempotent bootstrap so the namespace/NAT rules are current.
-      bash /opt/postrun.sh || true
+      bash /opt/kali/postrun.sh || true
     else
       echo "[entrypoint] mitmdump not found at $MITMDUMP_BIN; capture degraded"
     fi
