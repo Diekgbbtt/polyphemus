@@ -290,9 +290,23 @@ class HttpHistoryService:
             return {"ok": False, "detail": f"proxy not reachable: {exc}"}
 
     def _default_routing_probe(self) -> dict:
+        """Routing readiness for LEASED namespaces.
+
+        A lease installs its own per-veth REDIRECT to mitmproxy (see
+        notes in namespaces.SubprocessBackend); what must exist at boot is the
+        namespace egress path: IP forwarding plus the MASQUERADE rule for the
+        lease subnet. The proxy's own upstream connections stay in the root
+        namespace and are never redirected, which is what prevents a loop.
+        """
+        forwarding = False
+        try:
+            with open("/proc/sys/net/ipv4/ip_forward", encoding="ascii") as handle:
+                forwarding = handle.read().strip() == "1"
+        except OSError:
+            forwarding = False
         try:
             proc = subprocess.run(
-                ["iptables", "-t", "nat", "-S", "PREROUTING"],
+                ["iptables", "-t", "nat", "-S", "POSTROUTING"],
                 capture_output=True,
                 text=True,
                 timeout=3,
@@ -300,10 +314,16 @@ class HttpHistoryService:
             )
         except (OSError, subprocess.SubprocessError) as exc:
             return {"ok": False, "detail": f"routing probe failed: {exc}"}
-        present = "REDIRECT" in proc.stdout
+        masquerade = "172.30.0.0/24" in proc.stdout
+        ok = forwarding and masquerade
+        detail = (
+            "namespace egress ready (forwarding + MASQUERADE; per-lease REDIRECT at lease time)"
+            if ok
+            else f"namespace egress not ready (forwarding={forwarding}, masquerade={masquerade})"
+        )
         return {
-            "ok": present,
-            "detail": "transparent REDIRECT rules present" if present else "no REDIRECT rules",
+            "ok": ok,
+            "detail": detail,
         }
 
     def _store_status(self) -> dict:
