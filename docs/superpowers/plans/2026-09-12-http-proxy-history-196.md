@@ -123,4 +123,11 @@ Integration commits:
 ```text
 11c726f fix(kali): harden #196 live E2E gate and capture plane
 9fbce12 merge(kali): #196 live E2E hardening
+53e4fbb docs(kali): record live #196 E2E integration evidence
+```
+
+Pushed to `origin/dev` via SSH:
+
+```text
+53e4fbbd02625c521a5f96ae162189166f410d4d refs/heads/dev
 ```
