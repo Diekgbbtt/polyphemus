@@ -121,3 +121,15 @@ cookie / query / status / body marker, non-empty `http_artifact_refs`, real
 local target, project isolation, and no raw secrets on the sanitized boundary).
 For a host-only developer run that intentionally has no stack, set
 `KALI_HTTP_E2E_ALLOW_SKIP=1`; that is not a valid issue-closing gate.
+
+## Recorded live result
+
+On 2026-09-12 the gate was run against the local compose target and passed:
+
+```text
+1 passed, 2 warnings
+```
+
+Both `polymerhus-kali-1` and `polymerhus-http-e2e-target-1` were healthy, and
+`healthcheck.py --require-capture` returned `ok: true` with proxy, routing,
+namespace and store components all healthy.
