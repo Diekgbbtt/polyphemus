@@ -82,11 +82,15 @@ class HuntingHttpPod:
         transport: httpx.BaseTransport | None = None,
         timeout: float = 10.0,
         max_requests: int = 16,
+        replay_fn=None,
+        project_id: str = "",
     ):
         self._target_url = target_url
         self._transport = transport
         self._timeout = timeout
         self._max_requests = max_requests
+        self._replay_fn = replay_fn
+        self._project_id = project_id
 
     def __call__(self, spec: dict) -> dict:
         target = _target_url(spec, self._target_url)
@@ -107,6 +111,9 @@ class HuntingHttpPod:
                 init_validation=[f"unsupported target scheme: {target}"],
                 interpretations=["target URL rejected"],
             )
+        pvs = ((spec.get("d4_typed_base") or {}).get("payload_vector_space") or {})
+        if isinstance(pvs, dict) and pvs.get("request_ref"):
+            return self._run_request_ref(pvs)
         vectors = _vectors(spec)
         if not vectors:
             return self._envelope(
@@ -173,6 +180,77 @@ class HuntingHttpPod:
             )
         return self._envelope(
             "no-symptom-evidence", clean=all_definitive,
+            interpretations=interpretations, iterations=requests_made,
+        )
+
+    def _run_request_ref(self, pvs: dict) -> dict:
+        """Resolve a recorded baseline and replay its declared mutations.
+
+        A missing, cross-project or non-replayable reference is a RUNTIME
+        resolution failure (technical-infeasibility), never an INIT malformed-
+        spec rejection - `payload_vector_space` stays an open dict and
+        `validate_spec` never ranges over this nested shape.
+        """
+        from polymerhus.attack.hunting.pod.symbolic import mutations_from_pvs
+
+        ref = str(pvs.get("request_ref") or "")
+        if self._replay_fn is None:
+            return self._envelope(
+                "technical-infeasibility",
+                clean=False,
+                interpretations=["no deterministic replay capability is bound to the pod"],
+            )
+        try:
+            baseline = self._replay_fn(self._project_id, ref, {})
+        except Exception:  # noqa: BLE001 - any resolution failure is infeasible
+            baseline = None
+        if not isinstance(baseline, dict) or baseline.get("status") is None:
+            return self._envelope(
+                "technical-infeasibility",
+                clean=False,
+                interpretations=[
+                    f"request_ref {ref!r} is missing, cross-project or not replayable"
+                ],
+            )
+        mutations = mutations_from_pvs(pvs)
+        if not mutations:
+            return self._envelope(
+                "technical-infeasibility",
+                clean=False,
+                interpretations=[f"request_ref {ref!r} carries no declared mutations"],
+            )
+        interpretations: list[dict[str, Any]] = []
+        symptom_seen = False
+        definitive = True
+        requests_made = 0
+        baseline_allowed = _allowed(baseline.get("status"))
+        for override in mutations:
+            if requests_made >= self._max_requests:
+                definitive = False
+                interpretations.append({"override": override, "error": "request budget exhausted"})
+                break
+            requests_made += 1
+            try:
+                result = self._replay_fn(self._project_id, ref, override)
+            except Exception:  # noqa: BLE001
+                result = None
+            status = result.get("status") if isinstance(result, dict) else "error"
+            interpretations.append(
+                {"vector": f"request_ref {ref}", "override": override, "status": status}
+            )
+            if not isinstance(status, int):
+                definitive = False
+                continue
+            if baseline_allowed is False and _allowed(status) is True:
+                symptom_seen = True
+        if symptom_seen:
+            return self._envelope(
+                "symptom-confirmed", clean=True,
+                interpretations=interpretations, iterations=requests_made,
+                verdict="successful",
+            )
+        return self._envelope(
+            "no-symptom-evidence", clean=definitive,
             interpretations=interpretations, iterations=requests_made,
         )
 

@@ -84,6 +84,10 @@ class ProbeStep(BaseModel):
     headers: dict = Field(default_factory=dict)
     body: str = ""
     command: str = ""  # a raw terminal command (exec tool) when method/url is not used
+    # #196: a recorded-baseline reference, resolved at RUNTIME (never during
+    # INIT validation). `overrides` is the closed, deterministic mutation set.
+    request_ref: str = ""
+    overrides: dict = Field(default_factory=dict)
 
 
 class ProbeChain(BaseModel):

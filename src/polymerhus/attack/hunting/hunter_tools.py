@@ -768,6 +768,95 @@ class ExecTool(BaseTool):
         })
 
 
+class HttpHistorySearchArgs(BaseModel):
+    """The read-only search contract (#196): conjunctive filters over the
+    recorded transactions of the hunter's project. Raw bodies are never
+    returned - the rows are sanitized summaries."""
+
+    filters: list[dict] = Field(default_factory=list)
+    cursor: str | None = None
+    limit: int = 50
+    text: str | None = None
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class HttpHistoryGetArgs(BaseModel):
+    """The read-only get contract (#196). `include_body` is deliberately absent:
+    the raw body is available only to the deterministic pod-side replay."""
+
+    artifact_id: str
+
+    model_config = ConfigDict(extra="forbid")
+
+
+class HttpHistorySearchTool(BaseTool):
+    """Read-only search over the project's HTTP history (sanitized summaries).
+
+    The hunter may discover a baseline `request_ref` here; replaying it is the
+    POD's job, so this tool exposes no mutation or execution capability.
+    Fail-open: unwired or failing search degrades to a denoted error bundle."""
+
+    name: str = "search_http_history"
+    description: str = (
+        "Search this project's recorded HTTP request/response history. Filters "
+        "are conjunctive: {side, namespace, key, op, value} with side in "
+        "request|response|connection|context|timing, namespace in core|header|"
+        "cookie|query|form|body|tls, op in eq|contains|prefix|gte|lte. Returns "
+        "sanitized summaries (no bodies, no secrets). Use the returned "
+        "artifact_id as payload_vector_space.request_ref to replay a baseline."
+    )
+    args_schema: type[BaseModel] = HttpHistorySearchArgs
+
+    def __init__(self, *, http_search_fn=None, project_id: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self._fn = http_search_fn
+        self._project_id = project_id
+
+    def _run(self, **kwargs: Any) -> str:
+        args = HttpHistorySearchArgs(**kwargs)
+        if self._fn is None:
+            return json.dumps({"ok": False, "error": "http_history_unavailable", "degraded": True})
+        try:
+            result = self._fn(
+                self._project_id,
+                args.filters,
+                args.cursor,
+                args.limit,
+                args.text,
+            )
+        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            return json.dumps({"ok": False, "error": "http_history_failed", "detail": str(exc)})
+        return json.dumps(result)
+
+
+class HttpHistoryGetTool(BaseTool):
+    """Read-only fetch of one sanitized artifact by id."""
+
+    name: str = "get_http_artifact"
+    description: str = (
+        "Fetch one recorded HTTP transaction by artifact_id from this project. "
+        "The view is sanitized: authorization/cookie values are redacted and no "
+        "body content is returned. Cross-project ids are not found."
+    )
+    args_schema: type[BaseModel] = HttpHistoryGetArgs
+
+    def __init__(self, *, http_get_fn=None, project_id: str = "", **kwargs):
+        super().__init__(**kwargs)
+        self._fn = http_get_fn
+        self._project_id = project_id
+
+    def _run(self, **kwargs: Any) -> str:
+        args = HttpHistoryGetArgs(**kwargs)
+        if self._fn is None:
+            return json.dumps({"ok": False, "error": "http_history_unavailable", "degraded": True})
+        try:
+            result = self._fn(self._project_id, args.artifact_id, False)
+        except Exception as exc:  # noqa: BLE001 - fail-open, never into the turn
+            return json.dumps({"ok": False, "error": "http_history_failed", "detail": str(exc)})
+        return json.dumps(result)
+
+
 def build_hunter_tools(
     *,
     store: HunterMemoryStore | None = None,
@@ -776,6 +865,8 @@ def build_hunter_tools(
     graph_view_fn: GraphViewFn | None = None,
     kb_fn: KbQueryFn | None = None,
     exec_fn: ExecFn | None = None,
+    http_search_fn=None,
+    http_get_fn=None,
 ) -> list[BaseTool]:
     """Assemble the bound `HUNTER_TOOLS` list for the W5 `create_agent` binding.
 
@@ -800,6 +891,8 @@ def build_hunter_tools(
         build_graph_view_tool(graph_view_fn),
         KbQueryTool(kb_fn=kb_fn),
         ExecTool(exec_fn=exec_fn),
+        HttpHistorySearchTool(http_search_fn=http_search_fn, project_id=project_id),
+        HttpHistoryGetTool(http_get_fn=http_get_fn, project_id=project_id),
     ]
 
 
@@ -820,5 +913,7 @@ __all__ = [
     "NotesTool",
     "KbQueryTool",
     "ExecTool",
+    "HttpHistorySearchTool",
+    "HttpHistoryGetTool",
     "build_hunter_tools",
 ]

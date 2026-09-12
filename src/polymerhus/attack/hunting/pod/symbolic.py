@@ -49,6 +49,16 @@ def default_probe_from_spec(spec: dict, variant_ref: str) -> ProbeChain | None:
     either yields None (no probe derivable - the loop lands space-exhausted).
     Returns None only when no probe is derivable at all (no path anywhere)."""
     pvs = spec.get("payload_vector_space") or {}
+    if isinstance(pvs, dict) and pvs.get("request_ref"):
+        overrides = mutations_from_pvs(pvs)
+        step = ProbeStep(
+            role="core",
+            request_ref=str(pvs.get("request_ref") or ""),
+            overrides=overrides[0] if overrides else {},
+        )
+        chain = ProbeChain(variant_ref=variant_ref, steps=[step])
+        chain.signature = probe_signature(chain)
+        return chain
     if isinstance(pvs, dict) and pvs:
         method = str(pvs.get("method") or "").upper()
         path = str(pvs.get("path") or "")
@@ -63,6 +73,38 @@ def default_probe_from_spec(spec: dict, variant_ref: str) -> ProbeChain | None:
     chain = ProbeChain(variant_ref=variant_ref, steps=[step])
     chain.signature = probe_signature(chain)
     return chain
+
+
+_MUTATION_LOCATIONS = frozenset({"query", "form", "header", "headers", "cookie", "cookies", "body", "json"})
+
+
+def mutations_from_pvs(pvs: dict) -> list[dict]:
+    """Expand ``payload_vector_space.mutations`` into the closed override set.
+
+    Authored form::
+
+        mutations:
+          - location: query
+            name: search
+            values: ["'", "' OR 1=1--"]
+
+    Returns one override dict per declared value, e.g.
+    ``{"query": {"search": "'"}}``. Unknown locations are ignored (the spec is
+    an open dict; the RESOLVER only acts on the vocabulary it understands).
+    """
+    if not isinstance(pvs, dict):
+        return []
+    overrides: list[dict] = []
+    for mutation in pvs.get("mutations") or []:
+        if not isinstance(mutation, dict):
+            continue
+        location = str(mutation.get("location") or "")
+        if location not in _MUTATION_LOCATIONS:
+            continue
+        name = str(mutation.get("name") or "")
+        for value in mutation.get("values") or []:
+            overrides.append({location: {name: value}})
+    return overrides
 
 
 def _path_from_identity(identity) -> str:
