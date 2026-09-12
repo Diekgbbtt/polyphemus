@@ -110,6 +110,9 @@ class RawObservation(BaseModel):
     stderr: str = ""
     returncode: int | None = None
     duration_ms: int = 0
+    # #196: links this D6 record to captured HTTP artifacts by id - the artifact
+    # contents are never copied here.
+    http_artifact_refs: list[str] = Field(default_factory=list)
 
 
 class KbObservation(BaseModel):

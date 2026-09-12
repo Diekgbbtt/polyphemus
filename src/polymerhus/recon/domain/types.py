@@ -50,6 +50,34 @@ class ExecResult(BaseModel):
     stderr: str
     returncode: int
     duration_ms: int = 0
+    # #196: additive capture metadata. Defaults keep every existing fake and
+    # caller working unchanged.
+    exec_id: str = ""
+    http_artifact_refs: list[str] = Field(default_factory=list)
+    capture_warning: str | None = None
+
+
+class CaptureContext(BaseModel):
+    """The runtime correlation metadata carried from the pod to Kali.
+
+    Runtime metadata, never a hunter-spec validation schema: it names the
+    project/run/spec/variant a terminal call belongs to so the captured HTTP
+    artifacts can be linked back to the D6 observation that caused them.
+    """
+
+    project_id: str = ""
+    run_id: str = ""
+    spec_id: str = ""
+    variant_ref: str = ""
+    session_id: str = ""
+
+    def as_mcp_args(self) -> dict:
+        return {
+            "project_id": self.project_id,
+            "run_id": self.run_id,
+            "spec_id": self.spec_id,
+            "variant_ref": self.variant_ref,
+        }
 
 class ToolInvocation(BaseModel):
     command: str

@@ -453,10 +453,12 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                                  max_iters=MAX_POD_ITERS)
         parsed = parse_curl(result)
         observation = RawObservation(
-            probe_ref=sig, variant_ref=variant_ref, request={"command": command},
+            probe_ref=sig, variant_ref=variant_ref,
+            request={"command": command, "exec_id": result.exec_id},
             status=parsed.get("status"), body=parsed.get("body", "") or result.stdout,
             stdout=result.stdout, stderr=result.stderr, returncode=result.returncode,
-            duration_ms=result.duration_ms or parsed.get("time_ms", 0))
+            duration_ms=result.duration_ms or parsed.get("time_ms", 0),
+            http_artifact_refs=list(result.http_artifact_refs or []))
         log.mark_executed(sig)
         log.record_observation(observation)
         result_text = (f"TOOL RESULT: status={observation.status} "
