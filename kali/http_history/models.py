@@ -79,6 +79,10 @@ class CaptureContext(BaseModel):
     variant_ref: str = ""
     exec_id: str = ""
     source_ip: str | None = None
+    # Replay lineage is captured with the flow so the addon can stamp the new
+    # immutable artifact without a second write ever mutating the baseline.
+    derived_from: str | None = None
+    replay_kind: str | None = None
 
 
 class HttpError(BaseModel):

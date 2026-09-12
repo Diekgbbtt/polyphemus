@@ -63,8 +63,8 @@ def normalize_flow(
         connection=_connection_record(flow),
         timings=TimingsRecord(total_ms=total_ms),
         error=_error_record(error),
-        derived_from=derived_from,
-        replay_kind=replay_kind,
+        derived_from=derived_from or context.derived_from,
+        replay_kind=replay_kind or context.replay_kind,
         created_at=now if now is not None else time.time(),
     )
     bodies: dict[str, bytes] = {}
