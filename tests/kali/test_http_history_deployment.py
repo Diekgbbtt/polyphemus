@@ -35,6 +35,7 @@ def test_kali_environment_exposes_the_capture_knobs():
         "KALI_HTTP_MAX_BODY_BYTES",
         "KALI_HTTP_NAMESPACE_POOL",
         "KALI_HTTP_LEASE_TTL_S",
+        "KALI_HTTP_DNS_SERVER",
         "KALI_HTTP_PROXY_PORT",
     ):
         assert key in env
