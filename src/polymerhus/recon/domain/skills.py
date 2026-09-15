@@ -509,8 +509,7 @@ WRITE_SKILL_CONTRACT = (
     "directory, non-empty description and version); a malformed skill is never "
     "persisted.\n\n"
     "WRITE RULES - one whole file per call, written atomically. "
-    "`source_note_ids` is log-only provenance for the notes your revision "
-    "draws on. Malformed content fails with `skill_invalid`, an unknown "
+    "Malformed content fails with `skill_invalid`, an unknown "
     "target with `skill_target`, a degraded store with `store_unavailable`. "
     "Every outcome arrives as an in-band coded envelope; nothing raises into "
     "the turn."
@@ -558,8 +557,8 @@ def build_write_skill_tool(project_id: str, store: SkillStore | None = None):
         )
         source_note_ids: list[str] = Field(
             default_factory=list,
-            description="Log-only provenance: the note ids your revision draws "
-            "on. Recorded, never consulted at write time.",
+            description="Reserved log-only provenance, recorded and never "
+            "consulted at write time.",
         )
 
     @tool(args_schema=WriteSkillArgs)

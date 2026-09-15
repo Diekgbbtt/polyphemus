@@ -182,7 +182,7 @@ The compact usage-protocol skill appended to every `load_skill` result by the re
 _Avoid_: prompt injection (the protocol rides the tool result, never the system prompt or compaction state).
 
 **Authoring rules (`meta-write-skill`)**:
-The content-stable authoring instructions for writing a well-structured procedure rather than a note-dump: ordered steps closed by expected observables, frontmatter plus a revision block (`base_version`, `revision`, provenance, `source_note_ids`), bulky material behind `references/` pointers.
+The content-stable authoring instructions for writing a well-structured procedure rather than a note-dump: ordered steps closed by expected observables, valid frontmatter shape, bulky material behind `references/` pointers.
 The future `SkillEvolver` reuses it unchanged.
 _Avoid_: the note-dump (prose without steps, observables, or pointers).
 

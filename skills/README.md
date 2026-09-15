@@ -77,7 +77,7 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 | triager | `writing-observations` | **authored + RED/GREEN verified** | anchor allowlist, observations-not-vulnerabilities, no asset restatement |
 | crawler | `steel-crawl` | **authored + migrated (#222)** | agentic crawl budget/frontier discipline |
 | every loaded skill | `meta-usage-skill` | **authored (#234)** | assess the procedure against its observables; record improvements through `write_skill` |
-| skill author (executor + evolver) | `meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter + revision block, references pointers |
+| skill author (executor + evolver) | `meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter shape, references pointers |
 | job-orchestrator | `asset-distribution` | roadmap (deferred to LLM path) | asset cleaning/dedup/distribution over MAX_PODS |
 | configurator | agent-mode playbooks | roadmap (deferred) | non-crawl agentic configuration |
 

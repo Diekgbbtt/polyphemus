@@ -29,7 +29,7 @@ Reads are fail-open to the fallback, exactly like `skill_for`.
 
 `write_skill(skill, target, content, source_note_ids=[])`.
 `target` is the typed surface only: `procedure` rewrites the whole `SKILL.md`, `references/<name>` writes one reference file (`<name>` one safe file stem).
-No section granularity, no operation verbs, no rationale field; `source_note_ids` is log-only provenance.
+No section granularity, no operation verbs, no rationale field; `source_note_ids` stays a reserved log-only parameter (no notes system exists in this transitional system - no prose may present it as drawn-on).
 The factory binds `project_id` only; any skill in the project's bundle is writable (D234-12).
 The agent seam helper (`build_skill_tools`) returns `load_skill` for every agent plus project-bound `write_skill` only for agents whose procedure evolves a skill; a write tool without its project is a fail-fast wiring defect.
 Writes create the bundle on first use, re-validate frontmatter (data-section keys plus `name` == the bundle directory), and land atomically (temp file in the same dir + `os.replace`) under a per-project lock.
@@ -61,7 +61,7 @@ The L1 skill-index middleware is #222's in-flight seam and composes with this he
 ## D234-9 - meta-skill authorship
 
 Both meta-skills were authored by a specialised skill-writing subagent against the `writing-great-skills` bar (compact, no sediment, no no-ops, positive instruction, disclosure ladder).
-`meta-write-skill` is content-stable: it describes only the stable contract (targets, frontmatter, revision block, observables, pointers) with no transitory language, so the future `SkillEvolver` reuses it unchanged.
+`meta-write-skill` is content-stable: it describes only the stable contract (targets, frontmatter shape, observables, pointers) with no transitory language, so the future `SkillEvolver` reuses it unchanged.
 `meta-usage-skill` is deliberately transitory and compact (it rides every load): assess against stated observables, separate skill defect from execution miss, write directly through `write_skill`; only its body changes at the #232 migration.
 Authoring rules live only in `meta-write-skill`, the assessment protocol only in `meta-usage-skill` (one source of truth per meaning, pointer between them).
 
@@ -91,4 +91,5 @@ The meta-skills were rewritten to the corrected contract and reframed: `meta-wri
 No shadowing, no separate protocol reads: the usage protocol is appended to the read of any skill (project bundle or shared catalogue) and always reads from the shared catalogue; both meta-skills load bare to prevent blackloops (feedback self-judgement).
 The envelope mapping is single-sourced in the `write_skill` tool description (`WRITE_SKILL_CONTRACT`): the `meta-write-skill` step-4 Observable points at the contract instead of restating it.
 The `meta-usage-skill` step-3 Observable names the three codes (`skill_invalid`/`skill_target`/`store_unavailable`) as the sharper restriction - deliberate hot-path tokens per operator ruling, the one sanctioned duplication.
-Open (re-proposed extensively on operator request): the cross-run oscillation/convergence rule and the revision-block enforce-vs-advisory status.
+Settled on operator rulings: (a) claim criticality - every divergence/lack claim must be grounded on objective evidence, defensible from any perspective, unbiased by role and execution path, so weak additions are never added and solid additions never pruned for mere non-experience (wording inspired by the critical-thinking-logical-reasoning bar); (b) content-only revisions - the reading agent receives skill text, never frontmatter metadata, so a revision touches content only and version/identity stay symbolic; `source_note_ids` is a reserved parameter with no notes system behind it, and no ambiguous verbatim about drawn-on notes may live anywhere in the system.
+Open: the cross-run oscillation/convergence rule (no memory named yet) and nothing else.
