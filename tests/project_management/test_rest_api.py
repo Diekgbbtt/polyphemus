@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from polymerhus.project_management import api as routes
+from polymerhus.project_management import repository
 from polymerhus.app.clients import pg
 from polymerhus.app.main import app
 
@@ -9,7 +10,11 @@ client = TestClient(app)
 
 def test_create_project_returns_project_id(monkeypatch):
     calls = []
+    scaffolds = []
     monkeypatch.setattr(pg, "create_project", lambda pid, name: calls.append((pid, name)))
+    monkeypatch.setattr(
+        repository.data_root, "ensure_project", lambda pid: scaffolds.append(pid)
+    )
 
     resp = client.post("/projects", json={"name": "acme"})
 
@@ -17,6 +22,7 @@ def test_create_project_returns_project_id(monkeypatch):
     body = resp.json()
     assert "project_id" in body and body["project_id"]
     assert calls == [(body["project_id"], "acme")]
+    assert scaffolds == [body["project_id"]]
 
 
 def test_put_settings_unknown_project_404(monkeypatch):
