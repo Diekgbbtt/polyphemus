@@ -296,7 +296,9 @@ def _parse_frontmatter(text: str) -> dict | None:
 
 def _frontmatter_violations(meta: dict, *, skill: str) -> list[str]:
     """The data-section violations of one bundle frontmatter mapping, plus the
-    bundle-identity rule (`name` == the bundle directory). `[]` when valid."""
+    bundle-identity rule (`name` == the bundle directory). `[]` when valid.
+    Same shapes as the catalogue `validate_skill` contract, so a bundle the
+    writer accepts would also pass the catalogue sweep."""
     errors = []
     for key in _REQUIRED_DATA_KEYS:
         if key not in meta:
@@ -305,6 +307,16 @@ def _frontmatter_violations(meta: dict, *, skill: str) -> list[str]:
         errors.append(
             f"{skill}: frontmatter 'name' {meta['name']!r} is not the bundle directory"
         )
+    if "description" in meta and not isinstance(meta["description"], str):
+        errors.append(f"{skill}: frontmatter 'description' must be a string")
+    if "version" in meta and (
+        not isinstance(meta["version"], str) or not meta["version"]
+    ):
+        errors.append(
+            f"{skill}: frontmatter 'version' must be a non-empty string"
+        )
+    if "inputs" in meta and not isinstance(meta["inputs"], list):
+        errors.append(f"{skill}: frontmatter 'inputs' must be a list")
     return errors
 
 

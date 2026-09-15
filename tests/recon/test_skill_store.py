@@ -121,6 +121,16 @@ def test_write_refuses_name_not_matching_the_bundle(tmp_path: Path) -> None:
         store.write("proj-1", "auth_workflow", "procedure", _procedure("something_else"))
 
 
+def test_write_refuses_misshapen_frontmatter_values(tmp_path: Path) -> None:
+    store = SkillStore(root_dir=tmp_path)
+    bad_version = _procedure().replace("version: '1'", "version: 5")
+
+    with pytest.raises(SkillInvalidError):
+        store.write("proj-1", "auth_workflow", "procedure", bad_version)
+
+    assert not (tmp_path / "proj-1" / "skills" / "auth_workflow" / "SKILL.md").exists()
+
+
 @pytest.mark.parametrize(
     "target",
     ["", "procedure/extra", "references/../escape", "references/", "scripts/run", "/etc/passwd"],
