@@ -112,3 +112,10 @@ The hunting data layout moves onto the app-owned root: target is `<DATA_ROOT>/<p
 `fault-kb.yaml` moves to `<DATA_ROOT>/hunting/fault-kb.yaml` (shared, non-project): the `.gitignore` gains an exception for it, the `fault_kb.py` `importlib.resources` loader is rewritten to a filesystem read, and the image build must copy it.
 Bootstrap is strictly a manual, operator-authorised act - it is never something the runtime passes over - so on a project bundle's first update the frontmatter is simply **copied over from the shared catalogue skill of the same name**, and every write then bumps `metadata.version` by one minor (`major.minor`, one decimal place: `1.0` -> `1.1`).
 No component synthesises metadata: the store refuses `skill_invalid` when neither the project bundle nor the catalogue carries bootstrapped metadata.
+
+## D234-16 - hunting migration executed
+
+Built and run: the three root constants (`HUNT_STORE_ROOT`, `HUNTER_MEMORY_ROOT`, `HUNTING_DATA`) are deleted and unified behind one resolver, `app.data_root.project_dir(project_id, relative, root=...)`, which reads the same `PROJECT_SCAFFOLD` the scaffold creates.
+`PROJECT_SCAFFOLD` now enumerates the whole FIXED hunting skeleton (`hunting/orchestration/hunt_configs/{produced,consumed}`, `hunting/hunter/test-specs`, `hunting/test-executor-pod`), so the stores create no fixed directory: only a path keyed by a runtime id (a hunt fault key, a pod spec id) is created lazily, and only its own leaf (B10's safety-net allowance).
+`fault-kb.yaml` moved to `data/hunting/fault-kb.yaml`: `.gitignore` carries the one exception, the `fault_kb.py` `importlib.resources` loader is rewritten to that fixed path, the Dockerfile copies `data/` to `/srv/data`, the dev compose mounts `./data:/srv/data`, and a missing provisioned catalogue now fails CLOSED (`FaultKBCatalogueMissing`, plus a boot check in `app.main`).
+`tools/hunting/migrate_hunting_data_root.py` performed the copy-verify-delete on the live checkout: 145 per-project memory files across 3 projects plus the catalogue moved onto `<codebase_root>/data`, and the legacy module `data/` package was removed.

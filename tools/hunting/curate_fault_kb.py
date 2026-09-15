@@ -43,7 +43,7 @@ Usage:
     python tools/hunting/curate_fault_kb.py \
         --xml /path/to/cwec_v4.20.xml \
         --seed tools/hunting/owasp-top10-2025-seed.yaml \
-        --out src/polymerhus/attack/hunting/data/fault-kb.yaml
+        --out data/hunting/fault-kb.yaml
 """
 from __future__ import annotations
 

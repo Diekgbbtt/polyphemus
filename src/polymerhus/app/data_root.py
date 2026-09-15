@@ -32,12 +32,18 @@ from pathlib import Path
 DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
 
 # Every directory ``ensure_project`` creates for a project: the module buckets
-# the built modules write under. Adding a module dir is a change HERE, never a
-# change in the module store.
+# and the FIXED sub-layouts the stores write into. The full fixed skeleton is
+# enumerated here so no module store owns directory creation; a path keyed by a
+# runtime id (a hunt fault key, a pod spec id) is the only thing a store ever
+# creates lazily, and only its own leaf. Adding a fixed module dir is a change
+# HERE, never a change in the module store.
 PROJECT_SCAFFOLD: tuple[str, ...] = (
     "skills",
     "hunting/orchestration",
+    "hunting/orchestration/hunt_configs/produced",
+    "hunting/orchestration/hunt_configs/consumed",
     "hunting/hunter",
+    "hunting/hunter/test-specs",
     "hunting/test-executor-pod",
 )
 
@@ -64,6 +70,21 @@ def validate_path_component(value: str, what: str) -> str:
 def _validate_project_id(project_id: str) -> str:
     """The project-id form of `validate_path_component`."""
     return validate_path_component(project_id, "project_id")
+
+
+def project_dir(
+    project_id: str, relative: str = "", root: str | Path | None = None
+) -> Path:
+    """The project directory on the app-owned data root, optionally under one
+    `relative` scaffold path: ``<root>/<project_id>/<relative>``.
+
+    This is the ONE resolver every module store derives its bucket from, so the
+    layout is defined once (``PROJECT_SCAFFOLD``) and no store re-spells it.
+    ``root`` overrides the fixed default (``DATA_ROOT``) for the tests'
+    explicit temp roots; ``project_id`` is validated as one safe component.
+    """
+    base = Path(root) if root is not None else DATA_ROOT
+    return base / _validate_project_id(project_id) / relative
 
 
 def ensure_data_root(root: str | Path | None = None) -> Path:
@@ -96,5 +117,6 @@ __all__ = [
     "PROJECT_SCAFFOLD",
     "ensure_data_root",
     "ensure_project",
+    "project_dir",
     "validate_path_component",
 ]

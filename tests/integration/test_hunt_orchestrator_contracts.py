@@ -286,11 +286,11 @@ def test_hunt_record_ordering(tmp_path):
     assert len(notes) == 1
     assert notes[0]["revival_key"] == revival_key(SERVICE_A, FAULT_X)
     assert notes[0]["note"]
-    produced = (tmp_path / "project-1" / "orchestration" / "hunt_configs"
+    produced = (tmp_path / "project-1" / "hunting" / "orchestration" / "hunt_configs"
                 / "produced")
     assert produced.exists()
     # the per-run kinds are gone: no dispatch/result/hunt files anywhere
-    assert list((tmp_path / "project-1" / "orchestration").glob("*.md")) == []
+    assert list((tmp_path / "project-1" / "hunting" / "orchestration").glob("*.md")) == []
 
 
 # --- C12: the O9 budget stage is REMOVED (G7) ---------------------------------

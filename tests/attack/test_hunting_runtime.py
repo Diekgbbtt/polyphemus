@@ -18,7 +18,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     Witness,
     run_orchestration,
 )
-from polymerhus.attack.hunting.hunt_store import HUNT_STORE_ROOT, HuntStore
+from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
 
 SERVICE_A = "Service:slug:a"
@@ -324,13 +324,17 @@ def test_callersupplied_candidates_stay_the_override(monkeypatch):
     assert received and received[0] == supplied
 
 
-def test_default_tools_ground_on_the_fixed_store_root():
+def test_default_tools_ground_on_the_app_owned_store_root():
     """With no tools injected the entry point builds the seam defaults: the
-    HuntStore at the FIXED seam root and the read-only graph view."""
-    assert HUNT_STORE_ROOT.name == "data"
-    assert HUNT_STORE_ROOT.parent.name == "hunting"
+    HuntStore at the app-owned data root and the read-only graph view."""
+    from polymerhus.app.data_root import DATA_ROOT
+
     store = HuntStore()
-    assert store._root == HUNT_STORE_ROOT
+
+    assert store._root == DATA_ROOT
+    assert store._project_dir("proj-1") == (
+        DATA_ROOT / "proj-1" / "hunting" / "orchestration"
+    )
 
 
 def test_failing_orchestration_still_lands_a_terminal_status(monkeypatch):

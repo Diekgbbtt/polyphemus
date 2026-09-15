@@ -17,11 +17,14 @@ the spec's two facets (spec section 6):
     fault_id, the folded fault_ids captured under it (the reflection material
     the hunt-orchestrator's graph logic attaches to the parent fault unit).
 
-Fail-open contract: a missing or malformed catalogue yields an EMPTY KB (an
-empty tuple / empty mapping), never an exception to the caller - consistent
-with the fail-open selection contract (an unhardened, untagged entry prunes
-nothing). The loader imports no driver and performs no I/O at import; the
-catalogue path resolves lazily on first call (CODING_STANDARD section 6).
+Contract: a malformed catalogue fails open to an EMPTY KB (an empty tuple /
+empty mapping), never an exception to the caller - consistent with the
+fail-open selection contract (an unhardened, untagged entry prunes nothing).
+The PROVISIONED catalogue is the exception: `DATA_ROOT/hunting/fault-kb.yaml`
+(a static artifact the image build copies there) fails CLOSED when absent, so a
+deployment that forgot the artifact cannot hunt against a silently empty KB.
+The loader imports no driver and performs no I/O at import; an explicit fixture
+path is read lazily on first call (CODING_STANDARD section 6).
 
 This module mints no L0/L1 nodes and touches no database - it is the attack
 context's own data seam, not a graph consumer.
@@ -31,12 +34,13 @@ from __future__ import annotations
 import logging
 from collections import defaultdict
 from dataclasses import dataclass, field
-from importlib import resources
 from pathlib import Path
 from typing import Mapping
 
 import yaml
 
+from polymerhus.analysis.l1_curator import SYSTEM_KINDS
+from polymerhus.app.data_root import DATA_ROOT
 from polymerhus.attack.hunting.fault_source import FaultEntry
 from polymerhus.attack.hunting.predicate import (
     Clause,
@@ -44,29 +48,30 @@ from polymerhus.attack.hunting.predicate import (
     TypedPredicate,
     validate_predicate,
 )
-from polymerhus.analysis.l1_curator import SYSTEM_KINDS
 
 log = logging.getLogger(__name__)
 
 _SYSTEM_KIND_IDS = frozenset(kind for kind, _desc in SYSTEM_KINDS)
 _CLAUSE_FORMS = {form.value: form for form in ClauseForm}
 
-# The in-repo catalogue (packaged beside this module). Callers may override
-# with a fixture path in tests; resolution is lazy (no I/O at import).
-_DEFAULT_CATALOGUE: Path | None = None
+
+class FaultKBCatalogueMissing(RuntimeError):
+    """The provisioned fault-KB catalogue is absent from the app-owned data
+    root. Fail-closed by operator ruling: a deployment that forgot the artifact
+    must not hunt against a silently empty KB."""
 
 
 def _default_catalogue_path() -> Path:
-    """The packaged catalogue path, resolved lazily on first use."""
-    global _DEFAULT_CATALOGUE
-    if _DEFAULT_CATALOGUE is None:
-        _DEFAULT_CATALOGUE = (
-            Path(resources.files("polymerhus.attack.hunting.data").joinpath(
-                "fault-kb.yaml"))  # type: ignore[union-attr]
-            if resources.files("polymerhus.attack.hunting.data").is_file()
-            else Path(__file__).resolve().parent / "data" / "fault-kb.yaml"
+    """The provisioned catalogue path, `DATA_ROOT/hunting/fault-kb.yaml`
+    (copied there by the image build). Fail-closed when it is absent; callers
+    may still override with a fixture path in tests."""
+    path = DATA_ROOT / "hunting" / "fault-kb.yaml"
+    if not path.is_file():
+        raise FaultKBCatalogueMissing(
+            f"fault-KB catalogue missing at {path} - the image build must copy "
+            "it to the app-owned data root"
         )
-    return _DEFAULT_CATALOGUE
+    return path
 
 
 @dataclass(frozen=True)
@@ -217,13 +222,17 @@ def load_fault_entries(path: Path | str | None = None) -> tuple[FaultEntry, ...]
     capture ("fold at curation, filter at read"). The materialisation facet
     (`load_materialisation`) still serves their full content by own id.
 
-    A missing or malformed catalogue fails open to an EMPTY KB (never crashes
-    the caller); a malformed ENTRY is skipped with a logged diagnostic, never
+    A malformed catalogue fails open to an EMPTY KB (never crashes the
+    caller); the PROVISIONED catalogue at `DATA_ROOT/hunting/fault-kb.yaml`
+    fails CLOSED when absent (a broken image must not hunt KB-less). A
+    malformed ENTRY is skipped with a logged diagnostic, never
     dropped silently - the remaining entries stay usable (fail-open per entry,
     consistent with the per-entry degrade contract).
     """
     try:
         rows = _read_catalogue(path)
+    except FaultKBCatalogueMissing:
+        raise  # fail-closed: a missing provisioned catalogue is fatal
     except Exception as exc:  # noqa: BLE001 - fail-open is the contract
         log.warning("fault-KB catalogue read failed (fail-open to empty): %s",
                     exc)
@@ -246,6 +255,8 @@ def load_materialisation(
     or malformed catalogue."""
     try:
         rows = _read_catalogue(path)
+    except FaultKBCatalogueMissing:
+        raise  # fail-closed: a missing provisioned catalogue is fatal
     except Exception as exc:  # noqa: BLE001 - fail-open is the contract
         log.warning("fault-KB catalogue read failed (fail-open to empty): %s",
                     exc)
@@ -275,6 +286,8 @@ def load_fold_families(
     """
     try:
         rows = _read_catalogue(path)
+    except FaultKBCatalogueMissing:
+        raise  # fail-closed: a missing provisioned catalogue is fatal
     except Exception as exc:  # noqa: BLE001 - fail-open is the contract
         log.warning("fault-KB catalogue read failed (fail-open to empty): %s",
                     exc)

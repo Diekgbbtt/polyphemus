@@ -15,6 +15,7 @@ from polymerhus.app.data_root import (
     PROJECT_SCAFFOLD,
     ensure_data_root,
     ensure_project,
+    project_dir,
 )
 
 
@@ -75,3 +76,32 @@ def test_ensure_project_isolates_projects(tmp_path: Path) -> None:
 def test_ensure_project_rejects_an_unsafe_project_id(tmp_path: Path, bad: str) -> None:
     with pytest.raises(ValueError):
         ensure_project(bad, root=tmp_path / "data")
+
+
+def test_project_dir_is_the_one_layout_resolver(tmp_path: Path) -> None:
+    root = tmp_path / "data"
+
+    assert project_dir("proj-1", root=root) == root / "proj-1"
+    assert project_dir("proj-1", "hunting/orchestration", root=root) == (
+        root / "proj-1" / "hunting" / "orchestration"
+    )
+
+
+def test_project_dir_validates_the_project_id(tmp_path: Path) -> None:
+    with pytest.raises(ValueError):
+        project_dir("../escape", root=tmp_path / "data")
+
+
+def test_scaffold_enumerates_the_fixed_hunting_sub_layout(tmp_path: Path) -> None:
+    """The full fixed skeleton lands at project creation, so the stores create
+    no directories - only the runtime-keyed leaves (a fault key, a pod spec id)
+    stay lazy."""
+    project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
+
+    for rel in (
+        "hunting/orchestration/hunt_configs/produced",
+        "hunting/orchestration/hunt_configs/consumed",
+        "hunting/hunter/test-specs",
+        "hunting/test-executor-pod",
+    ):
+        assert (project_dir_ / rel).is_dir(), f"missing fixed dir {rel}"

@@ -1043,7 +1043,7 @@ def test_prior_hunt_insights_read_the_downstream_hunter_records(tmp_path):
         spec={
             "fault_id": "F1", "spec_id": "S1", "status": "specified",
             "strategy": "probe", "fault_key": config_key,
-            "spec_ref": f"data/project-1/hunter/test-specs/{config_key}/produced/f1_probe.yaml",
+            "spec_ref": f"data/project-1/hunting/hunter/test-specs/{config_key}/produced/f1_probe.yaml",
             "mechanism": "m", "supports": ["e1"], "conflicts": [],
             "test": "submit a tokenless foreign-origin request and observe the response",
         },
