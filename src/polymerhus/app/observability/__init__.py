@@ -5,7 +5,6 @@ the rest of the runtime imports one stable name (`get_langfuse_callbacks`)
 regardless of the tracing backend.
 """
 from polymerhus.app.observability.analyser_tracing import (
-    analyser_span,
     flush_analyser_traces,
     trace_generation,
     trace_reasoning,
@@ -18,7 +17,6 @@ from polymerhus.app.observability.langfuse_tracing import (
 __all__ = [
     "get_langfuse_callbacks",
     "disabled_reason",
-    "analyser_span",
     "trace_reasoning",
     "trace_generation",
     "flush_analyser_traces",

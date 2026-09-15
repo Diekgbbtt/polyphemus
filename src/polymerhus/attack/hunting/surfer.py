@@ -451,6 +451,7 @@ async def _run_hunter_idle(
                 checkpointer=get_session_checkpointer(),
                 inbox=inbox,
                 on_message=_verdict_stub_handler(fault_key=config_key),
+                extra_tags=[run_id],
             )
     except asyncio.CancelledError:
         raise

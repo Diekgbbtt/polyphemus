@@ -1165,35 +1165,37 @@ async def arun_orchestration(
 
         directions: list[EnvisionedDirection] = []
         from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
-            orchestrator_gate_span,
             trace_gate_step,
         )
-        with orchestrator_gate_span(run_id):
-            trace_gate_step("symbolic-render", input={
-                "pair": key,
-                "projection": "ok" if projection is not None else "UNKNOWN",
-                "materialisation": "ok" if materialisation is not None else "UNKNOWN",
-                "fold_family": "ok" if fold_ids is not None else "UNKNOWN",
-                "kb_degraded": kb_degraded,
-            })
-            if hypothesise_fn is not None:
-                try:
-                    decision = await _await_seam(hypothesise_fn, gate_input)
-                    directions = list(getattr(decision, "directions", None) or [])
-                    trace_gate_step("gate-decision", output={
-                        "directions": [{
-                            "pair": revival_key(d.unit_id, d.fault_class),
-                            "carried": bool(d.carried),
-                            "rationale": d.rationale,
-                            "research_direction": d.research_direction,
-                            "vulnerability_classes": list(
-                                d.vulnerability_classes),
-                        } for d in directions],
-                        "prior_minted_keys": list(gate_input.prior_minted_keys),
-                    })
-                except Exception as exc:  # noqa: BLE001 - fail-open: skip the pair
-                    logger.warning("hypothesise turn failed for %s, skipping (%s)",
-                                   key, exc)
+        # Convergence: no hand-written gate span - the pass trace rides the
+        # handler (actor turns carry the run tag); each step below carries its
+        # own explicit run correlation.
+        _gate_tags = ["attack", "hunting", "orchestrator-gate"]
+        trace_gate_step("symbolic-render", run_id=run_id, tags=_gate_tags, input={
+            "pair": key,
+            "projection": "ok" if projection is not None else "UNKNOWN",
+            "materialisation": "ok" if materialisation is not None else "UNKNOWN",
+            "fold_family": "ok" if fold_ids is not None else "UNKNOWN",
+            "kb_degraded": kb_degraded,
+        })
+        if hypothesise_fn is not None:
+            try:
+                decision = await _await_seam(hypothesise_fn, gate_input)
+                directions = list(getattr(decision, "directions", None) or [])
+                trace_gate_step("gate-decision", run_id=run_id, tags=_gate_tags, output={
+                    "directions": [{
+                        "pair": revival_key(d.unit_id, d.fault_class),
+                        "carried": bool(d.carried),
+                        "rationale": d.rationale,
+                        "research_direction": d.research_direction,
+                        "vulnerability_classes": list(
+                            d.vulnerability_classes),
+                    } for d in directions],
+                    "prior_minted_keys": list(gate_input.prior_minted_keys),
+                })
+            except Exception as exc:  # noqa: BLE001 - fail-open: skip the pair
+                logger.warning("hypothesise turn failed for %s, skipping (%s)",
+                               key, exc)
         # #186 anti-fabrication: an empty decision (a failed/None turn) NEVER
         # mints a harness-fabricated fully-empty draft - the pair flows to the
         # skip branch below (counted `units_skipped`). Only a direction the
@@ -1225,7 +1227,7 @@ async def arun_orchestration(
             # ratify set instead of earlier drafts being orphaned
             # forever-hypothesised.
             minted.setdefault(key, []).extend(configs)
-            trace_gate_step("emit-mint", input={
+            trace_gate_step("emit-mint", run_id=run_id, tags=_gate_tags, input={
                 "revival_key": key,
                 "configs": len(configs),
                 "classes": sorted(cfg.vulnerability_class for cfg in configs),
@@ -1367,7 +1369,9 @@ async def arun_orchestration(
                 trace_gate_step,
             )
             ledger.notes_recorded += 1
-            trace_gate_step("note-written", input={"revival_key": key})
+            trace_gate_step("note-written", run_id=run_id,
+                            tags=["attack", "hunting", "orchestrator-gate"],
+                            input={"revival_key": key})
             trail.append({"kind": "note", "revival_key": key,
                           "notes": notes_written})
         return {"ledger": ledger, "trail": trail}

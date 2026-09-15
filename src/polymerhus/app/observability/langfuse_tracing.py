@@ -32,6 +32,7 @@ module cleanly and simply gets an empty callback list.
 """
 from __future__ import annotations
 
+import contextlib
 import logging
 import os
 import threading
@@ -246,6 +247,118 @@ def _make_truncating_mask(*, cap_bytes: int) -> Callable[..., Any]:
     return mask
 
 
+def trace_attributes_from_metadata(metadata: Any) -> dict:
+    """Map a run's `langfuse_*` metadata keys to `propagate_attributes` kwargs.
+
+    LangGraph merges the run config metadata into every child run on every
+    thread, while the OTel context the stock handler relies on does not cross
+    worker threads. Reading the keys off each run's own metadata therefore
+    lets every non-root observation re-establish session/tags/user/name by
+    itself, thread-independently. Returns {} when no valid keys are present.
+    Pure: no SDK import, never raises.
+    """
+    if not isinstance(metadata, dict):
+        return {}
+    try:
+        attrs: dict = {}
+        session_id = metadata.get("langfuse_session_id")
+        if isinstance(session_id, str) and session_id:
+            attrs["session_id"] = session_id
+        user_id = metadata.get("langfuse_user_id")
+        if isinstance(user_id, str) and user_id:
+            attrs["user_id"] = user_id
+        trace_name = metadata.get("langfuse_trace_name")
+        if isinstance(trace_name, str) and trace_name:
+            attrs["trace_name"] = trace_name
+        tags = metadata.get("langfuse_tags")
+        if isinstance(tags, list):
+            attrs["tags"] = [str(tag) for tag in tags]
+        return attrs
+    except Exception:  # noqa: BLE001 - fail-open: attribution never breaks a run
+        logger.debug("trace attribute mapping raised; no attributes applied",
+                     exc_info=True)
+        return {}
+
+
+def attributing_handler_class(base_cls: type, propagate: Callable[..., Any]) -> type:
+    """Build a handler that re-establishes trace attributes on NON-ROOT runs.
+
+    The stock SDK handler parses `langfuse_session_id` / `langfuse_tags` only
+    at the root run and otherwise inherits them through the OTel context
+    (contextvars) - which does not cross the worker threads LangGraph uses
+    for parallel Send fan-out, so worker-thread children lose session/tags
+    (#226). Each run's own metadata DOES reach every thread (LangGraph merges
+    config metadata downward), so every non-root observation start re-enters
+    `propagate_attributes` from its own metadata for exactly the span-creation
+    call. Root runs are untouched - the SDK owns the root propagation, and a
+    run without langfuse keys leaves the context alone. Fail-open by
+    construction: `propagate_attributes` itself never raises, and the scope is
+    exited on the same thread that entered it.
+    """
+
+    class _AttributingHandler(base_cls):  # type: ignore[valid-type,misc]
+        def __init__(self, *args: Any, **kwargs: Any) -> None:
+            super().__init__(*args, **kwargs)
+            self._attribution_propagate = propagate
+
+        def _attribution_scope(self, metadata: Any, parent_run_id: Any) -> Any:
+            if parent_run_id is None:
+                return contextlib.nullcontext()
+            attrs = trace_attributes_from_metadata(metadata)
+            if not attrs:
+                return contextlib.nullcontext()
+            return self._attribution_propagate(**attrs)
+
+        def on_chain_start(self, serialized: Any, inputs: Any, *, run_id: Any,
+                           parent_run_id: Any = None, tags: Any = None,
+                           metadata: Any = None, **kwargs: Any) -> Any:
+            with self._attribution_scope(metadata, parent_run_id):
+                return super().on_chain_start(
+                    serialized, inputs, run_id=run_id,
+                    parent_run_id=parent_run_id, tags=tags,
+                    metadata=metadata, **kwargs)
+
+        def on_tool_start(self, serialized: Any, input_str: Any, *, run_id: Any,
+                          parent_run_id: Any = None, tags: Any = None,
+                          metadata: Any = None, **kwargs: Any) -> Any:
+            with self._attribution_scope(metadata, parent_run_id):
+                return super().on_tool_start(
+                    serialized, input_str, run_id=run_id,
+                    parent_run_id=parent_run_id, tags=tags,
+                    metadata=metadata, **kwargs)
+
+        def on_llm_start(self, serialized: Any, prompts: Any, *, run_id: Any,
+                         parent_run_id: Any = None, tags: Any = None,
+                         metadata: Any = None, **kwargs: Any) -> Any:
+            with self._attribution_scope(metadata, parent_run_id):
+                return super().on_llm_start(
+                    serialized, prompts, run_id=run_id,
+                    parent_run_id=parent_run_id, tags=tags,
+                    metadata=metadata, **kwargs)
+
+        def on_chat_model_start(self, serialized: Any, messages: Any, *,
+                                run_id: Any, parent_run_id: Any = None,
+                                tags: Any = None, metadata: Any = None,
+                                **kwargs: Any) -> Any:
+            with self._attribution_scope(metadata, parent_run_id):
+                return super().on_chat_model_start(
+                    serialized, messages, run_id=run_id,
+                    parent_run_id=parent_run_id, tags=tags,
+                    metadata=metadata, **kwargs)
+
+        def on_retriever_start(self, serialized: Any, query: Any, *,
+                               run_id: Any, parent_run_id: Any = None,
+                               tags: Any = None, metadata: Any = None,
+                               **kwargs: Any) -> Any:
+            with self._attribution_scope(metadata, parent_run_id):
+                return super().on_retriever_start(
+                    serialized, query, run_id=run_id,
+                    parent_run_id=parent_run_id, tags=tags,
+                    metadata=metadata, **kwargs)
+
+    return _AttributingHandler
+
+
 def _active_span_exporter(client: Any) -> Any:
     """Return the span exporter actually in effect on a built Langfuse client.
 
@@ -273,13 +386,67 @@ def _verify_configured_exporter_in_effect(client: Any, expected_exporter: Any) -
     return _active_span_exporter(client) is expected_exporter
 
 
+def _clean_env(name: str, default: str = "") -> str:
+    """Read an env var with surrounding whitespace/quotes stripped.
+
+    Operator `.env` files commonly quote values (`LANGFUSE_HOST="https://..."`);
+    the SDK reads them verbatim, so a quoted host becomes a malformed OTLP
+    endpoint and every handler batch is dropped (`No connection adapters`).
+    Cleaning here keeps one canonical, working value for the exporter, the
+    client construction, and the handler binding. Never raises.
+    """
+    try:
+        value = os.environ.get(name, default)
+        if value is None:
+            return default
+        return value.strip().strip('"').strip("'").strip()
+    except Exception:  # noqa: BLE001 - fail-open
+        return default
+
+
 def _resolve_base_url() -> str:
-    """Mirror `Langfuse.__init__`'s base_url resolution (client.py)."""
+    """Mirror `Langfuse.__init__`'s base_url resolution (client.py), cleaned."""
     return (
-        os.environ.get("LANGFUSE_BASE_URL")
-        or os.environ.get("LANGFUSE_HOST")
+        _clean_env("LANGFUSE_BASE_URL")
+        or _clean_env("LANGFUSE_HOST")
         or "https://cloud.langfuse.com"
     )
+
+
+def explicit_correlation(run_id: str | None, *, tags: list | None = None,
+                         trace_name: str | None = None) -> Any:
+    """Thin-exception correlation (convergence): an explicit `propagate_attributes`
+    context for hand-written spans where no LangChain run exists to carry the
+    trace - or a nullcontext when there is nothing to correlate.
+
+    The caller passes its OWN run/session/tags (never ambient reads): the
+    context applies to spans the caller opens inside the `with` body, on any
+    thread. Fail-open: a missing/broken `langfuse` package degrades to a
+    nullcontext instead of raising, so dispatch code wraps unconditionally."""
+    if run_id is None:
+        return contextlib.nullcontext()
+    try:
+        from langfuse import propagate_attributes
+
+        return propagate_attributes(session_id=run_id, tags=tags,
+                                    trace_name=trace_name)
+    except Exception:  # noqa: BLE001 - fail-open: correlation never breaks a run
+        logger.debug("explicit correlation unavailable; continuing uncorrelated",
+                     exc_info=True)
+        return contextlib.nullcontext()
+
+
+def build_attributing_handler(public_key: str) -> Any:
+    """Construct the process handler: the stock `CallbackHandler` wrapped so
+    every non-root observation re-establishes trace attributes from its own
+    run metadata (see `attributing_handler_class`). Lazy SDK import keeps the
+    offline runtime import-safe; never raises on its own (callers stay
+    fail-open)."""
+    from langfuse import propagate_attributes
+    from langfuse.langchain import CallbackHandler
+
+    handler_cls = attributing_handler_class(CallbackHandler, propagate_attributes)
+    return handler_cls(public_key=public_key)
 
 
 def _build_wrapped_span_exporter(*, timeout_s: float):
@@ -296,8 +463,8 @@ def _build_wrapped_span_exporter(*, timeout_s: float):
 
     from opentelemetry.exporter.otlp.proto.http.trace_exporter import OTLPSpanExporter
 
-    public_key = os.environ["LANGFUSE_PUBLIC_KEY"]
-    secret_key = os.environ["LANGFUSE_SECRET_KEY"]
+    public_key = _clean_env("LANGFUSE_PUBLIC_KEY")
+    secret_key = _clean_env("LANGFUSE_SECRET_KEY")
     base_url = _resolve_base_url()
     traces_export_path = os.environ.get("LANGFUSE_OTEL_TRACES_EXPORT_PATH")
     endpoint = (
@@ -359,7 +526,6 @@ def _build_callbacks() -> list:
         # Lazy import: the offline runtime does not ship `langfuse`, and we must
         # not turn a missing optional dependency into an import-time failure.
         from langfuse import Langfuse, get_client
-        from langfuse.langchain import CallbackHandler
 
         # Build our own client with a throttled, retrying span exporter (see
         # the root-cause note above `RetryingSpanExporter`) so a Langfuse
@@ -367,7 +533,8 @@ def _build_callbacks() -> list:
         # batch. This is best-effort: if building the custom exporter fails
         # for any reason, fall back to the SDK's own `get_client()` - today's
         # behavior (5s timeout, no outer retry) - rather than losing tracing
-        # entirely.
+        # entirely. Keys/host go in cleaned: a quoted `.env` value would
+        # otherwise become a malformed endpoint or bad credentials (#226).
         client = None
         span_exporter = None
         try:
@@ -382,6 +549,9 @@ def _build_callbacks() -> list:
             # attributes, so heavy phase-4 spans no longer exhaust the export
             # timeout budget (see the per-attribute cap note above).
             client = Langfuse(
+                public_key=_clean_env("LANGFUSE_PUBLIC_KEY"),
+                secret_key=_clean_env("LANGFUSE_SECRET_KEY"),
+                base_url=_resolve_base_url(),
                 timeout=int(export_timeout_s),
                 span_exporter=span_exporter,
                 mask=_make_truncating_mask(cap_bytes=cap_bytes),
@@ -423,11 +593,14 @@ def _build_callbacks() -> list:
 
         # Bind the handler explicitly to our public key so it resolves the same
         # instance we configured above, instead of relying on the SDK's
-        # "single active instance" fallback in `get_client()`.
-        handler = CallbackHandler(public_key=os.environ["LANGFUSE_PUBLIC_KEY"])
+        # "single active instance" fallback in `get_client()`. The handler
+        # re-establishes session/tags on every non-root run from its own
+        # metadata, so worker-thread children keep attribution (#226).
+        handler = build_attributing_handler(
+            _clean_env("LANGFUSE_PUBLIC_KEY"))
         _DISABLED_REASON = None
         logger.info(
-            "langfuse tracing enabled (host=%s)", os.environ.get("LANGFUSE_HOST")
+            "langfuse tracing enabled (host=%s)", _resolve_base_url()
         )
         return [handler]
     except Exception:  # noqa: BLE001 - fail-open: tracing never breaks the run

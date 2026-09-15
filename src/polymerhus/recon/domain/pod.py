@@ -23,7 +23,7 @@ import os
 
 from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel, Field, model_validator
-from typing import Literal
+from typing import Any, Literal
 
 from polymerhus.recon.domain.types import (
     PodState, ToolInvocation, PodExport, ExecResult, AssetDelta, Observation, JobSpec,
@@ -53,6 +53,50 @@ def _pod_ctx():
         from contextvars import ContextVar
         _pod_session_ctx = ContextVar("pod_session_ctx", default=None)
     return _pod_session_ctx
+
+
+# The pod's Langfuse trace metadata for the exec-tool span (#226). The Kali
+# exec tool is invoked on a worker thread (`run_coro_blocking`) with a fresh
+# LangChain config, so it never inherits the graph run's metadata - and the
+# OTel context the stock handler relies on does not cross that thread either.
+# The `execute` node (which alone knows the pod's run/phase/job) publishes the
+# metadata here, and the live `default_exec_fn` attaches it to the tool
+# config, where the attributing handler turns it into session/tags on the
+# tool span. Same contract discipline as `_pod_ctx` above: set+read within
+# one synchronous node execution (the read happens BEFORE the worker thread
+# spawns), concurrent pods never see each other's value, `None` => today's
+# callbacks-only config (tests, or a pod whose state carries no run_id).
+_trace_metadata_ctx_var: "ContextVar" = None  # lazily created below
+
+
+def trace_metadata_ctx():
+    """The trace-metadata ContextVar, created on first use."""
+    global _trace_metadata_ctx_var
+    if _trace_metadata_ctx_var is None:
+        from contextvars import ContextVar
+        _trace_metadata_ctx_var = ContextVar("pod_trace_metadata_ctx",
+                                             default=None)
+    return _trace_metadata_ctx_var
+
+
+def exec_trace_metadata(state: Any) -> dict | None:
+    """Build the pod's trace metadata from its state, or None with no run
+    context. Pure apart from the (also pure) `pod_trace_metadata` builder;
+    never raises - attribution must not break a pod."""
+    try:
+        run_id = (state or {}).get("run_id")
+        job = (state or {}).get("job")
+        if run_id is None or job is None:
+            return None
+        from polymerhus.recon.control.job_agent import pod_trace_metadata
+
+        phase = (state or {}).get("phase", 0) or 0
+        return pod_trace_metadata(run_id, phase,
+                                  getattr(job, "tool", ""))
+    except Exception:  # noqa: BLE001 - fail-open
+        logger.warning("exec trace metadata failed; tool span unattributed",
+                       exc_info=True)
+        return None
 
 
 # Tools whose parser module exposes `parse_findings(stdout) -> list[dict]` -
@@ -358,7 +402,15 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
 
     def execute(state: PodState) -> dict:
         invocation = state["invocation"]
-        exec_result = exec_fn(invocation.command, invocation.session_id, EXEC_TIMEOUT_S)
+        # Publish the pod's trace metadata for the exec-tool span (#226):
+        # `exec_fn` runs on a worker thread with a fresh config, so the tool
+        # span would otherwise lose session/tags. Read back synchronously by
+        # `default_exec_fn` before its worker spawns; injected fakes ignore it.
+        token = trace_metadata_ctx().set(exec_trace_metadata(state))
+        try:
+            exec_result = exec_fn(invocation.command, invocation.session_id, EXEC_TIMEOUT_S)
+        finally:
+            trace_metadata_ctx().reset(token)
         return {"exec_result": exec_result}
 
     def gate(state: PodState) -> str:
@@ -547,7 +599,14 @@ def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult
     # Trace the Kali MCP tool call + its response. This runs in a worker thread
     # (run_coro_blocking) where the graph's callback contextvar does not reach,
     # so pass the callbacks explicitly. Empty list (unconfigured) is inert.
+    # The execute node publishes the pod's trace metadata on a ContextVar;
+    # read it HERE (same thread) before the worker spawns and attach it to
+    # the tool config, so the tool span keeps session/tags (#226).
     callbacks = get_langfuse_callbacks()
+    trace_metadata = trace_metadata_ctx().get()
+    tool_config = {"callbacks": callbacks}
+    if trace_metadata is not None:
+        tool_config["metadata"] = trace_metadata
 
     async def _run():
         client = MultiServerMCPClient(
@@ -565,7 +624,7 @@ def default_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult
                 "id": session_id or "exec",
                 "args": {"command": command, "session_id": session_id, "timeout_s": timeout_s},
             },
-            config={"callbacks": callbacks},
+            config=tool_config,
         )
 
     start = time.monotonic()

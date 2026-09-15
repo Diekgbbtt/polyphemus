@@ -421,7 +421,7 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     def invoke(messages, *, schema=None):
         return stateful_turn("mechanism_typist", address, messages,
                              checkpointer=checkpointer, schema=schema,
-                             middleware=middleware)
+                             middleware=middleware, extra_tags=[run_id])
 
     return invoke
 
@@ -449,6 +449,8 @@ def type_mechanisms(
     invoke_fn=None,
     inventory: dict | None = None,
     aggregations: list[dict] | None = None,
+    run_id: str | None = None,
+    tags: list | None = None,
 ) -> L1DeltaBatch:
     """The A.1 mechanism-typist body (grilled #9): the reflection -> systems-extraction
     -> services-linking chain over a `service` chunk, returning a narrowed
@@ -476,12 +478,14 @@ def type_mechanisms(
         logger.warning("mechanism_typist: reflection exhausted; fail-closed to empty batch")
         return L1DeltaBatch()
 
-    # #9/#18: attach the reflection prose to the active Langfuse agent span (opened by
-    # the supervisor per dispatch). Otherwise the WHY behind each System proposal - the
-    # hypothesis-driven reason call - is built, consumed by extraction, and discarded,
-    # leaving nothing to evaluate the thought process against. Fail-open no-op untraced.
+    # #9/#18: attach the reflection prose to the run-correlated trace (explicit
+    # run correlation - the supervisor no longer opens an agent span, so the
+    # ambient update would go nowhere). Otherwise the WHY behind each System
+    # proposal - the hypothesis-driven reason call - is built, consumed by
+    # extraction, and discarded, leaving nothing to evaluate the thought
+    # process against. Fail-open no-op untraced.
     from polymerhus.app.observability import trace_reasoning
-    trace_reasoning(prose, call="typist-reflection")
+    trace_reasoning(prose, call="typist-reflection", run_id=run_id, tags=tags)
 
     # Call 2 - SYSTEMS EXTRACTION (extract). Soft pass-through on exhaustion.
     systems_batch = invoke_fn(
@@ -503,6 +507,7 @@ def type_mechanisms(
     # proposed (not just the WHY) leaves no inspectable trace (moodique cc29fd4a).
     from polymerhus.app.observability import trace_generation
     trace_generation("typist-systems-and-edges",
+                     run_id=run_id, tags=tags,
                      output={"systems": [{"kind": s.kind, "discriminator": s.discriminator}
                                          for s in (list(systems_batch.systems) + list(link_batch.systems))],
                              "edges": [{"service_slug": e.service_slug, "kind": e.kind,
@@ -565,4 +570,11 @@ def mechanism_typist_body(
     except Exception:
         logger.warning("mechanism_typist: aggregation read failed; no primary-service split", exc_info=True)
         aggregations = []
-    return type_mechanisms(chunk, invoke_fn=invoke_fn, inventory=inventory, aggregations=aggregations)
+    # Convergence: the supervisor no longer opens an agent span, so the WHY/WHAT
+    # records below carry their own explicit run correlation (the handler tree
+    # plus the run tag preserve structure and join).
+    run_id = (state.get("run_id") or "").removeprefix("stream-")
+    tags = ["analysis", getattr(dispatch, "role", "mechanism_typist")]
+    return type_mechanisms(chunk, invoke_fn=invoke_fn, inventory=inventory,
+                           aggregations=aggregations, run_id=run_id or None,
+                           tags=tags)

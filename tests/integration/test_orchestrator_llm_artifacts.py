@@ -65,7 +65,6 @@ from polymerhus.attack.hunting.llm import (
 from polymerhus.attack.hunting.orchestrator_graph import build_hunting_graph
 from polymerhus.attack.hunting.orchestrator_tracing import (
     flush_orchestrator_traces,
-    orchestrator_gate_span,
     trace_gate_step,
 )
 from polymerhus.attack.hunting.unit_projection import EdgeInfo, SystemInfo, UnitProjection, build_projection
@@ -931,55 +930,55 @@ def _fake_langfuse(calls):
     return mod
 
 
-def test_orchestrator_gate_span_correlates_to_the_run(monkeypatch):
-    """ONE agent span per gate turn named `orchestrator-<run_id[:8]>`,
-    session-correlated to the run with the attack/hunting/orchestrator-gate
-    tags."""
+def test_gate_step_carries_explicit_run_correlation(monkeypatch):
+    """Convergence: no gate span is opened - each step carries its own explicit
+    run session/tags, so the symbolic render and gate decision stay
+    run-joinable after the wrapper's deletion."""
     calls = []
     monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse(calls))
 
-    with orchestrator_gate_span("run-abc12345"):
-        pass
+    trace_gate_step("symbolic-render", run_id="run-abc12345",
+                    tags=["attack", "hunting", "orchestrator-gate"],
+                    input={"pair": "p"})
 
     kinds = [c[0] for c in calls]
-    assert kinds == ["propagate", "observation"]            # one span, no steps
+    assert kinds == ["propagate", "observation", "span-update"]
     prop = dict(calls[0][1])
     assert prop["session_id"] == "run-abc12345"
     assert prop["tags"] == ["attack", "hunting", "orchestrator-gate"]
-    obs = dict(calls[1][1])
-    assert obs["name"] == "orchestrator-run-abc1"           # run_id[:8]
-    assert obs["as_type"] == "agent"
-    assert obs["input"] == {"run_id": "run-abc12345"}
+    assert dict(calls[1][1])["name"] == "symbolic-render"
 
 
 def test_gate_step_records_pair_and_degraded_slots(monkeypatch):
-    """The symbolic-render step nests under the gate span carrying the pair
-    identity and the per-slot degraded markers; the gate-decision step carries
-    the carried directions."""
+    """Each step carries its own explicit run correlation; the symbolic-render
+    step carries the pair identity and the per-slot degraded markers, and the
+    gate-decision step carries the carried directions."""
     calls = []
     monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse(calls))
 
-    with orchestrator_gate_span("run-12345678"):
-        trace_gate_step("symbolic-render", input={
+    gate = {"run_id": "run-12345678",
+            "tags": ["attack", "hunting", "orchestrator-gate"]}
+    trace_gate_step("symbolic-render", input={
+        "pair": revival_key(SERVICE_A, "CWE-352"),
+        "projection": "ok",
+        "materialisation": "UNKNOWN",
+        "fold_family": "UNKNOWN",
+        "kb_degraded": True,
+    }, **gate)
+    trace_gate_step("gate-decision", output={
+        "directions": [{
             "pair": revival_key(SERVICE_A, "CWE-352"),
-            "projection": "ok",
-            "materialisation": "UNKNOWN",
-            "fold_family": "UNKNOWN",
-            "kb_degraded": True,
-        })
-        trace_gate_step("gate-decision", output={
-            "directions": [{
-                "pair": revival_key(SERVICE_A, "CWE-352"),
-                "carried": True,
-                "rationale": "plausible",
-                "vulnerability_classes": [],
-            }],
-        })
+            "carried": True,
+            "rationale": "plausible",
+            "vulnerability_classes": [],
+        }],
+    }, **gate)
 
     obs = [c[1] for c in calls if c[0] == "observation"]
-    assert [o["name"] for o in obs] == [
-        "orchestrator-run-1234", "symbolic-render", "gate-decision"]
-    render = obs[1]
+    assert [o["name"] for o in obs] == ["symbolic-render", "gate-decision"]
+    props = [c[1] for c in calls if c[0] == "propagate"]
+    assert all(p["session_id"] == "run-12345678" for p in props)
+    render = obs[0]
     assert render["as_type"] == "span"
     assert render["input"]["pair"] == revival_key(SERVICE_A, "CWE-352")
     assert render["input"]["materialisation"] == "UNKNOWN"
@@ -1001,8 +1000,7 @@ def test_orchestrator_tracing_fails_open_when_langfuse_absent(monkeypatch, tmp_p
     broken.propagate_attributes = boom
     monkeypatch.setitem(sys.modules, "langfuse", broken)
 
-    with orchestrator_gate_span("run-x"):
-        trace_gate_step("symbolic-render", input={})
+    trace_gate_step("symbolic-render", input={}, run_id="run-x")
     flush_orchestrator_traces()  # reaching here without raising is the assertion
 
     store = HuntStore(tmp_path)

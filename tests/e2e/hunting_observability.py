@@ -4,12 +4,13 @@ Caveat-3 resolution: the e2e tier must judge *how* the orchestrator ran, not
 just *whether* it met a functional count. That evidence lives in Langfuse
 observations the orchestrator emits through ``orchestrator_tracing``:
 
-- ``orchestrator_gate_span(run_id)`` - ONE agent span per REASON turn,
-  session-correlated to ``run_id``, tags ``attack/hunting/orchestrator-gate``.
-- ``trace_gate_step("symbolic-render" | "gate-decision" | ...)`` - nested
-  child spans per step, carrying the input/decision material the quality
-  predicates judge (prior-hunt reflection keys, knowledge-sufficiency
-  decision, same-class merge, per-unit work-items).
+- Actor turns ride the session seam under the handler (run tag for the join) -
+  no hand-written gate span is opened (convergence migration).
+- ``trace_gate_step("symbolic-render" | "gate-decision" | ..., run_id=...,
+  tags=[...])`` - explicitly-correlated step spans carrying the
+  input/decision material the quality predicates judge (prior-hunt
+  reflection keys, knowledge-sufficiency decision, same-class merge,
+  per-unit work-items).
 
 The orchestrator reaches Langfuse via ``get_client().start_as_current_observation``,
 so the OBSERVATION SYSTEM is the Langfuse client. Two lanes, both live:

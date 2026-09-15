@@ -2,19 +2,37 @@
 
 This is the canonical interaction pattern for emitting Langfuse observations from Python agent code.
 It was extracted 2026-09-09 from six mutually-mirroring implementations after live verification proved a divergent seventh (raw OpenTelemetry spans in `lightrag/observability.py`) never reaches Langfuse.
+It was re-grounded 2026-09-15 on the converged single pattern below, after the #226 diagnosis proved the hand-written agent-span scaffolding redundant wherever a LangChain run already carries the trace.
 Every new traced seam MUST follow this recipe; every divergent seam SHOULD be migrated to it.
+
+## The converged pattern (CallbackHandler-first)
+
+One observability client, one transport, one delivery path.
+The LangChain `CallbackHandler` (`app/observability/langfuse_tracing.py::get_langfuse_callbacks`) is the PRIMARY and default instrumentation for every dispatch that runs under a LangChain/LangGraph run.
+It captures the chain/tool/LLM/retriever tree with zero per-site code, threads trace membership explicitly through `parent_run_id` (thread-safe by construction), and - since #226 - re-establishes session/tags on every non-root observation from its own run metadata, so worker-thread children keep attribution without any ambient context.
+A dispatch running under a handler-carrying config MUST NOT open a parallel hand-written agent span around itself; the run's own chain span is the grouping span.
+The run-level join across session-scoped turn traces rides an explicit run tag (the bare `run_id`, mirroring the recon convention), passed through the turn seam - never a shared session, which would collide across concurrent instances (#94 keying).
+
+## Thin-exception contract (hand-written spans)
+
+Hand-written SDK spans are the DOCUMENTED EXCEPTION, allowed only where no LangChain run exists to carry the trace.
+Each exception site MUST satisfy all four clauses, otherwise it migrates to the handler.
+It takes its correlation EXPLICITLY as arguments (session id, tags, run id) and never reads ambient context.
+It wraps its body in `propagate_attributes` with those explicit values plus `start_as_current_observation`, fail-open to a no-op.
+It flushes through the owning call site's flush call (`flush`, never `shutdown`); delivery unification across all sites is #235.
+It is covered by the unit-test recipe below with the correlation asserted from the explicit arguments, never from ambient state.
 
 ## Primitives (the `langfuse` library surface we use)
 
 All imports are lazy (inside functions, never at module scope) so a runtime without the package imports cleanly.
-Three primitives cover everything: `get_client` + `propagate_attributes` for trace correlation and span I/O, `CallbackHandler` for LangChain/LangGraph runtimes only.
+Two primitives cover everything, in priority order: `CallbackHandler` for every LangChain/LangGraph runtime, `get_client` + `propagate_attributes` for the thin exception only.
 
-- `from langfuse import get_client, propagate_attributes` - the only import seam for hand-written spans.
-- `from langfuse.langchain import CallbackHandler` (via `app/observability/langfuse_tracing.py::get_langfuse_callbacks`) - ONLY for LangChain `invoke`/`graph.invoke` call sites, where the graph structure yields the trace tree for free.
+- `from langfuse.langchain import CallbackHandler` (via `app/observability/langfuse_tracing.py::get_langfuse_callbacks`) - the default seam for LangChain `invoke`/`graph.invoke`/session turns, where the run structure yields the trace tree for free.
+- `from langfuse import get_client, propagate_attributes` - the thin-exception import seam for hand-written spans, with explicit correlation arguments only.
 - Never touch `opentelemetry.trace` directly for emitted spans (see the caveat below).
 - Never construct `Langfuse(...)` outside `langfuse_tracing.py` (the process-wide singleton + retrying exporter live there).
 
-## Interaction sequence
+## Interaction sequence (thin exception only)
 
 One trace per dispatch, session-correlated to its run; step observations nest under the agent span.
 
@@ -30,7 +48,8 @@ One trace per dispatch, session-correlated to its run; step observations nest un
 ## Data structures
 
 All `input` / `output` / `metadata` payloads MUST be JSON-serialisable dicts (the SDK serialises them; OTel attribute limits do not apply on this path).
-`session_id` is ALWAYS the run id so a run's traces join by session.
+On the handler path the run-level join is the bare `run_id` carried as a TAG on turn configs (the session stays the per-instance thread id, so concurrent instances never collide).
+On the thin-exception path `session_id` is ALWAYS the run id so a run's traces join by session.
 `tags` name the layer and role (e.g. `["attack", "hunting", "hunting-agent"]`).
 `metadata` carries small correlation keys (`project_id`, `hunt_id`, `phase`, `dispatch_id`).
 
@@ -67,3 +86,22 @@ Pinned by `test_build_chat_model_requests_stream_usage_for_streamed_calls` + `te
 ## Witness index (mutual-mirror chain)
 
 `analysis/bootstrap.py::_bootstrap_span` is the original; `app/observability/analyser_tracing.py` replicates it for proposer dispatches; `attack/hunting/hunting_tracing.py` and `attack/hunting/orchestrator_tracing.py` mirror the analyser module exactly; `app/llm/negotiation.py::_emit_probe_span` is the minimal one-shot form; recon LangGraph runtimes use the `CallbackHandler` seam instead (`app/observability/langfuse_tracing.py`).
+
+## Convergence migration (2026-09-15)
+
+The hand-written agent-span wrappers are REDUNDANT wherever a LangChain run already carries the trace, because the handler tree plus the run tag preserve both structure and join.
+Each site migrates exactly once, by row, and the row states what survives.
+
+- Supervisor proposers (`analysis/supervisor.py` + `app/observability/analyser_tracing.py`): DELETE the `analyser_span` wrapper - the proposer node is itself a fully-attributed chain span under the run-sessioned supervisor graph.
+- The proposer bodies pass the bare run id as an extra turn tag, so session-scoped turn generations stay run-joinable by tag.
+- `trace_reasoning` / `trace_generation` survive as thin-exception spans with EXPLICIT correlation arguments (no ambient reads), because they record proposer data the handler never sees.
+- Hunting agent (`attack/hunting/hunting_agent.py` + `hunting_tracing.py`): DELETE the `hunting_span` wrapper - every step is an attributed session turn.
+- The hunt passes its run id as an extra turn tag for the same join.
+- `trace_span` survives as a thin-exception step span with explicit correlation arguments; the flush call stays until #235 unifies delivery.
+- Hunt orchestrator (`attack/hunting/hunt_orchestrator.py`, `runtime.py` + `orchestrator_tracing.py`): DELETE the `orchestrator_gate_span` wrapper - actor turns ride the session seam.
+- The pass threads its run id as an extra turn tag.
+- `trace_gate_step` survives as a thin-exception step span with explicit correlation arguments; the flush call stays until #235.
+- Bootstrapper (`analysis/bootstrap.py`): KEEPS `_bootstrap_span` UNCHANGED as the canonical thin exception.
+- Its `invoke_role` calls carry no handler config, so no LangChain run exists to carry the trace - deletion would lose the trace, not migrate it.
+- Negotiation probe (`app/llm/negotiation.py::_emit_probe_span`): KEEPS its one-shot span UNCHANGED as the minimal thin exception (no run context exists at probe time).
+- Anatomy (`analysis/anatomy.py`, the `anatomy` one_shot role): OUT OF SCOPE, obsolete - untouched by this migration, neither migrated nor reclassified.

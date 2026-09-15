@@ -8,6 +8,8 @@ chain (order, fail-closed reflection, soft pass-through), the compounding-descri
 prompt, the read-seam extension, and the supervisor body seam. The integration/e2e
 assertion catalogues (N1-N11, W-N1) live under the verifier gate, not here.
 """
+from types import SimpleNamespace
+
 from polymerhus.analysis.analyser_types import (
     L1DeltaBatch,
     ServiceProposal,
@@ -394,6 +396,31 @@ def test_body_degrades_when_reads_fail():
         invoke_fn=_Recorder(), read_inventory=boom, read_aggregations=boom,
     )
     assert [s.kind for s in out.systems] == ["RESTApi"]  # typed without context, never crashed
+
+
+def test_body_threads_run_correlation_to_trace_helpers(monkeypatch):
+    """Convergence: the typist's reasoning/generation records carry the dispatch
+    run (stream- prefix stripped, matching the old wrapper) plus role tags, so
+    the WHY/WHAT survive the agent-span wrapper's deletion."""
+    import polymerhus.app.observability as obs
+
+    seen = {}
+    monkeypatch.setattr(obs, "trace_reasoning",
+                        lambda *a, **k: seen.setdefault("reasoning", []).append((a, k)))
+    monkeypatch.setattr(obs, "trace_generation",
+                        lambda *a, **k: seen.setdefault("generation", []).append((a, k)))
+
+    dispatch = SimpleNamespace(phase="A1", chunk=_service_chunk(_endpoint("/x")),
+                               role="mechanism_typist")
+    mechanism_typist_body(
+        dispatch, {"project_id": "p", "run_id": "stream-run1"},
+        invoke_fn=_Recorder(),
+        read_inventory=lambda pid: {"services": ["checkout"]},
+        read_aggregations=lambda pid: [],
+    )
+    assert seen["reasoning"][0][1]["run_id"] == "run1"
+    assert seen["reasoning"][0][1]["tags"] == ["analysis", "mechanism_typist"]
+    assert seen["generation"][0][1]["run_id"] == "run1"
 
 
 # --- read-seam extension (N10) ------------------------------------------------

@@ -20,7 +20,7 @@ def _capture(monkeypatch):
 
     def fake_stateful_turn(role_id, thread, messages, *, checkpointer, schema=None, **kw):
         seen.update(role_id=role_id, thread_id=getattr(thread, "thread_id", thread),
-                    schema=schema, cp=checkpointer)
+                    schema=schema, cp=checkpointer, extra_tags=kw.get("extra_tags"))
         return None
 
     monkeypatch.setattr(S, "stateful_turn", fake_stateful_turn)
@@ -78,3 +78,19 @@ def test_the_three_proposers_never_share_a_thread(monkeypatch):
         call(build("runX", object()))
         threads.add(seen["thread_id"])
     assert threads == {"runX:assigner", "runX:mechanism_typist", "runX:data_modeller"}
+
+
+def test_all_three_proposers_tag_turns_with_the_run_id(monkeypatch):
+    """Convergence join: each proposer turn carries the bare run id as an extra
+    tag, so session-scoped turn traces stay run-joinable after the hand-written
+    agent-span wrappers go away."""
+    from polymerhus.analysis.assigner import stateful_invoke_fn as a
+    from polymerhus.analysis.data_modeller import stateful_invoke_fn as d
+    from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as t
+
+    for build, call in ((a, lambda f: f([HumanMessage(content="m")])),
+                        (t, lambda f: f([HumanMessage(content="m")], schema=None)),
+                        (d, lambda f: f([HumanMessage(content="m")], schema=None))):
+        seen = _capture(monkeypatch)
+        call(build("runX", object()))
+        assert seen["extra_tags"] == ["runX"]

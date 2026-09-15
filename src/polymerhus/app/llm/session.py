@@ -92,17 +92,25 @@ def _budgeted_model_factory(role_id: str, *, read_timeout_s: float) -> Any:
     return chat_model_for(role_id, read_timeout=read_timeout_s, max_retries=0)
 
 
-def _observe_config(config: dict, role_id: str, thread_id: str) -> dict:
+def _observe_config(config: dict, role_id: str, thread_id: str,
+                    extra_tags: Sequence[str] | None = None) -> dict:
     """Attach Langfuse callbacks + honest per-role_id/thread attribution (the #18
     recipe, mirrored from `analysis/supervisor._observability_config`). Empty
-    callbacks (Langfuse unconfigured) are inert; fail-open."""
+    callbacks (Langfuse unconfigured) are inert; fail-open.
+
+    `extra_tags` carries caller-owned join keys (the bare run id) onto the
+    recorded `langfuse_tags`, so session-scoped turn traces stay run-joinable
+    by tag after the hand-written agent-span wrappers go away (convergence).
+    The session id stays the per-instance thread id - concurrent instances
+    never collide."""
     from polymerhus.app.observability import get_langfuse_callbacks
 
     config = dict(config)
     config["callbacks"] = get_langfuse_callbacks()
+    tags = ["session", role_id] + [str(tag) for tag in (extra_tags or [])]
     config["metadata"] = {
         "langfuse_session_id": thread_id,
-        "langfuse_tags": ["session", role_id],
+        "langfuse_tags": tags,
         "role_id": role_id,
     }
     return config
@@ -195,9 +203,11 @@ def _build_agent(
     return create_agent(model, **kwargs)
 
 
-def _turn_config(role_id: str, thread_id: str, observe: bool) -> dict:
+def _turn_config(role_id: str, thread_id: str, observe: bool,
+                 extra_tags: Sequence[str] | None = None) -> dict:
     config: dict = {"configurable": {"thread_id": thread_id}}
-    return _observe_config(config, role_id, thread_id) if observe else config
+    return _observe_config(config, role_id, thread_id,
+                           extra_tags=extra_tags) if observe else config
 
 
 # --- T1 (#213): streamed generation as the default session mode --------------
@@ -393,6 +403,7 @@ def run_session_turn(
     observe: bool = True,
     read_timeout_s: float | None = None,
     reasoning_budget_chars: int | None = None,
+    extra_tags: Sequence[str] | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
 
@@ -408,14 +419,17 @@ def run_session_turn(
     captured per chunk; a stream that burns reasoning past `reasoning_budget_chars`
     (default 20k, env `LLM_BLACKLOOP_REASONING_BUDGET`) with no content emitted is
     CUT mid-flight and surfaced as `blackloop=True` with the captured reasoning - the
-    recovery turn's material, never lost (fail-open: the cut never raises)."""
+    recovery turn's material, never lost (fail-open: the cut never raises).
+
+    `extra_tags` appends caller-owned join keys (the bare run id) to the recorded
+    `langfuse_tags` (default None = today's tags, unchanged)."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
         middleware=middleware, store=store, checkpointer=checkpointer,
         model_factory=model_factory, read_timeout_s=read_timeout_s,
     )
-    config = _turn_config(role_id, thread_id, observe)
+    config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
     if observe and checkpointer is not None:
         _attach_readability_metadata(
             config, _read_thread_state(checkpointer, thread_id))
@@ -463,14 +477,16 @@ async def arun_session_turn(
     observe: bool = True,
     read_timeout_s: float | None = None,
     reasoning_budget_chars: int | None = None,
+    extra_tags: Sequence[str] | None = None,
 ) -> SessionTurn:
     """Async-native turn (`astream`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
     and monitor child sessions without blocking its own loop. Identical contract to
-    `run_session_turn`; pass an async checkpointer (`AsyncPostgresSaver`, already
-    used by the analysis supervisor) in production. `read_timeout_s` (default None)
-    bounds the turn's model calls per-attempt - the escalating-budget seam #186
-    rides: the actor runtime re-invokes this with the next, larger budget.
+    `run_session_turn` (including `extra_tags`); pass an async checkpointer
+    (`AsyncPostgresSaver`, already used by the analysis supervisor) in production.
+    `read_timeout_s` (default None) bounds the turn's model calls per-attempt -
+    the escalating-budget seam #186 rides: the actor runtime re-invokes this with
+    the next, larger budget.
 
     T1 (#213): streamed generation is the DEFAULT mode here too - same blackloop
     cut + reasoning capture as the sync turn, driven on the event loop."""
@@ -480,7 +496,7 @@ async def arun_session_turn(
         middleware=middleware, store=store, checkpointer=checkpointer,
         model_factory=model_factory, read_timeout_s=read_timeout_s,
     )
-    config = _turn_config(role_id, thread_id, observe)
+    config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
     if observe and checkpointer is not None:
         _attach_readability_metadata(
             config, await _aread_thread_state(checkpointer, thread_id))
@@ -640,6 +656,7 @@ def stateful_turn(
     middleware: Sequence = (),
     observe: bool = True,
     reasoning_budget_chars: int | None = None,
+    extra_tags: Sequence[str] | None = None,
 ):
     """The UBIQUITOUS stateful-agent invocation (#94): one turn of a sequentially
     dispatched agent that RESUMES from its OWN per-instance checkpoint and appends this
@@ -671,6 +688,7 @@ def stateful_turn(
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
             middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+            extra_tags=extra_tags,
         )
         # T2 (#214): the blackloop signature - the streamed cut, or a turn that
         # completed EMPTY-CONTENT while still emitting reasoning (the silent-empty

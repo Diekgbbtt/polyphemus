@@ -523,3 +523,12 @@ def test_lightrag_tool_always_bound(monkeypatch):
     )
     registry = actors.HuntingActorRegistry("run-1")
     assert "lightrag-tool" in registry.actor_for("hunt-1")._tools
+
+
+def test_run_scoped_actors_tag_turns_with_the_run_id():
+    """Convergence join: both run-scoped actors expose the bare run id as the
+    turn tags now that the hand-written agent/gate spans are gone."""
+    from polymerhus.attack.hunting.actors import HuntingHunterActor, HuntOrchestratorActor
+
+    assert HuntOrchestratorActor("run1")._extra_tags == ["run1"]
+    assert HuntingHunterActor("run1", "hunt-a")._extra_tags == ["run1"]

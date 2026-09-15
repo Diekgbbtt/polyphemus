@@ -86,6 +86,13 @@ class _TurnActor:
     def _make_address(self):
         raise NotImplementedError
 
+    @property
+    def _extra_tags(self) -> list | None:
+        """Run-join tags for this actor's turns (convergence: the run tag
+        replaces the deleted hand-written agent spans). The generic base knows
+        no run; run-scoped subclasses override with their run id."""
+        return None
+
     async def _ensure_started(self, response_format=None, system_prompt=None,
                               middleware_extra: list = None, tools=None) -> None:
         """Spawn the actor task on first use (lazy: a pass with no turns never
@@ -125,6 +132,7 @@ class _TurnActor:
             "on_turn_degraded": degraded_hook,
             "model_factory": self._model_factory,
             "observe": self._observe,
+            "extra_tags": self._extra_tags,
         }
         if tools:
             kwargs["tools"] = list(tools)
@@ -484,6 +492,12 @@ class HuntOrchestratorActor(_TurnActor):
         from polymerhus.app.llm.session_address import HuntingOrchestratorSession  # noqa: PLC0415
         return HuntingOrchestratorSession(run_id=self._run_id)
 
+    @property
+    def _extra_tags(self) -> list | None:
+        # Convergence join: the orchestrator's turns carry the run tag now
+        # that the hand-written gate span is gone.
+        return [self._run_id]
+
     async def _ensure_started(self) -> None:
         from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
             GateDecision,
@@ -726,6 +740,12 @@ class HuntingHunterActor(_TurnActor):
     def _make_address(self):
         from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415
         return HuntSession(run_id=self._run_id, hunt_id=self._hunt_id)
+
+    @property
+    def _extra_tags(self) -> list | None:
+        # Convergence join: the hunter's turns carry the run tag now that the
+        # hand-written agent span is gone.
+        return [self._run_id]
 
     def _on_message(self, message, last_turn):
         if message.kind in (_AUTHOR_KIND, _JUDGE_KIND):

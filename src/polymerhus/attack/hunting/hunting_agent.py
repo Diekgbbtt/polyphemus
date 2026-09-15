@@ -46,10 +46,11 @@ Everything external is a typed seam, injected at construction: the `graph_view` 
 `kb_query` / `exec` tool bodies, the per-project `HunterMemoryStore`, the session
 `model_factory` / `checkpointer` / compaction `middleware`. Never raise out of
 `dispatch_fn`; every collaborator failure degrades (fail-open) and is flagged in
-the feedback (O3/O4/C2/C3). The whole hunt runs under `hunting_span(run_id,
-hunt_id)` + the `hunt_session` ContextVar rollback lane (unchanged) and under
-`module_context("hunting")`, so `get_session_checkpointer()` resolves the
-hunting module's in-memory index.
+the feedback (O3/O4/C2/C3). The whole hunt runs under the handler-carried trace
+(attributed `arun_session_turn` steps with the run tag for the join, explicit
+thin-exception step spans) + the `hunt_session` ContextVar rollback lane
+(unchanged) and under `module_context("hunting")`, so `get_session_checkpointer()`
+resolves the hunting module's in-memory index.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
 section 6): the LLM seam pieces resolve lazily on call.
@@ -77,7 +78,6 @@ from polymerhus.attack.hunting.hunter_tools import (
 )
 from polymerhus.attack.hunting.hunting_tracing import (
     flush_hunting_traces,
-    hunting_span,
     trace_span,
 )
 
@@ -512,12 +512,15 @@ def build_hunting_agent(
                     middleware=middleware,
                     model_factory=model_factory,
                     observe=observe,
+                    extra_tags=[run_id],
                 )
             except Exception as exc:  # noqa: BLE001 - O3/C2/C3: degrade, never raise
                 logger.warning("hunt %s step degraded (%s)", hunt_id, exc, exc_info=True)
                 feedback.append(f"hunter turn unavailable ({exc})")
                 break
-            trace_span("hunter-step", input={"step": _step + 1})
+            trace_span("hunter-step", input={"step": _step + 1},
+                       run_id=run_id,
+                       tags=["attack", "hunting", "hunting-agent"])
 
             tool_calls = _last_tool_calls(turn.messages)
             if not tool_calls:
@@ -570,7 +573,8 @@ def build_hunting_agent(
                     )
                     state["injected_constant"] = None
                 trace_span("hunter-tool", input={"tool": tool_name, "args": tool_args},
-                           output=result[:500])
+                           output=result[:500], run_id=run_id,
+                           tags=["attack", "hunting", "hunting-agent"])
                 results.append(ToolMessage(tool_call_id=tc.get("id"), content=result))
             new_messages = results
         else:
@@ -608,7 +612,10 @@ def build_hunting_agent(
             module_context,
         )
         try:
-            with hunting_span(run_id, hunt_id), hunt_session(run_id, hunt_id):
+            # Convergence: no hand-written agent span - the dispatch trace rides
+            # the handler (attributed session turns, run tag for the join) while
+            # the step records below carry their own explicit run correlation.
+            with hunt_session(run_id, hunt_id):
                 with module_context("hunting"):
                     cp = checkpointer if checkpointer is not None else get_session_checkpointer()
                     mw = middleware if middleware is not None else [build_hunter_compaction_middleware()]
