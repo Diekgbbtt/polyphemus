@@ -3,6 +3,10 @@
 Real tool invocations against a temp-rooted store (the #220 auth-store tool
 precedent). Tests assert the coded envelopes and the on-disk result, never
 tool internals.
+
+Metadata ownership (D234-15): a `procedure` write carries the body alone; the
+store composes the frontmatter from the operator-bootstrapped metadata and
+bumps `metadata.version` one minor per write.
 """
 from __future__ import annotations
 
@@ -11,43 +15,56 @@ from pathlib import Path
 from polymerhus.recon.domain import skills
 from polymerhus.recon.domain.skills import SkillStore
 
-
-def _bind(tmp_path: Path):
-    return skills.build_write_skill_tool("proj-1", store=SkillStore(root_dir=tmp_path))
+BODY = "# Procedure\nstep one\n"
 
 
-def _procedure(name: str = "auth_workflow", body: str = "# Procedure\nstep one\n") -> str:
-    return (
-        "---\n"
-        f"name: {name}\n"
-        "description: The project's authentication procedure.\n"
-        "metadata:\n"
-        "  version: '1'\n"
-        "---\n\n"
-        f"{body}"
+def _catalogue(tmp_path: Path) -> Path:
+    catalogue = tmp_path / "catalogue"
+    for skill, description in (
+        ("auth_workflow", "The project's authentication procedure."),
+        ("another-skill", "Another project skill."),
+    ):
+        bundle = catalogue / skill
+        bundle.mkdir(parents=True)
+        (bundle / "SKILL.md").write_text(
+            "---\n"
+            f"name: {skill}\n"
+            f"description: {description}\n"
+            "metadata:\n"
+            "  version: '1.0'\n"
+            "---\n\n# Seed\n",
+            encoding="utf-8",
+        )
+    return catalogue
+
+
+def _bind(tmp_path: Path, monkeypatch):
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path))
+    return skills.build_write_skill_tool(
+        "proj-1", store=SkillStore(root_dir=tmp_path / "data")
     )
 
 
 def test_write_procedure_first_use_creates_bundle_and_returns_ok(
-    tmp_path: Path,
+    tmp_path: Path, monkeypatch
 ) -> None:
-    tool = _bind(tmp_path)
+    tool = _bind(tmp_path, monkeypatch)
 
     out = tool.invoke(
-        {"skill": "auth_workflow", "target": "procedure", "content": _procedure()}
+        {"skill": "auth_workflow", "target": "procedure", "content": BODY}
     )
 
     assert out["ok"] is True
     assert out["skill"] == "auth_workflow"
     assert out["target"] == "procedure"
-    bundle = tmp_path / "proj-1" / "skills" / "auth_workflow"
-    assert (bundle / "SKILL.md").read_text(encoding="utf-8").startswith("---\n")
+    sk = tmp_path / "data" / "proj-1" / "skills" / "auth_workflow" / "SKILL.md"
+    assert sk.read_text(encoding="utf-8").startswith("---\n")
 
 
-def test_write_reference_lands_in_the_bundle(tmp_path: Path) -> None:
-    tool = _bind(tmp_path)
+def test_write_reference_lands_in_the_bundle(tmp_path: Path, monkeypatch) -> None:
+    tool = _bind(tmp_path, monkeypatch)
     tool.invoke(
-        {"skill": "auth_workflow", "target": "procedure", "content": _procedure()}
+        {"skill": "auth_workflow", "target": "procedure", "content": BODY}
     )
 
     out = tool.invoke(
@@ -59,44 +76,44 @@ def test_write_reference_lands_in_the_bundle(tmp_path: Path) -> None:
     )
 
     assert out["ok"] is True
-    ref = tmp_path / "proj-1" / "skills" / "auth_workflow" / "references" / "roles.md"
+    ref = (
+        tmp_path / "data" / "proj-1" / "skills" / "auth_workflow"
+        / "references" / "roles.md"
+    )
     assert ref.read_text(encoding="utf-8") == "# Roles\nadmin\n"
 
 
-def test_any_project_skill_is_writable(tmp_path: Path) -> None:
-    tool = _bind(tmp_path)
+def test_any_project_skill_is_writable(tmp_path: Path, monkeypatch) -> None:
+    tool = _bind(tmp_path, monkeypatch)
 
     out = tool.invoke(
-        {
-            "skill": "another-skill",
-            "target": "procedure",
-            "content": _procedure("another-skill"),
-        }
+        {"skill": "another-skill", "target": "procedure", "content": "# body\n"}
     )
 
     assert out["ok"] is True
     assert (
-        tmp_path / "proj-1" / "skills" / "another-skill" / "SKILL.md"
+        tmp_path / "data" / "proj-1" / "skills" / "another-skill" / "SKILL.md"
     ).is_file()
 
 
-def test_write_malformed_content_refuses_in_band_without_persisting(
-    tmp_path: Path,
+def test_write_without_bootstrapped_metadata_refuses_in_band(
+    tmp_path: Path, monkeypatch
 ) -> None:
-    tool = _bind(tmp_path)
+    tool = _bind(tmp_path, monkeypatch)
 
     out = tool.invoke(
-        {"skill": "auth_workflow", "target": "procedure",
-         "content": "no frontmatter\n"}
+        {"skill": "unbootstrapped", "target": "procedure", "content": "# body\n"}
     )
 
     assert out["ok"] is False
     assert out["error"] == "skill_invalid"
-    assert not (tmp_path / "proj-1" / "skills" / "auth_workflow" / "SKILL.md").exists()
+    assert not (
+        tmp_path / "data" / "proj-1" / "skills" / "unbootstrapped" / "SKILL.md"
+    ).exists()
 
 
-def test_write_unsupported_target_refuses_in_band(tmp_path: Path) -> None:
-    tool = _bind(tmp_path)
+def test_write_unsupported_target_refuses_in_band(tmp_path: Path, monkeypatch) -> None:
+    tool = _bind(tmp_path, monkeypatch)
 
     out = tool.invoke(
         {"skill": "auth_workflow", "target": "scripts/run", "content": "# x\n"}
@@ -106,8 +123,8 @@ def test_write_unsupported_target_refuses_in_band(tmp_path: Path) -> None:
     assert out["error"] == "skill_target"
 
 
-def test_write_unsafe_skill_name_refuses_in_band(tmp_path: Path) -> None:
-    tool = _bind(tmp_path)
+def test_write_unsafe_skill_name_refuses_in_band(tmp_path: Path, monkeypatch) -> None:
+    tool = _bind(tmp_path, monkeypatch)
 
     out = tool.invoke(
         {"skill": "../escape", "target": "references/r", "content": "# x\n"}
@@ -117,14 +134,16 @@ def test_write_unsafe_skill_name_refuses_in_band(tmp_path: Path) -> None:
     assert out["error"] == "skill_invalid"
 
 
-def test_source_note_ids_are_accepted_as_log_only_provenance(tmp_path: Path) -> None:
-    tool = _bind(tmp_path)
+def test_source_note_ids_are_accepted_as_log_only_provenance(
+    tmp_path: Path, monkeypatch
+) -> None:
+    tool = _bind(tmp_path, monkeypatch)
 
     out = tool.invoke(
         {
             "skill": "auth_workflow",
             "target": "procedure",
-            "content": _procedure(),
+            "content": BODY,
             "source_note_ids": ["note-1", "note-2"],
         }
     )
@@ -140,7 +159,7 @@ def test_a_collapsed_store_degrades_to_store_unavailable_never_a_raise() -> None
     tool = skills.build_write_skill_tool("proj-1", store=CollapsedStore())
 
     out = tool.invoke(
-        {"skill": "auth_workflow", "target": "procedure", "content": _procedure()}
+        {"skill": "auth_workflow", "target": "procedure", "content": BODY}
     )
 
     assert out["ok"] is False

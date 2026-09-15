@@ -171,11 +171,12 @@ The one authority that reads and writes bundle artifacts (`src/polymerhus/recon/
 _Avoid_: a second skill system.
 
 **Skill writer (`write_skill`)**:
-The agent-callable write tool (`write_skill(skill, target, content, source_note_ids)`): `procedure` rewrites the whole `SKILL.md`, `references/<name>` writes one bulky reference file.
+The agent-callable write tool (`write_skill(skill, target, content)`): `procedure` carries the `SKILL.md` body alone, `references/<name>` writes one bulky reference file.
+The store owns the frontmatter - `name`, `description`, and `metadata.version` bumped one minor per write, carried from the project's own metadata or copied over from the shared catalogue on the first update (bootstrap is operator-authorised; nothing synthesises metadata).
 The factory binds the project, so an agent writes through its own project's bundle; any skill in it is writable (no per-skill writable set - the future `SkillEvolver` writes any skill).
-Every write re-validates frontmatter and lands atomically under a per-project lock.
+Every write lands atomically under a per-project lock.
 Failures arrive as coded in-band envelopes (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
-_Avoid_: section edits, operation verbs (no revise/add/correct - whole files only).
+_Avoid_: section edits, operation verbs (no revise/add/correct - whole files only), authoring frontmatter.
 
 **Reading protocol (`meta-usage-skill`)**:
 The compact usage-protocol skill appended to every `load_skill` result by the read path itself: assess the procedure against its stated observables during and after execution, separate a skill defect from an execution miss, and record reusable improvements through `write_skill`.

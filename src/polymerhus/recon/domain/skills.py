@@ -341,6 +341,27 @@ def _frontmatter_violations(meta: dict, *, skill: str) -> list[str]:
     return errors
 
 
+def _bump_version(version: str) -> str:
+    """The operator's monotonic version rule: `major.minor`, minor +1, one
+    decimal place. A missing minor part counts as 0."""
+    major, _, minor = str(version).partition(".")
+    try:
+        return f"{int(major)}.{int(minor or 0) + 1}"
+    except ValueError as exc:
+        raise SkillInvalidError(
+            f"skill_invalid: version {version!r} is not major.minor"
+        ) from exc
+
+
+def _dump_frontmatter(meta: dict) -> str:
+    """Render the store-owned frontmatter block prepended to a composed
+    `procedure` write."""
+    import yaml  # noqa: PLC0415 - already a production dependency (hunt_store, ...)
+
+    body = yaml.safe_dump(meta, sort_keys=False, allow_unicode=True, width=4096)
+    return f"---\n{body}---\n\n"
+
+
 class SkillStore:
     """The per-project skill-bundle store (#234): the one seam the loader and
     the writer share. Rooted under the app-owned data root (default `DATA_ROOT`);
@@ -438,6 +459,42 @@ class SkillStore:
             ) from exc
         return bundle
 
+    def _existing_frontmatter(self, project_id: str, skill: str) -> dict | None:
+        """The project bundle's current frontmatter mapping, or `None` when the
+        bundle carries no readable SKILL.md (fail-open, like every read)."""
+        try:
+            path = self._bundle_dir(project_id, skill) / "SKILL.md"
+            return _parse_frontmatter(path.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+
+    def _compose_procedure(self, project_id: str, skill: str, body: str) -> str:
+        """Compose the store-owned SKILL.md for one `procedure` write.
+
+        The metadata is never the caller's: it is the operator-bootstrapped
+        frontmatter the project already carries, or - on the project's first
+        update - the shared catalogue skill's frontmatter copied over. The
+        store then bumps `metadata.version` one minor and appends the caller's
+        body, so a skill with no bootstrapped metadata refuses rather than
+        inventing any. Any frontmatter in `body` is dropped.
+        """
+        meta = self._existing_frontmatter(project_id, skill) or skill_meta(skill)
+        if not meta:
+            raise SkillInvalidError(
+                f"skill_invalid: {skill!r} has no bootstrapped frontmatter "
+                "(bootstrap is operator-authorised)"
+            )
+        source = {**meta, "name": skill}
+        violations = _frontmatter_violations(source, skill=skill)
+        if violations:
+            raise SkillInvalidError("skill_invalid: " + "; ".join(violations))
+        composed = {
+            "name": skill,
+            "description": source["description"],
+            "metadata": {"version": _bump_version(source["metadata"]["version"])},
+        }
+        return _dump_frontmatter(composed) + _strip_frontmatter(body)
+
     def write(
         self,
         project_id: str,
@@ -448,13 +505,15 @@ class SkillStore:
     ) -> None:
         """Persist one whole bundle file, creating the bundle on first use.
 
-        `target` is the typed surface (`procedure` for `SKILL.md`,
+        `target` is the typed surface (`procedure` for the SKILL.md body,
         `references/<name>` for a reference file). `content` must be `str`;
-        `source_note_ids` is log-only provenance: recorded on the write log
-        line, never consulted. Refusals (`SkillTargetError`,
-        `SkillInvalidError`, `StoreUnavailableError`) carry the coded signal
-        the tool maps to an envelope. Every file write is atomic under the
-        per-project lock; a refused write persists nothing.
+        a `procedure` write carries the body alone (the store composes the
+        frontmatter and bumps `metadata.version`), a `references/<name>` write
+        carries the whole file. `source_note_ids` is log-only provenance:
+        recorded on the write log line, never consulted. Refusals
+        (`SkillTargetError`, `SkillInvalidError`, `StoreUnavailableError`)
+        carry the coded signal the tool maps to an envelope. Every file write
+        is atomic under the per-project lock; a refused write persists nothing.
         """
         if not isinstance(content, str):
             raise SkillInvalidError(
@@ -462,14 +521,7 @@ class SkillStore:
             )
         file_path = self._target_file(project_id, skill, target)
         if target == "procedure":
-            meta = _parse_frontmatter(content)
-            if meta is None:
-                raise SkillInvalidError(
-                    f"skill_invalid: {skill!r} carries no valid skill frontmatter"
-                )
-            violations = _frontmatter_violations(meta, skill=skill)
-            if violations:
-                raise SkillInvalidError("skill_invalid: " + "; ".join(violations))
+            content = self._compose_procedure(project_id, skill, content)
         with _lock_for(f"{self._root}::{project_id}"):
             self._ensure_bundle(project_id, skill)
             self._dump_text_atomic(file_path, content)
@@ -492,13 +544,15 @@ WRITE_SKILL_CONTRACT = (
     "later agents start from known ground instead of rediscovering it.\n\n"
     "DOMAIN MODEL - a skill bundle is the project's "
     "`data/<project_id>/skills/<skill>/` directory (SKILL.md, references/, "
-    "scripts/, assets/). The `procedure` target rewrites the whole SKILL.md; "
-    "`references/<name>` writes one bulky target file (endpoint snapshots, "
-    "header dumps, role matrices) so the procedure stays compact and carries "
-    "only a context pointer. The bundle is created on first write. Every "
-    "procedure write re-validates the frontmatter (name == the bundle "
-    "directory, non-empty description, non-empty metadata.version); a "
-    "malformed skill is never persisted.\n\n"
+    "scripts/, assets/). The `procedure` target carries the SKILL.md body "
+    "alone; `references/<name>` writes one bulky target file (endpoint "
+    "snapshots, header dumps, role matrices) so the procedure stays compact "
+    "and carries only a context pointer. The bundle is created on first write. "
+    "The store owns the frontmatter - `name`, `description`, and the "
+    "`metadata.version` it bumps one minor per write, carrying the "
+    "operator-bootstrapped metadata (the project's own on later writes, the "
+    "shared catalogue's copied over on the first); a skill with no "
+    "bootstrapped metadata refuses.\n\n"
     "WRITE RULES - one whole file per call, written atomically. "
     "Malformed content fails with `skill_invalid`, an unknown "
     "target with `skill_target`, a degraded store with `store_unavailable`. "
@@ -538,13 +592,13 @@ def build_write_skill_tool(project_id: str, store: SkillStore | None = None):
         )
         target: str = Field(
             description="The typed write surface: `procedure` rewrites the "
-            "whole SKILL.md; `references/<name>` writes one reference file."
+            "SKILL.md body; `references/<name>` writes one reference file."
         )
         content: str = Field(
-            description="The whole new file text. A procedure body must carry "
-            "valid skill frontmatter (name == the skill, non-empty "
-            "description, non-empty metadata.version); bulky target material "
-            "belongs in a reference."
+            description="The whole new file text. A `procedure` write carries "
+            "the body alone - the store owns the frontmatter (name, "
+            "description, and the metadata.version it bumps); a "
+            "`references/<name>` write carries the whole reference file."
         )
         source_note_ids: list[str] = Field(default_factory=list)
 

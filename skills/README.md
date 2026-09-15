@@ -46,9 +46,10 @@ An executing agent records what it learned using a procedure - a blocking condit
 ```
 
 There is no canonical shared original; a project's copy is its original, created lazily on first write.
-`write_skill(skill, target, content)` writes one whole file per call: `procedure` rewrites `SKILL.md`, `references/<name>` writes one bulky reference file (endpoint snapshots, header dumps, role matrices) so the procedure stays compact behind a pointer.
+`write_skill(skill, target, content)` writes one whole file per call: `procedure` carries the `SKILL.md` **body** alone, `references/<name>` writes one bulky reference file (endpoint snapshots, header dumps, role matrices) so the procedure stays compact behind a pointer.
 The factory binds the project - an agent writes through its own project's bundle, and any skill in it is writable (the future SkillEvolver writes any skill, so there is no per-skill writable set).
-Every procedure write re-validates the frontmatter (`name` == the bundle directory, non-empty `description`, non-empty `metadata.version`); a malformed skill is never persisted.
+The store owns the frontmatter: `name` (the bundle directory), `description`, and `metadata.version` bumped one minor per write.
+The metadata is operator-bootstrapped - the project bundle carries its own on later writes, and by the first update the shared catalogue skill's frontmatter is copied over; a skill with no bootstrapped metadata refuses rather than inventing any.
 Every write lands atomically under a per-project lock.
 Outcomes arrive as coded in-band envelopes (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 The write contract rides the tool's description verbatim from `WRITE_SKILL_CONTRACT` in the skills module - this README and that constant are the same wording, kept in sync by hand; update both together.
