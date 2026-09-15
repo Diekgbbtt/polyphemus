@@ -534,47 +534,18 @@ class RuntimeManager:
     def _flush_module(self, handle: ModuleHandle) -> "FlushResult":
         """Resolve and run the module's flush (TD-2/TD-6): the REGISTERED flush hook
         when one is registered, else the shared `flush_module_index` fallback - the
-        same shared seam, never a bespoke second path. Returns the typed result the
-        settle asserts on; a raising hook (or a hook that returns nothing) degrades
-        to a typed `cause="hook-raised"` / `"no-result"` result - fail-open, never
-        raises, and the drain surface stays a machine-readable object (never null
-        for a flush that ran)."""
-        from polymerhus.app.llm.checkpoints import FlushResult  # noqa: PLC0415
-
-        def _degraded(cause: str) -> "FlushResult":
-            return FlushResult(
-                committed=0, archived=0, dropped=0, dropped_thread_ids=[],
-                cause=cause)
+        same shared seam, never a bespoke second path. Both flow through the shared
+        `flush_seam_result` boundary, so a raise or a contract-violating result
+        degrades to a typed `cause` there (never a bare None reaching the settle)."""
+        from polymerhus.app.llm.checkpoints import (  # noqa: PLC0415
+            flush_module_index,
+            flush_seam_result,
+        )
         flush = handle.hooks.get("flush")
         if flush is not None:
-            try:
-                result = flush()
-            except Exception:  # noqa: BLE001 - fail-open: never raise into teardown
-                logger.warning(
-                    "flush hook of module %s raised (fail-open, degraded)", handle.name,
-                    exc_info=True,
-                )
-                return _degraded("hook-raised")
-            if result is None:
-                logger.warning(
-                    "flush hook of module %s returned nothing (fail-open, degraded)",
-                    handle.name)
-                return _degraded("no-result")
-            return result
-        from polymerhus.app.llm.checkpoints import flush_module_index
-
-        try:
-            result = flush_module_index(handle.name)
-        except Exception:  # noqa: BLE001
-            logger.warning("flush of module %s failed (fail-open, degraded)",
-                           handle.name, exc_info=True)
-            return _degraded("hook-raised")
-        if result is None:
-            logger.warning(
-                "flush of module %s returned nothing (fail-open, degraded)",
-                handle.name)
-            return _degraded("no-result")
-        return result
+            return flush_seam_result(flush, module=handle.name)
+        return flush_seam_result(
+            lambda: flush_module_index(handle.name), module=handle.name)
 
 
 class ShutdownFanOut:

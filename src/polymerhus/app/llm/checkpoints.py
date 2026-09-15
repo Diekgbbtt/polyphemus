@@ -107,6 +107,15 @@ class FlushResult:
     dropped_thread_ids: list[str]
     cause: str | None = None
 
+    @classmethod
+    def degraded(cls, cause: str) -> "FlushResult":
+        """The ONE designed default for a flush seam that could not run (TD-2/TD-5):
+        nothing archived, the cause recorded. This is the typed replacement every
+        seam boundary substitutes for a raise / a contract-violating `None`, so no
+        reaction point ever holds a bare None."""
+        return cls(committed=0, archived=0, dropped=0, dropped_thread_ids=[],
+                   cause=cause)
+
     def to_dict(self) -> dict:
         return {
             "committed": self.committed,
@@ -551,32 +560,43 @@ def flush_module_index(module: str, run_id: str | None = None) -> FlushResult:
     return index.flush(target, run_id=run_id)
 
 
+def flush_seam_result(seam, *, module: str) -> FlushResult:
+    """The ONE boundary that normalizes ANY flush seam's outcome to the typed
+    `FlushResult` (TD-2/TD-5): a returned `FlushResult` passes straight through; a
+    raise degrades to `cause="hook-raised"`; a contract-violating `None` (a
+    record-only stub, a hook that forgot to return) degrades to `cause="no-result"`
+    with a loud warning. Every seam caller funnels through here - the runtime hook
+    and its fallback, the bulk shutdown flush, the hunting tear-down hook, the
+    run-terminal chokepoint - so a None can never be CREATED as a flush outcome
+    (it is replaced by the designed default at the boundary) and no reaction point
+    dereferences it. Fail-open: this function never raises (TD-5)."""
+    try:
+        raw = seam()
+    except Exception:  # noqa: BLE001 - fail-open: never raise into teardown
+        logger.warning("flush seam of module %s raised (fail-open, degraded)",
+                       module, exc_info=True)
+        return FlushResult.degraded("hook-raised")
+    if isinstance(raw, FlushResult):
+        return raw
+    logger.warning(
+        "flush seam of module %s returned %r, expected FlushResult "
+        "(fail-open, degraded to no-result)", module, raw)
+    return FlushResult.degraded("no-result")
+
+
 def flush_all_indexes() -> dict[str, FlushResult]:
     """Shutdown flush hook (G7c): archive every live module index's committed threads
     into the still-open #94 pooled PG saver (fail-open), returning the per-module
-    `FlushResult`s. Call BEFORE `close_session_checkpointer`. Every value is a
-    typed result: a raising seam degrades to `cause="hook-raised"`, a result-less
-    one to `cause="no-result"` - teardown never raises and never reads None."""
+    `FlushResult`s. Call BEFORE `close_session_checkpointer`. Every value is a typed
+    result via the shared `flush_seam_result` boundary - teardown never raises and
+    never reads None."""
     with _indexes_lock:
         modules = list(_module_indexes)
-    results: dict[str, FlushResult] = {}
-    for module in modules:
-        try:
-            result = flush_module_index(module)
-        except Exception:  # noqa: BLE001 - fail-open: never raise into teardown
-            logger.warning("shutdown bulk flush of module %s raised (fail-open, "
-                           "degraded)", module, exc_info=True)
-            result = FlushResult(
-                committed=0, archived=0, dropped=0, dropped_thread_ids=[],
-                cause="hook-raised")
-        if result is None:
-            logger.warning("shutdown bulk flush of module %s returned nothing "
-                           "(fail-open, degraded)", module)
-            result = FlushResult(
-                committed=0, archived=0, dropped=0, dropped_thread_ids=[],
-                cause="no-result")
-        results[module] = result
-    return results
+    return {
+        module: flush_seam_result(
+            lambda m=module: flush_module_index(m), module=module)
+        for module in modules
+    }
 
 
 async def flush_run_scoped(module: str, run_id: str | None, *, flush_fn=None) -> FlushResult:
@@ -584,23 +604,17 @@ async def flush_run_scoped(module: str, run_id: str | None, *, flush_fn=None) ->
     recon pipeline terminal, the analysis supervisor terminal, the hunting run's
     `finally`) funnels through here - never an inline flush block - so the three
     sites cannot drift apart again. Runs the run-scoped `flush_module_index(module,
-    run_id=...)` off the loop, LOUDLY logs a drop with the thread ids (TD-4), and
-never raises: a raising seam degrades to a typed `cause="hook-raised"` result
-(TD-5). `flush_fn` is the injectable seam (defaults to `flush_module_index` so
-tests pin the call without monkeypatching module globals). `asyncio` stays a
-function-local import: the resume-seam audit pins this module's top-level
-imports to a side-effect-free allowlist."""
+    run_id=...)` off the loop through the shared `flush_seam_result` boundary (a
+    raise or a result-less seam degrades to a typed cause, never None), then LOUDLY
+    logs a drop with the thread ids (TD-4). Never raises (TD-5). `flush_fn` is the
+    injectable seam (defaults to `flush_module_index` so tests pin the call without
+    monkeypatching module globals). `asyncio` stays a function-local import: the
+    resume-seam audit pins this module's top-level imports to a side-effect-free
+    allowlist."""
     import asyncio  # noqa: PLC0415 - deferred: top-level imports are audit-pinned
     fn = flush_fn if flush_fn is not None else flush_module_index
-    try:
-        result = await asyncio.to_thread(fn, module, run_id)
-    except Exception:  # noqa: BLE001 - fail-open: never raise into teardown
-        logger.warning(
-            "%s run-terminal flush raised for run %s (fail-open, degraded)",
-            module, run_id, exc_info=True)
-        return FlushResult(
-            committed=0, archived=0, dropped=0, dropped_thread_ids=[],
-            cause="hook-raised")
+    result = await asyncio.to_thread(
+        flush_seam_result, lambda: fn(module, run_id), module=module)
     if result.dropped:
         logger.warning(
             "%s run-terminal flush dropped %d/%d committed thread(s) for run %s: %s",

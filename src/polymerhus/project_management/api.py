@@ -795,9 +795,7 @@ def drain_module(project_id: str, module: str) -> dict:
     runtime.drain(module)
     last = handle.last_flush
     if last is None:
-        last = FlushResult(
-            committed=0, archived=0, dropped=0, dropped_thread_ids=[],
-            cause="never-flushed")
+        last = FlushResult.degraded("never-flushed")
     return {
         "module": module,
         "state": handle.state.value,

@@ -315,3 +315,38 @@ def test_flush_all_indexes_returns_per_module_results(monkeypatch):
     assert set(results) == {"recon", "analysis"}
     assert results["recon"].archived == 1 and results["recon"].dropped == 0
     assert results["analysis"].archived == 1 and results["analysis"].dropped == 0
+
+# --- flush_seam_result: the single None/raise normalization boundary (S-regression) --
+
+def test_flush_seam_result_passes_a_real_result_straight_through():
+    real = C.FlushResult(committed=1, archived=1, dropped=0, dropped_thread_ids=[])
+    assert C.flush_seam_result(lambda: real, module="recon") is real
+
+
+def test_flush_seam_result_replaces_a_none_return_with_the_designed_default(caplog):
+    """The holistic NoneType guard: a seam that returns None (a record-only stub, a
+    hook that forgot to return) is normalized AT THE BOUNDARY to the designed
+    degraded default - no reaction point ever holds a bare None."""
+    with caplog.at_level("WARNING", logger="polymerhus.app.llm.checkpoints"):
+        result = C.flush_seam_result(lambda: None, module="recon")
+    assert result == C.FlushResult.degraded("no-result")
+    assert result.cause == "no-result"
+    assert any("expected FlushResult" in r.message for r in caplog.records)
+
+
+def test_flush_seam_result_degrades_a_raise_to_hook_raised():
+    def boom():
+        raise RuntimeError("seam down")
+    result = C.flush_seam_result(boom, module="analysis")
+    assert result == C.FlushResult.degraded("hook-raised")
+    assert result.cause == "hook-raised"
+
+
+def test_flush_all_indexes_degrades_a_none_returning_seam(monkeypatch):
+    """The shutdown bulk walk must never read a bare None: a seam returning None
+    yields a typed per-module result at the boundary (the full-suite-only crash)."""
+    C._module_index("recon")            # a live index so the walk visits a module
+    monkeypatch.setattr(C, "flush_module_index", lambda module, run_id=None: None)
+    results = C.flush_all_indexes()
+    assert set(results) == {"recon"}
+    assert results["recon"] == C.FlushResult.degraded("no-result")

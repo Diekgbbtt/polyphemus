@@ -72,7 +72,19 @@ def _stub_startup(monkeypatch, events=None):
     monkeypatch.setattr(llm, "close_session_checkpointer", rec("close-pool"))
 
     from polymerhus.app.llm import checkpoints as checkpoints
-    monkeypatch.setattr(checkpoints, "flush_module_index", rec("flush-index"))
+
+    def rec_flush(name):
+        """The `flush_module_index` facade returns a typed `FlushResult` (its real
+        contract) - a record-only stub returning None would violate the seam the
+        settle/assert now reads (#211)."""
+        def _f(*a, **k):
+            if events is not None:
+                events.append(name)
+            return checkpoints.FlushResult(
+                committed=0, archived=0, dropped=0, dropped_thread_ids=[])
+        return _f
+
+    monkeypatch.setattr(checkpoints, "flush_module_index", rec_flush("flush-index"))
 
     monkeypatch.setattr(pg, "reap_stale_runs", rec("reap-stale-runs"))
     monkeypatch.setattr(pg, "reconcile_orphaned_analysis_runs", rec("reconcile-analysis-runs"))

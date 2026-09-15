@@ -52,6 +52,8 @@ The assert's safe condition follows the clusterised state catalogue (see the Ass
 
 The flush seam (`flush_module_index` / `flush_all_indexes` / the registered hooks) returns a typed result per module: `{committed, archived, dropped, dropped_thread_ids, cause}`. `_settle_module` and `ShutdownFanOut` inspect it for the assert. The runtime no longer discards the outcome of a flush.
 
+Every seam call funnels through ONE normalization boundary, `flush_seam_result(seam, module=...)`: a returned `FlushResult` passes through; a raise degrades to `cause="hook-raised"`; a contract-violating `None` (a record-only stub, a hook that forgot to return) degrades to `cause="no-result"` via the designed default `FlushResult.degraded(cause)`. This is the single place a `None` flush outcome can arise, so no reaction point dereferences it - and the seam callers (the runtime hook + its fallback, the bulk shutdown flush, the hunting tear-down hook, the run-terminal chokepoint) cannot drift apart.
+
 The closed `cause` vocabulary (a drop is never a bare debug no-op): "no-target" (no open pooled saver - the whole eligible set reported dropped), "hook-raised" (the flush seam raised - degraded zero result), "no-result" (a registered hook returned nothing - degraded), "never-flushed" (a drain read before any flush ran - wire surface only, never stored). `cause: null` means the flush itself ran (clean or salvaged).
 
 ### TD-3 - The archive replay carries the tuple's own checkpoint_ns (the confirmed-mechanism repair)
