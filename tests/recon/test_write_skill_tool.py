@@ -152,3 +152,14 @@ def test_write_skill_description_carries_contract_verbatim() -> None:
         skills.WRITE_SKILL_CONTRACT
         in skills.build_write_skill_tool("p").description
     )
+
+
+def test_source_note_ids_rides_the_surface_with_zero_prose() -> None:
+    assert "source_note_ids" not in skills.WRITE_SKILL_CONTRACT
+
+    schema = skills.build_write_skill_tool("p").args_schema.model_json_schema()
+    assert "source_note_ids" in schema["properties"]
+    assert "description" not in schema["properties"]["source_note_ids"]
+
+    for name in ("meta-write-skill", "meta-usage-skill"):
+        assert "source_note" not in skills.skill_for(name)

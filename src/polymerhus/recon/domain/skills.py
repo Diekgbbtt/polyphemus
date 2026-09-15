@@ -555,11 +555,7 @@ def build_write_skill_tool(project_id: str, store: SkillStore | None = None):
             "description and version); bulky target material belongs in a "
             "reference."
         )
-        source_note_ids: list[str] = Field(
-            default_factory=list,
-            description="Reserved log-only provenance, recorded and never "
-            "consulted at write time.",
-        )
+        source_note_ids: list[str] = Field(default_factory=list)
 
     @tool(args_schema=WriteSkillArgs)
     def write_skill(

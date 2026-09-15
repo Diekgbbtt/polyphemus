@@ -29,7 +29,7 @@ Reads are fail-open to the fallback, exactly like `skill_for`.
 
 `write_skill(skill, target, content, source_note_ids=[])`.
 `target` is the typed surface only: `procedure` rewrites the whole `SKILL.md`, `references/<name>` writes one reference file (`<name>` one safe file stem).
-No section granularity, no operation verbs, no rationale field; `source_note_ids` stays a reserved log-only parameter (no notes system exists in this transitional system - no prose may present it as drawn-on).
+No section granularity, no operation verbs, no rationale field; `source_note_ids` rides the tool surface as a mechanically logged parameter (recorded on the write log, never consulted) with zero prose: no description, contract, or instruction verbatim may reference it.
 The factory binds `project_id` only; any skill in the project's bundle is writable (D234-12).
 The agent seam helper (`build_skill_tools`) returns `load_skill` for every agent plus project-bound `write_skill` only for agents whose procedure evolves a skill; a write tool without its project is a fail-fast wiring defect.
 Writes create the bundle on first use, re-validate frontmatter (data-section keys plus `name` == the bundle directory), and land atomically (temp file in the same dir + `os.replace`) under a per-project lock.
