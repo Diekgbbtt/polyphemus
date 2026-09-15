@@ -186,7 +186,14 @@ def test_session_agent_loads_skill_through_tool_at_phase_entry():
     assert turn.content == "phase ready"
     bodies = [m.content for m in turn.messages if isinstance(m, ToolMessage)]
     assert bodies  # the tool actually executed in the loop
-    assert bodies[0] == skills.skill_for("recon/crawler/steel-crawl")
+    # #234: the delivered result is the loader-identical body plus the
+    # appended usage protocol (the single-loader discipline holds at the
+    # loader seam; the tool composes body + separator + protocol).
+    assert bodies[0] == (
+        skills.skill_for("recon/crawler/steel-crawl")
+        + skills.PROTOCOL_SEPARATOR
+        + skills.skill_for(skills.META_USAGE_SKILL)
+    )
     assert "Steel Agentic Crawl" in bodies[0]
 
 
