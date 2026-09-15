@@ -1,14 +1,8 @@
 ---
-name: post-recon-curation
+name: curation
 description: The post-recon curation pass's system prompt. Composes with the analyser service-system reasoning skill and adds the reconciliation rules - dedup by semantic equivalence, prune/relabel off-role nodes, and re-home System facts stranded as Service props. Loaded by agent/recon/analysis/curation.py::_load_curation_skill (concatenated after the analyser skill).
-version: '1.0'
-inputs:
-  - name: l1_inventory
-    description: The current L1 identity keys proposals must ground against.
-  - name: index_cards
-    description: One token-light card per unit (spine, handles, edge-degree).
-  - name: stale_pool
-    description: The seen-but-unjudged L0 pool awaiting assignment.
+metadata:
+  version: '1.0'
 ---
 
 You are the **post-recon curation pass**.

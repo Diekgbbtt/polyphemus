@@ -1,8 +1,8 @@
 ---
 name: meta-write-skill
 description: Extend or correct a project skill from run experience through write_skill when a run exposed missing target detail or contradicted content.
-version: '1'
-inputs: []
+metadata:
+  version: '1'
 ---
 # Extending a project skill from run experience
 
@@ -17,5 +17,5 @@ Observable: every procedural step pairs its action with a sight naming the step,
 3. Hold bulky target detail (endpoint snapshots, header dumps, role matrices) in `references/<name>`; carry a context pointer naming the file in SKILL.md.
 Observable: SKILL.md reads as procedure alone; each bulky claim resolves through its pointer.
 4. Rewrite through `write_skill`: `procedure` rewrites the whole SKILL.md content, `references/<name>` writes one reference file for one safe file stem; one whole file per call, written atomically.
-Frontmatter keeps `name` matching the bundle directory plus non-empty `description` and `version` plus an `inputs` list; the revision touches content only, version and identity stay symbolic.
+Frontmatter carries `name` matching the bundle directory, non-empty `description`, and `metadata.version`; the revision touches content only - version and identity stay symbolic.
 Observable: the envelope reports per the `write_skill` contract.

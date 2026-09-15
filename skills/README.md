@@ -46,9 +46,9 @@ An executing agent records what it learned using a procedure - a blocking condit
 ```
 
 There is no canonical shared original; a project's copy is its original, created lazily on first write.
-`write_skill(skill, target, content, source_note_ids)` writes one whole file per call: `procedure` rewrites `SKILL.md`, `references/<name>` writes one bulky reference file (endpoint snapshots, header dumps, role matrices) so the procedure stays compact behind a pointer.
+`write_skill(skill, target, content)` writes one whole file per call: `procedure` rewrites `SKILL.md`, `references/<name>` writes one bulky reference file (endpoint snapshots, header dumps, role matrices) so the procedure stays compact behind a pointer.
 The factory binds the project - an agent writes through its own project's bundle, and any skill in it is writable (the future SkillEvolver writes any skill, so there is no per-skill writable set).
-Every procedure write re-validates the frontmatter (`name` == the bundle directory, non-empty `description` and `version`); a malformed skill is never persisted.
+Every procedure write re-validates the frontmatter (`name` == the bundle directory, non-empty `description`, non-empty `metadata.version`); a malformed skill is never persisted.
 Every write lands atomically under a per-project lock.
 Outcomes arrive as coded in-band envelopes (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 The write contract rides the tool's description verbatim from `WRITE_SKILL_CONTRACT` in the skills module - this README and that constant are the same wording, kept in sync by hand; update both together.
@@ -65,7 +65,8 @@ Bake-time mounts follow the same rule: the hunting orchestrator's gate skill mou
 ## Data section
 
 Every `skills/**/SKILL.md` carries a machine-readable frontmatter contract so the tool can index, validate, and report what was loaded.
-Mandatory keys: `name` (non-empty string, the skill's reported identity - deliberately not required to equal the loader path, which is the index key), `description` (non-empty string), `version` (non-empty string), `inputs` (a list, possibly empty, of strings or `{name, ...}` maps declaring the invocation context the skill expects).
+Keys, exactly: `name` (non-empty string, equal to the skill directory - the leaf of the loader path), `description` (non-empty string), `metadata` (a mapping carrying a non-empty string `version`).
+No other top-level keys and no structured `inputs`: the body describes invocation context better than a schema stub.
 Conformance is enforced by `tests/recon/test_skill_data_section.py::test_every_repo_skill_conforms_to_data_section`, which sweeps the catalogue and fails on any offender.
 Only `SKILL.md` files are skills: drafts and notes elsewhere under `skills/` (e.g. `systems-analysis/[DRAFT]*.md`) are out of scope by construction, not silent exceptions.
 Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description breaks parsing (seen twice), so prefer folded `>-` blocks for long descriptions.

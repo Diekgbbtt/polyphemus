@@ -1,8 +1,8 @@
 ---
 name: meta-usage-skill
 description: Judge a loaded skill against its stated observables after execution and record reusable improvements through write_skill.
-version: '1'
-inputs: []
+metadata:
+  version: '1'
 ---
 # Judging the skill just run
 

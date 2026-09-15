@@ -148,7 +148,7 @@ Every per-role reader retro-points here; no reader does its own file I/O.
 _Avoid_: a second skill system.
 
 **Data section**:
-The machine-readable YAML frontmatter contract every skill carries (`name`, `description`, `version`, `inputs`), so a runtime consumer can index, validate, and report what was loaded.
+The machine-readable YAML frontmatter contract every skill carries (`name`, `description`, `metadata.version`), so a runtime consumer can index, validate, and report what was loaded.
 _Avoid_: prose header (human-only, unvalidatable).
 
 **Runtime loading**:

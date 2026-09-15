@@ -1,12 +1,8 @@
 ---
-name: assigner-ownership-judgment
+name: assigner
 description: The reasoning discipline layered onto the cross-layer Assigner's base system prompt. Governs HOW one observed Endpoint is judged to belong to an existing Service - surface-first reading, a differential over candidate owners, discriminating evidence, and calibrated withholding against the no-owner null hypothesis. Loaded by src/polymerhus/analysis/assigner.py::_load_assigner_skill and appended to _ROLE_VERBATIM.
-version: '1.0'
-inputs:
-  - name: chunk
-    description: The admitted L0 slice (endpoints plus their evidence) to judge.
-  - name: service_inventory
-    description: The existing Services with their contracts as candidate owners.
+metadata:
+  version: '1.0'
 ---
 
 Your base prompt fixes WHAT you emit; this discipline fixes HOW you decide.

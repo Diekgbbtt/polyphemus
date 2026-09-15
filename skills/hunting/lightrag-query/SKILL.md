@@ -2,10 +2,8 @@
 name: lightrag-query
 description: >-
   Compact operational guide to the `query_lightrag` / `kb_query` tool for the hunting agent: when to use it, how to build a `QuerySpecV1` by deriving the fields from the HuntConfig, and how to treat the validated `AnswerBundle` (methodology and provenance, never a vulnerability confirmation). The KB is a testing-methodology knowledge base - retrieve concepts from it, never use it to verify or adjudicate a bug.
-version: '1.0'
-inputs:
-  - name: hunt_config
-    description: The dispatched HuntConfig the query fields derive from.
+metadata:
+  version: '1.0'
 ---
 
 # query_lightrag

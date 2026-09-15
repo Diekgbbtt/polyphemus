@@ -21,8 +21,8 @@ def _procedure(name: str = "auth_workflow", body: str = "# Procedure\nstep one\n
         "---\n"
         f"name: {name}\n"
         "description: The project's authentication procedure.\n"
-        "version: '1'\n"
-        "inputs: []\n"
+        "metadata:\n"
+        "  version: '1'\n"
         "---\n\n"
         f"{body}"
     )

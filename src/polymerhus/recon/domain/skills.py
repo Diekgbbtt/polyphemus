@@ -14,7 +14,7 @@ here, so hardening the loader hardens every consumer.
 the ONE shared `load_skill` tool, which calls `skill_for` internally, so
 bake-time mounts and runtime loads return byte-identical bodies and can never
 diverge. Every skill carries a machine-readable data section (`name`,
-`description`, `version`, `inputs` frontmatter) that `skill_meta` reads,
+`description`, `metadata.version` frontmatter) that `skill_meta` reads,
 `validate_skill` judges, and `list_skills` indexes; runtime loading is bounded
 by the phase-gating convention (load at phase entry, once per thread, never
 speculatively mid-reasoning - see `skills/README.md` and
@@ -102,7 +102,7 @@ SKILL_LOAD_CONTRACT = (
     "The appended protocol always reads from the shared catalogue - a "
     "per-project bundle never shadows it.\n\n"
     "EVERY skill carries a data section (frontmatter with name, description, "
-    "version, inputs) so callers can tell what was loaded.\n\n"
+    "metadata.version) so callers can tell what was loaded.\n\n"
     "PHASE-GATING CONVENTION - load at phase entry, once per thread, never "
     "speculatively mid-reasoning: call load_skill once when your phase starts "
     "for each skill your phase needs, then reason from the returned body. "
@@ -188,13 +188,28 @@ def skill_meta(name: str) -> dict:
     return meta if isinstance(meta, dict) else {}
 
 
-# The data-section contract (#222): every `skills/**/SKILL.md` carries these
-# YAML frontmatter keys. `name`/`description`/`version` are non-empty strings;
-# `inputs` is a list (possibly empty) of `{name, description?}` maps declaring
-# the invocation context the skill expects. Presence and shape are validated;
-# the `name` is deliberately NOT required to equal the loader path - the path
-# argument is the index key, the frontmatter name the reported identity.
-_REQUIRED_DATA_KEYS = ("name", "description", "version", "inputs")
+# The data-section contract (A3): every `skills/**/SKILL.md` carries exactly
+# these YAML frontmatter keys. `name` is a non-empty string equal to the skill
+# directory (the leaf of the loader path); `description` is a non-empty string;
+# `metadata` is a mapping carrying a non-empty string `version`. No other
+# top-level keys, no structured `inputs` (the body describes invocation
+# context). Presence and shape are validated; `skill_meta` still returns the
+# raw mapping, so a lenient reader is unaffected.
+_REQUIRED_DATA_KEYS = ("name", "description", "metadata")
+
+
+def _version_violations(meta: dict, *, subject: str) -> list[str]:
+    """The `metadata.version` rule: a mapping carrying a non-empty string
+    `version`. An absent `metadata` is reported by the required-keys sweep, so
+    it is not re-reported here."""
+    md = meta.get("metadata")
+    if md is None:
+        return []
+    if not isinstance(md, dict):
+        return [f"{subject}: 'metadata' must be a mapping"]
+    if not isinstance(md.get("version"), str) or not md.get("version"):
+        return [f"{subject}: 'metadata.version' must be a non-empty string"]
+    return []
 
 
 def validate_skill(name: str) -> list[str]:
@@ -206,25 +221,21 @@ def validate_skill(name: str) -> list[str]:
     for key in _REQUIRED_DATA_KEYS:
         if key not in meta:
             errors.append(f"{name}: data section missing required key {key!r}")
-    if "name" in meta and not isinstance(meta["name"], str):
-        errors.append(f"{name}: data section 'name' must be a string")
-    if "description" in meta and not isinstance(meta["description"], str):
-        errors.append(f"{name}: data section 'description' must be a string")
-    if "version" in meta and (not isinstance(meta["version"], str) or not meta["version"]):
-        errors.append(f"{name}: data section 'version' must be a non-empty string")
-    if "inputs" in meta:
-        inputs = meta["inputs"]
-        if not isinstance(inputs, list):
-            errors.append(f"{name}: data section 'inputs' must be a list")
-        else:
-            for item in inputs:
-                if isinstance(item, str):
-                    continue
-                if not isinstance(item, dict) or not isinstance(item.get("name"), str):
-                    errors.append(
-                        f"{name}: data section 'inputs' items must be "
-                        "strings or {name, ...} maps")
-                    break
+    if "name" in meta:
+        if not isinstance(meta["name"], str):
+            errors.append(f"{name}: data section 'name' must be a string")
+        elif meta["name"] != name.split("/")[-1]:
+            errors.append(
+                f"{name}: data section 'name' {meta['name']!r} must equal "
+                "the skill directory"
+            )
+    if "description" in meta and (
+        not isinstance(meta["description"], str) or not meta["description"]
+    ):
+        errors.append(
+            f"{name}: data section 'description' must be a non-empty string"
+        )
+    errors.extend(_version_violations(meta, subject=f"{name}: data section"))
     return errors
 
 
@@ -326,27 +337,7 @@ def _frontmatter_violations(meta: dict, *, skill: str) -> list[str]:
         errors.append(
             f"{skill}: frontmatter 'description' must be a non-empty string"
         )
-    if "version" in meta and (
-        not isinstance(meta["version"], str) or not meta["version"]
-    ):
-        errors.append(
-            f"{skill}: frontmatter 'version' must be a non-empty string"
-        )
-    if "inputs" in meta:
-        inputs = meta["inputs"]
-        if not isinstance(inputs, list):
-            errors.append(f"{skill}: frontmatter 'inputs' must be a list")
-        else:
-            for item in inputs:
-                if isinstance(item, str):
-                    continue
-                if not isinstance(item, dict) or not isinstance(
-                    item.get("name"), str
-                ):
-                    errors.append(
-                        f"{skill}: frontmatter 'inputs' items must be "
-                        "strings or {name, ...} maps")
-                    break
+    errors.extend(_version_violations(meta, subject=f"{skill}: frontmatter"))
     return errors
 
 
@@ -506,8 +497,8 @@ WRITE_SKILL_CONTRACT = (
     "header dumps, role matrices) so the procedure stays compact and carries "
     "only a context pointer. The bundle is created on first write. Every "
     "procedure write re-validates the frontmatter (name == the bundle "
-    "directory, non-empty description and version); a malformed skill is never "
-    "persisted.\n\n"
+    "directory, non-empty description, non-empty metadata.version); a "
+    "malformed skill is never persisted.\n\n"
     "WRITE RULES - one whole file per call, written atomically. "
     "Malformed content fails with `skill_invalid`, an unknown "
     "target with `skill_target`, a degraded store with `store_unavailable`. "
@@ -552,8 +543,8 @@ def build_write_skill_tool(project_id: str, store: SkillStore | None = None):
         content: str = Field(
             description="The whole new file text. A procedure body must carry "
             "valid skill frontmatter (name == the skill, non-empty "
-            "description and version); bulky target material belongs in a "
-            "reference."
+            "description, non-empty metadata.version); bulky target material "
+            "belongs in a reference."
         )
         source_note_ids: list[str] = Field(default_factory=list)
 

@@ -1,12 +1,8 @@
 ---
 name: writing-observations
 description: Use when acting as the recon triager - turning a completed tool run (stdout + parsed assets) into Observation records attached to the attack-surface graph. Governs anchor choice, observations-vs-vulnerabilities discipline, and avoiding restating assets or attack-surface primitives (SSL certificates, HTTP status codes, ports).
-version: '1.0'
-inputs:
-  - name: tool_stdout
-    description: The completed tool run's raw stdout to read insights from.
-  - name: parsed_assets
-    description: The deterministic parser's asset deltas for the same run.
+metadata:
+  version: '1.0'
 ---
 
 # Writing Observations (recon triager)

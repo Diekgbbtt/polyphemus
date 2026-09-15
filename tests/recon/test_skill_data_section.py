@@ -2,7 +2,8 @@
 
 Each test names the behaviour it pins. The data section is the contract
 `load_skill` indexes, validates, and reports: every `skills/**/SKILL.md`
-carries `name`, `description`, `version`, and `inputs` in its YAML frontmatter.
+carries `name` (equal to the skill directory), `description`, and
+`metadata.version` in its YAML frontmatter.
 """
 import pytest
 
@@ -27,8 +28,8 @@ def _write_skill(root, name, text):
 def test_validate_skill_accepts_conforming_skill(tmp_path, monkeypatch):
     _write_skill(
         tmp_path, "demo/skill",
-        "---\nname: demo-skill\ndescription: Does demo things.\n"
-        "version: '1.0'\ninputs:\n  - name: tool_output\n---\n\n# Body\n",
+        "---\nname: skill\ndescription: Does demo things.\n"
+        "metadata:\n  version: '1.0'\n---\n\n# Body\n",
     )
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
 
@@ -38,13 +39,12 @@ def test_validate_skill_accepts_conforming_skill(tmp_path, monkeypatch):
 def test_validate_skill_rejects_missing_keys(tmp_path, monkeypatch):
     _write_skill(
         tmp_path, "legacy/skill",
-        "---\nname: legacy-skill\ndescription: Predates the convention.\n---\n\n# Body\n",
+        "---\nname: skill\ndescription: Predates the convention.\n---\n\n# Body\n",
     )
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
 
     errors = skills.validate_skill("legacy/skill")
-    assert any("version" in e for e in errors)
-    assert any("inputs" in e for e in errors)
+    assert any("metadata" in e for e in errors)
 
 
 def test_validate_skill_rejects_absent_data_section(tmp_path, monkeypatch):
@@ -78,7 +78,7 @@ def test_list_skills_returns_sorted_loader_paths(tmp_path, monkeypatch):
 def test_load_skill_tool_returns_skill_for_identical_body(tmp_path, monkeypatch):
     _write_skill(
         tmp_path, "demo/skill",
-        "---\nname: demo-skill\ndescription: D.\nversion: '1.0'\ninputs: []\n---\n\n# Body\n",
+        "---\nname: skill\ndescription: D.\nmetadata:\n  version: '1.0'\n---\n\n# Body\n",
     )
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
 
@@ -91,7 +91,7 @@ def test_load_skill_tool_returns_skill_for_identical_body(tmp_path, monkeypatch)
 
 def test_load_skill_tool_refresh_rereads_after_disk_change(tmp_path, monkeypatch):
     _write_skill(tmp_path, "demo/skill",
-                 "---\nname: d\ndescription: D.\nversion: '1.0'\ninputs: []\n---\n\nv1\n")
+                 "---\nname: skill\ndescription: D.\nmetadata:\n  version: '1.0'\n---\n\nv1\n")
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
 
     tool = skills.build_load_skill_tool()
@@ -246,16 +246,14 @@ def test_session_agent_without_tool_binding_cannot_load_skill():
 def test_skill_meta_returns_data_section(tmp_path, monkeypatch):
     _write_skill(
         tmp_path, "demo/skill",
-        "---\nname: demo-skill\ndescription: Does demo things.\n"
-        "version: '1.0'\ninputs:\n  - name: tool_output\n"
-        "    description: The completed tool run.\n---\n\n# Body\n",
+        "---\nname: skill\ndescription: Does demo things.\n"
+        "metadata:\n  version: '1.0'\n---\n\n# Body\n",
     )
     monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path)
 
     meta = skills.skill_meta("demo/skill")
     assert meta == {
-        "name": "demo-skill",
+        "name": "skill",
         "description": "Does demo things.",
-        "version": "1.0",
-        "inputs": [{"name": "tool_output", "description": "The completed tool run."}],
+        "metadata": {"version": "1.0"},
     }

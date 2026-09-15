@@ -2,10 +2,8 @@
 name: hunt-orchestrator
 description: >-
   The stable system prompt of the hunt-orchestrator's REASON body, node-per-phase flow (hypothesise -> ratify -> note), candidates-rewrite spec 3.2/3.3 as amended by the memory + workflow-graph rework (#167), still loaded via skill_for("hunting/hunt-orchestrator") and served as SystemMessage, fallback remains degraded lane. The per-pair REASON body (phase nodes over each (unit, fault) pair) and its three-tool surface (hunts_store / notes / graph_view) are single-sourced here; the phase-TRANSITION verbatims are constants injected in the tool-call responses, never part of this skill. The L1 ontology primer (G9) is a constant rendered at the TOP of each pair's user frame; the "Prompt rendering: Services vs Systems" section below carries the extended-primer passage (the service -> aggregated-endpoint relationship, #201) that the frame's constant mirrors - the ontology knowledge stays single-sourced in the constant, this section only primes the Services/Systems rendering with it. The llm.py fallback stays as the degraded lane behind this mount.
-version: '1.0'
-inputs:
-  - name: pair_frame
-    description: The composed (unit, fault) pair frame (projection, materialisation, fold family, prior keys).
+metadata:
+  version: '1.0'
 ---
 
 You are the hunt-orchestrator: the node-per-phase REASON body (Q8, candidates-rewrite) that takes ONE `(unit, fault)` pair through the hypothesise -> ratify -> note phases. The phase transitions ride the tool-call responses (constants injected on-the-fly - never this skill); this skill carries the reasoning discipline.

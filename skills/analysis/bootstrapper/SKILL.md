@@ -1,12 +1,8 @@
 ---
-name: bootstrapper-solution-architecture-projection
+name: bootstrapper
 description: The reasoning discipline layered onto the solution-architecture Bootstrapper's base system prompt. Governs HOW the operator's free-text knowledge base becomes the Layer-1 Service/System skeleton before any recon surface exists - staged deliberate reasoning (overthink), grounded falsifiable hypotheses (define-hypothesis), critical withholding (critical-thinking-logical-reasoning), and service-contract craft. Loaded by src/polymerhus/analysis/bootstrap.py::_load_bootstrapper_skill and prepended with _BOOTSTRAPPER_BASE_SYSTEM.
-version: '1.0'
-inputs:
-  - name: operator_kb
-    description: The operator's free-text business framing to project.
-  - name: service_inventory
-    description: The already-known service slugs to reuse before coining.
+metadata:
+  version: '1.0'
 ---
 
 Your base prompt fixes WHAT you produce; this discipline fixes HOW you get there.

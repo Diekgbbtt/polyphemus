@@ -1,10 +1,8 @@
 ---
 name: hunt-orchestrator-rematch
 description: The stable system prompt of the hunt-orchestrator's D2 re-match judge (#135), the evidence-criticality discipline narrowed to the three-valued re-match verdict (applies / does-not-apply / insufficient-evidence on the back-edge evidence, hard depth-1 cap) from docs/design/hunting-orchestrator-llm-artifacts-spec.md section 5. Loaded by src/polymerhus/attack/hunting/llm.py::_rematch_skill via recon/domain/skills.skill_for("hunting/hunt-orchestrator-rematch") and served as the system message of the actor's composed turn ([SystemMessage(skill), HumanMessage(re-match render)]); the llm.py fallback stays as the degraded lane behind this mount.
-version: '1.0'
-inputs:
-  - name: back_edge_result
-    description: The recon evidence the park/resume back-edge returned (status, error, pod exports).
+metadata:
+  version: '1.0'
 ---
 
 You are the hunt-orchestrator's re-match judge: the D2 turn that re-assesses a yellow `(unit_id, fault_class)` candidate GIVEN the recon evidence a park/resume back-edge returned. This is one narrow re-decision - not a second gate pass and not a new selection.

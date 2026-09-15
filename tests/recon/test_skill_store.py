@@ -30,8 +30,8 @@ def _procedure(name: str = "auth_workflow", body: str = "# Procedure\nstep one\n
         "---\n"
         f"name: {name}\n"
         "description: The project's authentication procedure.\n"
-        "version: '1'\n"
-        "inputs: []\n"
+        "metadata:\n"
+        "  version: '1'\n"
         "---\n\n"
         f"{body}"
     )
@@ -141,19 +141,19 @@ def test_write_refuses_an_unsupported_or_unsafe_target(tmp_path: Path, target: s
         store.write("proj-1", "auth_workflow", target, "# x\n")
 
 
-@pytest.mark.parametrize("bad_key", ["name", "description", "version", "inputs"])
+@pytest.mark.parametrize("bad_key", ["name", "description", "metadata"])
 def test_write_refuses_a_missing_frontmatter_key(tmp_path: Path, bad_key: str) -> None:
     store = SkillStore(root_dir=tmp_path)
     lines = [
         "---\n",
         "name: auth_workflow\n",
         "description: The project's authentication procedure.\n",
-        "version: '1'\n",
-        "inputs: []\n",
+        "metadata:\n",
+        "  version: '1'\n",
         "---\n\n# Procedure\n",
     ]
-    key_line = {"name": 1, "description": 2, "version": 3, "inputs": 4}[bad_key]
-    del lines[key_line]
+    key_lines = {"name": [1], "description": [2], "metadata": [3, 4]}[bad_key]
+    lines = [line for i, line in enumerate(lines) if i not in key_lines]
 
     with pytest.raises(SkillInvalidError):
         store.write("proj-1", "auth_workflow", "procedure", "".join(lines))

@@ -30,14 +30,14 @@ def _catalogue(root: Path, *, with_protocol: bool = True) -> Path:
     demo = root / "demo"
     demo.mkdir(parents=True)
     (demo / "SKILL.md").write_text(
-        "---\nname: demo\ndescription: D.\nversion: '1'\ninputs: []\n---\n\n" + BODY,
+        "---\nname: demo\ndescription: D.\nmetadata:\n  version: '1'\n---\n\n" + BODY,
         encoding="utf-8",
     )
     if with_protocol:
         proto = root / "meta-usage-skill"
         proto.mkdir(parents=True)
         (proto / "SKILL.md").write_text(
-            "---\nname: meta-usage-skill\ndescription: P.\nversion: '1'\ninputs: []\n"
+            "---\nname: meta-usage-skill\ndescription: P.\nmetadata:\n  version: '1'\n"
             "---\n\n" + PROTOCOL,
             encoding="utf-8",
         )
@@ -69,7 +69,7 @@ def test_loading_meta_write_skill_returns_the_bare_body(
     writer = root / "meta-write-skill"
     writer.mkdir(parents=True)
     (writer / "SKILL.md").write_text(
-        "---\nname: meta-write-skill\ndescription: W.\nversion: '1'\ninputs: []\n"
+        "---\nname: meta-write-skill\ndescription: W.\nmetadata:\n  version: '1'\n"
         "---\n\n# Write\n",
         encoding="utf-8",
     )
@@ -111,7 +111,7 @@ def test_project_bound_load_resolves_bundle_first_then_appends_protocol(
         "proj-1",
         "demo",
         "procedure",
-        "---\nname: demo\ndescription: D.\nversion: '1'\ninputs: []\n---\n\n# Project\n",
+        "---\nname: demo\ndescription: D.\nmetadata:\n  version: '1'\n---\n\n# Project\n",
     )
 
     out = skills.build_load_skill_tool("proj-1", store=store).invoke({"name": "demo"})
@@ -128,7 +128,7 @@ def test_protocol_read_is_catalogue_pinned_no_project_shadowing(
         "proj-1",
         "meta-usage-skill",
         "procedure",
-        "---\nname: meta-usage-skill\ndescription: S.\nversion: '1'\ninputs: []\n"
+        "---\nname: meta-usage-skill\ndescription: S.\nmetadata:\n  version: '1'\n"
         "---\n\n# Shadow\n",
     )
 
