@@ -1,8 +1,6 @@
-import json
 import socket
 import threading
 import time
-from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 
 import pytest
 from polymerhus.app.llm import providers as P
@@ -145,78 +143,6 @@ def test_build_chat_model_sets_base_url_and_key(monkeypatch):
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
     assert str(m.openai_api_base) == P.PROVIDERS["swissai"]
-
-
-def test_build_chat_model_requests_stream_usage_for_streamed_calls(monkeypatch):
-    """#225: streamed generations recorded usage 0/0/0 because the client never
-    asked the provider for stream usage. The pinned langchain-openai auto-enables
-    `stream_usage` ONLY for the default OpenAI base URL; every polymerhus
-    construction carries a custom base_url (provider or gateway), so the default
-    stays off and `stream_options.include_usage` never reaches the wire. The
-    single construction seam must opt in, so any streamed turn's terminal usage
-    chunk is requested and the Langfuse generation carries real token counts."""
-    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
-    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
-    m = P.build_chat_model("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
-    assert m.stream_usage is True
-
-
-def test_streamed_calls_carry_include_usage_on_the_wire(monkeypatch):
-    """#225 wire proof (localhost stub, no live provider): a streamed turn must
-    send `stream_options: {"include_usage": true}`, and the provider's terminal
-    usage chunk must surface as `usage_metadata` on the streamed output - the
-    exact field the Langfuse handler parses into the generation's usage."""
-    seen_bodies: list[dict] = []
-
-    class _Stub(BaseHTTPRequestHandler):
-        def log_message(self, format, *args):  # noqa: A002 - stdlib signature
-            pass
-
-        def do_POST(self):
-            length = int(self.headers.get("Content-Length", 0))
-            seen_bodies.append(
-                json.loads(self.rfile.read(length) if length else b"{}"))
-            chunks = [
-                {"id": "s", "object": "chat.completion.chunk", "created": 1,
-                 "model": "m", "choices": [
-                     {"index": 0, "delta": {"content": "hi"},
-                      "finish_reason": None}]},
-                {"id": "s", "object": "chat.completion.chunk", "created": 1,
-                 "model": "m", "choices": [
-                     {"index": 0, "delta": {}, "finish_reason": "stop"}]},
-                {"id": "s", "object": "chat.completion.chunk", "created": 1,
-                 "model": "m", "choices": [],
-                 "usage": {"prompt_tokens": 40, "completion_tokens": 8,
-                           "total_tokens": 48}},
-            ]
-            self.send_response(200)
-            self.send_header("Content-Type", "text/event-stream")
-            self.end_headers()
-            for c in chunks:
-                self.wfile.write(f"data: {json.dumps(c)}\n\n".encode())
-            self.wfile.write(b"data: [DONE]\n\n")
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Stub)
-    port = server.server_address[1]
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    try:
-        monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
-        monkeypatch.setenv("API_KEY_SWISSAI", "tok")
-        monkeypatch.setitem(P.PROVIDERS, "swissai", f"http://127.0.0.1:{port}/v1")
-        m = P.build_chat_model("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
-        streamed = list(m.stream("hello"))
-    finally:
-        server.shutdown()
-        thread.join(timeout=5)
-
-    assert seen_bodies, "the stub received no request"
-    assert seen_bodies[0].get("stream_options") == {"include_usage": True}
-    usages = [c.usage_metadata for c in streamed
-              if getattr(c, "usage_metadata", None)]
-    assert usages, "no streamed chunk carried usage_metadata"
-    assert usages[0]["input_tokens"] == 40
-    assert usages[0]["output_tokens"] == 8
 
 
 def test_resolve_role_parses_the_qwen_swissai_swap(monkeypatch):
@@ -778,37 +704,3 @@ def test_gateway_base_url_is_none_when_unset_or_blank(monkeypatch):
     assert P.gateway_base_url() is None
     monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
     assert P.gateway_base_url() == "http://gateway:4000"
-
-
-def test_request_payload_omits_empty_tools_array(monkeypatch):
-    """Provider-shape hardening (live 2026-09-08, swissai): a no-tools session
-    role binds an EMPTY tool set via `create_agent` -> `tools: []` lands on the
-    wire, which swissai's hosted vLLM rejects (`tools must not be an empty
-    array... omit the field entirely`). The payload seam omits the key when it
-    carries nothing."""
-    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
-    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
-    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
-
-    def _empty_tools(self, input_, *, stop=None, **kwargs):
-        return {"messages": "not-a-list", "tools": []}
-
-    monkeypatch.setattr(P.ChatOpenAI, "_get_request_payload", _empty_tools)
-    assert "tools" not in m._get_request_payload(
-        [{"role": "user", "content": "hi"}], stop=None)
-
-
-def test_request_payload_preserves_nonempty_tools_binding(monkeypatch):
-    """The strip is empty-only: a real crawl/hunting tool binding must reach
-    the wire verbatim."""
-    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
-    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
-    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
-    bound = [{"type": "function", "function": {"name": "probe"}}]
-
-    def _bound_tools(self, input_, *, stop=None, **kwargs):
-        return {"messages": "not-a-list", "tools": list(bound)}
-
-    monkeypatch.setattr(P.ChatOpenAI, "_get_request_payload", _bound_tools)
-    payload = m._get_request_payload([{"role": "user", "content": "hi"}], stop=None)
-    assert payload["tools"] == bound

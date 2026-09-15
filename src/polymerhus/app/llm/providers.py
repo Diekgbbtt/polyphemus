@@ -325,7 +325,7 @@ class Role:
 # per-run orchestrator actor, and the analysis proposers (per-pass stateful turns).
 ROLES: tuple[Role, ...] = (
     Role("configurator",     "LLM_MODEL_CONFIGURATOR",     "session"),
-    Role("triager",          "LLM_MODEL_TRIAGER",          "session",  "medium"),
+    Role("triager",          "LLM_MODEL_TRIAGER",          "session",  "low"),
     Role("job_orchestrator", "LLM_MODEL_JOB_ORCHESTRATOR", "session",  "medium"),
     Role("crawler",          "LLM_MODEL_CRAWLER",          "session"),
     Role("bootstrapper",     "LLM_MODEL_ANALYSER",         "one_shot"),
@@ -455,15 +455,6 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
-        # Provider-shape hardening (live, 2026-09-08, swissai): a no-tools
-        # session role (the recon triager) binds an EMPTY tool set via
-        # `create_agent` -> `tools: []` lands on the wire. Some OpenAI-
-        # compatible upstreams (swissai's hosted vLLM) REJECT an empty tools
-        # array ("must not be an empty array... omit the field entirely"), so
-        # omit the key when it carries nothing - a no-tools turn never needs
-        # it. Never strips a non-empty binding (real crawl/hunting tools).
-        if payload.get("tools") == []:
-            payload.pop("tools")
         messages = payload.get("messages")
         if not isinstance(messages, list):
             return payload
@@ -613,21 +604,10 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     # field; verified to reach the wire payload. Merged after `extra` so nothing in
     # `_thinking_wire_form` (reasoning_effort / thinking budget) collides with it.
     model_kwargs = {"max_completion_tokens": max_completion_tokens()}
-    # Streamed-turn usage (#225): the pinned langchain-openai auto-enables
-    # `stream_usage` ONLY for the default OpenAI base URL - every construction
-    # here carries a custom base_url (provider or gateway), so without this opt-in
-    # no streamed request carries `stream_options.include_usage`, the provider
-    # sends no terminal usage chunk, and the Langfuse generation records
-    # usage 0/0/0. Non-streamed calls are unaffected (the flag is only consulted
-    # on the streaming path). Provider compat: `stream_options` is a standard
-    # OpenAI param the gateway forwards natively, and `drop_params: true`
-    # (gateway/litellm_config.yaml) strips it per-upstream when unsupported -
-    # the same safety net that covers `reasoning_effort` (ADR A5).
     return ReasoningPreservingChatOpenAI(model=model, api_key=api_key,
                                          base_url=base_url, temperature=temperature,
                                          timeout=timeout, max_retries=retries,
                                          model_kwargs=model_kwargs,
-                                         stream_usage=True,
                                          callbacks=get_langfuse_callbacks(), **extra)
 
 def validate_llm_config(roles: Sequence[Role] | None = None) -> None:
