@@ -237,27 +237,9 @@ def validate_skill(name: str) -> list[str]:
 # auth-store precedent: one `threading.Lock` per `project_id` covers every
 # check-then-write critical section).
 #
-# Writes create the bundle on first use, re-validate the skill frontmatter,
-# enforce size caps, and refuse secret-shaped content (redirected to the #220
-# auth store) - every refusal a denoted `ValueError` the `write_skill` tool
+# Writes create the bundle on first use and re-validate the skill
+# frontmatter; every refusal is a denoted `ValueError` the `write_skill` tool
 # maps to a coded in-band envelope, never a raise into the turn.
-
-# Size caps (grey-point values recorded in the #234 decision ledger):
-# SKILL.md must stay compact procedure prose (bulky target material belongs in
-# references/); a reference file may hold a fuller target snapshot.
-SKILL_MAX_BYTES = 16_384
-REFERENCE_MAX_BYTES = 65_536
-
-# High-confidence secret shapes only - a refusal must never fire on ordinary
-# procedural prose that merely mentions tokens. PEM private-key blocks, AWS
-# access-key ids, provider token prefixes, and JWTs.
-_SECRET_PATTERNS = (
-    re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"),
-    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
-    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
-    re.compile(r"\bghp_[A-Za-z0-9]{36}\b"),
-    re.compile(r"\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
-)
 
 # A reference name is one safe file stem - no separators, no traversal.
 _REFERENCE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
@@ -272,16 +254,6 @@ class SkillInvalidError(ValueError):
     """The denoted malformed-content signal: a `procedure` write whose body
     carries no valid skill frontmatter, or whose frontmatter `name` is not the
     bundle directory it would land in."""
-
-
-class SecretRefusedError(ValueError):
-    """The denoted secret-boundary refusal: the written content is secret-shaped
-    and belongs in the #220 auth store, never in a skill."""
-
-
-class SkillSizeError(ValueError):
-    """The denoted size-cap refusal: the written content exceeds the target's
-    byte cap."""
 
 
 class StoreUnavailableError(ValueError):
@@ -378,22 +350,19 @@ class SkillStore:
 
     def _target_file(
         self, project_id: str, skill: str, target: str
-    ) -> tuple[Path, int]:
-        """The bundle file and byte cap for one write `target`: `procedure`
-        maps to the bundle `SKILL.md`; `references/<name>` maps to
+    ) -> Path:
+        """The bundle file for one write `target`: `procedure` maps to the
+        bundle `SKILL.md`; `references/<name>` maps to
         `references/<name>.md`. Anything else raises `SkillTargetError`."""
         if target == "procedure":
-            return self._bundle_dir(project_id, skill) / "SKILL.md", SKILL_MAX_BYTES
+            return self._bundle_dir(project_id, skill) / "SKILL.md"
         if target.startswith("references/"):
             name = target[len("references/"):]
             if not name or not _REFERENCE_NAME_RE.fullmatch(name):
                 raise SkillTargetError(
                     f"skill_target: {target!r} is not a safe reference name"
                 )
-            return (
-                self._bundle_dir(project_id, skill) / "references" / f"{name}.md",
-                REFERENCE_MAX_BYTES,
-            )
+            return self._bundle_dir(project_id, skill) / "references" / f"{name}.md"
         raise SkillTargetError(
             f"skill_target: {target!r} must be 'procedure' or 'references/<name>'"
         )
@@ -440,17 +409,6 @@ class SkillStore:
             except FileNotFoundError:
                 pass
 
-    @staticmethod
-    def _refuse_secrets(content: str, *, skill: str) -> None:
-        """Refuse secret-shaped content at the trust boundary: credential-like
-        material belongs in the #220 auth store, never in a skill."""
-        for pattern in _SECRET_PATTERNS:
-            if pattern.search(content):
-                raise SecretRefusedError(
-                    f"secret_refused: {skill!r} content is secret-shaped; record "
-                    "credentials through the auth store instead"
-                )
-
     def _ensure_bundle(self, project_id: str, skill: str) -> Path:
         """Create the bundle on first use: the skill directory plus its
         canonical `references/`, `scripts/`, `assets/` subdirectories (the
@@ -473,21 +431,16 @@ class SkillStore:
         `target` is the typed surface (`procedure` for `SKILL.md`,
         `references/<name>` for a reference file). `content` must be `str`;
         `source_note_ids` is log-only provenance, never consulted. Refusals
-        (`SkillTargetError`, `SkillInvalidError`, `SecretRefusedError`,
-        `SkillSizeError`, `StoreUnavailableError`) carry the coded signal the
-        tool maps to an envelope. Every file write is atomic under the
-        per-project lock; a refused write persists nothing.
+        (`SkillTargetError`, `SkillInvalidError`, `StoreUnavailableError`)
+        carry the coded signal the tool maps to an envelope. Every file write
+        is atomic under the per-project lock; a refused write persists
+        nothing.
         """
         if not isinstance(content, str):
             raise SkillInvalidError(
                 f"skill_invalid: {skill!r} content must be text"
             )
-        file_path, cap = self._target_file(project_id, skill, target)
-        if len(content.encode("utf-8")) > cap:
-            raise SkillSizeError(
-                f"size_exceeded: {target!r} content exceeds the {cap}-byte cap"
-            )
-        self._refuse_secrets(content, skill=skill)
+        file_path = self._target_file(project_id, skill, target)
         if target == "procedure":
             meta = _parse_frontmatter(content)
             if meta is None:
@@ -518,49 +471,44 @@ WRITE_SKILL_CONTRACT = (
     "only a context pointer. The bundle is created on first write. Every "
     "procedure write re-validates the frontmatter (name == the bundle "
     "directory, non-empty description and version); a malformed skill is never "
-    "persisted. Size caps and secret-shaped content refuse; credentials belong "
-    "in the auth store, never in a skill.\n\n"
-    "WRITE RULES - you may write ONLY the skills bound to you (your writable "
-    "set); any other skill refuses with `skill_read_only`, and the shared "
-    "`skills/` catalogue is never mutated by a live run. One whole file per "
-    "call, written atomically. `source_note_ids` is log-only provenance for "
-    "the notes your revision draws on. Malformed content fails with "
-    "`skill_invalid`, secret-shaped content with `secret_refused`, an "
-    "oversized body with `size_exceeded`, an unknown target with "
-    "`skill_target`, a degraded store with `store_unavailable`. Every outcome "
-    "arrives as an in-band coded envelope; nothing raises into the turn."
+    "persisted.\n\n"
+    "WRITE RULES - one whole file per call, written atomically. "
+    "`source_note_ids` is log-only provenance for the notes your revision "
+    "draws on. Malformed content fails with `skill_invalid`, an unknown "
+    "target with `skill_target`, a degraded store with `store_unavailable`. "
+    "Every outcome arrives as an in-band coded envelope; nothing raises into "
+    "the turn."
 )
 
 
-def build_write_skill_tool(
-    project_id: str,
-    writable_skills: tuple[str, ...] | list[str] | set[str] | frozenset[str],
-    store: SkillStore | None = None,
-):
+def build_write_skill_tool(project_id: str, store: SkillStore | None = None):
     """Build the ONE shared `write_skill` agent-callable tool, bound to
-    `project_id` and a writable skill set (#234).
+    `project_id` (#234).
 
     `store` is the skill seam (default: the production `SkillStore` -
     constructing it performs no I/O; tests inject an explicit-root store).
-    The project id and the writable set are bound once here; agents never pass
-    identity and cannot address a skill outside the bound set. The contract
-    rides the tool's description verbatim. Import performs no I/O
-    (CODING_STANDARD section 6): the default production store is constructed
-    lazily inside the factory call, never at import.
+    The project id is bound once here; agents never pass identity. Any skill
+    in the project's bundle is writable through this tool - the future
+    SkillEvolver writes any skill, so there is no per-skill writable set.
+    Whether an agent may write at all is decided at the seam: agents that
+    execute no evolving procedure are simply not given this tool
+    (`build_skill_tools`). The contract rides the tool's description
+    verbatim. Import performs no I/O (CODING_STANDARD section 6): the
+    default production store is constructed lazily inside the factory call,
+    never at import.
     """
     from langchain_core.tools import tool  # noqa: PLC0415
     from pydantic import BaseModel, Field  # noqa: PLC0415
 
     seam = store if store is not None else SkillStore()
-    bound: frozenset[str] = frozenset(writable_skills)
 
     class WriteSkillArgs(BaseModel):
-        """The `write_skill` args (bound project and writable set need no
-        identity parameters)."""
+        """The `write_skill` args (the bound project needs no identity
+        parameter)."""
 
         skill: str = Field(
-            description="The project skill bundle to write (one of your bound "
-            "writable skills). Any other skill refuses with `skill_read_only`."
+            description="The project skill bundle to write. The bundle is "
+            "created on first write."
         )
         target: str = Field(
             description="The typed write surface: `procedure` rewrites the "
@@ -570,7 +518,7 @@ def build_write_skill_tool(
             description="The whole new file text. A procedure body must carry "
             "valid skill frontmatter (name == the skill, non-empty "
             "description and version); bulky target material belongs in a "
-            "reference, secret-shaped content refuses."
+            "reference."
         )
         source_note_ids: list[str] = Field(
             default_factory=list,
@@ -588,22 +536,9 @@ def build_write_skill_tool(
         """Placeholder - the real contract is assigned below (the `@tool`
         decorator reads the docstring at decoration time, so the interpolated
         `WRITE_SKILL_CONTRACT` is set on the returned tool explicitly)."""
-        if skill not in bound:
-            return {
-                "ok": False,
-                "error": "skill_read_only",
-                "detail": (
-                    f"skill_read_only: {skill!r} is outside your writable set; "
-                    "a live run never mutates the shared skills/ catalogue"
-                ),
-            }
         try:
             seam.write(project_id, skill, target, content,
                        source_note_ids or [])
-        except SecretRefusedError as exc:
-            return {"ok": False, "error": "secret_refused", "detail": str(exc)}
-        except SkillSizeError as exc:
-            return {"ok": False, "error": "size_exceeded", "detail": str(exc)}
         except SkillTargetError as exc:
             return {"ok": False, "error": "skill_target", "detail": str(exc)}
         except SkillInvalidError as exc:
@@ -628,39 +563,34 @@ def build_write_skill_tool(
 
 def build_skill_tools(
     project_id: str | None = None,
-    writable_skills: tuple[str, ...] | list[str] | set[str] | frozenset[str] = (),
+    with_write_skill: bool = False,
     store: SkillStore | None = None,
 ) -> list:
     """The shared agent skill seam (#234): the one place agent owners collect
     the skill tools. Every agent gets the read-only `load_skill`; an agent
-    with a configured writable skill set additionally gets `write_skill`
-    bound to its project and set, so non-auth agents keep the read-only
-    surface and the write blast radius stays explicit. (The L1 skill-index
-    middleware rides alongside at the agent owner's binding site - the #222
-    seam - composed with this helper, never reimplemented per agent.)"""
+    whose procedure evolves a skill additionally gets `write_skill` bound to
+    its project, so agents that execute no evolving procedure keep the
+    read-only surface and the write blast radius stays explicit. (The L1
+    skill-index middleware rides alongside at the agent owner's binding site -
+    the #222 seam - composed with this helper, never reimplemented per
+    agent.)"""
     tools = [build_load_skill_tool(project_id, store=store)]
-    if writable_skills:
+    if with_write_skill:
         if not project_id:
             raise ValueError(
-                "skill seam: a writable skill set needs its project_id - "
-                "write_skill without a bound project is a wiring defect"
+                "skill seam: write_skill needs its project_id - a write tool "
+                "without a bound project is a wiring defect"
             )
-        tools.append(
-            build_write_skill_tool(project_id, writable_skills, store=store)
-        )
+        tools.append(build_write_skill_tool(project_id, store=store))
     return tools
 
 
 __all__ = [
     "META_USAGE_SKILL",
     "PROTOCOL_SEPARATOR",
-    "REFERENCE_MAX_BYTES",
     "SKILL_LOAD_CONTRACT",
-    "SKILL_MAX_BYTES",
     "WRITE_SKILL_CONTRACT",
-    "SecretRefusedError",
     "SkillInvalidError",
-    "SkillSizeError",
     "SkillStore",
     "SkillTargetError",
     "StoreUnavailableError",

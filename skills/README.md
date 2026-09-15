@@ -44,12 +44,13 @@ An executing agent records what it learned using a procedure - a blocking condit
 
 There is no canonical shared original; a project's copy is its original, created lazily on first write.
 `write_skill(skill, target, content, source_note_ids)` writes one whole file per call: `procedure` rewrites `SKILL.md`, `references/<name>` writes one bulky reference file (endpoint snapshots, header dumps, role matrices) so the procedure stays compact behind a pointer.
-The factory binds the project and the writable skill set - an agent writes only its own project's bundle, and the shared `skills/` catalogue is never mutated by a live run.
-Every procedure write re-validates the frontmatter (`name` == the bundle directory, non-empty `description` and `version`); size caps and secret-shaped content refuse (credentials belong in the auth store); every write lands atomically under a per-project lock.
-Outcomes arrive as coded in-band envelopes (`skill_read_only`, `skill_invalid`, `secret_refused`, `size_exceeded`, `skill_target`, `store_unavailable`); nothing raises into the turn.
+The factory binds the project - an agent writes through its own project's bundle, and any skill in it is writable (the future SkillEvolver writes any skill, so there is no per-skill writable set).
+Every procedure write re-validates the frontmatter (`name` == the bundle directory, non-empty `description` and `version`); a malformed skill is never persisted.
+Every write lands atomically under a per-project lock.
+Outcomes arrive as coded in-band envelopes (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 The write contract rides the tool's description verbatim from `WRITE_SKILL_CONTRACT` in the skills module - this README and that constant are the same wording, kept in sync by hand; update both together.
 Reads resolve the per-project bundle first, then the shared catalogue, through the same store seam - loader, writer, and protocol injection share one store and can never diverge.
-Agent owners collect the surface through `build_skill_tools()`: `load_skill` for every agent, plus project-bound `write_skill` only when a writable skill set is configured.
+Agent owners collect the surface through `build_skill_tools()`: `load_skill` for every agent, plus project-bound `write_skill` only for agents whose procedure evolves a skill.
 
 ## Phase-gating convention
 

@@ -172,8 +172,9 @@ _Avoid_: a second skill system.
 
 **Skill writer (`write_skill`)**:
 The agent-callable write tool (`write_skill(skill, target, content, source_note_ids)`): `procedure` rewrites the whole `SKILL.md`, `references/<name>` writes one bulky reference file.
-The factory binds the project and the writable skill set, so an agent can only write its own project's bundle; every write re-validates frontmatter, enforces size caps, refuses secret-shaped content, and lands atomically under a per-project lock.
-Failures arrive as coded in-band envelopes (`skill_read_only`, `skill_invalid`, `secret_refused`, `size_exceeded`, `skill_target`, `store_unavailable`); nothing raises into the turn.
+The factory binds the project, so an agent writes through its own project's bundle; any skill in it is writable (no per-skill writable set - the future `SkillEvolver` writes any skill).
+Every write re-validates frontmatter and lands atomically under a per-project lock.
+Failures arrive as coded in-band envelopes (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 _Avoid_: section edits, operation verbs (no revise/add/correct - whole files only).
 
 **Reading protocol (`meta-usage-skill`)**:

@@ -25,15 +25,15 @@ Reads resolve the per-project bundle first, then the shared repo catalogue (`Ski
 A project skill shadows a shared one without copying; a project with no bundle reads the shared skill unchanged.
 Reads are fail-open to the fallback, exactly like `skill_for`.
 
-## D234-4 - the write_skill contract
+## D234-4 - the write_skill contract (amended by D234-12)
 
 `write_skill(skill, target, content, source_note_ids=[])`.
 `target` is the typed surface only: `procedure` rewrites the whole `SKILL.md`, `references/<name>` writes one reference file (`<name>` one safe file stem).
 No section granularity, no operation verbs, no rationale field; `source_note_ids` is log-only provenance.
-The factory binds `project_id` and the writable skill set; agents never pass identity and cannot address a skill outside the bound set.
-The agent seam helper (`build_skill_tools`) returns `load_skill` for every agent plus project-bound `write_skill` only when a writable set is configured; a writable set without its project is a fail-fast wiring defect.
+The factory binds `project_id` only; any skill in the project's bundle is writable (D234-12).
+The agent seam helper (`build_skill_tools`) returns `load_skill` for every agent plus project-bound `write_skill` only for agents whose procedure evolves a skill; a write tool without its project is a fail-fast wiring defect.
 Writes create the bundle on first use, re-validate frontmatter (data-section keys plus `name` == the bundle directory), and land atomically (temp file in the same dir + `os.replace`) under a per-project lock.
-Every refusal is a denoted `ValueError` mapped to a coded in-band envelope (`skill_read_only`, `skill_invalid`, `secret_refused`, `size_exceeded`, `skill_target`, `store_unavailable`); nothing raises into the turn.
+Every refusal is a denoted `ValueError` mapped to a coded in-band envelope (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 
 ## D234-5 - protocol injection seam
 
@@ -42,10 +42,10 @@ Composition is pinned: loader-identical body, `PROTOCOL_SEPARATOR` (`\n\n---\n\n
 Unconditional on every load: no marker, no pause mechanism, no coupling to the prompt or compaction domain.
 Three fail-open caveats preserve pinned contracts: a missing protocol appends nothing, an unknown skill still degrades to `''` (there is no loaded procedure to assess), and loading `meta-usage-skill` itself returns its bare body (no self-append).
 
-## D234-6 - grey-point values
+## D234-6 - removed grey-point checks (see D234-12)
 
-Size caps: `SKILL_MAX_BYTES = 16_384` (procedure prose stays compact; bulk belongs in references), `REFERENCE_MAX_BYTES = 65_536`.
-Secret shapes are high-confidence only (PEM private-key blocks, `AKIA…` AWS ids, `sk-…` provider tokens, `ghp_…` GitHub tokens, JWTs) - a refusal must never fire on ordinary procedural prose that merely mentions tokens; credential-like material is redirected to the #220 auth store.
+No size caps and no secret-shaped refusal: both were purely heuristic checks (an arbitrary byte cap, pattern-guessed secrets) and are removed rather than tuned.
+Compactness is taught by the authoring rules (`procedure` prose plus `references/` pointers), not enforced by the writer; credential placement is the auth store's contract, not the skill writer's guess.
 
 ## D234-7 - loader cache key
 
@@ -54,7 +54,7 @@ All pinned #222 cache behaviours (identity on repeat reads, `clear_cache`, refre
 
 ## D234-8 - binding scope on this base
 
-Per-agent binding of auth-executing agents rides the #223/#224 consumer tickets through `build_skill_tools`; no agent is rewired here because the auth-phase agents those tickets build do not exist yet.
+Per-agent binding of auth-executing agents rides the #223/#224 consumer tickets through `build_skill_tools` (`with_write_skill=True` for agents whose procedure evolves a skill); no agent is rewired here because the auth-phase agents those tickets build do not exist yet.
 The L1 skill-index middleware is #222's in-flight seam and composes with this helper at the agent owner's binding site - it is not reimplemented per agent here.
 
 ## D234-9 - meta-skill authorship
@@ -76,3 +76,11 @@ The migration is precise follow-up scope: repoint the three default roots to `DA
 This change is branched off the committed `feat/222-skill-load-tool` tip (operator ruling).
 The #222 in-flight reorganisation (flat `skills/` layout, loader at `app.llm.skills`, `metadata.version` frontmatter) is uncommitted on that branch and is NOT assumed here: catalogue skills keep their nested loader paths and the `inputs` data-section contract, and the meta-skills are flat entries the current loader already resolves.
 Rebasing onto the #222 reorg, when it lands, touches paths and the loader home but not the store/tool/seam contracts built here.
+
+## D234-12 - operator correction: no writable set, no heuristic refusals
+
+The per-skill writable set and its `skill_read_only` refusal are removed: they are wrong and irrelevant while the future SkillEvolver must be able to write any skill.
+Whether an agent may write at all is decided at the seam (the agent is given `write_skill` or it is not), not per skill name.
+The secret-shaped (`secret_refused`) and size-cap (`size_exceeded`) refusals are removed with it: both were purely heuristic checks, and heuristic refusals misfire on legitimate procedural content.
+The writer keeps its structural guarantees - typed surface, frontmatter re-validation, atomicity under a per-project lock, and the three structural envelopes (`skill_invalid`, `skill_target`, `store_unavailable`).
+The meta-skills were rewritten to the corrected contract and reframed: `meta-write-skill` teaches extending/correcting an already-existing skill from run experience (missing target detail added, contradicted content pruned) with writing-great-skills concepts as the instrument; both files are ultra-compact, dense verbatim, with `meta-usage-skill` the most compact since it rides every load.

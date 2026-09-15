@@ -1,18 +1,16 @@
 ---
 name: meta-usage-skill
-description: Assess a loaded skill after execution - judge its contribution against its stated observables, and record reusable improvements through write_skill.
+description: Judge a loaded skill against its stated observables after execution and record reusable improvements through write_skill.
 version: '1'
 inputs: []
 ---
+# Judging a loaded skill
 
-# Assessing a loaded skill
+Judge the skill just executed against the observable each step states.
 
-Treat every loaded skill as a procedure under assessment during and after execution.
-Work the steps in order; each ends with the observable showing it worked.
-
-1. Judge contribution: decide whether the skill materially shaped the outcome.
-   Observable: a one-line verdict, contributed or peripheral.
-2. Name divergence: compare what happened against the observable each step states; separate a defect in the skill from an execution miss on a sound step.
-   Observable: each gap cites its step plus seen-versus-stated.
-3. Record reusable improvements directly through `write_skill`, following `meta-write-skill` for shape, frontmatter, revision block, and pointers.
-   Observable: the tool envelope reports `ok`, or a code naming its correction.
+1. Compare the run's seen sights against each stated observable.
+Observable: each gap cites its step plus seen-versus-stated.
+2. Label each gap a skill defect or an execution miss on a sound step; keep the defects for step 3.
+Observable: each kept defect names the step a later run would hit again.
+3. Record reusable defects through `write_skill`, shaped by `meta-write-skill`.
+Observable: the envelope reports `ok`, or the code naming its correction.

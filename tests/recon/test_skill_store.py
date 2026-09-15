@@ -12,9 +12,7 @@ import pytest
 
 from polymerhus.recon.domain import skills
 from polymerhus.recon.domain.skills import (
-    SecretRefusedError,
     SkillInvalidError,
-    SkillSizeError,
     SkillStore,
     SkillTargetError,
 )
@@ -121,31 +119,6 @@ def test_write_refuses_name_not_matching_the_bundle(tmp_path: Path) -> None:
 
     with pytest.raises(SkillInvalidError):
         store.write("proj-1", "auth_workflow", "procedure", _procedure("something_else"))
-
-
-def test_write_refuses_secret_shaped_content_without_persisting(tmp_path: Path) -> None:
-    store = SkillStore(root_dir=tmp_path)
-    secret_body = (
-        "# Procedure\npassword: AKIAIOSFODNN7EXAMPLE\n"
-        "-----BEGIN RSA PRIVATE KEY-----\nMIIE...\n-----END RSA PRIVATE KEY-----\n"
-    )
-
-    with pytest.raises(SecretRefusedError):
-        store.write("proj-1", "auth_workflow", "procedure", _procedure(body=secret_body))
-
-    assert not (tmp_path / "proj-1" / "skills" / "auth_workflow" / "SKILL.md").exists()
-
-
-def test_write_refuses_oversized_content_without_persisting(tmp_path: Path) -> None:
-    store = SkillStore(root_dir=tmp_path)
-    huge = "# Procedure\n" + ("x" * (skills.REFERENCE_MAX_BYTES + 1))
-
-    with pytest.raises(SkillSizeError):
-        store.write("proj-1", "auth_workflow", "references/big", huge)
-
-    assert not (
-        tmp_path / "proj-1" / "skills" / "auth_workflow" / "references" / "big.md"
-    ).exists()
 
 
 @pytest.mark.parametrize(
