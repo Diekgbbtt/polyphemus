@@ -30,6 +30,7 @@ section 6): the model and the checkpointer resolve on call, never at import.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 import os
@@ -279,6 +280,37 @@ def _blackloop_turn(thread_id: str, capture: _StreamCapture) -> SessionTurn:
     )
 
 
+def _flush_turn_observations(config: dict) -> None:
+    """H1 delivery barrier, turn-end primary site (sync): drain the background
+    exporter for exactly the callback list this turn borrowed (the same list it
+    put in `config` - no global lookup on the hot path). Fail-open: a drop is
+    logged, never raised into the turn."""
+    try:
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
+        result = flush_observation_delivery(config.get("callbacks"))
+        if result.dropped or result.cause not in ("ok", "unconfigured"):
+            logger.warning("turn observation delivery incomplete: %s", result.to_dict())
+    except Exception:  # noqa: BLE001 - delivery never breaks a turn
+        logger.debug("turn observation delivery failed", exc_info=True)
+
+
+async def _aflush_turn_observations(config: dict) -> None:
+    """H1 delivery barrier, turn-end primary site (async): same contract as
+    `_flush_turn_observations`, off the loop (the SDK drain blocks)."""
+    try:
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
+        result = await asyncio.to_thread(
+            flush_observation_delivery, config.get("callbacks"))
+        if result.dropped or result.cause not in ("ok", "unconfigured"):
+            logger.warning("turn observation delivery incomplete: %s", result.to_dict())
+    except Exception:  # noqa: BLE001 - delivery never breaks a turn
+        logger.debug("turn observation delivery failed", exc_info=True)
+
+
 def _to_turn(result: dict, response_format, thread_id: str,
              reasoning: str = "") -> SessionTurn:
     messages = result.get("messages", [])
@@ -455,11 +487,15 @@ def run_session_turn(
         if blackloop:
             stream.close()
     if blackloop:
-        return _blackloop_turn(thread_id, capture)
-    if result is not None:
+        turn = _blackloop_turn(thread_id, capture)
+    elif result is not None:
         _replay_reasoning(agent, config, result, role_id, thread_id, profile)
-        return _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
-    return _blackloop_turn(thread_id, capture)
+        turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+    else:
+        turn = _blackloop_turn(thread_id, capture)
+    if observe:
+        _flush_turn_observations(config)
+    return turn
 
 
 async def arun_session_turn(
@@ -522,11 +558,16 @@ async def arun_session_turn(
         if blackloop:
             await stream.aclose()
     if blackloop:
-        return _blackloop_turn(thread_id, capture)
-    if result is not None:
+        turn = _blackloop_turn(thread_id, capture)
+    elif result is not None:
         await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
-        return _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
-    return _blackloop_turn(thread_id, capture)
+        turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+    else:
+        turn = _blackloop_turn(thread_id, capture)
+
+    if observe:
+        await _aflush_turn_observations(config)
+    return turn
 
 
 def _should_cut(capture: _StreamCapture, budget: int) -> bool:

@@ -267,7 +267,7 @@ The supervisor's LangGraph state - `project_id`, `run_id`, `schedule`, `dispatch
 **Async-runnable checkpoint (increment 2a)**:
 The point at which the async supervisor runs REAL work and produces the same `AnalyserExport` as the legacy pod.
 A proposer body may return an `L1DeltaBatch` that rides the envelope; the curator gains a `write_fn` seam and, given a non-empty batch, writes it through the sole-writer (system-stamped provenance) and emits `StepReceipt(status="written")` with real `WriteCounts` (fail-open to `degraded`).
-The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgresSaver`, and attaches the #18 Langfuse callbacks + a correct session id, flushing at run end.
+The driver opens an `AsyncPostgresStore` (`setup()`) alongside the `AsyncPostgresSaver`, and attaches the #18 Langfuse callbacks + a correct session id, flushing at run end (observation-delivery guarantee: `docs/design/observability-delivery.md`).
 2a wraps the LEGACY two-pass as one transitional `assigner` node (output-identical); the per-responsibility, chunk-fed decomposition is increment 2b.
 
 ## Proposer decomposition (increment 2b)

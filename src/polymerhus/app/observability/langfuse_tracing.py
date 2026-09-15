@@ -33,6 +33,7 @@ module cleanly and simply gets an empty callback list.
 from __future__ import annotations
 
 import contextlib
+import dataclasses
 import logging
 import os
 import threading
@@ -656,3 +657,64 @@ def reset_cache() -> None:
         _INIT_DONE = False
         _CALLBACKS = []
         _DISABLED_REASON = None
+
+
+@dataclasses.dataclass
+class DeliveryResult:
+    """The outcome of one observation-delivery drain (H1): how many borrowed
+    handlers had their owned client flushed (`delivered`), how many had no
+    flushable client (`pending` - deferred, never attempted), how many raised
+    mid-flush (`dropped`). Closed `cause` vocabulary: "ok" (all delivered),
+    "unconfigured" (no handlers - tracing off, inert by design),
+    "no-client" (a handler without a flushable owned client),
+    "flush-raised" (a client's flush raised - degraded). Never raises."""
+
+    delivered: int
+    pending: int
+    dropped: int
+    cause: str | None = "ok"
+
+    def to_dict(self) -> dict:
+        return {
+            "delivered": self.delivered,
+            "pending": self.pending,
+            "dropped": self.dropped,
+            "cause": self.cause,
+        }
+
+
+def flush_observation_delivery(callbacks: list | None = None) -> DeliveryResult:
+    """Forced, blocking drain of the Langfuse background exporter (H1).
+
+    Finished observations queue client-side; a process that dies first loses
+    them. Each borrowed handler's OWN client is flushed (never a fresh client:
+    the process-wide singleton keyed by public key means a new construction
+    may not carry the configured exporter). Pass the exact list the caller
+    borrowed (`config["callbacks"]`); None sweeps the cached handler (the
+    teardown fallback where no turn context exists). Fail-open: never raises.
+    """
+    handlers = list(callbacks) if callbacks is not None else get_langfuse_callbacks()
+    if not handlers:
+        return DeliveryResult(delivered=0, pending=0, dropped=0,
+                              cause="unconfigured")
+    delivered = 0
+    pending = 0
+    dropped = 0
+    cause: str | None = "ok"
+    for handler in handlers:
+        client = getattr(handler, "_langfuse_client", None)
+        flush = getattr(client, "flush", None)
+        if not callable(flush):
+            pending += 1
+            cause = "no-client"
+            continue
+        try:
+            flush()
+            delivered += 1
+        except Exception:  # noqa: BLE001 - fail-open: delivery never breaks a run
+            dropped += 1
+            cause = "flush-raised"
+            logger.warning("observation delivery flush raised (fail-open, dropped)",
+                           exc_info=True)
+    return DeliveryResult(delivered=delivered, pending=pending,
+                          dropped=dropped, cause=cause)
