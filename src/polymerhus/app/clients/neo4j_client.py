@@ -1,9 +1,24 @@
+import logging
+
 from neo4j import GraphDatabase
 from polymerhus.app.config import config
 from db.neo4j.init_schema import init_schema
 from db.neo4j.l1_schema import init_l1_schema
 
+logger = logging.getLogger(__name__)
+
 _driver = GraphDatabase.driver(config.NEO4J_URI, auth=(config.NEO4J_USER, config.NEO4J_PASSWORD))
+
+
+def close() -> None:
+    """Close the persistent driver at process shutdown (#211, TD-7: a stop that
+    halts everything). Fail-open and idempotent: a driver already closed (or a
+    close that raises) is logged, never raised - teardown must not fail on it."""
+    try:
+        _driver.close()
+    except Exception as exc:  # noqa: BLE001 - fail-open, teardown never raises
+        logger.warning("neo4j driver close failed (fail-open): %s", exc)
+
 
 def check() -> bool:
     _driver.verify_connectivity()

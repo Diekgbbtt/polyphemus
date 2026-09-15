@@ -32,6 +32,7 @@ composition it keys on.
 """
 from __future__ import annotations
 
+import asyncio
 import contextlib
 import contextvars
 import dataclasses
@@ -84,6 +85,37 @@ def module_context(name: str) -> Iterator[None]:
         yield
     finally:
         _MODULE_CTX.reset(token)
+
+
+@dataclasses.dataclass
+class FlushResult:
+    """The outcome of one module flush (TD-2): the counts a teardown assert inspects
+    before a module is marked `stopped` / a run stamped terminal / the pool closed.
+
+    `committed` counts the threads THIS flush was responsible for (the whole index,
+    or - with `run_id` - only that run's matching threads). `archived` are durably in
+    the store; `dropped` failed and stay in the index (a later flush can retry).
+    `cause` names the failure when nothing could be archived, so a drop is never a
+    bare debug no-op. The closed `cause` vocabulary: "no-target" (no open pooled
+    saver), "hook-raised" (the flush seam raised - degraded, nothing archived),
+    "no-result" (a registered hook returned nothing - degraded), "never-flushed"
+    (a drain read before any flush ran - wire surface only, never stored). `None`
+    means the flush itself ran: a clean or salvaged flush carries no cause."""
+
+    committed: int
+    archived: int
+    dropped: int
+    dropped_thread_ids: list[str]
+    cause: str | None = None
+
+    def to_dict(self) -> dict:
+        return {
+            "committed": self.committed,
+            "archived": self.archived,
+            "dropped": self.dropped,
+            "dropped_thread_ids": self.dropped_thread_ids,
+            "cause": self.cause,
+        }
 
 
 @dataclasses.dataclass
@@ -151,30 +183,45 @@ class ModuleIndex:
         with self._lock:
             return sorted(self._committed)
 
-    def flush(self, target: Any, run_id: str | None = None) -> None:
+    def flush(self, target: Any, run_id: str | None = None) -> FlushResult:
         """Archive the committed threads into the flush target and clear them from the
         index. With `run_id`, only that run's threads are archived (run-terminal flush);
-        with None, the whole index (module drain / shutdown flush). Fail-open: a thread
-        whose archive fails warns and is kept in the index (a later flush can retry);
-        the hook never raises. With no target (pool not open) it is a no-op that keeps
-        the in-memory state - the only store in a no-DSN process."""
-        if target is None:
-            logger.debug(
-                "module index %s: no flush target (pooled PG saver closed); "
-                "keeping in-memory state", self.module)
-            return
+        with None, the whole index (module drain / shutdown flush).
+
+        Returns the typed `FlushResult` the teardown walk asserts on (TD-2/TD-4):
+        `committed` = the threads THIS flush was responsible for, `archived` = the
+        threads durably in the store, `dropped` = the threads that failed and stay in
+        the index (a later flush can retry). Fail-open: a thread whose archive fails
+        warns, is kept in the index, and the loop CONTINUES to the remaining threads -
+        the salvage-saves-as-much-as-possible rule (TD-5). With no target (pool not
+        open) the flush is LOUD, not a debug no-op: the whole set is reported dropped
+        with `cause="no-target"`, because a committed-but-unarchived thread is a
+        resumability gap regardless of why the target is absent."""
         with self._lock:
             committed = sorted(self._committed)
+        if run_id is not None:
+            eligible = [
+                tid for tid in committed
+                if _address_matches(tid, self.module, run_id, None, None)
+            ]
+        else:
+            eligible = committed
+        if target is None:
+            return FlushResult(
+                committed=len(eligible),
+                archived=0,
+                dropped=len(eligible),
+                dropped_thread_ids=eligible,
+                cause="no-target",
+            )
         archived: list[str] = []
-        for thread_id in committed:
-            if run_id is not None and not _address_matches(
-                thread_id, self.module, run_id, None, None
-            ):
-                continue
+        dropped: list[str] = []
+        for thread_id in eligible:
             try:
                 self._archive_thread(target, thread_id)
                 archived.append(thread_id)
             except Exception as exc:  # noqa: BLE001 - fail-open flush, never raises
+                dropped.append(thread_id)
                 logger.warning(
                     "module index %s: flush of thread %s failed (fail-open, "
                     "dropped): %s", self.module, thread_id, exc)
@@ -183,15 +230,33 @@ class ModuleIndex:
                 for thread_id in archived:
                     self._committed.discard(thread_id)
                     self._threads.pop(thread_id, None)
+        return FlushResult(
+            committed=len(eligible),
+            archived=len(archived),
+            dropped=len(dropped),
+            dropped_thread_ids=dropped,
+        )
 
     def _archive_thread(self, target: Any, thread_id: str) -> None:
         """Replay a thread's retained checkpoints into the flush target (the #94 pooled
-        PG saver), including its pending writes, so the archived thread resumes."""
+        PG saver), including its pending writes, so the archived thread resumes.
+
+        The archive builds the put config explicitly - `thread_id` + the tuple's own
+        `checkpoint_ns` when present, never the stale `checkpoint_id`: the resolved
+        `PostgresSaver` contract hard-reads `checkpoint_ns` from the config (the #211
+        confirmed mechanism - a thread_id-only config made EVERY thread's archive raise
+        `KeyError: 'checkpoint_ns'` and silently drop) and mints a fresh id on put,
+        so replaying the source checkpoint's old id is unauthorised. A tuple without
+        `checkpoint_ns` keeps the old fail-open behaviour (the target rejects it, the
+        thread is dropped and logged, the loop continues)."""
         pair = self.pair(thread_id)
-        config = {"configurable": {"thread_id": thread_id}}
-        for tup in pair.saver.list(config):
+        for tup in pair.saver.list({"configurable": {"thread_id": thread_id}}):
             versions = tup.checkpoint.get("channel_versions", {})
-            put_config = target.put(config, tup.checkpoint, tup.metadata, versions)
+            source_cfg = tup.config.get("configurable", {}) if isinstance(tup.config, dict) else {}
+            put_cfg: dict[str, Any] = {"thread_id": thread_id}
+            if "checkpoint_ns" in source_cfg:
+                put_cfg["checkpoint_ns"] = source_cfg["checkpoint_ns"]
+            put_config = target.put({"configurable": put_cfg}, tup.checkpoint, tup.metadata, versions)
             pending = getattr(tup, "pending_writes", None) or ()
             by_task: dict[str, list] = {}
             for task_id, channel, value in pending:
@@ -472,28 +537,55 @@ def agent_contexts(run_id: str, phase=None, tool=None) -> list[str]:
     return sorted(found)
 
 
-def flush_module_index(module: str, run_id: str | None = None) -> None:
+def flush_module_index(module: str, run_id: str | None = None) -> FlushResult:
     """Run-terminal (per `run_id`) or full-module flush hook: archive the module
-    index's committed threads into the still-open #94 pooled PG saver. Fail-open: any
-    failure warns and drops that thread; the hook never raises. With no open pooled
-    saver it is a no-op."""
+    index's committed threads into the still-open #94 pooled PG saver and return the
+    typed `FlushResult` the teardown assert inspects (TD-2). Fail-open: any failure
+    warns and drops that thread (reported in the result); the hook never raises. With
+    no open pooled saver it is a LOUD `cause="no-target"` result, never a silent no-op."""
     with _lock:
         target = _saver
     with _indexes_lock:
         index = _module_indexes.get(module)
     if index is None:
-        return
-    index.flush(target, run_id=run_id)
+        return FlushResult(committed=0, archived=0, dropped=0, dropped_thread_ids=[])
+    return index.flush(target, run_id=run_id)
 
 
-def flush_all_indexes() -> None:
+def flush_all_indexes() -> dict[str, FlushResult]:
     """Shutdown flush hook (G7c): archive every live module index's committed threads
-    into the still-open #94 pooled PG saver (fail-open). Call BEFORE
-    `close_session_checkpointer`."""
+    into the still-open #94 pooled PG saver (fail-open), returning the per-module
+    `FlushResult`s. Call BEFORE `close_session_checkpointer`."""
     with _indexes_lock:
         modules = list(_module_indexes)
-    for module in modules:
-        flush_module_index(module)
+    return {module: flush_module_index(module) for module in modules}
+
+
+async def flush_run_scoped(module: str, run_id: str | None, *, flush_fn=None) -> FlushResult:
+    """The single run-terminal flush chokepoint (TD-1/TD-6): EVERY run surface (the
+    recon pipeline terminal, the analysis supervisor terminal, the hunting run's
+    `finally`) funnels through here - never an inline flush block - so the three
+    sites cannot drift apart again. Runs the run-scoped `flush_module_index(module,
+    run_id=...)` off the loop, LOUDLY logs a drop with the thread ids (TD-4), and
+    never raises: a raising seam degrades to a typed `cause="hook-raised"` result
+    (TD-5). `flush_fn` is the injectable seam (defaults to `flush_module_index` so
+    tests pin the call without monkeypatching module globals)."""
+    fn = flush_fn if flush_fn is not None else flush_module_index
+    try:
+        result = await asyncio.to_thread(fn, module, run_id)
+    except Exception:  # noqa: BLE001 - fail-open: never raise into teardown
+        logger.warning(
+            "%s run-terminal flush raised for run %s (fail-open, degraded)",
+            module, run_id, exc_info=True)
+        return FlushResult(
+            committed=0, archived=0, dropped=0, dropped_thread_ids=[],
+            cause="hook-raised")
+    if result.dropped:
+        logger.warning(
+            "%s run-terminal flush dropped %d/%d committed thread(s) for run %s: %s",
+            module, result.dropped, result.committed, run_id,
+            result.dropped_thread_ids)
+    return result
 
 
 def close_session_checkpointer() -> None:

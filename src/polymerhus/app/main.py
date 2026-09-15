@@ -119,8 +119,45 @@ async def _shutdown():
     runtime = getattr(app.state, "runtime", None)
     if runtime is not None:
         runtime.shutdown()
+    # #211 TD-6: the guaranteed single bulk flush for the non-runtime teardown
+    # path - every live index, including any whose module never registered on the
+    # runtime - runs here, strictly BEFORE the pool closes below.
+    from polymerhus.app.llm.checkpoints import flush_all_indexes  # noqa: PLC0415
+    try:
+        bulk = flush_all_indexes()
+    except Exception:  # noqa: BLE001 - fail-open: never raise into teardown
+        logger.warning("shutdown bulk flush raised (fail-open)", exc_info=True)
+        bulk = {}
+    for module, result in bulk.items():
+        if result.dropped:
+            logger.warning(
+                "shutdown: module %s bulk flush dropped %d/%d committed "
+                "thread(s): %s", module, result.dropped, result.committed,
+                result.dropped_thread_ids)
+        else:
+            logger.info(
+                "shutdown: module %s bulk flush archived %d/%d",
+                module, result.archived, result.committed)
     from polymerhus.app.llm import close_session_checkpointer
     close_session_checkpointer()  # close the pooled stateful-session checkpointer
+    # #211 TD-7: a stop that halts everything - explicitly release the persistent
+    # outbound handles after the last flush. Surveyed handle list (no other
+    # persistent handle exists at app level): the Kali MCP client is built per
+    # call inside `async with client.session(...)` (`app/clients/kali_mcp.py`);
+    # the lightrag ingestion adapter takes an injected per-use client
+    # (`ingestion/lightrag_adapter.py`); the LLM/gateway clients are built per
+    # construction with per-call httpx timeouts (`app/llm/providers.py`) - so the
+    # neo4j driver is the sole persistent outbound handle and is closed here.
+    # Each close is fail-open and logged - teardown never raises on a close.
+    try:
+        from polymerhus.app.clients import neo4j_client  # noqa: PLC0415
+        neo4j_client.close()
+    except Exception:  # noqa: BLE001
+        logger.warning("neo4j driver close raised during shutdown", exc_info=True)
+    logger.info(
+        "shutdown complete: runtime stopped, pooled saver closed, "
+        "persistent outbound handles released"
+    )
 
 @app.get("/health")
 async def health():

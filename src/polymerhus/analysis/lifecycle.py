@@ -133,6 +133,11 @@ def _start_analysis_sync(project_id: str, run_id: str, pass_fn=None) -> str | No
             logger.warning("analysis supervisor raised for run %s", run_id, exc_info=True)
             return
         status = stats.status or "withheld"
+        # #211 TD-1: flush the analysis index for THIS run BEFORE stamping the
+        # terminal status - the strict flush -> assert -> teardown dependency at the
+        # run surface - via the SHARED run-scoped chokepoint (loud drop, fail-open).
+        from polymerhus.app.llm.checkpoints import flush_run_scoped  # noqa: PLC0415
+        await flush_run_scoped("analysis", run_id)
         try:
             await asyncio.to_thread(
                 pg.set_analysis_run_status, analysis_run_id, status, stats.model_dump())
