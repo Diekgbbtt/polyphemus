@@ -10,10 +10,12 @@ See `docs/design/jobs-tools-skills-taxonomy.md` for the full jobs/tools/skills m
 
 ```
 skills/<area>/<role-or-family>/<skill-name>/SKILL.md
+skills/<flat-skill-name>/SKILL.md
 ```
 
 Areas: `recon`, `analysis`, `hunting`, `systems-analysis` (drafts only).
 Recon roles: `triager` (always active), `crawler` (agentic crawl), `configurator` (agent mode only), `job-orchestrator` (LLM distribution path, deferred).
+Flat entries (no area): the two meta-skills, `meta-write-skill` (authoring rules) and `meta-usage-skill` (usage protocol).
 
 ## Loader contract (`src/polymerhus/recon/domain/skills.py::skill_for`)
 
@@ -25,7 +27,29 @@ Defaults: `triager -> writing-observations`, `crawler -> steel-crawl`.
 ## Runtime loading (`build_load_skill_tool()::load_skill`)
 
 The single loader made agent-reachable: `load_skill(name)` returns the skill body with identical semantics to `skill_for` (cached, frontmatter-stripped, fail-open to `''`), plus a `refresh` flag that clears the cache first (the development hot-reload path only).
+Every result additionally carries the `meta-usage-skill` reading protocol appended after a `---` separator (body, separator, protocol) - delivered by the read path itself, never by the prompt or compaction domain; a missing protocol appends nothing, an unknown skill still degrades to `''`, and loading `meta-usage-skill` itself returns its bare body.
 The usage contract rides the tool's description verbatim from `SKILL_LOAD_CONTRACT` in the loader module - this README and that constant are the same wording, kept in sync by hand; update both together.
+
+## Per-project skill bundles (`SkillStore` + `build_write_skill_tool()::write_skill`)
+
+An executing agent records what it learned using a procedure - a blocking condition, a new role, a privilege-escalation path - into its own project's bundle, so sibling and later agents start from accumulated ground truth:
+
+```
+<data_root>/<project_id>/skills/<skill>/
+├── SKILL.md
+├── references/
+├── scripts/
+└── assets/
+```
+
+There is no canonical shared original; a project's copy is its original, created lazily on first write.
+`write_skill(skill, target, content, source_note_ids)` writes one whole file per call: `procedure` rewrites `SKILL.md`, `references/<name>` writes one bulky reference file (endpoint snapshots, header dumps, role matrices) so the procedure stays compact behind a pointer.
+The factory binds the project and the writable skill set - an agent writes only its own project's bundle, and the shared `skills/` catalogue is never mutated by a live run.
+Every procedure write re-validates the frontmatter (`name` == the bundle directory, non-empty `description` and `version`); size caps and secret-shaped content refuse (credentials belong in the auth store); every write lands atomically under a per-project lock.
+Outcomes arrive as coded in-band envelopes (`skill_read_only`, `skill_invalid`, `secret_refused`, `size_exceeded`, `skill_target`, `store_unavailable`); nothing raises into the turn.
+The write contract rides the tool's description verbatim from `WRITE_SKILL_CONTRACT` in the skills module - this README and that constant are the same wording, kept in sync by hand; update both together.
+Reads resolve the per-project bundle first, then the shared catalogue, through the same store seam - loader, writer, and protocol injection share one store and can never diverge.
+Agent owners collect the surface through `build_skill_tools()`: `load_skill` for every agent, plus project-bound `write_skill` only when a writable skill set is configured.
 
 ## Phase-gating convention
 
@@ -48,6 +72,8 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 |---|---|---|---|
 | triager | `writing-observations` | **authored + RED/GREEN verified** | anchor allowlist, observations-not-vulnerabilities, no asset restatement |
 | crawler | `steel-crawl` | **authored + migrated (#222)** | agentic crawl budget/frontier discipline |
+| every loaded skill | `meta-usage-skill` | **authored (#234)** | assess the procedure against its observables; record improvements through `write_skill` |
+| skill author (executor + evolver) | `meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter + revision block, references pointers |
 | job-orchestrator | `asset-distribution` | roadmap (deferred to LLM path) | asset cleaning/dedup/distribution over MAX_PODS |
 | configurator | agent-mode playbooks | roadmap (deferred) | non-crawl agentic configuration |
 

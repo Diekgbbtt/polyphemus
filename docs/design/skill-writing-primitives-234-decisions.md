@@ -1,0 +1,78 @@
+# Skill-writing primitives - implementation decisions (#234)
+
+The grilled decisions behind the #234 build, recorded per the workflow (Step 2a/3).
+Base description: the body of issue #234; prior draft `progressive-skill-lifecycle-system.md` (the decision ledger the spec refines).
+Companion specs: `skills-typed-surface-spec.md` and `skill-runtime-loading-222-decisions.md` (the #222 loader/frontmatter rules, which govern).
+Naming note: the draft's `update_project_skill` (§7) is the spec's `write_skill`; one tool, renamed, contract unchanged.
+
+## D234-1 - data-root ownership
+
+One shared app-layer module owns the data root and every scaffold directory: `src/polymerhus/app/data_root.py`.
+`ensure_data_root()` runs at system bootstrap (`app.main` startup); `ensure_project(project_id)` runs at project creation (`project_management.repository.create_project`, scaffold first so a project row always has its directories).
+Both create-if-absent and idempotent; neither removes nor overwrites existing state.
+`project_id` is validated as one safe path component (separators, control chars, dot-traversal refused).
+The scaffold is `skills/`, `hunting/orchestration/`, `hunting/hunter/`, `hunting/test-executor-pod/` - adding a module dir is a change here, never in a module store.
+
+## D234-2 - store code home
+
+The skill store lives in the skills-access module alongside the loader and both tools (`src/polymerhus/recon/domain/skills.py::SkillStore`).
+Loader, store, writer, and protocol injection are one domain and cannot drift.
+The store is explicit-root (the #220 auth-store / hunting notes-store precedent): production defaults to the app-owned `DATA_ROOT`, tests inject temp roots.
+
+## D234-3 - loader resolution order
+
+Reads resolve the per-project bundle first, then the shared repo catalogue (`SkillStore.read`, project-aware `build_load_skill_tool`).
+A project skill shadows a shared one without copying; a project with no bundle reads the shared skill unchanged.
+Reads are fail-open to the fallback, exactly like `skill_for`.
+
+## D234-4 - the write_skill contract
+
+`write_skill(skill, target, content, source_note_ids=[])`.
+`target` is the typed surface only: `procedure` rewrites the whole `SKILL.md`, `references/<name>` writes one reference file (`<name>` one safe file stem).
+No section granularity, no operation verbs, no rationale field; `source_note_ids` is log-only provenance.
+The factory binds `project_id` and the writable skill set; agents never pass identity and cannot address a skill outside the bound set.
+The agent seam helper (`build_skill_tools`) returns `load_skill` for every agent plus project-bound `write_skill` only when a writable set is configured; a writable set without its project is a fail-fast wiring defect.
+Writes create the bundle on first use, re-validate frontmatter (data-section keys plus `name` == the bundle directory), and land atomically (temp file in the same dir + `os.replace`) under a per-project lock.
+Every refusal is a denoted `ValueError` mapped to a coded in-band envelope (`skill_read_only`, `skill_invalid`, `secret_refused`, `size_exceeded`, `skill_target`, `store_unavailable`); nothing raises into the turn.
+
+## D234-5 - protocol injection seam
+
+The `meta-usage-skill` body is appended by the skill read path itself, as a tool-internal output extension inside `build_load_skill_tool` (the draft's recommended option).
+Composition is pinned: loader-identical body, `PROTOCOL_SEPARATOR` (`\n\n---\n\n`), protocol body.
+Unconditional on every load: no marker, no pause mechanism, no coupling to the prompt or compaction domain.
+Three fail-open caveats preserve pinned contracts: a missing protocol appends nothing, an unknown skill still degrades to `''` (there is no loaded procedure to assess), and loading `meta-usage-skill` itself returns its bare body (no self-append).
+
+## D234-6 - grey-point values
+
+Size caps: `SKILL_MAX_BYTES = 16_384` (procedure prose stays compact; bulk belongs in references), `REFERENCE_MAX_BYTES = 65_536`.
+Secret shapes are high-confidence only (PEM private-key blocks, `AKIA…` AWS ids, `sk-…` provider tokens, `ghp_…` GitHub tokens, JWTs) - a refusal must never fire on ordinary procedural prose that merely mentions tokens; credential-like material is redirected to the #220 auth store.
+
+## D234-7 - loader cache key
+
+The loader cache is keyed by `(name, fallback)`: the same missing skill read with two different fallbacks is two distinct requests, so an earlier cached miss can never override the fallback a later caller asked for.
+All pinned #222 cache behaviours (identity on repeat reads, `clear_cache`, refresh) hold unchanged.
+
+## D234-8 - binding scope on this base
+
+Per-agent binding of auth-executing agents rides the #223/#224 consumer tickets through `build_skill_tools`; no agent is rewired here because the auth-phase agents those tickets build do not exist yet.
+The L1 skill-index middleware is #222's in-flight seam and composes with this helper at the agent owner's binding site - it is not reimplemented per agent here.
+
+## D234-9 - meta-skill authorship
+
+Both meta-skills were authored by a specialised skill-writing subagent against the `writing-great-skills` bar (compact, no sediment, no no-ops, positive instruction, disclosure ladder).
+`meta-write-skill` is content-stable: it describes only the stable contract (targets, frontmatter, revision block, observables, pointers) with no transitory language, so the future `SkillEvolver` reuses it unchanged.
+`meta-usage-skill` is deliberately transitory and compact (it rides every load): assess against stated observables, separate skill defect from execution miss, write directly through `write_skill`; only its body changes at the #232 migration.
+Authoring rules live only in `meta-write-skill`, the assessment protocol only in `meta-usage-skill` (one source of truth per meaning, pointer between them).
+
+## D234-10 - hunting migration DEFERRED (conflict, needs operator ruling)
+
+The spec's data-root layout moves the hunting buckets from the hunting-owned root (`attack/hunting/data/<pid>/{orchestration,hunter,test-executor-pod,projects}`) to the app-owned `<codebase_root>/data/<pid>/hunting/{orchestration,hunter,test-executor-pod}` (with the notes bucket's `configs.yaml`/`notes.yaml` folding into `orchestration/`), the stores dropping scaffold `mkdir`, and existing data migrating seamlessly.
+That move is NOT built here: it overturns pinned, ratified contracts - the fixed `HUNT_STORE_ROOT` / `HUNTER_MEMORY_ROOT` / `HUNTING_DATA` roots asserted by name in `tests/attack/test_hunt_store.py`, `tests/attack/test_hunting_runtime.py`, and `tests/integration/test_orchestrator_candidates_rewrite_contracts.py` (C15: default root fixed, no env-var indirection) - and it orphans live accumulated memory unless paired with a verified data migration this session cannot e2e against a live stack.
+The `ensure_project` scaffold already reserves the target buckets (fail-safe, idempotent, harmless while unused).
+The migration is precise follow-up scope: repoint the three default roots to `DATA_ROOT`, insert the `hunting/` level in `_project_dir`, fold the notes bucket into `orchestration/`, add an idempotent old-to-new move run at bootstrap, update the pinned-root assertions - then rule on the ratchet conflict here.
+
+## D234-11 - base-branch note
+
+This change is branched off the committed `feat/222-skill-load-tool` tip (operator ruling).
+The #222 in-flight reorganisation (flat `skills/` layout, loader at `app.llm.skills`, `metadata.version` frontmatter) is uncommitted on that branch and is NOT assumed here: catalogue skills keep their nested loader paths and the `inputs` data-section contract, and the meta-skills are flat entries the current loader already resolves.
+Rebasing onto the #222 reorg, when it lands, touches paths and the loader home but not the store/tool/seam contracts built here.

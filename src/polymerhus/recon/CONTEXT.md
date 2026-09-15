@@ -161,6 +161,30 @@ The rule that bounds runtime loading: load at phase entry, once per thread, neve
 Bake-time mounts follow the same rule (the hunting gate skill mounts once per thread as the run's one system message; the crawl loop loads once at loop start).
 _Avoid_: enforcement (there is no mechanical gate; the convention is demonstrated by the reference flows, not compiled in).
 
+**Per-project skill bundle**:
+The project-owned skill directory (`<data_root>/<project_id>/skills/<skill>/`: `SKILL.md`, `references/`, `scripts/`, `assets/`) where an executing agent records what it learned using a procedure - a blocking condition, a new role, a privilege-escalation path - so sibling and later agents start from accumulated ground truth.
+There is no canonical shared original; a project's copy is its original, created lazily on first write.
+_Avoid_: editing the shared catalogue (a live run never mutates `skills/`).
+
+**Skill store**:
+The one authority that reads and writes bundle artifacts (`src/polymerhus/recon/domain/skills.py::SkillStore`, #234), sharing the loader's seam: reads resolve the per-project bundle first, then the shared catalogue, so a project skill shadows a shared one without copying.
+_Avoid_: a second skill system.
+
+**Skill writer (`write_skill`)**:
+The agent-callable write tool (`write_skill(skill, target, content, source_note_ids)`): `procedure` rewrites the whole `SKILL.md`, `references/<name>` writes one bulky reference file.
+The factory binds the project and the writable skill set, so an agent can only write its own project's bundle; every write re-validates frontmatter, enforces size caps, refuses secret-shaped content, and lands atomically under a per-project lock.
+Failures arrive as coded in-band envelopes (`skill_read_only`, `skill_invalid`, `secret_refused`, `size_exceeded`, `skill_target`, `store_unavailable`); nothing raises into the turn.
+_Avoid_: section edits, operation verbs (no revise/add/correct - whole files only).
+
+**Reading protocol (`meta-usage-skill`)**:
+The compact usage-protocol skill appended to every `load_skill` result by the read path itself: assess the procedure against its stated observables during and after execution, separate a skill defect from an execution miss, and record reusable improvements through `write_skill`.
+_Avoid_: prompt injection (the protocol rides the tool result, never the system prompt or compaction state).
+
+**Authoring rules (`meta-write-skill`)**:
+The content-stable authoring instructions for writing a well-structured procedure rather than a note-dump: ordered steps closed by expected observables, frontmatter plus a revision block (`base_version`, `revision`, provenance, `source_note_ids`), bulky material behind `references/` pointers.
+The future `SkillEvolver` reuses it unchanged.
+_Avoid_: the note-dump (prose without steps, observables, or pointers).
+
 ## Invariants owned here
 
 **Fail-open**:
