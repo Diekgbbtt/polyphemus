@@ -23,7 +23,13 @@ speculatively mid-reasoning - see `skills/README.md` and
 from __future__ import annotations
 
 import logging
+import os
+import re
+import threading
+import uuid
 from pathlib import Path
+
+from polymerhus.app.data_root import DATA_ROOT
 
 logger = logging.getLogger(__name__)
 
@@ -33,7 +39,15 @@ logger = logging.getLogger(__name__)
 # by the Dockerfile in prod), OUTSIDE the src/ package tree.
 _SKILLS_ROOT = Path(__file__).resolve().parents[4] / "skills"
 
-_CACHE: dict[str, str] = {}
+_CACHE: dict[tuple[str, str], str] = {}
+
+
+def _strip_frontmatter(text: str) -> str:
+    """Drop a leading YAML frontmatter block, leaving the body as-is when there
+    is none. The single stripping rule shared by the reader and the store."""
+    if text.startswith("---"):
+        return text.split("---", 2)[-1].lstrip()
+    return text
 
 
 def skill_for(name: str, *, fallback: str = "") -> str:
@@ -41,18 +55,20 @@ def skill_for(name: str, *, fallback: str = "") -> str:
     stripped and cached. `name` is a path under `skills/` using '/' separators
     (e.g. 'recon/triager/writing-observations', 'analysis/analyser'). On a missing
     or unreadable file, degrade to `fallback` (default '') and cache that, so a
-    missing mount degrades gracefully instead of crashing the caller."""
-    if name in _CACHE:
-        return _CACHE[name]
+    missing mount degrades gracefully instead of crashing the caller. The cache
+    is keyed by `(name, fallback)`: the same missing skill read with two
+    different fallbacks is two distinct requests, so an earlier cached miss can
+    never override the fallback a later caller asked for."""
+    key = (name, fallback)
+    if key in _CACHE:
+        return _CACHE[key]
     path = _SKILLS_ROOT / name / "SKILL.md"
     try:
-        text = path.read_text(encoding="utf-8")
-        if text.startswith("---"):
-            text = text.split("---", 2)[-1].lstrip()  # drop YAML frontmatter
+        text = _strip_frontmatter(path.read_text(encoding="utf-8"))
     except OSError:
         logger.warning("skill_for: skill not found at %s; using fallback", path)
         text = fallback
-    _CACHE[name] = text
+    _CACHE[key] = text
     return text
 
 
@@ -174,8 +190,302 @@ def validate_skill(name: str) -> list[str]:
     return errors
 
 
+# --- The per-project skill store (#234) ---------------------------------------
+#
+# The per-project skill bundle lives under the app-owned data root beside the
+# loader's shared catalogue, in the canonical skill layout:
+#
+#     <data_root>/<project_id>/skills/<skill_name>/
+#     ├── SKILL.md
+#     ├── references/
+#     ├── scripts/
+#     └── assets/
+#
+# The store is the one authority that reads and writes bundle artifacts: the
+# `load_skill` reader resolves the per-project bundle first and the shared
+# repo catalogue second, and the `write_skill` writer persists through this
+# seam, so bake-time mounts, runtime loads, and executor writes can never
+# diverge. Reader reads are fail-open (a missing or unreadable file degrades
+# to the fallback); writer writes are strict, atomic (temp file in the same
+# dir + `os.replace`) and serialised per project (the `hunt_store` / #220
+# auth-store precedent: one `threading.Lock` per `project_id` covers every
+# check-then-write critical section).
+#
+# Writes create the bundle on first use, re-validate the skill frontmatter,
+# enforce size caps, and refuse secret-shaped content (redirected to the #220
+# auth store) - every refusal a denoted `ValueError` the `write_skill` tool
+# maps to a coded in-band envelope, never a raise into the turn.
+
+# Size caps (grey-point values recorded in the #234 decision ledger):
+# SKILL.md must stay compact procedure prose (bulky target material belongs in
+# references/); a reference file may hold a fuller target snapshot.
+SKILL_MAX_BYTES = 16_384
+REFERENCE_MAX_BYTES = 65_536
+
+# High-confidence secret shapes only - a refusal must never fire on ordinary
+# procedural prose that merely mentions tokens. PEM private-key blocks, AWS
+# access-key ids, provider token prefixes, and JWTs.
+_SECRET_PATTERNS = (
+    re.compile(r"-----BEGIN (?:RSA |EC |DSA |OPENSSH |PGP )?PRIVATE KEY-----"),
+    re.compile(r"\bAKIA[0-9A-Z]{16}\b"),
+    re.compile(r"\bsk-[A-Za-z0-9]{20,}\b"),
+    re.compile(r"\bghp_[A-Za-z0-9]{36}\b"),
+    re.compile(r"\beyJ[A-Za-z0-9_-]+\.eyJ[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+"),
+)
+
+# A reference name is one safe file stem - no separators, no traversal.
+_REFERENCE_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9._-]*")
+
+
+class SkillTargetError(ValueError):
+    """The denoted unsupported-target signal: `target` is neither `procedure`
+    nor `references/<name>` for a safe single-component `<name>`."""
+
+
+class SkillInvalidError(ValueError):
+    """The denoted malformed-content signal: a `procedure` write whose body
+    carries no valid skill frontmatter, or whose frontmatter `name` is not the
+    bundle directory it would land in."""
+
+
+class SecretRefusedError(ValueError):
+    """The denoted secret-boundary refusal: the written content is secret-shaped
+    and belongs in the #220 auth store, never in a skill."""
+
+
+class SkillSizeError(ValueError):
+    """The denoted size-cap refusal: the written content exceeds the target's
+    byte cap."""
+
+
+class StoreUnavailableError(ValueError):
+    """The denoted degraded-store signal: a write that cannot persist its
+    bundle file fails loudly - never a silent corruption."""
+
+
+# Per-project write serialisation (the `hunt_store` I2 pattern it repeats): a
+# per-project lock covers the whole validate-then-write critical section, so
+# concurrent writers converge instead of forking bundle files.
+_PROJECT_LOCKS: dict[str, threading.Lock] = {}
+_PROJECT_LOCKS_GUARD = threading.Lock()
+
+
+def _lock_for(project_id: str) -> threading.Lock:
+    """The per-project lock, created once (the registry itself is guarded
+    against concurrent creation)."""
+    with _PROJECT_LOCKS_GUARD:
+        lock = _PROJECT_LOCKS.get(project_id)
+        if lock is None:
+            lock = threading.Lock()
+            _PROJECT_LOCKS[project_id] = lock
+        return lock
+
+
+def _parse_frontmatter(text: str) -> dict | None:
+    """The parsed frontmatter mapping of a skill body, or `None` when the body
+    carries none or it does not parse to a mapping - never a raise. `text` is
+    the raw file content (frontmatter included)."""
+    import yaml  # noqa: PLC0415 - already a production dependency (hunt_store, ...)
+
+    if not text.startswith("---"):
+        return None
+    try:
+        meta = yaml.safe_load(text.split("---", 2)[1])
+    except Exception:  # noqa: BLE001 - unparseable frontmatter is not valid
+        return None
+    return meta if isinstance(meta, dict) else None
+
+
+def _frontmatter_violations(meta: dict, *, skill: str) -> list[str]:
+    """The data-section violations of one bundle frontmatter mapping, plus the
+    bundle-identity rule (`name` == the bundle directory). `[]` when valid."""
+    errors = []
+    for key in _REQUIRED_DATA_KEYS:
+        if key not in meta:
+            errors.append(f"{skill}: frontmatter missing required key {key!r}")
+    if "name" in meta and meta["name"] != skill:
+        errors.append(
+            f"{skill}: frontmatter 'name' {meta['name']!r} is not the bundle directory"
+        )
+    return errors
+
+
+class SkillStore:
+    """The per-project skill-bundle store (#234): the one seam the loader and
+    the writer share. Rooted under the app-owned data root (default `DATA_ROOT`);
+    the explicit-root constructor is kept for the tests' temp stores (the
+    `hunt_store` / #220 auth-store precedent). Import performs no I/O."""
+
+    def __init__(self, root_dir: str | Path | None = None):
+        """Rooted under `root_dir` (default: the app-owned `DATA_ROOT`)."""
+        self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
+
+    # -- paths -------------------------------------------------------------
+
+    @staticmethod
+    def _validate_component(value: str, what: str) -> str:
+        """Reject a `project_id`/skill name that is not one safe path
+        component (the notes/auth-store discipline: separators, control chars,
+        and dot-traversal forms are refused)."""
+        if not isinstance(value, str) or not value:
+            raise ValueError(f"skill store: {what} must be a non-empty string")
+        if value in (".", ".."):
+            raise ValueError(
+                f"skill store: {what} {value!r} is not a valid path component"
+            )
+        if any(ch in value for ch in "/\\\x00") or any(
+            ord(ch) < 32 for ch in value
+        ):
+            raise ValueError(
+                f"skill store: {what} {value!r} contains a path separator "
+                "or control character"
+            )
+        return value
+
+    def _project_skills_root(self, project_id: str) -> Path:
+        self._validate_component(project_id, "project_id")
+        return self._root / project_id / "skills"
+
+    def _bundle_dir(self, project_id: str, skill: str) -> Path:
+        self._validate_component(skill, "skill")
+        return self._project_skills_root(project_id) / skill
+
+    def _target_file(
+        self, project_id: str, skill: str, target: str
+    ) -> tuple[Path, int]:
+        """The bundle file and byte cap for one write `target`: `procedure`
+        maps to the bundle `SKILL.md`; `references/<name>` maps to
+        `references/<name>.md`. Anything else raises `SkillTargetError`."""
+        if target == "procedure":
+            return self._bundle_dir(project_id, skill) / "SKILL.md", SKILL_MAX_BYTES
+        if target.startswith("references/"):
+            name = target[len("references/"):]
+            if not name or not _REFERENCE_NAME_RE.fullmatch(name):
+                raise SkillTargetError(
+                    f"skill_target: {target!r} is not a safe reference name"
+                )
+            return (
+                self._bundle_dir(project_id, skill) / "references" / f"{name}.md",
+                REFERENCE_MAX_BYTES,
+            )
+        raise SkillTargetError(
+            f"skill_target: {target!r} must be 'procedure' or 'references/<name>'"
+        )
+
+    # -- reads: project-first resolution, always fail-open --------------------
+
+    def read(self, name: str, project_id: str | None = None, fallback: str = "") -> str:
+        """The skill body for `name`, frontmatter stripped: the per-project
+        bundle first, then the shared repo catalogue. A missing or unreadable
+        file degrades to `fallback` (default ''), never a raise."""
+        if project_id is not None:
+            try:
+                path = self._bundle_dir(project_id, name) / "SKILL.md"
+                return _strip_frontmatter(path.read_text(encoding="utf-8"))
+            except (OSError, ValueError):
+                logger.warning(
+                    "skill store: unreadable project bundle for %s/%s; "
+                    "falling back to the shared catalogue",
+                    project_id,
+                    name,
+                )
+        return skill_for(name, fallback=fallback)
+
+    # -- writes: validate, then one atomic whole-file rewrite ------------------
+
+    @staticmethod
+    def _dump_text_atomic(path: Path, text: str) -> None:
+        """Write `text` atomically: dump to a temp file in the SAME directory,
+        then `os.replace` onto the target, so every file on disk is whole and
+        a crash mid-dump never leaves a partial target (the #220 auth-store
+        `_dump_yaml_atomic` discipline for prose)."""
+        path.parent.mkdir(parents=True, exist_ok=True)
+        tmp = path.with_name(f".{path.name}.{uuid.uuid4().hex[:8]}.tmp")
+        try:
+            tmp.write_text(text, encoding="utf-8")
+            os.replace(tmp, path)
+        except OSError as exc:
+            raise StoreUnavailableError(
+                f"store_unavailable: cannot persist {path} ({exc})"
+            ) from exc
+        finally:
+            try:
+                tmp.unlink()
+            except FileNotFoundError:
+                pass
+
+    @staticmethod
+    def _refuse_secrets(content: str, *, skill: str) -> None:
+        """Refuse secret-shaped content at the trust boundary: credential-like
+        material belongs in the #220 auth store, never in a skill."""
+        for pattern in _SECRET_PATTERNS:
+            if pattern.search(content):
+                raise SecretRefusedError(
+                    f"secret_refused: {skill!r} content is secret-shaped; record "
+                    "credentials through the auth store instead"
+                )
+
+    def _ensure_bundle(self, project_id: str, skill: str) -> Path:
+        """Create the bundle on first use: the skill directory plus its
+        canonical `references/`, `scripts/`, `assets/` subdirectories (the
+        app-owned scaffold already owns the parent `skills/` dir)."""
+        bundle = self._bundle_dir(project_id, skill)
+        for sub in ("references", "scripts", "assets"):
+            (bundle / sub).mkdir(parents=True, exist_ok=True)
+        return bundle
+
+    def write(
+        self,
+        project_id: str,
+        skill: str,
+        target: str,
+        content: str,
+        source_note_ids: tuple[str, ...] | list[str] = (),
+    ) -> None:
+        """Persist one whole bundle file, creating the bundle on first use.
+
+        `target` is the typed surface (`procedure` for `SKILL.md`,
+        `references/<name>` for a reference file). `content` must be `str`;
+        `source_note_ids` is log-only provenance, never consulted. Refusals
+        (`SkillTargetError`, `SkillInvalidError`, `SecretRefusedError`,
+        `SkillSizeError`, `StoreUnavailableError`) carry the coded signal the
+        tool maps to an envelope. Every file write is atomic under the
+        per-project lock; a refused write persists nothing.
+        """
+        if not isinstance(content, str):
+            raise SkillInvalidError(
+                f"skill_invalid: {skill!r} content must be text"
+            )
+        file_path, cap = self._target_file(project_id, skill, target)
+        if len(content.encode("utf-8")) > cap:
+            raise SkillSizeError(
+                f"size_exceeded: {target!r} content exceeds the {cap}-byte cap"
+            )
+        self._refuse_secrets(content, skill=skill)
+        if target == "procedure":
+            meta = _parse_frontmatter(content)
+            if meta is None:
+                raise SkillInvalidError(
+                    f"skill_invalid: {skill!r} carries no valid skill frontmatter"
+                )
+            violations = _frontmatter_violations(meta, skill=skill)
+            if violations:
+                raise SkillInvalidError("skill_invalid: " + "; ".join(violations))
+        with _lock_for(f"{self._root}::{project_id}"):
+            self._ensure_bundle(project_id, skill)
+            self._dump_text_atomic(file_path, content)
+
+
 __all__ = [
+    "REFERENCE_MAX_BYTES",
     "SKILL_LOAD_CONTRACT",
+    "SKILL_MAX_BYTES",
+    "SecretRefusedError",
+    "SkillInvalidError",
+    "SkillSizeError",
+    "SkillStore",
+    "SkillTargetError",
+    "StoreUnavailableError",
     "build_load_skill_tool",
     "clear_cache",
     "list_skills",
