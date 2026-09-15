@@ -476,10 +476,135 @@ class SkillStore:
             self._dump_text_atomic(file_path, content)
 
 
+# The single usage contract, rendered verbatim into the tool description at
+# every binding so no agent receives a divergent write contract (the
+# `GRAPH_VIEW_CONTRACT` / `AUTH_STORE_CONTRACT` precedent). Mirrors
+# `skills/README.md` - update both together.
+WRITE_SKILL_CONTRACT = (
+    "Write the run's per-project skill bundle: the one project-owned skill "
+    "directory holding the procedure your project accumulates, so sibling and "
+    "later agents start from known ground instead of rediscovering it.\n\n"
+    "DOMAIN MODEL - a skill bundle is the project's "
+    "`data/<project_id>/skills/<skill>/` directory (SKILL.md, references/, "
+    "scripts/, assets/). The `procedure` target rewrites the whole SKILL.md; "
+    "`references/<name>` writes one bulky target file (endpoint snapshots, "
+    "header dumps, role matrices) so the procedure stays compact and carries "
+    "only a context pointer. The bundle is created on first write. Every "
+    "procedure write re-validates the frontmatter (name == the bundle "
+    "directory, non-empty description and version); a malformed skill is never "
+    "persisted. Size caps and secret-shaped content refuse; credentials belong "
+    "in the auth store, never in a skill.\n\n"
+    "WRITE RULES - you may write ONLY the skills bound to you (your writable "
+    "set); any other skill refuses with `skill_read_only`, and the shared "
+    "`skills/` catalogue is never mutated by a live run. One whole file per "
+    "call, written atomically. `source_note_ids` is log-only provenance for "
+    "the notes your revision draws on. Malformed content fails with "
+    "`skill_invalid`, secret-shaped content with `secret_refused`, an "
+    "oversized body with `size_exceeded`, an unknown target with "
+    "`skill_target`, a degraded store with `store_unavailable`. Every outcome "
+    "arrives as an in-band coded envelope; nothing raises into the turn."
+)
+
+
+def build_write_skill_tool(
+    project_id: str,
+    writable_skills: tuple[str, ...] | list[str] | set[str] | frozenset[str],
+    store: SkillStore | None = None,
+):
+    """Build the ONE shared `write_skill` agent-callable tool, bound to
+    `project_id` and a writable skill set (#234).
+
+    `store` is the skill seam (default: the production `SkillStore` -
+    constructing it performs no I/O; tests inject an explicit-root store).
+    The project id and the writable set are bound once here; agents never pass
+    identity and cannot address a skill outside the bound set. The contract
+    rides the tool's description verbatim. Import performs no I/O
+    (CODING_STANDARD section 6): the default production store is constructed
+    lazily inside the factory call, never at import.
+    """
+    from langchain_core.tools import tool  # noqa: PLC0415
+    from pydantic import BaseModel, Field  # noqa: PLC0415
+
+    seam = store if store is not None else SkillStore()
+    bound: frozenset[str] = frozenset(writable_skills)
+
+    class WriteSkillArgs(BaseModel):
+        """The `write_skill` args (bound project and writable set need no
+        identity parameters)."""
+
+        skill: str = Field(
+            description="The project skill bundle to write (one of your bound "
+            "writable skills). Any other skill refuses with `skill_read_only`."
+        )
+        target: str = Field(
+            description="The typed write surface: `procedure` rewrites the "
+            "whole SKILL.md; `references/<name>` writes one reference file."
+        )
+        content: str = Field(
+            description="The whole new file text. A procedure body must carry "
+            "valid skill frontmatter (name == the skill, non-empty "
+            "description and version); bulky target material belongs in a "
+            "reference, secret-shaped content refuses."
+        )
+        source_note_ids: list[str] = Field(
+            default_factory=list,
+            description="Log-only provenance: the note ids your revision draws "
+            "on. Recorded, never consulted at write time.",
+        )
+
+    @tool(args_schema=WriteSkillArgs)
+    def write_skill(
+        skill: str,
+        target: str,
+        content: str,
+        source_note_ids: list | None = None,
+    ) -> dict:
+        """Placeholder - the real contract is assigned below (the `@tool`
+        decorator reads the docstring at decoration time, so the interpolated
+        `WRITE_SKILL_CONTRACT` is set on the returned tool explicitly)."""
+        if skill not in bound:
+            return {
+                "ok": False,
+                "error": "skill_read_only",
+                "detail": (
+                    f"skill_read_only: {skill!r} is outside your writable set; "
+                    "a live run never mutates the shared skills/ catalogue"
+                ),
+            }
+        try:
+            seam.write(project_id, skill, target, content,
+                       source_note_ids or [])
+        except SecretRefusedError as exc:
+            return {"ok": False, "error": "secret_refused", "detail": str(exc)}
+        except SkillSizeError as exc:
+            return {"ok": False, "error": "size_exceeded", "detail": str(exc)}
+        except SkillTargetError as exc:
+            return {"ok": False, "error": "skill_target", "detail": str(exc)}
+        except SkillInvalidError as exc:
+            return {"ok": False, "error": "skill_invalid", "detail": str(exc)}
+        except StoreUnavailableError as exc:
+            return {"ok": False, "error": "store_unavailable",
+                    "detail": str(exc)}
+        except ValueError as exc:  # noqa: BLE001 - unsafe component, fail-open
+            return {"ok": False, "error": "skill_invalid", "detail": str(exc)}
+        except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
+            return {"ok": False, "error": "store_unavailable",
+                    "detail": f"store_unavailable: {exc}"}
+        return {"ok": True, "skill": skill, "target": target}
+
+    # The `@tool` decorator snapshots the docstring at decoration; assign the
+    # interpolated contract as the description so every binding carries it.
+    tool_obj = write_skill
+    if hasattr(tool_obj, "description"):
+        tool_obj.description = WRITE_SKILL_CONTRACT
+    return tool_obj
+
+
 __all__ = [
     "REFERENCE_MAX_BYTES",
     "SKILL_LOAD_CONTRACT",
     "SKILL_MAX_BYTES",
+    "WRITE_SKILL_CONTRACT",
     "SecretRefusedError",
     "SkillInvalidError",
     "SkillSizeError",
@@ -487,6 +612,7 @@ __all__ = [
     "SkillTargetError",
     "StoreUnavailableError",
     "build_load_skill_tool",
+    "build_write_skill_tool",
     "clear_cache",
     "list_skills",
     "skill_for",
