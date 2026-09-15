@@ -626,6 +626,31 @@ def build_write_skill_tool(
     return tool_obj
 
 
+def build_skill_tools(
+    project_id: str | None = None,
+    writable_skills: tuple[str, ...] | list[str] | set[str] | frozenset[str] = (),
+    store: SkillStore | None = None,
+) -> list:
+    """The shared agent skill seam (#234): the one place agent owners collect
+    the skill tools. Every agent gets the read-only `load_skill`; an agent
+    with a configured writable skill set additionally gets `write_skill`
+    bound to its project and set, so non-auth agents keep the read-only
+    surface and the write blast radius stays explicit. (The L1 skill-index
+    middleware rides alongside at the agent owner's binding site - the #222
+    seam - composed with this helper, never reimplemented per agent.)"""
+    tools = [build_load_skill_tool(project_id, store=store)]
+    if writable_skills:
+        if not project_id:
+            raise ValueError(
+                "skill seam: a writable skill set needs its project_id - "
+                "write_skill without a bound project is a wiring defect"
+            )
+        tools.append(
+            build_write_skill_tool(project_id, writable_skills, store=store)
+        )
+    return tools
+
+
 __all__ = [
     "META_USAGE_SKILL",
     "PROTOCOL_SEPARATOR",
@@ -640,6 +665,7 @@ __all__ = [
     "SkillTargetError",
     "StoreUnavailableError",
     "build_load_skill_tool",
+    "build_skill_tools",
     "build_write_skill_tool",
     "clear_cache",
     "list_skills",
