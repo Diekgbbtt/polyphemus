@@ -104,15 +104,35 @@ SKILL_LOAD_CONTRACT = (
 )
 
 
-def build_load_skill_tool():
-    """Build the ONE shared `load_skill` agent-callable tool (#222).
+# The reading-protocol skill (#234): the first-class usage-protocol skill in
+# the shared catalogue, appended to every `load_skill` result by the skill
+# read path itself. `PROTOCOL_SEPARATOR` is the pinned composition rule -
+# loader-identical body, separator, protocol body.
+META_USAGE_SKILL = "meta-usage-skill"
+PROTOCOL_SEPARATOR = "\n\n---\n\n"
 
-    The tool is the single loader made agent-reachable: it calls `skill_for`
-    internally (never a parallel implementation), so bake-time mounts and
-    runtime loads can never diverge. `refresh=True` clears the skill cache
-    first (the development hot-reload path). Import performs no I/O
-    (CODING_STANDARD section 6)."""
+
+def build_load_skill_tool(
+    project_id: str | None = None, store: SkillStore | None = None
+):
+    """Build the ONE shared `load_skill` agent-callable tool (#222, #234).
+
+    The tool is the single loader made agent-reachable: it reads through the
+    shared store seam (the per-project bundle first, then the repo catalogue -
+    bake-time mounts and runtime loads can never diverge), then appends the
+    `meta-usage-skill` reading protocol (#234: the skills-domain output
+    extension - unconditional on every load, no marker, no pause mechanism,
+    and no coupling to the prompt or compaction domain). `refresh=True`
+    clears the skill cache first (the development hot-reload path). Import
+    performs no I/O (CODING_STANDARD section 6); the default store is
+    constructed lazily inside the factory call, never at import.
+
+    Fail-open is preserved end to end: a missing protocol appends nothing, an
+    unknown skill still degrades to `''`, and loading `meta-usage-skill`
+    itself returns its bare body (no self-append)."""
     from langchain_core.tools import tool  # noqa: PLC0415
+
+    seam = store if store is not None else SkillStore()
 
     @tool
     def load_skill(name: str, refresh: bool = False) -> str:
@@ -121,7 +141,13 @@ def build_load_skill_tool():
         `SKILL_LOAD_CONTRACT` is set on the returned tool explicitly)."""
         if refresh:
             clear_cache()
-        return skill_for(name)
+        body = seam.read(name, project_id=project_id)
+        if not body or name == META_USAGE_SKILL:
+            return body
+        protocol = seam.read(META_USAGE_SKILL, project_id=project_id)
+        if not protocol:
+            return body
+        return body + PROTOCOL_SEPARATOR + protocol
 
     tool_obj = load_skill
     if hasattr(tool_obj, "description"):
@@ -601,6 +627,8 @@ def build_write_skill_tool(
 
 
 __all__ = [
+    "META_USAGE_SKILL",
+    "PROTOCOL_SEPARATOR",
     "REFERENCE_MAX_BYTES",
     "SKILL_LOAD_CONTRACT",
     "SKILL_MAX_BYTES",
