@@ -87,17 +87,25 @@ def _budgeted_model_factory(role_id: str, *, read_timeout_s: float) -> Any:
     return chat_model_for(role_id, read_timeout=read_timeout_s, max_retries=0)
 
 
-def _observe_config(config: dict, role_id: str, thread_id: str) -> dict:
+def _observe_config(config: dict, role_id: str, thread_id: str,
+                    extra_tags: Sequence[str] | None = None) -> dict:
     """Attach Langfuse callbacks + honest per-role_id/thread attribution (the #18
     recipe, mirrored from `analysis/supervisor._observability_config`). Empty
-    callbacks (Langfuse unconfigured) are inert; fail-open."""
+    callbacks (Langfuse unconfigured) are inert; fail-open.
+
+    `extra_tags` carries caller-owned join keys (the bare run id) onto the
+    recorded `langfuse_tags`, so session-scoped turn traces stay run-joinable
+    by tag after the hand-written agent-span wrappers go away (convergence).
+    The session id stays the per-instance thread id - concurrent instances
+    never collide."""
     from polymerhus.app.observability import get_langfuse_callbacks
 
     config = dict(config)
     config["callbacks"] = get_langfuse_callbacks()
+    tags = ["session", role_id] + [str(tag) for tag in (extra_tags or [])]
     config["metadata"] = {
         "langfuse_session_id": thread_id,
-        "langfuse_tags": ["session", role_id],
+        "langfuse_tags": tags,
         "role_id": role_id,
     }
     return config
@@ -190,9 +198,11 @@ def _build_agent(
     return create_agent(model, **kwargs)
 
 
-def _turn_config(role_id: str, thread_id: str, observe: bool) -> dict:
+def _turn_config(role_id: str, thread_id: str, observe: bool,
+                 extra_tags: Sequence[str] | None = None) -> dict:
     config: dict = {"configurable": {"thread_id": thread_id}}
-    return _observe_config(config, role_id, thread_id) if observe else config
+    return _observe_config(config, role_id, thread_id,
+                           extra_tags=extra_tags) if observe else config
 
 
 def _to_turn(result: dict, response_format, thread_id: str) -> SessionTurn:
@@ -315,6 +325,7 @@ def run_session_turn(
     model_factory: ModelFactory | None = None,
     observe: bool = True,
     read_timeout_s: float | None = None,
+    extra_tags: Sequence[str] | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
 
@@ -323,14 +334,16 @@ def run_session_turn(
     model<->tool loop (`tools` bound via tool_calling) to a final answer, which is
     persisted back so the next turn resumes from here. `response_format` returns a
     parsed structured object as `content`. `read_timeout_s` (default None) bounds
-    the turn's model calls per-attempt - the escalating-budget seam #186 rides."""
+    the turn's model calls per-attempt - the escalating-budget seam #186 rides.
+    `extra_tags` appends caller-owned join keys (the bare run id) to the recorded
+    `langfuse_tags` (default None = today's tags, unchanged)."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
         middleware=middleware, store=store, checkpointer=checkpointer,
         model_factory=model_factory, read_timeout_s=read_timeout_s,
     )
-    config = _turn_config(role_id, thread_id, observe)
+    config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
     if observe and checkpointer is not None:
         _attach_readability_metadata(
             config, _read_thread_state(checkpointer, thread_id))
@@ -355,21 +368,23 @@ async def arun_session_turn(
     model_factory: ModelFactory | None = None,
     observe: bool = True,
     read_timeout_s: float | None = None,
+    extra_tags: Sequence[str] | None = None,
 ) -> SessionTurn:
     """Async-native turn (`ainvoke`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
     and monitor child sessions without blocking its own loop. Identical contract to
-    `run_session_turn`; pass an async checkpointer (`AsyncPostgresSaver`, already
-    used by the analysis supervisor) in production. `read_timeout_s` (default None)
-    bounds the turn's model calls per-attempt - the escalating-budget seam #186
-    rides: the actor runtime re-invokes this with the next, larger budget."""
+    `run_session_turn` (including `extra_tags`); pass an async checkpointer
+    (`AsyncPostgresSaver`, already used by the analysis supervisor) in production.
+    `read_timeout_s` (default None) bounds the turn's model calls per-attempt -
+    the escalating-budget seam #186 rides: the actor runtime re-invokes this with
+    the next, larger budget."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
         middleware=middleware, store=store, checkpointer=checkpointer,
         model_factory=model_factory, read_timeout_s=read_timeout_s,
     )
-    config = _turn_config(role_id, thread_id, observe)
+    config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
     if observe and checkpointer is not None:
         _attach_readability_metadata(
             config, await _aread_thread_state(checkpointer, thread_id))
@@ -496,6 +511,7 @@ def stateful_turn(
     model_factory: ModelFactory | None = None,
     middleware: Sequence = (),
     observe: bool = True,
+    extra_tags: Sequence[str] | None = None,
 ):
     """The UBIQUITOUS stateful-agent invocation (#94): one turn of a sequentially
     dispatched agent that RESUMES from its OWN per-instance checkpoint and appends this
@@ -517,7 +533,7 @@ def stateful_turn(
             role_id, _as_thread_id(thread), new_messages,
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
-            middleware=middleware,
+            middleware=middleware, extra_tags=extra_tags,
         )
         return turn.content
     except Exception as exc:

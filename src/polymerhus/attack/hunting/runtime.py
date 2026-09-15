@@ -247,29 +247,31 @@ async def launch_orchestrator(
                 materialize_candidates,
             )
             from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
-                orchestrator_gate_span,
                 trace_gate_step,
             )
 
-            with orchestrator_gate_span(run_id):
-                selected, summary = await asyncio.to_thread(
-                    materialize_candidates,
-                    project_id, candidates,
-                    fault_entries=fault_entries, read_fn=read_fn,
-                    match_fn=match_fn, unit_ids_fn=unit_ids_fn,
-                )
-                trace_gate_step(
-                    "selection",
-                    input={"project_id": project_id,
-                           "caller_supplied": summary.caller_supplied},
-                    output={
-                        "faults_evaluated": summary.faults_evaluated,
-                        "units_minted": summary.units_minted,
-                        "pruned_by_predicate": summary.pruned_by_predicate,
-                        "pruned_by_tag": summary.pruned_by_tag,
-                        "passed": summary.passed,
-                    },
-                )
+            # Convergence: no hand-written gate span - the selection record
+            # carries its own explicit run correlation.
+            _gate_tags = ["attack", "hunting", "orchestrator-gate"]
+            selected, summary = await asyncio.to_thread(
+                materialize_candidates,
+                project_id, candidates,
+                fault_entries=fault_entries, read_fn=read_fn,
+                match_fn=match_fn, unit_ids_fn=unit_ids_fn,
+            )
+            trace_gate_step(
+                "selection",
+                run_id=run_id, tags=_gate_tags,
+                input={"project_id": project_id,
+                        "caller_supplied": summary.caller_supplied},
+                output={
+                    "faults_evaluated": summary.faults_evaluated,
+                    "units_minted": summary.units_minted,
+                    "pruned_by_predicate": summary.pruned_by_predicate,
+                    "pruned_by_tag": summary.pruned_by_tag,
+                    "passed": summary.passed,
+                },
+            )
             if orchestrator_fn is not None:
                 return await orchestrator_fn(
                     project_id, run_id, selected, tools,
@@ -651,29 +653,29 @@ async def start_hunting(
                 materialize_candidates,
             )
             from polymerhus.attack.hunting.orchestrator_tracing import (  # noqa: PLC0415
-                orchestrator_gate_span,
                 trace_gate_step,
             )
 
-            with orchestrator_gate_span(hunting_run_id):
-                selected, summary = await asyncio.to_thread(
-                    materialize_candidates,
-                    project_id, candidates,
-                    fault_entries=fault_entries, read_fn=read_fn,
-                    match_fn=match_fn, unit_ids_fn=unit_ids_fn,
-                )
-                trace_gate_step(
-                    "selection",
-                    input={"project_id": project_id,
-                           "caller_supplied": summary.caller_supplied},
-                    output={
-                        "faults_evaluated": summary.faults_evaluated,
-                        "units_minted": summary.units_minted,
-                        "pruned_by_predicate": summary.pruned_by_predicate,
-                        "pruned_by_tag": summary.pruned_by_tag,
-                        "passed": summary.passed,
-                    },
-                )
+            selected, summary = await asyncio.to_thread(
+                materialize_candidates,
+                project_id, candidates,
+                fault_entries=fault_entries, read_fn=read_fn,
+                match_fn=match_fn, unit_ids_fn=unit_ids_fn,
+            )
+            trace_gate_step(
+                "selection",
+                run_id=hunting_run_id,
+                tags=["attack", "hunting", "orchestrator-gate"],
+                input={"project_id": project_id,
+                        "caller_supplied": summary.caller_supplied},
+                output={
+                    "faults_evaluated": summary.faults_evaluated,
+                    "units_minted": summary.units_minted,
+                    "pruned_by_predicate": summary.pruned_by_predicate,
+                    "pruned_by_tag": summary.pruned_by_tag,
+                    "passed": summary.passed,
+                },
+            )
             if orchestrator_fn is not None:
                 return await orchestrator_fn(
                     project_id, hunting_run_id, selected, tools,

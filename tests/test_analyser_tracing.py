@@ -1,10 +1,11 @@
-"""Unit tier for the reusable analyser Langfuse span (#18/#9).
+"""Unit tier for the analyser Langfuse step records (#18/#9, convergence).
 
-Closes the observability hole where the A.1 proposers (Assigner / mechanism-typist /
-DataPlane data-modeller) produced no named, session-correlated agent span and never
-captured their reasoning - unlike the Bootstrapper. Fakes the `langfuse` module (the
-helper imports it lazily) so both the happy path and the fail-open contract are pinned
-without a live Langfuse.
+The A.1 proposers (Assigner / mechanism-typist / DataPlane data-modeller) run
+under the run-sessioned supervisor graph, so no hand-written agent span is
+opened here - the surviving helpers are thin-exception step records fed
+explicit run correlation. Fakes the `langfuse` module (the helpers import it
+lazily) so the explicit-correlation contract and the fail-open contract are
+pinned without a live Langfuse.
 """
 import sys
 import types
@@ -25,7 +26,9 @@ def _fake_langfuse(calls):
     @contextmanager
     def _observation(**kw):
         calls.append(("observation", kw))
-        yield MagicMock()
+        span = MagicMock()
+        span.update.side_effect = lambda **ukw: calls.append(("update", ukw))
+        yield span
 
     client = MagicMock()
     client.start_as_current_observation.side_effect = _observation
@@ -35,23 +38,6 @@ def _fake_langfuse(calls):
     mod.propagate_attributes = propagate_attributes
     mod.get_client = lambda: client
     return mod
-
-
-def test_analyser_span_opens_session_correlated_agent_span(monkeypatch):
-    calls = []
-    monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse(calls))
-
-    with analyser_tracing.analyser_span("mechanism_typist", project_id="p",
-                                        run_id="run1", phase="A1", dispatch_id="d1"):
-        analyser_tracing.trace_reasoning("I hypothesise a WebPresentation", call="typist-reflection")
-
-    kinds = [c[0] for c in calls]
-    assert kinds == ["propagate", "observation", "update"]      # span opened, then reasoning attached
-    prop = dict(calls[0][1])
-    assert prop["session_id"] == "run1"                          # correlated to the run (the #18 gap)
-    assert prop["trace_name"] == "analyser-mechanism_typist"     # per-agent name
-    assert "mechanism_typist" in prop["tags"] and "analysis" in prop["tags"]
-    assert dict(calls[2][1])["output"] == "I hypothesise a WebPresentation"
 
 
 def test_trace_generation_records_structured_output_as_nested_observation(monkeypatch):
@@ -81,6 +67,47 @@ def test_trace_reasoning_skips_empty_prose(monkeypatch):
     assert calls == []                                           # nothing to attach
 
 
+def test_trace_reasoning_with_run_id_opens_explicit_span(monkeypatch):
+    """Convergence: without an agent span an ambient update goes nowhere, so an
+    explicitly-correlated reasoning record opens its own span under an explicit
+    propagate context carrying the caller's run session/tags."""
+    calls = []
+    monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse(calls))
+    analyser_tracing.trace_reasoning("I hypothesise a WebPresentation",
+                                     call="typist-reflection",
+                                     run_id="run1", tags=["analysis", "typist"])
+
+    kinds = [c[0] for c in calls]
+    assert kinds == ["propagate", "observation", "update"]
+    prop = dict(calls[0][1])
+    assert prop["session_id"] == "run1"
+    assert prop["tags"] == ["analysis", "typist"]
+    assert dict(calls[2][1])["output"] == "I hypothesise a WebPresentation"
+
+
+def test_trace_generation_with_run_id_correlates_explicitly(monkeypatch):
+    calls = []
+    monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse(calls))
+    analyser_tracing.trace_generation(
+        "assigner-aggregates", input={"chunk": "c0"}, output={"kept": 2},
+        run_id="run1", tags=["analysis", "assigner"])
+
+    kinds = [c[0] for c in calls]
+    assert kinds == ["propagate", "observation", "update"]
+    assert dict(calls[0][1])["session_id"] == "run1"
+    assert dict(calls[0][1])["tags"] == ["analysis", "assigner"]
+
+
+def test_step_helpers_without_run_id_keep_ambient_behaviour(monkeypatch):
+    """No explicit correlation, no propagate: the legacy ambient path is
+    untouched for callers that still run under an agent span."""
+    calls = []
+    monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse(calls))
+    analyser_tracing.trace_reasoning("why", call="c")
+    analyser_tracing.trace_generation("g", input={"i": 1}, output={"o": 2})
+    assert [c[0] for c in calls] == ["update", "observation", "update"]
+
+
 def test_flush_delegates_to_client(monkeypatch):
     calls = []
     monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse(calls))
@@ -100,6 +127,6 @@ def test_all_helpers_fail_open_when_langfuse_raises(monkeypatch):
     broken.propagate_attributes = boom
     monkeypatch.setitem(sys.modules, "langfuse", broken)
 
-    with analyser_tracing.analyser_span("assigner", project_id="p", run_id="r"):
-        analyser_tracing.trace_reasoning("x")
+    analyser_tracing.trace_reasoning("x", run_id="r", tags=["analysis"])
+    analyser_tracing.trace_generation("g", input={"i": 1}, run_id="r")
     analyser_tracing.flush_analyser_traces()  # reaching here without raising is the assertion

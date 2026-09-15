@@ -712,7 +712,7 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     def invoke(messages, *, schema=None):
         return stateful_turn("data_modeller", address, messages,
                              checkpointer=checkpointer, schema=schema,
-                             middleware=middleware)
+                             middleware=middleware, extra_tags=[run_id])
 
     return invoke
 

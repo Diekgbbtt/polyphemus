@@ -33,7 +33,7 @@ Machine-state evidence the component collects:
   (the G1 pair-end + fault-drain logic, observed through a recording
   ``PhaseContext``, never a mocked seam);
 - ``trace_rows`` - the orchestrator's own observations
-  (``orchestrator_gate_span`` / ``trace_gate_step``) captured through the
+  (explicitly-correlated ``trace_gate_step`` step spans) captured through the
   standard ``hunting_observability`` probe.
 """
 from __future__ import annotations

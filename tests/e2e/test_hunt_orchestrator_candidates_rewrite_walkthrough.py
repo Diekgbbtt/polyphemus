@@ -22,7 +22,7 @@ path through the endpoint, never the raw runtime primitive.
 
 Observation system (caveat B3): quality predicates Q4/Q5/Q6/Q7 judge the
 orchestrator through ``tests/e2e/hunting_observability.py`` - a Langfuse probe
-that the orchestrator's ``orchestrator_gate_span`` / ``trace_gate_step`` code
+that the orchestrator's explicitly-correlated ``trace_gate_step`` code
 resolves to (fake or real client), and a ``TraceJudge`` that scores evidence
 only (symbolic-render before gate-decision, mint+note adjacency, reflection
 markers, locale-negative research_direction) from what the observation system
@@ -650,7 +650,7 @@ def test_e2e_e7_q1_latency_batch_beats_n_singles(tmp_path, monkeypatch):
     hypothesise phase still reasons over the FAULT's full unit set in ONE
     turn's worth of seams - the stub sleeps 20ms per call, so the harness
     proves the fixed-cost saving that motivated the fault-level schedule."""
-    from polymerhus.attack.hunting.orchestrator_tracing import orchestrator_gate_span, trace_gate_step
+    from polymerhus.attack.hunting.orchestrator_tracing import trace_gate_step
 
     # harness: stub hypothesise seam sleeping 20ms per call; the fault-level
     # call covers U=4 units, the single-pair baseline covers 1
@@ -659,23 +659,22 @@ def test_e2e_e7_q1_latency_batch_beats_n_singles(tmp_path, monkeypatch):
         return GateDecision(directions=[EnvisionedDirection(unit_id=c.unit_id, fault_class=c.fault_class, carried=True) for c in inp.candidates])
 
     candidates_4 = [_candidate(f"Service:slug:{chr(97+i)}", FAULT_352) for i in range(4)]
+    _gate = {"run_id": "run-e7", "tags": ["attack", "hunting", "orchestrator-gate"]}
 
     # measure batch p50/p95 over 10 reps
     batch_durations: list[float] = []
     for _ in range(10):
         t0 = time.perf_counter()
-        with orchestrator_gate_span("run-e7-batch"):
-            # simulate the hypothesise turn for the fault over 4 units
-            asyncio.run(stub_hypothesise(GateInput(candidates=candidates_4)))
+        # simulate the hypothesise turn for the fault over 4 units
+        asyncio.run(stub_hypothesise(GateInput(candidates=candidates_4)))
         batch_durations.append((time.perf_counter() - t0) * 1000)
-        trace_gate_step("symbolic-render", input={"cooperating_systems": "ok"})
+        trace_gate_step("symbolic-render", input={"cooperating_systems": "ok"}, **_gate)
 
     # single-pair baseline: one GateInput with 1 candidate, same stub
     single_durations: list[float] = []
     for _ in range(10):
         t0 = time.perf_counter()
-        with orchestrator_gate_span("run-e7-single"):
-            asyncio.run(stub_hypothesise(GateInput(candidates=candidates_4[:1])))
+        asyncio.run(stub_hypothesise(GateInput(candidates=candidates_4[:1])))
         single_durations.append((time.perf_counter() - t0) * 1000)
 
     batch_durations.sort()

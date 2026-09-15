@@ -509,6 +509,8 @@ def assign(
     existing_slugs: frozenset[str] = frozenset(),
     bar: float = ASSIGN_CONFIDENCE_BAR,
     mode: str = "create",
+    run_id: str | None = None,
+    tags: list | None = None,
 ) -> AssignmentOutcome:
     """The Assigner proposer body (#8): from a `Chunk` + the LIVE inventory, judge
     which existing Service owns each admitted Endpoint, then drop unknown owners and
@@ -543,6 +545,7 @@ def assign(
     # and "did the Assigner withhold on confidence?" is unanswerable post-hoc (moodique cc29fd4a).
     from polymerhus.app.observability import trace_generation
     trace_generation("assigner-aggregates", input={"chunk": chunk.chunk_id, "bar": bar},
+                     run_id=run_id, tags=tags,
                      output={"proposed": [{"service_slug": getattr(a, "service_slug", None),
                                            "confidence": getattr(a, "confidence", None)}
                                           for a in (raw.aggregates or [])],
@@ -601,7 +604,7 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     def invoke(messages):
         return stateful_turn("assigner", address, messages,
                              checkpointer=checkpointer, schema=L1DeltaBatch,
-                             middleware=middleware)
+                             middleware=middleware, extra_tags=[run_id])
 
     return invoke
 
@@ -622,6 +625,9 @@ def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENC
         if dispatch.chunk is None:
             return None
         inventory = inventory_fn(state.get("project_id", "")) or {}
+        # Convergence: the supervisor no longer opens an agent span, so the
+        # structured-output record carries its own explicit run correlation.
+        run_id = (state.get("run_id") or "").removeprefix("stream-")
         outcome = assign(
             dispatch.chunk,
             invoke_fn=invoke_fn,
@@ -629,6 +635,8 @@ def make_assigner_body(*, invoke_fn, inventory_fn, bar: float = ASSIGN_CONFIDENC
             existing_slugs=frozenset(inventory.get("services") or ()),
             bar=bar,
             mode=getattr(dispatch, "mode", "create"),
+            run_id=run_id or None,
+            tags=["analysis", getattr(dispatch, "role", "assigner")],
         )
         if outcome.backlog:
             logger.info("assigner: %d backlog description(s) not transported (D6)", len(outcome.backlog))

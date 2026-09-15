@@ -177,6 +177,59 @@ def test_non_root_without_langfuse_metadata_leaves_context_alone():
     assert handler.starts[0]["active"] is False
 
 
+def _fake_langfuse_module(calls):
+    import sys
+    import types
+    from contextlib import contextmanager
+
+    mod = types.ModuleType("langfuse")
+
+    @contextmanager
+    def propagate_attributes(**kwargs):
+        calls.append(kwargs)
+        yield
+
+    mod.propagate_attributes = propagate_attributes
+    return mod
+
+
+def test_explicit_correlation_enters_propagate_with_given_values(monkeypatch):
+    import sys
+
+    calls = []
+    monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse_module(calls))
+    with lt.explicit_correlation("run-1", tags=["analysis", "assigner"],
+                                 trace_name="analyser-assigner"):
+        pass
+    assert calls == [{"session_id": "run-1", "tags": ["analysis", "assigner"],
+                      "trace_name": "analyser-assigner"}]
+
+
+def test_explicit_correlation_without_run_id_is_a_nullcontext(monkeypatch):
+    import sys
+
+    calls = []
+    monkeypatch.setitem(sys.modules, "langfuse", _fake_langfuse_module(calls))
+    with lt.explicit_correlation(None, tags=["x"]):
+        pass
+    assert calls == []
+
+
+def test_explicit_correlation_fail_open_when_langfuse_broken(monkeypatch):
+    import sys
+    import types
+
+    broken = types.ModuleType("langfuse")
+
+    def boom(**kwargs):
+        raise RuntimeError("langfuse unavailable")
+
+    broken.propagate_attributes = boom
+    monkeypatch.setitem(sys.modules, "langfuse", broken)
+    with lt.explicit_correlation("run-1", tags=["x"]):
+        pass
+
+
 def test_build_attributing_handler_returns_enriching_subclass(monkeypatch):
     import sys
     import types

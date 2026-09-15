@@ -88,3 +88,8 @@ from agent.app.observability import get_langfuse_callbacks
 `get_langfuse_callbacks() -> list` returns `[handler]` when configured, `[]` otherwise.
 `[]` is inert as `config={"callbacks": []}`, so the runtime wires it unconditionally.
 The handler is built once per process and cached.
+
+## Instrumentation pattern
+
+The handler above is the PRIMARY instrumentation for every LangChain-driven dispatch; hand-written SDK spans survive only as a documented thin exception where no LangChain run exists.
+The binding contract - canon, exception clauses, and the per-harness migration rows - is `docs/design/observability-recipe.md`.

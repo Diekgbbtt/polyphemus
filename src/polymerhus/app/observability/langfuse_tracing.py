@@ -413,6 +413,29 @@ def _resolve_base_url() -> str:
     )
 
 
+def explicit_correlation(run_id: str | None, *, tags: list | None = None,
+                         trace_name: str | None = None) -> Any:
+    """Thin-exception correlation (convergence): an explicit `propagate_attributes`
+    context for hand-written spans where no LangChain run exists to carry the
+    trace - or a nullcontext when there is nothing to correlate.
+
+    The caller passes its OWN run/session/tags (never ambient reads): the
+    context applies to spans the caller opens inside the `with` body, on any
+    thread. Fail-open: a missing/broken `langfuse` package degrades to a
+    nullcontext instead of raising, so dispatch code wraps unconditionally."""
+    if run_id is None:
+        return contextlib.nullcontext()
+    try:
+        from langfuse import propagate_attributes
+
+        return propagate_attributes(session_id=run_id, tags=tags,
+                                    trace_name=trace_name)
+    except Exception:  # noqa: BLE001 - fail-open: correlation never breaks a run
+        logger.debug("explicit correlation unavailable; continuing uncorrelated",
+                     exc_info=True)
+        return contextlib.nullcontext()
+
+
 def build_attributing_handler(public_key: str) -> Any:
     """Construct the process handler: the stock `CallbackHandler` wrapped so
     every non-root observation re-establishes trace attributes from its own
