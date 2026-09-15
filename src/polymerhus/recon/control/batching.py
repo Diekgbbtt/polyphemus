@@ -28,7 +28,7 @@ from pathlib import Path
 from urllib.parse import urlparse
 
 from polymerhus.recon.domain.parsers._urls import base_and_path, registrable_domain
-from polymerhus.recon.domain.types import JobSpec
+from polymerhus.recon.domain.types import ConsumptionOptions, JobSpec
 
 # This file is recon/control/batching.py; the runner lives at recon/scripts/,
 # so it is parents[1] (recon) / "scripts".
@@ -199,22 +199,28 @@ def _endpoint_baseurl(asset: dict) -> str | None:
     return None
 
 
-def prepare_endpoint_profile_assets(assets: list[dict]) -> list[dict]:
+def prepare_endpoint_profile_assets(
+    assets: list[dict], *, materialise_root: bool = True, skip_profiled: bool = True
+) -> list[dict]:
     """Prepare the endpoint-profiling pass's probe set (D16 per-endpoint split).
 
     1. Skip a non-root endpoint that already carries a `profile` (2026-07-31:
-       katana_parser now pre-fills `profile` from its own crawl-time
-       content-type via the same `classify_profile` this pass uses, so
-       re-probing an endpoint katana already classified is pure redundant
-       work). The root `/` is NEVER skipped by this rule regardless of an
-       existing profile - only THIS pass mirrors onto `BaseURL.profile`
-       (`httpx_parser`), so skipping it would silently stop that mirror from
-       ever being set for hosts katana alone crawled.
+        katana_parser now pre-fills `profile` from its own crawl-time
+        content-type via the same `classify_profile` this pass uses, so
+        re-probing an endpoint katana already classified is pure redundant
+        work). The root `/` is NEVER skipped by this rule regardless of an
+        existing profile - only THIS pass mirrors onto `BaseURL.profile`
+        (`httpx_parser`), so skipping it would silently stop that mirror from
+        ever being set for hosts katana alone crawled.
     2. Dedup to one probe per `(baseurl, method, path-template)`, so dynamic
-       routes (`/users/1`, `/users/2`) cost a single request, not one each.
+        routes (`/users/1`, `/users/2`) cost a single request, not one each.
     3. Materialise a synthetic root `/` Endpoint for every BaseURL lacking one,
-       so the root is always probed and `BaseURL.profile` (its root mirror) set.
+        so the root is always probed and `BaseURL.profile` (its root mirror) set.
 
+    #37 (Q1): this is the SHARED route-cluster seam. `httpx_reprofile` rides it
+    with the defaults; arjun rides it with `materialise_root=False` (probing
+    `/` for parameters is low-value) and `skip_profiled=False` (a content-type
+    profile is orthogonal to parameter discovery - it orders, never excludes).
     Pure + deterministic: survivors keep input order, synthesised roots follow in
     first-seen baseurl order. Assets with no derivable baseurl are dropped.
     """
@@ -235,7 +241,7 @@ def prepare_endpoint_profile_assets(assets: list[dict]) -> list[dict]:
         method = (asset.get("method") or "GET").upper()
         if path == "/":
             has_root.add(baseurl)
-        elif asset.get("profile"):
+        elif skip_profiled and asset.get("profile"):
             continue
         key = (baseurl, method, _path_template(path))
         if key in seen:
@@ -246,7 +252,7 @@ def prepare_endpoint_profile_assets(assets: list[dict]) -> list[dict]:
     synth = [
         {"url": f"{baseurl}/", "baseurl": baseurl, "path": "/", "method": "GET"}
         for baseurl in baseurl_order
-        if baseurl not in has_root
+        if materialise_root and baseurl not in has_root
     ]
     return kept + synth
 
@@ -279,3 +285,82 @@ def build_api_scope_assets(assets: list[dict], *, cap: int = 3) -> list[dict]:
         for target in derive_scan_targets(baseurl, by_host[baseurl], cap=cap):
             out.append({"url": target})
     return out
+
+
+# --------------- unified consumption-set derivation (#37, option B) --------------- #
+# ONE derivation for every job's input population, driven by the per-job
+# `JobSpec.consumption` options - replacing the accreted per-consumer branch
+# chain in `default_preprocess_fn` (batch / endpoint_profiling / api_scope +
+# the silent 1:1 fallback arjun fell through). Stages compose in fixed order;
+# each stage is a no-op unless its option is set, so the plain job
+# (all-False / pack="none") is the raw 1:1 pass-through. Pure + deterministic;
+# every budget arrives as an argument (never read from env here), so the unit
+# tier drives it with literals and the caller (`default_preprocess_fn`) threads
+# `MAX_PODS` / `MAX_JOB_ASSETS` through.
+def derive_consumption_set(
+    assets: list[dict],
+    *,
+    consumption: ConsumptionOptions,
+    apex_registrable: str | None = None,
+    max_pods: int,
+    set_cap: int,
+    api_cap: int = 3,
+) -> list[dict]:
+    """Derive one job's pod-input asset list from its read-back population.
+
+    Stages (fixed order, each gated on its option):
+      1. `drop_malformed` - exclude paths the curator gate classifies as
+         JS-concat/template junk (`noise_filter.is_malformed_concat_path`,
+         called - never copied - per P3), preprocess-side so no pod is ever
+         spent on junk. Deliberately path-predicate ONLY: probed statuses
+         (404/403/401 included) are kept - an error status means the request
+         shape may be wrong, which is exactly where probing must go (Q6).
+         Katana `-aff` mangling artifacts (`/EXPRindex.php`, `/.json`) are NOT
+         matched by the gate predicate and stay - they belong to the separate
+         katana upstream ticket, and this seam invents no URL-shape verdicts
+         of its own (corrected record 2).
+      2. `route_dedup` - the shared P1 seam (`prepare_endpoint_profile_assets`
+         with the job's `materialise_root` / `skip_profiled` variant): one
+         representative per `(baseurl, method, path-template)`. Assets with no
+         derivable baseurl are dropped here - the only hard exclusion besides
+         the malformed filter (near no-op for graph Endpoints, which always
+         carry one; recorded so the exclusion set is exact).
+      3. `order_restapi_first` - stable partition moving `profile == "restapi"`
+         assets first. ORDERING only, never exclusion: every survivor is still
+         probed (corrected record 2).
+      4. `pack` - `batches` (jsluice reduce + pack into `<= max_pods` pods),
+         `one_pod` (the whole set, bounded by `set_cap`, into ONE pod_input -
+         #208 C7: the cap bounds the probe SET, not the pod count),
+         `scan_targets` (kiterunner API-root prefixes, top-`api_cap`), or
+         `none` (raw 1:1 assets, e.g. arjun: still one pod per endpoint).
+    """
+    items = list(assets or [])
+
+    if consumption.drop_malformed:
+        from polymerhus.recon.domain.noise_filter import is_malformed_concat_path
+
+        items = [
+            a for a in items
+            if not is_malformed_concat_path(a.get("path") or "/")
+        ]
+
+    if consumption.route_dedup:
+        items = prepare_endpoint_profile_assets(
+            items,
+            materialise_root=consumption.materialise_root,
+            skip_profiled=consumption.skip_profiled,
+        )
+
+    if consumption.order_restapi_first:
+        items = sorted(items, key=lambda a: 0 if a.get("profile") == "restapi" else 1)
+
+    if consumption.pack == "batches":
+        return build_batch_assets(
+            items, apex_registrable=apex_registrable, max_pods=max_pods
+        )
+    if consumption.pack == "one_pod":
+        prepared = items[:set_cap]
+        return [{"endpoints": prepared}] if prepared else []
+    if consumption.pack == "scan_targets":
+        return build_api_scope_assets(items, cap=api_cap)
+    return items

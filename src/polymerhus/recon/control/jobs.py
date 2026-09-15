@@ -10,7 +10,7 @@ job (`pipeline._inject_seed_host`), or has been produced by a job in an
 earlier phase.
 """
 
-from polymerhus.recon.domain.types import AssetSelector, JobSpec
+from polymerhus.recon.domain.types import AssetSelector, ConsumptionOptions, JobSpec
 
 DOMAIN = "Domain"  # pre-seeded root asset type (the project's target domain)
 
@@ -137,7 +137,16 @@ JOBS: dict[str, JobSpec] = {
         # Endpoint's own `profile`; the root `/` probe additionally mirrors onto
         # `BaseURL.profile`. Enrichment only - fills gaps, never re-discovers.
         consumes="Endpoint",
-        endpoint_profiling=True,
+        # #208 one-pod reprofile + #37 option B: the probe SET is derived by the
+        # unified `derive_consumption_set` (dedup dynamic routes + materialise a
+        # root `/` per BaseURL + skip already-profiled non-roots) and packed
+        # into ONE pod_input - exactly one pod regardless of endpoint count.
+        consumption=ConsumptionOptions(
+            route_dedup=True,
+            materialise_root=True,
+            skip_profiled=True,
+            pack="one_pod",
+        ),
         use_auth=True,
     ),
     # gau removed from the pipeline (forward decision D-gau, 2026-07-09):
@@ -289,7 +298,9 @@ JOBS: dict[str, JobSpec] = {
         # the root `/` is a webapp. `{target}` is each derived prefix URL.
         consumes="Endpoint",
         consumes_where=AssetSelector(field="profile", op="equals", values=["restapi"]),
-        api_scope=True,
+        # #37 option B: the host's `restapi` Endpoints collapse per host into
+        # scan-target prefixes via the unified derivation (`pack="scan_targets"`).
+        consumption=ConsumptionOptions(pack="scan_targets"),
         # kr scans routes that may sit behind auth, so it receives the
         # project's cookies/headers like the other request-based tools (`kr`
         # takes repeated -H "k: v" flags, the shared default format).
@@ -310,7 +321,9 @@ JOBS: dict[str, JobSpec] = {
         # Endpoints carry no content_type (D17/Q5).
         consumes="Endpoint",
         consumes_where=AssetSelector(field="path", op="ends_with", values=[".js", ".mjs"]),
-        batch=True,
+        # #37 option B: bundles reduce + pack into batch pods via the unified
+        # derivation (`pack="batches"`).
+        consumption=ConsumptionOptions(pack="batches"),
         use_auth=False,
     ),
     "graphql-cop": JobSpec(
@@ -381,6 +394,23 @@ JOBS: dict[str, JobSpec] = {
         ),
         produces=["Parameter"],
         consumes="Endpoint",
+        # #37: arjun finally declares its input set instead of falling through
+        # the silent 1:1 fallback. Route-cluster dedup (one probe per
+        # (baseurl, method, path-template) - NO root `/` materialisation,
+        # NO already-profiled skip: a profile is orthogonal to parameters) +
+        # the curator gate's malformed-path exclusion (P3) + restapi-first
+        # ordering (ordering only, never exclusion - `webapp` is still probed).
+        # Still `pack="none"`: one pod per surviving endpoint. 404/403/401 are
+        # KEPT (Q6): an error status means the request shape may be wrong,
+        # exactly where probing must go.
+        consumption=ConsumptionOptions(
+            route_dedup=True,
+            materialise_root=False,
+            skip_profiled=False,
+            drop_malformed=True,
+            order_restapi_first=True,
+            pack="none",
+        ),
         use_auth=True,
     ),
 }
