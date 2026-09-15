@@ -97,7 +97,10 @@ SKILL_LOAD_CONTRACT = (
     "reading protocol appended after a `---` separator (body, separator, "
     "protocol).\n\n"
     "A missing protocol appends nothing, an unknown skill still degrades to "
-    "`''`, and loading `meta-usage-skill` itself returns its bare body.\n\n"
+    "`''`, and loading either meta-skill itself returns its bare body (no "
+    "protocol on the protocol skills: no blackloops).\n\n"
+    "The appended protocol always reads from the shared catalogue - a "
+    "per-project bundle never shadows it.\n\n"
     "EVERY skill carries a data section (frontmatter with name, description, "
     "version, inputs) so callers can tell what was loaded.\n\n"
     "PHASE-GATING CONVENTION - load at phase entry, once per thread, never "
@@ -110,9 +113,11 @@ SKILL_LOAD_CONTRACT = (
 
 # The reading-protocol skill (#234): the first-class usage-protocol skill in
 # the shared catalogue, appended to every `load_skill` result by the skill
-# read path itself. `PROTOCOL_SEPARATOR` is the pinned composition rule -
+# read path itself - except the two meta-skills, which load bare (no
+# blackloops), and always read from the shared catalogue (no shadowing). `PROTOCOL_SEPARATOR` is the pinned composition rule -
 # loader-identical body, separator, protocol body.
 META_USAGE_SKILL = "meta-usage-skill"
+META_WRITE_SKILL = "meta-write-skill"
 PROTOCOL_SEPARATOR = "\n\n---\n\n"
 
 
@@ -125,15 +130,18 @@ def build_load_skill_tool(
     shared store seam (the per-project bundle first, then the repo catalogue -
     bake-time mounts and runtime loads can never diverge), then appends the
     `meta-usage-skill` reading protocol (#234: the skills-domain output
-    extension - unconditional on every load, no marker, no pause mechanism,
+    extension - on every load except the two meta-skills themselves, no
+    marker, no pause mechanism,
     and no coupling to the prompt or compaction domain). `refresh=True`
     clears the skill cache first (the development hot-reload path). Import
     performs no I/O (CODING_STANDARD section 6); the default store is
     constructed lazily inside the factory call, never at import.
 
     Fail-open is preserved end to end: a missing protocol appends nothing, an
-    unknown skill still degrades to `''`, and loading `meta-usage-skill`
-    itself returns its bare body (no self-append)."""
+    unknown skill still degrades to `''`, and loading either meta-skill
+    itself returns its bare body (no protocol on the protocol skills: no
+    blackloops). The appended protocol always reads from the shared
+    catalogue - a per-project bundle never shadows it."""
     from langchain_core.tools import tool  # noqa: PLC0415
 
     seam = store if store is not None else SkillStore()
@@ -146,9 +154,9 @@ def build_load_skill_tool(
         if refresh:
             clear_cache()
         body = seam.read(name, project_id=project_id)
-        if not body or name == META_USAGE_SKILL:
+        if not body or name in (META_USAGE_SKILL, META_WRITE_SKILL):
             return body
-        protocol = seam.read(META_USAGE_SKILL, project_id=project_id)
+        protocol = seam.read(META_USAGE_SKILL)
         if not protocol:
             return body
         return body + PROTOCOL_SEPARATOR + protocol
@@ -616,6 +624,7 @@ def build_skill_tools(
 
 __all__ = [
     "META_USAGE_SKILL",
+    "META_WRITE_SKILL",
     "PROTOCOL_SEPARATOR",
     "SKILL_LOAD_CONTRACT",
     "WRITE_SKILL_CONTRACT",

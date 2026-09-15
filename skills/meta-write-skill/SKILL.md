@@ -18,4 +18,4 @@ Observable: every procedural step pairs its action with a sight naming the step,
 Observable: SKILL.md reads as procedure alone; each bulky claim resolves through its pointer.
 4. Rewrite through `write_skill`: `procedure` rewrites the whole SKILL.md, `references/<name>` writes one reference file for one safe file stem; one whole file per call, written atomically.
 Frontmatter carries `name` matching the bundle directory plus non-empty `description` and `version` plus an `inputs` list; the revision block carries `base_version` with the new `revision`, run provenance, and the `source_note_ids` the revision draws on, with empty `source_note_ids` legal and `base_version`/`revision` reader convention; the store checks only frontmatter `name`/`description`/`version`/`inputs`.
-Observable: the envelope reports `ok` for the intended skill and target; `skill_invalid` names the frontmatter correction, `skill_target` the target correction, `store_unavailable` the retry.
+Observable: the envelope reports per the `write_skill` contract.

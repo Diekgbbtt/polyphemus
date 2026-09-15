@@ -27,7 +27,8 @@ Defaults: `triager -> writing-observations`, `crawler -> steel-crawl`.
 ## Runtime loading (`build_load_skill_tool()::load_skill`)
 
 The single loader made agent-reachable: `load_skill(name)` returns the skill body with its YAML frontmatter stripped - identical semantics to the shared `skill_for` loader (cached, fail-open to `''` on an unknown skill) - plus the `meta-usage-skill` reading protocol appended after a `---` separator (body, separator, protocol).
-A missing protocol appends nothing, an unknown skill still degrades to `''`, and loading `meta-usage-skill` itself returns its bare body.
+A missing protocol appends nothing, an unknown skill still degrades to `''`, and loading either meta-skill itself returns its bare body (no protocol on the protocol skills: no blackloops).
+The appended protocol always reads from the shared catalogue - a per-project bundle never shadows it.
 The protocol is delivered by the read path itself, never by the prompt or compaction domain.
 `refresh` clears the cache first (the development hot-reload path only - never set it mid-run).
 The usage contract rides the tool's description verbatim from `SKILL_LOAD_CONTRACT` in the loader module - this README and that constant are the same wording, kept in sync by hand; update both together.

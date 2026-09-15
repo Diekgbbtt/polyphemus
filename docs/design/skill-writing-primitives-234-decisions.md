@@ -35,12 +35,13 @@ The agent seam helper (`build_skill_tools`) returns `load_skill` for every agent
 Writes create the bundle on first use, re-validate frontmatter (data-section keys plus `name` == the bundle directory), and land atomically (temp file in the same dir + `os.replace`) under a per-project lock.
 Every refusal is a denoted `ValueError` mapped to a coded in-band envelope (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 
-## D234-5 - protocol injection seam
+## D234-5 - protocol injection seam (amended by D234-13)
 
 The `meta-usage-skill` body is appended by the skill read path itself, as a tool-internal output extension inside `build_load_skill_tool` (the draft's recommended option).
 Composition is pinned: loader-identical body, `PROTOCOL_SEPARATOR` (`\n\n---\n\n`), protocol body.
-Unconditional on every load: no marker, no pause mechanism, no coupling to the prompt or compaction domain.
-Three fail-open caveats preserve pinned contracts: a missing protocol appends nothing, an unknown skill still degrades to `''` (there is no loaded procedure to assess), and loading `meta-usage-skill` itself returns its bare body (no self-append).
+Appended to the read of any skill, project or shared: no separate protocol reads, no shadowing - the appended protocol always reads from the shared catalogue, so a per-project bundle can never rewrite the judge.
+The two meta-skills themselves load bare (no protocol on the protocol skills: no blackloops).
+Three fail-open caveats preserve pinned contracts: a missing protocol appends nothing, an unknown skill still degrades to `''` (there is no loaded procedure to assess).
 
 ## D234-6 - removed grey-point checks (see D234-12)
 
@@ -84,3 +85,10 @@ Whether an agent may write at all is decided at the seam (the agent is given `wr
 The secret-shaped (`secret_refused`) and size-cap (`size_exceeded`) refusals are removed with it: both were purely heuristic checks, and heuristic refusals misfire on legitimate procedural content.
 The writer keeps its structural guarantees - typed surface, frontmatter re-validation, atomicity under a per-project lock, and the three structural envelopes (`skill_invalid`, `skill_target`, `store_unavailable`).
 The meta-skills were rewritten to the corrected contract and reframed: `meta-write-skill` teaches extending/correcting an already-existing skill from run experience (missing target detail added, contradicted content pruned) with writing-great-skills concepts as the instrument; both files are ultra-compact, dense verbatim, with `meta-usage-skill` the most compact since it rides every load.
+
+## D234-13 - operator rulings: protocol scope, envelope single-sourcing, sharp usage restriction
+
+No shadowing, no separate protocol reads: the usage protocol is appended to the read of any skill (project bundle or shared catalogue) and always reads from the shared catalogue; both meta-skills load bare to prevent blackloops (feedback self-judgement).
+The envelope mapping is single-sourced in the `write_skill` tool description (`WRITE_SKILL_CONTRACT`): the `meta-write-skill` step-4 Observable points at the contract instead of restating it.
+The `meta-usage-skill` step-3 Observable names the three codes (`skill_invalid`/`skill_target`/`store_unavailable`) as the sharper restriction - deliberate hot-path tokens per operator ruling, the one sanctioned duplication.
+Open (re-proposed extensively on operator request): the cross-run oscillation/convergence rule and the revision-block enforce-vs-advisory status.
