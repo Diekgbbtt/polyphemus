@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
 from polymerhus.app import data_root
 from polymerhus.app.clients import pg
@@ -34,15 +35,16 @@ class RunNotFound(Exception):
     """No run with the given id exists."""
 
 
-def create_project(name: str) -> str:
+def create_project(name: str, root: str | Path | None = None) -> str:
     """Create a project and return its freshly-minted id.
 
     The app-layer data root owns the per-project scaffold: ``ensure_project``
     creates the module buckets (``skills/``, ``hunting/...``) before the row
     lands, so a project always has its directories. Idempotent and fail-safe.
+    ``root`` overrides the data root (the tests' explicit temp root).
     """
     project_id = str(uuid.uuid4())
-    data_root.ensure_project(project_id)
+    data_root.ensure_project(project_id, root=root)
     pg.create_project(project_id, name)
     return project_id
 

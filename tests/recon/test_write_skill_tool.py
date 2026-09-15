@@ -106,6 +106,17 @@ def test_write_unsupported_target_refuses_in_band(tmp_path: Path) -> None:
     assert out["error"] == "skill_target"
 
 
+def test_write_unsafe_skill_name_refuses_in_band(tmp_path: Path) -> None:
+    tool = _bind(tmp_path)
+
+    out = tool.invoke(
+        {"skill": "../escape", "target": "references/r", "content": "# x\n"}
+    )
+
+    assert out["ok"] is False
+    assert out["error"] == "skill_invalid"
+
+
 def test_source_note_ids_are_accepted_as_log_only_provenance(tmp_path: Path) -> None:
     tool = _bind(tmp_path)
 

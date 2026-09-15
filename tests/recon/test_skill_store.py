@@ -141,6 +141,92 @@ def test_write_refuses_an_unsupported_or_unsafe_target(tmp_path: Path, target: s
         store.write("proj-1", "auth_workflow", target, "# x\n")
 
 
+@pytest.mark.parametrize("bad_key", ["name", "description", "version", "inputs"])
+def test_write_refuses_a_missing_frontmatter_key(tmp_path: Path, bad_key: str) -> None:
+    store = SkillStore(root_dir=tmp_path)
+    lines = [
+        "---\n",
+        "name: auth_workflow\n",
+        "description: The project's authentication procedure.\n",
+        "version: '1'\n",
+        "inputs: []\n",
+        "---\n\n# Procedure\n",
+    ]
+    key_line = {"name": 1, "description": 2, "version": 3, "inputs": 4}[bad_key]
+    del lines[key_line]
+
+    with pytest.raises(SkillInvalidError):
+        store.write("proj-1", "auth_workflow", "procedure", "".join(lines))
+
+
+def test_write_refuses_non_text_content(tmp_path: Path) -> None:
+    store = SkillStore(root_dir=tmp_path)
+    with pytest.raises(SkillInvalidError):
+        store.write("proj-1", "auth_workflow", "references/r", {"not": "text"})
+
+
+@pytest.mark.parametrize("bad", ["", ".", "..", "a/b", "a\\b"])
+def test_write_refuses_an_unsafe_skill_or_project_id(tmp_path: Path, bad: str) -> None:
+    store = SkillStore(root_dir=tmp_path)
+    with pytest.raises(ValueError):
+        store.write("proj-1", bad, "references/r", "# x\n")
+    with pytest.raises(ValueError):
+        store.write(bad, "auth_workflow", "references/r", "# x\n")
+
+
+def test_read_with_an_unsafe_project_id_falls_back(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(skills, "_SKILLS_ROOT", tmp_path / "empty")
+    store = SkillStore(root_dir=tmp_path / "data")
+
+    assert store.read("nope", project_id="../escape", fallback="FB") == "FB"
+
+
+def test_concurrent_writers_converge_without_losing_files(tmp_path: Path) -> None:
+    import threading
+
+    store = SkillStore(root_dir=tmp_path)
+    store.write("proj-1", "auth_workflow", "procedure", _procedure())
+    errors: list = []
+
+    def write_reference(i: int) -> None:
+        try:
+            store.write(
+                "proj-1", "auth_workflow", f"references/r{i}", f"# R{i}\n"
+            )
+        except Exception as exc:  # noqa: BLE001 - collected, asserted below
+            errors.append(exc)
+
+    threads = [threading.Thread(target=write_reference, args=(i,)) for i in range(8)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    assert not errors
+    for i in range(8):
+        ref = tmp_path / "proj-1" / "skills" / "auth_workflow" / "references" / f"r{i}.md"
+        assert ref.read_text(encoding="utf-8") == f"# R{i}\n"
+
+
+def test_concurrent_procedure_rewrites_leave_one_whole_file(tmp_path: Path) -> None:
+    import threading
+
+    store = SkillStore(root_dir=tmp_path)
+    bodies = [_procedure(body=f"# Body {i}\n") for i in range(4)]
+
+    def rewrite(i: int) -> None:
+        store.write("proj-1", "auth_workflow", "procedure", bodies[i])
+
+    threads = [threading.Thread(target=rewrite, args=(i,)) for i in range(4)]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    final = store.read("auth_workflow", project_id="proj-1")
+    assert final in [f"# Body {i}\n" for i in range(4)]  # whole, never interleaved
+
+
 def test_a_failed_write_leaves_prior_content_intact(tmp_path: Path) -> None:
     store = SkillStore(root_dir=tmp_path)
     store.write("proj-1", "auth_workflow", "procedure", _procedure(body="# First\n"))

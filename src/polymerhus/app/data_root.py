@@ -42,26 +42,28 @@ PROJECT_SCAFFOLD: tuple[str, ...] = (
 )
 
 
-def _validate_project_id(project_id: str) -> str:
-    """Reject a ``project_id`` that is not exactly one safe path component.
+def validate_path_component(value: str, what: str) -> str:
+    """Reject a `value` that is not exactly one safe path component.
 
-    The project id is used verbatim as a directory name, so only path
-    separators, control characters, and dot-traversal forms are refused.
+    Directory names derived from ids (project ids, skill names) are used
+    verbatim on disk, so path separators, control characters, and
+    dot-traversal forms are refused. Shared by every store on the data root
+    so the rule is defined once.
     """
-    if not isinstance(project_id, str) or not project_id:
-        raise ValueError("data_root: project_id must be a non-empty string")
-    if project_id in (".", ".."):
+    if not isinstance(value, str) or not value:
+        raise ValueError(f"{what} must be a non-empty string")
+    if value in (".", ".."):
+        raise ValueError(f"{what} {value!r} is not a valid path component")
+    if any(ch in value for ch in "/\\\x00") or any(ord(ch) < 32 for ch in value):
         raise ValueError(
-            f"data_root: project_id {project_id!r} is not a valid path component"
+            f"{what} {value!r} contains a path separator or control character"
         )
-    if any(ch in project_id for ch in "/\\\x00") or any(
-        ord(ch) < 32 for ch in project_id
-    ):
-        raise ValueError(
-            f"data_root: project_id {project_id!r} contains a path separator or "
-            "control character"
-        )
-    return project_id
+    return value
+
+
+def _validate_project_id(project_id: str) -> str:
+    """The project-id form of `validate_path_component`."""
+    return validate_path_component(project_id, "project_id")
 
 
 def ensure_data_root(root: str | Path | None = None) -> Path:
@@ -89,4 +91,10 @@ def ensure_project(project_id: str, root: str | Path | None = None) -> Path:
     return project_dir
 
 
-__all__ = ["DATA_ROOT", "PROJECT_SCAFFOLD", "ensure_data_root", "ensure_project"]
+__all__ = [
+    "DATA_ROOT",
+    "PROJECT_SCAFFOLD",
+    "ensure_data_root",
+    "ensure_project",
+    "validate_path_component",
+]

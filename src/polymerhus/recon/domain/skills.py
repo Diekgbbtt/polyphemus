@@ -29,7 +29,7 @@ import threading
 import uuid
 from pathlib import Path
 
-from polymerhus.app.data_root import DATA_ROOT
+from polymerhus.app.data_root import DATA_ROOT, validate_path_component
 
 logger = logging.getLogger(__name__)
 
@@ -93,7 +93,11 @@ def list_skills() -> list[str]:
 SKILL_LOAD_CONTRACT = (
     "Load a skill by name at runtime: returns the skill body with its YAML "
     "frontmatter stripped - identical semantics to the shared skill_for loader "
-    "(cached, fail-open to '' on an unknown skill).\n\n"
+    "(cached, fail-open to '' on an unknown skill) - plus the meta-usage-skill "
+    "reading protocol appended after a `---` separator (body, separator, "
+    "protocol).\n\n"
+    "A missing protocol appends nothing, an unknown skill still degrades to "
+    "`''`, and loading `meta-usage-skill` itself returns its bare body.\n\n"
     "EVERY skill carries a data section (frontmatter with name, description, "
     "version, inputs) so callers can tell what was loaded.\n\n"
     "PHASE-GATING CONVENTION - load at phase entry, once per thread, never "
@@ -262,8 +266,9 @@ class StoreUnavailableError(ValueError):
 
 
 # Per-project write serialisation (the `hunt_store` I2 pattern it repeats): a
-# per-project lock covers the whole validate-then-write critical section, so
-# concurrent writers converge instead of forking bundle files.
+# per-project lock covers the bundle-creation-plus-atomic-dump critical
+# section, so concurrent writers converge instead of forking bundle files
+# (content validation is pure and runs before the lock).
 _PROJECT_LOCKS: dict[str, threading.Lock] = {}
 _PROJECT_LOCKS_GUARD = threading.Lock()
 
@@ -307,16 +312,33 @@ def _frontmatter_violations(meta: dict, *, skill: str) -> list[str]:
         errors.append(
             f"{skill}: frontmatter 'name' {meta['name']!r} is not the bundle directory"
         )
-    if "description" in meta and not isinstance(meta["description"], str):
-        errors.append(f"{skill}: frontmatter 'description' must be a string")
+    if "description" in meta and (
+        not isinstance(meta["description"], str) or not meta["description"]
+    ):
+        errors.append(
+            f"{skill}: frontmatter 'description' must be a non-empty string"
+        )
     if "version" in meta and (
         not isinstance(meta["version"], str) or not meta["version"]
     ):
         errors.append(
             f"{skill}: frontmatter 'version' must be a non-empty string"
         )
-    if "inputs" in meta and not isinstance(meta["inputs"], list):
-        errors.append(f"{skill}: frontmatter 'inputs' must be a list")
+    if "inputs" in meta:
+        inputs = meta["inputs"]
+        if not isinstance(inputs, list):
+            errors.append(f"{skill}: frontmatter 'inputs' must be a list")
+        else:
+            for item in inputs:
+                if isinstance(item, str):
+                    continue
+                if not isinstance(item, dict) or not isinstance(
+                    item.get("name"), str
+                ):
+                    errors.append(
+                        f"{skill}: frontmatter 'inputs' items must be "
+                        "strings or {name, ...} maps")
+                    break
     return errors
 
 
@@ -332,32 +354,12 @@ class SkillStore:
 
     # -- paths -------------------------------------------------------------
 
-    @staticmethod
-    def _validate_component(value: str, what: str) -> str:
-        """Reject a `project_id`/skill name that is not one safe path
-        component (the notes/auth-store discipline: separators, control chars,
-        and dot-traversal forms are refused)."""
-        if not isinstance(value, str) or not value:
-            raise ValueError(f"skill store: {what} must be a non-empty string")
-        if value in (".", ".."):
-            raise ValueError(
-                f"skill store: {what} {value!r} is not a valid path component"
-            )
-        if any(ch in value for ch in "/\\\x00") or any(
-            ord(ch) < 32 for ch in value
-        ):
-            raise ValueError(
-                f"skill store: {what} {value!r} contains a path separator "
-                "or control character"
-            )
-        return value
-
     def _project_skills_root(self, project_id: str) -> Path:
-        self._validate_component(project_id, "project_id")
+        validate_path_component(project_id, "project_id")
         return self._root / project_id / "skills"
 
     def _bundle_dir(self, project_id: str, skill: str) -> Path:
-        self._validate_component(skill, "skill")
+        validate_path_component(skill, "skill")
         return self._project_skills_root(project_id) / skill
 
     def _target_file(
@@ -424,10 +426,17 @@ class SkillStore:
     def _ensure_bundle(self, project_id: str, skill: str) -> Path:
         """Create the bundle on first use: the skill directory plus its
         canonical `references/`, `scripts/`, `assets/` subdirectories (the
-        app-owned scaffold already owns the parent `skills/` dir)."""
+        app-owned scaffold already owns the parent `skills/` dir). A bundle
+        that cannot be created refuses `StoreUnavailableError` - never a raw
+        `OSError` past this seam."""
         bundle = self._bundle_dir(project_id, skill)
-        for sub in ("references", "scripts", "assets"):
-            (bundle / sub).mkdir(parents=True, exist_ok=True)
+        try:
+            for sub in ("references", "scripts", "assets"):
+                (bundle / sub).mkdir(parents=True, exist_ok=True)
+        except OSError as exc:
+            raise StoreUnavailableError(
+                f"store_unavailable: cannot create bundle {bundle} ({exc})"
+            ) from exc
         return bundle
 
     def write(
@@ -442,11 +451,11 @@ class SkillStore:
 
         `target` is the typed surface (`procedure` for `SKILL.md`,
         `references/<name>` for a reference file). `content` must be `str`;
-        `source_note_ids` is log-only provenance, never consulted. Refusals
-        (`SkillTargetError`, `SkillInvalidError`, `StoreUnavailableError`)
-        carry the coded signal the tool maps to an envelope. Every file write
-        is atomic under the per-project lock; a refused write persists
-        nothing.
+        `source_note_ids` is log-only provenance: recorded on the write log
+        line, never consulted. Refusals (`SkillTargetError`,
+        `SkillInvalidError`, `StoreUnavailableError`) carry the coded signal
+        the tool maps to an envelope. Every file write is atomic under the
+        per-project lock; a refused write persists nothing.
         """
         if not isinstance(content, str):
             raise SkillInvalidError(
@@ -465,6 +474,13 @@ class SkillStore:
         with _lock_for(f"{self._root}::{project_id}"):
             self._ensure_bundle(project_id, skill)
             self._dump_text_atomic(file_path, content)
+            logger.info(
+                "skill store: wrote %s target=%s project=%s source_notes=%s",
+                skill,
+                target,
+                project_id,
+                list(source_note_ids),
+            )
 
 
 # The single usage contract, rendered verbatim into the tool description at
@@ -559,7 +575,8 @@ def build_write_skill_tool(project_id: str, store: SkillStore | None = None):
             return {"ok": False, "error": "store_unavailable",
                     "detail": str(exc)}
         except ValueError as exc:  # noqa: BLE001 - unsafe component, fail-open
-            return {"ok": False, "error": "skill_invalid", "detail": str(exc)}
+            return {"ok": False, "error": "skill_invalid",
+                    "detail": f"skill_invalid: {exc}"}
         except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
             return {"ok": False, "error": "store_unavailable",
                     "detail": f"store_unavailable: {exc}"}
