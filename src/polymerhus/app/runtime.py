@@ -564,11 +564,17 @@ class RuntimeManager:
         from polymerhus.app.llm.checkpoints import flush_module_index
 
         try:
-            return flush_module_index(handle.name)
+            result = flush_module_index(handle.name)
         except Exception:  # noqa: BLE001
             logger.warning("flush of module %s failed (fail-open, degraded)",
                            handle.name, exc_info=True)
             return _degraded("hook-raised")
+        if result is None:
+            logger.warning(
+                "flush of module %s returned nothing (fail-open, degraded)",
+                handle.name)
+            return _degraded("no-result")
+        return result
 
 
 class ShutdownFanOut:

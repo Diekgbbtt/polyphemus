@@ -32,7 +32,6 @@ composition it keys on.
 """
 from __future__ import annotations
 
-import asyncio
 import contextlib
 import contextvars
 import dataclasses
@@ -555,10 +554,29 @@ def flush_module_index(module: str, run_id: str | None = None) -> FlushResult:
 def flush_all_indexes() -> dict[str, FlushResult]:
     """Shutdown flush hook (G7c): archive every live module index's committed threads
     into the still-open #94 pooled PG saver (fail-open), returning the per-module
-    `FlushResult`s. Call BEFORE `close_session_checkpointer`."""
+    `FlushResult`s. Call BEFORE `close_session_checkpointer`. Every value is a
+    typed result: a raising seam degrades to `cause="hook-raised"`, a result-less
+    one to `cause="no-result"` - teardown never raises and never reads None."""
     with _indexes_lock:
         modules = list(_module_indexes)
-    return {module: flush_module_index(module) for module in modules}
+    results: dict[str, FlushResult] = {}
+    for module in modules:
+        try:
+            result = flush_module_index(module)
+        except Exception:  # noqa: BLE001 - fail-open: never raise into teardown
+            logger.warning("shutdown bulk flush of module %s raised (fail-open, "
+                           "degraded)", module, exc_info=True)
+            result = FlushResult(
+                committed=0, archived=0, dropped=0, dropped_thread_ids=[],
+                cause="hook-raised")
+        if result is None:
+            logger.warning("shutdown bulk flush of module %s returned nothing "
+                           "(fail-open, degraded)", module)
+            result = FlushResult(
+                committed=0, archived=0, dropped=0, dropped_thread_ids=[],
+                cause="no-result")
+        results[module] = result
+    return results
 
 
 async def flush_run_scoped(module: str, run_id: str | None, *, flush_fn=None) -> FlushResult:
@@ -567,9 +585,12 @@ async def flush_run_scoped(module: str, run_id: str | None, *, flush_fn=None) ->
     `finally`) funnels through here - never an inline flush block - so the three
     sites cannot drift apart again. Runs the run-scoped `flush_module_index(module,
     run_id=...)` off the loop, LOUDLY logs a drop with the thread ids (TD-4), and
-    never raises: a raising seam degrades to a typed `cause="hook-raised"` result
-    (TD-5). `flush_fn` is the injectable seam (defaults to `flush_module_index` so
-    tests pin the call without monkeypatching module globals)."""
+never raises: a raising seam degrades to a typed `cause="hook-raised"` result
+(TD-5). `flush_fn` is the injectable seam (defaults to `flush_module_index` so
+tests pin the call without monkeypatching module globals). `asyncio` stays a
+function-local import: the resume-seam audit pins this module's top-level
+imports to a side-effect-free allowlist."""
+    import asyncio  # noqa: PLC0415 - deferred: top-level imports are audit-pinned
     fn = flush_fn if flush_fn is not None else flush_module_index
     try:
         result = await asyncio.to_thread(fn, module, run_id)
