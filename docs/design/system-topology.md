@@ -60,7 +60,7 @@ flowchart LR
 Each compose **service name is the container identifier** used below (e.g. `agent`, `neo4j`).
 
 ### `agent` — orchestrator and control plane
-`polymerhus-agent:latest`, built from the `redamon-agent:latest` base (`agent/Dockerfile`). Runs a
+`polymerhus-agent:latest`, built in-repo from `Dockerfile` (python:3.11-slim + pip layers). Runs a
 FastAPI app under `uvicorn` on `:8080` (published to host). It hosts the recon pipeline **and** the
 REST API that is the only way to create projects, configure targets, launch runs, and read the
 mapped attack surface (`README.md` "Interfaces"). It is the sole component that talks to the three
@@ -77,11 +77,13 @@ Stores the discovered attack surface as a labelled property graph. Layer-0 const
 by the agent at startup (`db/neo4j/schema.py`).
 
 ### `kali` — tool execution sandbox
-`redamon-kali-sandbox:latest`, publishing `:8000`. Runs a single-tool FastMCP server
+`redamon-kali-sandbox:latest` (tag kept; image built in-repo from `Dockerfile.kali`, a slim
+recon-tools image on `kalilinux/kali-rolling`), publishing `:8000`. Runs a single-tool FastMCP server
 (`kali/mcp_server.py`, `FastMCP("kali-exec")`) exposing `execute_command` over native HTTP at `/mcp`.
-It carries the ProjectDiscovery recon suite; `kali/postrun.sh` gap-fills extra tools into the
-persisted `kali-tools` volume on first `up`. Volumes: `kali-tools`, `resolvers`, `work` (per-session
-workdirs).
+It bakes the ProjectDiscovery recon suite (subfinder/dnsx/naabu/httpx/katana/ffuf) + arjun/paramspider/
+masscan/nmap/subzy/jsluice; `kali/postrun.sh` gap-fills the volume-persisted layer (massdns/puredns/
+kiterunner/graphql-cop) into `kali-tools` on first `up`. Volumes: `kali-tools`, `resolvers`, `work`
+(per-session workdirs).
 
 ### `frontend` — read-only viewer SPA
 Not a compose service: a Vite/React single-page app (`frontend/`), served by the Vite dev server on
@@ -98,10 +100,10 @@ traces. All three are reached over the public internet, not `polymerhus-net`.
 
 | Container id | Image | Host ports | In-network address | Volumes |
 |---|---|---|---|---|
-| `agent` | `polymerhus-agent:latest` (base `redamon-agent:latest`) | `8080` | `agent:8080` | (bind-mounts in dev) |
+| `agent` | `polymerhus-agent:latest` (built in-repo, `Dockerfile`) | `8080` | `agent:8080` | (bind-mounts in dev) |
 | `postgres` | `pgvector/pgvector:pg16` | `5432` | `postgres:5432` | `pg-data` |
 | `neo4j` | `neo4j:5.26-community` | `7474`, `7687` | `neo4j:7687` (Bolt) | `neo4j-data` |
-| `kali` | `redamon-kali-sandbox:latest` | `8000` | `kali:8000/mcp` | `kali-tools`, `resolvers`, `work` |
+| `kali` | `redamon-kali-sandbox:latest` (built in-repo, `Dockerfile.kali`) | `8000` | `kali:8000/mcp` | `kali-tools`, `resolvers`, `work` |
 | `frontend` | Vite/React (host, not compose) | `5173` | — | — |
 
 ## Network configuration

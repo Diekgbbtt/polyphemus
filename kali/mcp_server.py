@@ -1,4 +1,4 @@
-"""Single-tool fastmcp execution server for the reused Kali image.
+"""Single-tool fastmcp execution server for the Kali exec-node image (Dockerfile.kali).
 Exposes execute_command over native HTTP at /mcp; per-session workdir isolation;
 ANSI-stripped output; PATH primed for the ProjectDiscovery + gap tools.
 No scope enforcement (MVP)."""

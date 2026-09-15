@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# Idempotent gap-fill for the reused redamon-kali-sandbox image. Installs the
-# recon tools it lacks into a persisted volume (/opt/localbin) + the venv, so
-# recreation never recompiles.
+# Idempotent gap-fill for the Kali exec-node image (Dockerfile.kali). Installs
+# the volume-persisted tools (massdns/puredns/kr/graphql-cop/...) into
+# /opt/localbin + the venv, so recreation never recompiles.
 # Best-effort by design (I1): a failed gap-fill step must NOT abort this script,
 # because the compose entrypoint is `postrun.sh && mcp_server.py` — aborting here
 # would take down the whole exec server (incl. tools that need no gap-fill).

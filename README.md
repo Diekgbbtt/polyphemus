@@ -4,8 +4,10 @@ Autonomous vulnerability-discovery harness. Iteration 1 (recon MVP) substrate:
 four containers the recon pipeline and documentation-ingestion subsystem run on.
 
 ## Prerequisites
-Two base images must exist locally (reused, not rebuilt):
-`redamon-agent:latest`, `redamon-kali-sandbox:latest` (`docker images` to check).
+All images build in-repo from Dockerfiles (`docker images` to check):
+`polymerhus-agent:latest` (`Dockerfile`), `redamon-kali-sandbox:latest`
+(`Dockerfile.kali`, slim recon-tools image), `polyphemus-ingestion:latest`
+(`src/polymerhus/Dockerfile.ingestion`). The rest are pulled public images.
 
 ## Run
     cp .env.example .env
@@ -57,7 +59,7 @@ carries the reason (e.g. connection refused).
 - LangGraph checkpoints: `AsyncPostgresSaver.setup()` at agent startup.
 
 ## Kali recon tools
-`redamon-kali-sandbox` ships the ProjectDiscovery suite + arjun/masscan/nmap; `kali/postrun.sh`
+`Dockerfile.kali` bakes the ProjectDiscovery suite (subfinder/dnsx/naabu/httpx/katana incl. the main-branch `-pcs` flags/ffuf) + arjun/paramspider/masscan/nmap/subzy/jsluice/whois/openvpn into the image; `kali/postrun.sh`
 gap-fills massdns/puredns/whois/graphql-cop/kiterunner into a persisted volume on first `up`.
 
 ## Launching a recon run

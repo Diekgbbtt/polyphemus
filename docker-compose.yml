@@ -89,6 +89,10 @@ services:
       start_period: 60s
 
   kali:
+    # Built in-repo from Dockerfile.kali (slim recon-tools image, ~3-5 GB).
+    # Replaces the lost prebuilt redamon-kali-sandbox (never on a registry);
+    # the tag is kept so docs/tests referencing it keep working.
+    build: { context: ., dockerfile: Dockerfile.kali }
     image: redamon-kali-sandbox:latest
     entrypoint: ["bash", "-lc", "/opt/postrun.sh && /opt/venv/bin/python /opt/mcp_server.py"]
     ports: ["8000:8000"]

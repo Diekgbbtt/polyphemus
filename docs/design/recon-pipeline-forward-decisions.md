@@ -15,18 +15,18 @@ Operator decision (2026-07-03): **all six are in scope for Phase 2.**
 `kiterunner`, `paramspider`, `graphql-cop`, `subdomain_takeover`, and `steel_crawl` are all live `JobSpec` entries in `agent/recon/jobs.py::JOBS` (verified `path:line`: `jobs.py:121-128` kiterunner, `jobs.py:91-98` paramspider, `jobs.py:137-144` graphql-cop, `jobs.py:56-66` subdomain_takeover, `jobs.py:145-153` steel_crawl), each with a working parser under `agent/recon/parsers/`.
 `nuclei` alone was **not** ported - see D2's correction below; it exists nowhere in `agent/` (no `JobSpec`, no parser, no pod wiring - verified by search).
 
-Install status in the reused `redamon-kali-sandbox` image (unchanged from the original decision, not re-verified by this stream - out of scope for a docs-only pass):
+Install status in the `redamon-kali-sandbox` image (re-verified 2026-09-10 against `Dockerfile.kali` + the live container; the image is built in-repo from `kalilinux/kali-rolling`, no longer a reused prebuilt - the prebuilt is gone and was never on a registry):
 
 | Tool | Present | Source of truth |
 |---|---|---|
-| nuclei | yes (`/root/go/bin/nuclei`, `nuclei-templates/` present) | base image |
-| kiterunner (`kr`) | gap-filled at runtime | `kali/postrun.sh` |
-| paramspider | yes (`/opt/venv/bin/paramspider`) | base image |
-| graphql-cop | yes (`/usr/local/bin/graphql-cop`) | base image |
+| nuclei | **no** - not installed | - |
+| kiterunner (`kr`) | gap-filled at runtime into `/opt/localbin` | `kali/postrun.sh` |
+| paramspider | yes (Kali apt package, `/usr/bin/paramspider`) | `Dockerfile.kali` |
+| graphql-cop | gap-filled at runtime into `/opt/localbin` | `kali/postrun.sh` |
 | steel engine | **no** | see D3 |
 
 Note the distinction: the *binary* being present in the Kali image (this table) is orthogonal to whether the *agent-side* job/parser/pod wiring exists.
-`nuclei`'s binary is installed but nothing in `agent/` invokes it - D2 below is the accurate current status.
+`nuclei` is neither installed nor wired - D2 below is the accurate current status.
 
 ## D2 - nuclei stays fully deferred; the re-entrant interface it motivated is also unbuilt (CORRECTED)
 

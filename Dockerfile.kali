@@ -1,0 +1,101 @@
+# Kali exec-node image for the polymerhus recon pipeline.
+#
+# Replaces the lost prebuilt `redamon-kali-sandbox:latest` (a local-only build
+# from samugit83/redamon's mcp/kali-sandbox/Dockerfile, never published to any
+# registry). That image was ~15 GB (metasploit, playwright/chromium, nuclei
+# templates, AD tooling); this stack drives kali through ONE seam only -
+# `kali/mcp_server.py::execute_command` over http://kali:8000/mcp - and its
+# command templates (src/polymerhus/recon/control/jobs.py) need just the recon
+# tools below, so this is a slim purpose-built image (~3-5 GB).
+#
+# Split of responsibilities with the runtime gap-fill (`kali/postrun.sh`, kept
+# as-is): this image bakes every APT/Go tool; postrun keeps owning the
+# volume-persisted layer (massdns/puredns/kr/graphql-cop/resolvers) that
+# survives in the `kali-tools`/`resolvers` volumes. No ENTRYPOINT here - the
+# compose service overrides it with `postrun.sh && mcp_server.py`.
+FROM kalilinux/kali-rolling:latest
+
+ENV DEBIAN_FRONTEND=noninteractive
+
+# APT mirror bootstrap (from upstream): the default http.kali.org redirector
+# flakes with SSL/403 errors, so pin the direct CDN mirror over HTTP first,
+# install ca-certificates, then switch to HTTPS.
+RUN echo "deb http://kali.download/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list \
+    && apt-get update \
+    && apt-get install -y --no-install-recommends ca-certificates \
+    && echo "deb https://kali.download/kali kali-rolling main contrib non-free non-free-firmware" > /etc/apt/sources.list \
+    && apt-get update
+
+# Pipeline tools shipped as Kali packages (one layer, no source compiles):
+#  subfinder/dnsx/naabu/katana/ffuf/amass - phases 0-4 discovery/probe/crawl
+#  nmap/masscan                           - L2 port/service scan (+ naabu -nmap-cli)
+#  arjun/paramspider                      - phase 8/4 parameter harvest
+#  seclists                               - ffuf wordlist /usr/share/seclists/...
+#  whois/openvpn/iproute2/iputils-ping    - whois job + VPN-in-container recon
+#  golang                                 - Go toolchain for the installs below
+#  python3/python3-venv/python3-pip       - /opt/venv for the fastmcp exec server
+#  git/curl/tar/make/gcc + libc6-dev      - postrun.sh gap-fill deps; the C
+#                                          headers are load-bearing (Go builds
+#                                          with cgo: httpx, jsluice/tree-sitter)
+RUN apt-get update && apt-get install -y --no-install-recommends \
+    ca-certificates git curl tar make gcc libc6-dev \
+    python3 python3-venv python3-pip \
+    golang \
+    subfinder dnsx naabu katana ffuf amass \
+    nmap masscan \
+    arjun paramspider \
+    seclists \
+    whois openvpn iproute2 iputils-ping \
+    && rm -rf /var/lib/apt/lists/*
+
+# Belt-and-suspenders: the ffuf template needs this exact path. The seclists
+# package ships it, but a slimmed package would break every content-discovery
+# pod, so fall back to the pinned upstream copy instead of failing at runtime.
+RUN ls /usr/share/seclists/Discovery/Web-Content/common.txt 2>/dev/null || \
+    (mkdir -p /usr/share/seclists/Discovery/Web-Content && \
+     curl -sL https://raw.githubusercontent.com/danielmiessler/SecLists/47c02ddb16744a80c79fe19880096868c4c90cee/Discovery/Web-Content/common.txt \
+       -o /usr/share/seclists/Discovery/Web-Content/common.txt)
+
+# Python venv for the exec server. The compose entrypoint runs
+# /opt/venv/bin/python /opt/mcp_server.py, so the venv + fastmcp MUST exist in
+# the image (postrun.sh cannot create it - it only tops up packages).
+RUN python3 -m venv /opt/venv \
+    && /opt/venv/bin/pip install --no-cache-dir 'fastmcp<3'
+
+ENV GOPATH="/root/go"
+ENV PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:${PATH}"
+
+# Go tools with no Kali package (installed to /root/go/bin, which the exec
+# server's PATH primes ahead of the system PATH):
+#  httpx    - ProjectDiscovery HTTP probe (apt has no httpx package)
+#  katana   - rebuilt from main@7eaa0c2: the pipeline template uses -pcs/-pcsm/
+#             -pcsd flags that exist ONLY on main, never in a tagged release
+#             (not even the apt 1.7.0 - verified against the release notes
+#             trail in jobs.py). Falls back to main tip if the pin is pruned.
+#  jsluice  - JS bundle endpoint/secret extraction (CGO needs gcc, above)
+#  subzy    - subdomain-takeover fingerprints
+RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest \
+    && (go install -v github.com/projectdiscovery/katana/cmd/katana@7eaa0c2 \
+        || go install -v github.com/projectdiscovery/katana/cmd/katana@latest) \
+    && CGO_ENABLED=1 go install -v github.com/BishopFox/jsluice/cmd/jsluice@latest \
+    && go install -v github.com/PentestPad/subzy@latest
+
+# Login shells (`docker exec ... bash -lc`, and any ssh-style debugging) reset
+# PATH via /etc/profile, dropping the image ENV above. Persist the priming
+# for them too - the exec server itself does not need this (it primes
+# os.environ directly), but operators debugging inside the container do.
+RUN echo 'export PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:$PATH"' > /etc/profile.d/polymerhus-path.sh
+
+# Build-time smoke test: fail the build here, not at 2am in a recon pod.
+# Asserts every binary the job templates invoke, the -pcs flags that forced the
+# katana source build, the seclists wordlist path, and the fastmcp import the
+# entrypoint depends on. (massdns/puredns/kr/graphql-cop are intentionally NOT
+# asserted - they live in the persisted volumes, owned by postrun.sh.)
+RUN for t in subfinder amass whois dnsx naabu httpx katana ffuf arjun paramspider \
+             subzy jsluice nmap masscan curl git go python3 openvpn ip; do \
+      command -v $t >/dev/null 2>&1 || { echo "[smoke] MISSING: $t"; exit 1; }; \
+    done \
+    && katana -h 2>&1 | grep -q "\-pcs" || { echo "[smoke] katana lacks -pcs flags"; exit 1; } \
+    && test -f /usr/share/seclists/Discovery/Web-Content/common.txt \
+    && /opt/venv/bin/python -c "from fastmcp import FastMCP" \
+    && echo "[smoke] kali exec-node OK" && katana -version 2>&1 | head -n 1

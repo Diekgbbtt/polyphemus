@@ -60,9 +60,10 @@ services:
     env_file:
       - path: .env
         required: false
-    # Host 8080 is taken by the sibling worktree's polymerhus-agent-1; publish
-    # this agent on 8081. The agent itself listens on 8080 in-container.
-    ports: ["8081:8080"]
+    # Host 8080 is taken by the sibling worktree's polymerhus-agent-1, and host
+    # 8081 by the ingestion service default (docker-compose.ingestion.yml); publish
+    # this agent on 8082. The agent itself listens on 8080 in-container.
+    ports: ["8082:8080"]
     # Join the SHARED network the base stack already created, so `postgres`,
     # `neo4j`, and `kali` resolve by service DNS. Declared external because
     # those services are owned by the base `polymerhus` project, not this one.
