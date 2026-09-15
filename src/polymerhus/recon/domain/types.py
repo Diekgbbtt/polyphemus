@@ -95,6 +95,27 @@ class AssetSelector(BaseModel):
     op: Literal["ends_with", "starts_with", "equals", "contains"] = "ends_with"
     values: list[str]
 
+class ConsumptionOptions(BaseModel):
+    """How a job's input population derives into pod inputs (#37, option B).
+
+    The single declaration the unified derivation
+    (`batching.derive_consumption_set`) interprets - replacing the accreted
+    per-job booleans with one composed pipeline: malformed-path exclusion,
+    route-cluster dedup (+ optional root `/` materialisation and
+    already-profiled skip), restapi-first ordering, then pack into pod inputs.
+    All False / `pack="none"` is the plain-job no-op (raw 1:1 assets).
+    """
+    route_dedup: bool = False
+    # `materialise_root` / `skip_profiled` ride the `route_dedup` stage: set
+    # alone (without `route_dedup`) they are inert - the seam never materialises
+    # or skips outside the dedup pass.
+    materialise_root: bool = False
+    skip_profiled: bool = False
+    drop_malformed: bool = False
+    order_restapi_first: bool = False
+    pack: Literal["none", "batches", "one_pod", "scan_targets"] = "none"
+
+
 class JobSpec(BaseModel):
     tool: str
     skill: str
@@ -102,23 +123,34 @@ class JobSpec(BaseModel):
     produces: list[str]
     consumes: str
     consumes_where: AssetSelector | None = None
-    batch: bool = False
-    # #208 one-pod reprofile (D16 per-endpoint split, superseded dispatch): this
-    # job re-probes the Endpoint population to stamp each Endpoint's own
-    # `profile`. Its probe SET is prepared by
-    # `batching.prepare_endpoint_profile_assets` (dedup dynamic routes +
-    # materialise a root `/` per BaseURL) and packed into ONE pod_input by the
-    # `endpoint_profiling` preprocess branch - the pass dispatches exactly one
-    # pod regardless of endpoint count, paying O(1) triager turns per job.
-    endpoint_profiling: bool = False
-    # D16 per-endpoint split: this job (kiterunner) fuzzes under an evidence-
-    # derived API-root prefix. Its input Endpoints (profile==restapi) are grouped
-    # per host and collapsed to scan-target prefixes by
-    # `batching.build_api_scope_assets` (via `api_scope.derive_scan_targets`).
-    api_scope: bool = False
+    # #37 option B: `consumption` is the SINGLE declaration of how this job's
+    # input population derives into pod inputs. The legacy per-job flags below
+    # are read-only VIEWS over it (kept so the pod command builder and the
+    # pipeline phase planner, which switch on dispatch shape rather than
+    # input-set derivation, keep working unchanged).
+    consumption: ConsumptionOptions = Field(default_factory=ConsumptionOptions)
     use_auth: bool = False
     configurator_mode: Literal["deterministic", "agent"] = "deterministic"
     eval_criteria: str = "returncode_zero_nonempty"
+
+    # --- legacy dispatch-shape views (#37 option B) ---------------------------
+    # Read-only views over `consumption.pack` for the seams that switch on the
+    # pod DISPATCH shape (the pod command builder, the pipeline phase planner)
+    # rather than on input-set derivation. New code reads `consumption`.
+    @property
+    def batch(self) -> bool:
+        """True when this job packs bundles into batch pods (jsluice)."""
+        return self.consumption.pack == "batches"
+
+    @property
+    def endpoint_profiling(self) -> bool:
+        """True when this job packs its probe set into ONE pod (#208)."""
+        return self.consumption.pack == "one_pod"
+
+    @property
+    def api_scope(self) -> bool:
+        """True when this job collapses endpoints to scan targets (kiterunner)."""
+        return self.consumption.pack == "scan_targets"
 
 class PodExport(BaseModel):
     input_asset: dict
