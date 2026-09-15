@@ -79,6 +79,9 @@ if command -v ip >/dev/null 2>&1; then
   mkdir -p /run/netns /run/kali-http
   chmod 700 /run/kali-http 2>/dev/null || true
   sysctl -q -w net.ipv4.ip_forward=1 >/dev/null 2>&1 || true
+  DNS_RELAY_ADDRESS="${KALI_HTTP_DNS_SERVER:-169.254.169.253}"
+  ip -4 addr show dev lo | grep -q "${DNS_RELAY_ADDRESS}/32" || \
+    ip addr add "${DNS_RELAY_ADDRESS}/32" dev lo 2>/dev/null || true
 fi
 
 # Install mitmproxy's generated CA into the system trust store so interceptable

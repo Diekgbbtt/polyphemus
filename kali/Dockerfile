@@ -15,6 +15,10 @@ ENV DEBIAN_FRONTEND=noninteractive
 ENV PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:/usr/local/go/bin:${PATH}"
 ENV PYTHONPATH=/opt
 
+RUN apt-get update -qq \
+ && apt-get install -y -qq --no-install-recommends dnsmasq-base \
+ && rm -rf /var/lib/apt/lists/*
+
 RUN (command -v uv >/dev/null 2>&1 || /opt/venv/bin/pip install --no-cache-dir "uv==${UV_VERSION}") \
  && uv python install "${MITMPROXY_PYTHON}" \
  && uv venv --python "${MITMPROXY_PYTHON}" /opt/mitmproxy-env \
@@ -34,6 +38,7 @@ ENV KALI_HTTP_HISTORY_ROOT=/data \
     KALI_HTTP_MAX_BODY_BYTES=5242880 \
     KALI_HTTP_NAMESPACE_POOL=8 \
     KALI_HTTP_LEASE_TTL_S=900 \
+    KALI_HTTP_DNS_SERVER=169.254.169.253 \
     KALI_HTTP_PROXY_HOST=127.0.0.1 \
     KALI_HTTP_PROXY_PORT=8080 \
     KALI_HTTP_REGISTRY_PATH=/run/kali-http/registry.sqlite3

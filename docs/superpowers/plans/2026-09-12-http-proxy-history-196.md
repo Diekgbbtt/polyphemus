@@ -131,3 +131,14 @@ Pushed to `origin/dev` via SSH:
 ```text
 53e4fbbd02625c521a5f96ae162189166f410d4d refs/heads/dev
 ```
+
+## DNS relay follow-up (2026-09-14)
+
+Manual HTTPS verification found that copying Docker's loopback-only
+`nameserver 127.0.0.11` into a leased namespace prevented ordinary hostname
+resolution. Kali now runs a root-namespace dnsmasq relay at
+`169.254.169.253`; per-namespace resolver files point to that relay while
+preserving Docker/VPN search and resolver options. The E2E target now uses its
+Docker service name, so the zero-skip live gate covers DNS before HTTP capture
+and replay. Fresh verification passed against the service name and against an
+external HTTPS/HTTP2 request without `--resolve` or `-k`.

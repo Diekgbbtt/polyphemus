@@ -28,7 +28,7 @@ from fastmcp import Client
 from polymerhus.attack.hunting.hunting_pod import HuntingHttpPod
 
 MCP_URL = os.environ.get("KALI_MCP_URL", "http://localhost:8000/mcp")
-TARGET = os.environ.get("KALI_HTTP_E2E_TARGET", "http://172.28.0.20/")
+TARGET = os.environ.get("KALI_HTTP_E2E_TARGET", "http://http-e2e-target/")
 COOKIE_SECRET = "e2e-session"
 AUTH_SECRET = "e2e-secret-token"
 ALLOW_SKIP = os.environ.get("KALI_HTTP_E2E_ALLOW_SKIP") == "1"

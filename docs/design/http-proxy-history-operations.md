@@ -10,6 +10,7 @@ identifier within its project.
 
 ```
 MCP execute_command ──lease netns/veth──► subprocess (source 172.30.0.x)
+                    DNS 169.254.169.253 ──► dnsmasq ──► Kali/Docker resolver
                                             │ transparent REDIRECT :80/:443
                                             ▼
                        mitmdump (addon_entry.py) in the ROOT namespace
@@ -23,11 +24,12 @@ redirected, so there is no routing loop. Flows that cannot be correlated land in
 the reserved `unscoped` project, which project-scoped queries refuse to read.
 
 The live end-to-end target is a separate, deterministic local service
-(`http-e2e-target`, see `docker-compose.e2e.yml`). It is addressed by the
-fixed bridge address `172.28.0.20` on port 80 rather than by Docker DNS because
-leased network namespaces carry a copied `/etc/resolv.conf` and cannot rely on
-the Docker embedded DNS resolver. Port 80 is required so the per-lease
-transparent REDIRECT rules intercept it.
+(`http-e2e-target`, see `docker-compose.e2e.yml`). The gate addresses it by its
+Docker service name: each leased namespace queries the root-namespace dnsmasq
+relay at `169.254.169.253`, which forwards to Kali's current Docker/VPN resolver.
+This avoids copying an unreachable loopback nameserver such as `127.0.0.11`
+into the isolated namespace. Port 80 is required so the per-lease transparent
+REDIRECT rules intercept the request.
 
 `/dev/net/tun` is **not** mounted by the base `docker-compose.yml`. The HTTP
 capture plane needs `NET_ADMIN`, `SYS_ADMIN`, and unconfined seccomp/apparmor
@@ -47,6 +49,7 @@ existing on the host.
 | `KALI_HTTP_NAMESPACE_POOL` | `8` | Concurrent capture sessions |
 | `KALI_HTTP_LEASE_TTL_S` | `900` | Lease TTL for background processes |
 | `KALI_HTTP_ACQUIRE_TIMEOUT_S` | `30` | Backpressure wait before `PoolExhaustedError` |
+| `KALI_HTTP_DNS_SERVER` | `169.254.169.253` | Root-namespace dnsmasq relay used by leased namespaces |
 | `KALI_HTTP_PROXY_HOST` / `KALI_HTTP_PROXY_PORT` | `127.0.0.1` / `8080` | mitmdump listener |
 | `KALI_HTTP_REGISTRY_PATH` | `/run/kali-http/registry.sqlite3` | Shared source-ip registry |
 | `KALI_HTTP_RETENTION_S` | `0` | Age-based retention (0 = keep) |
@@ -110,7 +113,6 @@ docker compose exec kali \
   /opt/venv/bin/python /opt/kali/healthcheck.py --require-capture
 
 KALI_MCP_URL=http://localhost:8000/mcp \
-KALI_HTTP_E2E_TARGET=http://172.28.0.20/ \
 .venv/bin/pytest tests/e2e/test_http_proxy_history.py -vv -rs
 ```
 
@@ -118,7 +120,8 @@ The final command is the zero-skip live gate: it must produce `1 passed`, no
 skip, `proxy_status.ok=true`, and the full acceptance set (method / header /
 cookie / query / status / body marker, non-empty `http_artifact_refs`, real
 `request_ref` pod resolution, immutable lineage, cookie preservation via the
-local target, project isolation, and no raw secrets on the sanitized boundary).
+local target, Docker service-name resolution from the leased namespace, project
+isolation, and no raw secrets on the sanitized boundary).
 For a host-only developer run that intentionally has no stack, set
 `KALI_HTTP_E2E_ALLOW_SKIP=1`; that is not a valid issue-closing gate.
 

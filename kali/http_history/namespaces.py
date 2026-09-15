@@ -10,16 +10,39 @@ from __future__ import annotations
 
 import logging
 import os
-import shutil
 import subprocess
 import threading
 import time
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from kali.http_history.models import CaptureContext
 from kali.http_history.registry import SourceRegistry
 
 logger = logging.getLogger(__name__)
+DNS_RELAY_ADDRESS = "169.254.169.253"
+
+
+def render_namespace_resolv_conf(source: str, *, dns_server: str) -> str:
+    """Point a namespace at the root-namespace DNS relay.
+
+    Docker's embedded resolver is bound to the root network namespace's
+    loopback.  Copying that address into a leased namespace makes DNS fail, so
+    replace every upstream declaration with one reachable relay while keeping
+    search domains, resolver options and diagnostic comments intact.
+    """
+    rendered: list[str] = []
+    inserted = False
+    for line in source.splitlines():
+        if line.strip().startswith("nameserver "):
+            if not inserted:
+                rendered.append(f"nameserver {dns_server}")
+                inserted = True
+            continue
+        rendered.append(line)
+    if not inserted:
+        rendered.insert(0, f"nameserver {dns_server}")
+    return "\n".join(rendered) + "\n"
 
 
 class PoolExhaustedError(RuntimeError):
@@ -50,8 +73,20 @@ class SubprocessBackend:
     """Real ``ip netns``/veth backend; transparent-routing rules are installed
     by ``entrypoint.sh``/``postrun.sh`` and re-asserted per lease here."""
 
-    def __init__(self, *, proxy_port: int = 8080):
+    def __init__(
+        self,
+        *,
+        proxy_port: int = 8080,
+        dns_server: str | None = None,
+        resolv_conf_path: str | Path = "/etc/resolv.conf",
+        netns_config_root: str | Path = "/etc/netns",
+    ):
         self.proxy_port = proxy_port
+        self.dns_server = dns_server or os.environ.get(
+            "KALI_HTTP_DNS_SERVER", DNS_RELAY_ADDRESS
+        )
+        self.resolv_conf_path = Path(resolv_conf_path)
+        self.netns_config_root = Path(netns_config_root)
 
     def create(self, namespace: str, source_ip: str) -> None:
         veth_host = f"vh{namespace[-6:]}"
@@ -68,10 +103,14 @@ class SubprocessBackend:
             self._run("ip", "-n", namespace, "link", "set", veth_ns, "up")
             self._run("ip", "-n", namespace, "link", "set", "lo", "up")
             self._run("ip", "-n", namespace, "route", "add", "default", "via", gateway_ip)
-            resolv_dir = f"/etc/netns/{namespace}"
-            self._run("mkdir", "-p", resolv_dir)
-            if os.path.exists("/etc/resolv.conf"):
-                shutil.copy("/etc/resolv.conf", f"{resolv_dir}/resolv.conf")
+            resolv_dir = self.netns_config_root / namespace
+            self._run("mkdir", "-p", str(resolv_dir))
+            if self.resolv_conf_path.exists():
+                resolv_dir.joinpath("resolv.conf").write_text(
+                    render_namespace_resolv_conf(
+                        self.resolv_conf_path.read_text(), dns_server=self.dns_server
+                    )
+                )
             for port in (80, 443):
                 self._run(
                     "iptables", "-t", "nat", "-A", "PREROUTING", "-i", veth_host,
@@ -92,7 +131,7 @@ class SubprocessBackend:
             )
         self._run("ip", "link", "del", veth_host)
         self._run("ip", "netns", "del", namespace)
-        self._run("rm", "-rf", f"/etc/netns/{namespace}")
+        self._run("rm", "-rf", str(self.netns_config_root / namespace))
 
     def _run(self, *argv: str) -> None:
         proc = subprocess.run(argv, capture_output=True, text=True, check=False)
