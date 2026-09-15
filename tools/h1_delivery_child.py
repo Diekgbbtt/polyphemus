@@ -13,6 +13,11 @@ import sys
 import uuid
 
 sys.path.insert(0, os.getcwd())
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from _h1_env import load_langfuse_env  # noqa: E402
+
+load_langfuse_env()
 
 from langchain_core.messages import AIMessage  # noqa: E402
 from langchain_core.outputs import ChatGeneration, LLMResult  # noqa: E402
@@ -50,9 +55,10 @@ def main(marker, mode):
         inputs=["h1-prompt " + marker],
     )
     if mode == "barrier":
-        client = getattr(handler, "_langfuse_client", None)
-        if client is not None and hasattr(client, "flush"):
-            client.flush()
+        # Exercise the SHIPPED primitive, not an inline flush: this arm proves
+        # `flush_observation_delivery` itself delivers live.
+        from polymerhus.app.observability import langfuse_tracing as lt
+        lt.flush_observation_delivery([handler])
     tid = str(getattr(handler, "last_trace_id", "") or "")
     os.write(1, ("TRACEID=%s\n" % tid).encode())
     try:

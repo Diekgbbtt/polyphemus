@@ -26,6 +26,7 @@ One trace per dispatch, session-correlated to its run; step observations nest un
 6. Free-text reasoning: `get_client().update_current_span(input={"call": <call>}, output=<prose>)` on the current span (transient, never persisted to the graph).
 7. Numeric metrics: `get_client().score_current_span(name=<metric>, value=float(...))` while the target span is current.
 8. Flush with `get_client().flush()` when a worker may exit before the background exporter fires - `flush`, never `shutdown`, because the client is a process-wide singleton later runs reuse.
+9. LangChain-handler runs flush through the same client: `flush_observation_delivery(callbacks)` (`app/observability/langfuse_tracing.py`) drains each borrowed handler's OWN client (a fresh client may not carry the configured exporter - singleton hazard) and returns a typed `DeliveryResult`; the turn calls it with exactly the list it borrowed, teardown sweeps the cache. Design: `docs/design/observability-delivery.md`.
 
 ## Data structures
 

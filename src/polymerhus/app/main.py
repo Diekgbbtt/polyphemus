@@ -121,6 +121,20 @@ async def _shutdown():
         runtime.shutdown()
     from polymerhus.app.llm import close_session_checkpointer
     close_session_checkpointer()  # close the pooled stateful-session checkpointer
+    # H1 delivery barrier, teardown fallback site: sweep the cached handler so
+    # observations finished before stop are not lost to the background
+    # exporter dying with the process. Off the loop, fail-open (a drop is
+    # logged, never raised into shutdown).
+    try:
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
+        delivery = await asyncio.to_thread(flush_observation_delivery, None)
+        if delivery.dropped or delivery.cause not in ("ok", "unconfigured"):
+            logger.warning("shutdown observation delivery incomplete: %s",
+                           delivery.to_dict())
+    except Exception:  # noqa: BLE001 - delivery never breaks shutdown
+        logger.debug("shutdown observation delivery failed", exc_info=True)
 
 @app.get("/health")
 async def health():

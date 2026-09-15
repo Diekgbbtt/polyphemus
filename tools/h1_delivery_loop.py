@@ -15,6 +15,12 @@ import sys
 import time
 import urllib.request
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+from _h1_env import load_langfuse_env  # noqa: E402
+
+load_langfuse_env()
+
 host = os.environ["LANGFUSE_HOST"].rstrip("/")
 token = base64.b64encode(("%s:%s" % (
     os.environ["LANGFUSE_PUBLIC_KEY"], os.environ["LANGFUSE_SECRET_KEY"])).encode()).decode()
@@ -37,10 +43,12 @@ for arm, (prefix, mode) in ARMS.items():
         os.remove("/tmp/h1_%s.tid" % mode)
     except OSError:
         pass
-    subprocess.run([sys.executable, os.path.join(HERE, "h1_child.py"),
-                    marker, mode], check=False,
-                   stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL,
-                   env=dict(os.environ, H1_MARKER=marker))
+    child = subprocess.run(
+        [sys.executable, os.path.join(HERE, "h1_delivery_child.py"), marker, mode],
+        check=False, capture_output=True, text=True)
+    if child.returncode != 0:
+        print("%s child FAILED rc=%d err=%r" % (arm, child.returncode,
+                                                child.stderr[-400:]), flush=True)
     try:
         with open("/tmp/h1_%s.tid" % mode) as fh:
             tids[arm] = (fh.read().strip(), marker)

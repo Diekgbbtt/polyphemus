@@ -92,4 +92,4 @@ The hunting module's app-module seam contract is `docs/design/hunting-module-run
 - Pod template + `{verdict, ...}` single export - `recon/domain/pod.py`.
 - Job registry pattern (for the tool registry) - `recon/control/jobs.py::JobSpec`.
 - Index-card projection (the surface-context budget rule) - `analysis/index_card.py`.
-- Observability recipe (the Langfuse client-layer canon) - `docs/design/observability-recipe.md`; `hunting_tracing.py` / `orchestrator_tracing.py` mirror `analyser_tracing.py` exactly, and the KB query stages (`lightrag/observability.py`) follow the same SDK primitives (raw OTel spans are dropped by the processor filter).
+- Observability recipe (the Langfuse client-layer canon) - `docs/design/observability-recipe.md`; `hunting_tracing.py` / `orchestrator_tracing.py` mirror `analyser_tracing.py` exactly, and the KB query stages (`lightrag/observability.py`) follow the same SDK primitives (raw OTel spans are dropped by the processor filter); delivery barrier + attribution model: `docs/design/observability-delivery.md`.

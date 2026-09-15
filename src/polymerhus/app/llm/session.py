@@ -30,6 +30,7 @@ section 6): the model and the checkpointer resolve on call, never at import.
 """
 from __future__ import annotations
 
+import asyncio
 import inspect
 import logging
 from dataclasses import dataclass
@@ -195,6 +196,37 @@ def _turn_config(role_id: str, thread_id: str, observe: bool) -> dict:
     return _observe_config(config, role_id, thread_id) if observe else config
 
 
+def _flush_turn_observations(config: dict) -> None:
+    """H1 delivery barrier, turn-end primary site (sync): drain the background
+    exporter for exactly the callback list this turn borrowed (the same list it
+    put in `config` - no global lookup on the hot path). Fail-open: a drop is
+    logged, never raised into the turn."""
+    try:
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
+        result = flush_observation_delivery(config.get("callbacks"))
+        if result.dropped or result.cause not in ("ok", "unconfigured"):
+            logger.warning("turn observation delivery incomplete: %s", result.to_dict())
+    except Exception:  # noqa: BLE001 - delivery never breaks a turn
+        logger.debug("turn observation delivery failed", exc_info=True)
+
+
+async def _aflush_turn_observations(config: dict) -> None:
+    """H1 delivery barrier, turn-end primary site (async): same contract as
+    `_flush_turn_observations`, off the loop (the SDK drain blocks)."""
+    try:
+        from polymerhus.app.observability.langfuse_tracing import (
+            flush_observation_delivery,
+        )
+        result = await asyncio.to_thread(
+            flush_observation_delivery, config.get("callbacks"))
+        if result.dropped or result.cause not in ("ok", "unconfigured"):
+            logger.warning("turn observation delivery incomplete: %s", result.to_dict())
+    except Exception:  # noqa: BLE001 - delivery never breaks a turn
+        logger.debug("turn observation delivery failed", exc_info=True)
+
+
 def _to_turn(result: dict, response_format, thread_id: str) -> SessionTurn:
     messages = result.get("messages", [])
     if response_format is not None:
@@ -338,6 +370,8 @@ def run_session_turn(
         _attach_compaction_metadata(config, middleware, thread_id)
     result = agent.invoke({"messages": list(new_messages)}, config)
     _replay_reasoning(agent, config, result, role_id, thread_id, profile)
+    if observe:
+        _flush_turn_observations(config)
     return _to_turn(result, response_format, thread_id)
 
 
@@ -377,6 +411,8 @@ async def arun_session_turn(
         _attach_compaction_metadata(config, middleware, thread_id)
     result = await agent.ainvoke({"messages": list(new_messages)}, config)
     await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
+    if observe:
+        await _aflush_turn_observations(config)
     return _to_turn(result, response_format, thread_id)
 
 

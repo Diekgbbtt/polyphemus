@@ -88,3 +88,10 @@ from agent.app.observability import get_langfuse_callbacks
 `get_langfuse_callbacks() -> list` returns `[handler]` when configured, `[]` otherwise.
 `[]` is inert as `config={"callbacks": []}`, so the runtime wires it unconditionally.
 The handler is built once per process and cached.
+
+## Delivery guarantee
+
+Observations queue in the SDK background exporter; a finished turn's receipts land only after a forced flush.
+Each session turn ends with `flush_observation_delivery` on exactly the callback list it borrowed (bounded, fail-open, typed result), and teardown sweeps the cached handler.
+Session attribution rides the turn metadata (`langfuse_session_id` = thread id, `langfuse_tags` = session + role).
+Design: `docs/design/observability-delivery.md`.
