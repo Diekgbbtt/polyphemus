@@ -490,6 +490,63 @@ def test_summarise_reasoning_core_survives_the_fold():
         "latest thought: the attack surface is the login raft"
 
 
+# --- T3 (#215): the reasoning_content projection into span text --------------
+
+def test_span_text_renders_reasoning_content_projection():
+    """T3: a span carrying `reasoning_content` in `additional_kwargs` renders the
+    reasoning core into its span text - an empty-content failed reasoning is no
+    longer an invisible (folded-as-empty) span."""
+    msg = AIMessage(
+        content="",
+        additional_kwargs={"reasoning_content": "Need maybe mention the admin routes"})
+    text = S._span_text(msg)
+    assert "Need maybe mention the admin routes" in text
+
+
+def test_span_text_renders_reasoning_details_via_provider_specific_fields():
+    """T3: the `reasoning_details` surface (relocated under
+    `provider_specific_fields`) is rendered too - both ratified D11 surfaces."""
+    msg = AIMessage(
+        content="the answer",
+        additional_kwargs={"provider_specific_fields": {
+            "reasoning_details": "the login raft is the locus"}})
+    text = S._span_text(msg)
+    assert "the login raft is the locus" in text
+    assert "the answer" in text
+
+
+def test_span_text_merges_content_and_reasoning():
+    """T3: content and reasoning BOTH render into the span text - ordinary turns
+    with reasoning are not perturbed, the reasoning augments the content."""
+    msg = AIMessage(
+        content="final answer",
+        additional_kwargs={"reasoning_content": "thought it through"})
+    text = S._span_text(msg)
+    assert "final answer" in text
+    assert "thought it through" in text
+
+
+def test_span_text_fails_open_on_unrenderable_reasoning_payload():
+    """T3 fail-open: a weird reasoning payload (a non-renderable object) degrades
+    to the content-only span text, never raises into the pass."""
+    msg = AIMessage(
+        content="still renderable",
+        additional_kwargs={"reasoning_content": object()})
+    text = S._span_text(msg)
+    assert "still renderable" in text
+
+
+def test_build_messages_renders_reasoning_content_into_the_summariser_input():
+    """T3 acceptance: the summariser's USER input features the reasoning core of a
+    failed reasoning turn - `build_summary_messages` renders the projected span."""
+    reasoning = AIMessage(
+        content="",
+        additional_kwargs={"reasoning_content": "CONVERGED: check the OAuth callback"})
+    user = S.build_summary_messages(None, [reasoning])[-1]
+    rendered = user.content if isinstance(user.content, str) else str(user.content)
+    assert "CONVERGED: check the OAuth callback" in rendered
+
+
 # --- the summariser construction: negotiated method (ADR A1, #210) -----------
 
 class _StructuredFake:

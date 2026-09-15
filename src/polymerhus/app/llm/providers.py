@@ -4,8 +4,8 @@ from dataclasses import dataclass
 from typing import Literal, Sequence
 
 import httpx
-from langchain_core.messages import AIMessage
-from langchain_core.outputs import ChatGeneration
+from langchain_core.messages import AIMessage, AIMessageChunk
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk
 from langchain_openai import ChatOpenAI
 
 logger = logging.getLogger(__name__)
@@ -452,6 +452,41 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
             logger.debug("reasoning wire capture failed (%s); continuing with "
                          "stock conversion", exc)
         return result
+
+    def _convert_chunk_to_generation_chunk(
+        self, chunk: dict, default_chunk_class: type, base_generation_info: dict | None,
+    ) -> ChatGenerationChunk | None:
+        """T1 (#213): preserve `reasoning_content` on STREAMED chunks.
+
+        The stock streaming conversion (`_convert_delta_to_message_chunk`) drops
+        every `delta` key except `function_call`/`tool_calls` - so a streamed
+        reasoning would never reach `additional_kwargs` and the session seam's
+        per-chunk blackloop capture would see nothing. This override re-attaches
+        the delta's `reasoning_content` (deepseek/openai-compatible streams carry
+        it on `choices[0].delta`) onto the chunk's `additional_kwargs`, where the
+        T1 capture reads it. Fail-open: any shape mishap degrades to the stock
+        streamed chunk."""
+        generation_chunk = super()._convert_chunk_to_generation_chunk(
+            chunk, default_chunk_class, base_generation_info)
+        if generation_chunk is None:
+            return None
+        message = generation_chunk.message
+        if not isinstance(message, AIMessageChunk):
+            return generation_chunk
+        try:
+            choices = chunk.get("choices") or chunk.get("chunk", {}).get("choices")
+            delta = (choices or [{}])[0].get("delta") or {}
+            reasoning = delta.get("reasoning_content")
+            if not reasoning:
+                return generation_chunk
+            kwargs = dict(message.additional_kwargs)
+            kwargs["reasoning_content"] = (
+                kwargs.get("reasoning_content") or "") + reasoning
+            message.additional_kwargs = kwargs
+        except Exception as exc:  # noqa: BLE001 - fail-open: stock chunk
+            logger.debug("streamed reasoning capture failed (%s); using stock "
+                         "streamed chunk", exc)
+        return generation_chunk
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)

@@ -24,7 +24,7 @@ from __future__ import annotations
 import asyncio
 
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
 from langchain_core.outputs import ChatGeneration, ChatResult
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -662,6 +662,44 @@ def test_preserving_client_captures_wire_reasoning():
     assert message.content == "the answer"
 
 
+def test_preserving_client_streamed_chunk_carries_reasoning():
+    """T1 (#213): the preserving client's streaming override re-attaches the
+    delta's `reasoning_content` onto the streamed chunk's `additional_kwargs` -
+    without it the session seam's per-chunk blackloop capture would see NOTHING
+    on the stream (the stock streaming conversion drops every delta key except
+    `function_call`/`tool_calls`)."""
+    model = _preserving_model()
+    chunk = {
+        "id": "chunk-1",
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {
+            "role": "assistant", "content": "",
+            "reasoning_content": "Need maybe mention",
+        }}],
+    }
+    gc = model._convert_chunk_to_generation_chunk(chunk, AIMessageChunk, None)
+    assert gc is not None
+    assert gc.message.additional_kwargs["reasoning_content"] == "Need maybe mention"
+    assert gc.message.content == ""
+
+
+def test_preserving_client_streamed_chunk_without_reasoning_is_unchanged():
+    """A streamed chunk with no reasoning degrades to the stock chunk - the
+    override never perturbs ordinary streamed turns."""
+    model = _preserving_model()
+    chunk = {
+        "id": "chunk-2",
+        "object": "chat.completion.chunk",
+        "choices": [{"index": 0, "delta": {
+            "role": "assistant", "content": "the answer",
+        }}],
+    }
+    gc = model._convert_chunk_to_generation_chunk(chunk, AIMessageChunk, None)
+    assert gc is not None
+    assert gc.message.additional_kwargs == {}
+    assert gc.message.content == "the answer"
+
+
 def test_preserving_client_captures_encrypted_wire_reasoning():
     """Encrypted reasoning on the wire is captured byte-identical too (D11
     item 4: replayed regardless, never skipped)."""
@@ -741,7 +779,13 @@ class _StubCompletions:
     """Stub for the openai `client.chat.completions` resource: records every
     request payload, answers with the next queued wire response dict. The
     replies list is SHARED and popped in place, so models built for successive
-    turns consume the sequence exactly once."""
+    turns consume the sequence exactly once.
+
+    T1 (#213): session turns now STREAM by default, so the stub also serves the
+    `create(stream=True)` path - returning a context-manager-iterable that yields
+    the wire reply as ONE chunk carrying content + reasoning_content in the delta,
+    the shape `_convert_chunk_to_generation_chunk` + the preserving client's
+    streamed-reasoning override consume."""
 
     def __init__(self, replies):
         self.replies = replies
@@ -758,6 +802,46 @@ class _StubCompletions:
     @property
     def with_raw_response(self):
         return self._WithRaw(self)
+
+    def create(self, **payload):
+        self.calls.append(payload)
+        return _StubStream(self.replies.pop(0))
+
+
+class _StubStream:
+    """A context-manager-iterable the openai streaming path iterates (`with
+    response: for chunk in response`): yields the wire reply as ONE chunk whose
+    delta carries `content` + `reasoning_content` (and `finish_reason`)."""
+
+    def __init__(self, wire):
+        self._wire = wire
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *exc):
+        return False
+
+    def __iter__(self):
+        message = (self._wire.get("choices") or [{}])[0].get("message") or {}
+        yield {
+            "id": self._wire.get("id", "cmpl-x"),
+            "object": "chat.completion.chunk",
+            "created": self._wire.get("created", 1700000000),
+            "model": self._wire.get("model", "deepseek/deepseek-v4-flash-free"),
+            "choices": [{
+                "index": 0,
+                "delta": {
+                    "role": "assistant",
+                    "content": message.get("content") or "",
+                    **({"reasoning_content": message["reasoning_content"]}
+                       if message.get("reasoning_content") else {}),
+                },
+                "finish_reason": (self._wire.get("choices") or [{}])[0].get(
+                    "finish_reason", "stop"),
+            }],
+            "usage": self._wire.get("usage"),
+        }
 
 
 def test_seam_wire_to_wire_replay_roundtrip(monkeypatch):

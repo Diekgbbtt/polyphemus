@@ -297,14 +297,60 @@ def _text_of(content: Any) -> str:
 
 
 def _span_text(span: Any) -> str:
+    """Render one span's text for the summariser, INCLUDING the reasoning
+    projection (#215, T3): the span's `content` plus its `reasoning_content` /
+    `provider_specific_fields.reasoning_details` surfaces, so a failed-reasoning
+    turn's reasoning core reaches the summariser instead of rendering empty. The
+    projection feeds #210's chunker as a single span text - the chunker is
+    span-granular and never inspects `reasoning_content`, so a projected span
+    passes unmodified. Fail-open: an unrenderable span/reasoning degrades, never
+    raises into the pass."""
+    parts: list[str] = []
     content = getattr(span, "content", None)
-    if content is None:
-        return str(span)
+    if content is not None:
+        try:
+            rendered = _text_of(content)
+            if rendered:
+                parts.append(rendered)
+        except Exception:  # noqa: BLE001 - a bad span degrades, never raises
+            logger.debug("span text render failed; falling back to repr",
+                         exc_info=True)
+    kwargs = getattr(span, "additional_kwargs", None)
+    if isinstance(kwargs, dict):
+        rendered = _reasoning_text(kwargs.get("reasoning_content"))
+        if rendered:
+            parts.append(rendered)
+        provider = kwargs.get("provider_specific_fields")
+        if isinstance(provider, dict):
+            for key in ("reasoning_details", "reasoning_content"):
+                rendered = _reasoning_text(provider.get(key))
+                if rendered:
+                    parts.append(rendered)
+    if parts:
+        return "\n".join(parts)
+    return str(span)
+
+
+def _reasoning_text(value: Any) -> str:
+    """Coerce a reasoning surface to a non-empty string, tolerantly (T3): the
+    canonical string or the list-of-blocks shape some SDKs carry; anything else
+    (an unrenderable payload) degrades to "" - never raises."""
     try:
-        return _text_of(content)
-    except Exception:  # noqa: BLE001 - a bad span degrades, never raises
-        logger.debug("span text render failed; falling back to repr", exc_info=True)
-        return str(span)
+        if isinstance(value, str):
+            return value if value else ""
+        if isinstance(value, list):
+            pieces: list[str] = []
+            for block in value:
+                if isinstance(block, str):
+                    pieces.append(block)
+                elif isinstance(block, dict):
+                    text = block.get("text")
+                    if isinstance(text, str):
+                        pieces.append(text)
+            return "\n".join(pieces)
+    except Exception:  # noqa: BLE001 - fail-open, never into the pass
+        return ""
+    return ""
 
 
 def _prior_text(existing: RunningSummary | None) -> str:

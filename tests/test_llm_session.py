@@ -14,8 +14,8 @@ import asyncio
 
 from langchain.agents.middleware import AgentMiddleware
 from langchain_core.language_models import BaseChatModel
-from langchain_core.messages import AIMessage, HumanMessage
-from langchain_core.outputs import ChatGeneration, ChatResult
+from langchain_core.messages import AIMessage, AIMessageChunk, HumanMessage
+from langchain_core.outputs import ChatGeneration, ChatGenerationChunk, ChatResult
 from langchain_core.tools import tool
 from langgraph.checkpoint.memory import InMemorySaver
 
@@ -382,3 +382,388 @@ def test_arun_session_turn_carries_memory_across_turns():
     turn2 = asyncio.run(_two_turns())
     assert [m.content for m in turn2.messages] == ["hello", "a1", "again", "a2"]
     assert turn2.content == "a2"
+
+
+# --- T1 (#213): streamed generation is the DEFAULT session mode --------------
+
+class _StreamFake(BaseChatModel):
+    """A streaming chat model: `_stream` emits reasoning chunks (on
+    `additional_kwargs.reasoning_content`) then the final answer's content chunks,
+    with a selectable reasoning burn and whether content is ever emitted."""
+
+    reasoning_pieces: list = []
+    content_pieces: list = []
+    idx: dict = {}
+
+    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+        return ChatResult(generations=[ChatGeneration(message=AIMessage(content=""))])
+
+    def _stream(self, messages, stop=None, run_manager=None, **kwargs):
+        for piece in self.reasoning_pieces:
+            yield ChatGenerationChunk(
+                message=AIMessageChunk(
+                    content="", additional_kwargs={"reasoning_content": piece}))
+        for piece in self.content_pieces:
+            yield ChatGenerationChunk(message=AIMessageChunk(content=piece))
+        # a real provider always closes the stream with an empty final chunk
+        yield ChatGenerationChunk(message=AIMessageChunk(content=""))
+
+    @property
+    def _llm_type(self) -> str:
+        return "fake"
+
+    def bind_tools(self, tools, **kwargs):
+        return self
+
+
+def _stream_factory(*, reasoning_pieces=(), content_pieces=()):
+    """A `model_factory` yielding a fresh streaming fake per turn."""
+
+    def make(role_id):
+        return _StreamFake(
+            reasoning_pieces=list(reasoning_pieces), content_pieces=list(content_pieces))
+
+    return make
+
+
+def test_run_session_turn_streams_and_captures_reasoning():
+    """T1: `run_session_turn` now STREAMS the model call (`stream_events`), so a
+    turn that emits reasoning before its answer has BOTH surfaces captured - the
+    turn returns the generated content and carries the streamed reasoning."""
+    saver = InMemorySaver()
+    turn = run_session_turn(
+        "assigner", "s1",
+        [HumanMessage(content="hello")],
+        checkpointer=saver,
+        model_factory=_stream_factory(
+            reasoning_pieces=["Need maybe mention", " the admin routes"],
+            content_pieces=["final", " answer"]),
+        observe=False,
+        reasoning_budget_chars=100_000,
+    )
+    assert turn.content == "final answer"
+    assert turn.reasoning == "Need maybe mention the admin routes"
+    assert turn.blackloop is False
+
+
+def test_arun_session_turn_streams_and_captures_reasoning():
+    """Same contract on the async path (`astream_events`), the production parent-
+    coordinator entry point."""
+    saver = InMemorySaver()
+
+    async def _one():
+        return await arun_session_turn(
+            "assigner", "s2",
+            [HumanMessage(content="hello")],
+            checkpointer=saver,
+            model_factory=_stream_factory(
+                reasoning_pieces=["deep", " deliberation"],
+                content_pieces=["answer"]),
+            observe=False,
+            reasoning_budget_chars=100_000,
+        )
+
+    turn = asyncio.run(_one())
+    assert turn.content == "answer"
+    assert turn.reasoning == "deep deliberation"
+
+
+def test_arun_session_turn_cuts_blackloop_and_thread_stays_resumable():
+    """T1: a stream that burns reasoning with NO content past the detection bound
+    is CUT mid-flight (never waiting for the full generation), surfaced as a
+    blackloop turn with the captured reasoning - and the SAME thread remains
+    resumeable for the follow-up recovery turn."""
+    saver = InMemorySaver()
+
+    async def _cut_then_recover():
+        cut = await arun_session_turn(
+            "assigner", "s3",
+            [HumanMessage(content="hello")],
+            checkpointer=saver,
+            model_factory=_stream_factory(
+                reasoning_pieces=["Need maybe mention"] * 4000,  # burns past the bound
+                content_pieces=[]),
+            observe=False,
+            reasoning_budget_chars=8000,
+        )
+        assert cut.blackloop is True
+        assert cut.content == ""
+        assert "Need maybe mention" in cut.reasoning
+        # the thread must be healthy for the recovery turn (T2):
+        recovered = await arun_session_turn(
+            "assigner", "s3",
+            [HumanMessage(content="answer now")],
+            checkpointer=saver,
+            model_factory=_stream_factory(
+                reasoning_pieces=["ok"], content_pieces=["recovered"]),
+            observe=False,
+            reasoning_budget_chars=100_000,
+        )
+        return recovered
+
+    recovered = asyncio.run(_cut_then_recover())
+    assert recovered.content == "recovered"
+    assert recovered.blackloop is False
+
+
+# --- T2 (#214): the recovery turn inside `stateful_turn` ---------------------
+
+def _sequential_factory(*models):
+    """A `model_factory` that hands out a FRESH `_StreamFake` per call, walking a
+    scripted sequence (turn 1's model, the recovery turn's model, ...) - so a
+    stateful_turn whose first generation blackloops can be followed by a recovering
+    one. (`BaseChatModel.dict()` only yields `_type`, so instances are rebuilt from
+    their pieces directly.)"""
+    state = {"i": 0}
+
+    def make(role_id):
+        idx = min(state["i"], len(models) - 1)
+        state["i"] += 1
+        model = models[idx]
+        return _StreamFake(
+            reasoning_pieces=list(model.reasoning_pieces),
+            content_pieces=list(model.content_pieces),
+        )
+
+    return make
+
+
+def test_stateful_turn_recovers_after_blackloop_cut():
+    """T2: a streamed-cut blackloop routes to a recovery generation on the SAME thread
+    instead of degrading to None - the recovery is itself streamed + single-bounded, and
+    its content is what the caller sees."""
+    from polymerhus.app.llm.session import stateful_turn
+
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["Need maybe mention"] * 4000, content_pieces=[]),
+        _StreamFake(reasoning_pieces=["ok"], content_pieces=["recovered"]),
+    )
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result == "recovered"
+
+
+def test_stateful_turn_recovery_re_blackloop_fails_open_to_none():
+    """T2 fail-open preserved: if the recovery generation ALSO blackloops (a re-blackloop
+    is cut - the recovery is streamed + bounded, never unbounded), `stateful_turn`
+    degrades to None exactly as today - never crashes the caller."""
+    from polymerhus.app.llm.session import stateful_turn
+
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
+        _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
+    )
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result is None
+
+
+def test_stateful_turn_recovery_composes_prior_context_and_instruction():
+    """T2: the recovery generation carries the prior context (the failed turn's
+    new_messages persisted in the checkpointer) + a bounded compacted rendering of the
+    failed reasoning + the verbatim blackloop instruction - asserted from the persisted
+    thread after the recovery completes."""
+    from polymerhus.app.llm.session import stateful_turn
+
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["Need maybe mention the admin routes"] * 300,
+                    content_pieces=[]),
+        _StreamFake(reasoning_pieces=[], content_pieces=["conclusion"]),
+    )
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=200,
+    )
+    assert result == "conclusion"
+    tup = saver.get_tuple({"configurable": {"thread_id": "run1:assigner"}})
+    messages = tup.checkpoint["channel_values"]["messages"]
+    texts = [str(getattr(m, "content", "") or "") for m in messages]
+    assert "the job" in texts[0]
+    assert any("END THIS STEP NOW" in t for t in texts)
+    assert any("Need maybe mention the admin routes" in t for t in texts)
+
+
+def test_stateful_turn_recovers_from_length_finish_exception_shape_a(monkeypatch):
+    """T2 (shape A): a `LengthFinishReasonError` carries the failed reasoning on
+    `exc.completion` (the failed message was NOT persisted) - stateful_turn extracts
+    it and composes the recovery generation instead of degrading blindly."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session import stateful_turn
+
+    class _FakeCompletion:
+        reasoning_content = "Need maybe mention the admin routes"
+
+    class _FakeLengthFinishError(Exception):
+        def __init__(self):
+            super().__init__("finish_reason=length")
+            self.completion = _FakeCompletion()
+
+    real_run = S.run_session_turn
+    calls = {"n": 0}
+
+    def fake_run(role_id, thread_id, msgs, **kwargs):
+        calls["n"] += 1
+        if calls["n"] == 1:
+            raise _FakeLengthFinishError()
+        return real_run(role_id, thread_id, msgs, **kwargs)
+
+    monkeypatch.setattr(S, "run_session_turn", fake_run)
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=[], content_pieces=["recovered"]))
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=100,
+    )
+    assert result == "recovered"
+    assert calls["n"] == 2
+
+
+def test_stateful_turn_length_finish_without_reasoning_fails_open_to_none(monkeypatch):
+    """T2 (shape A, no reasoning): a `LengthFinishReasonError` with NO extractable
+    reasoning (nothing to recover from) degrades to None exactly as today."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session import stateful_turn
+
+    class _FakeLengthFinishError(Exception):
+        def __init__(self):
+            super().__init__("finish_reason=length")
+            self.completion = None
+
+    def fake_run(role_id, thread_id, msgs, **kwargs):
+        raise _FakeLengthFinishError()
+
+    monkeypatch.setattr(S, "run_session_turn", fake_run)
+    saver = InMemorySaver()
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, observe=False,
+    )
+    assert result is None
+
+
+def test_stateful_turn_recovers_on_empty_content_with_reasoning():
+    """T2 (empty-content signature): a turn that completes EMPTY-CONTENT while still
+    emitting reasoning (the silent-empty shape) is recovered, never returned empty."""
+    from polymerhus.app.llm.session import stateful_turn
+
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["brief thinking"], content_pieces=[]),
+        _StreamFake(reasoning_pieces=[], content_pieces=["recovered"]),
+    )
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result == "recovered"
+
+
+def test_stateful_turn_empty_without_reasoning_is_a_legitimate_empty():
+    """T2: empty content with NO reasoning is a legitimate empty (not a blackloop) -
+    returned as-is, never routed to recovery."""
+    from polymerhus.app.llm.session import stateful_turn
+
+    saver = InMemorySaver()
+    factory = _sequential_factory(_StreamFake(reasoning_pieces=[], content_pieces=[]))
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result == ""
+
+
+# --- T5 (#217): blackloop_recovery observability -----------------------------
+
+def test_stateful_turn_records_blackloop_recovery_metadata():
+    """T5: after a blackloop is recovered, the thread's last-recovery record carries
+    shape, output_produced and cut point - the material the D11 trace field shows."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session import stateful_turn
+
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["Need maybe mention"] * 4000, content_pieces=[]),
+        _StreamFake(reasoning_pieces=[], content_pieces=["recovered"]),
+    )
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result == "recovered"
+    record = S._last_blackloop_recovery["run1:assigner"]
+    assert record["shape"] == "streamed_cut"
+    assert record["output_produced"] is True
+    assert record["cut_point_chars"] > 0
+
+
+def test_stateful_turn_records_blackloop_recovery_failure_output():
+    """T5: a recovery that FAILS (re-blackloop, output NOT produced) still records
+    the field with output_produced=False - the occurrence is never silent."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session import stateful_turn
+
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
+        _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
+    )
+    result = stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=False,
+        reasoning_budget_chars=8000,
+    )
+    assert result is None
+    record = S._last_blackloop_recovery["run1:assigner"]
+    assert record["shape"] == "streamed_cut"
+    assert record["output_produced"] is False
+
+
+def test_blackloop_recovery_metadata_rides_the_trace_when_observing(monkeypatch):
+    """T5: with observability on, the last-recovery record rides the config metadata
+    of the NEXT turn - the same `langfuse_session_id` trace the D11 readability
+    fields ride (recorded AFTER the outcome is known, never gating)."""
+    from polymerhus.app.llm import session as S
+    from polymerhus.app.llm.session import stateful_turn
+
+    merged = {}
+    real_attach = S._attach_blackloop_metadata
+
+    def fake_attach(config, thread_id):
+        real_attach(config, thread_id)
+        merged["meta"] = dict(config.get("metadata", {}))
+
+    monkeypatch.setattr(S, "_attach_blackloop_metadata", fake_attach)
+    saver = InMemorySaver()
+    factory = _sequential_factory(
+        _StreamFake(reasoning_pieces=["loop"] * 4000, content_pieces=[]),
+        _StreamFake(reasoning_pieces=[], content_pieces=["recovered"]),
+    )
+    stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="the job")],
+        checkpointer=saver, model_factory=factory, observe=True,
+        reasoning_budget_chars=8000,
+    )
+    # a further turn on the same thread rides the record
+    stateful_turn(
+        "assigner", "run1:assigner", [HumanMessage(content="continue")],
+        checkpointer=saver, model_factory=_sequential_factory(
+            _StreamFake(reasoning_pieces=[], content_pieces=["next"])),
+        observe=True,
+    )
+    assert "blackloop_recovery" in merged["meta"]
+    assert "langfuse_session_id" in merged["meta"]

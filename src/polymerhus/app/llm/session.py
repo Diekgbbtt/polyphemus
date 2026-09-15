@@ -32,10 +32,11 @@ from __future__ import annotations
 
 import inspect
 import logging
+import os
 from dataclasses import dataclass
 from typing import Any, Callable, Sequence
 
-from langchain_core.messages import BaseMessage
+from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from polymerhus.app.llm.capability import resolve_capability
 
@@ -57,11 +58,15 @@ class SessionTurn:
     """One turn's result: the model's `content` (the last message's text, or the
     parsed object when a `response_format` schema is set), and the full post-turn
     `messages` trail - the persisted short-term memory - for a caller that wants
-    to inspect it."""
+    to inspect it. `blackloop` flags a stream cut for unbounded reasoning (#206);
+    `reasoning` carries the reasoning the streamed turn emitted (the raw surface,
+    the recovery turn's material)."""
 
     content: Any
     messages: list[BaseMessage]
     thread_id: str
+    blackloop: bool = False
+    reasoning: str = ""
 
 
 # `model_factory(role_id) -> chat model`. Defaults to the session-path builder
@@ -195,13 +200,85 @@ def _turn_config(role_id: str, thread_id: str, observe: bool) -> dict:
     return _observe_config(config, role_id, thread_id) if observe else config
 
 
-def _to_turn(result: dict, response_format, thread_id: str) -> SessionTurn:
+# --- T1 (#213): streamed generation as the default session mode --------------
+
+# The default blackloop detection bound: accumulated reasoning past this many
+# characters with NO content emitted yet cuts the stream (#206). Env-overridable
+# (`LLM_BLACKLOOP_REASONING_BUDGET`, fail-open). Tuned ABOVE the repo's observed
+# normal thinking burst (~9k tokens, recon CONTEXT.md - a blackloop burns past
+# the ceiling, a normal heavy-thinking turn must NOT be cut) - ~10k tokens at
+# ~4 chars/token. The cut is fail-open (a false positive routes to a cheap
+# recovery; a missed blackloop is caught by the empty-content signature).
+_DEFAULT_REASONING_BUDGET_CHARS = 40_000
+
+
+def _reasoning_budget_chars(override: int | None) -> int:
+    if override is not None and override > 0:
+        return override
+    try:
+        value = int(os.environ.get("LLM_BLACKLOOP_REASONING_BUDGET", "") or "")
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return _DEFAULT_REASONING_BUDGET_CHARS
+
+
+class _StreamCapture:
+    """Accumulate the reasoning + content a streamed model call emits, with running
+    character counts so the blackloop cut is O(1) per chunk (a blackloop burns the
+    full 131k-token budget - never re-sum the trail)."""
+
+    __slots__ = ("reasoning_parts", "reasoning_chars", "content_parts")
+
+    def __init__(self) -> None:
+        self.reasoning_parts: list[str] = []
+        self.reasoning_chars: int = 0
+        self.content_parts: list[str] = []
+
+    def consume(self, chunk) -> None:
+        from polymerhus.app.llm.streaming import extract_content, extract_reasoning
+
+        reasoning = extract_reasoning(chunk)
+        if reasoning:
+            self.reasoning_parts.append(reasoning)
+            self.reasoning_chars += len(reasoning)
+        content = extract_content(chunk)
+        if content:
+            self.content_parts.append(content)
+
+    @property
+    def content(self) -> str:
+        return "".join(self.content_parts)
+
+    @property
+    def reasoning(self) -> str:
+        return "".join(self.reasoning_parts)
+
+
+def _blackloop_turn(thread_id: str, capture: _StreamCapture) -> SessionTurn:
+    """The cut turn's shape: no final message persisted (the cut fired mid-stream, the
+    graph's state is the pre-turn thread), no answer content - but the captured
+    reasoning (the recovery turn's material) is carried, not lost."""
+    return SessionTurn(
+        content="",
+        messages=[],
+        thread_id=thread_id,
+        blackloop=True,
+        reasoning=capture.reasoning,
+    )
+
+
+def _to_turn(result: dict, response_format, thread_id: str,
+             reasoning: str = "") -> SessionTurn:
     messages = result.get("messages", [])
     if response_format is not None:
         content = result.get("structured_response")
     else:
         content = messages[-1].content if messages else None
-    return SessionTurn(content=content, messages=list(messages), thread_id=thread_id)
+    return SessionTurn(
+        content=content, messages=list(messages), thread_id=thread_id,
+        reasoning=reasoning)
 
 
 def _resolve_reasoning_profile(role_id: str):
@@ -315,6 +392,7 @@ def run_session_turn(
     model_factory: ModelFactory | None = None,
     observe: bool = True,
     read_timeout_s: float | None = None,
+    reasoning_budget_chars: int | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
 
@@ -323,7 +401,14 @@ def run_session_turn(
     model<->tool loop (`tools` bound via tool_calling) to a final answer, which is
     persisted back so the next turn resumes from here. `response_format` returns a
     parsed structured object as `content`. `read_timeout_s` (default None) bounds
-    the turn's model calls per-attempt - the escalating-budget seam #186 rides."""
+    the turn's model calls per-attempt - the escalating-budget seam #186 rides.
+
+    T1 (#213): the model call is STREAMED (the operator's 2026-09-07 ruling - streamed
+    generation is the DEFAULT session mode), so `reasoning_content` AND `content` are
+    captured per chunk; a stream that burns reasoning past `reasoning_budget_chars`
+    (default 20k, env `LLM_BLACKLOOP_REASONING_BUDGET`) with no content emitted is
+    CUT mid-flight and surfaced as `blackloop=True` with the captured reasoning - the
+    recovery turn's material, never lost (fail-open: the cut never raises)."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
@@ -336,9 +421,31 @@ def run_session_turn(
             config, _read_thread_state(checkpointer, thread_id))
     if observe:
         _attach_compaction_metadata(config, middleware, thread_id)
-    result = agent.invoke({"messages": list(new_messages)}, config)
-    _replay_reasoning(agent, config, result, role_id, thread_id, profile)
-    return _to_turn(result, response_format, thread_id)
+        _attach_blackloop_metadata(config, thread_id)
+    budget = _reasoning_budget_chars(reasoning_budget_chars)
+    capture = _StreamCapture()
+    result: dict | None = None
+    blackloop = False
+    stream = agent.stream(
+        {"messages": list(new_messages)}, config, stream_mode=["messages", "values"])
+    try:
+        for mode, payload in stream:
+            if mode == "messages":
+                capture.consume(payload[0])
+                if _should_cut(capture, budget):
+                    blackloop = True
+                    break
+            elif isinstance(payload, dict) and "messages" in payload:
+                result = payload
+    finally:
+        if blackloop:
+            stream.close()
+    if blackloop:
+        return _blackloop_turn(thread_id, capture)
+    if result is not None:
+        _replay_reasoning(agent, config, result, role_id, thread_id, profile)
+        return _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+    return _blackloop_turn(thread_id, capture)
 
 
 async def arun_session_turn(
@@ -355,14 +462,18 @@ async def arun_session_turn(
     model_factory: ModelFactory | None = None,
     observe: bool = True,
     read_timeout_s: float | None = None,
+    reasoning_budget_chars: int | None = None,
 ) -> SessionTurn:
-    """Async-native turn (`ainvoke`) - the entry point an async-native PARENT
+    """Async-native turn (`astream`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
     and monitor child sessions without blocking its own loop. Identical contract to
     `run_session_turn`; pass an async checkpointer (`AsyncPostgresSaver`, already
     used by the analysis supervisor) in production. `read_timeout_s` (default None)
     bounds the turn's model calls per-attempt - the escalating-budget seam #186
-    rides: the actor runtime re-invokes this with the next, larger budget."""
+    rides: the actor runtime re-invokes this with the next, larger budget.
+
+    T1 (#213): streamed generation is the DEFAULT mode here too - same blackloop
+    cut + reasoning capture as the sync turn, driven on the event loop."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
@@ -375,9 +486,41 @@ async def arun_session_turn(
             config, await _aread_thread_state(checkpointer, thread_id))
     if observe:
         _attach_compaction_metadata(config, middleware, thread_id)
-    result = await agent.ainvoke({"messages": list(new_messages)}, config)
-    await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
-    return _to_turn(result, response_format, thread_id)
+        _attach_blackloop_metadata(config, thread_id)
+    budget = _reasoning_budget_chars(reasoning_budget_chars)
+    capture = _StreamCapture()
+    result: dict | None = None
+    blackloop = False
+    stream = agent.astream(
+        {"messages": list(new_messages)}, config, stream_mode=["messages", "values"])
+    try:
+        async for mode, payload in stream:
+            if mode == "messages":
+                capture.consume(payload[0])
+                if _should_cut(capture, budget):
+                    blackloop = True
+                    break
+            elif isinstance(payload, dict) and "messages" in payload:
+                result = payload
+    finally:
+        if blackloop:
+            await stream.aclose()
+    if blackloop:
+        return _blackloop_turn(thread_id, capture)
+    if result is not None:
+        await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
+        return _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+    return _blackloop_turn(thread_id, capture)
+
+
+def _should_cut(capture: _StreamCapture, budget: int) -> bool:
+    from polymerhus.app.llm.streaming import should_cut_stream
+
+    return should_cut_stream(
+        accumulated_reasoning_chars=capture.reasoning_chars,
+        accumulated_content=capture.content,
+        reasoning_budget_chars=budget,
+    )
 
 
 # Test seam for probe validation - when set, the session runs the real
@@ -496,6 +639,7 @@ def stateful_turn(
     model_factory: ModelFactory | None = None,
     middleware: Sequence = (),
     observe: bool = True,
+    reasoning_budget_chars: int | None = None,
 ):
     """The UBIQUITOUS stateful-agent invocation (#94): one turn of a sequentially
     dispatched agent that RESUMES from its OWN per-instance checkpoint and appends this
@@ -510,17 +654,54 @@ def stateful_turn(
     structured-output profile, ToolStrategy (the function_calling-equivalent, #44-safe)
     on a tool-calling-only profile. Returns the parsed `schema` object (or None), or the
     text content when no schema - the same shape the legacy `invoke_role` seam returned,
-    so a call site swaps in place."""
+    so a call site swaps in place.
+
+    T2 (#214): on the blackloop signature (the T1 stream cut), a RECOVERY generation is
+    composed on the SAME thread - prior context (already in the checkpointer) + a bounded
+    compacted rendering of the failed reasoning + the verbatim blackloop instruction -
+    instead of degrading to None. The recovery is itself streamed and single-bounded
+    (a re-blackloop is cut), and its output + the failed reasoning fold into the native
+    turn-end compaction. Fail-open preserved: recovery failure degrades to None exactly
+    as before."""
     response_format = _structured_response_format(role_id, schema) if schema is not None else None
+    thread_id = _as_thread_id(thread)
     try:
         turn = run_session_turn(
-            role_id, _as_thread_id(thread), new_messages,
+            role_id, thread_id, new_messages,
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
-            middleware=middleware,
+            middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
         )
+        # T2 (#214): the blackloop signature - the streamed cut, or a turn that
+        # completed EMPTY-CONTENT while still emitting reasoning (the silent-empty
+        # shape - a reasoned-but-empty result is a blackloop, never a legitimate
+        # empty). Both route to the recovery generation.
+        if turn.blackloop or (_is_empty_result(turn.content) and turn.reasoning):
+            return _recover_blackloop(
+                role_id, thread_id, turn.reasoning,
+                checkpointer=checkpointer, response_format=response_format,
+                system_prompt=system_prompt, model_factory=model_factory, observe=observe,
+                middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+                shape="streamed_cut" if turn.blackloop else "empty_content",
+                cut_point_chars=len(turn.reasoning),
+            )
         return turn.content
     except Exception as exc:
+        # T2 (shape A): a `LengthFinishReasonError` carries the failed reasoning on
+        # `exc.completion` (the message was NOT persisted) - recover from it instead of
+        # degrading blindly. Any other exception (or a shape with no extractable
+        # reasoning) falls through to the existing fail-open.
+        failed_reasoning = _failed_reasoning_from_exception(exc)
+        if failed_reasoning:
+            recovered = _recover_blackloop(
+                role_id, thread_id, failed_reasoning,
+                checkpointer=checkpointer, response_format=response_format,
+                system_prompt=system_prompt, model_factory=model_factory, observe=observe,
+                middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+                shape="length_finish", cut_point_chars=len(failed_reasoning),
+            )
+            if recovered is not None:
+                return recovered
         # FAIL-OPEN (the invariant the recon context owns, mirrored from the
         # one-shot `invoke_role` seam, which already degrades to None): a
         # structured-output PARSE failure must never kill a stateful turn. The
@@ -546,6 +727,200 @@ def stateful_turn(
                 "stateful_turn %s raised %s (%s); degrading to None (fail-open)",
                 role_id, type(exc).__name__, exc)
         return None
+
+
+# --- T2 (#214): the recovery turn --------------------------------------------
+
+# The verbatim blackloop instruction (spec decision 7 - crafted prompt content:
+# ends the step, ablates corollary thoughts, goal-oriented).
+_BLACKLOOP_RECOVERY_INSTRUCTION = (
+    "You are resuming an agent step whose previous reasoning turn entered an "
+    "unbounded thinking loop and produced no answer. Your job is to END THIS STEP "
+    "NOW, not to continue thinking. Ablate every corollary and surrounding thought "
+    "you were entertaining: they are the loop. State, in the required output format, "
+    "the single most defensible conclusion your prior reasoning converged on, with "
+    "the briefest supporting evidence, then STOP. Be goal-oriented: the workflow "
+    "needs this step's result, not more deliberation. Do not restate your loop; do "
+    "not enumerate what you considered; do not ask what to do next. Produce the "
+    "answer directly and finish."
+)
+
+# The bounded compacted-rendering cap for the failed reasoning fed to the recovery
+# turn (env `LLM_RECOVERY_REASONING_EXCERPT`, fail-open). The model needs enough of
+# its prior thinking to converge on a conclusion - not the full 131k-token loop.
+_RECOVERY_REASONING_EXCERPT_CHARS = 8_000
+
+
+def _recovery_reasoning_excerpt_chars() -> int:
+    try:
+        value = int(os.environ.get("LLM_RECOVERY_REASONING_EXCERPT", "") or "")
+        if value > 0:
+            return value
+    except (TypeError, ValueError):
+        pass
+    return _RECOVERY_REASONING_EXCERPT_CHARS
+
+
+def _compact_reasoning(reasoning: str, *, max_chars: int | None = None) -> str:
+    """A bounded rendering of the failed reasoning for the recovery prompt: the full
+    text when window-fitting, else a truncated excerpt with a marker - never the whole
+    loop."""
+    if not reasoning:
+        return ""
+    cap = max_chars or _recovery_reasoning_excerpt_chars()
+    if len(reasoning) <= cap:
+        return reasoning
+    return (reasoning[:cap] + "\n[...] (prior reasoning truncated; the workflow "
+            "needs your conclusion, not the loop)")
+
+
+def _reasoning_span_chars(role_id: str) -> int:
+    """The window-fitting span bound for the failed reasoning's foldable units (S3:
+    deterministic bounded chunk size = the compaction window's budget). Fail-open to
+    the conservative default on any resolution failure - the session must always
+    recover."""
+    try:
+        from polymerhus.app.llm.compaction import resolve_window
+
+        return resolve_window(role_id).budget
+    except Exception:  # noqa: BLE001 - fail-open, never into the recovery path
+        return 150_000
+
+
+def _failed_reasoning_from_exception(exc: BaseException) -> str:
+    """Shape A (#206): a `LengthFinishReasonError` carries the failed reasoning on
+    `exc.completion` (an openai message with `reasoning_content`; the failed message
+    was NOT persisted). Tolerant of shape variance; "" when nothing extractable."""
+    try:
+        completion = getattr(exc, "completion", None)
+        if completion is None:
+            return ""
+        if isinstance(completion, dict):
+            value = completion.get("reasoning_content") or completion.get(
+                "provider_specific_fields", {}).get("reasoning_details")
+        else:
+            value = getattr(completion, "reasoning_content", None) or getattr(
+                getattr(completion, "provider_specific_fields", None) or {},
+                "reasoning_details", None)
+        if isinstance(value, str):
+            return value
+        if isinstance(value, list):  # list-of-blocks shape some SDKs carry
+            parts = [b if isinstance(b, str) else (b.get("text") or "")
+                     for b in value]
+            return "".join(parts)
+    except Exception:  # noqa: BLE001 - fail-open: a weird exception never recovers
+        return ""
+    return ""
+
+
+def _is_empty_result(content: Any) -> bool:
+    """Whether a turn produced NO usable result: None, or an empty str/list/dict
+    (the silent-empty blackloop shape - a reasoned-but-empty output, never a
+    legitimate empty)."""
+    if content is None:
+        return True
+    if isinstance(content, (str, list, dict)):
+        return not content
+    return False
+
+
+def _recover_blackloop(
+    role_id: str,
+    thread_id: str,
+    reasoning: str,
+    *,
+    checkpointer,
+    response_format,
+    system_prompt: str | None,
+    model_factory: ModelFactory | None,
+    observe: bool,
+    middleware: Sequence,
+    reasoning_budget_chars: int | None,
+    shape: str,
+    cut_point_chars: int,
+):
+    """T2/T5: compose + run ONE recovery generation on the SAME thread (prior context
+    already in the checkpointer) from the failed reasoning, and return its content.
+
+    The recovery prompt message carries a bounded compacted rendering of the failed
+    reasoning + the verbatim blackloop instruction; the failed reasoning is ALSO
+    segmented into window-fitting spans (S3) and replayed as an assistant message
+    (the D11 surface - a foldable thread span the native turn-end compaction folds,
+    seam S1; never a handler-side summary). The recovery is itself a streamed
+    generation under the SAME detection bound, so a re-blackloop is cut. Fail-open:
+    a recovery that fails (re-blackloop, exception, empty) returns None, never
+    raises.
+
+    T5 (#217): the recovery records a `blackloop_recovery` field on its trace
+    metadata (shape, output_produced, cut point) - D11 recipe, never gating."""
+    if not reasoning:
+        return None
+    from polymerhus.app.llm.streaming import segment_reasoning
+
+    compacted = _compact_reasoning(reasoning)
+    spans = segment_reasoning(reasoning, max_span_chars=_reasoning_span_chars(role_id))
+    reasoning_message = AIMessage(
+        content="", additional_kwargs={"reasoning_content": "\n\n".join(spans)})
+    prompt = HumanMessage(
+        content=f"{compacted}\n\n{_BLACKLOOP_RECOVERY_INSTRUCTION}")
+    try:
+        recovery = run_session_turn(
+            role_id, thread_id, [reasoning_message, prompt],
+            checkpointer=checkpointer, response_format=response_format,
+            system_prompt=system_prompt, model_factory=model_factory, observe=observe,
+            middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+        )
+    except Exception as exc:  # noqa: BLE001 - fail-open: recovery failure degrades
+        logger.warning(
+            "stateful_turn %s recovery generation raised %s (%s); degrading to "
+            "None (fail-open)", role_id, type(exc).__name__, exc)
+        _record_blackloop_recovery(thread_id, shape, False, cut_point_chars)
+        return None
+    output_produced = not recovery.blackloop
+    if not output_produced:
+        logger.warning(
+            "stateful_turn %s recovery re-blacklooped; degrading to None (fail-open)",
+            role_id)
+    _record_blackloop_recovery(thread_id, shape, output_produced, cut_point_chars)
+    return recovery.content if output_produced else None
+
+
+# T5 (#217): the `blackloop_recovery` D11 metadata record - a per-thread record of
+# the last recovery, surfaced onto the NEXT turn's trace metadata exactly like
+# `compaction_readability` (the D11 recipe: the field rides the same
+# `langfuse_session_id`, recorded AFTER the outcome is known - a trace captured at
+# stream time can never know output_produced). Fail-open: absent/unconfigured
+# observability simply omits the field; never gating, never on the retry axis.
+_last_blackloop_recovery: dict[str, dict] = {}
+
+
+def _record_blackloop_recovery(thread_id: str, shape: str, output_produced: bool,
+                               cut_point_chars: int) -> None:
+    """T5: record the last recovery's observability for a thread. Purely
+    descriptive; never gating."""
+    _last_blackloop_recovery[thread_id] = {
+        "shape": shape,
+        "output_produced": bool(output_produced),
+        "cut_point_chars": int(cut_point_chars),
+    }
+
+
+def _attach_blackloop_metadata(config: dict, thread_id: str) -> None:
+    """T5: merge the thread's last-recovery record onto the config metadata (the D11
+    recipe). Fail-open: no record simply omits the field."""
+    record = _last_blackloop_recovery.get(thread_id)
+    if record is None:
+        return
+    config.setdefault("metadata", {})["blackloop_recovery"] = record
+
+
+def _record_recovery_output(role_id: str, thread_id: str, shape: str,
+                            cut_point_chars: int) -> None:
+    """T5: the observability line for a recovery that produced output. Fail-open
+    and purely descriptive - never gating, never on the retry axis."""
+    logger.info(
+        "blackloop_recovery: role=%s thread=%s shape=%s output_produced=true "
+        "cut_point_chars=%d", role_id, thread_id, shape, cut_point_chars)
 
 
 def _read_thread_state(checkpointer, thread_id: str) -> dict | None:
