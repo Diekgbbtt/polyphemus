@@ -11,6 +11,7 @@ earlier phase.
 """
 
 from polymerhus.recon.domain.types import AssetSelector, ConsumptionOptions, JobSpec
+from polymerhus.recon.config import KATANA_DEPTH
 
 DOMAIN = "Domain"  # pre-seeded root asset type (the project's target domain)
 
@@ -179,7 +180,8 @@ JOBS: dict[str, JobSpec] = {
             # form's method/action/parameters, so form/body request parameters are
             # discovered (not just query params from crawled URLs) - the built-in
             # param-discovery capability the katana_parser now turns into Parameters.
-            # `-d 1` (operator default, 2026-07-30): depth-3 crawls of large catalogs
+            # `-d 1` (operator default, 2026-07-30, now the `KATANA_DEPTH` knob):
+            # depth-3 crawls of large catalogs
             # (e.g. moodique's PrestaShop store: 116k+ events, unbounded at -d3) blow
             # past EXEC_TIMEOUT_S so the pod never returns and no params persist. Depth
             # is meant to be set adaptively by the configurator agent; the static
@@ -249,7 +251,13 @@ JOBS: dict[str, JobSpec] = {
             # wappalyzergo dataset httpx_reprofile's `-td` uses - now mapped by
             # katana_parser into the same Technology/Header nodes httpx_parser
             # produces, so this is free signal instead of being discarded.
-            "katana -u {target} -d 1 -jc -kf robotstxt -fx -td -c 10 -rl 50 "
+            # `-d` is ASSEMBLED BY CONCATENATION, not an f-string: the template
+            # is later `.replace()`-filled for `{target}`/`{auth_header}` (see
+            # pod.fill_template), and an f-string would need every literal brace
+            # doubled to survive. `KATANA_DEPTH` is read from the environment
+            # once, at import (recon/config.py) - the depth knob a deep-crawl
+            # experiment sets *before* the process starts.
+            "katana -u {target} -d " + KATANA_DEPTH + " -jc -kf robotstxt -fx -td -c 10 -rl 50 "
             "-ct 240s -pcs -pcsm simhash -pcsd 3 -iqp -fsu -fst 10 -aff "
             "-ef css,scss,less,woff,woff2,ttf,eot,otf,map,"
             "png,jpg,jpeg,gif,svg,webp,ico,bmp,mp3,wav,mp4,webm,mov,pdf,zip "

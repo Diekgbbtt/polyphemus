@@ -1,7 +1,57 @@
+import importlib
+import os
+import re
+
 import pytest
 
 from polymerhus.recon.domain.parsers import PARSERS
 from polymerhus.recon.control.jobs import JOBS, PHASES, build_phase_plan, validate_job_subset
+
+
+_DEPTH_RE = r"(-d )(\d+)( )"
+
+
+def _depth(template: str) -> str:
+    m = re.search(_DEPTH_RE, template)
+    assert m, f"no `-d N` token in the katana template: {template[:120]!r}"
+    return m.group(2)
+
+
+def _without_depth(template: str) -> str:
+    return re.sub(_DEPTH_RE, r"\1N\3", template, count=1)
+
+
+@pytest.fixture
+def katana_depth_knob():
+    """`KATANA_DEPTH` with a reload of BOTH modules that carry it.
+
+    `JOBS` (and `recon.config.KATANA_DEPTH`) are built at IMPORT time, so the
+    only faithful way to exercise the knob is to set the env var and reload -
+    which is also the operational contract (set it before the process starts).
+    The fixture restores the production default afterwards so the reload cannot
+    leak a non-default depth into any other test in the session.
+    """
+    from polymerhus.recon import config as recon_config
+    from polymerhus.recon.control import jobs as jobs_module
+
+    original = os.environ.get("KATANA_DEPTH")
+
+    def reload_with(depth: str | None):
+        if depth is None:
+            os.environ.pop("KATANA_DEPTH", None)
+        else:
+            os.environ["KATANA_DEPTH"] = depth
+        importlib.reload(recon_config)
+        return importlib.reload(jobs_module).JOBS["katana"].command_template
+
+    yield reload_with
+
+    if original is None:
+        os.environ.pop("KATANA_DEPTH", None)
+    else:
+        os.environ["KATANA_DEPTH"] = original
+    importlib.reload(recon_config)
+    importlib.reload(jobs_module)
 
 
 def test_every_job_tool_has_a_parser():
@@ -34,6 +84,45 @@ def test_katana_template_excludes_static_assets_but_keeps_js():
     assert "-cos" in template and "node_modules/" in template
     # output contract preserved.
     assert "-jsonl" in template
+
+
+def test_katana_depth_defaults_to_1():
+    """The operator default: depth 1 unless the env knob says otherwise."""
+    assert _depth(JOBS["katana"].command_template) == "1"
+
+
+def test_katana_depth_knob_changes_only_the_depth_token(katana_depth_knob):
+    """`KATANA_DEPTH=N` swaps the depth and leaves EVERY other flag byte-identical.
+
+    This is the guarantee the deep-crawl E2E leans on: raising the depth must not
+    silently drop/add/tune any other crawl flag (`-ct 240s`, the `-pcs*` cluster,
+    `-aff`, the `-ef`/`-cos` filters, ...). Compared with the depth token
+    normalised out on both sides, so the assertion is a character-for-character
+    diff of the rest of the template.
+    """
+    default_template = katana_depth_knob(None)
+    deep_template = katana_depth_knob("4")
+
+    assert _depth(deep_template) == "4"
+    assert _without_depth(deep_template) == _without_depth(default_template)
+    assert default_template.replace(" -d 1 ", " -d 4 ") == deep_template
+
+
+def test_katana_depth_knob_rejects_a_non_numeric_value():
+    """A bad knob must fail loudly at import, never emit a mangled flag."""
+    import subprocess
+    import sys
+    from pathlib import Path
+
+    src = Path(__file__).resolve().parents[2] / "src"
+    proc = subprocess.run(
+        [sys.executable, "-c", "import polymerhus.recon.control.jobs"],
+        env={**os.environ, "KATANA_DEPTH": "three", "PYTHONPATH": str(src)},
+        capture_output=True,
+        text=True,
+    )
+    assert proc.returncode != 0
+    assert "KATANA_DEPTH" in proc.stderr
 
 
 def test_ffuf_template_writes_json_to_file_and_cats_it_with_autocalibration():
