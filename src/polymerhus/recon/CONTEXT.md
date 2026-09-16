@@ -185,6 +185,20 @@ The content-stable authoring instructions for writing a well-structured procedur
 The future `SkillEvolver` reuses it unchanged.
 _Avoid_: the note-dump (prose without steps, observables, or pointers).
 
+## Browser capability
+
+**Exec gateway**:
+The single loosely-coupled `steel_exec` tool beside `execute_command`, accepting either a `steel`-token-routed command or a `.sh`/`.py` automation script, carrying no operation knowledge (that lives in the skill).
+_Avoid_: per-subcommand allowlist, in-process driver.
+
+**Named session**:
+A cloud-browser session under an agent-chosen semantic `polymerhus-<flow>-<id>` name whose uniqueness is checked at creation with the `live` oracle (success means TAKEN, the typed `No running session` error means free), stopped by script-trap on every path with platform inactivity as the backstop.
+_Avoid_: the default session, an unchecked name, an orphaned session.
+
+**Browser profiles**:
+Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by id only and defines no profile terms here.
+_Avoid_: duplicating #220's profile vocabulary.
+
 ## Invariants owned here
 
 **Fail-open**:
