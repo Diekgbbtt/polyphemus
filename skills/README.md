@@ -72,6 +72,7 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 |---|---|---|
 | `authorization-pyramid` | **authored** | reverse-engineering a service's role-to-permission structure via the inverse-pyramid probe |
 | `lightrag-query` | **authored** | the hunting agent's methodology-KB query discipline (`query_lightrag` / `kb_query`) |
+| `steel-browser` | **authored** | the browser operation mechanics over `steel_exec` (session lifecycle, ref flow, batch text entry, waiting, inline eval, bounded reads, one-shot scrape, spidering, profile mounts) |
 | `webapp-clientside-semantic-model` | **authored** | client-side semantic modeling from browser-observable artifacts before security analysis |
 | `webpage-analysis` | **authored** | web-application architectural profiling (navigation x rendering, independent) |
 | `webpage-profile` | **authored + verified** | L1-spine webpage classification (L1D-31a: independent dimensions, fingerprint-insufficiency) |

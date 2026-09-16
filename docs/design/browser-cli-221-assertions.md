@@ -1,63 +1,77 @@
 # Assertions - browser capability via Steel CLI (#221)
 
-**Source:** `docs/design/browser-cli-221-spec.md` (realising #221, per `docs/design/browser-cli-221-decisions.md` D1-D10).
-**Seams under assertion:** the exec seam (CLI runner plus redaction plus session lifecycle), the tool factory (`get_browser_tools` over `BROWSER_TOOL_NAMES`), the skill loader (`skill_for` for the browser skill).
+**Source:** `docs/design/browser-cli-221-spec.md` (the just-exec design), per `docs/design/browser-cli-221-decisions.md` (D11-D17 binding; D1/D4/D5 retired, D6/D10 amended).
+**Seams under assertion:** the `steel_exec` gateway tool (routing, guards, envelope), the eager kali delivery (postrun install plus compose credential wiring), the shared skill loader and the catalogue conformance sweep, and the `steel-browser` skill's operation references.
+**Retired with the rulings:** the earlier redaction, eleven-tool-factory, always-present-session-flag, and stop-on-failure predicates asserted a seam design (allowlist plus redaction plus context-manager lifecycle) that D1/D4/D5/D11 replaced; no assertion below depends on it.
 
-## Contract predicates (integration)
+## Contract predicates (unit, host-side)
 
-C1 - Redaction at the seam.
-Given start-shaped stdout carrying token-shaped values (synthetic `apiKey=`/`sessionId=` in the live-observed key layout) at the exec seam, exercising the secret-leak semantic, the contract yields tool results, context, and logs containing zero token-shaped values.
-Yields `tests/integration/test_browser_cli_redaction.py::test_start_secrets_stripped` (failing-first).
+C1 - Command routing refusals.
+Given `steel_exec` at the tool-function seam, exercising the routing semantic, the tool yields typed refusals (`returncode` 2, nothing executed) for a command carrying no `steel` token, for both-inputs and neither-input, and for an unsupported `script_lang`.
+Yields `tests/test_steel_exec.py::test_non_steel_command_refused_never_executed`, `::test_ambiguous_inputs_refused_never_executed`, `::test_steel_substring_without_token_refused`, `::test_py_script_runs_and_bad_lang_refused`.
 
-C2 - Stop on failure.
-Given a mid-flow command failure at the session-lifecycle seam, exercising the failure-path semantic, the contract yields exactly one stop for the flow's named session and the error surfaced (never swallowed).
-Yields `tests/integration/test_browser_cli_lifecycle.py::test_stop_on_failure`.
+C2 - Pinned-CLI guard.
+Given a `steel --version` probe that does not name the 0.4.4 pin, exercising the delivery-honesty semantic, the tool yields `refused:steel-version-mismatch` and runs nothing.
+Yields `tests/test_steel_exec.py::test_stale_steel_version_refused_never_executed`.
 
-C3 - Batch-routed text entry.
-Given a fill act at the exec seam, exercising the CLI-defect semantic (standalone text entry fails on the pinned CLI), the contract yields an argv where the fill travels inside a batch opened by a snapshot (never a standalone fill/type/setvalue invocation).
-Yields `tests/integration/test_browser_cli_interaction.py::test_fill_rides_batch`.
+C3 - Timeout ordering.
+Given a command whose longest steel `--timeout` reaches or exceeds the tool `timeout_s` (default 600), exercising the D11 semantic (steel clock authoritative), the tool yields `refused:timeout-ordering`; a `--session-timeout` (a session lifetime) never triggers it.
+Yields `tests/test_steel_exec.py::test_tool_timeout_defaults_to_600`, `::test_steel_wait_within_budget_proceeds`, `::test_steel_wait_exceeding_budget_refused_never_executed`, `::test_session_lifetime_is_not_a_wait`.
 
-C4 - Tool contract shape.
-Given `get_browser_tools()` at the tool-factory seam, exercising the success semantic, the contract yields exactly the `BROWSER_TOOL_NAMES` set (eleven tools), each with a non-empty description carrying its contract.
-Yields `tests/integration/test_browser_cli_tools.py::test_contract_names_and_descriptions`.
+C4 - Session-name uniqueness.
+Given a command-mode `browser start` on a name the `live` oracle reports TAKEN, exercising the D13 semantic, the tool yields `refused:session-taken` carrying `<name> is already used` and never starts; on a free name it proceeds.
+Yields `tests/test_steel_exec.py::test_taken_session_name_refused_with_name`, `::test_free_session_name_proceeds_to_start`, `::test_guard_only_watches_command_mode_starts`.
 
-C5 - Malformed CLI output degrades.
-Given non-JSON stdout (and given an error-envelope JSON) at the parse seam, exercising the malformed semantic, the contract yields a typed error result (never a raise, never a hang).
-Yields `tests/integration/test_browser_cli_parsing.py::test_malformed_degrades`.
+C5 - Envelope shape is unchanged.
+Given any run (success, shell error, malformed output), exercising the envelope semantic, the tool yields exactly `{stdout, stderr, returncode, duration_ms}` with ANSI stripped, and a script run writes its file verbatim into the session workdir.
+Yields `tests/test_steel_exec.py::test_steel_command_passes_through_with_envelope`, `::test_sh_script_written_verbatim_then_run`, `::test_py_script_runs_and_bad_lang_refused`.
 
-C6 - Session flag always present.
-Given any allowlisted command at the argv seam, exercising the scoping semantic (bare commands address nothing), the contract yields an argv always carrying the flow's `--session` value.
-Yields `tests/integration/test_browser_cli_lifecycle.py::test_session_flag_always_present`.
+C6 - Eager kali delivery.
+Given the repo at rest, exercising the delivery semantic, `kali/postrun.sh` pins v0.4.4 with both arch checksums and installs best-effort/idempotently, and the kali service is the only place `STEEL_API_KEY` is wired, with no key value in the repo.
+Yields `tests/test_steel_cli_delivery.py` (five static pin/wiring assertions).
 
-C7 - Skill loads through the shared loader.
-Given `skill_for("recon/browser/login")` at the loader seam, exercising the success semantic, the contract yields the skill body quoting the tool descriptions verbatim (no paraphrase drift).
-Yields `tests/integration/test_browser_cli_skill.py::test_skill_loads_and_quotes_contract`.
+C7 - Skill data-section conformance.
+Given `skills/steel-browser/SKILL.md`, exercising the catalogue semantic, `validate_skill` reports zero violations and the sweep over every `skills/*/SKILL.md` stays green.
+Yields `tests/recon/test_skill_data_section.py::test_every_repo_skill_conforms_to_data_section`.
 
-## Walkthrough predicates (end-to-end)
+C8 - Skill resolves through the one loader.
+Given `skill_for("steel-browser")` and `render_skill_index(["steel-browser"])`, exercising the single-loader semantic, the body returns non-empty with frontmatter stripped and the index renders the name-plus-description line.
+Yields `tests/recon/test_skills.py` plus the runner one-liner recorded in the PR body.
 
-E1 - Fixture login end to end.
+## Walkthrough predicates
+
+The same five contract predicates also run against a live kali with no cloud key at all (`tests/test_steel_exec_live.py`, seven assertions: version pin, the routing refusals, timeout ordering, envelope shape on a keyless script, and the key-absence guard), so the gateway is proven on the real transport without spending a Steel session.
+
+E1 - Fixture login end to end (live tier, deferred past this PR).
 Grounds spec stories 1-8 and 10.
-Input entering at the tool surface: navigate `https://the-internet.herokuapp.com/login`, fill username `tomsmith`, fill password `SuperSecretPassword!` (public fixture credentials), click login, wait text `Secure Area` (timeout 10000 ms).
-Live edge: the public fixture target plus the Steel cloud (mode: live session under a `polymerhus-e2e-*` name).
-Path: start creates the named session (branch: credential present), batch snapshot/fill/click submits the form (branch: batch-routed text entry), wait synchronises on the success text (branch: hit, not timeout), cookies/storage/URL reads capture the post-login state, stop releases the session (branch: success path).
-Terminal: current URL is the `/secure` page exactly once, flash text is `You logged into a secure area!`, cookies include `rack.session` (count at least 1 session-like cookie), zero live `polymerhus-e2e-*` sessions afterwards.
-Observed: the tool results of each act plus a sessions listing before and after, read back through the seam.
-Yields `tests/e2e/test_browser_cli_login.py::test_fixture_login`.
+Input entering at the tool surface: navigate `https://the-internet.herokuapp.com/login`, batch snapshot/fill/click, wait text `Secure Area` (timeout 10000 ms).
+Live edge: the Steel cloud under a `polymerhus-e2e-*` name.
+Terminal: the current URL is `/secure`, the flash text is `You logged into a secure area!`, cookies include `rack.session`, and the session is released on every path.
+Observed: the tool envelopes of each act plus the `live` oracle before and after.
+Status: deferred to the post-merge live run (this PR's tests are keyless; no cloud session is created by the suite).
 
-E2 - Live redaction.
-Grounds spec story 12.
-Input entering at the exec seam: a real `start` for a `polymerhus-e2e-*` session.
-Live edge: the Steel cloud (mode: live session create plus stop).
-Path: start returns raw stdout (branch: platform secrets present in the raw envelope), the seam builds the tool result, stop releases the session.
-Terminal: the tool result carries `id`, `name`, `mode`, timeouts (4 fields, values literal from the live envelope minus secrets) and zero token-shaped values; zero live `polymerhus-e2e-*` sessions afterwards.
-Observed: the tool result plus the redaction scan over it, read back through the seam.
-Yields `tests/e2e/test_browser_cli_login.py::test_live_start_redacted`.
-
-E3 - steel_crawl non-regression.
-Grounds spec story 15.
-Input entering at the crawl seam: the unchanged crawl contract (`get_crawl_tools` names, steel parser on a fixture manifest).
+E2 - steel_crawl non-regression.
+Grounds spec story 16.
+Input entering at the crawl seam: the unchanged crawl contract and the crawler role prompt.
 Live edge: none (self-contained).
-Path: the crawl tool factory returns the seven tools (branch: credential-gated as before), the steel parser maps a fixture manifest to deltas (branch: unchanged shape).
-Terminal: `CRAWL_TOOL_NAMES` membership exact, parser delta counts identical to the pre-change baseline, zero diff hunks under `crawl/` and `parsers/`.
-Observed: the existing crawl suites green plus a diff-boundary assertion.
-Yields the crawl unit/integration suites plus `tests/e2e/test_browser_cli_login.py::test_crawl_boundary_untouched`.
+Terminal: the crawl suites stay green and the diff shows zero hunks under `recon/crawl/`; the duplicate readers are already one role-prompt each (#222), so this stream touches no crawl content.
+Yields the existing `tests/recon/crawl/` suites.
+
+E3 - Skill live validation (the writer's evidence, recorded here for PR review).
+Input entering at the shell with the pinned CLI: every `skills/steel-browser/references/*.sh` run end to end against public fixtures.
+Live edge: the Steel cloud, 2026-09-16, CLI 0.4.4, `steel doctor` pass.
+Terminal: each script exits 0 with the expected envelope shapes, and afterwards `steel doctor` reports 0 active sessions with `steel browser live --session <name>` free per name; no `polymerhus-*` session survives.
+Observed: the commands and outputs recorded below; the verbatim script text was also driven through `kali.mcp_server.steel_exec.fn(script=..., script_lang="sh")` to prove the tool path (returncode 0, the unchanged envelope keys).
+
+### E3 evidence (2026-09-16, host CLI `/Users/diekgbbtt/.steel/bin/steel`)
+
+- `steel --version` -> `steel 0.4.4`; `steel doctor` -> `overall pass`.
+- Oracle free: `steel browser live --session <name> --json` -> `{"error":"No running session \"<name>\".","success":false}`.
+- Oracle taken (after start): -> `{"data":"https://app.steel.dev/sessions/<id>","success":true}`.
+- `start --session <name> --session-timeout 600000 --json` -> `data` keys `connectUrl, id, inactivityTimeoutMs, liveUrl, mode, name, remainingMs` (the `connectUrl` embeds `apiKey=` and a JWT, so start stdout is sensitive - the reference scripts print `name`/`mode` only).
+- Standalone `fill @e6` -> `{"error":"Unknown ref: e6",...,"success":false}` (the 0.4.4 defect the batch rule answers).
+- `batch "snapshot -i" "fill @e6 tomsmith" "fill @e8 ..." "click @e4" --json` -> per-op `data` with the fill echoing `{"filled":"@e6"}`.
+- `wait -t "Secure Area" --timeout 10000 --json` -> hit; `cookies --json` -> 5 cookies incl. `rack.session`; `eval "window.location.href"` -> the `/secure` URL; `stop` -> `{"stoppedSessions":["<name>"]}`, oracle then free.
+- `steel scrape https://example.com --format markdown --json` -> `{content.markdown, links, metadata}`.
+- All eight references run via `bash <file>`: exit 0 each; a `steel browser sessions` sweep is NOT an orphan proof (it reads empty while a session is live, and the cloud `steel sessions list` carries history with no `name` field), so the post-run proof is `steel doctor` active-count 0 plus the `live` oracle per name.
+- Third-party source-skill claims corrected against the live CLI: no `snapshot -C` (0.4.4 has `-u/--urls`), no `sessions --raw`, and `browser live --session <name>` is the uniqueness oracle rather than a viewer-only command.
