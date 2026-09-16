@@ -258,3 +258,14 @@ def test_execute_can_label_a_manual_replay(tmp_path):
     )
     assert seen["context"].derived_from == "http_01J0000000000000000000000A"
     assert seen["context"].replay_kind == "mutated"
+
+
+def test_store_cache_is_bounded(tmp_path, monkeypatch):
+    from kali.http_history import service as service_module
+
+    monkeypatch.setattr(service_module, "_STORE_CACHE_MAX", 2)
+    service = _service(tmp_path)
+    for index in range(4):
+        service.store(f"proj-{index}")
+    assert len(service._stores) <= 2
+    assert "proj-0" not in service._stores

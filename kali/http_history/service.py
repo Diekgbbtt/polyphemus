@@ -12,6 +12,7 @@ import socket
 import subprocess
 import threading
 import time
+from collections import OrderedDict
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Callable
@@ -25,6 +26,10 @@ from kali.http_history.sanitize import sanitize_artifact, sanitize_summary
 from kali.http_history.store import HttpHistoryStore
 
 RESERVED_PROJECTS = frozenset({UNSCOPED_PROJECT})
+
+#: Open SQLite handles kept per MCP process (LRU; one process serves many
+#: projects, and an unbounded cache leaks a connection per project seen).
+_STORE_CACHE_MAX = 32
 
 
 class NotFoundError(LookupError):
@@ -90,7 +95,7 @@ class HttpHistoryService:
         self._store_factory = store_factory or (
             lambda project: HttpHistoryStore(self.config.store_root, project)
         )
-        self._stores: dict[str, HttpHistoryStore] = {}
+        self._stores: OrderedDict[str, HttpHistoryStore] = OrderedDict()
         self._lock = threading.RLock()
         self._proxy_probe = proxy_probe or self._default_proxy_probe
         self._routing_probe = routing_probe or self._default_routing_probe
@@ -100,9 +105,17 @@ class HttpHistoryService:
     def store(self, project_id: str) -> HttpHistoryStore:
         with self._lock:
             store = self._stores.get(project_id)
-            if store is None:
-                store = self._store_factory(project_id)
-                self._stores[project_id] = store
+            if store is not None:
+                self._stores.move_to_end(project_id)
+                return store
+            store = self._store_factory(project_id)
+            self._stores[project_id] = store
+            while len(self._stores) > _STORE_CACHE_MAX:
+                _, evicted = self._stores.popitem(last=False)
+                try:
+                    evicted.close()
+                except Exception:  # noqa: BLE001 - eviction never fails a read
+                    pass
             return store
 
     @staticmethod
