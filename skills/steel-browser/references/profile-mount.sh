@@ -15,26 +15,33 @@ SESSION="${SESSION:-polymerhus-${FLOW}-$(date +%s)}"
 STARTED=0
 
 if [ -z "$PROFILE" ]; then
-  echo "usage: PROFILE=<profile-name> [WRITE=1] $0" >&2
+  echo "usage: PROFILE=<profile-name> [WRITE=1] bash $0" >&2
   exit 2
 fi
 
 release() {
-  # The stop IS the persistence call: with --update-profile the release writes
-  # the session state back; a read-only mount releases without writing.
+  # The stop IS the persistence call: a WRITE=1 session releases its state back
+  # into the profile; a read-only mount releases without writing.
   if [ "$STARTED" = 1 ]; then
     steel browser stop --session "$SESSION" --json >/dev/null 2>&1 || true
   fi
 }
 trap release EXIT INT TERM
 
-if steel browser live --session "$SESSION" --json >/dev/null 2>&1; then
-  echo "refused: $SESSION is already used" >&2
+# Catalogue guard (D13 amended). One live session per profile holds the last
+# writer, so the semantic name keeps this flow's session addressable.
+if steel browser sessions --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+    names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}
+except Exception:
+    sys.exit(1)  # cannot verify -> treat as free, never block the start
+sys.exit(0 if sys.argv[1] in names else 1)
+' "$SESSION"; then
+  echo "refused: $SESSION is already live" >&2
   exit 3
 fi
 
-# One live session per profile: the semantic name keeps this flow's session
-# addressable, and the uniqueness oracle above keeps it from attaching to one.
 if [ "$WRITE" = 1 ]; then
   START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --profile "$PROFILE" --update-profile --json)
 else
@@ -51,4 +58,13 @@ NAV_JSON=$(steel browser navigate "$URL" --wait-until domcontentloaded --session
 printf '%s' "$NAV_JSON" | python3 -c \
   'import json,sys; d=json.load(sys.stdin)["data"]; print("verified mount via", d["url"], "|", d["title"])'
 
-echo "profile mount complete; the trap releases and persists on exit"
+# Explicit stop (the persistence call) before the exit trap.
+steel browser stop --session "$SESSION" --json >/dev/null
+STARTED=0
+steel browser sessions --json | python3 -c '
+import json,sys
+names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}
+print("released:", sys.argv[1] not in names)
+' "$SESSION"
+
+echo "profile mount complete"

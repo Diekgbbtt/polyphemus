@@ -19,8 +19,16 @@ release() {
 }
 trap release EXIT INT TERM
 
-if steel browser live --session "$SESSION" --json >/dev/null 2>&1; then
-  echo "refused: $SESSION is already used" >&2
+# Catalogue guard (D13 amended).
+if steel browser sessions --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+    names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}
+except Exception:
+    sys.exit(1)  # cannot verify -> treat as free, never block the start
+sys.exit(0 if sys.argv[1] in names else 1)
+' "$SESSION"; then
+  echo "refused: $SESSION is already live" >&2
   exit 3
 fi
 
@@ -58,4 +66,13 @@ print("  visited", d["url"], "|", d["title"])
 '
 done
 
-echo "spider complete (limit $LIMIT); the trap releases $SESSION on exit"
+# Explicit stop, then prove the name is gone; the trap is the backstop.
+steel browser stop --session "$SESSION" --json >/dev/null
+STARTED=0
+steel browser sessions --json | python3 -c '
+import json,sys
+names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}
+print("released:", sys.argv[1] not in names)
+' "$SESSION"
+
+echo "spider complete (limit $LIMIT)"

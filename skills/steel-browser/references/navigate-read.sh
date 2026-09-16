@@ -17,8 +17,16 @@ release() {
 }
 trap release EXIT INT TERM
 
-if steel browser live --session "$SESSION" --json >/dev/null 2>&1; then
-  echo "refused: $SESSION is already used" >&2
+# Catalogue guard (D13 amended): the live list is the source of truth for a name.
+if steel browser sessions --json 2>/dev/null | python3 -c '
+import json,sys
+try:
+    names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}
+except Exception:
+    sys.exit(1)  # cannot verify -> treat as free, never block the start
+sys.exit(0 if sys.argv[1] in names else 1)
+' "$SESSION"; then
+  echo "refused: $SESSION is already live" >&2
   exit 3
 fi
 
@@ -32,16 +40,15 @@ NAV_JSON=$(steel browser navigate "$URL" --wait-until domcontentloaded --session
 printf '%s' "$NAV_JSON" | python3 -c \
   'import json,sys; d=json.load(sys.stdin)["data"]; print("navigated", d["url"], "|", d["title"])'
 
-# Page reading primitives: dedicated getters, then a compact tree slice.
-TITLE_JSON=$(steel browser get title --session "$SESSION" --json)
-URL_JSON=$(steel browser get url --session "$SESSION" --json)
-printf '%s' "$TITLE_JSON" | python3 -c 'import json,sys; print("get title ->", json.load(sys.stdin)["data"])'
-printf '%s' "$URL_JSON" | python3 -c 'import json,sys; print("get url ->", json.load(sys.stdin)["data"])'
+# Page-reading primitives: dedicated getters, then a compact tree slice.
+steel browser get title --session "$SESSION" --json \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("get title ->", d.get("title", d) if isinstance(d, dict) else d)'
+steel browser get url --session "$SESSION" --json \
+  | python3 -c 'import json,sys; d=json.load(sys.stdin)["data"]; print("get url ->", d.get("url", d) if isinstance(d, dict) else d)'
 
-# Bounded read: only the count and the first few interactive lines, never the
-# whole tree, so the tool result never explodes agent context.
-SNAP_JSON=$(steel browser snapshot -i -c --session "$SESSION" --json)
-printf '%s' "$SNAP_JSON" | python3 -c '
+# Projected read: only the count and the first few interactive lines, never the
+# whole tree, so the result never explodes context.
+steel browser snapshot -i -c --session "$SESSION" --json | python3 -c '
 import json,sys
 lines=json.load(sys.stdin)["data"].splitlines()
 print("interactive nodes:", len(lines))
@@ -49,4 +56,13 @@ for line in lines[:5]:
     print("  " + line)
 '
 
-echo "read complete; the trap releases $SESSION on exit"
+# Explicit stop, then prove the name is gone; the trap is the backstop.
+steel browser stop --session "$SESSION" --json >/dev/null
+STARTED=0
+steel browser sessions --json | python3 -c '
+import json,sys
+names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}
+print("released:", sys.argv[1] not in names)
+' "$SESSION"
+
+echo "read complete"

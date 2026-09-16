@@ -60,3 +60,7 @@ data/*
 # artifacts here: the project pins its dependencies in requirements-*.txt.
 src/*.egg-info/
 uv.lock
+
+# Editor swap files (stray vim buffers on tracked markdown).
+*.swp
+*.swo

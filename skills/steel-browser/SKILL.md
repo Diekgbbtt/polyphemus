@@ -8,116 +8,104 @@ description: >-
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '1.0'
+  version: '1.2'
 ---
 
 # Steel browser operation
 
-Drive a real cloud browser through the `steel_exec` tool: one `steel ...` command, or a whole `.sh` automation script chaining several commands.
-This skill owns the operation mechanics - session lifecycle, the ref flow, batch-routed text entry, waiting, JS evaluation, extraction, scraping, spidering, and profiles.
-The canonical login procedures written in these mechanics belong to the auth skill; this skill carries the mechanics alone.
+Drive a real cloud browser through `steel_exec` - one `steel ...` command, or a whole `.sh`/`.py` script chaining several.
+This skill carries operation mechanics, not a goal: no login procedure, no scraping recipe, only the framework any browser task composes.
+Reach for it when a target needs JavaScript to render, an element driven, or client-side browser state read.
 
-## The tool contract
+## The tool surface
 
-`steel_exec` accepts exactly one of two inputs:
+`steel_exec` takes exactly one of `command` (a string carrying a `steel` token) or `script` with `script_lang` in `sh`/`py`.
+Script text is not scanned, so a script owns its own timeout ordering and session-name uniqueness.
+A refusal is typed and nothing runs (`returncode` 2): `refused:ambiguous-input`, `refused:not-steel-command`, `refused:steel-version-mismatch`, `refused:timeout-ordering`, `refused:unsupported-script-lang`, `refused:session-taken`.
+Fix the input and reissue; a refusal is not a transient to retry.
+On a bare CLI you hold the same guards yourself.
 
-- `command`: a `steel ...` command string, routed on a `steel` token.
-- `script` plus `script_lang` in `{"sh", "py"}`: a whole automation script, written verbatim to a unique file under `/work/{session_id}` and run there.
+## The path: survey, open, mount, operate, close
 
-The tool's own contract, quoted verbatim:
+A spine with an open middle - pick the path the goal needs, not a fixed sequence.
 
 ```
-Run a steel CLI command or automation script in /work/{session_id} and
-return the unchanged {stdout, stderr, returncode, duration_ms} envelope.
-Exactly one of command/script; commands must carry the steel token.
-Guards, in order: pinned steel version re-check; longest steel --timeout
-must sit below timeout_s (default 600, steel clock authoritative); a
-command-mode start on a live name is refused with `<name> is already
-used`. Scripts carry timeout ordering and unique names by skill
-construction and are never scanned.
+survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
+                                                    |
+                       each operation takes a shape: single | batch | wait | script
 ```
 
-Every call returns the unchanged `{stdout, stderr, returncode, duration_ms}` envelope with ANSI stripped, run with `cwd` `/work/{session_id}`.
-Typed refusals (`returncode` 2, nothing executed): `refused:ambiguous-input`, `refused:not-steel-command`, `refused:steel-version-mismatch`, `refused:timeout-ordering`, `refused:unsupported-script-lang`, `refused:session-taken` (`<name> is already used`).
-Two duties this contract leaves to the script: because script text is not scanned, the script's own timeout ordering and its session-name uniqueness are the skill's to hold.
+**Survey.** `steel browser sessions --json` lists every live session this key owns as `{id, mode, name, status, viewerUrl}`, and `{"data":[]}` when none is live. `steel profile list --json` lists profiles as `{name, profileId}`. Read both before opening anything.
 
-## Workflow
+**Open, or reuse.** A live session's name is already addressable, so reuse one rather than start a twin. Otherwise `steel browser start --session <name> --session-timeout 600000 --json`, naming it `polymerhus-<flow>-<id>`.
+`start` silently attaches to a live name, so check the catalogue first: `steel_exec` refuses a command-mode start on a catalogued name with `<name> is already used`, and a script holds its own check.
+`remainingMs` on receipt sits below what you asked for - provisioning spends the session clock.
 
-1. Prove a session name free, then open it.
-Name sessions semantically: `polymerhus-<flow>-<id>`.
-`steel browser live --session <name> --json` reports `success: true` iff the name is TAKEN; the typed `No running session` error means free (the tool reads that same `success` field before it lets a command-mode `start` through).
-Open with `steel browser start --session <name> --session-timeout 600000 --json`.
-Observable: the oracle reads free before `start`; the start JSON carries your chosen name.
+**Mount a profile (optional).** `start --profile <name>` mounts server-side identity and state; read-only by default, `--update-profile` accumulates it back on release. There is no state-poll primitive, so prove a mount with a settle pause then a navigation - an unverified mount never passes a verdict. One live session per profile holds the last writer.
 
-2. Arm the trap on every multi-op script.
-The script owns its stop: `trap release EXIT INT TERM`, where `release` runs `steel browser stop --session <name> --json` iff the script started it.
-Observable: `steel browser live --session <name>` reports free after the run, on the success, error, and signal paths alike.
+**Operate.** Any web-interaction operation or client-side browser-state inspection: the command families below proxy to the CDP API. Choose each operation's shape:
+- **single** - one atomic act whose result is the answer; no sequencing, no ref to discover.
+- **batch** - several ops in one spawn that must share state (a discovered ref, an entered value).
+- **wait** - when the page, not you, is the unknown; synchronise on an observable before reading it.
+- **script** - a whole flow with a lifecycle, a loop, or several operations; it owns its stop.
 
-3. Navigate, then confirm where you are.
-`steel browser navigate <url> --wait-until domcontentloaded --json` returns `{title, url}`.
-Observable: the returned `url` is the target you asked for.
+**Close.** Stop the session with `steel browser stop --session <name> --json` when you own it, or let the stop owner fire, then prove it gone against the catalogue (`sessions --json` back to `[]`). Where the mount was write-oriented, that stop is what backs the profile up.
 
-4. Snapshot for refs, then act in one batch.
-`steel browser snapshot -i --json` returns element refs (`@eN`).
-Route all text entry (`fill`, `type`, `setvalue`) through a `batch` whose first element is `snapshot -i`; a standalone `fill` returns `Unknown ref: eN` on CLI 0.4.4.
-Refs hold for the act that immediately follows and never across a `navigate`.
-Observable: the batch result carries `success:true` for the act; read the value back to confirm the entry landed.
+## Rules a decision can violate
 
-5. Wait on the observable with steel's clock.
-`steel browser wait -t "<text>" --timeout <ms>` (also `--selector`, `-u`, `-f`, `-l`).
-Steel's `--timeout` governs the wait; keep the tool `timeout_s` above it (default 600 s) and the agent call budget above that.
-Observable: `wait` succeeds, or returns the typed timeout error - never a hang past `--timeout`.
+**Refs**
+- Take every ref and accessible name from the `snapshot -i` you just read; never from what a field is called in the source (a password field here is named `"Password input"`, not `"Password"`).
+- Text entry (`fill`, `type`, `setvalue`) rides a `batch` whose first element is `snapshot -i`; standalone, CLI 0.4.4 answers `Unknown ref: eN`.
+- Re-snapshot after every `navigate`. Within one document the ref registry is append-only, so an earlier ref still resolves; after a `navigate` the old ref no longer names its element - it answers `Unknown ref` until the new document's refs exist, then silently resolves to whatever now carries it.
 
-6. Bound every read.
-`cookies`, `storage local|session`, `get url`, and `eval` are the extraction reads.
-Project before return: aim every read at a count, a slice, a targeted selector, or a boolean.
-`eval` runs inline, with the escaping patterns and the bounding rule in `references/eval-inline.sh`; a proven snippet graduates into `/work/<session_id>/js/` and is fed back through shell substitution inside a script.
-Observable: each read returns a count, a slice, a boolean, or a named field.
+**Reads**
+- Project every read before it returns: a count, a slice, a named field, or a boolean. An unprojected `cookies`/`storage`/`snapshot`/`eval` dumps a whole jar, tree, or document into context.
+- Print cookie and storage names and counts, never values, and never echo a text-entry command string; values are target secrets in flight.
 
-7. Close and prove it.
-The script trap is the stop; a session opened by direct command stops with `steel browser stop --session <name>`.
-`steel browser sessions` reads empty while a session is provably live, so prove liveness with the `live` oracle and stop by name only - `stop --all` would kill foreign sessions (a foreign `default` may be live).
-Observable: `steel browser live --session <name>` reports free after the flow.
+**Shell**
+- Single-quote every literal value fed through the shell; a trailing `$` or a backtick inside double quotes expands silently and submits the wrong value with no error. A runtime value rides a variable, interpolated as `"${VALUE}"` - expansion does not re-expand the contents, so only literals need the quotes.
+- `eval` takes one inline JS expression - JS source, not a file path (a path parses as a regex literal). A proven snippet graduates to a script, which feeds it back through shell substitution.
+- Validate before parsing `batch ... --json`; it is not guaranteed strict JSON (an embedded tree can carry a control character). On a parse failure, re-read a bounded slice rather than trust the frame.
 
-8. Mount profiles with settle-then-verify.
-`steel browser start --session <name> --profile <profile> --json` mounts read-only; add `--update-profile` to accumulate state.
-No CLI state poll exists (`steel profile list` returns name plus id only), so settle, then prove the mount by a navigation.
-Release (`stop`) is the persistence call, and one live session per profile holds the last writer.
-Observable: a post-mount navigation succeeds before any verdict; the release runs on every path.
+**Synchronisation**
+- Steel's `--timeout` (milliseconds) governs a wait; keep the tool `timeout_s` above it so the outer clock never cuts a wait short. `steel_exec` refuses a wait that reaches `timeout_s` (`refused:timeout-ordering`); on a bare CLI you enforce it.
+
+**Lifecycle**
+- Every session gets a stop owner. One script invocation owns it with `trap ... EXIT INT TERM`; a flow spanning separate calls arms a dead-man watchdog (`references/stop-owner.sh`) or wraps the calls in a stopping script.
+- Stop by the name you own; never `stop --all`, which kills a foreign session (a foreign `default` may be live). `stop --json` returns only `stoppedSessions`; the catalogue is the liveness proof.
+
+**State and gates**
+- Clear a consent, region, or guest gate before snapshotting for refs; the gate's own click changes cookie and storage state, so take any pre-state baseline after it settles.
+- Decide a state change on a UI signal plus a pre/post baseline, never on cookie names alone: `PHPSESSID` and `PrestaShop-<hash>` exist pre-login, and login changes their values, not their names.
 
 ## Command families
 
-Every command takes `--session <name>`; pass `--json` on every call.
+Every command carries `--session <name>` and `--json`.
 
-- Session: `start [--session-timeout ms] [--stealth] [--proxy url]`, `stop`, `sessions`, `live`.
+- Session: `start [--session-timeout ms] [--stealth] [--proxy url] [--profile name] [--update-profile]`, `stop [-a]`, `sessions`, `live` (viewer).
 - Navigation: `navigate <url> [--wait-until load|domcontentloaded|networkidle]` (aliases `open`, `goto`), `back`, `forward`, `reload`.
-- Page reading: `snapshot [-i] [-c] [-d n] [-s css]`, `get text|html|value|attr|url|title|count|box|styles`, `find <css>`, `content`, `is visible|enabled|checked`.
+- Page reading: `snapshot [-i] [-c] [-s css] [-d n] [-u]`, `get text|html|value|attr|url|title|count|box|styles`, `find <css>`, `content`, `is visible|enabled|checked`.
 - Interaction: `click`, `dblclick`, `press`, `hover`, `focus`, `check`, `uncheck`, `select`, `clear`, `selectall`, `scroll`, `scrollintoview`, `drag`, `upload`.
 - Text entry (batch-routed): `fill`, `type`, `setvalue`.
-- Waiting: `wait -t <text> | --selector <css> | -u <substr> | -f <js> | -l <load-state: load|domcontentloaded|networkidle>` with `--timeout <ms>`.
+- Waiting: `wait -t <text> | --selector <css> | -u <substr> | -f <js> | -l <load-state>` with `--timeout <ms>`.
 - JS: `eval <js>`.
-- Cookies and storage: `cookies [set|clear]`, `storage local|session [get|set|clear]`.
+- Cookies and storage: `cookies [set|clear]`, `storage local|session [key] [set|clear]`.
 - Batch: `batch "cmd" "cmd" ... [--bail]`.
-- One-shot scraping: `steel scrape <url> [--format markdown|html|readability|cleaned_html] [--screenshot] [--pdf] [--use-proxy]`.
-- Spidering: `eval` to enumerate links, `navigate` per link, both bounded.
-- Profiles: `steel profile list`; mount via `start --profile <name> [--update-profile]`.
+- One-shot scraping (no session): `steel scrape <url> [--format html|readability|cleaned_html|markdown] [--pdf] [--screenshot] [--use-proxy]`.
+- Spidering: enumerate links with `eval`, `navigate` per link, both capped.
+- Profiles: `steel profile list|import|sync|delete`; mount through `start --profile`.
 
 ## References
 
-Runnable operation scripts beside this skill, each self-guarding (name oracle, exit trap, bounded output) and runnable verbatim through `steel_exec(script, script_lang="sh")` or `bash <file>`.
+Runnable scripts beside this skill; each is self-guarding, `--json`, bounded output, and runs verbatim through `steel_exec(script, script_lang="sh")` or `bash <file>`.
 
-- `references/session-lifecycle.sh` - open, use, and release a session with the oracle and the trap.
+- `references/catalogue.sh` - list live sessions and profiles; the survey read.
+- `references/session-lifecycle.sh` - survey, open a free name, use it, release under a trap, prove the catalogue clean.
+- `references/stop-owner.sh` - arm or defuse a dead-man watchdog for a flow that spans separate calls.
 - `references/navigate-read.sh` - navigate, then read title, URL, and a compact tree slice.
-- `references/interact-batch.sh` - snapshot-then-act text entry inside one batch, with an explicit wait.
-- `references/extract-reads.sh` - bounded cookie, storage, URL, and eval reads.
-- `references/eval-inline.sh` - the inline-JS escaping patterns and the result-bounding rule.
+- `references/interact-batch.sh` - snapshot-then-act text entry in one batch, with a boolean read-back.
+- `references/extract-reads.sh` - bounded cookie, storage, and eval reads.
+- `references/eval-inline.sh` - inline-JS escaping patterns and the projection rule.
 - `references/scrape-page.sh` - one-shot `steel scrape` with a bounded slice.
-- `references/spider-bounded.sh` - enumerate links, then fetch and parse a capped same-host set.
-- `references/profile-mount.sh` - mount a profile, settle, and verify by navigation.
-
-## Traps that cost a flow
-
-- `Unknown ref: eN`: the ref expired; take a fresh `snapshot -i` and act in the same batch.
-- `No running session`: the oracle's free verdict, or a session that died; open a fresh semantic name.
-- Target secrets (cookie values, tokens, password values) stay out of stdout; print cookie and storage names and counts.
-- `steel --timeout` is the authoritative wait clock; keep the tool `timeout_s` above it so the tool clock never cuts a wait short.
+- `references/spider-bounded.sh` - enumerate links, then fetch a capped same-host set.
+- `references/profile-mount.sh` - mount a profile, settle, verify by navigation, persist on release.
