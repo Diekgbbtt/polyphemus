@@ -40,7 +40,7 @@ Agents browse by calling the tool; multi-op flows chain steel commands in script
 
 - Delivery: eager postrun-shaped install of the pinned CLI into the persisted kali binary dir at boot; lazy configuration only (credential env, per-flow sessions). No agent-image change (D12).
 - Tool: one `steel_exec` gateway beside `execute_command`, sharing its runner and envelope; dual input (steel-token-routed command, verbatim-written script in `sh`/`py`); per-session workdir isolation; default tool timeout 600; thin contract, no operation knowledge; no per-subcommand allowlist and no redaction stage, by ruling.
-- Session namespace: semantic agent-chosen names; uniqueness via the `live` oracle at creation in command mode (script mode by skill construction); `start` attach semantics and `sessions` unreliability recorded as the reasons (D13).
+- Session namespace: semantic agent-chosen names; uniqueness via the live session catalogue at creation in command mode (script mode by skill construction); `start` attach semantics recorded as the reason the guard exists, and the catalogue read as the introspection path (D13, amended 2026-09-16).
 - Timeouts: steel authoritative, tool budget (600 default) above it, agent budget above that, all explicit per call (D11).
 - Eval: inline default with skill-carried escaping verbatim and pitfall specimens; file promotion for reuse; result bounding as hard rule (D14).
 - Transcript: Langfuse tool spans via the established callback pattern; per-command granularity through script stdout markers; no log files (D15).
@@ -53,9 +53,9 @@ Agents browse by calling the tool; multi-op flows chain steel commands in script
 ## Testing Decisions
 
 - A good test asserts external behaviour at the tool function (args in, envelope out, refusal reasons), never steel internals or live cloud state.
-- Tool function with stubbed steel binary: routing refusals, uniqueness guard with faked oracle, timeout plumbing, envelope shape on success/malformed/error.
+- Tool function with stubbed steel binary: routing refusals, uniqueness guard with a faked session catalogue, timeout plumbing, envelope shape on success/malformed/error.
 - Crawl boundary: existing crawl suites green plus the skill byte-identity check.
-- Live tier only: fixture-login script end to end, stop proof via the oracle, orphan check.
+- Live tier only: fixture-login script end to end, stop proof via the session catalogue, orphan check.
 - Prior art: the pod/exec unit tests with injected fakes; the skill-loader tests; the YAML store tests with explicit temp roots.
 
 ## Out of Scope

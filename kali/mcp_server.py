@@ -16,7 +16,7 @@ _STEEL_VERSION_PIN = "0.4.4"
 _START_SHAPE = re.compile(r"\bbrowser\s+start\b")
 _SESSION_FLAG = re.compile(r"--session[= ]+(?:\"([^\"]+)\"|'([^']+)'|(\S+))")
 _STEEL_WAIT = re.compile(r"(?<!\S)--timeout[= ]+(\d+)")
-_ORACLE_TIMEOUT_S = 30
+_CATALOGUE_TIMEOUT_S = 30
 _VERSION_TIMEOUT_S = 15
 _SCRIPT_RUNNERS = {"sh": "sh", "py": "python3"}
 
@@ -64,18 +64,28 @@ def _session_name(command: str) -> str | None:
     return m.group(1) or m.group(2) or m.group(3)
 
 
-def _session_live(name: str) -> bool:
-    # Uniqueness oracle (D13, proven live 2026-09-11): `live` returns
-    # {success:true} iff the name is taken. Fail-open: any oracle error or
-    # unparseable shape reads as free, so a broken oracle never blocks a
-    # flow. The check-then-start race is accepted and documented, not solved.
+def _live_session_names() -> set[str] | None:
+    # The session catalogue (re-probed live 2026-09-16): `steel browser
+    # sessions --json` returns every live session this key owns as
+    # {id, mode, name, status, viewerUrl}, and `data: []` once none is live -
+    # one read answers the name question that used to cost a per-name `live`
+    # probe, and it is visible across processes and workdirs (proven by
+    # starting through this tool and listing from a separate shell). Fail-open:
+    # an error or unparseable shape returns None ("cannot verify"), so a broken
+    # catalogue never blocks a start. The check-then-start race is accepted and
+    # documented, not solved.
     try:
         proc = subprocess.run(
-            f"steel browser live --session {shlex.quote(name)} --json",
-            shell=True, capture_output=True, text=True, timeout=_ORACLE_TIMEOUT_S)
-        return json.loads(proc.stdout or "").get("success") is True
+            "steel browser sessions --json",
+            shell=True, capture_output=True, text=True,
+            timeout=_CATALOGUE_TIMEOUT_S)
+        data = json.loads(proc.stdout or "").get("data")
+        if not isinstance(data, list):
+            return None
+        return {s["name"] for s in data
+                if isinstance(s, dict) and isinstance(s.get("name"), str)}
     except Exception:
-        return False
+        return None
 
 
 def _steel_version_ok() -> bool:
@@ -117,9 +127,9 @@ def steel_exec(command: str = "", script: str = "", script_lang: str = "sh",
     Exactly one of command/script; commands must carry the steel token.
     Guards, in order: pinned steel version re-check; longest steel --timeout
     must sit below timeout_s (default 600, steel clock authoritative); a
-    command-mode start on a live name is refused with `<name> is already
-    used`. Scripts carry timeout ordering and unique names by skill
-    construction and are never scanned."""
+    command-mode start on a name the live session catalogue reports is refused
+    with `<name> is already used`. Scripts carry timeout ordering and unique
+    names by skill construction and are never scanned."""
     if bool(command) == bool(script):
         return _refused("ambiguous-input", "pass exactly one of command or script")
     if command:
@@ -133,8 +143,10 @@ def steel_exec(command: str = "", script: str = "", script_lang: str = "sh",
             return _refused("timeout-ordering",
                             f"longest steel wait {max(waits)}s needs tool timeout_s above it, got {timeout_s}")
         name = _session_name(command)
-        if name is not None and _session_live(name):
-            return _refused("session-taken", f"{name} is already used")
+        if name is not None:
+            live = _live_session_names()
+            if live is not None and name in live:
+                return _refused("session-taken", f"{name} is already used")
         return _run(command, session_id, timeout_s)
     if script_lang not in _SCRIPT_RUNNERS:
         return _refused("unsupported-script-lang", f"want one of {sorted(_SCRIPT_RUNNERS)}")

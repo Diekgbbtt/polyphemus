@@ -19,8 +19,8 @@ Given a command whose longest steel `--timeout` reaches or exceeds the tool `tim
 Yields `tests/test_steel_exec.py::test_tool_timeout_defaults_to_600`, `::test_steel_wait_within_budget_proceeds`, `::test_steel_wait_exceeding_budget_refused_never_executed`, `::test_session_lifetime_is_not_a_wait`.
 
 C4 - Session-name uniqueness.
-Given a command-mode `browser start` on a name the `live` oracle reports TAKEN, exercising the D13 semantic, the tool yields `refused:session-taken` carrying `<name> is already used` and never starts; on a free name it proceeds.
-Yields `tests/test_steel_exec.py::test_taken_session_name_refused_with_name`, `::test_free_session_name_proceeds_to_start`, `::test_guard_only_watches_command_mode_starts`.
+Given a command-mode `browser start` on a name the live session catalogue reports, exercising the D13 semantic, the tool yields `refused:session-taken` carrying `<name> is already used` and never starts; on a free name it proceeds; an unreadable catalogue fails open.
+Yields `tests/test_steel_exec.py::test_taken_session_name_refused_with_name`, `::test_free_session_name_proceeds_to_start`, `::test_guard_only_watches_command_mode_starts`, `::test_unreadable_catalogue_fails_open`.
 
 C5 - Envelope shape is unchanged.
 Given any run (success, shell error, malformed output), exercising the envelope semantic, the tool yields exactly `{stdout, stderr, returncode, duration_ms}` with ANSI stripped, and a script run writes its file verbatim into the session workdir.
@@ -47,7 +47,7 @@ Grounds spec stories 1-8 and 10.
 Input entering at the tool surface: navigate `https://the-internet.herokuapp.com/login`, batch snapshot/fill/click, wait text `Secure Area` (timeout 10000 ms).
 Live edge: the Steel cloud under a `polymerhus-e2e-*` name.
 Terminal: the current URL is `/secure`, the flash text is `You logged into a secure area!`, cookies include `rack.session`, and the session is released on every path.
-Observed: the tool envelopes of each act plus the `live` oracle before and after.
+Observed: the tool envelopes of each act plus the session catalogue before and after.
 Status: deferred to the post-merge live run (this PR's tests are keyless; no cloud session is created by the suite).
 
 E2 - steel_crawl non-regression.
@@ -60,18 +60,19 @@ Yields the existing `tests/recon/crawl/` suites.
 E3 - Skill live validation (the writer's evidence, recorded here for PR review).
 Input entering at the shell with the pinned CLI: every `skills/steel-browser/references/*.sh` run end to end against public fixtures.
 Live edge: the Steel cloud, 2026-09-16, CLI 0.4.4, `steel doctor` pass.
-Terminal: each script exits 0 with the expected envelope shapes, and afterwards `steel doctor` reports 0 active sessions with `steel browser live --session <name>` free per name; no `polymerhus-*` session survives.
+Terminal: each script exits 0 with the expected envelope shapes, and afterwards `steel doctor` reports 0 active sessions with `steel browser sessions --json` empty; no `polymerhus-*` session survives.
 Observed: the commands and outputs recorded below; the verbatim script text was also driven through `kali.mcp_server.steel_exec.fn(script=..., script_lang="sh")` to prove the tool path (returncode 0, the unchanged envelope keys).
 
 ### E3 evidence (2026-09-16, host CLI `/Users/diekgbbtt/.steel/bin/steel`)
 
 - `steel --version` -> `steel 0.4.4`; `steel doctor` -> `overall pass`.
-- Oracle free: `steel browser live --session <name> --json` -> `{"error":"No running session \"<name>\".","success":false}`.
+- Session catalogue before/after: `steel browser sessions --json` -> `{"data":[{id,mode,name,status,viewerUrl}],"success":true}` while live, `{"data":[],"success":true}` once stopped; `steel sessions list --status live --json` agrees on the id but carries no name; a `default` session appears when a start omits `--session`.
 - Oracle taken (after start): -> `{"data":"https://app.steel.dev/sessions/<id>","success":true}`.
 - `start --session <name> --session-timeout 600000 --json` -> `data` keys `connectUrl, id, inactivityTimeoutMs, liveUrl, mode, name, remainingMs` (the `connectUrl` embeds `apiKey=` and a JWT, so start stdout is sensitive - the reference scripts print `name`/`mode` only).
 - Standalone `fill @e6` -> `{"error":"Unknown ref: e6",...,"success":false}` (the 0.4.4 defect the batch rule answers).
 - `batch "snapshot -i" "fill @e6 tomsmith" "fill @e8 ..." "click @e4" --json` -> per-op `data` with the fill echoing `{"filled":"@e6"}`.
-- `wait -t "Secure Area" --timeout 10000 --json` -> hit; `cookies --json` -> 5 cookies incl. `rack.session`; `eval "window.location.href"` -> the `/secure` URL; `stop` -> `{"stoppedSessions":["<name>"]}`, oracle then free.
+- `wait -t "Secure Area" --timeout 10000 --json` -> hit; `cookies --json` -> 5 cookies incl. `rack.session`; `eval "window.location.href"` -> the `/secure` URL; `stop` -> `{"stoppedSessions":["<name>"]}`, the catalogue then empty.
 - `steel scrape https://example.com --format markdown --json` -> `{content.markdown, links, metadata}`.
-- All eight references run via `bash <file>`: exit 0 each; a `steel browser sessions` sweep is NOT an orphan proof (it reads empty while a session is live, and the cloud `steel sessions list` carries history with no `name` field), so the post-run proof is `steel doctor` active-count 0 plus the `live` oracle per name.
-- Third-party source-skill claims corrected against the live CLI: no `snapshot -C` (0.4.4 has `-u/--urls`), no `sessions --raw`, and `browser live --session <name>` is the uniqueness oracle rather than a viewer-only command.
+- All eight references run via `bash <file>`: exit 0 each; the post-run orphan proof is the live session catalogue (`steel browser sessions --json` empty) plus `steel doctor` active-count 0.
+- Third-party source-skill claims corrected against the live CLI: no `snapshot -C` (0.4.4 has `-u/--urls`) and no `sessions --raw`.
+- Re-probed 2026-09-16: `steel browser sessions --json` is a reliable live-session catalogue (named start, unnamed `default` start, post-`stop` read, and a cross-process read all behave), so it is both the tool's uniqueness guard and the skill's list-sessions step (D13 amended).

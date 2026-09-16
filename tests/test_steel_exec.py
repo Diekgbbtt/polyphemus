@@ -29,9 +29,9 @@ def steel_stub(tmp_path, monkeypatch):
     """A stubbed `steel` binary: echoes argv as JSON, records each call.
 
     Emulates the two probes the tool shells out to: `--version` reports the
-    pinned CLI, and the `live` uniqueness oracle reports TAKEN for session
-    names containing `taken-` (the `{success:true}` shape) and free otherwise
-    (the typed `No running session` shape) - both live-observed 2026-09-11.
+    pinned CLI, and the session catalogue (`browser sessions --json`) reports
+    one live session named `taken-sess` in the live-observed shape
+    ({id, mode, name, status, viewerUrl}, data [] when none is live).
     """
     bindir = tmp_path / "bin"
     bindir.mkdir()
@@ -59,11 +59,10 @@ def _write_steel_stub(bindir, calls, version_line):
         f'echo "$@" >> "{calls}"\n'
         'case "$*" in\n'
         f'  *--version*) echo "{version_line}" ;;\n'
-        '  *live*)\n'
-        '    case "$*" in\n'
-        '      *taken-*) echo \'{"success":true,"data":{}}\' ;;\n'
-        '      *) echo \'{"success":false,"error":"No running session"}\' ;;\n'
-        '    esac ;;\n'
+        '  *"browser sessions"*)\n'
+        '    echo \'{"success":true,"data":[{"id":"uuid-1","mode":"cloud",'
+        '"name":"taken-sess","status":"live",'
+        '"viewerUrl":"https://app.steel.dev/sessions/uuid-1"}]}\' ;;\n'
         '  *) echo "{\\"stub\\": true}" ;;\n'
         "esac\n"
     )
@@ -128,16 +127,16 @@ def test_py_script_runs_and_bad_lang_refused(workroot, steel_stub):
 
 
 def test_steel_command_passes_through_with_envelope(workroot, steel_stub):
-    out = STEEL_EXEC(command="steel browser sessions --json", session_id="s1")
+    out = STEEL_EXEC(command="steel browser cookies --json", session_id="s1")
     assert out["returncode"] == 0
     assert json.loads(out["stdout"]) == {"stub": True}
     assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
     # The pinned-version probe runs first, then the command itself.
-    assert _calls(steel_stub) == ["--version", "browser sessions --json"]
+    assert _calls(steel_stub) == ["--version", "browser cookies --json"]
 
 
 def test_taken_session_name_refused_with_name(workroot, steel_stub):
-    # The live oracle says TAKEN ({success:true}); the start must never run.
+    # The session catalogue reports taken-sess live; the start must never run.
     out = STEEL_EXEC(command="steel browser start --session taken-sess --json",
                      session_id="s1")
     assert out["returncode"] != 0
@@ -145,7 +144,7 @@ def test_taken_session_name_refused_with_name(workroot, steel_stub):
     assert "taken-sess is already used" in out["stderr"]
     assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
     calls = _calls(steel_stub)
-    assert any("live" in c and "taken-sess" in c for c in calls)
+    assert any("browser sessions" in c for c in calls)
     assert not any("start" in c for c in calls)
 
 
@@ -154,22 +153,43 @@ def test_free_session_name_proceeds_to_start(workroot, steel_stub):
                      session_id="s1")
     assert out["returncode"] == 0, out
     calls = _calls(steel_stub)
-    assert any("live" in c and "fresh-sess" in c for c in calls)
+    assert any("browser sessions" in c for c in calls)
     assert any("start" in c and "fresh-sess" in c for c in calls)
 
 
 def test_guard_only_watches_command_mode_starts(workroot, steel_stub):
-    # A non-start command carrying --session never consults the oracle.
+    # A non-start command carrying --session never reads the catalogue.
     out = STEEL_EXEC(command="steel browser navigate https://x --session taken-sess --json",
                      session_id="s1")
     assert out["returncode"] == 0, out
-    assert not any("live" in c for c in _calls(steel_stub))
+    assert not any("browser sessions" in c for c in _calls(steel_stub))
     # Script text is never scanned: skill-constructed names bypass the guard.
     script = "steel browser start --session taken-sess --json\necho done\n"
     out = STEEL_EXEC(script=script, script_lang="sh", session_id="s2")
     assert out["returncode"] == 0, out
     assert "done" in out["stdout"]
-    assert not any("live" in c for c in _calls(steel_stub))
+    assert not any("browser sessions" in c for c in _calls(steel_stub))
+
+
+def test_unreadable_catalogue_fails_open(workroot, tmp_path, monkeypatch):
+    # A catalogue that errors or does not parse must never block a start:
+    # the guard reads "cannot verify" and the run proceeds.
+    bindir = tmp_path / "bin2"
+    bindir.mkdir()
+    stub = bindir / "steel"
+    stub.write_text(
+        "#!/bin/sh\n"
+        'case "$*" in\n'
+        '  *--version*) echo "steel version 0.4.4" ;;\n'
+        '  *"browser sessions"*) echo "not json" ;;\n'
+        '  *) echo "{\\"stub\\": true}" ;;\n'
+        "esac\n"
+    )
+    stub.chmod(stub.stat().st_mode | stat.S_IXUSR | stat.S_IXGRP | stat.S_IXOTH)
+    monkeypatch.setenv("PATH", str(bindir) + os.pathsep + os.environ.get("PATH", ""))
+    out = STEEL_EXEC(command="steel browser start --session taken-sess --json",
+                     session_id="s1")
+    assert out["returncode"] == 0, out
 
 
 def test_tool_timeout_defaults_to_600():

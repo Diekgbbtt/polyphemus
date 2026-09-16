@@ -192,7 +192,7 @@ The single loosely-coupled `steel_exec` tool beside `execute_command`, accepting
 _Avoid_: per-subcommand allowlist, in-process driver.
 
 **Named session**:
-A cloud-browser session under an agent-chosen semantic `polymerhus-<flow>-<id>` name whose uniqueness is checked at creation with the `live` oracle (success means TAKEN, the typed `No running session` error means free), stopped by script-trap on every path with platform inactivity as the backstop.
+A cloud-browser session under an agent-chosen semantic `polymerhus-<flow>-<id>` name whose uniqueness is checked at creation against the live session catalogue (`steel browser sessions --json`: one read lists every live session with its name), stopped by script-trap on every path with platform inactivity as the backstop.
 _Avoid_: the default session, an unchecked name, an orphaned session.
 
 **Browser profiles**:
