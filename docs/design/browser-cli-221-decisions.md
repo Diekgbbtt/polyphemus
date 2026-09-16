@@ -95,14 +95,18 @@ Per #220, the tool description IS the contract (single implementation, no per-co
 **Rationale.**
 `CODING_STANDARD.md` §8 (one behaviour, one implementation) plus the #220 precedent: the second capability surface reuses the first's proven contract shape instead of inventing one, so a reader who understands `get_crawl_tools` already understands `get_browser_tools`.
 
-## D8 - The skill loads through `skill_for` under a `browser` role; duplicate readers are deleted
+## D8 - The skill is a flat repo skill on the shared loader; duplicate readers are already gone
 
-Skill path `skills/recon/browser/login/SKILL.md` (role `browser`: the session agent in its browser-operating capacity), loaded via `skill_for("recon/browser/login")` (`src/polymerhus/recon/domain/skills.py:29-46`); `skills/README.md` gains the `browser` role row.
-The skill body quotes the tool descriptions verbatim and carries only the discipline the descriptions cannot: the D2 snapshot-then-act ref flow, the D3 `eval` purpose bound, the stop-is-unconditional rule (D6), and the verification-predicate recipe (D9).
-The ticket's "duplicate skill readers" (the crawl-local `.md` loads that bypass the shared loader) are deleted in the same change; `steel-crawl`'s own skill is untouched (D10).
+*Amended 2026-09-16 on rebase onto #222 (`5064ecd`): the role-routed skill path this record first named is stale - the catalogue went flat.*
+
+The skill is `skills/steel-browser/SKILL.md`, with its operation references beside it as `references/*.sh` (#222/#234 catalogue: flat, `name` == directory, no role-routing layers; role prompts are NOT skills and live in module `prompts/` dirs).
+It loads through the shared loader `skill_for` (`src/polymerhus/app/llm/skills.py`) and, on demand, through the agent-callable `load_skill(name)` tool that calls that same loader internally - so bake-time mounts and runtime loads return byte-identical bodies.
+The skill body quotes the `steel_exec` contract verbatim and carries only the discipline the tool description cannot: the snapshot-then-act ref flow, the batch-routed text entry, the inline-`eval` escaping and result bounding (D14), the trap-owned stop on every path (D13), and the timeout ordering (D11).
+Per-agent binding of the skill into the L1 index (`context={"skills": [...]}`) is deferred past #221: the #222 D3 reversal wires `load_skill` and the index middleware on every stateful agent but leaves per-agent skill-set configuration open, so this stream ships catalogue content plus the operation references and records the gap.
+The ticket's "duplicate skill readers" concern is already resolved upstream: `crawl_agent._load_skill` and `crawl_agentic._load_steel_crawl_skill` both serve the crawler role prompt `recon/crawl/prompts/steel-crawl.md`, so this stream touches no crawl content and `steel-crawl`'s own text is untouched (D10).
 
 **Rationale.**
-The loader exists precisely so every role's discipline hardens together (`skills.py:1-12`); a browser capability with its own private reader would re-fork the behaviour the ticket charges us to unify.
+The loader exists precisely so every role's discipline hardens together; a browser capability with its own private reader would re-fork the behaviour the ticket charges us to unify.
 
 ## D9 - Verification is a `login_succeeded`-shaped predicate over cookies + URL; no request history
 
@@ -168,6 +172,6 @@ Operator decision from the #220 stream: durable browser identity lives in Steel 
 
 ## What was deliberately NOT decided here
 
-- `domain-model.md` is unchanged by this ticket: the seam introduces capability infrastructure inside Recon, not a new primitive, relationship, or open question in the reasoned ontology. Per `CONTEXT-MAP.md`'s helper-modules ruling, capability vocabulary lives in the owning context's glossary (`recon/CONTEXT.md`: exec seam, named session, redaction boundary - added alongside), never as ontology.
+- `domain-model.md` is unchanged by this ticket: the seam introduces capability infrastructure inside Recon, not a new primitive, relationship, or open question in the reasoned ontology. Per `CONTEXT-MAP.md`'s helper-modules ruling, capability vocabulary lives in the owning context's glossary (`recon/CONTEXT.md`: exec gateway, named session, the #220-owned profile split; the redaction-boundary entry retired with D4/D5), never as ontology.
 - The exact Dockerfile install stanza (binary download URL, checksum) is fixed at implementation with a built-image `steel --version` proof, not guessed here.
 - The consuming login flow (ticket 5) and the fallback leg (ticket 4) are out of scope; this ticket ends at proven primitives plus the skill.

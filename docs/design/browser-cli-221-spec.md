@@ -1,7 +1,7 @@
 # Browser Capability via Steel CLI (#221) - Specification
 
 Parent ticket: #221 (auth-context: pluggable browser capability via steel CLI).
-Companion decisions: `docs/design/browser-cli-221-decisions.md` (D1-D10 as amended 2026-09-11, plus binding D11-D16).
+Companion decisions: `docs/design/browser-cli-221-decisions.md` (D1-D10 as amended 2026-09-11, plus binding D11-D17).
 Glossary: `src/polymerhus/recon/CONTEXT.md` (exec gateway, named session; profiles split per D16/D17).
 Prior spec version (seam/tool-factory design) superseded in full by the operator-ruled just-exec design below.
 
@@ -47,7 +47,7 @@ Agents browse by calling the tool; multi-op flows chain steel commands in script
 - Skill data: reusable operation scripts as `references/` beside the steel CLI skill under repo-root `skills/` (one per operation; never exploitation PoCs or testing payloads); canonical login scripts owned by AUTH-SKILL-1; session workdirs hold run copies and evidence only (D16).
 - Data-plane split with #220: the auth store holds WHAT (accounts, credentials, tokens, profile refs, snapshots, technical conditions, the `procedure` hook); the auth skill holds login PROCEDURES; this steel skill holds the operation MECHANICS. Extraction reads feed concrete-snapshot writes; technical-condition checks execute through steel reads; profile lifecycle administration is jointly out of scope.
 - Profiles: server-side profile identity replaces session-context shuttling (D17) - mint-with-persist, mount-by-id with read-only default, settle-plus-verify (no CLI state poll exists), explicit release as the persistence call, one live session per profile, bearer-id handling per #220.
-- The crawl duplicate readers migrate to the shared loader with a byte-identity check; the skill loads through `skill_for` under the #222 runtime convention when it lands.
+- The crawl duplicate readers are already consolidated upstream (#222): `crawl_agent._load_skill` and `crawl_agentic._load_steel_crawl_skill` both serve the crawler role prompt `recon/crawl/prompts/steel-crawl.md`, so this stream edits no crawl content; the browser skill is a flat repo skill (`skills/steel-browser/SKILL.md` with `references/*.sh`) loaded through the shared loader (`src/polymerhus/app/llm/skills.py::skill_for`) and, on demand, the `load_skill` tool (D8 amended on rebase).
 - D2's batch-routing survives as skill knowledge (spike-proven CLI defect), not code.
 
 ## Testing Decisions
@@ -67,4 +67,4 @@ Agents browse by calling the tool; multi-op flows chain steel commands in script
 - This spec travels with the change and links from #221 at PR time (recorded deviation from tracker publication - #221 already carries the problem/solution/acceptance).
 - CLI pin is the spike-tested 0.4.4; bumps are skill-review events.
 - The #221 acceptance criteria on redaction and always-stopped sessions are restated by the D4/D5 retirement and the trap-plus-backstop lifecycle; the criteria text itself needs its amendment at implementation time.
-- ADRs live in the companion decisions file (D1/D4/D5/D6/D7/D10 superseded or retired as marked; D11-D16 binding).
+- ADRs live in the companion decisions file (D1/D4/D5/D6/D7/D10 superseded or retired as marked; D11-D17 binding).
