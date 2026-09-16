@@ -419,6 +419,8 @@ def build_hunting_agent(
     graph_view_fn: GraphViewFn | None = None,
     kb_fn: KbQueryFn | None = None,
     exec_fn: ExecFn | None = None,
+    http_search_fn=None,
+    http_get_fn=None,
     checkpointer=None,
     middleware=None,
     model_factory=None,
@@ -479,6 +481,7 @@ def build_hunting_agent(
         tools = build_hunter_tools(
             store=memory_store, project_id=project_id, hunt_store=hunt_store,
             graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
+            http_search_fn=http_search_fn, http_get_fn=http_get_fn,
         )
         tools_by_name = {tool.name: tool for tool in tools}
         state: dict = {"phase": "grounding", "trail": []}

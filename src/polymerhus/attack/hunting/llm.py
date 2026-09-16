@@ -799,7 +799,8 @@ def build_actor_judge_fn(registry):
 def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
                               hunt_store=None, graph_view_fn=None, kb_fn=None,
                               exec_fn=None, checkpointer=None, model_factory=None,
-                              observe: bool = True):
+                              observe: bool = True,
+                              http_search_fn=None, http_get_fn=None):
     """Compose the production hunting-agent dispatch seam (as of #164 W5).
 
     As of W5 the harness (`hunting_agent.build_hunting_agent`) is the turn-by-turn
@@ -823,6 +824,7 @@ def build_actor_hunting_agent(*, run_id, project_id="", memory_store=None,
         run_id=run_id, project_id=project_id,
         memory_store=memory_store, hunt_store=hunt_store,
         graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
+        http_search_fn=http_search_fn, http_get_fn=http_get_fn,
         checkpointer=checkpointer, model_factory=model_factory, observe=observe,
     )
     return dispatch_fn, registry

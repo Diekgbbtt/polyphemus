@@ -439,12 +439,18 @@ def _default_hunter_builder(*, run_id, project_id, hunt_store, hunter_store, **k
     the caller reaps the registry at the session's end."""
     from polymerhus.attack.hunting.hunt_orchestrator import ReadOnlyGraphView
     from polymerhus.attack.hunting.pod.tools import default_exec_fn
+    from polymerhus.app.clients.kali_http_history import (  # noqa: PLC0415
+        default_http_get_fn,
+        default_http_search_fn,
+    )
 
     return build_production_hunting_agent(
         store=hunt_store, run_id=run_id, project_id=project_id,
         memory_store=hunter_store,
         graph_view_fn=ReadOnlyGraphView(project_id).read,
         exec_fn=default_exec_fn,
+        http_search_fn=default_http_search_fn,
+        http_get_fn=default_http_get_fn,
     )
 
 
@@ -782,7 +788,8 @@ def build_production_hunting_agent(*, store, run_id, project_id="",
                                    graph_view_fn=None,
                                    memory_store=None, checkpointer=None,
                                    model_factory=None, observe: bool = True,
-                                   exec_fn=None):
+                                   exec_fn=None,
+                                   http_search_fn=None, http_get_fn=None):
     """The production default hunting-agent dispatch seam (as of #164 W5): the
     turn-by-turn ReAct harness wired to the real `query_lightrag` KB tool (the
     lightrag branch's single KB tool, always-bound as of #197 - the
@@ -802,6 +809,8 @@ def build_production_hunting_agent(*, store, run_id, project_id="",
         graph_view_fn=graph_view_fn,
         kb_fn=None,  # the KB seam: the harness binds the always-bound query_lightrag tool (#197)
         exec_fn=exec_fn,  # None -> the harness's default fail-open exec seam (the Kali container is a sibling workstream)
+        http_search_fn=http_search_fn,  # #196: None -> the seam degrades fail-open
+        http_get_fn=http_get_fn,
         checkpointer=checkpointer,
         model_factory=model_factory,
         observe=observe,
