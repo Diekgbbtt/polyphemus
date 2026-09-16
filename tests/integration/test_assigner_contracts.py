@@ -478,7 +478,7 @@ def test_C36_stats_name_where_each_judgment_died():
 
 # --- C37-C40: the role-specific skill seam (#30 retirement for the Assigner) ---
 #
-# `skills/analysis/assigner/SKILL.md` carries the HOW (the ownership-judgment
+# `prompts/assigner.md` carries the HOW (the ownership-judgment
 # discipline); `_ROLE_VERBATIM` keeps the WHAT. Selected by ASSIGNER_PROMPT_CONFIG,
 # default `baseline` until a comparative eval flips it (the bootstrap._PROMPT_CONFIGS
 # discipline: a prompt default is earned by measurement, never by argument).
@@ -524,47 +524,35 @@ def test_C37b_the_default_arm_is_skill_and_an_unknown_value_coerces_to_it(monkey
 
 
 def test_C38_assigner_skill_is_single_sourced():
-    """The discipline lives in ONE place - the skills mount - exactly as every other
-    analysis role's does. A second copy in Python is how the two drift apart."""
-    from polymerhus.recon.domain import skills
+    """The discipline lives in ONE place - the module's prompts/ dir. A second
+    copy in Python is how the two drift apart."""
+    from pathlib import Path
 
-    skills.clear_cache()
     skill = assigner._load_assigner_skill()
     assert skill
-    assert not skill.startswith("---")                      # frontmatter stripped
-    # Single source, compared by CONTENT: `_load_assigner_skill` asks `skill_for`
-    # with a fallback, and the cache is keyed by `(name, fallback)`, so the two
-    # calls are distinct-but-equal objects even while both read the one mount.
-    assert skill == skills.skill_for("analysis/assigner")   # single source
-    # the in-process cache is what keeps the system prefix byte-stable across a run,
+    assert not skill.startswith("---")                      # plain .md, no frontmatter
+    expected = (Path(assigner.__file__).resolve().parent / "prompts" / "assigner.md").read_text(encoding="utf-8")
+    assert skill == expected                                 # single source
+    # the in-process memo is what keeps the system prefix byte-stable across a run,
     # so the provider prompt-cache survives every chunk of that run
     assert assigner._load_assigner_skill() is skill
 
 
-def test_C39_missing_mount_still_carries_the_withholding_core(monkeypatch):
-    """Fail-open must not mean fail-SILENT. A missing mount degrades calibration, but
-    the defence against the measured 31-38% over-assignment has to survive it, so the
-    fallback is the discipline's core - never ''."""
+def test_C39_missing_prompt_raises_fail_closed(monkeypatch):
+    """A missing prompt file is a defect, not a degraded lane: the read FAILS
+    CLOSED (raises) so a role never reasons without its prompt."""
     import pathlib
-
-    from polymerhus.recon.domain import skills
 
     def boom(self, *a, **k):
         raise OSError("no mount")
 
     monkeypatch.setattr(pathlib.Path, "read_text", boom)
-    skills.clear_cache()
+    monkeypatch.setattr(assigner, "_ASSIGNER_SKILL", None)
     try:
-        skill = assigner._load_assigner_skill()
-        assert skill == assigner._ASSIGNER_SKILL_FALLBACK   # inline fallback, not ''
-        assert "NO OWNER" in skill                          # the null hypothesis
-        assert "evidence for none" in skill                 # discriminating evidence
-        assert "below-bar" in skill                         # withholding is correct
-        system = _system_for("skill", monkeypatch)
-        assert assigner._ROLE_VERBATIM in system            # the WHAT always holds
-        assert assigner._ASSIGNER_SKILL_FALLBACK in system
+        with pytest.raises(OSError):
+            assigner._load_assigner_skill()
     finally:
-        skills.clear_cache()
+        monkeypatch.setattr(assigner, "_ASSIGNER_SKILL", None)
 
 
 @pytest.mark.parametrize("config", assigner._ASSIGNER_PROMPT_CONFIGS)

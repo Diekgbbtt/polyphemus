@@ -31,13 +31,13 @@ ALLOWED_LABELS = frozenset({
 })
 
 # Observation anchors are DELIBERATELY restricted to broad, well-identified
-# nodes. The triager (skills/recon/triager/writing-observations) is instructed
+# nodes. The triager (recon/domain/prompts/writing-observations.md) is instructed
 # to re-anchor a finding UP to the owning broad asset (e.g. a Technology/Endpoint
 # finding -> its BaseURL), naming the narrow element in the observation evidence.
 # An out-of-allowlist anchor (Endpoint/Technology/Parameter/...) is therefore a
 # TRIAGER error, correctly dropped here; the fix belongs in the triager prompt,
 # NOT in widening this set (which only masks mis-anchoring and fragments the
-# host-level observation graph). See the writing-observations skill's Edit 3.
+# host-level observation graph). See the writing-observations prompt's Edit 3.
 ANCHOR_ALLOWLIST = frozenset({"Domain", "Subdomain", "BaseURL", "IP", "Service"})
 
 # D8 - deterministic re-anchor repair (forward-decision D8, operator-approved

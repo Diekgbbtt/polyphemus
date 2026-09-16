@@ -5,9 +5,8 @@ Kept in a separate file so tests can import it without pulling in the full
 FastAPI application (websockets, uvicorn, etc. not required here).
 
 Notable design points (kept minimal + marked in-line with `D23`/`SP4`):
-1. `_load_steel_crawl_skill` is single-sourced through the shared `skill_for`
-   loader (#222): `skills/recon/crawler/steel-crawl/SKILL.md`, frontmatter
-   stripped, cached, fail-open.
+1. `_load_steel_crawl_skill` reads the steel-crawl role prompt directly from
+   this module's `prompts/` dir, memoized on first call, fail-closed.
 2. `AgenticCrawlRequest.credentials` (optional) + a credentialed-login prompt
    branch in `_run_agentic_crawl` (D23): when credentials are supplied and no
    human-interactive session is precreated, the agent is instructed to log in
@@ -104,15 +103,25 @@ async def precreate_auth_session(mcp_manager, body) -> "tuple[str | None, dict |
     return crawl_id, awaiting_status
 
 
-def _load_steel_crawl_skill() -> str:
-    """Load the steel_crawl skill system prompt through the shared `skill_for`
-    loader (#222): `skills/recon/crawler/steel-crawl/SKILL.md`, frontmatter
-    stripped, cached, fail-open to '' (the crawl then degrades to the empty
-    manifest through the adapter's best-effort contract).
-    """
-    from polymerhus.recon.domain.skills import skill_for  # noqa: PLC0415
+# The steel-crawl role prompt, memoized on first call (no import-time I/O,
+# CODING STANDARD section 6). A missing prompt file is a defect: fail-closed.
+_STEEL_CRAWL_SKILL: str | None = None
 
-    return skill_for("recon/crawler/steel-crawl", fallback="")
+
+def _load_steel_crawl_skill() -> str:
+    """Load the steel_crawl skill system prompt directly from this module's
+    `prompts/` dir. Memoized on first call; FAIL-CLOSED - a missing prompt
+    file raises instead of degrading to an empty manifest, so the crawl never
+    runs without its budget/frontier discipline.
+    """
+    global _STEEL_CRAWL_SKILL
+    if _STEEL_CRAWL_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415 - lazy, mirrors the reader convention
+
+        _STEEL_CRAWL_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "steel-crawl.md"
+        ).read_text(encoding="utf-8")
+    return _STEEL_CRAWL_SKILL
 
 
 def _payload_from_tool_result(out) -> dict:

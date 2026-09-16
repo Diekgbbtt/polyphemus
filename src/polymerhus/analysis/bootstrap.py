@@ -617,10 +617,9 @@ def bootstrap_reasoned(
 # The Bootstrapper's system message is TWO layers: this base prompt (identity, pipeline
 # position, breadth stakes, and the output-field contract - the WHAT, a stable Python
 # constant) and, prepended in `default_reason_fn`, the reasoning discipline from
-# `skills/analysis/bootstrapper/SKILL.md` (the HOW - the 5 stages, service-contract craft
+# `prompts/bootstrapper.md` (the HOW - the 5 stages, service-contract craft
 # and critical-withholding disciplines, operator-tunable without a code change, #29).
-# The base stays here because it is an output contract, not a reasoning discipline, and
-# because it must hold even when the skills mount is unavailable.
+# The base stays here because it is an output contract, not a reasoning discipline.
 _BOOTSTRAPPER_BASE_SYSTEM = (
     "You are the solution-architecture Bootstrapper. You read the operator's free-text "
     "solution architecture - the knowledge base, written in business terms - and project it "
@@ -643,40 +642,27 @@ _BOOTSTRAPPER_BASE_SYSTEM = (
     "lists over padding."
 )
 
-# The FALLBACK below is a degraded stand-in for the SKILL.md discipline, used only when the
-# skills mount is unavailable (`skill_for` logs a warning). The base prompt above is always
-# prepended, so this covers HOW-to-reason only: the 5 stages, ground-or-withhold,
-# exposure-or-omit, and the contract with its no-invented-paths rule - a weaker projection
-# than the full skill, but still constrained.
-_BOOTSTRAPPER_SKILL_FALLBACK = (
-    "Reason out loud through five stages, in order: (1) DECOMPOSE the text into distinct "
-    "business-function components and the cross-cutting systems it implies, separating what "
-    "it STATES from what you ASSUME; (2) EXPAND laterally to adjacent/implied functions "
-    "(a missed Service costs more than an over-proposed one); (3) GROUND each candidate as a "
-    "falsifiable claim tied to a SPECIFIC span, classifying exposure (public/authenticated) "
-    "from the text's trust signals or omitting it when the text is silent - never guess; "
-    "(4) WITHHOLD candidates with NO support, recording non-obvious Systems as shallow "
-    "claim-based hypotheses and capturing the AuthorizationSystem's stated roles and realms; "
-    "(5) DECIDE, reusing an identity already in the inventory over a synonym.\n\n"
-    "For EVERY Service also write a `service_contract`: a brief functional profile of what "
-    "the function does and what it owns, in the application's OWN domain nouns and action "
-    "verbs. A later agent matches observed endpoint path nouns against it, so it must "
-    "discriminate this function from the others. NEVER write a path, URL, route or parameter "
-    "name - the text states none, and a guessed path would enter the model looking like "
-    "evidence."
-)
+# The bootstrapper role prompt (`prompts/bootstrapper.md`) is the HOW layer only:
+# the 5 stages, ground-or-withhold, exposure-or-omit, and the service-contract
+# craft - operator-tunable without a code change. There is no degraded stand-in:
+# a missing prompt file is a defect and the read below FAILS CLOSED (raises).
+_BOOTSTRAPPER_SKILL: str | None = None
 
 
 def _load_bootstrapper_skill() -> str:
-    """The Bootstrapper's reasoning discipline = `skills/analysis/bootstrapper/SKILL.md`,
-    loaded through the shared `skill_for` (FR-SKILLIF) exactly as the analyser pod
-    loads its own: single-sourced, frontmatter stripped, cached, and degraded to the
-    terse fallback above if the mount is unavailable, so a missing mount never crashes
-    or blocks a bootstrap. It is the HOW layer only; `default_reason_fn` prepends the
-    `_BOOTSTRAPPER_BASE_SYSTEM` identity/output-contract layer to form the system message."""
-    from polymerhus.recon.domain.skills import skill_for
+    """The Bootstrapper's reasoning discipline = `prompts/bootstrapper.md`, read
+    directly from this module's `prompts/` dir: memoized in-process, FAIL-CLOSED
+    on a missing file (raise). It is the HOW layer only; `default_reason_fn`
+    prepends the `_BOOTSTRAPPER_BASE_SYSTEM` identity/output-contract layer to
+    form the system message."""
+    global _BOOTSTRAPPER_SKILL
+    if _BOOTSTRAPPER_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
 
-    return skill_for("analysis/bootstrapper", fallback=_BOOTSTRAPPER_SKILL_FALLBACK)
+        _BOOTSTRAPPER_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "bootstrapper.md"
+        ).read_text(encoding="utf-8")
+    return _BOOTSTRAPPER_SKILL
 
 
 # Two DIVERGENT-domain few-shot CoT exemplars (#26 Q4): neither ecommerce nor a likely

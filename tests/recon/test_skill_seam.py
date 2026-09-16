@@ -10,7 +10,7 @@ from __future__ import annotations
 
 import pytest
 
-from polymerhus.recon.domain import skills
+from polymerhus.app.llm import skills
 
 
 def test_read_only_agent_gets_load_skill_alone() -> None:

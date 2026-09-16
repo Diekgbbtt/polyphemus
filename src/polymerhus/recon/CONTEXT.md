@@ -136,30 +136,28 @@ _Avoid_: planner.
 The only human, and the source of intent the system is blind to by design: supplies the target, scope, `operator_kb` framing, and settings.
 Deliberately kept blind to the target's true identity (it analyses `soupmarket.shop` without being told it is Juice Shop).
 
-## Skills, the loader, and runtime loading
+## Prompts, skills, and the loader
+
+**Role prompt**:
+A role's system prompt, living with its owning module in a `prompts/` directory as plain Markdown (no frontmatter) and read directly by its module - fail-closed (a missing file raises), memoized, no cross-module imports.
+_Avoid_: skill (on-demand knowledge, never role identity).
 
 **Skill**:
-A Markdown reasoning discipline (`skills/<path>/SKILL.md`) loaded as an LLM role's system prompt - the triager's writing-observations, the crawler's steel-crawl, the analysis proposers' skills, the hunting skills.
+A Markdown reasoning discipline (`skills/<name>/SKILL.md`, `name` == directory) loaded on demand through the shared loader - never as a role prompt.
 _Avoid_: tool (a tool is called; a skill is read).
 
 **Skill loader (single loader)**:
-The one module (`src/polymerhus/recon/domain/skills.py::skill_for`, FR-SKILLIF) authorised to read skills: it strips the YAML frontmatter, caches the body, and degrades to a fallback on a missing mount.
-Every per-role reader retro-points here; no reader does its own file I/O.
+The one module (`src/polymerhus/app/llm/skills.py::skill_for`, FR-SKILLIF) authorised to read skills: it strips the YAML frontmatter, caches the body, and degrades to a fallback on a missing mount.
+Only on-demand skill readers call it; no role prompt loads through here.
 _Avoid_: a second skill system.
 
 **Data section**:
-The machine-readable YAML frontmatter contract every skill carries (`name`, `description`, `metadata.version`), so a runtime consumer can index, validate, and report what was loaded.
+The spec frontmatter contract every skill carries (`name` == directory, `description` = what + when, `metadata` string map carrying `version`), so a runtime consumer can index, validate, and report what was loaded.
 _Avoid_: prose header (human-only, unvalidatable).
 
 **Runtime loading**:
-Loading a skill mid-run through the agent-callable `load_skill(name)` tool, which returns the loader-identical body.
-It decouples skill evolution from prompt bake-time; bake-time mounts and runtime loads can never diverge because both call the single loader.
-_Avoid_: bake-time mount (the prompt-composed path, still the default for static disciplines).
-
-**Phase-gating (convention)**:
-The rule that bounds runtime loading: load at phase entry, once per thread, never speculatively mid-reasoning.
-Bake-time mounts follow the same rule (the hunting gate skill mounts once per thread as the run's one system message; the crawl loop loads once at loop start).
-_Avoid_: enforcement (there is no mechanical gate; the convention is demonstrated by the reference flows, not compiled in).
+Two tiers. L1 discovery: an agent's bounded skill set rendered as name + description lines into its system message by the shared skill-index middleware (bound per agent through the native invocation context). L2 activation: loading a skill mid-run through the agent-callable `load_skill(name)` tool, which returns the loader-identical body. It decouples skill evolution from prompt bake-time; bake-time reads and runtime loads can never diverge because both call the single loader.
+_Avoid_: convention-only gating (the index is composed by middleware, no model cooperation needed).
 
 **Per-project skill bundle**:
 The project-owned skill directory (`<data_root>/<project_id>/skills/<skill>/`: `SKILL.md`, `references/`, `scripts/`, `assets/`) where an executing agent records what it learned using a procedure - a blocking condition, a new role, a privilege-escalation path - so sibling and later agents start from accumulated ground truth.
@@ -167,7 +165,7 @@ There is no canonical shared original; a project's copy is its original, created
 _Avoid_: editing the shared catalogue (a live run never mutates `skills/`).
 
 **Skill store**:
-The one authority that reads and writes bundle artifacts (`src/polymerhus/recon/domain/skills.py::SkillStore`, #234), sharing the loader's seam: reads resolve the per-project bundle first, then the shared catalogue, so a project skill shadows a shared one without copying.
+The one authority that reads and writes bundle artifacts (`src/polymerhus/app/llm/skills.py::SkillStore`, #234), sharing the loader's seam: reads resolve the per-project bundle first, then the shared catalogue, so a project skill shadows a shared one without copying.
 _Avoid_: a second skill system.
 
 **Skill writer (`write_skill`)**:

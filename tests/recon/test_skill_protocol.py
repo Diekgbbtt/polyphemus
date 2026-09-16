@@ -11,8 +11,8 @@ from pathlib import Path
 
 import pytest
 
-from polymerhus.recon.domain import skills
-from polymerhus.recon.domain.skills import SkillStore
+from polymerhus.app.llm import skills
+from polymerhus.app.llm.skills import SkillStore
 
 BODY = "# Demo\n"
 PROTOCOL = "# Skill usage protocol\nassess and report divergence\n"

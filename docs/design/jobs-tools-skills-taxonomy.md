@@ -1,5 +1,6 @@
 > **SUPERSEDED.** Retained for historical trace only.
 > The authoritative doc is `recon-pipeline-design.md` §4.2 (job registry + phase DAG) and §10.2 (module map), which fold in this document's job/tool/skill conceptual model and 17-job table, with the `skills/` layout status corrected against the live filesystem (partially realized: the triager skill file exists but is not wired; no `skill_for` resolver exists).
+> Sections 4-5 (the `skill_for(role, job)` selection model and module-routing layout) are additionally superseded by `skills-typed-surface-spec.md` (flat `skills/<name>/`, `name` == directory, role prompts in module `prompts/` dirs).
 
 # Jobs / Tools / Skills Taxonomy
 

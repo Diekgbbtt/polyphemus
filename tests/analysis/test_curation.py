@@ -403,7 +403,7 @@ def test_curation_does_not_resurrect_a_merged_away_service(monkeypatch):
 # The last e2e produced 0 merges partly because the prompt FORBADE semantic merges:
 # it defined a duplicate as `iff they share a business_function_slug intent`, an
 # exact-key test that is near-tautologically empty over a set of already-distinct
-# keys. These two tests pin the NEW prompt contract (prompt string + SKILL.md) so a
+# keys. These two tests pin the NEW prompt contract (prompt string + prompts/curation.md) so a
 # future edit cannot silently reintroduce the exact-key rule.
 
 def test_curation_prompt_defines_dedup_as_semantic_not_exact_key():
@@ -433,15 +433,14 @@ def test_curation_prompt_defines_dedup_as_semantic_not_exact_key():
 
 
 def test_curation_skill_defines_dedup_as_semantic_not_identity_reuse():
-    """The SKILL.md loaded by the pass must encode the same semantic-equivalence
+    """The role prompt served by the pass must encode the same semantic-equivalence
     contract: retitled away from `Dedup is identity reuse`, a meaning-based test,
     a pairwise-before-empty rule, the precision guard, a worked example, and NONE
     of the old exact-key `iff` rule."""
-    from polymerhus.recon.domain import skills
-    skills.clear_cache()
-    text = skills.skill_for("analysis/curation")
+    from polymerhus.analysis import curation
+    text = curation._load_curation_skill()
     low = text.lower()
-    assert not text.startswith("---")  # frontmatter stripped
+    assert not text.startswith("---")  # plain .md, no frontmatter
     # retitled + semantic definition
     assert "semantic equivalence" in low
     assert "dedup is identity reuse" not in low
@@ -456,7 +455,6 @@ def test_curation_skill_defines_dedup_as_semantic_not_identity_reuse():
     # the old exact-key `iff` rules are GONE
     assert "iff they share a single business-function intent" not in text
     assert "iff they share a `kind:discriminator`" not in text
-    skills.clear_cache()
 
 
 # --- AST-CUR-06: RECALL seam - a semantic merge is carried end-to-end -----------

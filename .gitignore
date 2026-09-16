@@ -55,3 +55,8 @@ tests/e2e/fixtures/eval-targets.yaml
 data/*
 !data/.gitkeep
 !data/hunting/fault-kb.yaml
+
+# Build metadata (setuptools) and the local uv lockfile. Both are per-machine
+# artifacts here: the project pins its dependencies in requirements-*.txt.
+src/*.egg-info/
+uv.lock

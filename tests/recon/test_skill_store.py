@@ -15,8 +15,8 @@ from pathlib import Path
 
 import pytest
 
-from polymerhus.recon.domain import skills
-from polymerhus.recon.domain.skills import (
+from polymerhus.app.llm import skills
+from polymerhus.app.llm.skills import (
     SkillInvalidError,
     SkillStore,
     SkillTargetError,

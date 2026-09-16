@@ -12,8 +12,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from polymerhus.recon.domain import skills
-from polymerhus.recon.domain.skills import SkillStore
+from polymerhus.app.llm import skills
+from polymerhus.app.llm.skills import SkillStore
 
 BODY = "# Procedure\nstep one\n"
 

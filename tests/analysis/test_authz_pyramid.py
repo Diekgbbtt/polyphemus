@@ -122,9 +122,9 @@ def test_commit_writes_system_edges_fail_open():
 # --- AST-AUTHZ-06: the SKILL.md encodes the inverse-pyramid discipline ---
 
 def test_authz_skill_encodes_inverse_pyramid():
-    from polymerhus.recon.domain import skills
+    from polymerhus.app.llm import skills
     skills.clear_cache()
-    text = skills.skill_for("analysis/anatomy/authorization-pyramid")
+    text = skills.skill_for("authorization-pyramid")
     assert not text.startswith("---")  # frontmatter stripped
     low = text.lower()
     assert "inverse" in low and "pyramid" in low  # the probe discipline

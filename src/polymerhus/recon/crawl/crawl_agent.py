@@ -41,12 +41,22 @@ __all__ = [
 _EMPTY_MANIFEST = {"endpoints": [], "js_urls": []}
 
 
-def _load_skill() -> str:
-    """The steel_crawl skill prompt, single-sourced through the shared
-    `skill_for` loader (#222): YAML frontmatter stripped, cached, fail-open."""
-    from polymerhus.recon.domain.skills import skill_for  # noqa: PLC0415
+# The steel-crawl role prompt, memoized on first call (no import-time I/O,
+# CODING STANDARD section 6). A missing prompt file is a defect: fail-closed.
+_STEEL_CRAWL_SKILL: str | None = None
 
-    return skill_for("recon/crawler/steel-crawl", fallback="")
+
+def _load_skill() -> str:
+    """The steel_crawl skill prompt, read directly from this module's `prompts/`
+    dir. Memoized on first call; FAIL-CLOSED - a missing prompt file raises."""
+    global _STEEL_CRAWL_SKILL
+    if _STEEL_CRAWL_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
+
+        _STEEL_CRAWL_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "steel-crawl.md"
+        ).read_text(encoding="utf-8")
+    return _STEEL_CRAWL_SKILL
 
 
 class _ToolsManager:

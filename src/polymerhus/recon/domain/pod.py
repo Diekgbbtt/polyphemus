@@ -617,13 +617,23 @@ class _ObservationBatch(BaseModel):
 # Max parsed assets serialized into the triager prompt (see default_triage_fn).
 _MAX_TRIAGE_ASSETS = int(os.environ.get("MAX_TRIAGE_ASSETS", "200"))
 
+# The triager role prompt, memoized on first call (no import-time I/O, CODING
+# STANDARD section 6). A missing prompt file is a defect: reads FAIL CLOSED.
+_TRIAGER_SKILL: str | None = None
+
+
 def _load_triager_skill() -> str:
-    """The triager system prompt = the writing-observations skill, loaded via the
-    shared `skill_for` (FR-SKILLIF): single-sourced from
-    skills/recon/triager/writing-observations/SKILL.md, frontmatter stripped,
-    cached, and degraded to '' (no system prompt) if the mount is unavailable."""
-    from polymerhus.recon.domain.skills import skill_for
-    return skill_for("recon/triager/writing-observations")
+    """The triager system prompt = the writing-observations role prompt, read
+    directly from this module's `prompts/` dir. Memoized on first call (no
+    import-time I/O); FAIL-CLOSED - a missing prompt file raises instead of
+    degrading, so a role never reasons without its prompt."""
+    global _TRIAGER_SKILL
+    if _TRIAGER_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415 - lazy, mirrors the reader convention
+        _TRIAGER_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "writing-observations.md"
+        ).read_text(encoding="utf-8")
+    return _TRIAGER_SKILL
 
 
 logger = logging.getLogger(__name__)
@@ -679,10 +689,14 @@ def default_configure_fn(job: JobSpec, input_asset: dict, signals: list[dict]) -
         if ctx is not None:
             from polymerhus.app.llm.session import stateful_turn
             from polymerhus.app.llm import compaction as C
+            from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
 
+            index_mw, load_tool = skill_agent_seams()
             return stateful_turn("configurator", ctx.address, [HumanMessage(content=prompt)],
                                  checkpointer=ctx.checkpointer, schema=PodConfig,
-                                 middleware=[C.cached_role_compaction_middleware("configurator")])
+                                 tools=[load_tool],
+                                 middleware=[C.cached_role_compaction_middleware("configurator"),
+                                             index_mw])
         from polymerhus.app.llm.roles import invoke_role
 
         return invoke_role("configurator", [HumanMessage(content=prompt)], schema=PodConfig)
@@ -741,9 +755,14 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     if ctx is not None:
         from polymerhus.app.llm.session import stateful_turn
         from polymerhus.app.llm import compaction as C
+        from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+
+        index_mw, load_tool = skill_agent_seams()
         result = stateful_turn("triager", ctx.address, messages,
                                checkpointer=ctx.checkpointer, schema=_ObservationBatch,
-                               middleware=[C.cached_role_compaction_middleware("triager")])
+                               tools=[load_tool],
+                               middleware=[C.cached_role_compaction_middleware("triager"),
+                                           index_mw])
     else:
         result = invoke_role("triager", messages, schema=_ObservationBatch)
     return result.observations if result else []  # None = exhausted generation -> no observations

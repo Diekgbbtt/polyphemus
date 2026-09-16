@@ -1,7 +1,15 @@
 # Skill runtime loading decisions (#222)
 
-*Status: decided in the #222 grilling (self-grilled against the ticket text and the codebase precedents; no operator unknowns rose to load-bearing, so no questionnaire was issued).*
+*Status: SUPERSEDED IN PART by the operator-grilled rounds of 2026-09-11 (Q1 loader home, Q2 spec frontmatter, Q3 L1/L2 mechanics, the role-prompts design-hole move, the hunter system-prompt correction). Decided below in self-grill; the reversals are recorded here, the current contract in `skills-typed-surface-spec.md`.*
 *Implements ticket #222: one agent-callable `load_skill(name)` tool plus a data-section convention every repo skill follows, with the steel skill readers consolidated onto the shared loader as the proof consumer.*
+
+## Reversals (operator-grilled 2026-09-11)
+
+- D1 (lenient shapes, name-need-not-equal-path): REVERSED. Frontmatter follows the Agent Skills spec - `name` == directory (enforced), `description` = what + when, extras under the `metadata` string map (`version`); no structured `inputs` in frontmatter.
+- D3 (convention-only gating, deferred fleet binding): REVERSED. L1 index composed by the shared `dynamic_prompt` skill-index middleware (no model cooperation needed); `load_skill` + middleware wired on all stateful agents; bounded skill sets travel in the native invocation context (per-agent configuration deferred past #221).
+- D5 (steel moves to `skills/`, rest gain fields): SUPERSEDED by the design-hole move. Role prompts (steel included) live in module `prompts/` dirs as plain Markdown; `skills/` holds only flat genuine skills. Drafts promoted to `skills/<name>/SKILL.md` with minimal frontmatter instead of excluded.
+- D6 (canonical constant in `skills.py`): location moved to `app/llm/skills.py` (Q1); the verbatim-mirror rule stands.
+- D2 (tool contract), D4 (two-severity rejection), D7 (#220 alignment): STAND.
 
 ## Context
 

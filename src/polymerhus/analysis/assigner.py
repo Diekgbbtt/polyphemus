@@ -319,8 +319,8 @@ def _system_prompt(mode: str = "create") -> str:
     data relationships and Service props, all of which #34 D4/D18 forbid this role
     from emitting. Carrying it here would put "emit aggregates only" and a
     WebPresentation worked example in one system message and let the model choose.
-    Retiring it per-role is ticket #30; the ROLE-SPECIFIC skill that replaces it for
-    the Assigner is `skills/analysis/assigner/SKILL.md`, selected by
+    Retiring it per-role is ticket #30; the ROLE-SPECIFIC prompt that replaces it for
+    the Assigner is `prompts/assigner.md`, selected by
     `ASSIGNER_PROMPT_CONFIG=skill`."""
     base = (
         f"{_ROLE_VERBATIM}\n\n{_load_assigner_skill()}"
@@ -402,47 +402,38 @@ _FEW_SHOTS = (
 
 # The Assigner's system message is TWO layers, mirroring the Bootstrapper
 # (`bootstrap.py::_BOOTSTRAPPER_BASE_SYSTEM`): `_ROLE_VERBATIM` above is the WHAT
-# (identity, the aggregates-only output contract, the reference shape) and must hold
-# even with no skills mount, while `skills/analysis/assigner/SKILL.md` is the HOW (the
+# (identity, the aggregates-only output contract, the reference shape) and holds
+# unconditionally, while `prompts/assigner.md` is the HOW (the
 # ownership-judgment discipline and its worked examples), operator-tunable without a
 # code change. This is the per-role retirement of the shared analyser skill promised by
 # #30: that skill instructs System modelling and data relationships this role is
 # forbidden to emit, so a GENERALIST skill was worse here than none.
 #
-# The FALLBACK is a degraded stand-in used only when the mount is unavailable
-# (`skill_for` logs a warning). Fail-open is required (`loop-constraints.md`: a skill
-# error degrades, never crashes), but it must not degrade to SILENCE: withholding is the
-# only defence against the measured 31-38% over-assignment, so the fallback carries the
-# null-hypothesis, discriminating-evidence and calibration core even though it drops the
-# worked examples. Every HARD invariant survives a missing mount regardless, because
-# narrow / resolve / inventory / bar are code, not prompt.
-_ASSIGNER_SKILL_FALLBACK = (
-    "Begin every judgment from NO OWNER and make the evidence overturn it: "
-    "assignment is the claim that carries the burden of proof. Read the "
-    "Endpoint's own path nouns, method and parameter names BEFORE you read the "
-    "inventory, hold every candidate Service whose contract touches them, and "
-    "keep only the candidate whose evidence fits THAT contract and not the "
-    "others - evidence that fits three Services equally is evidence for none. "
-    "Where two contracts genuinely both reach the Endpoint, emit both. "
-    "Confidence tracks discriminating evidence: ~0.9 when a path noun names a "
-    "record the contract owns, ~0.5 when only the business area matches, ~0.2 "
-    "when the only link is topical proximity. A below-bar judgment produces no "
-    "edge, and that is the correct outcome rather than a failure."
-)
+# There is no degraded stand-in: a missing prompt file is a defect and the read
+# below FAILS CLOSED (raises). Withholding is the only defence against the
+# measured 31-38% over-assignment, so the discipline's null-hypothesis,
+# discriminating-evidence and calibration core must always be present - and every
+# HARD invariant survives regardless, because narrow / resolve / inventory / bar
+# are code, not prompt.
+_ASSIGNER_SKILL: str | None = None
 
 
 def _load_assigner_skill() -> str:
-    """The Assigner's ownership-judgment discipline, single-sourced from
-    `skills/analysis/assigner/SKILL.md` through the shared `skill_for` (FR-SKILLIF):
-    YAML frontmatter stripped, cached in-process, and degraded to the terse fallback
-    above if the mount is unavailable.
+    """The Assigner's ownership-judgment discipline, read directly from this
+    module's `prompts/assigner.md`: memoized in-process, FAIL-CLOSED on a
+    missing file (raise).
 
-    That cache is what preserves the provider prompt-cache prefix: the file is read
-    ONCE per process, so `_system_prompt` returns byte-identical content for every
-    chunk of a run (the only invalidation is `skills.clear_cache()`, a test seam)."""
-    from polymerhus.recon.domain.skills import skill_for
+    That memoization is what preserves the provider prompt-cache prefix: the file
+    is read ONCE per process, so `_system_prompt` returns byte-identical content
+    for every chunk of a run."""
+    global _ASSIGNER_SKILL
+    if _ASSIGNER_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
 
-    return skill_for("analysis/assigner", fallback=_ASSIGNER_SKILL_FALLBACK)
+        _ASSIGNER_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "assigner.md"
+        ).read_text(encoding="utf-8")
+    return _ASSIGNER_SKILL
 
 
 # The assignment prompt is the highest-variance surface in the analyser: the SAME
@@ -596,12 +587,15 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     address = AnalysisSession(run_id, "assigner")
 
     from polymerhus.app.llm import compaction as C  # noqa: PLC0415
-    middleware = [C.build_role_compaction_middleware("assigner")]
+    from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+
+    index_mw, load_tool = skill_agent_seams()
+    middleware = [C.build_role_compaction_middleware("assigner"), index_mw]
 
     def invoke(messages):
         return stateful_turn("assigner", address, messages,
                              checkpointer=checkpointer, schema=L1DeltaBatch,
-                             middleware=middleware)
+                             tools=[load_tool], middleware=middleware)
 
     return invoke
 

@@ -1,7 +1,7 @@
 # polymerhus skills
 
-Runtime role-prompts for the product's LLM agents, authored and tested with the `superpowers:writing-skills` TDD discipline (RED baseline -> write skill -> GREEN verify).
-Each skill's `SKILL.md` body is loaded as a role's system prompt - at bake time through the shared loader, or at runtime through the shared tool (both call `skill_for`, so the two paths can never diverge).
+Genuine progressive-disclosure skills, loadable on demand through the shared loader (`src/polymerhus/app/llm/skills.py::skill_for`) or at runtime through the shared tool (`build_load_skill_tool()::load_skill`, which calls `skill_for` internally so the two paths can never diverge).
+Each skill's `SKILL.md` carries Agent-Skills-spec frontmatter: `name` == its directory, `description` = what + when, `metadata` string map carrying `version`.
 This is distinct from `docs/superpowers/skills/` (meta-skills for Claude-the-developer); these are the product's skills.
 
 See `docs/design/jobs-tools-skills-taxonomy.md` for the full jobs/tools/skills model and `docs/design/agent-context-architecture.md` for how skills compose with the `asset_context` channel.
@@ -9,20 +9,18 @@ See `docs/design/jobs-tools-skills-taxonomy.md` for the full jobs/tools/skills m
 ## Layout
 
 ```
-skills/<area>/<role-or-family>/<skill-name>/SKILL.md
-skills/<flat-skill-name>/SKILL.md
+skills/<skill-name>/SKILL.md
 ```
 
-Areas: `recon`, `analysis`, `hunting`, `systems-analysis` (drafts only).
-Recon roles: `triager` (always active), `crawler` (agentic crawl), `configurator` (agent mode only), `job-orchestrator` (LLM distribution path, deferred).
-Flat entries (no area): the two meta-skills, `meta-write-skill` (authoring rules) and `meta-usage-skill` (usage protocol).
+Flat: one directory per skill, `name` == directory. There are no module-routing layers.
+Role prompts are NOT skills and do not live here: each role's system prompt lives with its owning module in a `prompts/` dir (`src/polymerhus/recon/domain/prompts/`, `src/polymerhus/recon/crawl/prompts/`, `src/polymerhus/attack/hunting/prompts/`, `src/polymerhus/analysis/prompts/`) and is read directly by its module (fail-closed, memoized, no cross-module imports).
+The two meta-skills are flat entries here like any other: `meta-write-skill` (authoring rules) and `meta-usage-skill` (usage protocol).
 
-## Loader contract (`src/polymerhus/recon/domain/skills.py::skill_for`)
+## Loader contract (`src/polymerhus/app/llm/skills.py::skill_for`)
 
-`skill_for(name)` loads `skills/<name>/SKILL.md` (e.g. `recon/triager/writing-observations`, `recon/crawler/steel-crawl`).
+`skill_for(name)` loads `skills/<name>/SKILL.md` (e.g. `webpage-profile`, `lightrag-query`).
 It strips the YAML frontmatter, caches the body, and degrades to the caller-supplied fallback on a missing or unreadable file.
-Every per-role skill reader retro-points here (FR-SKILLIF single-loader discipline); no reader does its own file I/O.
-Defaults: `triager -> writing-observations`, `crawler -> steel-crawl`.
+Only on-demand skill readers call it; no role prompt loads through here.
 
 ## Runtime loading (`build_load_skill_tool()::load_skill`)
 
@@ -56,31 +54,28 @@ The write contract rides the tool's description verbatim from `WRITE_SKILL_CONTR
 Reads resolve the per-project bundle first, then the shared catalogue, through the same store seam - loader, writer, and protocol injection share one store and can never diverge.
 Agent owners collect the surface through `build_skill_tools()`: `load_skill` for every agent, plus project-bound `write_skill` only for agents whose procedure evolves a skill.
 
-## Phase-gating convention
+## L1 skill index (`skill_index_middleware`) and the phase-gating convention
 
-PHASE-GATING CONVENTION - load at phase entry, once per thread, never speculatively mid-reasoning: call load_skill once when your phase starts for each skill your phase needs, then reason from the returned body.
-Repeat loads are cache-cheap but a second load buys nothing new.
-`refresh` is the development hot-reload path only - never set it mid-run.
-Bake-time mounts follow the same rule: the hunting orchestrator's gate skill mounts once per thread as the run's one system message (never re-added per turn), and the crawl loop loads its skill once at loop start.
+Two tiers. L1 discovery: every stateful agent's system message carries its BOUNDED skill set's frontmatters (one `- name: description` line per skill under a header naming `load_skill` as the L2 move), rendered from the catalogue by the shared `dynamic_prompt` middleware - never hand-written, so it cannot drift. The binding travels in the native invocation context (`context={"skills": [...]}`); absent or empty means no index. L2 activation: the agent calls `load_skill` for a listed skill when its discipline bears on the turn; the result re-enters context through the native tool loop, no custom forwarding.
 
 ## Data section
 
-Every `skills/**/SKILL.md` carries a machine-readable frontmatter contract so the tool can index, validate, and report what was loaded.
-Keys, exactly: `name` (non-empty string, equal to the skill directory - the leaf of the loader path), `description` (non-empty string), `metadata` (a mapping carrying a non-empty string `version`).
+Every `skills/*/SKILL.md` carries a machine-readable frontmatter contract so the tool can index, validate, and report what was loaded.
+Mandatory: `name` (non-empty string, EQUAL to the skill's directory), `description` (non-empty string: what the skill does + when to use it), `metadata` (string map carrying non-empty `version`).
 No other top-level keys and no structured `inputs`: the body describes invocation context better than a schema stub.
 Conformance is enforced by `tests/recon/test_skill_data_section.py::test_every_repo_skill_conforms_to_data_section`, which sweeps the catalogue and fails on any offender.
-Only `SKILL.md` files are skills: drafts and notes elsewhere under `skills/` (e.g. `systems-analysis/[DRAFT]*.md`) are out of scope by construction, not silent exceptions.
 Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description breaks parsing (seen twice), so prefer folded `>-` blocks for long descriptions.
 
 ## Skills
 
-| Role | Skill | Status | Governs |
-|---|---|---|---|
-| triager | `writing-observations` | **authored + RED/GREEN verified** | anchor allowlist, observations-not-vulnerabilities, no asset restatement |
-| crawler | `steel-crawl` | **authored + migrated (#222)** | agentic crawl budget/frontier discipline |
-| every loaded skill | `meta-usage-skill` | **authored (#234)** | assess the procedure against its observables; record improvements through `write_skill` |
-| skill author (executor + evolver) | `meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter shape, references pointers |
-| job-orchestrator | `asset-distribution` | roadmap (deferred to LLM path) | asset cleaning/dedup/distribution over MAX_PODS |
-| configurator | agent-mode playbooks | roadmap (deferred) | non-crawl agentic configuration |
+| Skill | Status | Governs |
+|---|---|---|
+| `authorization-pyramid` | **authored** | reverse-engineering a service's role-to-permission structure via the inverse-pyramid probe |
+| `lightrag-query` | **authored** | the hunting agent's methodology-KB query discipline (`query_lightrag` / `kb_query`) |
+| `webapp-clientside-semantic-model` | **authored** | client-side semantic modeling from browser-observable artifacts before security analysis |
+| `webpage-analysis` | **authored** | web-application architectural profiling (navigation x rendering, independent) |
+| `webpage-profile` | **authored + verified** | L1-spine webpage classification (L1D-31a: independent dimensions, fingerprint-insufficiency) |
+| `meta-usage-skill` | **authored (#234)** | assess the procedure against its observables; record improvements through `write_skill` |
+| `meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter shape, references pointers |
 
 Roadmap detail + priorities: `docs/design/jobs-tools-skills-taxonomy.md` section 6.
