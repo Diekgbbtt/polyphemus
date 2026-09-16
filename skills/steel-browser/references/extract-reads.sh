@@ -9,16 +9,22 @@ set -euo pipefail
 FLOW="extract"
 URL="${URL:-https://the-internet.herokuapp.com/}"
 SESSION="${SESSION:-polymerhus-${FLOW}-$(date +%s)}"
-STARTED=0
+SESSION_NAMED=0
 
 release() {
-  if [ "$STARTED" = 1 ]; then
+  # Fires on success, error, and signal alike. The mark is set before `start`
+  # (past the catalogue guard), so a signal inside the start window still gets a
+  # named stop; a name never created is a harmless no-op, and the explicit stop
+  # below clears the mark so the trap no-ops on the happy path.
+  if [ "$SESSION_NAMED" = 1 ]; then
     steel browser stop --session "$SESSION" --json >/dev/null 2>&1 || true
   fi
 }
 trap release EXIT INT TERM
 
 # Catalogue guard (D13 amended).
+# This read is also the pre-call baseline: a `default` seen here is foreign and
+# never addressed by this run.
 if steel browser sessions --json 2>/dev/null | python3 -c '
 import json,sys
 try:
@@ -31,8 +37,8 @@ sys.exit(0 if sys.argv[1] in names else 1)
   exit 3
 fi
 
+SESSION_NAMED=1
 START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --json)
-STARTED=1
 printf '%s' "$START_JSON" | python3 -c \
   'import json,sys; d=json.load(sys.stdin)["data"]; print("started", d["name"])'
 
@@ -66,7 +72,7 @@ steel browser eval 'document.querySelectorAll("a").length' --session "$SESSION" 
 
 # Explicit stop, then prove the name is gone; the trap is the backstop.
 steel browser stop --session "$SESSION" --json >/dev/null
-STARTED=0
+SESSION_NAMED=0
 steel browser sessions --json | python3 -c '
 import json,sys
 names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}

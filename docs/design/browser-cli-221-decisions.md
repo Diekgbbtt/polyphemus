@@ -14,7 +14,7 @@ Raw captures live under `/tmp/spike221_*.json` (host scratch, never committed); 
 | `start --session` | pass | 4 s | Raw stdout carries `data.connectUrl` (775 chars) embedding `apiKey=` + `sessionId=` over `wss://` - redaction mandatory (D4). `data` keys: `connectUrl, id, inactivityTimeoutMs, liveUrl, mode, name, remainingMs`. |
 | `navigate` | pass | 1 s | Returns `{title, url}`; reached the login page. |
 | `snapshot -i` | pass | 1 s | Accessibility tree with `@eN` refs; username `@e6`, password `@e8`, login `@e4`. |
-| `fill @eN` standalone | FAIL | - | `Unknown ref: e6`, 4/4 across `fill`/`type`/`setvalue`, CSS selector also fails (`Element not found: #username`) while the element provably exists (`find input` returns 2, `eval` reads `id="username"`). CLI 0.4.4 ref-resolution defect in the single-command path; `focus @e6` + `click @e4` on the same refs succeed. |
+| `fill @eN` standalone | FAIL | - | `Unknown ref: e6`, 4/4 across `fill`/`type`/`setvalue`, CSS selector also fails (`Element not found: #username`) while the element provably exists (`find input` returns 2, `eval` reads `id="username"`). CLI 0.4.4 ref-resolution defect in the single-command path; `focus @e6` + `click @e4` on the same refs succeed. **Amended 2026-09-16: the cause is flag order, not ref resolution - the invocation put `--session`/`--json` after the value, and the variadic verb swallowed them as VALUE, addressing a missing/`default` session. With options leading, all three verbs resolve a ref and a CSS selector standalone (ladder rounds 2-3, `a1_control.raw`).** |
 | `fill` inside `batch` | pass | ~4 s for 3 ops | `batch "snapshot -i" "fill @e6 tomsmith"` returns `{filled: @e6}` and `eval` reads `#username.value == "tomsmith"` - the value provably landed. D2 routes all text entry through `batch`. |
 | `click` | pass | 1 s | `{clicked: @e4}`; empty-credential submit behaved as the page specifies. |
 | `wait -t` | pass | ~1 s hit / 11 s timeout path | `wait -t "Secure Area" --timeout 10000` succeeds post-login; pre-login it times out with a typed error (no hang past the timeout). |
@@ -38,14 +38,16 @@ Anything outside the eleven (tabs, screenshots, PDFs, file upload, drag, `set he
 **Rationale.**
 A small allowlist is the safety bound the ticket's eval question is really asking for: the risk is not one command but an open-ended browser remote-control surface. Eleven spike-proven commands, each mapped to login or extraction, keep the surface reviewable in one screen.
 
-## D2 - All text entry rides `batch`; refs never cross a navigation
+## D2 - Batch is the preferred text-entry shape, not a defect workaround; refs never cross a navigation
 
-`fill`, `type`, `setvalue` are never invoked standalone: the seam executes every text-entry act inside a `batch` whose FIRST element is `snapshot -i`, followed by the entry commands against that snapshot's refs, followed by the submitting act where the flow calls for it.
-Refs from a returned snapshot are valid for the immediately following call only, and never across a `navigate`: a fresh snapshot opens every post-navigation sequence (the vendor's own discipline - element refs expire).
-The spike's stale-ref curiosity (a previous batch's `@e6` still resolving after a renumbering snapshot) is therefore never depended upon: same-batch snapshot-then-act is the only sanctioned ref flow.
+*Amended 2026-09-16 (ladder rounds 2-3): the single-command defect this record stood on is falsified - see below.*
 
-**Rationale.**
-The CLI 0.4.4 single-command ref-resolution defect (spike matrix) makes standalone text entry a guaranteed failure; `batch` is the proven shape AND the ticket's latency answer (one spawn per sequence). Encoding it in the seam, not in agent prompts, keeps agents from rediscovering the defect one failure at a time.
+`batch` remains the preferred shape for a multi-act sequence: one spawn per sequence, the snapshot's refs shared across the acts, and the submitting act where the flow calls for one.
+Refs from a returned snapshot are valid for the immediately following call only, and never across a `navigate`: a fresh snapshot opens every post-navigation sequence.
+The 2026-09-16 re-probe sharpens what "never across a navigate" means in both directions: within one document the ref registry is append-only (an earlier ref still resolves), but after a `navigate` the same id silently re-binds to a different element instead of erroring, so a stale ref clicks the wrong thing behind `success:true`.
+
+**Amendment rationale.**
+The spike's "CLI 0.4.4 single-command ref-resolution defect" was a flag-order artifact: `fill`/`type`/`setvalue` are variadic (`fill [OPTIONS] <SELECTOR> [VALUE]...`), so options trailing the value are swallowed as more VALUE tokens and the command addresses a missing or `default` session - which is what produced `Unknown ref` / `Element not found` while the element provably existed. With options before the first value token, all three verbs resolve a ref and a CSS selector standalone (live control pair, ladder rounds 2-3). The batch shape therefore survives as the latency/state choice, no longer as the only way to enter text. The `default` session such a mistake may auto-provision is a billable leak, not a harmless error, and the skill carries the attribution rule that stops it.
 
 ## D3 - `eval` is permitted, purpose-bounded by skill discipline, audit-logged
 
@@ -151,12 +153,15 @@ Names encode flow semantics (`polymerhus-<flow>-<id>`), chosen by the agent per 
 **Amended 2026-09-16 (catalogue read replaces the per-name `live` probe).**
 The guard reads the live session catalogue: `steel browser sessions --json` returns every live session this key owns as `{id, mode, name, status, viewerUrl}`, and `data: []` once none is live; a command-mode `start` whose name appears there is refused with `<name> is already used`. One read answers every name question and is visible across processes and workdirs (proven by starting a session through the tool and listing it from a separate host shell, then confirming `data: []` after `stop`), which is what the skill surfaces as its list-sessions step.
 The first ruling's premise is superseded, not merely refined: `steel browser sessions` was recorded as unusable because it "lists empty while a session is demonstrably live", and a re-probe on the same 0.4.4 pin (named start, unnamed `default` start, post-`stop` read, cross-process read) shows it listing correctly in every case and agreeing with the platform's `steel sessions list --status live`. The per-name `steel browser live --session <name>` oracle is therefore retired; `live` remains a viewer-open command in the skill's command families, not the guard. The catalogue call fails open (`None` = cannot verify) exactly as the probe did, so a broken catalogue never blocks a start.
+A catalogue read is authoritative but not instantaneous: a session whose `start` has not returned is legitimately absent (in-flight, not stale), so a surprising read is re-read once rather than believed; and a `default` that appears because a bad flag shape addressed it is the caller's own leak to stop by name (a `default` already live before the call stays foreign and untouchable).
 
 ## D14 - Inline eval by default, skill-carried escaping, files for promotion only (amended: file-first retired)
 
 Supersedes the file-first rule below it. Rationale for the reversal: agents develop JS probe-then-persist (REPL-style inline iteration, then keep what works) - file-first inverts the loop, forcing a write round-trip per probe and assuming first-try success. And the dominant in-browser use beyond auth is vulnerability-test execution, an unbounded-read primitive: the design risk is data explosion, not quoting, so the guardrail belongs on result shape.
 
 The discipline, owned by the skill: eval runs INLINE, with the skill carrying steel CLI usage verbatim plus a dedicated eval section citing the snippet format and the common writing pitfalls (single/double/backtick nesting through the JSON-arg and shell layers; `$` expansion; the IIFE-returns-plain-data format; the two live-proven traps - a path argument parses as a regex literal, a bare `-` evaluates as source). Result bounding is a hard rule: project before return (counts, slices, targeted selectors over whole-document dumps), chunk large extractions, prefer booleans for checks. Files are the promotion path, not the default: a proven snippet graduates into `/work/<session_id>/js/` for reuse inside `.sh`/`.py` automation scripts (which chain multiple steel cmds, EVALs included) and as audit trail - fed then via `"$(cat …)"`, which stands as the mechanism, demoted from the discipline.
+
+**Amended 2026-09-16 (ladder evidence).** The skill now carries the route preference for driving a control from `eval`: `element.click()`, a dispatched pointer/mouse sequence and `form.requestSubmit()` honour submit handlers and native validation (an empty `required` field fires exactly 2 `invalid` events, 0 `submit`, no navigation), while `form.submit()` and a framework `trigger("submit")` bypass both and are the last resort; counting `invalid` events takes its own measurement, since `checkValidity()` fires its own. And there is no automatic result bounding - a 200000-character return arrives whole - so projection before return is the operator's hard rule, not a platform guarantee. A missing selector returns `{"data":null,"success":true}`, so a null read is not an error signal.
 
 ## D14 (original, superseded) - JS executes from files, fed via substitution
 

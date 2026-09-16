@@ -76,3 +76,11 @@ Observed: the commands and outputs recorded below; the verbatim script text was 
 - All eight references run via `bash <file>`: exit 0 each; the post-run orphan proof is the live session catalogue (`steel browser sessions --json` empty) plus `steel doctor` active-count 0.
 - Third-party source-skill claims corrected against the live CLI: no `snapshot -C` (0.4.4 has `-u/--urls`) and no `sessions --raw`.
 - Re-probed 2026-09-16: `steel browser sessions --json` is a reliable live-session catalogue (named start, unnamed `default` start, post-`stop` read, and a cross-process read all behave), so it is both the tool's uniqueness guard and the skill's list-sessions step (D13 amended).
+
+### Skill live-validation campaign (2026-09-16, three ladder rounds + three writer/critic pod iterations)
+
+Grounds the skill's rules (all PASS at every critic gate; evidence traces under `.../opencode/moodique/{trace.md,trace2.md,ladder1..3/}`).
+
+- Surfaces exercised live on real logins: fully sequential (one process per operation), batched (3-100 ops), scripted (`.sh` and `.py`, summary line, trap-owned stop proven on SIGTERM), and eval-driven submit (all five routes: `element.click()`, dispatched pointer/mouse, `form.requestSubmit()`, `form.submit()`, framework trigger).
+- Rule reversals the campaign produced (all folded, D2/D13/D14 amended): standalone text entry is not broken - the spike's failures were flag-order swallowing by the variadic `fill`/`type`/`setvalue`; `batch` is a choice for latency/state, not a defect workaround; a swallowed `--session` can auto-provision a billable `default` session; a failing batch has two envelope shapes (op-level two lines, batch-level one); count answers presence while `is visible` answers showness; `form.submit()` and framework triggers bypass handlers and native validation; there is no automatic eval-result bounding.
+- Reproducible failure modes recorded for the PR: stale-ref silent re-bind after `navigate` (deterministic, 3/3), `select` with a no-match value silently landing on the first option (3/3), a `default`-session leak from the bad flag shape (2/2), and a trap that marks its name after `start` orphaning on a signal inside the start window (1/5 versus 0/5 with the rule).

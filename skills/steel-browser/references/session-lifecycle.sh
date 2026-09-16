@@ -10,20 +10,25 @@ set -euo pipefail
 FLOW="lifecycle"
 URL="${URL:-https://example.com}"
 SESSION="${SESSION:-polymerhus-${FLOW}-$(date +%s)}"
-STARTED=0
+SESSION_NAMED=0
 
 release() {
-  # Trap-owned stop: fires on success, error, and signal alike. STARTED keeps a
-  # refused-before-start run from touching a stranger's session, and the
-  # explicit stop below clears it so the trap no-ops on the happy path.
-  if [ "$STARTED" = 1 ]; then
+  # Trap-owned stop: fires on success, error, and signal alike. SESSION_NAMED is
+  # set once the name is marked free (past the catalogue guard) and BEFORE
+  # `start`, so a signal landing inside the start window still gets a named stop;
+  # a name never created is a harmless no-op. A refusal leaves the mark down, so
+  # a stranger's live name is never addressed, and the explicit stop below clears
+  # the mark so the trap no-ops on the happy path.
+  if [ "$SESSION_NAMED" = 1 ]; then
     steel browser stop --session "$SESSION" --json >/dev/null 2>&1 || true
   fi
 }
 trap release EXIT INT TERM
 
-# Survey: one catalogue read answers the name question (D13 amended) and shows
-# what else is live, so a foreign `default` is never mistaken for ours.
+# Survey: one catalogue read answers the name question (D13 amended) and is the
+# pre-call baseline for `default` attribution - a `default` here is foreign, so
+# this run never addresses it; only a `default` that appears because of our call
+# would be ours to stop by name.
 CATA_JSON=$(steel browser sessions --json)
 printf '%s' "$CATA_JSON" | python3 -c '
 import json,sys
@@ -41,10 +46,12 @@ sys.exit(0 if sys.argv[1] in names else 1)
   exit 3
 fi
 
-# Session lifetime 600000 ms outlives the script; provisioning consumes part of
-# it before the receipt, so remainingMs lands below what was requested.
+# Mark the name before `start`: the stop decision rides this mark, never a flag
+# set only after `start` returns, so a signal inside the start window is not
+# orphaned. Session lifetime 600000 ms outlives the script; provisioning consumes
+# part of it before the receipt, so remainingMs lands below what was requested.
+SESSION_NAMED=1
 START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --json)
-STARTED=1
 printf '%s' "$START_JSON" | python3 -c \
   'import json,sys; d=json.load(sys.stdin)["data"]; print("started", d["name"], "mode", d["mode"], "remainingMs", d.get("remainingMs"))'
 
@@ -55,7 +62,7 @@ printf '%s' "$NAV_JSON" | python3 -c \
 # Explicit stop first, so this run proves the catalogue clean itself; the trap
 # stays armed as the backstop on the error and signal paths.
 steel browser stop --session "$SESSION" --json >/dev/null
-STARTED=0
+SESSION_NAMED=0
 steel browser sessions --json | python3 -c '
 import json,sys
 names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}

@@ -1,11 +1,12 @@
 #!/usr/bin/env bash
 # Operation family: interaction - snapshot for refs, then act in ONE batch.
-# Text entry rides a batch because standalone `fill`/`type`/`setvalue` answer
-# `Unknown ref: eN` on CLI 0.4.4 (the ref never resolves on the single-command path).
-# A runtime VALUE is interpolated through the shell as "${VALUE}" - variable
-# expansion never re-expands a `$` or backtick inside the value's contents, so
-# this is the safe form; only a literal value would need single-quoting. The
-# read-back prints a boolean, never the value.
+# The batch is a choice to share the discovered ref and one spawn, not a
+# workaround: standalone `fill`/`type`/`setvalue` resolve fine when every flag
+# leads the positionals (a trailing `--session`/`--json` is swallowed as another
+# VALUE). A runtime VALUE is interpolated through the shell as "${VALUE}" -
+# variable expansion never re-expands a `$` or backtick inside the value's
+# contents, so this is the safe form; only a literal value would need
+# single-quoting. The read-back prints a boolean, never the value.
 # Runnable verbatim through steel_exec(script=<text>, script_lang="sh") or `bash <file>`.
 if [ -z "${BASH_VERSION:-}" ]; then exec bash "$0" "$@"; fi
 set -euo pipefail
@@ -14,16 +15,21 @@ FLOW="interact"
 URL="${URL:-https://the-internet.herokuapp.com/inputs}"
 VALUE="${VALUE:-42}"
 SESSION="${SESSION:-polymerhus-${FLOW}-$(date +%s)}"
-STARTED=0
+SESSION_NAMED=0
 
 release() {
-  if [ "$STARTED" = 1 ]; then
+  # Fires on success, error, and signal alike. The mark is set before `start`
+  # (past the catalogue guard), so a signal inside the start window still gets a
+  # named stop; a name never created is a harmless no-op, and the explicit stop
+  # below clears the mark so the trap no-ops on the happy path.
+  if [ "$SESSION_NAMED" = 1 ]; then
     steel browser stop --session "$SESSION" --json >/dev/null 2>&1 || true
   fi
 }
 trap release EXIT INT TERM
 
-# Catalogue guard (D13 amended).
+# Catalogue guard (D13 amended); this read is also the pre-call baseline, so a
+# foreign `default` seen here is never addressed by this run.
 if steel browser sessions --json 2>/dev/null | python3 -c '
 import json,sys
 try:
@@ -36,8 +42,8 @@ sys.exit(0 if sys.argv[1] in names else 1)
   exit 3
 fi
 
+SESSION_NAMED=1
 START_JSON=$(steel browser start --session "$SESSION" --session-timeout 600000 --json)
-STARTED=1
 printf '%s' "$START_JSON" | python3 -c \
   'import json,sys; d=json.load(sys.stdin)["data"]; print("started", d["name"])'
 
@@ -65,25 +71,52 @@ if [ "$REF" = "MISS" ]; then
   exit 4
 fi
 
-# One batch: a fresh snapshot, then the batch-routed text entry. Results are
-# reported by op index and success, plus one deliberate exception on failure -
-# a bounded typed `error`. The result envelope also echoes each `command`
-# string, and a text-entry command carries its value, so that field is never
-# printed; the `error` field names the failure without it.
-BATCH_JSON=$(steel browser batch 'snapshot -i' "fill @${REF} ${VALUE}" --session "$SESSION" --json)
+# One batch: a fresh snapshot, then the text entry, options ahead of the value.
+# Results are reported by op index and success, plus one deliberate exception on
+# failure - a bounded typed `error`. The result envelope also echoes each
+# `command` string, and a text-entry command carries its value, so that field is
+# never printed; the `error` field names the failure without it.
+# A failing batch has TWO shapes, told apart structurally: an op-level failure
+# writes the results envelope (line 1, carrying data.results) then
+# {"error":"One or more batch commands failed"} and exits 1, while a batch-level
+# failure (a clap usage error, an empty session name) writes a SINGLE
+# {"error":...} line with no results envelope. So a whole-stdout parse would die
+# on Extra data; the parser keys on line 1 carrying data.results.
+# `set -e` must not abort on the expected exit-1, so the exit status is captured
+# instead: `if BATCH_JSON=$(...)` clears the errexit flag for this command, and
+# the parser also receives the exit code as its last argument.
+set +e
+if BATCH_JSON=$(steel browser batch 'snapshot -i' "fill @${REF} ${VALUE}" --session "$SESSION" --json); then
+  BATCH_RC=0
+else
+  BATCH_RC=$?
+fi
+set -e
 printf '%s' "$BATCH_JSON" | python3 -c '
 import json,sys
-d=json.load(sys.stdin)
-data=d.get("data") if isinstance(d.get("data"), dict) else {}
+try:
+    rc=int(sys.argv[1])
+except (IndexError,ValueError):
+    rc=None
+lines=[l for l in sys.stdin.read().splitlines() if l.strip()]
+if not lines:
+    print("batch empty stdout | exit", rc); sys.exit(0)
+first=json.loads(lines[0])
+data=first.get("data") if isinstance(first.get("data"), dict) else {}
+if "results" not in data:  # batch-level refusal: a single error line, no envelope
+    print("batch refused:", first.get("error"), "| exit", rc)
+    sys.exit(0)
 results=data.get("results", [])
-print("batch success:", d.get("success"), "| ops:", len(results))
+print("batch success:", first.get("success"), "| ops:", len(results), "| exit", rc)
 for i,r in enumerate(results):
     status="ok" if r.get("success") else "FAIL"
     line="  op %d %s" % (i, status)
     if not r.get("success") and r.get("error"):
         line += " | " + str(r["error"])[:80]
     print(line)
-'
+if len(lines) > 1:
+    print("batch exit signal:", json.loads(lines[1]).get("error"))
+' "$BATCH_RC"
 
 # Verify the entry landed by reading the value back, and print only whether it
 # matches - the value itself stays out of stdout.
@@ -96,7 +129,7 @@ print("entry landed:", got == sys.argv[1])
 
 # Explicit stop, then prove the name is gone; the trap is the backstop.
 steel browser stop --session "$SESSION" --json >/dev/null
-STARTED=0
+SESSION_NAMED=0
 steel browser sessions --json | python3 -c '
 import json,sys
 names={s.get("name") for s in (json.load(sys.stdin).get("data") or []) if isinstance(s, dict)}
