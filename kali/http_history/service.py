@@ -207,6 +207,8 @@ class HttpHistoryService:
         run_id: str = "",
         spec_id: str = "",
         variant_ref: str = "",
+        derived_from: str = "",
+        replay_kind: str = "",
     ) -> dict:
         exec_id = new_ulid()
         lease = None
@@ -222,6 +224,8 @@ class HttpHistoryService:
                         spec_id=spec_id,
                         variant_ref=variant_ref,
                         exec_id=exec_id,
+                        derived_from=derived_from or None,
+                        replay_kind=replay_kind or None,
                     ),
                 )
             except Exception as exc:  # noqa: BLE001 - capture is fail-open

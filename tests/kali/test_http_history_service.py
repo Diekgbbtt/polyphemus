@@ -226,3 +226,35 @@ def test_replay_still_accepts_a_bodyless_baseline(tmp_path):
         "proj-1", "http_01J0000000000000000000000A", {}, sender=_fake_sender(store)
     )
     assert result["replay_kind"] == "baseline"
+
+
+from kali.http_history.service import ExecOutcome
+
+
+def test_execute_can_label_a_manual_replay(tmp_path):
+    seen = {}
+
+    class _Lease:
+        namespace = "kali-http-0001"
+
+    class _Leases:
+        def acquire(self, *, session_id, project_id, context):
+            seen["context"] = context
+            return _Lease()
+
+        def release(self, lease):
+            pass
+
+    service = HttpHistoryService(
+        config=HttpHistoryConfig(store_root=str(tmp_path)),
+        lease_manager=_Leases(),
+        runner=lambda command, session_id, timeout_s, namespace=None: ExecOutcome(
+            stdout="", stderr="", returncode=0, duration_ms=1
+        ),
+    )
+    service.execute(
+        "curl -sS http://t/", "s1", project_id="proj-1",
+        derived_from="http_01J0000000000000000000000A", replay_kind="mutated",
+    )
+    assert seen["context"].derived_from == "http_01J0000000000000000000000A"
+    assert seen["context"].replay_kind == "mutated"

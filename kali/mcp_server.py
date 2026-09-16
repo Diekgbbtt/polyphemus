@@ -75,6 +75,8 @@ def execute_command(
     run_id: str = "",
     spec_id: str = "",
     variant_ref: str = "",
+    derived_from: str = "",
+    replay_kind: str = "",
 ) -> dict:
     """Run a shell command in /work/{session_id}.
 
@@ -91,6 +93,8 @@ def execute_command(
             run_id=run_id,
             spec_id=spec_id,
             variant_ref=variant_ref,
+            derived_from=derived_from,
+            replay_kind=replay_kind,
         )
     except Exception as exc:  # noqa: BLE001 - never take the exec server down
         return {
