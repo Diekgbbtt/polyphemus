@@ -120,3 +120,35 @@ def test_rate_limited_mutation_is_not_a_confirmed_symptom():
     assert out["evidence"]["terminal_reason"] != "symptom-confirmed"
     assert any(item.get("defence") == "rate-limited"
                for item in out["evidence"]["interpretations"])
+
+
+def test_the_precedence_note_does_not_leak_across_calls_on_one_pod():
+    """One `HuntingHttpPod` instance may serve more than one spec: the
+    `request_ref` precedence note must reflect THIS call, never a stale flag
+    left by a previous spec that carried an inline method/path."""
+    def replay(project_id, artifact_id, overrides):
+        return {"status": 200 if overrides else 403}
+
+    def spec(*, method="", path=""):
+        pvs = {
+            "request_ref": "http_01J0000000000000000000000A",
+            "mutations": [{"location": "query", "name": "q", "values": ["x"]}],
+        }
+        if method:
+            pvs["method"] = method
+        if path:
+            pvs["path"] = path
+        return {"d4_typed_base": {
+            "target_identity": {"url": "http://target.example/"},
+            "payload_vector_space": pvs,
+        }}
+
+    pod = HuntingHttpPod(project_id="proj-1", replay_fn=replay,
+                         transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    first = pod(spec(method="GET", path="/inline"))
+    assert any("ignored" in str(item) for item in first["evidence"]["interpretations"])
+
+    # This spec has NO inline method/path: the note must be absent even though
+    # the previous call set the flag on this same instance.
+    second = pod(spec())
+    assert not any("ignored" in str(item) for item in second["evidence"]["interpretations"])

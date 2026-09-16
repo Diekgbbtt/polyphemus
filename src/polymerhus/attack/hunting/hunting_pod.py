@@ -112,10 +112,13 @@ class HuntingHttpPod:
                 interpretations=["target URL rejected"],
             )
         pvs = ((spec.get("d4_typed_base") or {}).get("payload_vector_space") or {})
-        if isinstance(pvs, dict) and pvs.get("request_ref") and (
-            pvs.get("method") or pvs.get("path")
-        ):
-            self._inline_ignored = True
+        # Assigned on EVERY call (never only on the True branch): one pod
+        # instance may serve more than one spec, and a stale flag would stamp
+        # the precedence note onto an unrelated stretch's evidence.
+        self._inline_ignored = bool(
+            isinstance(pvs, dict) and pvs.get("request_ref")
+            and (pvs.get("method") or pvs.get("path"))
+        )
         if isinstance(pvs, dict) and pvs.get("request_ref"):
             return self._run_request_ref(pvs)
         vectors = _vectors(spec)
