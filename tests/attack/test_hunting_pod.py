@@ -87,3 +87,36 @@ def test_pod_rejects_a_dict_missing_method_or_path_without_defaulting():
         out = pod(_spec(target_url="https://target.test", payload=payload))
         assert out["evidence"]["terminal_reason"] == "technical-infeasibility"
         assert any("payload_vector_space" in v for v in out["evidence"]["init_validation"])
+
+
+from polymerhus.attack.hunting.hunting_pod import _allowed, _defence_signal
+
+
+def test_waf_and_rate_limit_are_not_application_verdicts():
+    assert _allowed(429) is None
+    assert _allowed(503) is None
+    assert _allowed(500) is None
+    assert _allowed(403) is False
+    assert _allowed(200) is True
+    assert _defence_signal(429) == "rate-limited"
+    assert _defence_signal(500) == "server-error"
+    assert _defence_signal(403) is None
+
+
+def test_rate_limited_mutation_is_not_a_confirmed_symptom():
+    def replay(project_id, artifact_id, overrides):
+        return {"status": 429 if overrides else 403}
+
+    spec = {"d4_typed_base": {
+        "target_identity": {"url": "http://target.example/"},
+        "payload_vector_space": {
+            "request_ref": "http_01J0000000000000000000000A",
+            "mutations": [{"location": "query", "name": "q", "values": ["x"]}],
+        }}}
+    pod = HuntingHttpPod(project_id="proj-1", replay_fn=replay,
+                         transport=httpx.MockTransport(lambda r: httpx.Response(200)))
+    out = pod(spec)
+    assert out["verdict"] == "unsuccessful"
+    assert out["evidence"]["terminal_reason"] != "symptom-confirmed"
+    assert any(item.get("defence") == "rate-limited"
+               for item in out["evidence"]["interpretations"])

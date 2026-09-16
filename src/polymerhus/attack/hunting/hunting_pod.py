@@ -235,9 +235,14 @@ class HuntingHttpPod:
             except Exception:  # noqa: BLE001
                 result = None
             status = result.get("status") if isinstance(result, dict) else "error"
+            defence = _defence_signal(status)
             interpretations.append(
-                {"vector": f"request_ref {ref}", "override": override, "status": status}
+                {"vector": f"request_ref {ref}", "override": override,
+                 "status": status, "defence": defence}
             )
+            if defence is not None:
+                definitive = False
+                continue
             if not isinstance(status, int):
                 definitive = False
                 continue
@@ -275,9 +280,26 @@ class HuntingHttpPod:
         return {"verdict": verdict, "evidence": evidence}
 
 
+DEFENCE_STATUSES = frozenset({429, 503})
+
+
+def _defence_signal(status) -> str | None:
+    """A defence that is not an application verdict: rate limiting or a
+    server-side block. Never `denied`, never `allowed` - inconclusive."""
+    if not isinstance(status, int):
+        return None
+    if status in DEFENCE_STATUSES:
+        return "rate-limited"
+    if 500 <= status < 600:
+        return "server-error"
+    return None
+
+
 def _allowed(status) -> bool | None:
     """True = request allowed (2xx/3xx), False = denied (4xx), None = unknown."""
     if not isinstance(status, int):
+        return None
+    if _defence_signal(status) is not None:
         return None
     if 200 <= status < 400:
         return True
