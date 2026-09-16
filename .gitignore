@@ -45,6 +45,9 @@ docs/.DS_Store
 
 # Recon run artifacts (multi-MB per-target graph dumps), reproducible by re-running.
 .recon-exports/
+# Live-E2E run artifacts (tool logs, captured stdout, delta reports), written by
+# tests/e2e/test_recon_crawl_katana_depth.py; evidence, reproduced by re-running.
+.e2e-artifacts/
 tests/e2e/fixtures/eval-targets.yaml
 
 # Hunting run artifacts (per-project memory-store files), reproducible by
