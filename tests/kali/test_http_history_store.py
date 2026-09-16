@@ -107,3 +107,27 @@ def test_store_status_reports_paths_and_counts(tmp_path):
     assert status["ok"] is True
     assert status["artifact_count"] == 1
     assert status["schema_version"] == "http-artifact/v1"
+
+
+from tests.kali.test_http_history_search import _seed
+
+
+def test_attribute_indexes_are_covering(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    sql = {
+        row["name"]: (row["sql"] or "")
+        for row in store._conn.execute(
+            "SELECT name, sql FROM sqlite_master WHERE type='index'"
+        )
+    }
+    assert "artifact_id" in sql["attributes_text_cov"]
+    assert "artifact_id" in sql["attributes_numeric_cov"]
+    assert "attributes_text" not in sql, "the non-covering index must be dropped"
+    assert "attributes_numeric" not in sql
+
+
+def test_optimize_runs_analyze(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    store.optimize()
+    assert store._conn.execute("SELECT count(*) FROM sqlite_stat1").fetchone()[0] > 0

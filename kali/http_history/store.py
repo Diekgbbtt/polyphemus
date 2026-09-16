@@ -59,10 +59,10 @@ CREATE TABLE IF NOT EXISTS attributes (
     numeric_value REAL
 );
 CREATE INDEX IF NOT EXISTS attributes_artifact ON attributes (artifact_id);
-CREATE INDEX IF NOT EXISTS attributes_text
-    ON attributes (side, namespace, key, text_value);
-CREATE INDEX IF NOT EXISTS attributes_numeric
-    ON attributes (side, namespace, key, numeric_value);
+CREATE INDEX IF NOT EXISTS attributes_text_cov
+    ON attributes (side, namespace, key, text_value, artifact_id);
+CREATE INDEX IF NOT EXISTS attributes_numeric_cov
+    ON attributes (side, namespace, key, numeric_value, artifact_id);
 CREATE VIRTUAL TABLE IF NOT EXISTS flows_fts USING fts5 (
     artifact_id UNINDEXED,
     url,
@@ -98,6 +98,10 @@ class HttpHistoryStore:
         self._lock = threading.RLock()
         self._conn = sqlite3.connect(self.db_path, check_same_thread=False)
         self._conn.row_factory = sqlite3.Row
+        # Due processi scrivono lo stesso file di progetto (l'addon registra,
+        # il MCP purga/fa retention): senza busy_timeout il secondo incassa un
+        # "database is locked" immediato invece di attendere il writer.
+        self._conn.execute("PRAGMA busy_timeout=5000")
         self._migrate()
 
     # --- schema ---------------------------------------------------------------
@@ -107,6 +111,11 @@ class HttpHistoryStore:
             self._conn.execute("PRAGMA journal_mode=WAL")
             self._conn.execute("PRAGMA synchronous=NORMAL")
             self._conn.executescript(_SCHEMA)
+            # hardening #196: i due indici non covering restano su file
+            # esistenti finche non li si rimuove; il rimpiazzo covering e gia
+            # creato da _SCHEMA. DROP IF EXISTS e un no-op sui file nuovi.
+            self._conn.execute("DROP INDEX IF EXISTS attributes_text")
+            self._conn.execute("DROP INDEX IF EXISTS attributes_numeric")
             existing = self._conn.execute(
                 "SELECT value FROM meta WHERE key='schema_version'"
             ).fetchone()
@@ -344,6 +353,11 @@ class HttpHistoryStore:
     def close(self) -> None:
         with self._lock:
             self._conn.close()
+
+    def optimize(self) -> None:
+        """Refresh the query planner statistics (SQLite ANALYZE)."""
+        with self._lock:
+            self._conn.execute("ANALYZE")
 
     # --- retention / purge -----------------------------------------------------
 
