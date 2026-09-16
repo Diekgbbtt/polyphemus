@@ -532,7 +532,10 @@ def test_C38_assigner_skill_is_single_sourced():
     skill = assigner._load_assigner_skill()
     assert skill
     assert not skill.startswith("---")                      # frontmatter stripped
-    assert skill is skills.skill_for("analysis/assigner")   # single source
+    # Single source, compared by CONTENT: `_load_assigner_skill` asks `skill_for`
+    # with a fallback, and the cache is keyed by `(name, fallback)`, so the two
+    # calls are distinct-but-equal objects even while both read the one mount.
+    assert skill == skills.skill_for("analysis/assigner")   # single source
     # the in-process cache is what keeps the system prefix byte-stable across a run,
     # so the provider prompt-cache survives every chunk of that run
     assert assigner._load_assigner_skill() is skill

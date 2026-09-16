@@ -17,8 +17,15 @@ from polymerhus.analysis.analyser_types import AggregatesProposal, L1DeltaBatch
 from polymerhus.analysis.l1_types import L0Ref
 from polymerhus.app.clients import neo4j_client
 from polymerhus.recon.domain.types import AssetDelta
+from tests.conftest import neo4j_live
 
 BU = "https://dec.example"
+
+# The DEC-07 mechanisation seeds through the real sole-writers and counts in the
+# real graph, so it needs the live database. Gate on reachability (the same
+# `neo4j_live()` the sibling live modules use) rather than erroring out with a
+# driver traceback on a clean-env run; DEC-06 above is pure and stays ungated.
+_LIVE_NEO4J = pytest.mark.skipif(not neo4j_live(), reason="live neo4j not reachable")
 
 
 # --- AST-DEC-06: a provider call is time-bounded ------------------------------
@@ -122,6 +129,7 @@ def project():
     _cleanup(pid)
 
 
+@_LIVE_NEO4J
 def test_AST_DEC_07_two_consecutive_passes_write_no_new_identities(project):
     """A replayed pass over an identical surface converges rather than duplicating.
     This is what makes conflation safe: a coalesced cursor costs one extra pass, and
@@ -166,6 +174,7 @@ def test_AST_DEC_07_two_consecutive_passes_write_no_new_identities(project):
     assert _counts(project) == after_first          # twice yields the same one
 
 
+@_LIVE_NEO4J
 def test_AST_DEC_07b_a_pass_over_an_empty_surface_records_what_it_observed(project):
     """The census must distinguish 'read nothing' from 'read surface and judged
     nothing' - the whole basis of the drain's evidence bar (DQ2b)."""
