@@ -20,6 +20,8 @@ ALLOWED_OVERRIDES = frozenset(
         "query",
         "header",
         "headers",
+        "remove_header",
+        "remove_headers",
         "cookie",
         "cookies",
         "body",
@@ -105,6 +107,14 @@ def apply_overrides(
     if cookie_overrides:
         cookies.update({str(k): str(v) for k, v in cookie_overrides.items()})
         _set_header(headers, "cookie", _cookie_header([NameValue(name=k, value=v) for k, v in cookies.items()]))
+
+    removals = [
+        *(overrides.get("remove_header") or []),
+        *(overrides.get("remove_headers") or []),
+    ]
+    if removals:
+        lowered = {str(name).lower() for name in removals}
+        headers = [(k, v) for k, v in headers if k.lower() not in lowered]
 
     new_body = body or b""
     if "body" in overrides:

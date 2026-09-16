@@ -68,3 +68,19 @@ def test_source_request_is_not_mutated():
     apply_overrides(request, b"", {"method": "DELETE", "query": {"q": "x"}})
     assert request.method == "POST"
     assert request.url == "https://target.example/search?q=1"
+
+
+def test_remove_header_drops_the_named_headers():
+    plan = apply_overrides(_request(), b"", {"remove_headers": ["authorization", "X-Keep"]})
+    names = [name.lower() for name, _ in plan.headers]
+    assert "authorization" not in names
+    assert "x-keep" not in names
+    assert "content-type" in names
+    assert plan.replay_kind == "mutated"
+
+
+def test_remove_header_runs_after_setting_headers():
+    plan = apply_overrides(
+        _request(), b"", {"headers": {"x-new": "1"}, "remove_header": ["x-new"]}
+    )
+    assert [name.lower() for name, _ in plan.headers].count("x-new") == 0
