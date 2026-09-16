@@ -26,8 +26,10 @@ the terminal nodes always render the binary envelope.
 """
 from __future__ import annotations
 
+import json
 from typing import Callable, Literal
 
+from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
 from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
@@ -114,7 +116,9 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
     before_obs = len(hc.log.raw_observations)
     tools = runner_react_tools(hc.exec_fn, hc.memory_store, hc.spec_id, hc.log,
                                hc.variant_ref or "", graph_view_fn=hc.graph_view_fn,
-                               capture_context=hc.capture_context)
+                               capture_context=hc.capture_context,
+                               replay_fn=hc.replay_fn,
+                               project_id=getattr(hc.capture_context, "project_id", "") or "")
     harness_mw = build_harness_middleware(log=hc.log,
                                           variant_ref=hc.variant_ref or "",
                                           cap=hc.cap)
@@ -203,7 +207,7 @@ TRIAGER_SYSTEM = POD_TRIAGER_SYSTEM
 
 def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
                        kb_fn=None, kb_lookup=None, graph_view_fn=None,
-                       capture_context=None):
+                       capture_context=None, replay_fn=None, project_id=""):
     """The Runner's bound-tool set (D84-16/27): `exec` (raw-recording terminal),
     `note` (pod memory write/read), the single `query_lightrag` KB tool from the
     lightrag branch (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` gate
@@ -223,6 +227,16 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     ]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
+    if replay_fn is not None:
+        @tool
+        def replay(artifact_id: str, overrides: dict | None = None) -> str:
+            """Replay a recorded request by artifact_id applying the declared
+            deterministic overrides, and return the new artifact's status. Use
+            this when the spec carries payload_vector_space.request_ref instead
+            of authoring a curl by hand."""
+            return json.dumps(replay_fn(project_id, artifact_id, overrides or {}))
+
+        tools.append(replay)
     return tools
 
 

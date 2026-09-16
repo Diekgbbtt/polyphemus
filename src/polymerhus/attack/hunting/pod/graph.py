@@ -240,7 +240,7 @@ def _variant_order(state: PodState) -> int:
 
 def _harness_ctx(state: PodState, *, exec_fn, memory_store,
                  model_factory, spec_id, graph_view_fn=None,
-                 project_id=None) -> PodHarnessContext:
+                 project_id=None, replay_fn=None) -> PodHarnessContext:
     """The run-scoped harness the production seams read (T7): exec/store/log/
     variant/model factory, with the memory key on the #164 spec id (D84-34) -
     resolved through `_mem_key`, the SAME value `bind_pod_session` threads as
@@ -266,13 +266,15 @@ def _harness_ctx(state: PodState, *, exec_fn, memory_store,
         spec_id=mem_key, log=state.get("log"),
         variant_ref=state.get("current_variant_ref", "v0"),
         model_factory=model_factory, cap=HUNT_POD_MAX_TOOL_CALLS,
-        graph_view_fn=graph_view_fn, capture_context=capture_context)
+        graph_view_fn=graph_view_fn, capture_context=capture_context,
+        replay_fn=replay_fn)
 
 
 def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                     runner_middleware=(), triager_middleware=(),
                     memory_store=None, model_factory=None,
-                    project_id=None, spec_id=None, graph_view_fn=None):
+                    project_id=None, spec_id=None, graph_view_fn=None,
+                    replay_fn=None):
     """Compile the pod subgraph, injecting the side-effecting collaborators:
 
     - `exec_fn(command, timeout_s) -> ExecResult` - the terminal (required).
@@ -380,7 +382,8 @@ def build_pod_graph(*, exec_fn, runner_step_fn=None, triager_fn=None,
                                       model_factory=model_factory,
                                       spec_id=spec_id,
                                       graph_view_fn=graph_view_fn,
-                                      project_id=project_id)):
+                                      project_id=project_id,
+                                      replay_fn=replay_fn)):
                 step = await _await_seam(runner_step_fn, spec, delta,
                                          state.get("tool_calls", 0))
             if not isinstance(step, RunnerStep):

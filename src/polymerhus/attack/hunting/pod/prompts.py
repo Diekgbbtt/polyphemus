@@ -50,7 +50,9 @@ committing: an assumption the evidence contradicts stops the stretch as \
 infeasible; one you cannot confirm but which is not contradicted holds \
 (default-open). Establish target reachability and that the capability or \
 instrument is obtainable (install it if needed). Hold the authorization level \
-and the request context from the spec.
+and the request context from the spec. If the spec carries \
+`payload_vector_space.request_ref`, do not author a curl: call the `replay` tool \
+with the declared mutations and read the status it returns.
 - P1 Concretization (KB-augmented) - envision the target unit's failure modes; \
 build the SUCCESS and FAILURE symptom space for every variant, each \
 operationalized into a concrete observable (status, body marker, timing delta). \

@@ -460,10 +460,12 @@ async def _default_pod_builder(spec, *, run_id, project_id, memory_store, spec_i
     Q13). The pod never raises into the run (IA-4); the surfer's wrapper adds
     the export-delivery ring on top."""
     from polymerhus.attack.hunting.pod.pod import arun_pod  # noqa: PLC0415
+    from polymerhus.app.clients.kali_http_history import default_replay_fn  # noqa: PLC0415
 
     return await arun_pod(
         spec, run_id=run_id, memory_store=memory_store,
         project_id=project_id, spec_id=spec_id,
+        replay_fn=default_replay_fn,
     )
 
 

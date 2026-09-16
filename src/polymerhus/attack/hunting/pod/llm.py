@@ -71,6 +71,11 @@ class PodHarnessContext:
     # #196: the capture context propagated to the Kali exec surface, so the
     # HTTP artifacts a probe produces are correlated with this pod run.
     capture_context: Any = None
+    # #196: the deterministic replay seam the EXECUTING runner binds as its
+    # `replay` tool (a spec carrying `request_ref` is executed through it).
+    # Absent (None) -> no `replay` tool is bound, so an existing pod is
+    # byte-for-byte unchanged.
+    replay_fn: Any = None
 
 
 def _pod_ctx():
