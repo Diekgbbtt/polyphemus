@@ -185,3 +185,31 @@ def test_projection_covers_tls_and_timing_namespaces(tmp_path):
     assert store.search(
         [{"side": "context", "namespace": "core", "key": "exec_id", "op": "eq", "value": "e1"}]
     ).artifacts
+
+
+def test_absent_operator_matches_transactions_without_the_attribute(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    with_x = _artifact("http_01J0000000000000000000000A", created_at=1000.0,
+                       req_headers=[["x-forwarded-for", "127.0.0.1"]])
+    without_x = _artifact("http_01J0000000000000000000001A", created_at=1001.0,
+                          req_headers=[["content-type", "application/json"]])
+    for artifact, bodies in (with_x, without_x):
+        store.record(artifact, bodies=bodies)
+
+    page = store.search([
+        {"side": "request", "namespace": "header", "key": "x-forwarded-for",
+         "op": "absent"},
+    ])
+    assert [a.artifact_id for a in page.artifacts] == [
+        "http_01J0000000000000000000001A"
+    ]
+
+
+def test_absent_does_not_require_a_value(tmp_path):
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    _seed(store)
+    page = store.search([
+        {"side": "request", "namespace": "header", "key": "x-not-sent",
+         "op": "absent"},
+    ])
+    assert len(page.artifacts) == 3

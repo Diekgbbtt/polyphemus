@@ -27,7 +27,7 @@ _PROJECT_ID_RE = re.compile(r"^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$")
 
 ALLOWED_SIDES = frozenset({"request", "response", "connection", "context", "timing"})
 ALLOWED_NAMESPACES = frozenset({"core", "header", "cookie", "query", "form", "body", "tls"})
-ALLOWED_OPS = frozenset({"eq", "contains", "prefix", "gte", "lte"})
+ALLOWED_OPS = frozenset({"eq", "contains", "prefix", "gte", "lte", "absent"})
 MIN_LIMIT, MAX_LIMIT = 1, 200
 
 _SCHEMA = """
@@ -336,6 +336,14 @@ class HttpHistoryStore:
                 raise ValueError(f"unknown op {op!r}")
             if namespace == "header":
                 key = key.lower()
+            if op == "absent":
+                clauses.append(
+                    "NOT EXISTS (SELECT 1 FROM attributes a "
+                    "WHERE a.artifact_id = f.artifact_id "
+                    "AND a.side = ? AND a.namespace = ? AND a.key = ?)"
+                )
+                params.extend([side, namespace, key])
+                continue
             clause, clause_params = _op_sql(op, value)
             clauses.append(
                 "EXISTS (SELECT 1 FROM attributes a WHERE a.artifact_id = f.artifact_id "
