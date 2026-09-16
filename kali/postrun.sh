@@ -102,6 +102,22 @@ if command -v iptables >/dev/null 2>&1; then
     iptables -A FORWARD -s 172.30.0.0/24 -p udp --dport 443 -j REJECT 2>/dev/null || true
 fi
 
+# --- Non-interactive login shells must stay silent ---------------------------
+# Defense in depth for the exec runner's PATH fix (`default_runner` now uses
+# `bash -c`, a NON-login shell, so the login profile no longer resets PATH -
+# see kali/http_history/service.py). Any remaining login shell (an operator
+# running `bash -lc` by hand, a future runner) still sources
+# /etc/profile.d/zz-redamon-motd.sh from the redamon base image, which prints
+# "⚡ redagraph - tenant-scoped graph CLI" on stdout even without a TTY and
+# lands in front of every tool's output, polluting the parsers' input. The
+# guard returns early when PS1 is unset, i.e. for any non-interactive shell.
+# Idempotent (marker check) and best-effort like everything else here: a
+# read-only /etc must never abort the composite entrypoint (I1).
+MOTD=/etc/profile.d/zz-redamon-motd.sh
+if [ -f "$MOTD" ] && ! grep -q POLYPHEMUS_NONINTERACTIVE_GUARD "$MOTD" 2>/dev/null; then
+  sed -i '1i [ -z "$PS1" ] && return 0  # POLYPHEMUS_NONINTERACTIVE_GUARD' "$MOTD" 2>/dev/null || true
+fi
+
 echo "[postrun] gap-fill complete"
 echo "[postrun] http-history bootstrap complete (idempotent)"
 exit 0

@@ -53,7 +53,18 @@ def default_runner(
 ) -> ExecOutcome:
     workdir = f"/work/{session_id}"
     os.makedirs(workdir, exist_ok=True)
-    argv = ["bash", "-lc", command]
+    # NON-login shell, deliberately. `bash -lc` makes the login profile
+    # (/etc/profile + /etc/profile.d/*) re-derive PATH, which DISCARDS the tools
+    # path the entrypoint exports (`/opt/localbin:/root/go/bin:/opt/venv/bin:...`)
+    # and leaves the system PATH: `httpx` then resolves to the Python httpx CLI
+    # (`Error: No such option: -u`) and `katana`/`naabu`/`subfinder`/... are not
+    # found at all. The base image also prints a MOTD banner on every login
+    # shell, including non-interactive ones, which lands on the stdout of every
+    # executed tool command and pollutes the parsers' input. Both were observed
+    # live on 2026-09-16 (a real recon run: `httpx` degraded with 0 assets,
+    # `katana` skipped for lack of BaseURLs). `bash -c` inherits the MCP
+    # process environment as intended.
+    argv = ["bash", "-c", command]
     if namespace:
         argv = ["ip", "netns", "exec", namespace, *argv]
     start = time.time()
