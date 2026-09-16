@@ -58,10 +58,12 @@ def _sanitize_output(text: str) -> str:
 
 
 def _error_payload(exc: Exception) -> dict:
-    from kali.http_history.service import NotFoundError
+    from kali.http_history.service import BodyUnavailableError, NotFoundError
 
     if isinstance(exc, NotFoundError):
         return {"error": "not_found", "detail": str(exc)}
+    if isinstance(exc, BodyUnavailableError):
+        return {"error": "body_unavailable", "detail": str(exc)}
     return {"error": "invalid_request", "detail": str(exc)}
 
 

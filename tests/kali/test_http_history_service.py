@@ -188,3 +188,41 @@ def test_purge_project_removes_everything(tmp_path):
     result = service.purge_project("proj-1")
     assert result["artifacts_removed"] == 1
     assert service.search("proj-1")["summaries"] == []
+
+
+from kali.http_history.service import BodyUnavailableError
+
+
+def test_replay_refuses_a_baseline_whose_body_is_missing(tmp_path):
+    flow = FakeFlow(
+        request=FakeMessage(
+            method="POST", url="https://target.example/upload", content=b"0123456789"
+        ),
+        response=FakeMessage(status=200, reason="OK"),
+    )
+    artifact, bodies = normalize_flow(
+        flow,
+        project_id="proj-1",
+        capture_context=CaptureContext(exec_id="e1"),
+        artifact_id="http_01J0000000000000000000000A",
+        max_body_bytes=1,
+    )
+    assert artifact.request.capture_state == "omitted"
+    assert bodies == {}
+    HttpHistoryStore(tmp_path, "proj-1").record(artifact, bodies)
+
+    service = _service(tmp_path)
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    with pytest.raises(BodyUnavailableError) as excinfo:
+        service.replay("proj-1", artifact.artifact_id, {}, sender=_fake_sender(store))
+    assert "omitted" in str(excinfo.value)
+
+
+def test_replay_still_accepts_a_bodyless_baseline(tmp_path):
+    _seed(tmp_path)
+    service = _service(tmp_path)
+    store = HttpHistoryStore(tmp_path, "proj-1")
+    result = service.replay(
+        "proj-1", "http_01J0000000000000000000000A", {}, sender=_fake_sender(store)
+    )
+    assert result["replay_kind"] == "baseline"

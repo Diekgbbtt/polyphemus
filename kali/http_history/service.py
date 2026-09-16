@@ -31,6 +31,10 @@ class NotFoundError(LookupError):
     """Project-scoped lookup/replay missed (also covers cross-project access)."""
 
 
+class BodyUnavailableError(ValueError):
+    """The recorded request declares a body whose bytes are not in the store."""
+
+
 @dataclass
 class ExecOutcome:
     stdout: str
@@ -161,6 +165,15 @@ class HttpHistoryService:
         if baseline is None:
             raise NotFoundError(f"artifact {artifact_id!r} not found in project {project_id!r}")
         raw_body = store.get_body(baseline.request.body_ref)
+        if baseline.request.body_size and raw_body is None:
+            raise BodyUnavailableError(
+                f"replay refused for {artifact_id!r}: the recorded request declares "
+                f"a {baseline.request.body_size}-byte body but the bytes are "
+                f"unavailable (capture_state="
+                f"{baseline.request.capture_state!r}); replaying it would send a "
+                "request with no body. Declare an explicit `body` override to send "
+                "a bodyless variant on purpose."
+            )
         plan = apply_overrides(baseline.request, raw_body, overrides or {})
 
         context = (capture_context or CaptureContext()).model_copy(
