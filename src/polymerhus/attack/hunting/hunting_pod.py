@@ -112,6 +112,10 @@ class HuntingHttpPod:
                 interpretations=["target URL rejected"],
             )
         pvs = ((spec.get("d4_typed_base") or {}).get("payload_vector_space") or {})
+        if isinstance(pvs, dict) and pvs.get("request_ref") and (
+            pvs.get("method") or pvs.get("path")
+        ):
+            self._inline_ignored = True
         if isinstance(pvs, dict) and pvs.get("request_ref"):
             return self._run_request_ref(pvs)
         vectors = _vectors(spec)
@@ -248,6 +252,10 @@ class HuntingHttpPod:
                 continue
             if baseline_allowed is False and _allowed(status) is True:
                 symptom_seen = True
+        if getattr(self, "_inline_ignored", False):
+            interpretations.append(
+                "request_ref is present: the inline method/path were ignored"
+            )
         if symptom_seen:
             return self._envelope(
                 "symptom-confirmed", clean=True,

@@ -744,7 +744,11 @@ class ExecTool(BaseTool):
         "unbounded - you decide when to probe. PARTITION GUARD: exec never "
         "produces the hypothesis verdict - the pod remains the only source of "
         "experimental evidence for the committed hypothesis; exec results only "
-        "inform your reasoning, never the committed hypothesis's evidence."
+        "inform your reasoning, never the committed hypothesis's evidence. If "
+        "the spec's payload_vector_space carries a request_ref, do NOT re-create "
+        "that request by hand here: a hand-written curl loses the replay lineage "
+        "(derived_from / replay_kind stay null and the artifact looks like "
+        "original traffic) - the pod's replay path is what preserves it."
     )
     args_schema: type[BaseModel] = ExecArgs
 
@@ -802,9 +806,11 @@ class HttpHistorySearchTool(BaseTool):
         "Search this project's recorded HTTP request/response history. Filters "
         "are conjunctive: {side, namespace, key, op, value} with side in "
         "request|response|connection|context|timing, namespace in core|header|"
-        "cookie|query|form|body|tls, op in eq|contains|prefix|gte|lte. Returns "
-        "sanitized summaries (no bodies, no secrets). Use the returned "
-        "artifact_id as payload_vector_space.request_ref to replay a baseline."
+        "cookie|query|form|body|tls, op in eq|contains|prefix|gte|lte|absent "
+        "(absent = the transaction does NOT carry that key: use it for the "
+        "control group). Returns sanitized summaries: a list of candidates, not "
+        "a verification. Use the returned artifact_id as "
+        "payload_vector_space.request_ref to replay a baseline."
     )
     args_schema: type[BaseModel] = HttpHistorySearchArgs
 
@@ -836,8 +842,11 @@ class HttpHistoryGetTool(BaseTool):
     name: str = "get_http_artifact"
     description: str = (
         "Fetch one recorded HTTP transaction by artifact_id from this project. "
-        "The view is sanitized: authorization/cookie values are redacted and no "
-        "body content is returned. Cross-project ids are not found."
+        "Use it to inspect a candidate before committing it as a request_ref "
+        "(header names are visible here, values of sensitive headers are "
+        "redacted) and to check request.body.capture_state: only `captured` is "
+        "replayable. The view is sanitized: no body content is returned. "
+        "Cross-project ids are not found."
     )
     args_schema: type[BaseModel] = HttpHistoryGetArgs
 
