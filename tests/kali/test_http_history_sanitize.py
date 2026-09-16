@@ -63,3 +63,23 @@ def test_sanitized_summary_is_a_compact_safe_projection():
 def test_sanitize_never_exposes_body_identity_or_content():
     view = sanitize_artifact(_artifact())
     assert "body_ref" not in json.dumps(view)
+
+
+from kali.http_history.models import CaptureContext, HttpArtifact
+from kali.http_history.sanitize import sanitize_artifact
+
+
+def test_capture_context_is_projected_explicitly():
+    artifact = HttpArtifact(
+        artifact_id="http_01J0000000000000000000000A",
+        project_id="proj-1",
+        capture_context=CaptureContext(
+            exec_id="e1", session_id="s1", source_ip="172.30.0.2"
+        ),
+    )
+    view = sanitize_artifact(artifact)
+    assert set(view["capture_context"]) == {
+        "session_id", "run_id", "spec_id", "variant_ref", "exec_id",
+        "derived_from", "replay_kind",
+    }
+    assert "172.30.0.2" not in str(view)

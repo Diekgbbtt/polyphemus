@@ -94,13 +94,26 @@ def _message_view(message, *, request: bool) -> dict:
     return view
 
 
+_EXPOSED_CONTEXT_FIELDS = (
+    "session_id", "run_id", "spec_id", "variant_ref", "exec_id",
+    "derived_from", "replay_kind",
+)
+
+
+def _context_view(artifact: HttpArtifact) -> dict:
+    """Explicit projection: anything not listed here never crosses the
+    boundary (`source_ip` is the internal namespace address and stays out)."""
+    return {name: getattr(artifact.capture_context, name)
+            for name in _EXPOSED_CONTEXT_FIELDS}
+
+
 def sanitize_artifact(artifact: HttpArtifact) -> dict:
     """A full sanitized record (no body content, no body reference)."""
     return {
         "schema_version": artifact.schema_version,
         "artifact_id": artifact.artifact_id,
         "project_id": artifact.project_id,
-        "capture_context": artifact.capture_context.model_dump(),
+        "capture_context": _context_view(artifact),
         "request": _message_view(artifact.request, request=True),
         "response": None
         if artifact.response is None
