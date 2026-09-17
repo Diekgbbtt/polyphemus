@@ -142,13 +142,23 @@ SKILL_INDEX_HEADER = (
 )
 
 
-def render_skill_index(names) -> str:
+def render_skill_index(names, project_id: str | None = None, store=None) -> str:
     """Render the L1 index for the bound skill names: the header plus one
     `- name: description` line per skill that resolves (sorted). Unknown names
-    are skipped fail-open - a stale binding never breaks the render."""
+    are skipped fail-open - a stale binding never breaks the render.
+
+    Resolution is the SAME store seam the loader uses (B3): the per-project
+    bundle first (a project-authored skill such as `authn`, whose bundle is the
+    only copy), then the shared catalogue. A skill whose frontmatter does not
+    resolve - including a project skill whose bundle is NOT at its designed
+    data-dir location `<data_root>/<project_id>/skills/<name>/SKILL.md` - is
+    simply not collected into the index, so it never renders and never advertises
+    itself as available. Without a `project_id` the render is catalogue-only
+    (every pre-existing site unchanged)."""
+    seam = store if store is not None else SkillStore()
     lines = [SKILL_INDEX_HEADER]
     for name in sorted(set(names)):
-        meta = skill_meta(name)
+        meta = seam.meta(name, project_id=project_id)
         description = meta.get("description") if isinstance(meta, dict) else None
         if not isinstance(description, str) or not description:
             continue
@@ -179,20 +189,41 @@ def _bound_skills(context) -> list:
     return [n for n in names if isinstance(n, str) and n]
 
 
-def skill_index_middleware():
+def _context_project_id(context):
+    """The bound project id from the native invocation context - the same
+    `context=` mapping that carries `skills` (`context={"skills": [...],
+    "project_id": "..."}`). Absent or unshaped -> None, so the index stays
+    catalogue-only. This is what makes a project-authored skill (a bundle that
+    exists only under `<data_root>/<project_id>/skills/`) render its frontmatter
+    description into the system prompt."""
+    if isinstance(context, dict):
+        project_id = context.get("project_id")
+    else:
+        project_id = getattr(context, "project_id", None)
+    return project_id if isinstance(project_id, str) and project_id else None
+
+
+def skill_index_middleware(store=None):
     """Build the shared L1 skill-index middleware (Q3): a `dynamic_prompt`
     that appends `render_skill_index` for the invocation context's bounded
     skill set to the turn's system message. No bound skills -> the system
-    message passes through byte-identical. Import performs no I/O."""
+    message passes through byte-identical. When the context also carries a
+    `project_id`, the index resolves per-project bundles first, so a
+    project-authored skill (e.g. `authn`) is collected only when its bundle is
+    at the designed data-dir location and renders its own frontmatter
+    description. Import performs no I/O."""
     from langchain.agents.middleware import dynamic_prompt  # noqa: PLC0415
 
     @dynamic_prompt
     def _skill_index(request) -> str:
-        names = _bound_skills(getattr(getattr(request, "runtime", None), "context", None))
+        context = getattr(getattr(request, "runtime", None), "context", None)
+        names = _bound_skills(context)
         base = request.system_prompt or ""
         if not names:
             return base
-        index = render_skill_index(names)
+        index = render_skill_index(
+            names, project_id=_context_project_id(context), store=store
+        )
         return f"{base}\n\n{index}" if base else index
 
     return _skill_index
@@ -527,6 +558,27 @@ class SkillStore:
                     name,
                 )
         return skill_for(name, fallback=fallback)
+
+    def meta(self, name: str, project_id: str | None = None) -> dict:
+        """The skill's data section (parsed frontmatter), resolved the same way
+        `read` resolves the body: the per-project bundle first, then the shared
+        catalogue. A project bundle that is absent, unreadable, or not at its
+        designed location falls through to the catalogue; a name with neither
+        returns `{}`. Never raises - the index render depends on this."""
+        if project_id is not None:
+            try:
+                path = self._bundle_dir(project_id, name) / "SKILL.md"
+                meta = _parse_frontmatter(path.read_text(encoding="utf-8"))
+                if meta is not None:
+                    return meta
+            except (OSError, ValueError):
+                logger.warning(
+                    "skill store: unreadable project bundle frontmatter for "
+                    "%s/%s; falling back to the shared catalogue",
+                    project_id,
+                    name,
+                )
+        return skill_meta(name)
 
     # -- writes: validate, then one atomic whole-file rewrite ------------------
 

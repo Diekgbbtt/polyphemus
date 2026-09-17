@@ -424,3 +424,88 @@ def test_session_turn_carries_bound_skill_index_to_model(tmp_path, monkeypatch):
     systems = [m.content for m in received if isinstance(m, SystemMessage)]
     assert systems  # the middleware composed a system message from the None base
     assert any("- demo-skill: Demo discipline." in s for s in systems)
+
+
+# --- project-authored skills in the L1 index (the authn bundle gate) ---
+
+def _write_project_bundle(root, project_id, name, description):
+    """Write a per-project bundle FILE directly (the external author's output),
+    NOT through `write_skill` - a project-authored skill such as `authn` has no
+    bootstrapped catalogue metadata, so it lands as a plain file at the designed
+    data-dir location."""
+    bundle = root / project_id / "skills" / name / "SKILL.md"
+    bundle.parent.mkdir(parents=True, exist_ok=True)
+    bundle.write_text(
+        f"---\nname: {name}\ndescription: {description}\nmetadata:\n  version: '1.0'\n"
+        f"---\n\n# {name}\n",
+        encoding="utf-8",
+    )
+
+
+def test_render_skill_index_collects_a_project_skill_only_when_its_bundle_exists(
+    tmp_path,
+):
+    store = skills.SkillStore(root_dir=tmp_path / "data")
+    _write_project_bundle(
+        tmp_path / "data", "proj-1", "authn", "Per-project authentication procedure."
+    )
+
+    collected = skills.render_skill_index(
+        ["authn"], project_id="proj-1", store=store
+    )
+    assert "- authn: Per-project authentication procedure." in collected
+
+    # A project with no bundle at the designed location collects nothing.
+    assert "authn" not in skills.render_skill_index(
+        ["authn"], project_id="proj-2", store=store
+    )
+    # Catalogue-only resolution never invents a project-only skill either.
+    assert "authn" not in skills.render_skill_index(["authn"], store=store)
+
+
+def test_index_middleware_renders_the_project_authn_frontmatter(tmp_path):
+    import asyncio
+
+    from langchain_core.language_models import BaseChatModel
+
+    _write_project_bundle(
+        tmp_path / "data", "proj-1", "authn", "Per-project authentication procedure."
+    )
+    store = skills.SkillStore(root_dir=tmp_path / "data")
+    mw = skills.skill_index_middleware(store=store)
+
+    class _M(BaseChatModel):
+        @property
+        def _llm_type(self) -> str:
+            return "fake"
+
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            from langchain_core.outputs import ChatGeneration, ChatResult
+            from langchain_core.messages import AIMessage
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="ok"))])
+
+    async def _run(context):
+        seen = {}
+
+        async def _handler(request):
+            seen["system"] = request.system_message.content if request.system_message else None
+            from langchain.agents.middleware.types import ModelResponse
+            from langchain_core.messages import AIMessage
+            return ModelResponse(result=[AIMessage(content="ok")])
+
+        from langchain.agents.middleware.types import ModelRequest
+        req = ModelRequest(
+            model=_M(), messages=[], system_prompt="base",
+            state={"messages": []},
+            runtime=type("R", (), {"context": context})(),
+        )
+        await mw.wrap_model_call(req, _handler)
+        return seen["system"]
+
+    rendered = asyncio.run(
+        _run({"skills": ["authn"], "project_id": "proj-1"})
+    )
+    assert "- authn: Per-project authentication procedure." in rendered
+
+    unbound = asyncio.run(_run({"skills": ["authn"], "project_id": "proj-2"}))
+    assert "authn" not in unbound  # no bundle at the designed location: not collected
