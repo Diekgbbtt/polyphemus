@@ -569,12 +569,21 @@ Due cause distinte, entrambe silenziose.
 
 **Evidenza (2026-09-17).**
 
-- E2E live crawl-only, `katana -d 3`, progetto `d1cc4864-0ab0-433a-af57-253db7288e68`,
-  run `eb31545c-a103-420d-a516-d8a5339ff06d`: `httpx` success (318 ms, 1 ref), `katana`
-  success (10.262 s, 2 ref), `stats.capture = {sent: true, refs: 1|2, warning: null}`,
-  3 artifact trovati per `context/run_id`, replay con mutazione dichiarata
-  (`X-Polymerhus-Replay-eb31545c`) → **200** dal target. Delta invariato: `total=8 kept=8
-  dropped=0 collected=1 unexplained=0`, gate control positivo.
+- **Accettazione sui commit congelati** (`afdd2a1`) - E2E live crawl-only, `katana -d 3`,
+  progetto `81aa8c04-1849-4255-a6b3-b9dc8d92cc33`, run
+  `ef27ec78-dca0-4f17-95bb-749d5e76e53a`, wall 13.9 s: `httpx` success (637 ms, 1 ref),
+  `katana` success (10.613 s, 2 ref), `stats.capture = {sent: true, refs: 1|2,
+  warning: null}` per entrambi i job; 3 artifact per `context/run_id`
+  (`http_01M2QEQ7DC6JM96BB3JFSFR20W` GET `/` 200 per httpx,
+  `http_01M2QEQ9P44GT9DYC8MQC95A7C` GET `/robots.txt` 200 e
+  `http_01M2QEQ9PB94M5JFA1A54PZRM2` GET `/` 200 per katana), replay
+  `http_01M2QEQMSDA7EMRQ6GEZMVEJPG` dalla baseline httpx con mutazione dichiarata
+  (`X-Polymerhus-Replay-ef27ec78`) → **200** dal target. Delta invariato: `total=8 kept=8
+  dropped=0 collected=1 unexplained=0`, gate control positivo. Orchestratore: 1 attore, 0
+  turni.
+- Prima esecuzione live dopo il fix (progetto `d1cc4864-0ab0-433a-af57-253db7288e68`, run
+  `eb31545c-a103-420d-a516-d8a5339ff06d`): `httpx` 318 ms / 1 ref, `katana` 10.262 s / 2 ref,
+  stessi esiti di cattura e replay → 200.
 - Corroborazione **black-box** (stesso subset via API, container agent): run
   `235a15dd-8498-46d5-a79e-e19199fdde52` → `httpx` success (1.033 s, `refs=1`), `katana`
   success (10.62 s, `refs=2`), entrambi `sent=true, warning=null`; 3 artifact nello store
@@ -583,6 +592,15 @@ Due cause distinte, entrambe silenziose.
 - Costo sotto proxy vs baseline registrata: `httpx` 318 ms contro ~0.6 s, `katana -d 3`
   10.262 s contro ~10.5 s — dentro il rumore; il passaggio da mitmproxy non sposta la
   durata di questi job.
+
+**Criteri di accettazione di #196, stato puntuale.**
+
+| Criterio dell'issue | Stato | Cosa manca, se manca |
+|---|---|---|
+| ogni request/response in uscita dal container kali è registrata con ampiezza HAR-like | **Parziale** | vale per il traffico **in lease** (`project_id` presente) e sulle sole porte **80/443** (`REDIRECT`): un `execute_command` senza `project_id`, o un job su porta non standard, non è registrato. È una condizione dichiarata, non un silenzio |
+| gli artifact sono interrogabili per qualunque attributo registrato | **Attuato** | indice EAV; verificato in produzione con filtri su `context/run_id` e `context/spec_id` |
+| gli artifact sono durevoli e indirizzabili con un id stabile | **Attuato, con un tetto** | SQLite su volume + ULID; da C.11 il byte cap per progetto (1 GiB) può evacuare i più vecchi sotto pressione reale di byte |
+| una spec dell'hunter (o il pod) può riferire una richiesta sicura per identificatore | **Attuato** | filiera C.1 (`request_ref` + tool `replay`) e ora anche il percorso recon; nessun layer di validazione (#191) |
 
 **Limiti residui (dichiarati, non mitigati qui).**
 
