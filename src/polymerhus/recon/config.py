@@ -30,6 +30,26 @@ if not _KATANA_DEPTH.isdigit() or int(_KATANA_DEPTH) < 1:
     raise ValueError(f"KATANA_DEPTH must be a positive integer, got {_KATANA_DEPTH!r}")
 KATANA_DEPTH = _KATANA_DEPTH
 
+# #196 capture for recon pods: does a recon pod hand its project/run/spec
+# identity to the kali terminal, so every HTTP request the scanning phase makes
+# is recorded in the project's history store and can be reproduced later?
+#
+# ON by default, deliberately: the failure this closes is silent - a run whose
+# traffic was never recorded cannot be replayed, debugged or reproduced, and the
+# loss is discovered too late to fix. Two operational consequences are the
+# operator's to own, and both are visible rather than hidden:
+#   - each pod now egresses through a leased namespace and the recording proxy,
+#     so the target sees the proxy's TLS fingerprint (design doc, Parte B) and
+#     the crawl pays the proxy's latency;
+#   - `KALI_HTTP_NAMESPACE_POOL` bounds how many pods can be captured at once.
+#     Beyond it the exec degrades fail-open to an uncaptured run and says so in
+#     `recon_jobs.stats[].capture`, never silently.
+# Set `POD_HTTP_CAPTURE=0` in the agent environment (before the process starts -
+# the pod graph reads this at import) to turn it off for a deployment.
+POD_HTTP_CAPTURE = os.environ.get("POD_HTTP_CAPTURE", "1").strip().lower() not in (
+    "0", "false", "no", "off",
+)
+
 # steel.dev cloud-browser credential. The steel_* crawl tools drive a
 # steel.dev session via Playwright-over-CDP (see src/polymerhus/recon/crawl/steel_client.py);
 # there is NO remote MCP host URL - the tool provider is instantiated in-process.

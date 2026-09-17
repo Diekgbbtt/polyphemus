@@ -27,12 +27,13 @@ from typing import Any, Literal
 
 from polymerhus.recon.domain.types import (
     PodState, ToolInvocation, PodExport, ExecResult, AssetDelta, Observation, JobSpec,
+    CaptureContext,
 )
 from polymerhus.recon.domain.parsers import get_parser
 from polymerhus.recon.domain.parsers import graphql_parser, takeover_parser
 from polymerhus.recon.domain.findings import finding_to_observation
 from polymerhus.recon.domain.curator import curate
-from polymerhus.recon.config import MAX_POD_ITERS, EXEC_TIMEOUT_S
+from polymerhus.recon.config import MAX_POD_ITERS, EXEC_TIMEOUT_S, POD_HTTP_CAPTURE
 
 # The per-pod session context for the triager's STATEFUL turn (#94): (thread_id,
 # checkpointer). The triager NODE (which alone knows the concurrent pod instance) sets
@@ -157,6 +158,75 @@ def _call_with_optional_target_url(fn, stdout: str, target_url: str | None):
     if "target_url" in inspect.signature(fn).parameters:
         return fn(stdout, target_url=target_url)
     return fn(stdout)
+
+
+def _accepts_capture_context(fn) -> bool:
+    """True only when an exec seam explicitly declares `capture_context`.
+
+    The seam is polymorphic (`default_exec_fn` takes the kwarg; every test fake
+    takes three positional args), so the context is forwarded by signature
+    inspection rather than by convention - the same guard the hunting terminal
+    uses. A legacy fake keeps working with no edit.
+    """
+    try:
+        return "capture_context" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
+
+
+def pod_capture_context(state: PodState) -> CaptureContext | None:
+    """The #196 correlation for one recon pod's terminal call.
+
+    This is the piece that was missing: the recon pod ran its tools with no
+    capture context, so the kali service never leased a namespace, never routed
+    the traffic through the recording proxy, and nothing the recon phase asked a
+    target was recorded or reproducible.
+
+    `spec_id` carries the pod's unit of work - the input-asset discriminator the
+    pod's own session address already uses - because that is the only link
+    nothing else stores: the artifact's request attributes answer "what was
+    asked", `session_id` answers "in which run/phase/tool", but only `spec_id`
+    answers "which unit of work was this pod dispatched for".
+
+    Returns None (no capture requested) when the feature is killed by config or
+    the pod carries no project identity: a context-less call is the honest
+    outcome, and the service would skip the lease anyway.
+    """
+    if not POD_HTTP_CAPTURE:
+        return None
+    project_id = state.get("project_id") or ""
+    if not project_id:
+        return None
+    return CaptureContext(
+        project_id=project_id,
+        run_id=state.get("run_id") or "",
+        spec_id=_pod_asset_discriminator(state.get("input_asset") or {}),
+        session_id=state.get("session_id") or "",
+    )
+
+
+def _capture_stats(
+    state: PodState, exec_result: ExecResult | None, *, sent: bool
+) -> dict:
+    """The pod's capture outcome, for `recon_jobs.stats`.
+
+    `sent=False` means the pod never asked for capture (feature off, or a seam
+    that cannot carry the context) - never the same thing as "asked and got
+    nothing". `refs=0` with `sent=True` is legitimate (a pod that made no HTTP
+    request, or one whose traffic was outside the redirected ports), so the two
+    are reported separately and a partial capture can never read as complete.
+
+    `sent` is passed in rather than carried in the graph state: this is
+    deterministic from the pod's inputs (config + project identity + whether the
+    seam can carry a context), and a declared-but-unwritten channel in `PodState`
+    is not harmless - adding one stalled the pipeline's pod fan-out entirely
+    (observed live 2026-09-17 while building this). Recomputation costs nothing.
+    """
+    return {
+        "sent": bool(sent),
+        "refs": len(getattr(exec_result, "http_artifact_refs", None) or []),
+        "warning": getattr(exec_result, "capture_warning", None),
+    }
 
 
 def fill_template(
@@ -317,6 +387,24 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
     rate_profile). configure_fn is optional - without it the configurator
     node is the deterministic command-fill only.
     """
+    # #196: resolved ONCE per graph - the seam either can carry a capture context
+    # or it cannot, and that does not change between this pod's executions.
+    capture_aware = _accepts_capture_context(exec_fn)
+
+    def capture_context_for(state: PodState) -> CaptureContext | None:
+        """The context to send with this pod's terminal call, or None."""
+        if not capture_aware:
+            return None
+        return pod_capture_context(state)
+
+    def capture_was_sent(state: PodState) -> bool:
+        """Whether this pod's terminal call DID request capture.
+
+        Recomputed where the stats are written instead of stashed in the graph
+        state: `capture_context_for` is a pure function of the pod's inputs, and
+        a new `PodState` channel that no node writes stalls the pod fan-out.
+        """
+        return capture_context_for(state) is not None
 
     def configurator(state: PodState) -> dict:
         job = state["job"]
@@ -408,7 +496,19 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
         # `default_exec_fn` before its worker spawns; injected fakes ignore it.
         token = trace_metadata_ctx().set(exec_trace_metadata(state))
         try:
-            exec_result = exec_fn(invocation.command, invocation.session_id, EXEC_TIMEOUT_S)
+            # #196: hand the pod's project/run/spec identity to the terminal so
+            # kali leases a namespace and records the HTTP traffic this tool
+            # produces. Only for a seam that can carry it; the context is None
+            # when the feature is killed by config or the pod has no identity.
+            capture = capture_context_for(state)
+            if capture is not None:
+                exec_result = exec_fn(
+                    invocation.command, invocation.session_id, EXEC_TIMEOUT_S,
+                    capture_context=capture,
+                )
+            else:
+                exec_result = exec_fn(
+                    invocation.command, invocation.session_id, EXEC_TIMEOUT_S)
         finally:
             trace_metadata_ctx().reset(token)
         return {"exec_result": exec_result}
@@ -495,6 +595,12 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
         )
         invocation = state.get("invocation")
         stats = {"command": invocation.command} if invocation is not None else None
+        # #196 capture coverage: rides the export into `recon_jobs.stats` so a
+        # run that was only partially captured can never read as complete.
+        if stats is not None:
+            stats["capture"] = _capture_stats(
+                state, state.get("exec_result"), sent=capture_was_sent(state)
+            )
         if job.endpoint_profiling:
             # #208: the reprofile pod is ONE pod for the WHOLE pass - record how
             # many endpoints it probed so the phase's lineage is recoverable from
@@ -519,6 +625,11 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
         exec_result = state.get("exec_result")
         error = exec_result.stderr if exec_result is not None else "unknown error"
         invocation = state.get("invocation")
+        stats: dict = {"command": invocation.command} if invocation is not None else {}
+        # A terminally failed pod still reports whether it was being captured:
+        # "the exec failed" and "we have no record of what it asked" are two
+        # different facts and the operator needs both.
+        stats["capture"] = _capture_stats(state, exec_result, sent=capture_was_sent(state))
         export = PodExport(
             input_asset=state["input_asset"],
             verdict="failed",
@@ -526,7 +637,7 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
             observations_merged=0,
             iterations=state.get("iteration", 0),
             error=error,
-            stats={"command": invocation.command} if invocation is not None else None,
+            stats=stats,
         )
         return {"export": export}
 
