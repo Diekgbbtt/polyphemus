@@ -50,7 +50,10 @@ case "$(printf '%s' "$CAPTURE_ENABLED" | tr '[:upper:]' '[:lower:]')" in
       # changes: the proxy verifies against its default store.
       MITM_TLS_ARGS=()
       UPSTREAM_BUNDLE="$MITM_CONFDIR/upstream-ca-bundle.pem"
-      if [ -f "$UPSTREAM_BUNDLE" ]; then
+      # Opt-in, tied to the knob: the bundle lives on the volume, so without
+      # this guard a trust decision would survive an operator removing
+      # KALI_HTTP_UPSTREAM_CA - and silently keep trusting that CA.
+      if [ -n "${KALI_HTTP_UPSTREAM_CA:-}" ] && [ -f "$UPSTREAM_BUNDLE" ]; then
         MITM_TLS_ARGS=(--set "ssl_verify_upstream_trusted_ca=$UPSTREAM_BUNDLE")
       fi
       "$MITMDUMP_BIN" \

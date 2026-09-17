@@ -64,6 +64,13 @@ def test_entrypoint_hands_the_proxy_the_upstream_bundle():
     )
     assert "ssl_verify_upstream_trusted_ca" in script
     assert "upstream-ca-bundle.pem" in script
+    # The bundle persists on the volume: it must only be honoured while the
+    # operator's knob is set, or the trust decision would outlive its removal.
+    flag_line = next(
+        line for line in script.splitlines() if "ssl_verify_upstream_trusted_ca=" in line
+    )
+    guard = script.splitlines()[: script.splitlines().index(flag_line)]
+    assert any("KALI_HTTP_UPSTREAM_CA" in line for line in guard[-4:]), guard[-4:]
 
 
 def test_kali_defaults_bound_the_store_without_age_based_deletion():
