@@ -348,7 +348,21 @@ regressione sul caso legittimo).
 ## C.3 WAF e rate limit letti come esito applicativo
 
 Vedi **B.3/R2** e **B.4 punto 1** per l'analisi completa e per ciò che resta aperto.
-**Stato: Parziale** (`a6b5d50`).
+
+**Evidenza misurata (2026-09-17), con fixture locale.** Il capture plane **registra** la difesa
+correttamente (blocco ModSecurity CRS 403 con la sua pagina; challenge 403 con `cf-ray` e
+`cf-mitigated`, più il controllo con il cookie → 200): la cattura non è il problema. Il problema
+è a valle: un run `httpx + katana` contro la challenge ha ingerito l'interstitial come superficie
+applicativa — `BaseURL` con `title = "Just a moment..."`, `Technology Cloudflare`, gli header
+`cf-ray`/`cf-mitigated` presenti come nodi ma **nessun segnale che dica "questa era una sfida"**.
+I marker sono già nello store, quindi ciò che manca è l'**interpretazione** (E.2).
+
+Fixture riutilizzabile: `docker-compose.e2e.yml` (`waf-e2e-target` + `waf-e2e-front` =
+ModSecurity CRS su `172.28.0.21:80`; `challenge-e2e-target` su `172.28.0.22:80`), con
+`tests/e2e/tcp_forwarder.py` e `tests/e2e/http_challenge_target.py`. Reportage:
+`docs/design/http-proxy-history-real-target-walkthrough.md` §8.
+
+**Stato: Parziale** (`a6b5d50`; cattura verificata, interpretazione ancora da fare).
 
 ## C.4 Impossibile costruire il gruppo di controllo (P2)
 

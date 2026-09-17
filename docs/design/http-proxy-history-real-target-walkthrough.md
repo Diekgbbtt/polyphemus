@@ -218,3 +218,73 @@ run `1217282a-000a-4512-ab4e-1053f66463d9`.
    API REST, 401/500 autentici) molto più di quanto mostri il log di un tool.
 4. Il replay su dominio + TLS funziona, con lineage verso la baseline.
 5. Restano fuori: WAF con sfida, porte non web, QUIC, e la telemetria dei tool da ripulire.
+
+---
+
+## 8. Test A — un target che si difende (WAF), con gruppo di controllo
+
+I WAF commerciali non si possono provocare su siti di terzi (nessuna autorizzazione, e senza
+poter spegnere la difesa non esiste controllo). Quindi la fixture è **locale e toggleable**,
+nell'overlay e2e — due forme di difesa, entrambe sulla porta 80 (l'unica che il `REDIRECT` del
+lease copre):
+
+| Servizio | Cos'è | IP:porta |
+|---|---|---|
+| `waf-e2e-target` + `waf-e2e-front` | **OWASP ModSecurity CRS** (929 regole caricate): blocco 403 su payload. L'engine gira unprivileged su 8080 e un forwarder TCP trasparente lo espone sulla :80, perché l'immagine rifiuta le porte privilegiate | `172.28.0.21:80` |
+| `challenge-e2e-target` | **challenge in stile vendor**: interstitial + `cf-ray` + `cf-mitigated: challenge`, e il **cookie come controllo** (stessa richiesta, sfida spenta) | `172.28.0.22:80` |
+
+### 8.1 Cosa cattura il capture plane (funziona)
+
+Quattro richieste, tutte via lease, tutte finite nello store con `capture_warning: null`:
+
+| Prova | Comando | Status | Header del WAF | Body |
+|---|---|---|---|---|
+| **blocco** | `curl 'http://172.28.0.21/?q=<script>alert(1)</script>'` | **403** | `Server: nginx` | 146 B (pagina di blocco) |
+| **controllo** (stessa fixture) | `curl 'http://172.28.0.21/?q=health'` | **200** | `Server: nginx` | 71 B (risposta dell'app) |
+| **challenge** | `curl http://172.28.0.22/` | **403** | `cf-ray`, `cf-mitigated: challenge` | 277 B (interstitial) |
+| **controllo** (cookie) | `curl -H 'Cookie: cf_clearance=1' http://172.28.0.22/` | **200** | — | 65 B (risposta dell'app) |
+
+Il capture plane non ha bisogno di sapere che sta parlando con un WAF: registra status, header e
+corpo come per qualsiasi transazione, e i marker della difesa restano **nello store**. Questo è
+il pezzo che il test A doveva dimostrare, ed è verde.
+
+### 8.2 Cosa fa il recon con una challenge (il buco, misurato)
+
+Un run `httpx + katana` contro il fixture di challenge registra:
+
+```text
+httpx   success   stats.capture {sent: true, refs: 2, warning: null}   asset 10
+katana  success   stats.capture {sent: true, refs: 3, warning: null}   asset 10
+
+grafo: 15 nodi — IP 1, BaseURL 1, Endpoint 1, Header 10, Technology 2
+  BaseURL http://172.28.0.22   server = "BaseHTTP/0.6 Python/3.12.14 cloudflare"
+                               title  = "Just a moment..."
+  Technology Cloudflare
+  Header cf-ray, cf-mitigated            <- i marker SONO nello store
+```
+
+Nessun nodo, nessun campo e nessuna observation dice **"questa era una challenge"**: la pagina
+di verifica è stata ingerita come superficie applicativa, con `title` preso dall'interstitial e
+`Cloudflare` come tecnologia. È esattamente il falso positivo che C.3/E.2 descrivono — evidenza
+che *sembra* pulita — e ora è **dimostrato con artifact**, non argomentato. I marker sono già
+persistiti (`cf-ray`, `cf-mitigated`), quindi il fix è di **interpretazione**, non di cattura.
+
+### 8.3 Come si esegue
+
+```bash
+# fixture
+docker compose --env-file <checkout>/.env -p polymerhus \
+  -f docker-compose.yml -f docker-compose.e2e.yml up -d waf-e2e-target waf-e2e-front challenge-e2e-target
+
+# blocco + controllo, dal percorso di cattura
+#   curl 'http://172.28.0.21/?q=<script>alert(1)</script>'   -> 403
+#   curl 'http://172.28.0.21/?q=health'                      -> 200
+#   curl http://172.28.0.22/                                 -> 403 + cf-ray
+#   curl -H 'Cookie: cf_clearance=1' http://172.28.0.22/     -> 200
+
+# challenge vista dal recon: seed = 172.28.0.22, jobs = [httpx, katana]
+```
+
+Il passo successivo (non fatto qui, da decidere) è E.2: etichettare la challenge — **mai**
+`symptom-confirmed` su una risposta riconosciuta come sfida, esito **inconcludente** — usando i
+marker che il capture plane già registra.

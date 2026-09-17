@@ -73,6 +73,20 @@ def test_entrypoint_hands_the_proxy_the_upstream_bundle():
     assert any("KALI_HTTP_UPSTREAM_CA" in line for line in guard[-4:]), guard[-4:]
 
 
+def test_e2e_overlay_offers_the_waf_and_challenge_fixtures():
+    """The WAF test needs a target that DEFENDS itself, in two shapes: an engine
+    that blocks (ModSecurity CRS) and a vendor-shaped challenge. Both must be
+    reachable on port 80, the only web port the lease's REDIRECT covers."""
+    root = Path(__file__).resolve().parents[2]
+    overlay = (root / "docker-compose.e2e.yml").read_text(encoding="utf-8")
+    for service in ("waf-e2e-target", "waf-e2e-front", "challenge-e2e-target"):
+        assert service in overlay, service
+    assert "owasp/modsecurity-crs" in overlay
+    assert 'LISTEN_PORT: "80"' in overlay, "the WAF front must be on the captured port"
+    assert (root / "tests/e2e/tcp_forwarder.py").is_file()
+    assert (root / "tests/e2e/http_challenge_target.py").is_file()
+
+
 def test_kali_defaults_bound_the_store_without_age_based_deletion():
     """The byte cap is ON by default (capture is on for every recon pod) and
     retention stays 0: age-based deletion would drop evidence with no disk
