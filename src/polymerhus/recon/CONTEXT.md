@@ -243,9 +243,18 @@ The store-to-skill coupling name on an account record (optional non-empty string
 _Avoid_: procedural knowledge in the store (the store carries only the label).
 
 **Auth-store tool** (`auth_store`, built by `build_auth_store_tool`):
-The one shared read/write agent tool over the store, bound to its project id at build time; its usage contract (`AUTH_STORE_CONTRACT`) rides the tool description verbatim.
+The one shared read/write agent tool over the store, bound to its project id at build time; the id defaults to the control-plane project (`config.PROJECT_ID`) resolved lazily inside the factory, so no agent harness threads identity; its usage contract (`AUTH_STORE_CONTRACT`) rides the tool description verbatim.
 Origin through this tool is always agent; every failure arrives as an in-band coded envelope (`operator_immutable`, `duplicate_auth`, `auth_invalid`, `store_unavailable`) - nothing raises into the turn.
 _Avoid_: a second tool face (one implementation, bound per project).
+
+**Auth-capable binding** (`auth_capable_binding`, `app/auth/seams.py`):
+The auth-capable extension of `skill_agent_binding`: the same L1 index middleware, skill tools, and invocation context, plus the `auth_store` tool and the per-project `authn` procedure in the bounded skill set.
+The analysis-domain agents never bind it, and the recon job-specific agents take it when #223 lands (`docs/design/browser-cli-221-decisions.md` D18).
+_Avoid_: a per-site auth binding (one seam, attached through `tools=` / `middleware=` / `context=` like every other capability).
+
+**`authn` (per-project authentication procedure)**:
+The project-authored skill (no canonical catalogue copy) that the meta skill `meta/authn-skill-writing` produces; it is collected into an auth-capable agent's L1 index only when its bundle exists at `<data_root>/<project_id>/skills/authn/SKILL.md`.
+_Avoid_: a canonical `authn` skill (a project's copy is its original).
 
 ## Invariants owned here
 
