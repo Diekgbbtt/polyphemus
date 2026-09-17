@@ -248,6 +248,21 @@ Il capture plane non ha bisogno di sapere che sta parlando con un WAF: registra 
 corpo come per qualsiasi transazione, e i marker della difesa restano **nello store**. Questo è
 il pezzo che il test A doveva dimostrare, ed è verde.
 
+### 8.1bis Riutilizzabili, non solo salvati: il replay riproduce la difesa
+
+| Baseline | Replay (con mutazione dichiarata) | Corpo | Esito |
+|---|---|---|---|
+| blocco WAF 403 (146 B) | **403**, 146 B | identico | la difesa si riproduce |
+| controllo WAF 200 (71 B) | **200**, 71 B | identico | l'app risponde |
+| challenge 403 (277 B) | **403**, 277 B | identico | l'interstitial si riproduce |
+| controllo challenge 200 (65 B) | **200**, 65 B | identico | il cookie registrato basta per l'app |
+
+Ogni replay è un artifact **nuovo** con `derived_from` verso la baseline e `replay_kind=mutated`,
+e la mutazione dichiarata (`X-Replay-Waf`) compare negli header inviati: la catena resta
+auditabile. Il motivo per cui la difesa si riproduce è che l'artifact registra **ciò che l'ha
+provocata** (l'URL con il payload, oppure l'assenza del cookie); contro un WAF con logica
+dinamica il verdetto può differire, e sarà comunque quello che l'artifact del replay mostra.
+
 ### 8.2 Cosa fa il recon con una challenge (il buco, misurato)
 
 Un run `httpx + katana` contro il fixture di challenge registra:
