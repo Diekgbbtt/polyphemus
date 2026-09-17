@@ -5,6 +5,7 @@ the layout is defined once and no module scaffolds its own directories:
 
     <data_root>/<project_id>/
     ├── skills/                 # the skills module owns this
+    ├── auth/                   # the auth module owns this (#220)
     ├── hunting/
     │   ├── orchestration/      # HuntStore
     │   ├── hunter/             # HunterMemoryStore
@@ -39,6 +40,7 @@ DATA_ROOT = Path(__file__).resolve().parents[3] / "data"
 # HERE, never a change in the module store.
 PROJECT_SCAFFOLD: tuple[str, ...] = (
     "skills",
+    "auth",
     "hunting/orchestration",
     "hunting/orchestration/hunt_configs/produced",
     "hunting/orchestration/hunt_configs/consumed",

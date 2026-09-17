@@ -10,22 +10,23 @@ import yaml
 
 from polymerhus.app.auth.records import AuthInvalidError
 from polymerhus.app.auth.store import (
-    AUTH_STORE_ROOT,
     AuthStore,
     DuplicateAuthError,
     OperatorImmutableError,
     StoreUnavailableError,
 )
+from polymerhus.app.data_root import DATA_ROOT
 
 PROJECT = "proj-auth-1"
 
 
-# --- roots: fixed default, explicit root for tests, no I/O on import --------
+# --- roots: app-owned default, explicit root for tests, no I/O on import -----
 
-def test_default_root_is_the_fixed_data_dir():
-    assert AUTH_STORE_ROOT.name == "data"
-    assert str(AUTH_STORE_ROOT).endswith("src/polymerhus/app/auth/data")
-    assert AuthStore()._root == AUTH_STORE_ROOT
+def test_default_root_is_the_app_owned_data_root():
+    assert DATA_ROOT.name == "data"
+    assert str(DATA_ROOT).endswith("data")
+    assert AuthStore()._root == DATA_ROOT
+    assert AuthStore()._bucket_dir(PROJECT) == DATA_ROOT / PROJECT / "auth"
 
 
 def test_explicit_root_points_at_a_temp_dir(tmp_path):

@@ -1,6 +1,8 @@
 """The per-project shared auth bucket store (#220, T2).
 
-Topology (D220-3), one bucket per project, lazily created at the first write:
+Topology (D220-3), one bucket per project under the app-owned data root
+(`app.data_root.DATA_ROOT`, `<repo>/data/` - the same root the skills and
+hunting stores write under), lazily created at the first write:
 
     data/<project_id>/auth/
       credentials.yaml   ({accounts: {<name>: <account record>}})
@@ -19,7 +21,8 @@ covers every check-then-write and read-modify-write critical section - the
 `hunt_store` I2 pattern it repeats).
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
-section 6); the fixed root takes no env var.
+section 6); the root is the app-owned `DATA_ROOT` (no env var), resolved
+through the one layout owner (`app.data_root.project_dir`).
 """
 from __future__ import annotations
 
@@ -38,13 +41,15 @@ from polymerhus.app.auth.records import (
     validate_account,
     validate_overview,
 )
+from polymerhus.app.data_root import DATA_ROOT, project_dir
 
 logger = logging.getLogger(__name__)
 
-# The FIXED store root (D220-3): the per-project auth buckets live under
-# `src/polymerhus/app/auth/data/` - no env var. The explicit-root constructor
-# is kept for the tests' temp stores (the `hunt_store` precedent).
-AUTH_STORE_ROOT = Path(__file__).resolve().parent / "data"
+# The store root is the app-owned data root (D220-3), the same root the skills
+# and hunting stores write under - no env var, resolved through the one layout
+# owner; the bucket is `<data_root>/<project_id>/auth/`. The explicit-root
+# constructor is kept for the tests' temp stores (the `hunt_store` precedent).
+_BUCKET_NAME = "auth"
 
 _CREDENTIALS_FILE = "credentials.yaml"
 _OVERVIEW_FILE = "overview.yaml"
@@ -94,14 +99,14 @@ class AuthStore:
     are thin adapters over this seam; no caller reaches past it."""
 
     def __init__(self, root_dir: str | Path | None = None):
-        """Rooted under `root_dir` (default: the FIXED seam root
-        `src/polymerhus/app/auth/data/`)."""
-        self._root = Path(root_dir) if root_dir is not None else AUTH_STORE_ROOT
+        """Rooted under `root_dir` (default: the app-owned `DATA_ROOT`,
+        `<repo>/data/`)."""
+        self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
 
     # --- path helpers ----------------------------------------------------------
 
     def _bucket_dir(self, project_id: str) -> Path:
-        return self._root / str(project_id) / "auth"
+        return project_dir(project_id, _BUCKET_NAME, root=self._root)
 
     def _credentials_file(self, project_id: str) -> Path:
         return self._bucket_dir(project_id) / _CREDENTIALS_FILE

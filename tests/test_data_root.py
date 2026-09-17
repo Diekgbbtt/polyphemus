@@ -92,6 +92,16 @@ def test_project_dir_validates_the_project_id(tmp_path: Path) -> None:
         project_dir("../escape", root=tmp_path / "data")
 
 
+def test_scaffold_carries_the_module_buckets(tmp_path: Path) -> None:
+    """Every module bucket lands at project creation - skills (#234) and auth
+    (#220) included - so a store writes files only, never directories."""
+    project_dir_ = ensure_project("proj-1", root=tmp_path / "data")
+
+    for rel in ("skills", "auth", "hunting/orchestration", "hunting/hunter",
+                "hunting/test-executor-pod"):
+        assert (project_dir_ / rel).is_dir(), f"missing module bucket {rel}"
+
+
 def test_scaffold_enumerates_the_fixed_hunting_sub_layout(tmp_path: Path) -> None:
     """The full fixed skeleton lands at project creation, so the stores create
     no directories - only the runtime-keyed leaves (a fault key, a pod spec id)

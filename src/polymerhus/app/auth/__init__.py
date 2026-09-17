@@ -6,7 +6,6 @@ from polymerhus.app.auth.records import (
     validate_overview,
 )
 from polymerhus.app.auth.store import (
-    AUTH_STORE_ROOT,
     AuthStore,
     DuplicateAuthError,
     OperatorImmutableError,
@@ -16,7 +15,6 @@ from polymerhus.app.auth.tool import AUTH_STORE_CONTRACT, build_auth_store_tool
 
 __all__ = [
     "AUTH_STORE_CONTRACT",
-    "AUTH_STORE_ROOT",
     "AuthInvalidError",
     "AuthStore",
     "DuplicateAuthError",
