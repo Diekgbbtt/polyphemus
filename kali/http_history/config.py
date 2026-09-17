@@ -42,7 +42,12 @@ class HttpHistoryConfig:
     proxy_port: int = 8080
     registry_path: str = "/run/kali-http/registry.sqlite3"
     retention_s: int = 0  # 0 disables age-based retention
-    project_max_bytes: int = 0  # 0 disables the per-project byte cap
+    # 0 disables the cap. Non-zero by default (see docker-compose.yml): with
+    # capture ON for every recon pod the store would otherwise grow forever.
+    project_max_bytes: int = 1024 * 1024 * 1024
+    # The trim runs on the exec path, so it must not pay a full store scan per
+    # command: at most one `enforce_limits` per project per this many seconds.
+    enforce_interval_s: int = 60
 
 
 def load_config() -> HttpHistoryConfig:
@@ -59,5 +64,6 @@ def load_config() -> HttpHistoryConfig:
             "KALI_HTTP_REGISTRY_PATH", "/run/kali-http/registry.sqlite3"
         ),
         retention_s=_env_int("KALI_HTTP_RETENTION_S", 0),
-        project_max_bytes=_env_int("KALI_HTTP_PROJECT_MAX_BYTES", 0),
+        project_max_bytes=_env_int("KALI_HTTP_PROJECT_MAX_BYTES", 1024 * 1024 * 1024),
+        enforce_interval_s=max(0, _env_int("KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S", 60)),
     )

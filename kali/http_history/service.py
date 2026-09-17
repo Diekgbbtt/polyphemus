@@ -108,6 +108,7 @@ class HttpHistoryService:
         )
         self._stores: OrderedDict[str, HttpHistoryStore] = OrderedDict()
         self._lock = threading.RLock()
+        self._limits_checked_at: dict[str, float] = {}
         self._proxy_probe = proxy_probe or self._default_proxy_probe
         self._routing_probe = routing_probe or self._default_routing_probe
 
@@ -272,6 +273,12 @@ class HttpHistoryService:
                         self.lease_manager.release(lease)
                     except Exception:  # noqa: BLE001 - never break the command result
                         pass
+            # Storage cap (§5.C). The exec path is the only place that sees every
+            # project, so it is where the store is trimmed - throttled per project
+            # and completely best-effort: a trim failure must never reach the
+            # command's result, and with retention and cap both 0 this is a no-op.
+            if project_id:
+                self._enforce_limits_throttled(project_id)
 
         return {
             "stdout": outcome.stdout,
@@ -282,6 +289,28 @@ class HttpHistoryService:
             "http_artifact_refs": refs,
             "capture_warning": capture_warning,
         }
+
+    def _enforce_limits_throttled(self, project_id: str) -> None:
+        """Run `enforce_limits` at most once per project per interval.
+
+        Deliberately NOT per exec: the trim scans the project store, and a recon
+        phase runs many pods back to back. The in-memory stamp is per MCP process
+        (the trims are idempotent and additive, so a second process only trims
+        sooner, never wrongly). Failures are swallowed - housekeeping never
+        fails a command, and the next interval retries.
+        """
+        if self.config.retention_s <= 0 and self.config.project_max_bytes <= 0:
+            return
+        now = time.monotonic()
+        with self._lock:
+            last = self._limits_checked_at.get(project_id)
+            if last is not None and now - last < self.config.enforce_interval_s:
+                return
+            self._limits_checked_at[project_id] = now
+        try:
+            self.enforce_limits(project_id)
+        except Exception:  # noqa: BLE001 - housekeeping is never on the exec path
+            pass
 
     def _refs_for_exec(self, project_id: str, exec_id: str) -> list[str]:
         page = self.store(project_id).search(

@@ -127,8 +127,18 @@ services:
       KALI_HTTP_PROXY_HOST: 127.0.0.1
       KALI_HTTP_PROXY_PORT: ${KALI_HTTP_PROXY_PORT:-8080}
       KALI_HTTP_REGISTRY_PATH: /run/kali-http/registry.sqlite3
+      # Retention stays 0 on purpose: age-based deletion drops evidence even when
+      # the disk is under no pressure - a deliberate deviation from the "cap +
+      # retention" default, see docs/design/http-proxy-history-hardening-decisions.md.
       KALI_HTTP_RETENTION_S: ${KALI_HTTP_RETENTION_S:-0}
-      KALI_HTTP_PROJECT_MAX_BYTES: ${KALI_HTTP_PROJECT_MAX_BYTES:-0}
+      # 1 GiB per project: with capture ON for every recon pod the store is the
+      # only thing keeping it bounded, and bodies are capped at 5 MiB each, so
+      # this holds hundreds of full bodies (thousands of transactional rows)
+      # before the oldest are evicted.
+      KALI_HTTP_PROJECT_MAX_BYTES: ${KALI_HTTP_PROJECT_MAX_BYTES:-1073741824}
+      # The cap is enforced from the exec path at most once per project per
+      # interval (never per command: that would scan the store on every pod).
+      KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S: ${KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S:-60}
     volumes:
       - ./kali:/opt/kali:ro
       - http-history:/data

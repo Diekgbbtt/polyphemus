@@ -12,7 +12,8 @@ from kali.http_history.models import (
     ResponseRecord,
 )
 from kali.http_history.normalize import normalize_flow
-from kali.http_history.service import HttpHistoryService, NotFoundError
+from kali.http_history import service as service_module
+from kali.http_history.service import ExecOutcome, HttpHistoryService, NotFoundError
 from kali.http_history.store import HttpHistoryStore
 from tests.kali.fakes import FakeFlow, FakeMessage
 
@@ -20,6 +21,24 @@ from tests.kali.fakes import FakeFlow, FakeMessage
 def _service(tmp_path, **config_overrides) -> HttpHistoryService:
     config = HttpHistoryConfig(store_root=str(tmp_path), **config_overrides)
     return HttpHistoryService(config=config)
+
+
+def _quiet_service(tmp_path, **config_overrides) -> HttpHistoryService:
+    """A service whose runner never shells out (the exec path stays deterministic)."""
+    config = HttpHistoryConfig(store_root=str(tmp_path), **config_overrides)
+    return HttpHistoryService(
+        config=config,
+        runner=lambda command, session_id, timeout_s, namespace=None: ExecOutcome(
+            stdout="ok", stderr="", returncode=0, duration_ms=1
+        ),
+    )
+
+
+def _frozen_clock(monkeypatch, start: float = 1000.0) -> dict:
+    """Freeze the monotonic clock the storage-cap throttle reads."""
+    clock = {"now": start}
+    monkeypatch.setattr(service_module.time, "monotonic", lambda: clock["now"])
+    return clock
 
 
 def _seed(tmp_path, project="proj-1", artifact_id="http_01J0000000000000000000000A"):
@@ -179,6 +198,82 @@ def test_enforce_limits_applies_the_configured_caps(tmp_path):
     service = _service(tmp_path, retention_s=0, project_max_bytes=1)
     result = service.enforce_limits("proj-1")
     assert result["artifacts_removed"] == 1
+    assert service.store("proj-1").status()["artifact_count"] == 0
+
+
+def test_execute_enforces_the_byte_cap_throttled_per_project(tmp_path, monkeypatch):
+    """§5.C: nothing called `enforce_limits` in production, so the store grew
+    unbounded once capture was on by default. The exec path is the only place
+    that sees every project, so it trims - at most once per project per
+    interval, and never in a way the command can observe."""
+    service = _quiet_service(tmp_path, project_max_bytes=1024, enforce_interval_s=60)
+    clock = _frozen_clock(monkeypatch)
+    calls: list[str] = []
+    monkeypatch.setattr(
+        service, "enforce_limits",
+        lambda project_id: calls.append(project_id) or {"artifacts_removed": 0},
+    )
+
+    for _ in range(3):
+        result = service.execute("httpx -u 172.28.0.20", "s1", 5, project_id="proj-1")
+        assert result["returncode"] == 0
+    assert calls == ["proj-1"], calls
+
+    clock["now"] += 61
+    service.execute("httpx -u 172.28.0.20", "s1", 5, project_id="proj-1")
+    assert calls == ["proj-1", "proj-1"], calls
+
+    # A different project has its own budget: one project's heavy traffic must
+    # not defer another's trim.
+    service.execute("httpx -u 172.28.0.20", "s2", 5, project_id="proj-2")
+    assert calls == ["proj-1", "proj-1", "proj-2"], calls
+
+
+def test_execute_is_a_no_op_when_both_storage_limits_are_zero(tmp_path, monkeypatch):
+    """Retention 0 and cap 0 mean "keep everything": the trimmer must not even
+    be consulted, so the default deployment keeps every artifact."""
+    service = _quiet_service(tmp_path, retention_s=0, project_max_bytes=0)
+    _frozen_clock(monkeypatch)
+    calls: list[str] = []
+    monkeypatch.setattr(service, "enforce_limits", lambda project_id: calls.append(project_id))
+
+    service.execute("true", "s1", 5, project_id="proj-1")
+    assert calls == []
+
+    # A retention window alone still arms the trimmer (cap 0).
+    service_retention = _quiet_service(tmp_path, retention_s=60, project_max_bytes=0)
+    monkeypatch.setattr(
+        service_retention, "enforce_limits",
+        lambda project_id: calls.append(project_id) or {"artifacts_removed": 0},
+    )
+    service_retention.execute("true", "s1", 5, project_id="proj-1")
+    assert calls == ["proj-1"]
+
+
+def test_execute_storage_cap_is_best_effort(tmp_path, monkeypatch):
+    """A trim failure must never fail, or even alter, the command result."""
+    service = _quiet_service(tmp_path, project_max_bytes=1024)
+    _frozen_clock(monkeypatch)
+
+    def boom(project_id):
+        raise OSError("disk busy")
+
+    monkeypatch.setattr(service, "enforce_limits", boom)
+    result = service.execute("true", "s1", 5, project_id="proj-1")
+    assert result["stdout"] == "ok"
+    assert result["returncode"] == 0
+
+
+def test_execute_trims_the_real_store_when_the_cap_is_exceeded(tmp_path, monkeypatch):
+    """End to end through the real store: the exec path is what actually evicts."""
+    _seed(tmp_path)
+    service = _service(tmp_path, project_max_bytes=1, enforce_interval_s=60)
+    _frozen_clock(monkeypatch)
+    service._runner = lambda command, session_id, timeout_s, namespace=None: ExecOutcome(
+        stdout="ok", stderr="", returncode=0, duration_ms=1
+    )
+
+    service.execute("true", "s1", 5, project_id="proj-1")
     assert service.store("proj-1").status()["artifact_count"] == 0
 
 

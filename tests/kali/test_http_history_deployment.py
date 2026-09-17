@@ -36,8 +36,21 @@ def test_kali_environment_exposes_the_capture_knobs():
         "KALI_HTTP_NAMESPACE_POOL",
         "KALI_HTTP_LEASE_TTL_S",
         "KALI_HTTP_PROXY_PORT",
+        "KALI_HTTP_RETENTION_S",
+        "KALI_HTTP_PROJECT_MAX_BYTES",
+        "KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S",
     ):
         assert key in env
+
+
+def test_kali_defaults_bound_the_store_without_age_based_deletion():
+    """The byte cap is ON by default (capture is on for every recon pod) and
+    retention stays 0: age-based deletion would drop evidence with no disk
+    pressure to justify it (deliberate deviation, decision record Parte C)."""
+    env = _compose()["services"]["kali"]["environment"]
+    assert int(env["KALI_HTTP_PROJECT_MAX_BYTES"]) > 0
+    assert int(env["KALI_HTTP_RETENTION_S"]) == 0
+    assert int(env["KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S"]) > 0
 
 
 def test_kali_healthcheck_distinguishes_components():
