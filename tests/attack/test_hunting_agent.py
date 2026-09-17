@@ -406,6 +406,16 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
     )
 
     skill = _load_hunting_agent_skill()
+    from polymerhus.app.llm.skills import (  # noqa: PLC0415
+        render_skill_index,
+        skill_meta,
+        skills_for_role,
+    )
+
+    # The role's bounded skill set rides the same system channel, after the
+    # skill: `skill` verbatim, blank line, L1 index (the shared renderer's
+    # exact composition - never hand-written here).
+    index = render_skill_index(skills_for_role("hunting_hunter"))
     seen: list = []
     import tempfile  # noqa: PLC0415
 
@@ -423,6 +433,10 @@ def test_scripted_model_sees_system_skill_first_through_the_real_session():
     assert "phase: concluded" in result.feedback
     assert len(seen) == 2
     for turn_messages in seen:
-        assert turn_messages[0] == skill  # the leading SystemMessage
+        assert turn_messages[0] == f"{skill}\n\n{index}"  # the leading SystemMessage
+        assert "steel-browser" in turn_messages[0]  # the bounded set is indexed
+        # ... and the line the model actually reads is the skill's frontmatter
+        # `description` VERBATIM (not a paraphrase, not a re-render).
+        assert skill_meta("steel-browser")["description"] in turn_messages[0]
         assert skill not in turn_messages[1]  # the grounding HumanMessage
         assert "You are dispatched to hunt" in turn_messages[1]

@@ -159,6 +159,12 @@ _Avoid_: prose header (human-only, unvalidatable).
 Two tiers. L1 discovery: an agent's bounded skill set rendered as name + description lines into its system message by the shared skill-index middleware (bound per agent through the native invocation context). L2 activation: loading a skill mid-run through the agent-callable `load_skill(name)` tool, which returns the loader-identical body. It decouples skill evolution from prompt bake-time; bake-time reads and runtime loads can never diverge because both call the single loader.
 _Avoid_: convention-only gating (the index is composed by middleware, no model cooperation needed).
 
+**Skill binding (bounded skill set)**:
+The per-role roster of which catalogue skills a tool-calling agent may load (`ROLE_SKILLS`, keyed by `role_id`) and the one call every bound agent site makes to bind it (`skill_agent_binding(role_id)`: index middleware + skill tools + the invocation context carrying the set).
+The skill-domain analogue of the tool-bounding pattern - a declared, minimal set the owner attaches through one native seam, never the whole catalogue.
+A role with no bearing skill is declared EXEMPT (an empty tuple) and binds nothing at all (no `load_skill` tool, no index middleware, no context), and an UNDECLARED role id is refused at construction; the frontmatter `description` of every bound skill is rendered verbatim.
+_Avoid_: per-site skill lists (drift), a `skills` field on the `Role` record (skill policy in the model-transport module), an empty index on a role that cannot use one.
+
 **Per-project skill bundle**:
 The project-owned skill directory (`<data_root>/<project_id>/skills/<skill>/`: `SKILL.md`, `references/`, `scripts/`, `assets/`) where an executing agent records what it learned using a procedure - a blocking condition, a new role, a privilege-escalation path - so sibling and later agents start from accumulated ground truth.
 There is no canonical shared original; a project's copy is its original, created lazily on first write.

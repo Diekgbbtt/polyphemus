@@ -64,9 +64,11 @@ def test_all_three_proposers_pass_compaction_middleware(monkeypatch):
 
     assert set(seen) == {"assigner", "data_modeller", "mechanism_typist"}
     for role in seen:
-        assert len(seen[role]) == 2
+        # Compaction is the WHOLE chain for an analysis proposer: it is
+        # skill-exempt (ADR A9 exemption amendment), so no L1 index rides it.
+        assert len(seen[role]) == 1
         _assert_compaction_middleware(seen[role][0])
-        assert type(seen[role][1]).__name__ == "_skill_index"
+        assert "_skill_index" not in {type(m).__name__ for m in seen[role]}
 
 
 # --- the recon-pod roles pass a shared per-role middleware ---------------------
@@ -96,10 +98,15 @@ def test_recon_pod_configurator_and_triager_pass_compaction_middleware(monkeypat
         pod._pod_ctx().reset(token)
 
     assert set(seen) == {"triager", "configurator"}
-    for role in seen:
-        assert len(seen[role]) == 2
-        _assert_compaction_middleware(seen[role][0])
-        assert type(seen[role][1]).__name__ == "_skill_index"
+    # The two recon-pod roles differ by roster state (ADR A9): the triager is
+    # BOUND (it reads delivered web artefacts, so compaction + the L1 index),
+    # the configurator is EXEMPT (compaction alone - no dead skill surface).
+    assert len(seen["triager"]) == 2
+    _assert_compaction_middleware(seen["triager"][0])
+    assert type(seen["triager"][1]).__name__ == "_skill_index"
+    assert len(seen["configurator"]) == 1
+    _assert_compaction_middleware(seen["configurator"][0])
+    assert "_skill_index" not in {type(m).__name__ for m in seen["configurator"]}
 
 
 def test_cached_role_middleware_is_shared_per_role():

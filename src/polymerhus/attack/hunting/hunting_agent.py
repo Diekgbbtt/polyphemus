@@ -486,16 +486,17 @@ def build_hunting_agent(
         )
         from polymerhus.app.llm.session import arun_session_turn  # noqa: PLC0415
         from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415
-        from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+        from polymerhus.app.llm.skills import skill_agent_binding  # noqa: PLC0415
 
         # The skill seams ride BOTH planes of the hybrid loop (the declaration /
-        # execution split): `load_skill` is declared request-only alongside the
-        # five hunter tools AND registered in the harness executor map, joined
-        # by the tool name; the index middleware joins the turn middleware.
-        index_mw, load_tool = skill_agent_seams()
-        tools = list(tools) + [load_tool]
+        # execution split): the binding's `load_skill` tool is declared
+        # request-only alongside the five hunter tools AND registered in the
+        # harness executor map, joined by the tool name; the index middleware
+        # joins the turn middleware and carries the role's bounded skill set.
+        binding = skill_agent_binding(_HUNTER_ROLE)
+        tools = list(tools) + binding.tools
         tools_by_name = {tool.name: tool for tool in tools}
-        middleware = list(middleware) + [index_mw]
+        middleware = list(middleware) + binding.middleware
 
         thread_id = HuntSession(run_id, hunt_id).thread_id
         # The stable skill rides the SYSTEM channel on EVERY turn (the
@@ -524,6 +525,7 @@ def build_hunting_agent(
                     tools=request_tools,
                     system_prompt=skill,
                     middleware=middleware,
+                    context=binding.context,
                     model_factory=model_factory,
                     observe=observe,
                 )

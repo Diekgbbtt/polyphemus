@@ -587,15 +587,13 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     address = AnalysisSession(run_id, "assigner")
 
     from polymerhus.app.llm import compaction as C  # noqa: PLC0415
-    from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
 
-    index_mw, load_tool = skill_agent_seams()
-    middleware = [C.build_role_compaction_middleware("assigner"), index_mw]
+    middleware = [C.build_role_compaction_middleware("assigner")]
 
     def invoke(messages):
         return stateful_turn("assigner", address, messages,
                              checkpointer=checkpointer, schema=L1DeltaBatch,
-                             tools=[load_tool], middleware=middleware)
+                             middleware=middleware)
 
     return invoke
 

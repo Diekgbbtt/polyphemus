@@ -119,13 +119,13 @@ def _hunter_turn(text: str) -> dict | None:
     ctx = _hunt_ctx().get()
     if ctx is not None:
         from polymerhus.app.llm.session import stateful_turn
-        from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+        from polymerhus.app.llm.skills import skill_agent_binding  # noqa: PLC0415
 
-        index_mw, load_tool = skill_agent_seams()
+        binding = skill_agent_binding(HUNTER_ROLE)
         return _parse_json_object(stateful_turn(
             HUNTER_ROLE, ctx.address, [HumanMessage(content=text)],
-            checkpointer=ctx.checkpointer, tools=[load_tool],
-            middleware=[index_mw]))
+            checkpointer=ctx.checkpointer, tools=binding.tools,
+            middleware=binding.middleware, context=binding.context))
     from polymerhus.app.llm.roles import invoke_role
     return _parse_json_object(invoke_role(HUNTER_ROLE, [HumanMessage(content=text)]))
 
