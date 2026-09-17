@@ -618,6 +618,9 @@ worktree: per la prova black-box il branch è stato reso visibile con un mount t
 
 **Stato: Attuato.**
 
+Walkthrough didattico (prima/dopo sugli stessi job, cosa contiene un artifact rispetto al tool
+log, limiti): `docs/design/http-proxy-history-walkthrough.md`.
+
 ---
 
 # Parte D — Fuori scope, con il motivo e il trigger
