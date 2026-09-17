@@ -6,7 +6,7 @@
 ## Reversals (operator-grilled 2026-09-11)
 
 - D1 (lenient shapes, name-need-not-equal-path): REVERSED. Frontmatter follows the Agent Skills spec - `name` == directory (enforced), `description` = what + when, extras under the `metadata` string map (`version`); no structured `inputs` in frontmatter.
-- D3 (convention-only gating, deferred fleet binding): REVERSED. L1 index composed by the shared `dynamic_prompt` skill-index middleware (no model cooperation needed); `load_skill` + middleware wired on all stateful agents; bounded skill sets travel in the native invocation context (per-agent configuration deferred past #221).
+- D3 (convention-only gating, deferred fleet binding): REVERSED. L1 index composed by the shared `dynamic_prompt` skill-index middleware (no model cooperation needed); `load_skill` + middleware wired on all stateful agents; bounded skill sets travel in the native invocation context - and (closed in #221, ADR A9) every tool-calling role takes a roster state in `ROLE_SKILLS`: a bounded set (bound by `skill_agent_binding(role_id)`, so the index actually renders) or an explicit exemption (binding nothing at all; see the A9 exemption amendment of 2026-09-17).
 - D5 (steel moves to `skills/`, rest gain fields): SUPERSEDED by the design-hole move. Role prompts (steel included) live in module `prompts/` dirs as plain Markdown; `skills/` holds only flat genuine skills. Drafts promoted to `skills/<name>/SKILL.md` with minimal frontmatter instead of excluded.
 - D6 (canonical constant in `skills.py`): location moved to `app/llm/skills.py` (Q1); the verbatim-mirror rule stands.
 - D2 (tool contract), D4 (two-severity rejection), D7 (#220 alignment): STAND.
@@ -41,6 +41,7 @@ Gating is by convention, as the ticket prescribes: load at phase entry, once per
 Mechanical enforcement was rejected: the tool layer has no thread identity without framework coupling, the `skill_for` cache already bounds repeat-load cost to a dict hit, and binding a guard that rejects second loads would break legitimate multi-skill phase entries.
 The reference flows demonstrate the convention three ways: the crawl loop loads its skill once at loop start, the hunting orchestrator's gate skill mounts once per thread as the run's one system message (unchanged #187 precedent), and the session-loop test loads through `tools=()` at a scripted phase entry.
 Fleet-wide binding of `load_skill` on every session agent is deliberately deferred: binding an unneeded tool on every agent would itself bloat the context the gate exists to protect, so future disciplines bind it on demand as they acquire runtime-loading needs.
+*Superseded on the first half by ADR A9 (2026-09-17): the fleet is now rostered in `ROLE_SKILLS`, and a role with no bearing skill binds nothing at all, which satisfies this paragraph's concern by construction rather than by deferral. The phase-gating convention above is unchanged.*
 
 ## D4 - rejection surfaces twice (fail-open at runtime, hard fail in repo hygiene)
 

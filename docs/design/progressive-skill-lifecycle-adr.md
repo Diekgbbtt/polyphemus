@@ -1,8 +1,8 @@
 # ADR: progressive skill lifecycle and skill-writing primitives (session ledger)
 
-*Status: ACCEPTED - living. Records every architectural decision taken across the #222 skill-loading session and the follow-on skill-writing design rounds (2026-09-11 -> 2026-09-15), so the reasoning survives the conversation that produced it.*
-*Scope: Part A covers the #222 skill-access surface (implemented, committed on `feat/222-skill-load-tool`). Part B covers the progressive skill lifecycle and the transitory skill-writing primitives (spec #234, not yet built).*
-*Companions: `skills-typed-surface-spec.md` (the #222 typed surface), `skill-runtime-loading-222-decisions.md` (the #222 self-grill whose reversals are folded in below), `progressive-skill-lifecycle-system.md` (the high-level system description), `skill-writing-primitives-spec.md` (the transitory spec).*
+*Status: ACCEPTED - living. Records every architectural decision taken across the #222 skill-loading session and the follow-on skill-writing design rounds (2026-09-11 -> 2026-09-15), plus the #221/#189 runtime-binding round (2026-09-17: A9, its exemption amendment, and the forward-wiring note), so the reasoning survives the conversation that produced it.*
+*Scope: Part A covers the #222 skill-access surface (implemented, committed on `feat/222-skill-load-tool`) and the #221 per-role binding that made its L1 half live (`ROLE_SKILLS` + `skill_agent_binding`, in flight on `feat/221-browser-cli`). Part B covers the progressive skill lifecycle and the transitory skill-writing primitives (spec #234, not yet built).*
+*Companions: `skills-typed-surface-spec.md` (the typed surface and its compiled contract), `skill-runtime-loading-222-decisions.md` (the #222 self-grill whose reversals are folded in below), `progressive-skill-lifecycle-system.md` (the high-level system description), `skill-writing-primitives-spec.md` (the transitory spec), and the tracker epic #189 with child #236 (artifact-declared skills at runtime).*
 
 ---
 
@@ -32,7 +32,7 @@
 
 **Decision.** L1 discovery is the bounded skill set's frontmatters rendered into the system message by the shared `dynamic_prompt` skill-index middleware, bound per agent through the **native invocation context** (`agent.invoke(..., context={"skills": [...]})`). L2 activation is the agent-callable `load_skill` tool on every stateful agent. Non-`create_agent` loops keep direct reads through the same loader functions.
 **Alternatives rejected.** Convention-only phase gating with deferred binding (`D3`, reversed). A custom context-forwarding mechanism instead of the native `context=`/`ModelRequest.runtime` seam.
-**Consequences.** `SKILL_INDEX_HEADER`, `render_skill_index`, `skill_index_middleware`, and `skill_agent_seams()` were added; ten stateful sites wired (recon configurator/triager, orchestrator, assigner, mechanism-typist, data-modeller, hunting actors base, pod runner/triager, `llm.py:_hunter_turn`, `hunting_agent.py` dual-plane, `surfer.py` idle); 1660 tests passed. Per-agent bounded skill sets were deferred past #221.
+**Consequences.** `SKILL_INDEX_HEADER`, `render_skill_index`, `skill_index_middleware`, and `skill_agent_seams()` were added; ten stateful sites wired (recon configurator/triager, orchestrator, assigner, mechanism-typist, data-modeller, hunting actors base, pod runner/triager, `llm.py:_hunter_turn`, `hunting_agent.py` dual-plane, `surfer.py` idle); 1660 tests passed. Per-agent bounded skill sets were deferred past #221 - closed by A9, which also retired `skill_agent_seams()` for the binding seam.
 
 ### A5 - The skill rides `system_prompt=`, not the first HumanMessage
 
@@ -57,6 +57,51 @@
 
 **Decision.** `D2` (string body, loader-identical, fail-open; `refresh=True` as the dev hot-reload path), `D4` (two-severity rejection: tolerant at runtime, strict in repo hygiene), and `D7` (#220 follows the factory shape #222 establishes: `build_<x>_tool`, contract constant, fail-open returns, injectable seams, no I/O at import) stand unchanged.
 **Reversed/escalated.** `D1` reversed (A3), `D3` reversed (A4), `D5` superseded by the design-hole move (A1), `D6` relocated (A2).
+
+### A9 - Skill bounding is a per-role declaration delivered through the native invocation context (#221)
+
+**Decision.** Every tool-calling role is declared once in `ROLE_SKILLS` (`app/llm/skills.py`), keyed by `role_id`, with ONE of two states: a BOUNDED SKILL SET (the catalogue skills whose discipline bears on that role's turns) or an explicit EXEMPTION (an empty tuple: the role binds no skill surface at all).
+A bounded set is delivered by ONE call, `skill_agent_binding(role_id)`, which returns the L1 index middleware, the L2 skill tools, and the invocation `context={"skills": [...]}` carrying the set; an exempt role's binding composes to nothing (no middleware, no tools, no context).
+The index middleware stays policy-free and byte-identical at every agent; `role_id` - the identity the turn actually runs as, its `SessionAddress` or its role constant - is the only input. So which skills an agent may see is one auditable table, not a list per agent site, and the frontmatter `description` of each bound skill is rendered verbatim into that role's system message by the shared renderer.
+
+**Context.** #222 built the whole mechanism (A4) but bound no sets: ten sites wired the middleware and the tool, none passed a `context`, so `render_skill_index` was never reached and every agent's L1 index was empty. The tool pattern in the same codebase already answers the shape question - a role's tool surface is a declared, BOUNDED set (`CRAWL_TOOL_NAMES` filtered against the MCP pool, `runner_react_tools`/`triager_react_tools`, `build_hunter_tools`, `build_orchestrator_tool_surface`), built by its owner and attached through one native construction seam, never the whole pool. Skill bounding is the same discipline; only the seam differs, because a skill is not a callable - it travels as context and is rendered into the system message, not bound as a JSON schema.
+
+**Alternatives rejected.**
+- Per-site skill lists (the literal mirror of the tool pattern): one place to read per agent site to answer "what can this fleet's agents see", and the same number of chances for a role's set to drift from its discipline.
+- A `skills: tuple[str, ...]` field on the `Role` record in `providers.py`: that registry is the LLM-turn domain (model key, turn mode, thinking baseline), so a knowledge-surface declaration there puts skill policy in the model-transport module and contradicts B1 (the skills-access domain owns every skill-surface behaviour). `role_id` is the join key, not `Role`.
+- Closing the middleware over the set (`skill_index_middleware(role_id)`) instead of passing the native `context=`: identical output, but it abandons the native seam A4 ratified, makes the middleware policy-bearing, and forecloses varying the set per invocation (a future narrower or wider turn).
+- Declaring the whole catalogue for every role: violates the minimal-high-signal rule every tool surface follows, and dilutes the index the load decision is actually made from.
+
+**Amendment (2026-09-17) - the exemption rule, on the operator's ruling.**
+The analysis module's three proposers (`assigner`, `mechanism_typist`, `data_modeller`) lose the skill primitives: their turns interact with LOCAL context only - the published L0/L1 substrate, their own prompts, the steering signals - and never with an external environment, so no catalogue skill bears on them.
+Generalised, the rule is capability minimalism: **a role with no bearing skill binds NOTHING - not an inert tool, not a middleware, not a context.**
+This supersedes the earlier reading of an empty declaration ("the middleware passes the prompt through byte-identical"): a dead tool schema plus an index that can never render is context cost with zero capability, and the fleet should not pay it.
+The roster therefore has three states, and `skill_agent_binding` distinguishes all three:
+- a role with a bounded set - the surface is bound;
+- a DECLARED role with an empty tuple (configurator, job_orchestrator, assigner, mechanism_typist, data_modeller, hunting_orchestrator) - exempt, and the binding composes to nothing;
+- an UNDECLARED role id - refused with a `ValueError` at construction, because the roster is the considered decision for every tool-calling role, so an unlisted one is a wiring defect (usually a typo), not a silent no-op.
+Two implementation consequences follow.
+The binding's middleware field is a LIST, so an exempt binding composes harmlessly at a shared site with no branch - which is what lets the shared hunting actor base serve both a bound role (`hunting_hunter`) and an exempt one (`hunting_orchestrator`).
+And a dedicated site for an exempt role carries no reference to the skills domain at all, so the exemption is visible where a reader looks.
+The exempt set is pinned by test (`test_the_roster_is_exactly_the_bound_plus_the_exempt_roles`), so an exemption is a deliberate edit in two places, never a drift.
+The analysis module's own ANATOMY readers keep reading their job skills directly through `skill_for` (webpage-profile, authorization-pyramid) as their system prompts: that is the bake-time role/job-skill pattern (A1), not the runtime primitives, and it is untouched by this ruling.
+
+**Amendment (2026-09-17) - forward wiring.**
+When #223 lands (the recon JOB-SPECIFIC agents refactored into stateful entities), those agents acquire the session seam and MUST be wired to the skill primitives the same way the hunting roles are: declare each one's bounded set in `ROLE_SKILLS` (or declare it exempt) and bind it through `skill_agent_binding`.
+`skill-writing-primitives-234-decisions.md` already anticipated this as the #223/#224 consumer path for per-agent binding; the roster's "undeclared role refused" guard is what makes the obligation impossible to miss once an agent with a session role id exists.
+
+**Consequences.** Four role ids carry a bounded set (triager: webpage-analysis + webpage-profile; hunting_hunter and pod_runner: lightrag-query + steel-browser; pod_triager: lightrag-query), six are declared exempt, and the bound surface is bound at seven call sites (pod runner, pod triager, the hunter's gate/`llm.py` turn, the hunter graph's per-step turn, the shared hunting actor base, the surfer's idle session, the recon pod triager).
+`skill_agent_seams()` (the #222 pair) is retired rather than kept beside the new seam, so no second seam can drift.
+Repo hygiene carries the strict half of the D4 split - a declared name that does not resolve in `skills/`, a session-mode role with no roster entry, an exemption that drifts, or a meta-skill advertised in an index fails the suite; at runtime an unknown name is still skipped fail-open by the renderer.
+`crawler` is the one recorded gap: a session-mode role whose loop is a manual `bind_tools` ReAct loop (not `create_agent`), so it runs no `dynamic_prompt` middleware; its delivery (direct-read index + the tool in its bound set) is an open work item and the roster documents it in place.
+
+**The mapping is policy, and it is the operator-ratifiable surface.** Each entry is grounded on the role's own discipline and on what its turn can act on - a skill is bound only where the role's tools or domain make it actionable, and a role is exempt only where no catalogue discipline bears:
+- `triager` (recon pod): the two anatomy skills, because it reads delivered web artefacts into anchored observations.
+- `hunting_hunter` and `pod_runner`: the KB retrieval guide (they hold the KB tool) plus the browser skill (they touch the live target through `exec`).
+- `pod_triager`: the KB guide alone - it never touches the target, and its KB reads are context reads (D84-27).
+- `configurator`, `job_orchestrator`, `hunting_orchestrator`: exempt - their turns are decisions over steering signals and candidate material, with no target contact and no KB tool.
+- `assigner`, `mechanism_typist`, `data_modeller`: exempt - the analysis proposers' local-context interaction.
+Correcting a binding, or moving a role between bound and exempt, is a one-line edit to `ROLE_SKILLS` plus the pinned exempt set in the seam test.
 
 ---
 
@@ -90,7 +135,7 @@
 
 ### B5 - `write_skill` has a simplified contract
 
-**Decision.** `write_skill(skill, target, content, source_note_ids=[])`. `target` is a typed surface over the bundle (`procedure` -> `SKILL.md`; `references/<name>`; later `scripts/<name>`, `assets/<name>`). No section granularity, no operation verbs, no `rationale` field. `source_note_ids` is log-only provenance. The factory binds `project_id` and a writable skill set; agents never pass identity.
+**Decision.** `write_skill(skill, target, content, source_note_ids=[])`. `target` is a typed surface over the bundle (`procedure` -> `SKILL.md`; `references/<name>`; later `scripts/<name>`, `assets/<name>`). No section granularity, no operation verbs, no `rationale` field. `source_note_ids` is log-only provenance. The factory binds `project_id` alone; there is NO per-skill writable set (D234-12 corrected the earlier bound-set + `skill_read_only` design: the future `SkillEvolver` must write any skill, and whether an agent may write at all is decided at the seam - an agent that executes no evolving procedure is simply not given the tool, `build_skill_tools`).
 **Alternatives rejected.** The first draft's `update_project_skill(skill, operation, section, content, rationale, source_note_ids)` with section surgery and a rationale field (rejected: section surgery fragments a skill that must stay compact and single-sourced; `rationale` was shaved off).
 **Consequences.** Writes are whole-target, re-validate frontmatter, enforce size caps, refuse secret-shaped content, and are atomic under a per-project lock; failures are coded in-band envelopes. Widening to further skills is a binding change, never a tool change.
 
