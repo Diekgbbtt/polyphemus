@@ -446,9 +446,9 @@ async def _run_hunter_idle(
     hunt_session = HuntSession(run_id, config.hunt_id)
     try:
         with module_context("hunting"):
-            from polymerhus.app.llm.skills import skill_agent_binding  # noqa: PLC0415
+            from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-            binding = skill_agent_binding(hunt_session.role_id)
+            binding = auth_capable_binding(hunt_session.role_id)
             await run_session_agent(
                 hunt_session.role_id, hunt_session.thread_id, None,
                 checkpointer=get_session_checkpointer(),

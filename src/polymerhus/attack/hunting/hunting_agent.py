@@ -486,14 +486,14 @@ def build_hunting_agent(
         )
         from polymerhus.app.llm.session import arun_session_turn  # noqa: PLC0415
         from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415
-        from polymerhus.app.llm.skills import skill_agent_binding  # noqa: PLC0415
+        from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
         # The skill seams ride BOTH planes of the hybrid loop (the declaration /
         # execution split): the binding's `load_skill` tool is declared
         # request-only alongside the five hunter tools AND registered in the
         # harness executor map, joined by the tool name; the index middleware
         # joins the turn middleware and carries the role's bounded skill set.
-        binding = skill_agent_binding(_HUNTER_ROLE)
+        binding = auth_capable_binding(_HUNTER_ROLE)
         tools = list(tools) + binding.tools
         tools_by_name = {tool.name: tool for tool in tools}
         middleware = list(middleware) + binding.middleware

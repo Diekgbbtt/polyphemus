@@ -119,9 +119,9 @@ def _hunter_turn(text: str) -> dict | None:
     ctx = _hunt_ctx().get()
     if ctx is not None:
         from polymerhus.app.llm.session import stateful_turn
-        from polymerhus.app.llm.skills import skill_agent_binding  # noqa: PLC0415
+        from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = skill_agent_binding(HUNTER_ROLE)
+        binding = auth_capable_binding(HUNTER_ROLE)
         return _parse_json_object(stateful_turn(
             HUNTER_ROLE, ctx.address, [HumanMessage(content=text)],
             checkpointer=ctx.checkpointer, tools=binding.tools,

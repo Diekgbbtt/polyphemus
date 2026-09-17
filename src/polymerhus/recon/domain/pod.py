@@ -751,9 +751,9 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     if ctx is not None:
         from polymerhus.app.llm.session import stateful_turn
         from polymerhus.app.llm import compaction as C
-        from polymerhus.app.llm.skills import skill_agent_binding  # noqa: PLC0415
+        from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = skill_agent_binding("triager")
+        binding = auth_capable_binding("triager")
         result = stateful_turn("triager", ctx.address, messages,
                                checkpointer=ctx.checkpointer, schema=_ObservationBatch,
                                tools=binding.tools,

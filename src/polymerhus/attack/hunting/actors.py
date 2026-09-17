@@ -117,9 +117,9 @@ class _TurnActor:
         middleware = [middleware] if middleware else []
         if middleware_extra:
             middleware = middleware + list(middleware_extra)
-        from polymerhus.app.llm.skills import skill_agent_binding  # noqa: PLC0415
+        from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        binding = skill_agent_binding(self._address.role_id)
+        binding = auth_capable_binding(self._address.role_id)
         middleware = middleware + binding.middleware
         kwargs = {
             "checkpointer": self._checkpointer,
