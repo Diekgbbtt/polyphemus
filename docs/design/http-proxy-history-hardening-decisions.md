@@ -621,6 +621,64 @@ worktree: per la prova black-box il branch è stato reso visibile con un mount t
 Walkthrough didattico (prima/dopo sugli stessi job, cosa contiene un artifact rispetto al tool
 log, limiti): `docs/design/http-proxy-history-walkthrough.md`.
 
+## C.12 Dentro il lease non esisteva il DNS (P1) — chiuso
+
+**Cosa succedeva.** Il backend copiava `/etc/resolv.conf` del container nel namespace, e quel
+file dice `nameserver 127.0.0.11`: il resolver embedded di Docker, che vive sul loopback del
+**container**. In un namespace figlio `127.0.0.11` è il loopback *del namespace*, quindi non
+risponde a nessuno. Misurato live il 2026-09-17 dentro un lease:
+`curl: (6) Could not resolve host: example.com`, `getent hosts` fallito,
+`socket.gethostbyname` → `gaierror`. httpx/katana non se ne accorgevano perché portano la
+**loro** resolver list (`/resolvers/resolvers.txt`): il difetto era invisibile al recon e
+visibile a tutto il resto — in particolare al **sender del replay**, che è `curl` dentro il
+lease, quindi il replay di un artifact con hostname non poteva funzionare.
+
+**Decisione.** Il lease scrive il proprio `/etc/resolv.conf` (che `ip netns exec`
+bind-monta da `/etc/netns/<ns>/`) con il **gateway del lease** come primo nameserver —
+un indirizzo che il namespace raggiunge — più gli eventuali resolver esterni del container
+come fallback; un `DnsForwarder` inoltra da quel gateway al resolver del container, così il
+lease ottiene le **stesse** risposte (nomi del compose e nomi pubblici) senza allentare nulla.
+`/etc/hosts` viene copiato nel namespace per non perdere gli alias (`extra_hosts`, nomi VPN).
+Un listener per gateway, legato alla vita del lease (unbind al `destroy`); una query che non
+si riesce a inoltrare viene **scartata**, mai risposta con un risultato inventato.
+
+**Attuazione.** `kali/http_history/dns.py` (nuovo: `lease_resolv_conf`, `DnsForwarder`),
+`kali/http_history/namespaces.py` (percorsi iniettabili, scrittura del resolver, bind/unbind),
+`kali/mcp_server.py` (wiring del forwarder).
+
+**Evidenza.** `tests/kali` → **119 passed** (7 nuovi: politica del resolver, fallback,
+relay, idempotenza/robustezza del listener, bootstrap del namespace). Live su un endpoint
+Internet: `getent hosts example.com` risolve, `curl https://example.com` → **200**, artifact
+`tls=true`/`sni=example.com`, e **replay HTTPS con hostname** → 200 (`replay_kind=mutated`).
+Nessun listener residuo dopo il release (`ss -lun` senza socket sui gateway, `/etc/netns`
+vuoto).
+
+**Residui dichiarati.** Solo UDP (il caso truncation→TCP non è coperto); il forwarder serve
+il gateway del lease, quindi non espone un resolver arbitrario scelto dall'operatore.
+
+**Stato: Attuato.**
+
+## C.13 Upstream TLS con certificato self-signed: misurato, decisione aperta (P1)
+
+**Cosa succede.** mitmdump gira **senza** `ssl_insecure`, quindi verifica il certificato
+dell'upstream. Contro un target di laboratorio con certificato self-signed — `soupmarket.shop`,
+il target degli e2e di luglio — la transazione non arriva: il client riceve **502** dal proxy e
+l'artifact registra il perché, `error = {"type": "Error", "message": "Certificate verify
+failed: self-signed certificate"}`, `tls=false`, `sni=soupmarket.shop`. Il fallimento è
+**visibile** (l'artifact esiste, con l'errore) ma il traffico HTTPS verso quel target non è
+ispezionabile né riproducibile.
+
+**Decisione (aperta, dell'operatore).** Tre strade, in ordine di prudenza:
+
+1. installare la **CA del laboratorio** nel trust store del container (copertura mirata,
+   nessun allentamento globale) — la scelta consigliata per i lab;
+2. opzione esplicita dietro config (`--set ssl_insecure=true` o equivalente per-host) —
+   massima copertura, ma il proxy accetta qualsiasi certificato upstream;
+3. lasciare il comportamento attuale e documentare che i target self-signed non sono
+   catturabili (l'errore resta visibile in `stats.capture`/artifact).
+
+**Stato: aperto** (misurato, non mitigato).
+
 ---
 
 # Parte D — Fuori scope, con il motivo e il trigger

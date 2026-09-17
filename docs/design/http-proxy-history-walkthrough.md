@@ -107,6 +107,12 @@ Quattro confini da tenere a mente:
 | kali ↔ target | il traffico esce dal namespace del lease (sorgente `172.30.0.x`), non dall'IP del container |
 | store ↔ modello | il body e i segreti non attraversano: solo `size`/`capture_state` e valori redatti |
 
+Nota su DNS e nomi: il namespace non eredita il resolver del container (Docker ascolta su
+`127.0.0.11`, che in un namespace figlio è il *suo* loopback). Ogni lease scrive quindi un
+proprio `/etc/resolv.conf` con il **gateway del lease** come primo nameserver e un forwarder
+che inoltra al resolver del container; `/etc/hosts` viene copiato nel namespace per non
+perdere gli alias. Dettagli e prove: C.12 del decision record.
+
 ### 3.2 I componenti e chi possiede cosa
 
 | Componente | Responsabilità | Possiede | File |
@@ -452,6 +458,7 @@ test veloci che pinnano la regressione silenziosa della firma.
 | **body cap** `KALI_HTTP_MAX_BODY_BYTES=5 MiB` | oltre la soglia il body non è salvato (`capture_state="omitted"`); un replay su una baseline con body dichiarato **rifiuta** invece di inventare | C.2 |
 | **byte cap** 1 GiB/progetto | a saturazione i più vecchi artifact vengono evacuati (retention 0) | C.11, C.9 |
 | **fingerprint TLS** | il target vede mitmproxy, non il client del pod | Parte B, C.11 |
+| **certificato upstream self-signed** | il proxy *verifica* l'upstream (`ssl_insecure` assente): verso un target di lab con cert self-signed il client riceve 502 e l'artifact registra `error = "Certificate verify failed"`, `tls=false` — il fallimento è visibile ma il traffico non è ispezionabile | C.13 (aperto) |
 | **solo HTTP(S) applicativo** | niente DNS/UDP, niente traffico del browser/DOM (quello è #51 / Steel) | Parte D |
 | **lineage del replay** | l'artifact del replay porta `derived_from` e `replay_kind`, ma **non** eredita `run_id`/`spec_id` | C.11 |
 | **assenza non dimostrabile** | si può provare che ogni invocazione ha riportato ref > 0 e che gli artifact sono nello store; non si può provare dall'esterno che **nessun** pacchetto sia sfuggito | C.11 |
