@@ -42,7 +42,7 @@ from tests.hunting_fixtures import (
 
 
 def _produced(tmp_path):
-    return tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced"
+    return tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
 
 
 # --- E1: the full lifecycle over the real store --------------------------------
@@ -271,11 +271,12 @@ def test_H4_phase_hints_ride_tool_responses_and_graph_tracks_the_loop(tmp_path):
 
 
 def test_H5_tool_schemas_ride_the_session_turn(tmp_path, monkeypatch):
-    """The five tool schemas are bound REQUEST-ONLY to the session turn: each
+    """The six tool schemas are bound REQUEST-ONLY to the session turn: each
     `convert_to_openai_tool` dict carries the tool's JSON schema in the
     generation request's `tools` body (the standard tool interface), so the
     model can emit valid args - and no ToolNode is created, so the harness stays
-    the sole executor."""
+    the sole executor. The sixth is `load_skill` (ADR A4): the hunter declares it
+    request-only alongside its five memory/exec tools."""
     import polymerhus.app.llm.session as S
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
@@ -306,7 +307,9 @@ def test_H5_tool_schemas_ride_the_session_turn(tmp_path, monkeypatch):
     assert result.hypothesis_verdict is None
     tools = captured.get("tools", ())
     names = [t["function"]["name"] for t in tools]
-    assert names == ["hunts_store", "notes", "graph_view", "kb_query", "exec"]
+    assert names == [
+        "hunts_store", "notes", "graph_view", "kb_query", "exec", "load_skill",
+    ]
     for t in tools:
         assert t["type"] == "function"
         assert t["function"]["name"] and t["function"]["description"]

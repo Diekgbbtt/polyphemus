@@ -47,9 +47,20 @@ docs/.DS_Store
 .recon-exports/
 tests/e2e/fixtures/eval-targets.yaml
 
-# Hunting run artifacts (per-project memory-store files), reproducible by
-# re-running. The store root is `data/`; each project gets
-# `data/<project_id>/orchestration/` (the legacy `data/hunts/` tree is gone).
-src/polymerhus/attack/hunting/data/*
-!src/polymerhus/attack/hunting/data/fault-kb.yaml
-!src/polymerhus/attack/hunting/data/__init__.py
+# The shared app-owned data root (#234): one directory per module per project
+# (skills/, hunting/orchestration/, hunting/hunter/, hunting/test-executor-pod/).
+# Run artifacts, reproducible by re-running. The fault-KB catalogue is the ONE
+# tracked artifact: the image build copies it into the data root, and the
+# loader fails closed if it is absent.
+data/*
+!data/.gitkeep
+!data/hunting/fault-kb.yaml
+
+# Build metadata (setuptools) and the local uv lockfile. Both are per-machine
+# artifacts here: the project pins its dependencies in requirements-*.txt.
+src/*.egg-info/
+uv.lock
+
+# Editor swap files (stray vim buffers on tracked markdown).
+*.swp
+*.swo

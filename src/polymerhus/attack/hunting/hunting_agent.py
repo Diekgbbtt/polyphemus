@@ -114,37 +114,32 @@ HypothesisVerdict = Literal[
 
 # --- the stable system prompt (single-sourced from the SKILL.md) ---------------
 
-# The stable system prompt is single-sourced from
-# `skills/hunting/hunting-agent/SKILL.md` through the shared `skill_for`
-# (FR-SKILLIF), degraded to the terse fallback below when the mount is
-# unavailable. The harness embeds it ahead of the FIRST step's input; the per-hunt
-# session checkpointer carries it across the later steps, so it is never repeated
-# into the conversation (the stateful-thread pattern, R4).
-_HUNTING_AGENT_SKILL_FALLBACK = (
-    "You are the hunting agent: the hypothesis formulation and verification "
-    "agent of the hunting design/execution partition. For the dispatched "
-    "HuntConfig, formulate candidate fault hypotheses for the testable unit, "
-    "author a TestImplementationSpec for each candidate worth testing, and "
-    "verify each hypothesis through the test-executor pod, ending with an "
-    "evidence-backed verdict. You are a scientist, not a script writer: every "
-    "spec is an experiment design, every claim must be backed by evidence you "
-    "actually hold, and the pod is the only source of experimental evidence - "
-    "you never declare success, the evidence does. A hypothesis is a candidate "
-    "specific fault of the dispatched class. One hypothesis per spec; no "
-    "bulldozing - never re-dispatch a closed candidate without new evidence. "
-    "Degraded grounding (empty or raising KB, missing config parts) degrades "
-    "the run, never raises; flag the gap in the feedback."
-)
+# The stable system prompt is read directly from this module's `prompts/` dir,
+# memoized on first call (no import-time I/O). A missing prompt file is a
+# defect: FAIL-CLOSED (raise), so the harness never starts a hunt without its
+# prompt. The harness serves it as `system_prompt=` on EVERY `arun_session_turn`
+# (the orchestrator's [SystemMessage(skill), HumanMessage(prompt)] composed-turn
+# precedent, `llm.build_gate_reason_fn`): the installed `create_agent` prepends
+# it ephemerally at each model invocation and never persists it into the
+# checkpointer state, so per-turn passing is cheap (no accumulation) and
+# required (a fresh agent is built per turn - first-turn-only would lose the
+# skill on the resumed thread). The #95 compactor's `_dedup_system_messages`
+# never sees it (it is not in the trail); the first HumanMessage stays the
+# per-dispatch instance data below.
+_HUNTING_AGENT_SKILL: str | None = None
 
 
 def _load_hunting_agent_skill() -> str:
-    """The stable system prompt, single-sourced from
-    `skills/hunting/hunting-agent/SKILL.md` through the shared `skill_for`:
-    YAML frontmatter stripped, cached in-process, degraded to the terse
-    fallback above when the mount is unavailable."""
-    from polymerhus.recon.domain.skills import skill_for
+    """The stable system prompt, read directly from this module's `prompts/`
+    dir: memoized in-process, FAIL-CLOSED on a missing file (raise)."""
+    global _HUNTING_AGENT_SKILL
+    if _HUNTING_AGENT_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
 
-    return skill_for("hunting/hunting-agent", fallback=_HUNTING_AGENT_SKILL_FALLBACK)
+        _HUNTING_AGENT_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "hunting-agent.md"
+        ).read_text(encoding="utf-8")
+    return _HUNTING_AGENT_SKILL
 
 
 # --- pure helpers (kept from the #83 harness) ---------------------------------
@@ -357,12 +352,15 @@ def _state_summary(state: dict) -> str:
 
 
 def _compose_first_step(config: HuntConfig, state: dict, tool_surface: str) -> str:
-    """The first step's input: the stable skill ahead of the hunt grounding, the
-    tool surface, the current state, and the step protocol. Later steps resume
-    the thread from the checkpoint, so the skill/surface/grounding are never
-    repeated into the conversation."""
+    """The first step's HUMAN input: the hunt grounding, the tool surface, the
+    current state, and the step protocol, in that order. The stable skill rides
+    the SYSTEM channel (`system_prompt=` on every turn - the orchestrator's
+    [SystemMessage(skill), HumanMessage(prompt)] composed-turn precedent), never
+    this message: this message is per-dispatch instance data (the correct human
+    channel), while the skill is the stable system prompt. Later steps resume
+    the thread from the checkpoint, so the grounding/surface are never repeated
+    into the conversation."""
     return "\n\n".join([
-        _load_hunting_agent_skill(),
         _compose_grounding(config),
         tool_surface,
         _state_summary(state),
@@ -480,7 +478,6 @@ def build_hunting_agent(
             store=memory_store, project_id=project_id, hunt_store=hunt_store,
             graph_view_fn=graph_view_fn, kb_fn=kb_fn, exec_fn=exec_fn,
         )
-        tools_by_name = {tool.name: tool for tool in tools}
         state: dict = {"phase": "grounding", "trail": []}
 
         from langchain_core.messages import HumanMessage, ToolMessage  # noqa: PLC0415
@@ -489,8 +486,24 @@ def build_hunting_agent(
         )
         from polymerhus.app.llm.session import arun_session_turn  # noqa: PLC0415
         from polymerhus.app.llm.session_address import HuntSession  # noqa: PLC0415
+        from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+
+        # The skill seams ride BOTH planes of the hybrid loop (the declaration /
+        # execution split): `load_skill` is declared request-only alongside the
+        # five hunter tools AND registered in the harness executor map, joined
+        # by the tool name; the index middleware joins the turn middleware.
+        index_mw, load_tool = skill_agent_seams()
+        tools = list(tools) + [load_tool]
+        tools_by_name = {tool.name: tool for tool in tools}
+        middleware = list(middleware) + [index_mw]
 
         thread_id = HuntSession(run_id, hunt_id).thread_id
+        # The stable skill rides the SYSTEM channel on EVERY turn (the
+        # orchestrator's composed-turn precedent): `create_agent` prepends it
+        # ephemerally per model invocation without persisting it, so per-turn
+        # passing is cheap and required. Fail-closed here (raise) so a hunt
+        # never starts without its prompt.
+        skill = _load_hunting_agent_skill()
         new_messages = [HumanMessage(
             content=_compose_first_step(config, state, _tool_surface(tools)))]
         # The five tools ride the generation request REQUEST-ONLY (the standard
@@ -509,6 +522,7 @@ def build_hunting_agent(
                     _HUNTER_ROLE, thread_id, new_messages,
                     checkpointer=checkpointer,
                     tools=request_tools,
+                    system_prompt=skill,
                     middleware=middleware,
                     model_factory=model_factory,
                     observe=observe,

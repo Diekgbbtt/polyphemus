@@ -117,6 +117,10 @@ class _TurnActor:
         middleware = [middleware] if middleware else []
         if middleware_extra:
             middleware = middleware + list(middleware_extra)
+        from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+
+        index_mw, load_tool = skill_agent_seams()
+        middleware = middleware + [index_mw]
         kwargs = {
             "checkpointer": self._checkpointer,
             "inbox": self._inbox,
@@ -134,6 +138,7 @@ class _TurnActor:
             kwargs["system_prompt"] = system_prompt
         if self._tools:
             kwargs["tools"] = self._tools
+        kwargs["tools"] = list(kwargs.get("tools", ())) + [load_tool]
         self._task = asyncio.ensure_future(
             run_session_agent(
                 self._address.role_id,

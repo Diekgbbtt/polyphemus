@@ -15,7 +15,6 @@ import pytest
 
 from polymerhus.attack.hunting.hunt_store import (
     DuplicateConfigError,
-    HUNT_STORE_ROOT,
     HuntStore,
     config_file_name,
     parse_config_file_name,
@@ -98,25 +97,30 @@ def test_semantic_key_is_the_canonical_internal_identity():
     assert semantic_key(UNIT, CWE, CLASS) == "Service:catalogue-and-discovery::CWE-639::IDOR"
 
 
-# --- topology: lazily created per project at the first write -----------------
+# --- topology: the store writes files, the app scaffold owns directories -----
 
-def test_write_creates_the_project_topology(tmp_path):
+def test_write_lands_its_file_without_scaffolding_the_rest(tmp_path):
     store = HuntStore(tmp_path)
     key = store.write_config(PROJECT, _config())
     assert key == semantic_key(UNIT, CWE, CLASS)
-    produced = tmp_path / PROJECT / "orchestration" / "hunt_configs" / "produced"
-    consumed = tmp_path / PROJECT / "orchestration" / "hunt_configs" / "consumed"
-    memory = tmp_path / PROJECT / "orchestration" / "memory.yaml"
-    assert produced.exists()
-    assert consumed.exists()          # both directories are part of the topology
-    assert not memory.exists()        # memory.yaml is created only by a note write
+    orchestration = tmp_path / PROJECT / "hunting" / "orchestration"
+    produced = orchestration / "hunt_configs" / "produced"
     assert (produced / f"{UNIT}_{CWE}_{CLASS}.yaml").exists()
+    # The fixed topology (the consumed side, memory.yaml) is created eagerly by
+    # the app scaffold (ensure_project), never by the store.
+    assert not (orchestration / "hunt_configs" / "consumed").exists()
+    assert not (orchestration / "memory.yaml").exists()  # only a note write
 
 
-def test_default_root_is_the_fixed_seam_root():
-    assert HUNT_STORE_ROOT.name == "data"
-    assert str(HUNT_STORE_ROOT).endswith("src/polymerhus/attack/hunting/data")
-    assert HuntStore()._root == HUNT_STORE_ROOT
+def test_default_root_is_the_app_owned_data_root():
+    from polymerhus.app.data_root import DATA_ROOT
+
+    store = HuntStore()
+
+    assert store._root == DATA_ROOT
+    assert store._project_dir(PROJECT) == (
+        DATA_ROOT / PROJECT / "hunting" / "orchestration"
+    )
 
 
 # --- duplicate-write novelty gate (G4) --------------------------------------
@@ -165,7 +169,7 @@ def test_update_config_marks_dropped_and_stays_on_disk(tmp_path):
     configs = store.read_configs(PROJECT)
     assert len(configs) == 1
     assert configs[0]["status"] == "dropped"
-    assert (tmp_path / PROJECT / "orchestration" / "hunt_configs" / "produced"
+    assert (tmp_path / PROJECT / "hunting" / "orchestration" / "hunt_configs" / "produced"
             / f"{UNIT}_{CWE}_{CLASS}.yaml").exists()
 
 
@@ -203,7 +207,7 @@ def test_dropped_config_stays_on_disk(tmp_path):
     # the file survives any later read / note operation (never deleted)
     store.append_note(PROJECT, f"{UNIT}::{CWE}", "a note")
     assert len(store.read_configs(PROJECT)) == 1
-    assert (tmp_path / PROJECT / "orchestration" / "hunt_configs" / "produced"
+    assert (tmp_path / PROJECT / "hunting" / "orchestration" / "hunt_configs" / "produced"
             / f"{UNIT}_{CWE}_{CLASS}.yaml").exists()
 
 
@@ -257,7 +261,7 @@ def test_read_failures_are_fail_open(tmp_path):
     # a corrupt config file degrades that record (warned + skipped), the
     # surviving config still reads
     store.write_config(PROJECT, _config())
-    corrupt = tmp_path / PROJECT / "orchestration" / "hunt_configs" / "produced"
+    corrupt = tmp_path / PROJECT / "hunting" / "orchestration" / "hunt_configs" / "produced"
     (corrupt / f"{UNIT}_CWE-9_broken.yaml").write_text(":: not yaml ::", encoding="utf-8")
     assert len(store.read_configs(PROJECT)) == 1
 
@@ -273,7 +277,7 @@ def test_notes_append_in_natural_order(tmp_path):
     notes = store.read_notes(PROJECT, key)
     assert [n["note"] for n in notes] == ["first", "second"]
     # natural append order, no _seq anywhere
-    body = (tmp_path / PROJECT / "orchestration" / "memory.yaml").read_text(
+    body = (tmp_path / PROJECT / "hunting" / "orchestration" / "memory.yaml").read_text(
         encoding="utf-8")
     assert "_seq" not in body
     assert body.index("first") < body.index("second")
@@ -324,7 +328,7 @@ def test_failed_note_dump_leaves_prior_content_intact(tmp_path, monkeypatch):
     temp-file + os.replace write), so the whole notes history is never lost."""
     store = HuntStore(tmp_path)
     store.append_note(PROJECT, f"{UNIT}::{CWE}", "first")
-    memory = tmp_path / PROJECT / "orchestration" / "memory.yaml"
+    memory = tmp_path / PROJECT / "hunting" / "orchestration" / "memory.yaml"
     before = memory.read_text(encoding="utf-8")
 
     def boom(*args, **kwargs):
@@ -355,7 +359,7 @@ def test_failed_config_dump_leaves_no_partial_file(tmp_path, monkeypatch):
     monkeypatch.undo()
 
     assert store.read_configs(PROJECT) == []
-    produced = tmp_path / PROJECT / "orchestration" / "hunt_configs" / "produced"
+    produced = tmp_path / PROJECT / "hunting" / "orchestration" / "hunt_configs" / "produced"
     assert [p for p in produced.iterdir() if p.name.endswith(".yaml")] == []
     assert [p for p in produced.iterdir() if p.name.endswith(".tmp")] == []
 

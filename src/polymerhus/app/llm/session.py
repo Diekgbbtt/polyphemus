@@ -315,15 +315,19 @@ def run_session_turn(
     model_factory: ModelFactory | None = None,
     observe: bool = True,
     read_timeout_s: float | None = None,
+    context: dict | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
 
     The `checkpointer` (keyed by `thread_id`, e.g. `f"{run_id}:{role_id}"`) restores
     the thread's prior messages; `new_messages` are appended; the agent runs its
     model<->tool loop (`tools` bound via tool_calling) to a final answer, which is
-    persisted back so the next turn resumes from here. `response_format` returns a
-    parsed structured object as `content`. `read_timeout_s` (default None) bounds
-    the turn's model calls per-attempt - the escalating-budget seam #186 rides."""
+    persisted back so the next turn resumes from here. `response_format` returns
+    a parsed structured object as `content`. `read_timeout_s` (default None) bounds
+    the turn's model calls per-attempt - the escalating-budget seam #186 rides.
+    `context` (default None) is the native invocation context (`runtime.context`
+    in middleware) - e.g. `{"skills": [...]}` for the skill-index middleware;
+    absent means no context-carried bindings for this turn."""
     profile = _resolve_reasoning_profile(role_id)
     agent = _build_agent(
         role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
@@ -336,7 +340,7 @@ def run_session_turn(
             config, _read_thread_state(checkpointer, thread_id))
     if observe:
         _attach_compaction_metadata(config, middleware, thread_id)
-    result = agent.invoke({"messages": list(new_messages)}, config)
+    result = agent.invoke({"messages": list(new_messages)}, config, context=context)
     _replay_reasoning(agent, config, result, role_id, thread_id, profile)
     return _to_turn(result, response_format, thread_id)
 
@@ -355,6 +359,7 @@ async def arun_session_turn(
     model_factory: ModelFactory | None = None,
     observe: bool = True,
     read_timeout_s: float | None = None,
+    context: dict | None = None,
 ) -> SessionTurn:
     """Async-native turn (`ainvoke`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
@@ -375,7 +380,7 @@ async def arun_session_turn(
             config, await _aread_thread_state(checkpointer, thread_id))
     if observe:
         _attach_compaction_metadata(config, middleware, thread_id)
-    result = await agent.ainvoke({"messages": list(new_messages)}, config)
+    result = await agent.ainvoke({"messages": list(new_messages)}, config, context=context)
     await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
     return _to_turn(result, response_format, thread_id)
 
@@ -496,6 +501,8 @@ def stateful_turn(
     model_factory: ModelFactory | None = None,
     middleware: Sequence = (),
     observe: bool = True,
+    context: dict | None = None,
+    tools: Sequence = (),
 ):
     """The UBIQUITOUS stateful-agent invocation (#94): one turn of a sequentially
     dispatched agent that RESUMES from its OWN per-instance checkpoint and appends this
@@ -517,7 +524,7 @@ def stateful_turn(
             role_id, _as_thread_id(thread), new_messages,
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
-            middleware=middleware,
+            middleware=middleware, context=context, tools=tools,
         )
         return turn.content
     except Exception as exc:

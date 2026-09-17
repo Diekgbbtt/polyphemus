@@ -24,22 +24,40 @@ from lightrag.context import (
 )
 from lightrag.generation import (
     AnswerBundleV1,
+    BundleValidationResult,
     extract_json_object,
     validate_bundle,
 )
 from lightrag.query_spec import QuerySpecV1, RetrievalConfigV1, R_A
+
+# The SINGLE canonical description of the KB tool (#207). The KB is a
+# web-application testing-methodology knowledge base (WSTG + writeup overlays),
+# NOT a "fault knowledge base": agents must never use it to verify or adjudicate
+# a bug - only to retrieve methodology. This constant is imported verbatim by
+# the pod and hunter tool surfaces (pod/tools.py, hunter_tools.py) so the
+# description cannot drift between sites. The ontology list must match the real
+# `lightrag.ontology.ENTITY_TYPES`.
+QUERY_LIGHTRAG_DESCRIPTION = (
+    "Retrieve web-application testing methodology from the LightRAG knowledge "
+    "base when specific knowledge is missing from your reasoning. Query it for "
+    "the target stack's mechanisms or shape, for payloads and their vectors, "
+    "for a technique or methodology gap, or for verification-symptom shape. It "
+    "covers the ontology's concepts: technology stack, attack technique, "
+    "payload pattern, artifact, observable signal, vulnerability class, attack "
+    "goal, attacker capability, precondition environment, and defensive "
+    "control. Returns a structured answer: a summary plus per-concept "
+    "explanations (type, canonical name, prose) with provenance references and "
+    "knowledge gaps. Answers may enrich beyond the retrieved context - confirm "
+    "concrete target parameters on the target. An empty or degraded result "
+    "means the KB has nothing further - continue on your own grounding."
+)
 
 
 class LightRagQueryTool(BaseTool):
     """Query LightRAG for methodology evidence and return a validated answer."""
 
     name: str = "query_lightrag"
-    description: str = (
-        "Retrieve reusable web-application testing methodology from LightRAG "
-        "for one bounded testing concern, then return a structured answer: one "
-        "ontology entity (type + canonical name) with a detailed prose "
-        "explanation, grounded only in the returned references."
-    )
+    description: str = QUERY_LIGHTRAG_DESCRIPTION
     args_schema: type[QuerySpecV1] = QuerySpecV1
     client: Any
     llm: Any
@@ -59,32 +77,62 @@ class LightRagQueryTool(BaseTool):
 
     def _validate_text(
         self, spec: QuerySpecV1, registry: Any, text: str
-    ) -> tuple[AnswerBundleV1 | None, bool]:
+    ) -> tuple[BundleValidationResult, AnswerBundleV1 | None, bool]:
         payload_obj = extract_json_object(text)
         result = validate_bundle(payload_obj, spec=spec, registry=registry)
         if result.is_valid and result.bundle is not None:
-            return result.bundle, True
+            return result, result.bundle, True
         from lightrag.pipeline import _deterministic_fallback
 
-        return _deterministic_fallback(spec, result.errors), False
+        return result, _deterministic_fallback(spec, result.errors), False
 
     def stream(self, spec: QuerySpecV1) -> Iterator[dict]:
+        from lightrag.observability import registry_metadata, stage_span
+
+        collected: list[str] = []
+        bundle = None
+        accepted = False
         try:
-            raw = self.client.query_data(
-                {
-                    "query": _q3(spec),
-                    "mode": self.retrieval_config.mode,
-                    "chunk_top_k": self.retrieval_config.chunk_top_k,
-                    "max_total_tokens": self.retrieval_config.max_total_tokens,
-                }
-            )
-            prompt, registry = self._build_prompt(spec, raw)
-            collected: list[str] = []
-            for event in self.llm.stream(prompt):
-                if event.get("type") == "delta":
-                    collected.append(event["text"])
-                yield event
-            bundle, accepted = self._validate_text(spec, registry, "".join(collected))
+            with stage_span("retrieval", input={
+                "query": _q3(spec),
+                "mode": self.retrieval_config.mode,
+                "top_k": self.retrieval_config.chunk_top_k,
+            }) as retrieval:
+                raw = self.client.query_data(
+                    {
+                        "query": _q3(spec),
+                        "mode": self.retrieval_config.mode,
+                        "chunk_top_k": self.retrieval_config.chunk_top_k,
+                        "max_total_tokens": self.retrieval_config.max_total_tokens,
+                    }
+                )
+                prompt, registry = self._build_prompt(spec, raw)
+                context = from_raw_response(raw)
+                retrieval.record(
+                    status=raw.get("status"),
+                    chunk_ids=[c.reference_id for c in context.chunks],
+                    chunk_scores=_chunk_scores(raw),
+                    registry=registry_metadata(registry),
+                )
+            with stage_span("generation", input={"prompt": prompt}) as generation:
+                reasoning: list[str] = []
+                for event in self.llm.stream(prompt):
+                    if event.get("type") == "reasoning":
+                        reasoning.append(event["text"])
+                        continue
+                    if event.get("type") == "delta":
+                        collected.append(event["text"])
+                    yield event
+                generation.record(
+                    reasoning_content="".join(reasoning),
+                    output="".join(collected),
+                )
+            text = "".join(collected)
+            with stage_span("validation", input={
+                "scenario_id": spec.scenario_id,
+            }) as validation:
+                result, bundle, accepted = self._validate_text(spec, registry, text)
+                self._record_validation(validation, result, bundle, accepted)
         except Exception as exc:  # noqa: BLE001 - fail-open: the author lane keeps going
             from lightrag.pipeline import _deterministic_fallback  # noqa: PLC0415
             bundle = _deterministic_fallback(
@@ -96,6 +144,33 @@ class LightRagQueryTool(BaseTool):
             "answer": bundle.model_dump() if bundle else {},
             "accepted": accepted,
         }
+
+    def _record_validation(
+        self,
+        validation: Any,
+        result: BundleValidationResult,
+        bundle: AnswerBundleV1 | None,
+        accepted: bool,
+    ) -> None:
+        """Surface the validation outcome as structured observation metadata + scores.
+
+        #207 defect 1, points E and F: an accepted-but-empty-provenance bundle
+        (``PROV []``) and the entity-count contract drift are surfaced, not
+        swallowed. ``degraded`` marks a validation that fell back to the
+        deterministic fallback. Fail-open: recording never raises into the
+        turn.
+        """
+        provenance = bundle.provenance_references if bundle else []
+        entity_count = float(len(bundle.ontology_explanations)) if bundle else 0.0
+        validation.record(
+            accepted=accepted,
+            degraded=not accepted,
+            errors=result.errors,
+            rejected_citations=result.rejected_citations,
+            provenance_references=provenance,
+        )
+        validation.metric("provenance_empty", 1.0 if not provenance else 0.0)
+        validation.metric("entity_count", entity_count)
 
     def _run(self, **kwargs: Any) -> str:
         spec = QuerySpecV1(**kwargs)
@@ -110,6 +185,31 @@ def _q3(spec: QuerySpecV1) -> str:
     from lightrag.query_spec import build_q3
 
     return build_q3(spec)
+
+
+def _chunk_scores(raw: dict) -> list[float]:
+    """Best-effort chunk scores from the raw ``/query/data`` response.
+
+    LightRAG does not consistently surface a score per chunk, so this reads
+    whatever the response carries (``score`` / ``order`` fields under each
+    chunk) and returns an empty list when absent - the span then records the
+    ids without scores (observability must never crash the pipeline).
+    """
+    scores: list[float] = []
+    data = raw.get("data") or {}
+    for item in data.get("chunks") or []:
+        if not isinstance(item, dict):
+            continue
+        for key in ("score", "order"):
+            value = item.get(key)
+            if value is None:
+                continue
+            try:
+                scores.append(float(value))
+                break
+            except (TypeError, ValueError):
+                continue
+    return scores
 
 
 def json_dump(value: Any) -> str:

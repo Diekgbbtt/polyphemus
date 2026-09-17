@@ -147,39 +147,30 @@ def _read_context(project_id: str, read_fn, report: CurationReport) -> dict:
 
 # --- Stage 2: the curation LLM proposal pass (real collaborator) ---------------
 
-_CURATION_FALLBACK = (
-    "You are the post-recon curation pass. Reconcile the accumulated Layer-1 "
-    "graph: propose merges (services/systems that denote the SAME business "
-    "function or mechanism even under different slugs/synonyms - dedup is SEMANTIC "
-    "equivalence, judged by meaning not by matching keys), deletes (off-role/noise "
-    "nodes), relabels (mis-typed nodes), "
-    "and rehome (a Service prop that is really a System fact). Ground every "
-    "proposal in the provided cards; propose nothing not present. Compare every "
-    "pair for semantic overlap before concluding; an empty set is honest ONLY "
-    "after that check - a different slug alone does not keep two units apart, and a "
-    "merge with no evidence is still a defect."
-)
+# The curation role prompt (`prompts/curation.md`), memoized on first call (no
+# import-time I/O, CODING STANDARD section 6). A missing prompt file is a
+# defect: FAIL-CLOSED (raise).
+_CURATION_SKILL: str | None = None
 
 
 def _load_curation_skill() -> str:
-    """The curation system prompt COMPOSED with the analyser reasoning skill (the
-    curation pass reasons the same way, then applies the reconciliation rules).
-    Both are loaded via the shared `skill_for`, degrading to the inline fallbacks
-    if the mount is unavailable (a missing mount never crashes the pass).
+    """The curation system prompt, read directly from this module's `prompts/`
+    dir: memoized in-process, FAIL-CLOSED on a missing file (raise).
 
-    #30 SCOPE NOTE (operator-ratified 2026-07-28). This is the SECOND and last
-    production consumer of `skills/analysis/analyser/SKILL.md`, and it is the reason
-    that shared skill cannot simply be deleted when the analyser pod retires it.
-    It is deliberately left alone: curation is legacy code under the analysis
-    rewrite and degrades ORGANICALLY once the pipeline is complete - the skill and
-    its consumer retire together, rather than the skill being surgically unpicked
-    from a pass that is itself on the way out. Do not "fix" this coupling in
-    isolation; retiring curation retires it."""
-    from polymerhus.recon.domain.skills import skill_for
+    #30 RETIREMENT NOTE. The shared analyser SKILL.md this pass once composed
+    with never existed as a file - the ghost read always yielded ''. The composition is retired with it: this loader serves ONLY the curation
+    prompt now. Curation reasons its own way, then applies the reconciliation
+    rules; it is legacy code under the analysis rewrite and degrades ORGANICALLY
+    once the pipeline is complete. Do not reintroduce the coupling; retiring
+    curation retires it."""
+    global _CURATION_SKILL
+    if _CURATION_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
 
-    analyser = skill_for("analysis/analyser", fallback="")
-    curation = skill_for("analysis/curation", fallback=_CURATION_FALLBACK)
-    return f"{analyser}\n\n{curation}" if analyser else curation
+        _CURATION_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "curation.md"
+        ).read_text(encoding="utf-8")
+    return _CURATION_SKILL
 
 
 def _curation_prompt(context: dict) -> str:

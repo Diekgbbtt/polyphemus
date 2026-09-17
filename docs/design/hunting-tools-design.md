@@ -99,10 +99,55 @@ all three tools:
   discriminator); the SAME coded teaching rejection applies to a malformed
   call so the pod loop self-corrects instead of degrading silently.
 
+## The `kb_query` / `query_lightrag` tool (#207): one canonical description + per-stage observability
+
+*Status: DRAFT (records the #207 disposition; the authoritative tool contract is
+`lightrag/tool.py` and the pipeline contract is
+`docs/design/lightrag/lightrag_design_doc.md`, amended by the same change).*
+
+The KB tool is the LightRAG **testing-methodology** knowledge base (WSTG +
+writeup overlays), surfaced at two agent seams - the hunter's author-lane
+`kb_query` (`attack/hunting/hunter_tools.py`) and the pod's
+`query_lightrag` (`attack/hunting/pod/tools.py`) - both wrapping the real
+`query_lightrag` tool (`lightrag/tool.py`). Two #207 defects shaped this
+design:
+
+1. **Wrong "fault KB" framing** - the tool was framed as a "fault knowledge
+   base" and its descriptions drifted (pod said "one ontology entity",
+   hunter listed config fields). The fix: ONE canonical description constant,
+   `QUERY_LIGHTRAG_DESCRIPTION` in `lightrag/tool.py`, imported verbatim by
+   all three description sites so it cannot drift. The description frames the
+   KB **positively** - it retrieves the ontology's methodology concepts
+   (technology stack, attack technique, payload pattern, artifact, observable
+   signal, vulnerability class, attack goal, attacker capability, precondition
+   environment, defensive control - the real `ENTITY_TYPES`) - and never
+   invites using the KB to verify or adjudicate a bug. The prompt bullet
+   (`{KB_TOOL}` at both pod prompt sites) is the same neutral pointer +
+   trigger-line signature, zero overlap with the description.
+2. **Observability black-box** - the pipeline's inner stages (retrieval,
+   generation, validation) were untraced plain httpx; KB answers were not
+   auditable. The fix records, per call, per-stage Langfuse observations via
+   `lightrag/observability.py` (grey pt 6: the SDK primitives, reusing the
+   wiring in `app/observability/langfuse_tracing.py` - raw OTel tracer scopes
+   are dropped by the SDK export filter, see
+   `docs/design/observability-recipe.md`). See
+   `docs/observability-langfuse.md` and the lightrag design doc for the
+   observation details.
+
+### The author-lane recording seam (grey pt 8)
+
+The hunter has no D6 log, so its author-lane `kb_query` reads land a
+KbObservation-equivalent artifact **as observation metadata** (never a filesystem
+artifact): a `kb_observation` observation per call recording the query + scenario
+id as input and the returned entity names + provenance references as metadata
+(`lightrag/observability.py::kb_observation_span`,
+`hunter_tools.py::KbQueryTool._run`). The pod lane keeps its D6-log
+`KbObservation` recording (`pod/tools.py::_record`, T3/#179) - that lane has a
+log, so its observation metadata is the same shape for consistency.
+
 ## Open / not yet designed
 
-- The `kb_query` / `exec` tool contracts (`hunts_store` / `notes` / `kb_query`
-  / `exec` remain partially future sections).
+- The `exec` tool contract (`exec` remains a partially future section).
 - Whether the orchestrator's `hunts_store` / `notes` closures migrate into this
   shared module. The orchestrator closures (`actors.py::hunts_store` /
   `::notes`) already use a required positional `cmd` + a coded `unknown cmd`

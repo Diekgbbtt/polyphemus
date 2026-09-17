@@ -81,6 +81,9 @@ def parse(stdout: str) -> list[AssetDelta]:
         if url_deltas:
             baseurl_identity = url_deltas[0].identity
             if response_headers:
+                # Same structural contract as httpx_parser: response headers
+                # carry direction="response" (observed surface, never replayed
+                # into requests - see the httpx_parser seam note).
                 for name, value in response_headers.items():
                     if not name or not isinstance(name, str):
                         continue
@@ -88,7 +91,7 @@ def parse(stdout: str) -> list[AssetDelta]:
                         AssetDelta(
                             type="Header",
                             identity={"name": name.lower(), "baseurl": baseurl_identity["url"]},
-                            props={"value": str(value)},
+                            props={"value": str(value), "direction": "response"},
                             edges=[
                                 Edge(
                                     rel="HAS_HEADER",

@@ -24,11 +24,11 @@ Two run modes mirror `tests/e2e/hunting_stack.py`:
 - From the host: the target is published on 8082/8080 (`AGENT_HTTP_URL`
   overrides) and the helper brings it up via the selected compose files.
 
-The store roots are FIXED under `src/polymerhus/attack/hunting/data/`, which
-the sibling mounts (`./src:/srv/src`), so fixtures seeded by the test process
-through the real store APIs land on the SAME physical files the container
-reads - seeding is not doubled, it is the container's own store written by the
-caller of the real stores.
+The store roots are under the app-owned data root (`DATA_ROOT`, i.e.
+`<codebase_root>/data`), which the sibling `./data:/srv/data` mount mirrors, so
+fixtures seeded by the test process through the real store APIs land on the
+SAME physical files the container reads - seeding is not doubled, it is the
+container's own store written by the caller of the real stores.
 
 Failure policy (per catalogue): live-tier gates skip with a clear reason when
 the stack is unreachable (matching the repo's integration/e2e convention), and
@@ -204,9 +204,10 @@ def create_project(client, name: str) -> str:
 
 # --- fixture seeding through the REAL store APIs -------------------------------
 
-# The store default roots resolve to `src/polymerhus/attack/hunting/data/`,
-# which the sibling mounts (`./src:/srv/src`) - the fixture is the container's
-# own store written via its real store APIs, on the caller's side of the mount.
+# The store default roots resolve to the app-owned data root
+# (`<codebase_root>/data`), which the sibling `./data:/srv/data` mount mirrors -
+# the fixture is the container's own store written via its real store APIs, on
+# the caller's side of the mount.
 
 
 def seed_hunt_config(project_id: str, *, unit_id: str, fault_class: str,
@@ -353,7 +354,7 @@ def consumed_spec_files(project_id: str, fault_key: str) -> list[str]:
     from polymerhus.attack.hunting.hunter_memory import HunterMemoryStore
     store = HunterMemoryStore()
     root = store._root  # noqa: SLF001 - physical-layout read-back
-    side_dir = root / str(project_id) / "hunter" / "test-specs" / str(fault_key) / "consumed"
+    side_dir = root / str(project_id) / "hunting" / "hunter" / "test-specs" / str(fault_key) / "consumed"
     if not side_dir.exists():
         return []
     return sorted(child.stem for child in side_dir.glob("*.yaml"))

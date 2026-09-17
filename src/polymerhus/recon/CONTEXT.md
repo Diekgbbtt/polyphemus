@@ -35,7 +35,9 @@ The profiling pass is enrichment only: it fills gaps (methods/parameters/headers
 The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_scope.derive_scan_targets` from a host's `restapi` Endpoint paths (last api-noun cut, versions left as fuzz-space, parent-dir fallback). Not a naming classifier - the gate is the content-type `profile`; the noun set only picks the cut depth.
 
 **Parameter / Header**:
-The input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
+Parameter nodes are the input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
+Header nodes as minted today are RESPONSE headers (httpx `-irh` / katana `response.headers`), hung off their BaseURL via `HAS_HEADER` with `direction="response"` - observed surface, never replayed into requests.
+Request headers come only from the operator's `auth_context` (pod `_auth_header`, injected solely for `use_auth` jobs); no code path reads `:Header` nodes to build a request, so a `Set-Cookie` value can never become a request `Cookie`.
 
 **Service (L0)**:
 A network service discovered on a Port (the descriptive node label).
@@ -175,6 +177,69 @@ _Avoid_: procedural knowledge in the store (the store carries only the label).
 The one shared read/write agent tool over the store, bound to its project id at build time; its usage contract (`AUTH_STORE_CONTRACT`) rides the tool description verbatim.
 Origin through this tool is always agent; every failure arrives as an in-band coded envelope (`operator_immutable`, `duplicate_auth`, `auth_invalid`, `store_unavailable`) - nothing raises into the turn.
 _Avoid_: a second tool face (one implementation, bound per project).
+
+## Prompts, skills, and the loader
+
+**Role prompt**:
+A role's system prompt, living with its owning module in a `prompts/` directory as plain Markdown (no frontmatter) and read directly by its module - fail-closed (a missing file raises), memoized, no cross-module imports.
+_Avoid_: skill (on-demand knowledge, never role identity).
+
+**Skill**:
+A Markdown reasoning discipline (`skills/<name>/SKILL.md`, `name` == directory) loaded on demand through the shared loader - never as a role prompt.
+_Avoid_: tool (a tool is called; a skill is read).
+
+**Skill loader (single loader)**:
+The one module (`src/polymerhus/app/llm/skills.py::skill_for`, FR-SKILLIF) authorised to read skills: it strips the YAML frontmatter, caches the body, and degrades to a fallback on a missing mount.
+Only on-demand skill readers call it; no role prompt loads through here.
+_Avoid_: a second skill system.
+
+**Data section**:
+The spec frontmatter contract every skill carries (`name` == directory, `description` = what + when, `metadata` string map carrying `version`), so a runtime consumer can index, validate, and report what was loaded.
+_Avoid_: prose header (human-only, unvalidatable).
+
+**Runtime loading**:
+Two tiers. L1 discovery: an agent's bounded skill set rendered as name + description lines into its system message by the shared skill-index middleware (bound per agent through the native invocation context). L2 activation: loading a skill mid-run through the agent-callable `load_skill(name)` tool, which returns the loader-identical body. It decouples skill evolution from prompt bake-time; bake-time reads and runtime loads can never diverge because both call the single loader.
+_Avoid_: convention-only gating (the index is composed by middleware, no model cooperation needed).
+
+**Per-project skill bundle**:
+The project-owned skill directory (`<data_root>/<project_id>/skills/<skill>/`: `SKILL.md`, `references/`, `scripts/`, `assets/`) where an executing agent records what it learned using a procedure - a blocking condition, a new role, a privilege-escalation path - so sibling and later agents start from accumulated ground truth.
+There is no canonical shared original; a project's copy is its original, created lazily on first write.
+_Avoid_: editing the shared catalogue (a live run never mutates `skills/`).
+
+**Skill store**:
+The one authority that reads and writes bundle artifacts (`src/polymerhus/app/llm/skills.py::SkillStore`, #234), sharing the loader's seam: reads resolve the per-project bundle first, then the shared catalogue, so a project skill shadows a shared one without copying.
+_Avoid_: a second skill system.
+
+**Skill writer (`write_skill`)**:
+The agent-callable write tool (`write_skill(skill, target, content)`): `procedure` carries the `SKILL.md` body alone, `references/<name>` writes one bulky reference file.
+The store owns the frontmatter - `name`, `description`, and `metadata.version` bumped one minor per write, carried from the project's own metadata or copied over from the shared catalogue on the first update (bootstrap is operator-authorised; nothing synthesises metadata).
+The factory binds the project, so an agent writes through its own project's bundle; any skill in it is writable (no per-skill writable set - the future `SkillEvolver` writes any skill).
+Every write lands atomically under a per-project lock.
+Failures arrive as coded in-band envelopes (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
+_Avoid_: section edits, operation verbs (no revise/add/correct - whole files only), authoring frontmatter.
+
+**Reading protocol (`meta/meta-usage-skill`)**:
+The compact usage-protocol skill appended to every `load_skill` result by the read path itself, except meta-family skills (any loader path under `skills/meta/`, matched by `is_meta_skill`): assess the procedure against its stated observables during and after execution, separate a skill defect from an execution miss, and record reusable improvements through `write_skill`.
+_Avoid_: prompt injection (the protocol rides the tool result, never the system prompt or compaction state).
+
+**Authoring rules (`meta/meta-write-skill`)**:
+The content-stable authoring instructions for writing a well-structured procedure rather than a note-dump: ordered steps closed by expected observables, valid frontmatter shape, bulky material behind `references/` pointers.
+The future `SkillEvolver` reuses it unchanged.
+_Avoid_: the note-dump (prose without steps, observables, or pointers).
+
+## Browser capability
+
+**Exec gateway**:
+The single loosely-coupled `steel_exec` tool beside `execute_command`, accepting either a `steel`-token-routed command or a `.sh`/`.py` automation script, carrying no operation knowledge (that lives in the skill).
+_Avoid_: per-subcommand allowlist, in-process driver.
+
+**Named session**:
+A cloud-browser session under an agent-chosen semantic `polymerhus-<flow>-<id>` name whose uniqueness is checked at creation against the live session catalogue (`steel browser sessions --json`: one read lists every live session with its name), stopped by script-trap on every path with platform inactivity as the backstop.
+_Avoid_: the default session, an unchecked name, an orphaned session.
+
+**Browser profiles**:
+Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by id only and defines no profile terms here.
+_Avoid_: duplicating #220's profile vocabulary.
 
 ## Invariants owned here
 

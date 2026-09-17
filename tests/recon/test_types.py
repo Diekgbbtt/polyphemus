@@ -1,5 +1,10 @@
 # tests/recon/test_types.py
-from polymerhus.recon.domain.types import AssetDelta, Edge, Observation, JobSpec, ExecResult
+import pytest
+from pydantic import ValidationError
+
+from polymerhus.recon.domain.types import (
+    PROFILE_VALUES, AssetDelta, Edge, Observation, JobSpec, ExecResult,
+)
 
 def test_asset_delta_with_edge_roundtrips():
     d = AssetDelta(
@@ -11,6 +16,26 @@ def test_asset_delta_with_edge_roundtrips():
     )
     assert d.type == "Endpoint"
     assert d.edges[0].node_type == "BaseURL"
+
+def test_asset_delta_accepts_every_typed_profile_value():
+    for profile in sorted(PROFILE_VALUES):
+        d = AssetDelta(type="Endpoint", identity={"path": "/x", "method": "GET",
+                                                  "baseurl": "https://a.example"},
+                       props={"profile": profile})
+        assert d.props["profile"] == profile
+
+def test_asset_delta_rejects_an_untyped_profile_value():
+    # The D16 profile is a typed literal (webapp/restapi/graphql_api): a delta
+    # carrying anything else is a programmer error and must fail loud at the
+    # delta seam (the same guard also sits at the curator graph-write seam).
+    with pytest.raises(ValidationError):
+        AssetDelta(type="Endpoint", identity={"path": "/x", "method": "GET",
+                                              "baseurl": "https://a.example"},
+                   props={"profile": "rest"})
+
+def test_asset_delta_non_profile_props_are_untouched():
+    d = AssetDelta(type="Technology", identity={"name": "Nginx"}, props={"version": "1.30.1"})
+    assert d.props["version"] == "1.30.1"
 
 def test_jobspec_defaults():
     j = JobSpec(tool="httpx", skill="http_probe",

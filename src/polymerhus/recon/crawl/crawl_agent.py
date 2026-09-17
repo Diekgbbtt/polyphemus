@@ -18,7 +18,6 @@ This module does NOT reimplement the crawl loop - it wraps `crawl_agentic.py`
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from polymerhus.recon import config
@@ -42,9 +41,22 @@ __all__ = [
 _EMPTY_MANIFEST = {"endpoints": [], "js_urls": []}
 
 
+# The steel-crawl role prompt, memoized on first call (no import-time I/O,
+# CODING STANDARD section 6). A missing prompt file is a defect: fail-closed.
+_STEEL_CRAWL_SKILL: str | None = None
+
+
 def _load_skill() -> str:
-    """Read the steel_crawl skill prompt next to this module."""
-    return (Path(__file__).parent / "steel_crawl_skill.md").read_text(encoding="utf-8")
+    """The steel_crawl skill prompt, read directly from this module's `prompts/`
+    dir. Memoized on first call; FAIL-CLOSED - a missing prompt file raises."""
+    global _STEEL_CRAWL_SKILL
+    if _STEEL_CRAWL_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
+
+        _STEEL_CRAWL_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "steel-crawl.md"
+        ).read_text(encoding="utf-8")
+    return _STEEL_CRAWL_SKILL
 
 
 class _ToolsManager:

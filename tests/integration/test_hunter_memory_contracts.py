@@ -44,7 +44,7 @@ def test_C1_produced_topology_and_lazy_project_dir(tmp_path):
         spec=_fault("F1", status="hypothesised"),
     )
     expected = (
-        tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced" / "csrf_probe.yaml"
+        tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced" / "csrf_probe.yaml"
     )
     assert path == expected
     assert expected.is_file()
@@ -74,7 +74,7 @@ def test_C3_keyword_sanitisation_poisons_separator_chars(tmp_path):
         spec=_fault("F1", status="hypothesised"),
     )
     f = (
-        tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced"
+        tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
         / "fault-x-csrf_probe-1.yaml"
     )
     assert f.is_file()
@@ -97,7 +97,7 @@ def test_C4_status_lifecycle_rides_one_produced_file(tmp_path):
                      spec=_fault("F1", status="verified", supports=["e1"]), **k)
     store.write_spec(PROJECT, FAULT_KEY, mode="update",
                      spec=_spec("F1", "S1", status="specified"), **k)
-    produced = tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced"
+    produced = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
     files = sorted(produced.glob("*.yaml"))
     assert len(files) == 1
     assert files[0].name == "csrf_probe.yaml"
@@ -123,7 +123,7 @@ def test_C5_duplicate_create_fails_and_preserves_original(tmp_path):
     store.write_spec(PROJECT, FAULT_KEY, mode="create", side="consumed",
                      fault_keyword="csrf", strategy_keyword="probe",
                      spec=_fault("F1", status="hypothesised"))
-    produced = tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced"
+    produced = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
     assert len(list(produced.glob("*.yaml"))) == 2
 
 
@@ -134,7 +134,7 @@ def test_C6_reauthor_update_overwrites_in_place(tmp_path):
                      spec=_fault("F1", status="hypothesised"), **k)
     store.write_spec(PROJECT, FAULT_KEY, mode="update",
                      spec=_fault("F1", status="verified", supports=["e1"]), **k)
-    produced = tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced"
+    produced = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
     files = sorted(produced.glob("*.yaml"))
     assert len(files) == 1
     body = store.read_spec(PROJECT, FAULT_KEY, **k)
@@ -182,10 +182,10 @@ def test_C9_sides_addressable_and_no_movement(tmp_path):
     store = build_memory_store(tmp_path)
     store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f1", strategy_keyword="probe",
                      side="consumed", spec=_fault("F1", status="specified"))
-    consumed = tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "consumed"
+    consumed = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "consumed"
     assert (consumed / "f1_probe.yaml").is_file()
     # nothing eagerly creates or moves the produced side
-    assert not (tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced").exists()
+    assert not (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced").exists()
     with pytest.raises(ValueError):
         store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f2", strategy_keyword="probe",
                          side="sideways", spec=_fault("F2", status="hypothesised"))
@@ -212,14 +212,14 @@ def test_C11_corrupt_file_fails_loud(tmp_path):
     store = build_memory_store(tmp_path)
     store.write_spec(PROJECT, FAULT_KEY, fault_keyword="f1", strategy_keyword="probe",
                      spec=_fault("F1", status="hypothesised"))
-    f = tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced" / "f1_probe.yaml"
+    f = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced" / "f1_probe.yaml"
     f.write_text("{{{{{{{{")
     with pytest.raises(OSError):
         store.read_spec(PROJECT, FAULT_KEY, fault_keyword="f1", strategy_keyword="probe")
     with pytest.raises(OSError):
         store.read_specs(PROJECT, FAULT_KEY)
     # a corrupt notes file fails loud the same way
-    notes = tmp_path / PROJECT / "hunter" / "notes.yaml"
+    notes = tmp_path / PROJECT / "hunting" / "hunter" / "notes.yaml"
     notes.write_text("{{{{{{{{")
     with pytest.raises(OSError):
         store.read_notes(PROJECT)
@@ -298,7 +298,7 @@ def test_C15_fault_and_note_share_the_config_identifier(tmp_path):
     assert notes[0]["key"] == f"{FAULT_KEY}:decision"
     # the produced spec file lives under test-specs/<fault_key>/ - the SAME key
     # the note keys embed: the pipeline is walked by one identifier
-    produced = tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced"
+    produced = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced"
     assert (produced / "f1_probe.yaml").is_file()
 
 
@@ -323,7 +323,7 @@ def test_C16_hunts_store_write_create(tmp_path):
     }))
     assert out["ok"] is True
     assert out["status"] == "hypothesised"
-    assert out["path"].endswith(f"{PROJECT}/hunter/test-specs/{FAULT_KEY}/produced/f1_probe.yaml")
+    assert out["path"].endswith(f"{PROJECT}/hunting/hunter/test-specs/{FAULT_KEY}/produced/f1_probe.yaml")
     assert Path(out["path"]).is_file()
 
 
@@ -410,7 +410,7 @@ def test_C22_read_failure_degrades_to_empty_set(tmp_path):
         "fault_keyword": "f1", "strategy_keyword": "probe",
         "spec": _fault("F1", status="hypothesised"),
     })
-    f = tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY / "produced" / "f1_probe.yaml"
+    f = tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY / "produced" / "f1_probe.yaml"
     f.write_text("{{{{{{{{")
     out = json.loads(tool.invoke({"command": "read", "fault_key": FAULT_KEY}))
     assert out["specs"] == []
@@ -469,7 +469,7 @@ def test_C23_fault_key_gate_rejects_a_non_canonical_identity(tmp_path):
         assert out["specs"] == []
         assert out["error"] == "fault_key_mismatch"
     # NO folder was fabricated for any rejected identity
-    assert not (tmp_path / PROJECT / "hunter" / "test-specs").exists()
+    assert not (tmp_path / PROJECT / "hunting" / "hunter" / "test-specs").exists()
 
 
 def test_C24_fault_key_gate_accepts_the_canonical_identity(tmp_path):
@@ -486,7 +486,7 @@ def test_C24_fault_key_gate_accepts_the_canonical_identity(tmp_path):
         }))
         assert out["ok"] is True, out
         assert out["path"].endswith(
-            f"{PROJECT}/hunter/test-specs/{folder}/produced/f1_probe.yaml")
+            f"{PROJECT}/hunting/hunter/test-specs/{folder}/produced/f1_probe.yaml")
         assert Path(out["path"]).is_file()
     out = json.loads(tool.invoke({"command": "read", "fault_key": _CANON_KEY}))
     assert len(out["specs"]) == 1

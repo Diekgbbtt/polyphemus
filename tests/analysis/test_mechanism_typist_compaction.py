@@ -39,11 +39,12 @@ def test_typist_turns_run_compacted(monkeypatch):
     invoke = stateful_invoke_fn("runX", object())
     invoke([HumanMessage(content="reflect")], schema=None)
     assert seen["role_id"] == "mechanism_typist"
-    assert len(seen["middleware"]) == 1
+    assert len(seen["middleware"]) == 2
     mw = seen["middleware"][0]
     assert isinstance(mw.manager, C.CompactionManager)
     assert mw.manager.summariser is not None
     assert mw.manager.window.context_limit == C.DEFAULT_CONTEXT_LIMIT  # fail-open, no env
+    assert type(seen["middleware"][1]).__name__ == "_skill_index"
 
 
 def test_typist_compaction_middleware_is_shared_across_the_chain(monkeypatch):

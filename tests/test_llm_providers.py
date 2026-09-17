@@ -704,3 +704,37 @@ def test_gateway_base_url_is_none_when_unset_or_blank(monkeypatch):
     assert P.gateway_base_url() is None
     monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
     assert P.gateway_base_url() == "http://gateway:4000"
+
+
+def test_request_payload_omits_empty_tools_array(monkeypatch):
+    """Provider-shape hardening (live 2026-09-08, swissai): a no-tools session
+    role binds an EMPTY tool set via `create_agent` -> `tools: []` lands on the
+    wire, which swissai's hosted vLLM rejects (`tools must not be an empty
+    array... omit the field entirely`). The payload seam omits the key when it
+    carries nothing."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
+
+    def _empty_tools(self, input_, *, stop=None, **kwargs):
+        return {"messages": "not-a-list", "tools": []}
+
+    monkeypatch.setattr(P.ChatOpenAI, "_get_request_payload", _empty_tools)
+    assert "tools" not in m._get_request_payload(
+        [{"role": "user", "content": "hi"}], stop=None)
+
+
+def test_request_payload_preserves_nonempty_tools_binding(monkeypatch):
+    """The strip is empty-only: a real crawl/hunting tool binding must reach
+    the wire verbatim."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
+    bound = [{"type": "function", "function": {"name": "probe"}}]
+
+    def _bound_tools(self, input_, *, stop=None, **kwargs):
+        return {"messages": "not-a-list", "tools": list(bound)}
+
+    monkeypatch.setattr(P.ChatOpenAI, "_get_request_payload", _bound_tools)
+    payload = m._get_request_payload([{"role": "user", "content": "hi"}], stop=None)
+    assert payload["tools"] == bound

@@ -455,6 +455,15 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        # Provider-shape hardening (live, 2026-09-08, swissai): a no-tools
+        # session role (the recon triager) binds an EMPTY tool set via
+        # `create_agent` -> `tools: []` lands on the wire. Some OpenAI-
+        # compatible upstreams (swissai's hosted vLLM) REJECT an empty tools
+        # array ("must not be an empty array... omit the field entirely"), so
+        # omit the key when it carries nothing - a no-tools turn never needs
+        # it. Never strips a non-empty binding (real crawl/hunting tools).
+        if payload.get("tools") == []:
+            payload.pop("tools")
         messages = payload.get("messages")
         if not isinstance(messages, list):
             return payload

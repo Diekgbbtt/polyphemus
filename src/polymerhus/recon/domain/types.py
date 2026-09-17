@@ -1,7 +1,7 @@
 # src/polymerhus/recon/domain/types.py
 import operator
 from typing import Annotated, Literal, TypedDict
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 class Edge(BaseModel):
     rel: str
@@ -9,11 +9,32 @@ class Edge(BaseModel):
     node_type: str
     node_identity: dict
 
+# The per-Endpoint surface classification (D16): the ONLY values
+# `Endpoint.profile` (and the `BaseURL.profile` root mirror) may hold. Typed as
+# a Literal at the classifier (`classify_profile` returns it) and enforced at
+# BOTH write seams: the AssetDelta construction (a delta carrying any other
+# value is rejected at parse time - a programmer error, fail-loud) and the
+# curator's cypher build (build_asset_cypher raises, curate skips+logs it -
+# fail-open at the graph write, per the L0 sole-writer invariants).
+Profile = Literal["webapp", "restapi", "graphql_api"]
+PROFILE_VALUES: frozenset[str] = frozenset(Profile.__args__)
+
+
 class AssetDelta(BaseModel):
     type: str
     identity: dict
     props: dict = Field(default_factory=dict)
     edges: list[Edge] = Field(default_factory=list)
+
+    @model_validator(mode="after")
+    def _profile_is_typed(self) -> "AssetDelta":
+        profile = self.props.get("profile")
+        if profile is not None and profile not in PROFILE_VALUES:
+            raise ValueError(
+                f"invalid {self.type} profile {profile!r}; must be one of "
+                f"{sorted(PROFILE_VALUES)}"
+            )
+        return self
 
 class Observation(BaseModel):
     macro_kind: str

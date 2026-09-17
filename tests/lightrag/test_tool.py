@@ -103,3 +103,25 @@ def test_stream_fails_open_on_retrieval_error():
     events = list(tool.stream(_spec()))
     assert events[-1]["type"] == "answer"
     assert events[-1]["accepted"] is False
+
+
+def test_chunk_scores_best_effort_from_raw_response():
+    from lightrag.tool import _chunk_scores
+
+    raw = {
+        "data": {
+            "chunks": [
+                {"reference_id": "a", "score": 0.92},
+                {"reference_id": "b", "order": 3},
+                {"reference_id": "c"},
+            ]
+        }
+    }
+    assert _chunk_scores(raw) == [0.92, 3.0]
+
+
+def test_chunk_scores_empty_when_no_score_fields():
+    from lightrag.tool import _chunk_scores
+
+    assert _chunk_scores({"data": {"chunks": [{"reference_id": "a"}]}}) == []
+    assert _chunk_scores({}) == []

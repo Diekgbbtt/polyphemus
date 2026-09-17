@@ -14,6 +14,40 @@ When enabled, each recon run produces a trace tree that mirrors the LangGraph st
 
 The `steel_*` crawl tools run inside a vendored ReAct loop; the crawler LLM's reasoning (which records each tool-call decision) is traced, but the individual Steel tool-execution spans are not wired in this lightweight pass.
 
+### Per-stage observations in the LightRAG query pipeline (#207)
+
+The `query_lightrag` / `kb_query` tool's inner stages (retrieval, generation,
+validation) are instrumented with **per-stage Langfuse observations**
+(`lightrag/observability.py`), following the client-layer canon
+(`docs/design/observability-recipe.md`): the SDK primitives
+(`start_as_current_observation` / `span.update` / `score_current_span`), never
+raw OpenTelemetry (whose tracer scopes the SDK export filter silently drops -
+verified live 2026-09-09).
+They are created with the SDK tracer, so they nest under the active trace and
+appear in Langfuse as first-class observations:
+
+- **`retrieval`** - input = the query, mode, top_k; metadata = status, the
+  retrieved chunk ids (and best-effort scores), and the persisted
+  `ReferenceRegistryV1` mapping (index -> reference_id -> file_path) so a
+  cited provenance index is resolvable post-hoc (the registry is otherwise an
+  in-memory value that dies with the call).
+- **`generation`** - input = the assembled prompt (registry + retrieved
+  context); output = the collected raw output; metadata = the generator's
+  `reasoning_content` (the DeepSeek reasoning deltas, surfaced as `reasoning`
+  events by `DeepSeekClient.stream` and recorded on the observation).
+- **`validation`** - metadata = accepted/degraded, validation errors, rejected
+  citations, the resolved provenance references; scores =
+  `provenance_empty` (1.0 for an accepted-but-empty `PROV []` bundle)
+  and `entity_count` (the contract-drift counter - bundles routinely
+  return 3-7 entities, the drift was previously unmeasured).
+- **`kb_observation`** (hunter author lane only, #207 defect 1 point D) - the
+  hunter has no D6 log, so each `kb_query` records the query + scenario id as
+  input and the returned entity names + provenance references as metadata.
+
+All of it is **fail-open** (CODING_STANDARD section 12): a missing
+`langfuse` package or a misconfigured client degrades every observation to a
+silent no-op - observability never crashes or perturbs the query pipeline.
+
 ## How to enable
 
 Set all three environment variables (any one missing = tracing is a silent no-op; the agent never hard-fails on Langfuse):

@@ -435,7 +435,7 @@ def test_author_tools_reach_run_session_agent(monkeypatch):
 
     actor = asyncio.run(_drive())
     assert actor._tools == ["fake-tool"]
-    assert captured["tools"] == ["fake-tool"]
+    assert [getattr(t, "name", t) for t in captured["tools"]] == ["fake-tool", "load_skill"]
 
 
 def test_hunting_hunter_actor_runs_query_lightrag_tool_loop_hermetically():

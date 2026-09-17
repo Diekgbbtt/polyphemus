@@ -74,9 +74,9 @@ call, then conclude.
 - exec - a general-purpose terminal: run any command-line tool (curl for HTTP \
 probing) and use package managers to install a tool you lack; a non-zero exit is \
 retried, each call is time-bounded, every result is recorded raw.
-- {KB_TOOL} - query the fault knowledge base in natural language, citing any \
-ontology element(s) (fault, symptom, assumption, defence, payload, vector, \
-strategy, technology), singly or combined, to ground a probe or a payload family.
+- {KB_TOOL} - the knowledge base from which you retrieve the testing ontology's \
+concepts when missing from your reasoning; query it when stack-shape, \
+payload/vector, technique, or verification-symptom knowledge is missing.
 - note - write or read a pod experiment note in the pod's memory store (kinds: \
 experiment_summary, kb_insight, freeform). The consolidated experiment_summary \
 is your P3 final step; read prior notes when a later stretch needs them.
@@ -110,10 +110,9 @@ verdict is derived one level above you, from your binary outcome plus the trail.
 # Tools
 - note - read the pod memory: the Runner's verbatim experiment_summary note is \
 your primary reasoning artifact; also read prior kb_insight and freeform notes.
-- {KB_TOOL} - query the fault knowledge base in natural language, citing any \
-ontology element(s) (fault, symptom, assumption, defence, payload, vector, \
-strategy, technology), to find a precise new variant of the symptom and its \
-payload or vector or technique difference.
+- {KB_TOOL} - the knowledge base from which you retrieve the testing ontology's \
+concepts when missing from your reasoning; query it when stack-shape, \
+payload/vector, technique, or verification-symptom knowledge is missing.
 
 # Reason from a third-party perspective
 - You did not run the probes. Evaluate whether a NEW variant that changes a \

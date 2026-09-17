@@ -5,8 +5,8 @@ Kept in a separate file so tests can import it without pulling in the full
 FastAPI application (websockets, uvicorn, etc. not required here).
 
 Notable design points (kept minimal + marked in-line with `D23`/`SP4`):
-1. `_load_steel_crawl_skill`'s path resolves to `steel_crawl_skill.md` next to
-   this module.
+1. `_load_steel_crawl_skill` reads the steel-crawl role prompt directly from
+   this module's `prompts/` dir, memoized on first call, fail-closed.
 2. `AgenticCrawlRequest.credentials` (optional) + a credentialed-login prompt
    branch in `_run_agentic_crawl` (D23): when credentials are supplied and no
    human-interactive session is precreated, the agent is instructed to log in
@@ -21,7 +21,6 @@ always injects `build_llm_fn`, so that import never fires on our host.
 """
 from __future__ import annotations
 
-from pathlib import Path
 from typing import Optional
 
 from pydantic import BaseModel
@@ -104,13 +103,25 @@ async def precreate_auth_session(mcp_manager, body) -> "tuple[str | None, dict |
     return crawl_id, awaiting_status
 
 
-def _load_steel_crawl_skill() -> str:
-    """Load the steel_crawl skill system prompt from disk.
+# The steel-crawl role prompt, memoized on first call (no import-time I/O,
+# CODING STANDARD section 6). A missing prompt file is a defect: fail-closed.
+_STEEL_CRAWL_SKILL: str | None = None
 
-    Adapted (SP4-T3): points at `steel_crawl_skill.md` next to this module.
+
+def _load_steel_crawl_skill() -> str:
+    """Load the steel_crawl skill system prompt directly from this module's
+    `prompts/` dir. Memoized on first call; FAIL-CLOSED - a missing prompt
+    file raises instead of degrading to an empty manifest, so the crawl never
+    runs without its budget/frontier discipline.
     """
-    skill_path = Path(__file__).parent / "steel_crawl_skill.md"
-    return skill_path.read_text(encoding="utf-8")
+    global _STEEL_CRAWL_SKILL
+    if _STEEL_CRAWL_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415 - lazy, mirrors the reader convention
+
+        _STEEL_CRAWL_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "steel-crawl.md"
+        ).read_text(encoding="utf-8")
+    return _STEEL_CRAWL_SKILL
 
 
 def _payload_from_tool_result(out) -> dict:

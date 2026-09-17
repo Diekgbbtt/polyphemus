@@ -540,19 +540,18 @@ agent/recon/
     crawl_agent.py     - thin adapter over the ReAct loop
     crawl_agentic.py   - the ReAct loop
     steel_client.py    - steel.dev provider seam (§6, SteelProviderUnavailable)
-    steel_crawl_skill.md - the crawler's live system prompt
+    (the crawler's live system prompt moved to skills/recon/crawler/steel-crawl/SKILL.md, #222)
 agent/app/
   routes.py      - REST API (§8)
   llm/providers.py, roles.py - LLM provider/role contract (§4.5)
   clients/pg.py, neo4j_client.py - Postgres/Neo4j clients
 skills/
   recon/triager/writing-observations/SKILL.md - authored, NOT wired (§4.1, §9.1)
-  recon/crawler/  (implied by steel_crawl_skill.md's role, not this directory layout in practice -
-                    the live crawler prompt is a sibling file in agent/recon/crawl/, not under skills/)
+  recon/crawler/steel-crawl/SKILL.md  (realised by #222 - the live crawler prompt moved under skills/ and loads via the shared `skill_for` loader)
 ```
 
 Correction against `jobs-tools-skills-taxonomy.md` §3: the proposed `skills/` layout (`skills/recon/{role}/{skill-name}/SKILL.md`, with a `skill_for(role, job)` resolver in `agent/recon/skills.py`) is only partially realized.
-`skills/recon/triager/writing-observations/SKILL.md` exists on disk exactly as proposed, but no `agent/recon/skills.py` or `skill_for` function exists to load it, and the live crawler prompt (`agent/recon/crawl/steel_crawl_skill.md`) lives beside `crawl_agent.py`, not under `skills/recon/crawler/steel-crawl/SKILL.md` as the taxonomy doc proposed.
+`skills/recon/triager/writing-observations/SKILL.md` exists on disk exactly as proposed, but no `agent/recon/skills.py` or `skill_for` function exists to load it (historical note: `skill_for` now lives at `src/polymerhus/recon/domain/skills.py` and the crawler prompt moved to `skills/recon/crawler/steel-crawl/SKILL.md`, #222; the resolver-signature part of this correction still stands).
 The taxonomy's conceptual model (job/tool/skill as three axes, `JobSpec.skill` as a job-family label) is accurate to `jobs.py`'s live `skill=` field; only the file-loading mechanism is unbuilt.
 
 ---

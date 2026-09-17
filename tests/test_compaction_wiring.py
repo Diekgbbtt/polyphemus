@@ -64,8 +64,9 @@ def test_all_three_proposers_pass_compaction_middleware(monkeypatch):
 
     assert set(seen) == {"assigner", "data_modeller", "mechanism_typist"}
     for role in seen:
-        assert len(seen[role]) == 1
+        assert len(seen[role]) == 2
         _assert_compaction_middleware(seen[role][0])
+        assert type(seen[role][1]).__name__ == "_skill_index"
 
 
 # --- the recon-pod roles pass a shared per-role middleware ---------------------
@@ -96,8 +97,9 @@ def test_recon_pod_configurator_and_triager_pass_compaction_middleware(monkeypat
 
     assert set(seen) == {"triager", "configurator"}
     for role in seen:
-        assert len(seen[role]) == 1
+        assert len(seen[role]) == 2
         _assert_compaction_middleware(seen[role][0])
+        assert type(seen[role][1]).__name__ == "_skill_index"
 
 
 def test_cached_role_middleware_is_shared_per_role():

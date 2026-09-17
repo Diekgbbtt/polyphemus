@@ -92,6 +92,12 @@ services:
     image: redamon-kali-sandbox:latest
     entrypoint: ["bash", "-lc", "/opt/postrun.sh && /opt/venv/bin/python /opt/mcp_server.py"]
     ports: ["8000:8000"]
+    environment:
+      # Browser capability (#221): the steel CLI resolves auth from the
+      # environment, so the key is wired here and never into an argv.
+      # Empty default keeps a clean clone working; the operator's .env
+      # provides the real value. NEVER a real key in the repo.
+      STEEL_API_KEY: ${STEEL_API_KEY:-}
     # VPN-in-container (D-HS e2e): OpenVPN needs to create a tun interface so
     # recon pods can reach a target that lives only on a VPN route. Least
     # privilege - NET_ADMIN + the tun device, deliberately NOT --privileged.

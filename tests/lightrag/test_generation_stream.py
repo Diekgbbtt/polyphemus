@@ -52,6 +52,41 @@ def test_stream_yields_deltas_and_finish(monkeypatch):
     assert captured["json"]["messages"][0]["content"] == "prompt"
 
 
+def test_stream_surfaces_reasoning_content_deltas(monkeypatch):
+    """#207 criterion 1: the reasoning model's `reasoning_content` (thinking is
+    enabled in the payload) is surfaced as `reasoning` events, so the caller can
+    record it on the generation span."""
+    class _ReasoningStreamResponse:
+        def __enter__(self):
+            return self
+
+        def __exit__(self, *args):
+            return False
+
+        def raise_for_status(self):
+            pass
+
+        def iter_lines(self):
+            yield from [
+                'data: {"choices":[{"delta":{"reasoning_content":"think hard"}}]}',
+                'data: {"choices":[{"delta":{"content":"Hello"}}]}',
+                'data: {"choices":[{"delta":{},"finish_reason":"stop"}]}',
+                "data: [DONE]",
+            ]
+
+    def fake_stream(method, url, **kwargs):
+        return _ReasoningStreamResponse()
+
+    monkeypatch.setattr(gen.httpx, "stream", fake_stream)
+    client = DeepSeekClient(
+        base_url="https://example.test/v1", api_key="k", model="m", max_tokens=128
+    )
+    events = list(client.stream("prompt"))
+    assert {"type": "reasoning", "text": "think hard"} in events
+    assert {"type": "delta", "text": "Hello"} in events
+    assert events[-1]["type"] == "finish"
+
+
 def test_complete_sends_non_streaming_payload(monkeypatch):
     captured = {}
 

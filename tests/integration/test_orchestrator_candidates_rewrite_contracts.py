@@ -21,6 +21,7 @@ from pathlib import Path
 
 import pytest
 
+from polymerhus.app.data_root import DATA_ROOT
 from polymerhus.attack.hunting.actors import (
     HuntingActorRegistry,
 )
@@ -44,7 +45,7 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     revival_key,
     run_orchestration,
 )
-from polymerhus.attack.hunting.hunt_store import HUNT_STORE_ROOT, HuntStore
+from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.llm import _compose_gate_prompt, _gate_skill
 from polymerhus.attack.hunting.orchestrator_graph import (
     _HYPOTHESISE,
@@ -539,9 +540,9 @@ def test_integration_c9_store_append_and_split_reads(tmp_path):
     store.append_note("project-1", "Service:slug:a::CWE-352", "track it")
 
     # files
-    config_path = tmp_path / "project-1" / "orchestration" / "hunt_configs" \
+    config_path = tmp_path / "project-1" / "hunting" / "orchestration" / "hunt_configs" \
         / "produced" / "Service:slug:a_CWE-352_CSRF.yaml"
-    notes_path = tmp_path / "project-1" / "orchestration" / "memory.yaml"
+    notes_path = tmp_path / "project-1" / "hunting" / "orchestration" / "memory.yaml"
     assert config_path.exists()
     assert notes_path.exists()
     config_text = config_path.read_text(encoding="utf-8")
@@ -553,12 +554,11 @@ def test_integration_c9_store_append_and_split_reads(tmp_path):
     configs = store.read_configs_by_key("project-1", "Service:slug:a::CWE-352")
     assert len(configs) == 1 and configs[0]["hunt_id"] == "h1"
     assert store.read_notes("project-1", "Service:slug:a::CWE-352")[0]["note"] == "track it"
-    # default root is fixed, no env var
-    assert HUNT_STORE_ROOT == Path(__file__).resolve().parents[2] / "src" / "polymerhus" / "attack" / "hunting" / "data"
-    assert str(HUNT_STORE_ROOT).endswith("src/polymerhus/attack/hunting/data")
+    # default root is the app-owned data root, fixed, no env var
+    assert HuntStore()._root == DATA_ROOT
     # no memory.md, no kind files anywhere in the topology
     assert not (tmp_path / "memory.md").exists()
-    assert list((tmp_path / "project-1" / "orchestration").glob("*.md")) == []
+    assert list((tmp_path / "project-1" / "hunting" / "orchestration").glob("*.md")) == []
 
 
 # --- C10: store read failure degrades to empty prior insights (O4) -----------
@@ -821,16 +821,18 @@ def test_integration_c14_actor_thread_reused(tmp_path):
     assert _ORCHESTRATOR_ACTORS.get(run_id) is None
 
 
-# --- C15: cross-pass config visibility via the fixed HUNT_STORE_ROOT ----------
+# --- C15: cross-pass config visibility via the app-owned store root -----------
 
 def test_integration_c15_cross_run_memory_fixed_root(tmp_path):
-    """C15 - HuntStore default HUNT_STORE_ROOT fixed, and the per-project
-    store carries the prior pass's produced/ configs and memory.yaml notes
-    into the next pass (the cross-run `memory.md` is gone, #166)."""
+    """C15 - HuntStore default root is the app-owned `DATA_ROOT` (fixed, no env
+    var), and the per-project store carries the prior pass's produced/ configs
+    and memory.yaml notes into the next pass (the cross-run `memory.md` is gone,
+    #166)."""
     # default root string equality, no env var
-    assert HUNT_STORE_ROOT == Path(__file__).resolve().parents[2] / "src" / "polymerhus" / "attack" / "hunting" / "data"
-    assert str(HUNT_STORE_ROOT).endswith("src/polymerhus/attack/hunting/data")
-    assert "HUNT_STORE" not in str(HUNT_STORE_ROOT).lower() or True  # no env var indirection
+    assert HuntStore()._root == DATA_ROOT
+    assert HuntStore()._project_dir("project-1") == (
+        DATA_ROOT / "project-1" / "hunting" / "orchestration"
+    )
     # cross-pass behavior via tmp_path simulation of the fixed-root seam
     store = HuntStore(tmp_path)
     # simulate pass-a: the mint writes a hypothesised config + a note
@@ -848,7 +850,7 @@ def test_integration_c15_cross_run_memory_fixed_root(tmp_path):
     assert [n["note"] for n in notes] == ["track the CSRF surface"]
     # no memory.md; the topology is produced/ + consumed/ + memory.yaml
     assert not (tmp_path / "memory.md").exists()
-    assert (tmp_path / "project-1" / "orchestration" / "memory.yaml").exists()
+    assert (tmp_path / "project-1" / "hunting" / "orchestration" / "memory.yaml").exists()
 
 
 # --- C16: HuntingAgent dispatch harness per-hunt thread via HuntingActorRegistry

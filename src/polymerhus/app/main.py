@@ -5,6 +5,7 @@ from fastapi import FastAPI
 from polymerhus.app.logging_config import configure_logging
 from polymerhus.app.clients import pg, neo4j_client, kali_mcp
 from polymerhus.app.config import config
+from polymerhus.app.data_root import ensure_data_root
 from polymerhus.app.llm import validate_llm_config
 from polymerhus.app.observability import disabled_reason, get_langfuse_callbacks
 from polymerhus.project_management.api import router as recon_router
@@ -40,6 +41,17 @@ def log_tracing_status() -> None:
 
 @app.on_event("startup")
 async def _startup():
+    # #234: the app-layer data root owns every per-project scaffold directory.
+    # Create the shared `<codebase_root>/data/` root at boot; each project's
+    # scaffold lands at project creation. Idempotent and fail-safe.
+    ensure_data_root()
+    # #234: the fault-KB catalogue is the ONE provisioned artifact in the data
+    # root (`data/hunting/fault-kb.yaml`, copied by the image build). Verify it
+    # at boot so a broken image fails loudly here instead of hunting KB-less.
+    from polymerhus.attack.hunting.fault_kb import (  # noqa: PLC0415
+        _default_catalogue_path,
+    )
+    _default_catalogue_path()
     # Size up the default thread pool that asyncio.to_thread uses: the recon
     # pipeline offloads every blocking pod graph.invoke AND all sync pg/neo4j
     # calls onto it. The stdlib default (~cpu+4) is far too small for phase

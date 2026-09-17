@@ -216,6 +216,7 @@ async def run_session_agent(
     model_factory=None,
     observe: bool = True,
     on_turn_degraded: Callable[[str, Exception], Awaitable[None] | None] | None = None,
+    context: dict | None = None,
 ) -> AgentRunResult:
     """Run an async-native agent that stays ACTIVE after its turn, listening on `inbox`.
 
@@ -242,7 +243,7 @@ async def run_session_agent(
     turn_kwargs = dict(
         checkpointer=checkpointer, tools=tools, response_format=response_format,
         system_prompt=system_prompt, middleware=middleware, store=store,
-        model_factory=model_factory, observe=observe,
+        model_factory=model_factory, observe=observe, context=context,
     )
 
     async def _run_turn_attempt(messages: Sequence[BaseMessage], *,

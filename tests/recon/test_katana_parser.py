@@ -124,6 +124,21 @@ def test_content_type_read_from_response_headers():
     assert endpoint.props["content_type"] == "application/json"
 
 
+def test_response_headers_marked_response_direction():
+    # Structural contract shared with httpx_parser: minted Headers carry
+    # direction="response" (observed surface, never replayed into requests).
+    from polymerhus.recon.domain.parsers.katana_parser import parse
+    line = (
+        '{"request":{"endpoint":"https://h/page","method":"GET"},'
+        '"response":{"status_code":200,"headers":{"Server":"nginx","X-A":"b"}}}\n'
+    )
+    out = parse(line)
+    headers = [d for d in out if d.type == "Header"]
+    assert len(headers) == 2
+    assert all(d.props.get("direction") == "response" for d in headers)
+    assert all(d.identity["baseurl"] == "https://h" for d in headers)
+
+
 def test_katana_get_form_parameters_are_query_position():
     from polymerhus.recon.domain.parsers.katana_parser import parse
     line = (

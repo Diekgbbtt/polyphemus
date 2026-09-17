@@ -117,10 +117,13 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
     harness_mw = build_harness_middleware(log=hc.log,
                                           variant_ref=hc.variant_ref or "",
                                           cap=hc.cap)
-    mw = list(pod_middleware()) + [harness_mw]
+    from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+
+    index_mw, load_tool = skill_agent_seams()
+    mw = list(pod_middleware()) + [harness_mw, index_mw]
     turn = await arun_session_turn(
         ctx.address.role_id, ctx.address, list(messages),
-        checkpointer=ctx.checkpointer, tools=tools, middleware=mw,
+        checkpointer=ctx.checkpointer, tools=tools + [load_tool], middleware=mw,
         system_prompt=RUNNER_SYSTEM, model_factory=hc.model_factory)
     new_obs = len(hc.log.raw_observations) - before_obs
     content = str(getattr(turn, "content", None) or "")
@@ -155,10 +158,14 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
                                     log=hc.log, variant_ref=hc.variant_ref or "",
                                     graph_view_fn=hc.graph_view_fn)
         delta = _dicts_to_lc(list(messages))
+        from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+
+        index_mw, load_tool = skill_agent_seams()
         result = stateful_turn(
             ctx.address.role_id, ctx.address, delta,
             checkpointer=ctx.checkpointer, schema=TriagerDecision,
-            system_prompt=TRIAGER_SYSTEM, middleware=list(pod_middleware()),
+            tools=[load_tool],
+            system_prompt=TRIAGER_SYSTEM, middleware=list(pod_middleware()) + [index_mw],
             model_factory=hc.model_factory)
         if result is None:
             raise ValueError("unmet triager generation")

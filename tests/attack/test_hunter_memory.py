@@ -35,7 +35,7 @@ def _spec(**extra) -> dict:
 
 def _spec_file(tmp_path, side: Literal["produced", "consumed"]) -> Path:
     return (
-        tmp_path / PROJECT / "hunter" / "test-specs" / FAULT_KEY
+        tmp_path / PROJECT / "hunting" / "hunter" / "test-specs" / FAULT_KEY
         / side / "registration_probe.yaml"
     )
 
