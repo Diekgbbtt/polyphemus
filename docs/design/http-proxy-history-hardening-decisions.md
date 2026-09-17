@@ -668,16 +668,38 @@ failed: self-signed certificate"}`, `tls=false`, `sni=soupmarket.shop`. Il falli
 **visibile** (l'artifact esiste, con l'errore) ma il traffico HTTPS verso quel target non è
 ispezionabile né riproducibile.
 
-**Decisione (aperta, dell'operatore).** Tre strade, in ordine di prudenza:
+**Decisione (attuata).** Opzione stretta: l'operatore punta `KALI_HTTP_UPSTREAM_CA` a un file
+che contiene la CA del laboratorio, e la bootstrap fa **due** cose, perché una sola non basta:
 
-1. installare la **CA del laboratorio** nel trust store del container (copertura mirata,
-   nessun allentamento globale) — la scelta consigliata per i lab;
-2. opzione esplicita dietro config (`--set ssl_insecure=true` o equivalente per-host) —
-   massima copertura, ma il proxy accetta qualsiasi certificato upstream;
-3. lasciare il comportamento attuale e documentare che i target self-signed non sono
-   catturabili (l'errore resta visibile in `stats.capture`/artifact).
+1. la installa nel trust store di sistema (`update-ca-certificates`) — serve ai **client**
+   dentro il lease (es. il `curl` del replay);
+2. ne costruisce un **bundle** (`store di default + CA dell'operatore`) e lo passa a mitmdump
+   via `--set ssl_verify_upstream_trusted_ca=…`.
 
-**Stato: aperto** (misurato, non mitigato).
+Il punto 2 è la lezione del primo tentativo: installata la CA "alla Debian", `curl` verificava
+ma il proxy **no** — mitmproxy verifica contro la propria sorgente CA (certifi), non contro lo
+store di sistema, quindi il run falliva ancora con lo stesso errore. Il bundle tiene le CA
+pubbliche (o ogni target normale si romperebbe) e aggiunge quella dell'operatore una volta sola.
+Si è preferito questo a `ssl_insecure`, che renderebbe il proxy disposto a fidarsi di
+**qualsiasi** upstream: nel piano che registra le prove, fidarsi del peer sbagliato significa
+falsificare ogni artifact.
+
+**Attuazione.** `kali/http_history/trust.py` (`install_upstream_ca`,
+`build_upstream_bundle`), `kali/postrun.sh` (installazione + bundle), `kali/entrypoint.sh`
+(flag al proxy), `docker-compose.yml` (`KALI_HTTP_UPSTREAM_CA`).
+
+**Evidenza.** `tests/kali` → **127 passed** (bundle, non-duplicazione, no-op, wiring di
+entrypoint/postrun/compose). Live sul laboratorio `soupmarket.shop`: run
+`1217282a-000a-4512-ab4e-1053f66463d9` → 36 transazioni **tutte** `tls=true`/`sni=soupmarket.shop`,
+zero errori di trasporto (`200`×24, `401`×4, `500`×8), `stats.capture = {sent: true, refs: 36}`);
+replay su dominio+TLS → 200 con `replay_kind=mutated`. Il run precedente alla correzione
+(`1d4cffee-…`) mostrava 3 artifact con l'errore di verifica: prima/dopo nello stesso reportage.
+
+**Onere dichiarato.** La CA va **fornita** dall'operatore: nel test è stata estratta
+dall'handshake (trust-on-first-use) perché è il laboratorio dell'operatore, ma in produzione il
+file si consegna, non si raccoglie.
+
+**Stato: Attuato.** Reportage completo: `docs/design/http-proxy-history-real-target-walkthrough.md`.
 
 ---
 

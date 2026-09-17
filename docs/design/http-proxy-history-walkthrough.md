@@ -458,7 +458,8 @@ test veloci che pinnano la regressione silenziosa della firma.
 | **body cap** `KALI_HTTP_MAX_BODY_BYTES=5 MiB` | oltre la soglia il body non è salvato (`capture_state="omitted"`); un replay su una baseline con body dichiarato **rifiuta** invece di inventare | C.2 |
 | **byte cap** 1 GiB/progetto | a saturazione i più vecchi artifact vengono evacuati (retention 0) | C.11, C.9 |
 | **fingerprint TLS** | il target vede mitmproxy, non il client del pod | Parte B, C.11 |
-| **certificato upstream self-signed** | il proxy *verifica* l'upstream (`ssl_insecure` assente): verso un target di lab con cert self-signed il client riceve 502 e l'artifact registra `error = "Certificate verify failed"`, `tls=false` — il fallimento è visibile ma il traffico non è ispezionabile | C.13 (aperto) |
+| **certificato upstream self-signed** | il proxy *verifica* l'upstream (`ssl_insecure` assente). Supportato fornendo la CA (`KALI_HTTP_UPSTREAM_CA`), che entra nel bundle `ssl_verify_upstream_trusted_ca`; senza di essa il client riceve 502 e l'artifact registra `error = "Certificate verify failed"` | C.13 (chiuso) |
+| **telemetria dei tool** | httpx/katana contattano `api.pdtm.sh` per il check di aggiornamento: quelle richieste finiscono nello store (2 per run) e portano un `machine_id` | reportage target reale §4 |
 | **solo HTTP(S) applicativo** | niente DNS/UDP, niente traffico del browser/DOM (quello è #51 / Steel) | Parte D |
 | **lineage del replay** | l'artifact del replay porta `derived_from` e `replay_kind`, ma **non** eredita `run_id`/`spec_id` | C.11 |
 | **assenza non dimostrabile** | si può provare che ogni invocazione ha riportato ref > 0 e che gli artifact sono nello store; non si può provare dall'esterno che **nessun** pacchetto sia sfuggito | C.11 |
