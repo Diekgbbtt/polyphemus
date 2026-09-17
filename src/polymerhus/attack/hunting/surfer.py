@@ -446,16 +446,17 @@ async def _run_hunter_idle(
     hunt_session = HuntSession(run_id, config.hunt_id)
     try:
         with module_context("hunting"):
-            from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+            from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-            index_mw, load_tool = skill_agent_seams()
+            binding = auth_capable_binding(hunt_session.role_id)
             await run_session_agent(
                 hunt_session.role_id, hunt_session.thread_id, None,
                 checkpointer=get_session_checkpointer(),
                 inbox=inbox,
                 on_message=_verdict_stub_handler(fault_key=config_key),
-                tools=[load_tool],
-                middleware=[index_mw],
+                tools=binding.tools,
+                middleware=binding.middleware,
+                context=binding.context,
             )
     except asyncio.CancelledError:
         raise

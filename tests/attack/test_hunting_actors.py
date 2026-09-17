@@ -435,7 +435,13 @@ def test_author_tools_reach_run_session_agent(monkeypatch):
 
     actor = asyncio.run(_drive())
     assert actor._tools == ["fake-tool"]
-    assert [getattr(t, "name", t) for t in captured["tools"]] == ["fake-tool", "load_skill"]
+    # The auth capability (#220) rides the same bounding seam as the skill
+    # surface: a bound role additionally carries `auth_store`.
+    assert [getattr(t, "name", t) for t in captured["tools"]] == [
+        "fake-tool",
+        "load_skill",
+        "auth_store",
+    ]
 
 
 def test_hunting_hunter_actor_runs_query_lightrag_tool_loop_hermetically():

@@ -689,14 +689,10 @@ def default_configure_fn(job: JobSpec, input_asset: dict, signals: list[dict]) -
         if ctx is not None:
             from polymerhus.app.llm.session import stateful_turn
             from polymerhus.app.llm import compaction as C
-            from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
 
-            index_mw, load_tool = skill_agent_seams()
             return stateful_turn("configurator", ctx.address, [HumanMessage(content=prompt)],
                                  checkpointer=ctx.checkpointer, schema=PodConfig,
-                                 tools=[load_tool],
-                                 middleware=[C.cached_role_compaction_middleware("configurator"),
-                                             index_mw])
+                                 middleware=[C.cached_role_compaction_middleware("configurator")])
         from polymerhus.app.llm.roles import invoke_role
 
         return invoke_role("configurator", [HumanMessage(content=prompt)], schema=PodConfig)
@@ -755,14 +751,15 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     if ctx is not None:
         from polymerhus.app.llm.session import stateful_turn
         from polymerhus.app.llm import compaction as C
-        from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+        from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        index_mw, load_tool = skill_agent_seams()
+        binding = auth_capable_binding("triager")
         result = stateful_turn("triager", ctx.address, messages,
                                checkpointer=ctx.checkpointer, schema=_ObservationBatch,
-                               tools=[load_tool],
-                               middleware=[C.cached_role_compaction_middleware("triager"),
-                                           index_mw])
+                               tools=binding.tools,
+                               middleware=[C.cached_role_compaction_middleware("triager")]
+                               + binding.middleware,
+                               context=binding.context)
     else:
         result = invoke_role("triager", messages, schema=_ObservationBatch)
     return result.observations if result else []  # None = exhausted generation -> no observations

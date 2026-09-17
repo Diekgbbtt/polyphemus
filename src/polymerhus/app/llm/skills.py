@@ -26,6 +26,12 @@ by the phase-gating convention (load at phase entry, once per thread, never
 speculatively mid-reasoning - see `skills/README.md` and
 `docs/design/skill-runtime-loading-222-decisions.md`).
 
+#221 makes the L1 half live: `ROLE_SKILLS` declares each role's bounded skill
+set and `skill_agent_binding(role_id)` is the ONE call every tool-calling agent
+makes to bind its whole skill surface (index middleware + skill tools + the
+context carrying the bounded set), so the frontmatter description of every
+skill a role may load is rendered into that role's system message.
+
 #234 adds the write half of the same domain (ADR B1): the per-project skill
 store (`SkillStore`) under the app-owned data root, the `write_skill` tool bound
 to one project, and the `meta-usage-skill` reading protocol appended by the read
@@ -40,6 +46,7 @@ import os
 import re
 import threading
 import uuid
+from dataclasses import dataclass
 from pathlib import Path
 
 from polymerhus.app.data_root import DATA_ROOT, validate_path_component
@@ -166,13 +173,157 @@ def render_skill_index(names, project_id: str | None = None, store=None) -> str:
     return "\n".join(lines)
 
 
-def skill_agent_seams() -> tuple:
-    """The uniform per-agent wiring pair (Q3): a fresh `(skill-index
-    middleware, load_skill tool)`. Every stateful agent binds both through the
-    native seams (the `middleware=` / `tools=` parameters) - the bounded skill
-    set itself travels separately in the invocation context, so this pair is
-    identical at every site and can never drift."""
-    return skill_index_middleware(), build_load_skill_tool()
+# The bounded skill set per role (#221): the skill-domain analogue of the
+# established tool-bounding pattern. A role's cognitive job declares, in ONE
+# place, the catalogue skills whose discipline bears on its turns - never the
+# whole catalogue, the same minimal-high-signal rule every tool surface
+# follows (`runner_react_tools`, `CRAWL_TOOL_NAMES`). The names travel to the
+# agent through the native invocation context (`context={"skills": [...]}`) and
+# the shared index middleware renders each one's frontmatter `description`
+# verbatim into the turn's system message, so the agent reads WHAT it may load
+# and WHEN without a word of hand-written index text.
+#
+# An empty tuple is a deliberate, honest declaration: the role is EXEMPT - it
+# binds no skill surface at all (no `load_skill` tool, no L1 index, no
+# context-carried set). The rationale is capability minimalism: the skill
+# surface earns its context cost only on an agent whose turn can act on
+# procedural knowledge, so an exempt role carries neither a dead tool schema nor
+# an index that could never render. `skill_agent_binding` enforces the roster:
+# a role id that is NOT declared here (usually a typo) raises, so a new
+# tool-calling agent cannot silently arrive without a considered decision,
+# while a declared-exempt role binds nothing rather than raising (the shared
+# actor site serves a bound role and an exempt one).
+#
+# The analysis module's proposers are exempt on the operator's ruling
+# (2026-09-17): their turns interact with LOCAL context only (the published
+# L0/L1 substrate through the session seams), never with an external
+# environment, so no skill of the catalogue bears on them.
+#
+# Verify-by-test, not by comment: `test_skill_seam.py` sweeps the roster (every
+# session-mode role is declared), pins the exempt set, and asserts every
+# declared name resolves in the catalogue - so a stale or forgotten binding
+# fails the suite, never a run.
+ROLE_SKILLS: dict[str, tuple[str, ...]] = {
+    # -- recon -----------------------------------------------------------------
+    # The pod triager reads a delivered job's web artefacts into anchored
+    # observations; classifying a page's rendering and architectural shape is
+    # exactly what the two anatomy skills state.
+    "triager": ("webpage-analysis", "webpage-profile"),
+    # The configurator picks a rate profile from steering signals, and the
+    # control-plane orchestrator routes jobs over assets and phases - both are
+    # coverage bookkeeping over signals, not target knowledge.
+    "configurator": (),
+    "job_orchestrator": (),
+    # -- analysis (exempt: local-context reasoning only) ------------------------
+    # The three proposers reason over the published L0/L1 substrate into typed
+    # model deltas; the catalogue carries no modelling discipline for that job,
+    # and their turns never touch an external environment.
+    "assigner": (),
+    "mechanism_typist": (),
+    "data_modeller": (),
+    # -- hunting ---------------------------------------------------------------
+    # The agent that touches the live target: the KB guide is its retrieval
+    # discipline, the browser skill is how a JS-rendered or bot-gated target is
+    # actually driven (through its own exec surface).
+    "hunting_hunter": ("lightrag-query", "steel-browser"),
+    "pod_runner": ("lightrag-query", "steel-browser"),
+    # The critic never touches the target: its KB reads are context reads
+    # (D84-27), so only the retrieval discipline bears.
+    "pod_triager": ("lightrag-query",),
+    # The gate/ratify/match decisions run over candidate material; no knowledge
+    # skill bears.
+    "hunting_orchestrator": (),
+    # `crawler` is deliberately ABSENT, not forgotten: it is a tool-calling role
+    # (`agent_mode == "session"`) whose loop is a manual `bind_tools` ReAct loop
+    # (`recon/crawl/crawl_agentic.py`), not `create_agent`, so no
+    # `dynamic_prompt` middleware runs to render an index. Its delivery - the
+    # rendered index prepended by direct read plus the load tool in its bound set
+    # (the spec's non-`create_agent` clause) - is the known gap; the day it is
+    # closed the crawler declares `("steel-browser",)` here and nothing else
+    # changes.
+    #
+    # FORWARD (operator instruction, 2026-09-17): when #223 lands (the recon
+    # job-specific agents refactored into stateful entities), those agents take
+    # the session seam and MUST be wired to the skill primitives here - declare
+    # their bounded sets in this roster and bind them through
+    # `skill_agent_binding`, exactly as the hunting roles are.
+}
+
+
+def skills_for_role(role_id: str) -> tuple[str, ...]:
+    """The role's bounded skill set: `ROLE_SKILLS[role_id]`, or `()` for an
+    unknown role (which `skill_agent_binding` refuses - an undeclared role is a
+    wiring defect, not an exemption). `()` for a DECLARED role means exempt: no
+    skill surface is bound."""
+    return ROLE_SKILLS.get(role_id, ())
+
+
+@dataclass(frozen=True)
+class SkillAgentBinding:
+    """One tool-calling agent's complete skill surface, in the three pieces its
+    session seam consumes: the L1 index `middleware` (an empty list for an
+    exempt role), the L2 skill `tools` (`load_skill`, plus `write_skill` for a
+    write-capable agent), and the invocation `context` carrying the role's
+    bounded skill set. Compose with `list(mw) + binding.middleware` and
+    `list(tools) + binding.tools` - both are lists, so an exempt binding
+    composes to nothing and no site needs a branch."""
+
+    role_id: str
+    middleware: list
+    tools: list
+    context: dict
+
+
+def skill_agent_binding(
+    role_id: str,
+    *,
+    project_id: str | None = None,
+    with_write_skill: bool = False,
+    store: "SkillStore | None" = None,
+) -> SkillAgentBinding:
+    """Build the ONE per-agent skill binding (the `skill_agent_seams` successor,
+    Q3 -> #221): every tool-calling agent binds its whole skill surface through
+    this single call, so the middleware, the tools, and the bounded set can never
+    drift or be half-wired - the exact discipline the tool-bounding pattern
+    already imposes on a tool surface.
+
+    `role_id` is the role the turn actually runs as (the site's own address or
+    role constant), so the declaration in `ROLE_SKILLS` is the only thing that
+    decides what the index lists. `project_id`/`with_write_skill`/`store` reach
+    `build_skill_tools`, so a read-only agent (the default) can never acquire the
+    write tool by accident.
+
+    An UNDECLARED role id raises: the roster is the considered decision for every
+    tool-calling role, so an unlisted one (usually a typo) is a wiring defect
+    caught at construction, not a silent no-op. A DECLARED role with an empty
+    set is exempt and returns an inert binding (no middleware, no tools, no
+    skills in the context): the site stays uniform, and nothing dead is bound.
+    Import performs no I/O."""
+    if role_id not in ROLE_SKILLS:
+        raise ValueError(
+            f"skill seam: {role_id!r} is not declared in ROLE_SKILLS - every "
+            "tool-calling role is either given a bounded skill set there or "
+            "declared exempt with an empty tuple. An undeclared role (usually a "
+            "typo) is a wiring defect."
+        )
+    names = ROLE_SKILLS[role_id]
+    if not names:
+        return SkillAgentBinding(
+            role_id=role_id, middleware=[], tools=[], context={}
+        )
+    # The project scope is tool-owned (`config.PROJECT_ID` when unset) and rides
+    # the SAME invocation context the bounded set does, so the index resolves
+    # per-project bundles (a project-authored skill such as `authn`) and
+    # `load_skill` reads them - one seam, no per-site plumbing.
+    project_id = _resolve_project_id(project_id)
+    return SkillAgentBinding(
+        role_id=role_id,
+        middleware=[skill_index_middleware(store=store)],
+        tools=build_skill_tools(
+            project_id, with_write_skill=with_write_skill, store=store
+        ),
+        context={"skills": list(names), "project_id": project_id},
+    )
 
 
 def _bound_skills(context) -> list:
@@ -211,7 +362,11 @@ def skill_index_middleware(store=None):
     `project_id`, the index resolves per-project bundles first, so a
     project-authored skill (e.g. `authn`) is collected only when its bundle is
     at the designed data-dir location and renders its own frontmatter
-    description. Import performs no I/O."""
+    description.
+
+    The names arrive through the native `context=` seam - `skill_agent_binding`
+    fills that context from `ROLE_SKILLS`, so the middleware itself stays
+    policy-free and is identical at every agent. Import performs no I/O."""
     from langchain.agents.middleware import dynamic_prompt  # noqa: PLC0415
 
     @dynamic_prompt
@@ -259,6 +414,18 @@ def is_meta_skill(name: str) -> bool:
     )
 
 
+def _resolve_project_id(project_id: str | None) -> str:
+    """The tool-owned project scope: the explicit id, else the deployment's
+    single project (`config.PROJECT_ID`), resolved LAZILY so import never
+    touches config/env (CODING_STANDARD §6). No agent harness threads identity -
+    the tool owns its scope (operator ruling: one project runs at a time)."""
+    if project_id:
+        return project_id
+    from polymerhus.app.config import config  # noqa: PLC0415 - lazy, no env at import
+
+    return config.PROJECT_ID
+
+
 def build_load_skill_tool(
     project_id: str | None = None, store: "SkillStore | None" = None
 ):
@@ -282,6 +449,7 @@ def build_load_skill_tool(
     per-project bundle never shadows it."""
     from langchain_core.tools import tool  # noqa: PLC0415
 
+    project_id = _resolve_project_id(project_id)
     seam = store if store is not None else SkillStore()
 
     @tool
@@ -550,6 +718,8 @@ class SkillStore:
             try:
                 path = self._bundle_dir(project_id, name) / "SKILL.md"
                 return _strip_frontmatter(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                pass  # no project bundle: the catalogue fallback is the normal path
             except (OSError, ValueError):
                 logger.warning(
                     "skill store: unreadable project bundle for %s/%s; "
@@ -571,6 +741,8 @@ class SkillStore:
                 meta = _parse_frontmatter(path.read_text(encoding="utf-8"))
                 if meta is not None:
                     return meta
+            except FileNotFoundError:
+                pass  # no project bundle: the catalogue metadata is the normal path
             except (OSError, ValueError):
                 logger.warning(
                     "skill store: unreadable project bundle frontmatter for "
@@ -811,6 +983,7 @@ def build_skill_tools(
     skill-index middleware rides alongside at the agent owner's binding site -
     the #222 seam - composed with this helper, never reimplemented per
     agent.)"""
+    project_id = _resolve_project_id(project_id)
     tools = [build_load_skill_tool(project_id, store=store)]
     if with_write_skill:
         if not project_id:
@@ -827,9 +1000,11 @@ __all__ = [
     "META_USAGE_SKILL",
     "META_WRITE_SKILL",
     "PROTOCOL_SEPARATOR",
+    "ROLE_SKILLS",
     "SKILL_INDEX_HEADER",
     "SKILL_LOAD_CONTRACT",
     "WRITE_SKILL_CONTRACT",
+    "SkillAgentBinding",
     "SkillInvalidError",
     "SkillStore",
     "SkillTargetError",
@@ -841,9 +1016,10 @@ __all__ = [
     "is_meta_skill",
     "list_skills",
     "render_skill_index",
-    "skill_agent_seams",
+    "skill_agent_binding",
     "skill_for",
     "skill_index_middleware",
     "skill_meta",
+    "skills_for_role",
     "validate_skill",
 ]

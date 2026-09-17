@@ -187,13 +187,9 @@ class ReconOrchestratorActor:
         if self._compaction is None:
             from polymerhus.app.llm import compaction as C  # noqa: PLC0415
             self._compaction = C.build_role_compaction_middleware("job_orchestrator")
-        from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
-
-        index_mw, load_tool = skill_agent_seams()
         middleware_list = [middleware] if middleware else []
         if self._compaction is not False:
             middleware_list.append(self._compaction)
-        middleware_list.append(index_mw)
         self._task = asyncio.ensure_future(
             run_session_agent(
                 self._address.role_id,
@@ -203,7 +199,6 @@ class ReconOrchestratorActor:
                 inbox=self._inbox,
                 on_message=self._on_message,
                 response_format=ToolStrategy(RoutingDecision),
-                tools=[load_tool],
                 middleware=middleware_list,
                 on_turn_degraded=degraded_hook,
                 system_prompt=ORCHESTRATOR_STEERING,

@@ -703,15 +703,13 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     address = AnalysisSession(run_id, "data_modeller")
 
     from polymerhus.app.llm import compaction as C  # noqa: PLC0415
-    from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
 
-    index_mw, load_tool = skill_agent_seams()
-    middleware = [C.build_role_compaction_middleware("data_modeller"), index_mw]
+    middleware = [C.build_role_compaction_middleware("data_modeller")]
 
     def invoke(messages, *, schema=None):
         return stateful_turn("data_modeller", address, messages,
                              checkpointer=checkpointer, schema=schema,
-                             tools=[load_tool], middleware=middleware)
+                             middleware=middleware)
 
     return invoke
 

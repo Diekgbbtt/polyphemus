@@ -117,15 +117,16 @@ class _TurnActor:
         middleware = [middleware] if middleware else []
         if middleware_extra:
             middleware = middleware + list(middleware_extra)
-        from polymerhus.app.llm.skills import skill_agent_seams  # noqa: PLC0415
+        from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
-        index_mw, load_tool = skill_agent_seams()
-        middleware = middleware + [index_mw]
+        binding = auth_capable_binding(self._address.role_id)
+        middleware = middleware + binding.middleware
         kwargs = {
             "checkpointer": self._checkpointer,
             "inbox": self._inbox,
             "on_message": self._on_message,
             "middleware": middleware,
+            "context": binding.context,
             "on_turn_degraded": degraded_hook,
             "model_factory": self._model_factory,
             "observe": self._observe,
@@ -138,7 +139,7 @@ class _TurnActor:
             kwargs["system_prompt"] = system_prompt
         if self._tools:
             kwargs["tools"] = self._tools
-        kwargs["tools"] = list(kwargs.get("tools", ())) + [load_tool]
+        kwargs["tools"] = list(kwargs.get("tools", ())) + binding.tools
         self._task = asyncio.ensure_future(
             run_session_agent(
                 self._address.role_id,

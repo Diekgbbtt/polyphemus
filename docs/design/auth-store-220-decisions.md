@@ -82,10 +82,19 @@ The upward direction is clean: no module under `recon/` or `app/` imports `proje
 `analysis/anatomy.py:386` (`select_auth_context` consumption) is operator-declared dead code and was struck as evidence; its cleanup is out of scope for #220 and no action is taken here.
 No ticket is filed: there is no defect, only a suspicion closed by this decision.
 
-## Blocked follow-up
+## D220-9 - Project scope is tool-owned; the auth tool binds on the established patterns
 
-AUTH-SKILL-1 (owned by the #220 implementer, blocked on #222): author the auth skill (all login procedures incl. priv-esc variants, registration flow, `references/` automation scripts for request-based login, Steel-CLI browser login, and registration), couple it with the auth store via the `procedure` label, and reference it from every agent system prompt.
-The store built under this ledger already carries the hooks (`procedure`, `technical_conditions`, `steel` refs); nothing here pre-builds #222's read/write machinery.
+The store keeps `project_id` on every call, but neither the `auth_store` tool nor the skill tools require an agent harness to thread it: `build_auth_store_tool(project_id=None)` and `build_load_skill_tool(project_id=None)` default to the control-plane project (`config.PROJECT_ID`, the deployment's single project - the recorded "effectively single-project execution" ruling), resolved LAZILY inside the factory so import touches no config/env (CODING_STANDARD section 6).
+The auth capability binds to the stateful fleet exactly as the skills surface and the steel tool do: `auth_capable_binding(role_id)` (`app/auth/seams.py`) is the auth-capable extension of `skill_agent_binding`, adding the `auth_store` tool and the per-project `authn` procedure to the bounded set through the native `tools=` / `middleware=` / `context=` seams, never a per-site reimplementation.
+The analysis-domain agents (assigner, mechanism_typist, data_modeller) never bind authentication capability; the recon job-specific agents take it when #223 lands.
+The `authn` skill is project-authored (no canonical catalogue copy), so its L1 index line renders only when its bundle exists at `<data_root>/<project_id>/skills/authn/SKILL.md` - the project-scoped index resolution (`SkillStore.meta` + the `dynamic_prompt` middleware reading the context's `project_id`).
+Full record: `docs/design/browser-cli-221-decisions.md` D18.
+
+## Follow-up: AUTH-SKILL-1 RESOLVED
+
+AUTH-SKILL-1 is delivered as the META skill `skills/meta/authn-skill-writing/` (meta family: exempt from the usage-protocol append by loader path, `is_meta_skill`), which the operator's external agent runs to author a TARGET PROJECT's `authn` procedure.
+The procedure lives in that project's bundle (`<data_root>/<project_id>/skills/authn/`), is coupled to the store by the account `procedure` label, and rides every auth-capable agent's system prompt through the L1 skill index (D220-9; 221-D18).
+The store built under this ledger carries only the hooks (`procedure`, `technical_conditions`, `steel` refs) and no skill bodies, exactly as D220-2 requires.
 
 ## Glossary candidates (ratify into `CONTEXT.md` with the implementation, not here)
 

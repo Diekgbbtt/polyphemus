@@ -51,6 +51,31 @@ def test_default_store_is_the_production_auth_store():
     assert set(tool.args) == {"command", "path", "value"}
 
 
+def test_factory_defaults_the_project_to_the_control_plane(tmp_path, monkeypatch):
+    """Tool-owned scoping: with no explicit project the tool binds the
+    deployment's single project (`config.PROJECT_ID`), so no agent harness
+    threads identity."""
+    from polymerhus.app.config import config
+
+    monkeypatch.setattr(config, "PROJECT_ID", "proj-cfg")
+    tool = build_auth_store_tool(store=AuthStore(tmp_path))
+    out = tool.invoke(
+        {
+            "command": "write",
+            "path": "accounts.bob",
+            "value": {
+                "credentials": {
+                    "username": "u",
+                    "password": "p",
+                    "login_url": "https://t/login",
+                }
+            },
+        }
+    )
+    assert out["ok"] is True
+    assert (tmp_path / "proj-cfg" / "auth" / "credentials.yaml").is_file()
+
+
 # --- contract: model, schema, and rules ride the description ------------------
 
 def test_description_carries_the_full_contract(tmp_path):

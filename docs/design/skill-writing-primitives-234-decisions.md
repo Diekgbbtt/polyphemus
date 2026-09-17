@@ -32,6 +32,7 @@ Reads are fail-open to the fallback, exactly like `skill_for`.
 No section granularity, no operation verbs, no rationale field; `source_note_ids` rides the tool surface as a mechanically logged parameter (recorded on the write log, never consulted) with zero prose: no description, contract, or instruction verbatim may reference it.
 The factory binds `project_id` only; any skill in the project's bundle is writable (D234-12).
 The agent seam helper (`build_skill_tools`) returns `load_skill` for every agent plus project-bound `write_skill` only for agents whose procedure evolves a skill; a write tool without its project is a fail-fast wiring defect.
+This is the TOOL collector's contract - which roles call it at all is the roster's decision (ADR A9): a role with no bearing skill is exempt and binds nothing, `load_skill` included.
 Writes create the bundle on first use, re-validate frontmatter (data-section keys plus `name` == the bundle directory), and land atomically (temp file in the same dir + `os.replace`) under a per-project lock.
 Every refusal is a denoted `ValueError` mapped to a coded in-band envelope (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 
@@ -119,3 +120,11 @@ Built and run: the three root constants (`HUNT_STORE_ROOT`, `HUNTER_MEMORY_ROOT`
 `PROJECT_SCAFFOLD` now enumerates the whole FIXED hunting skeleton (`hunting/orchestration/hunt_configs/{produced,consumed}`, `hunting/hunter/test-specs`, `hunting/test-executor-pod`), so the stores create no fixed directory: only a path keyed by a runtime id (a hunt fault key, a pod spec id) is created lazily, and only its own leaf (B10's safety-net allowance).
 `fault-kb.yaml` moved to `data/hunting/fault-kb.yaml`: `.gitignore` carries the one exception, the `fault_kb.py` `importlib.resources` loader is rewritten to that fixed path, the Dockerfile copies `data/` to `/srv/data`, the dev compose mounts `./data:/srv/data`, and a missing provisioned catalogue now fails CLOSED (`FaultKBCatalogueMissing`, plus a boot check in `app.main`).
 `tools/hunting/migrate_hunting_data_root.py` performed the copy-verify-delete on the live checkout: 145 per-project memory files across 3 projects plus the catalogue moved onto `<codebase_root>/data`, and the legacy module `data/` package was removed.
+
+## D234-17 - meta-family taxonomy and the project-scoped index (post-rebase)
+
+The #221 stream introduced the meta family as a first-class taxonomy class: the two protocol/authoring skills moved from flat catalogue entries to `skills/meta/meta-write-skill/` and `skills/meta/meta-usage-skill/`, and the usage-protocol exemption became a PATH rule, `is_meta_skill(name)` (`app/llm/skills.py`: any loader path under `meta/`), replacing the name allowlist.
+This SUPERSEDES the flat-entry statements in D234-9 and D234-11: any skill placed under `skills/meta/` is exempt by construction, which is how the task-specific meta skill `meta/authn-skill-writing` lands exempt.
+The L1 skill index also became project-scoped: `render_skill_index(names, project_id=..., store=...)` resolves through the same store seam the loader uses (`SkillStore.meta`, project bundle first), and `skill_index_middleware` reads `project_id` from the native invocation context.
+A project-authored skill with no catalogue copy (e.g. the per-project `authn` procedure) is therefore collected, and renders its frontmatter description, only when its bundle exists at `<data_root>/<project_id>/skills/<name>/SKILL.md`; a missing or misplaced bundle is not collected (fail-open).
+Project scope is tool-owned (`config.PROJECT_ID`, resolved lazily in the factories), so no agent harness threads identity; the auth capability binds through the same seam (`app/auth/seams.py::auth_capable_binding`). Full records: 221-D18 and `auth-store-220-decisions.md` D220-9.
