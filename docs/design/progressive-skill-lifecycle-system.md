@@ -120,7 +120,7 @@ A single shared app-layer module owns the data root and every scaffold directory
 
 ## 4. Consumption
 
-- **L1 discovery**: the bounded skill set's frontmatters are rendered into the system message by the shared skill-index middleware, bound per agent through the invocation context (the #222 mechanics).
+- **L1 discovery**: the bounded skill set's frontmatters are rendered into the system message by the shared skill-index middleware, bound per agent through the invocation context (the #222 mechanics). The per-role roster of who binds a set at all, and who is exempt, is ADR A9 (`ROLE_SKILLS`): a role with no bearing skill binds nothing, not an empty index.
 - **L2 activation**: `load_skill(name)` returns the skill body; resolution prefers the per-project bundle when present, else the repo catalogue.
 - **Reading protocol**: appended by `load_skill` on every call (section 1.1, section 5).
 - **Bounded sets**: each agent binds the skills relevant to its discipline; the set travels per invocation.
@@ -200,7 +200,7 @@ update_project_skill(skill, target, content, source_note_ids=[])
 - Lazy bundle creation with a valid frontmatter skeleton on first write.
 - Every write re-validates frontmatter, enforces size caps, and refuses secret-shaped content (redirecting to the #220 auth store).
 - Whole-file atomic rewrite under a per-project lock, following the notes-store discipline.
-- Scope is factory-bound: `project_id` plus a writable skill set, currently `{auth_workflow}`. Widening is a binding change, never a tool change.
+- Scope is factory-bound: `project_id` alone. There is no per-skill writable set (D234-12): any skill in the project's bundle is writable, and which AGENTS hold the tool is the seam's decision.
 - The tool description teaches the contract and the boundary; failures return coded in-band envelopes, never raises into the turn.
 
 ---

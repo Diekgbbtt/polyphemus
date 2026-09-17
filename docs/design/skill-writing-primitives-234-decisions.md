@@ -32,6 +32,7 @@ Reads are fail-open to the fallback, exactly like `skill_for`.
 No section granularity, no operation verbs, no rationale field; `source_note_ids` rides the tool surface as a mechanically logged parameter (recorded on the write log, never consulted) with zero prose: no description, contract, or instruction verbatim may reference it.
 The factory binds `project_id` only; any skill in the project's bundle is writable (D234-12).
 The agent seam helper (`build_skill_tools`) returns `load_skill` for every agent plus project-bound `write_skill` only for agents whose procedure evolves a skill; a write tool without its project is a fail-fast wiring defect.
+This is the TOOL collector's contract - which roles call it at all is the roster's decision (ADR A9): a role with no bearing skill is exempt and binds nothing, `load_skill` included.
 Writes create the bundle on first use, re-validate frontmatter (data-section keys plus `name` == the bundle directory), and land atomically (temp file in the same dir + `os.replace`) under a per-project lock.
 Every refusal is a denoted `ValueError` mapped to a coded in-band envelope (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 
