@@ -182,11 +182,11 @@ Every write lands atomically under a per-project lock.
 Failures arrive as coded in-band envelopes (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 _Avoid_: section edits, operation verbs (no revise/add/correct - whole files only), authoring frontmatter.
 
-**Reading protocol (`meta-usage-skill`)**:
-The compact usage-protocol skill appended to every `load_skill` result by the read path itself: assess the procedure against its stated observables during and after execution, separate a skill defect from an execution miss, and record reusable improvements through `write_skill`.
+**Reading protocol (`meta/meta-usage-skill`)**:
+The compact usage-protocol skill appended to every `load_skill` result by the read path itself, except meta-family skills (any loader path under `skills/meta/`, matched by `is_meta_skill`): assess the procedure against its stated observables during and after execution, separate a skill defect from an execution miss, and record reusable improvements through `write_skill`.
 _Avoid_: prompt injection (the protocol rides the tool result, never the system prompt or compaction state).
 
-**Authoring rules (`meta-write-skill`)**:
+**Authoring rules (`meta/meta-write-skill`)**:
 The content-stable authoring instructions for writing a well-structured procedure rather than a note-dump: ordered steps closed by expected observables, valid frontmatter shape, bulky material behind `references/` pointers.
 The future `SkillEvolver` reuses it unchanged.
 _Avoid_: the note-dump (prose without steps, observables, or pointers).

@@ -34,7 +34,7 @@ def _catalogue(root: Path, *, with_protocol: bool = True) -> Path:
         encoding="utf-8",
     )
     if with_protocol:
-        proto = root / "meta-usage-skill"
+        proto = root / "meta" / "meta-usage-skill"
         proto.mkdir(parents=True)
         (proto / "SKILL.md").write_text(
             "---\nname: meta-usage-skill\ndescription: P.\nmetadata:\n  version: '1'\n"
@@ -57,7 +57,7 @@ def test_loading_the_protocol_itself_returns_the_bare_body(
 ) -> None:
     monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path / "cat"))
 
-    out = skills.build_load_skill_tool().invoke({"name": "meta-usage-skill"})
+    out = skills.build_load_skill_tool().invoke({"name": "meta/meta-usage-skill"})
 
     assert out == PROTOCOL  # no self-append, no doubling
 
@@ -66,7 +66,7 @@ def test_loading_meta_write_skill_returns_the_bare_body(
     tmp_path: Path, monkeypatch
 ) -> None:
     root = _catalogue(tmp_path / "cat")
-    writer = root / "meta-write-skill"
+    writer = root / "meta" / "meta-write-skill"
     writer.mkdir(parents=True)
     (writer / "SKILL.md").write_text(
         "---\nname: meta-write-skill\ndescription: W.\nmetadata:\n  version: '1'\n"
@@ -75,7 +75,7 @@ def test_loading_meta_write_skill_returns_the_bare_body(
     )
     monkeypatch.setattr(skills, "_SKILLS_ROOT", root)
 
-    out = skills.build_load_skill_tool().invoke({"name": "meta-write-skill"})
+    out = skills.build_load_skill_tool().invoke({"name": "meta/meta-write-skill"})
 
     assert out == "# Write\n"  # meta-skills never carry the protocol: no blackloops
 
@@ -124,14 +124,28 @@ def test_protocol_read_is_catalogue_pinned_no_project_shadowing(
 ) -> None:
     monkeypatch.setattr(skills, "_SKILLS_ROOT", _catalogue(tmp_path / "cat"))
     store = SkillStore(root_dir=tmp_path / "data")
-    store.write(
-        "proj-1",
-        "meta-usage-skill",
-        "procedure",
-        "---\nname: meta-usage-skill\ndescription: S.\nmetadata:\n  version: '1'\n"
-        "---\n\n# Shadow\n",
-    )
+
+    # The protocol path is nested under `meta/`, and a project bundle addresses
+    # one flat path component only, so a project can never even name - let
+    # alone shadow - a meta-family skill.
+    with pytest.raises(ValueError):
+        store.write(
+            "proj-1",
+            skills.META_USAGE_SKILL,
+            "procedure",
+            "---\nname: meta-usage-skill\ndescription: S.\nmetadata:\n  version: '1'\n"
+            "---\n\n# Shadow\n",
+        )
 
     out = skills.build_load_skill_tool("proj-1", store=store).invoke({"name": "demo"})
 
-    assert out == BODY + SEPARATOR + PROTOCOL  # the project shadow never judges
+    assert out == BODY + SEPARATOR + PROTOCOL  # protocol always catalogue-pinned
+
+
+def test_is_meta_skill_keys_on_the_meta_directory() -> None:
+    assert skills.is_meta_skill("meta/meta-usage-skill")
+    assert skills.is_meta_skill("meta/meta-write-skill")
+    assert skills.is_meta_skill("meta/authn-skill-writing")
+    assert skills.is_meta_skill("meta")
+    assert not skills.is_meta_skill("recon/triager/writing-observations")
+    assert not skills.is_meta_skill("metaplicity")  # not a path under meta/

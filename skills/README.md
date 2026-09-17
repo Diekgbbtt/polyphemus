@@ -10,11 +10,12 @@ See `docs/design/jobs-tools-skills-taxonomy.md` for the full jobs/tools/skills m
 
 ```
 skills/<skill-name>/SKILL.md
+skills/meta/<meta-skill-name>/SKILL.md
 ```
 
-Flat: one directory per skill, `name` == directory. There are no module-routing layers.
+Flat: one directory per skill, `name` == directory. There are no module-routing layers, with one structural family: the meta family under `skills/meta/`.
 Role prompts are NOT skills and do not live here: each role's system prompt lives with its owning module in a `prompts/` dir (`src/polymerhus/recon/domain/prompts/`, `src/polymerhus/recon/crawl/prompts/`, `src/polymerhus/attack/hunting/prompts/`, `src/polymerhus/analysis/prompts/`) and is read directly by its module (fail-closed, memoized, no cross-module imports).
-The two meta-skills are flat entries here like any other: `meta-write-skill` (authoring rules) and `meta-usage-skill` (usage protocol).
+The meta family (`skills/meta/`) holds the skills exempt from the usage-protocol append, by a path rule (`is_meta_skill`: any loader path under `skills/meta/`), never a per-skill list: the two protocol/authoring skills `meta/meta-write-skill` (authoring rules) and `meta/meta-usage-skill` (usage protocol), plus task-specific meta-authoring skills such as `meta/authn-skill-writing`.
 
 ## Loader contract (`src/polymerhus/app/llm/skills.py::skill_for`)
 
@@ -25,7 +26,7 @@ Only on-demand skill readers call it; no role prompt loads through here.
 ## Runtime loading (`build_load_skill_tool()::load_skill`)
 
 The single loader made agent-reachable: `load_skill(name)` returns the skill body with its YAML frontmatter stripped - identical semantics to the shared `skill_for` loader (cached, fail-open to `''` on an unknown skill) - plus the `meta-usage-skill` reading protocol appended after a `---` separator (body, separator, protocol).
-A missing protocol appends nothing, an unknown skill still degrades to `''`, and loading either meta-skill itself returns its bare body (no protocol on the protocol skills: no blackloops).
+A missing protocol appends nothing, an unknown skill still degrades to `''`, and loading a meta-family skill (any loader path under `skills/meta/`) returns its bare body (no protocol on the protocol skills: no blackloops).
 The appended protocol always reads from the shared catalogue - a per-project bundle never shadows it.
 The protocol is delivered by the read path itself, never by the prompt or compaction domain.
 `refresh` clears the cache first (the development hot-reload path only - never set it mid-run).
@@ -77,7 +78,8 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 | `webapp-clientside-semantic-model` | **authored** | client-side semantic modeling from browser-observable artifacts before security analysis |
 | `webpage-analysis` | **authored** | web-application architectural profiling (navigation x rendering, independent) |
 | `webpage-profile` | **authored + verified** | L1-spine webpage classification (L1D-31a: independent dimensions, fingerprint-insufficiency) |
-| `meta-usage-skill` | **authored (#234)** | assess the procedure against its observables; record improvements through `write_skill` |
-| `meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter shape, references pointers |
+| `meta/meta-usage-skill` | **authored (#234)** | assess the procedure against its observables; record improvements through `write_skill` |
+| `meta/meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter shape, references pointers |
+| `meta/authn-skill-writing` | **authored** | authoring a project's per-project `authn` skill: posture probe, sign-in/sign-up execution, and the store/skill two-plane split |
 
 Roadmap detail + priorities: `docs/design/jobs-tools-skills-taxonomy.md` section 6.

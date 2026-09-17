@@ -35,7 +35,8 @@ skill a role may load is rendered into that role's system message.
 #234 adds the write half of the same domain (ADR B1): the per-project skill
 store (`SkillStore`) under the app-owned data root, the `write_skill` tool bound
 to one project, and the `meta-usage-skill` reading protocol appended by the read
-path to every load. Loader, store, writer, and protocol injection are one domain
+path to every load except meta-family skills (`skills/meta/`). Loader, store,
+writer, and protocol injection are one domain
 here so they cannot drift; the prompt/compaction domain stays unaware of skills.
 """
 from __future__ import annotations
@@ -123,7 +124,8 @@ SKILL_LOAD_CONTRACT = (
     "reason from the returned body; loading the same skill twice returns the "
     "cached body unchanged.\n\n"
     "A missing protocol appends nothing, an unknown skill still degrades to "
-    "`''`, and loading either meta-skill itself returns its bare body (no "
+    "`''`, and loading a meta-family skill (any skill under `skills/meta/`, "
+    "including the protocol skills themselves) returns its bare body (no "
     "protocol on the protocol skills: no blackloops). The appended protocol "
     "always reads from the shared catalogue - a per-project bundle never "
     "shadows it.\n\n"
@@ -348,13 +350,32 @@ def skill_index_middleware():
 
 # The reading-protocol skill (#234): the first-class usage-protocol skill in
 # the shared catalogue, appended to every `load_skill` result by the skill
-# read path itself - except the two meta-skills, which load bare (no
-# blackloops), and always read from the shared catalogue (no shadowing).
-# `PROTOCOL_SEPARATOR` is the pinned composition rule - loader-identical body,
-# separator, protocol body.
-META_USAGE_SKILL = "meta-usage-skill"
-META_WRITE_SKILL = "meta-write-skill"
+# read path itself - except meta-family skills (any skill under `skills/meta/`),
+# which load bare (no blackloops), and always read from the shared catalogue
+# (no shadowing). `PROTOCOL_SEPARATOR` is the pinned composition rule -
+# loader-identical body, separator, protocol body.
+#
+# The meta family is a taxonomy class, not a per-skill flag: the exemption is
+# a path rule (`is_meta_skill`), so any skill placed under `skills/meta/` is
+# exempt from the usage-protocol append by construction. The two existing
+# meta-skills live there beside meta-authoring skills like
+# `meta/authn-skill-writing`.
+META_SKILLS_PREFIX = "meta/"
+META_USAGE_SKILL = f"{META_SKILLS_PREFIX}meta-usage-skill"
+META_WRITE_SKILL = f"{META_SKILLS_PREFIX}meta-write-skill"
 PROTOCOL_SEPARATOR = "\n\n---\n\n"
+
+
+def is_meta_skill(name: str) -> bool:
+    """The meta-family taxonomy filter: true when `name` is the `meta` area
+    itself or any loader path under `skills/meta/` (so `meta/meta-usage-skill`,
+    `meta/meta-write-skill`, and `meta/authn-skill-writing` are all meta
+    skills). Meta-family skills never receive the `meta-usage-skill` append -
+    the exemption is keyed on the directory path, never on a per-skill list, so
+    a new meta skill is exempt the moment it lands under `skills/meta/`."""
+    return name == META_SKILLS_PREFIX.rstrip("/") or name.startswith(
+        META_SKILLS_PREFIX
+    )
 
 
 def build_load_skill_tool(
@@ -366,14 +387,15 @@ def build_load_skill_tool(
     shared store seam (the per-project bundle first, then the repo catalogue -
     bake-time mounts and runtime loads can never diverge), then appends the
     `meta-usage-skill` reading protocol (#234: the skills-domain output
-    extension - on every load except the two meta-skills themselves, no marker,
+    extension - on every load except meta-family skills (under `skills/meta/`),
+    no marker,
     no pause mechanism, and no coupling to the prompt or compaction domain).
     `refresh=True` clears the skill cache first (the development hot-reload
     path). Import performs no I/O (CODING_STANDARD section 6); the default store
     is constructed lazily inside the factory call, never at import.
 
     Fail-open is preserved end to end: a missing protocol appends nothing, an
-    unknown skill still degrades to `''`, and loading either meta-skill itself
+    unknown skill still degrades to `''`, and loading a meta-family skill
     returns its bare body (no protocol on the protocol skills: no blackloops).
     The appended protocol always reads from the shared catalogue - a
     per-project bundle never shadows it."""
@@ -389,7 +411,7 @@ def build_load_skill_tool(
         if refresh:
             clear_cache()
         body = seam.read(name, project_id=project_id)
-        if not body or name in (META_USAGE_SKILL, META_WRITE_SKILL):
+        if not body or is_meta_skill(name):
             return body
         protocol = seam.read(META_USAGE_SKILL)
         if not protocol:
@@ -899,6 +921,7 @@ def build_skill_tools(
 
 
 __all__ = [
+    "META_SKILLS_PREFIX",
     "META_USAGE_SKILL",
     "META_WRITE_SKILL",
     "PROTOCOL_SEPARATOR",
@@ -915,6 +938,7 @@ __all__ = [
     "build_skill_tools",
     "build_write_skill_tool",
     "clear_cache",
+    "is_meta_skill",
     "list_skills",
     "render_skill_index",
     "skill_agent_binding",
