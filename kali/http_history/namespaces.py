@@ -18,6 +18,7 @@ from dataclasses import dataclass, field
 
 from kali.http_history.models import CaptureContext
 from kali.http_history.registry import SourceRegistry
+from kali.http_history.dns import DnsForwarder, lease_resolv_conf
 
 logger = logging.getLogger(__name__)
 
@@ -50,8 +51,24 @@ class SubprocessBackend:
     """Real ``ip netns``/veth backend; transparent-routing rules are installed
     by ``entrypoint.sh``/``postrun.sh`` and re-asserted per lease here."""
 
-    def __init__(self, *, proxy_port: int = 8080):
+    def __init__(
+        self,
+        *,
+        proxy_port: int = 8080,
+        netns_dir: str = "/etc/netns",
+        resolv_conf: str = "/etc/resolv.conf",
+        hosts_file: str = "/etc/hosts",
+        dns_forwarder: DnsForwarder | None = None,
+    ):
         self.proxy_port = proxy_port
+        # The paths are injectable so the namespace bootstrap is unit-testable
+        # without touching the host's /etc; production uses the defaults, which
+        # are exactly what `ip netns exec` bind-mounts over /etc.
+        self.netns_dir = netns_dir
+        self.resolv_conf = resolv_conf
+        self.hosts_file = hosts_file
+        self.dns_forwarder = dns_forwarder
+        self._gateways: dict[str, str] = {}
 
     def create(self, namespace: str, source_ip: str) -> None:
         veth_host = f"vh{namespace[-6:]}"
@@ -68,10 +85,27 @@ class SubprocessBackend:
             self._run("ip", "-n", namespace, "link", "set", veth_ns, "up")
             self._run("ip", "-n", namespace, "link", "set", "lo", "up")
             self._run("ip", "-n", namespace, "route", "add", "default", "via", gateway_ip)
-            resolv_dir = f"/etc/netns/{namespace}"
-            self._run("mkdir", "-p", resolv_dir)
-            if os.path.exists("/etc/resolv.conf"):
-                shutil.copy("/etc/resolv.conf", f"{resolv_dir}/resolv.conf")
+            # Resolver + hosts for the lease. Copying the container's
+            # /etc/resolv.conf verbatim pointed the namespace at Docker's
+            # resolver on 127.0.0.11, which is the CONTAINER's loopback and
+            # answers nothing from a child namespace (live 2026-09-17: every
+            # hostname failed with `curl: (6) Could not resolve host`). The
+            # gateway is reachable, so it goes first; the forwarder bound there
+            # relays to the container's own resolver, which is why the lease
+            # sees the same answers (compose names and public names).
+            conf_dir = os.path.join(self.netns_dir, namespace)
+            os.makedirs(conf_dir, exist_ok=True)
+            parent_resolv = ""
+            if os.path.exists(self.resolv_conf):
+                with open(self.resolv_conf, encoding="utf-8", errors="replace") as handle:
+                    parent_resolv = handle.read()
+            with open(os.path.join(conf_dir, "resolv.conf"), "w", encoding="utf-8") as handle:
+                handle.write(lease_resolv_conf(parent_resolv, gateway_ip))
+            if self.hosts_file and os.path.exists(self.hosts_file):
+                shutil.copy(self.hosts_file, os.path.join(conf_dir, "hosts"))
+            if self.dns_forwarder is not None:
+                self.dns_forwarder.bind(gateway_ip)
+            self._gateways[namespace] = gateway_ip
             for port in (80, 443):
                 self._run(
                     "iptables", "-t", "nat", "-A", "PREROUTING", "-i", veth_host,
@@ -84,6 +118,7 @@ class SubprocessBackend:
 
     def destroy(self, namespace: str) -> None:
         veth_host = f"vh{namespace[-6:]}"
+        gateway_ip = self._gateways.pop(namespace, None)
         for port in (80, 443):
             self._run(
                 "iptables", "-t", "nat", "-D", "PREROUTING", "-i", veth_host,
@@ -92,7 +127,9 @@ class SubprocessBackend:
             )
         self._run("ip", "link", "del", veth_host)
         self._run("ip", "netns", "del", namespace)
-        self._run("rm", "-rf", f"/etc/netns/{namespace}")
+        self._run("rm", "-rf", os.path.join(self.netns_dir, namespace))
+        if gateway_ip and self.dns_forwarder is not None:
+            self.dns_forwarder.unbind(gateway_ip)
 
     def _run(self, *argv: str) -> None:
         proc = subprocess.run(argv, capture_output=True, text=True, check=False)

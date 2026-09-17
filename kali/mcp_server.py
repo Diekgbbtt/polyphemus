@@ -24,6 +24,7 @@ _SERVICE = None
 
 
 def _build_service():
+    from kali.http_history.dns import DnsForwarder
     from kali.http_history.config import load_config
     from kali.http_history.namespaces import NamespaceLeaseManager, SubprocessBackend
     from kali.http_history.registry import SourceRegistry
@@ -34,12 +35,18 @@ def _build_service():
     lease_manager = None
     if config.enabled:
         registry = SourceRegistry(config.registry_path)
+        # Leased namespaces cannot reach Docker's resolver (`127.0.0.11` is the
+        # CONTAINER's loopback); the forwarder serves it on each lease gateway,
+        # so a `curl` replay and any system-resolver client resolve exactly what
+        # the container resolves. Started lazily per lease, stopped on release.
         lease_manager = NamespaceLeaseManager(
             registry=registry,
             pool_size=config.pool_size,
             ttl_s=config.ttl_s,
             acquire_timeout_s=config.acquire_timeout_s,
-            backend=SubprocessBackend(proxy_port=config.proxy_port),
+            backend=SubprocessBackend(
+                proxy_port=config.proxy_port, dns_forwarder=DnsForwarder()
+            ),
         )
     return HttpHistoryService(
         config=config, registry=registry, lease_manager=lease_manager
