@@ -113,28 +113,45 @@ def test_write_capable_agent_gets_load_skill_plus_bound_write_skill(tmp_path) ->
     ).is_file()
 
 
-def test_write_tool_without_project_is_a_wiring_defect() -> None:
-    with pytest.raises(ValueError):
-        skills.build_skill_tools(with_write_skill=True)
+def test_write_tool_defaults_to_the_deployment_project(monkeypatch) -> None:
+    from polymerhus.app.config import config
+
+    monkeypatch.setattr(config, "PROJECT_ID", "proj-cfg")
+    tools = skills.build_skill_tools(with_write_skill=True)
+    assert [t.name for t in tools] == ["load_skill", "write_skill"]
 
 
 # --- the #221 per-role binding ------------------------------------------------
 
 
-def test_binding_carries_the_roles_bounded_skill_set() -> None:
+def test_binding_carries_the_roles_bounded_skill_set(monkeypatch) -> None:
+    from polymerhus.app.config import config
+
+    monkeypatch.setattr(config, "PROJECT_ID", "proj-cfg")
     binding = skill_agent_binding("pod_runner")
 
     assert isinstance(binding, SkillAgentBinding)
     assert binding.role_id == "pod_runner"
     assert [t.name for t in binding.tools] == ["load_skill"]
     assert len(binding.middleware) == 1
-    assert binding.context == {"skills": ["lightrag-query", "steel-browser"]}
+    # The project scope is tool-owned: unset -> the deployment's single project.
+    assert binding.context == {
+        "skills": ["lightrag-query", "steel-browser"],
+        "project_id": "proj-cfg",
+    }
     assert skills_for_role("pod_runner") == ("lightrag-query", "steel-browser")
 
 
-def test_binding_defaults_to_read_only_and_can_carry_the_write_tool(tmp_path) -> None:
+def test_binding_defaults_to_read_only_and_can_carry_the_write_tool(
+    tmp_path, monkeypatch
+) -> None:
+    from polymerhus.app.config import config
+
+    monkeypatch.setattr(config, "PROJECT_ID", "proj-cfg")
     read_only = skill_agent_binding("pod_runner")
     assert [t.name for t in read_only.tools] == ["load_skill"]
+    # Unset project -> the tool-owned deployment default.
+    assert read_only.context["project_id"] == "proj-cfg"
 
     write_capable = skill_agent_binding(
         "pod_runner",
@@ -144,7 +161,9 @@ def test_binding_defaults_to_read_only_and_can_carry_the_write_tool(tmp_path) ->
     )
     assert [t.name for t in write_capable.tools] == ["load_skill", "write_skill"]
     # The bounded set is the role's, independent of the write capability.
-    assert write_capable.context == read_only.context
+    assert write_capable.context["skills"] == read_only.context["skills"]
+    # An explicit project overrides the deployment default.
+    assert write_capable.context["project_id"] == "proj-1"
 
 
 def test_an_exempt_role_binds_no_skill_surface_at_all() -> None:

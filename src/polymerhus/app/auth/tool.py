@@ -125,14 +125,20 @@ class AuthStoreArgs(BaseModel):
 _ARGS_SCHEMA = AuthStoreArgs
 
 
-def build_auth_store_tool(project_id: str, store: AuthStore | None = None):
+def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None = None):
     """Build the ONE shared `auth_store` tool bound to `project_id`.
 
+    `project_id` defaults to the control-plane project (`config.PROJECT_ID`,
+    the deployment's single project) resolved LAZILY here, so no agent harness
+    threads identity and import never touches config/env (CODING_STANDARD §6).
     `store` is the auth seam (default: the production `AuthStore` -
     constructing it performs no I/O; tests inject an explicit-root store).
-    The project id is bound once here; agents never pass identity. The
-    contract rides the tool's description verbatim.
+    The contract rides the tool's description verbatim.
     """
+    if project_id is None:
+        from polymerhus.app.config import config  # noqa: PLC0415 - lazy, no env at import
+
+        project_id = config.PROJECT_ID
     seam = store if store is not None else AuthStore()
 
     @tool(args_schema=_ARGS_SCHEMA)

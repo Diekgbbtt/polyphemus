@@ -311,19 +311,18 @@ def skill_agent_binding(
         return SkillAgentBinding(
             role_id=role_id, middleware=[], tools=[], context={}
         )
-    # The project id rides the SAME invocation context the bounded set does, so
-    # the index resolves per-project bundles (a project-authored skill such as
-    # `authn`) and `load_skill` reads them - one seam, no per-site plumbing.
-    context = {"skills": list(names)}
-    if project_id is not None:
-        context["project_id"] = project_id
+    # The project scope is tool-owned (`config.PROJECT_ID` when unset) and rides
+    # the SAME invocation context the bounded set does, so the index resolves
+    # per-project bundles (a project-authored skill such as `authn`) and
+    # `load_skill` reads them - one seam, no per-site plumbing.
+    project_id = _resolve_project_id(project_id)
     return SkillAgentBinding(
         role_id=role_id,
         middleware=[skill_index_middleware(store=store)],
         tools=build_skill_tools(
             project_id, with_write_skill=with_write_skill, store=store
         ),
-        context=context,
+        context={"skills": list(names), "project_id": project_id},
     )
 
 
@@ -415,6 +414,18 @@ def is_meta_skill(name: str) -> bool:
     )
 
 
+def _resolve_project_id(project_id: str | None) -> str:
+    """The tool-owned project scope: the explicit id, else the deployment's
+    single project (`config.PROJECT_ID`), resolved LAZILY so import never
+    touches config/env (CODING_STANDARD §6). No agent harness threads identity -
+    the tool owns its scope (operator ruling: one project runs at a time)."""
+    if project_id:
+        return project_id
+    from polymerhus.app.config import config  # noqa: PLC0415 - lazy, no env at import
+
+    return config.PROJECT_ID
+
+
 def build_load_skill_tool(
     project_id: str | None = None, store: "SkillStore | None" = None
 ):
@@ -438,6 +449,7 @@ def build_load_skill_tool(
     per-project bundle never shadows it."""
     from langchain_core.tools import tool  # noqa: PLC0415
 
+    project_id = _resolve_project_id(project_id)
     seam = store if store is not None else SkillStore()
 
     @tool
@@ -706,6 +718,8 @@ class SkillStore:
             try:
                 path = self._bundle_dir(project_id, name) / "SKILL.md"
                 return _strip_frontmatter(path.read_text(encoding="utf-8"))
+            except FileNotFoundError:
+                pass  # no project bundle: the catalogue fallback is the normal path
             except (OSError, ValueError):
                 logger.warning(
                     "skill store: unreadable project bundle for %s/%s; "
@@ -727,6 +741,8 @@ class SkillStore:
                 meta = _parse_frontmatter(path.read_text(encoding="utf-8"))
                 if meta is not None:
                     return meta
+            except FileNotFoundError:
+                pass  # no project bundle: the catalogue metadata is the normal path
             except (OSError, ValueError):
                 logger.warning(
                     "skill store: unreadable project bundle frontmatter for "
@@ -967,6 +983,7 @@ def build_skill_tools(
     skill-index middleware rides alongside at the agent owner's binding site -
     the #222 seam - composed with this helper, never reimplemented per
     agent.)"""
+    project_id = _resolve_project_id(project_id)
     tools = [build_load_skill_tool(project_id, store=store)]
     if with_write_skill:
         if not project_id:
