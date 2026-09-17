@@ -67,9 +67,140 @@ Nessun errore, nessun warning, run `complete`, delta `unexplained == 0`: il fall
 
 ---
 
-## 3. Come funziona adesso
+## 3. Modello architetturale (vista d'insieme)
 
-### 3.1 Il percorso di una richiesta
+### 3.1 I confini: dove passa il dato, e dove no
+
+```text
+┌───────────────── processo agent (uvicorn :8080, PYTHONPATH=/srv/src) ──────────────────┐
+│  API HTTP ──▶ pipeline recon ──▶ job agent (MAX_PODS concorrenti) ──▶ POD (LangGraph)  │
+│                                                                        │               │
+│        il pod NON parla col target: l'unico modo è il seam exec_fn ────┘               │
+│                          (command, session_id, timeout_s, capture_context)             │
+└───────────────────────────────────────────┬────────────────────────────────────────────┘
+                                            │  MCP streamable-http :8000
+┌───────────────── container kali ──────────┼────────────────────────────────────────────┐
+│  mcp_server.execute_command(...)  ──▶  HttpHistoryService                              │
+│        │                                     │                                         │
+│        │                              LeaseManager.acquire(session_id, project_id, ctx) │
+│        │                                     │  namespace dedicato + REDIRECT 80/443    │
+│        │                                     ▼                                          │
+│        │                            il tool gira dentro 172.30.0.x                      │
+│        │                                     │  HTTP/HTTPS                             │
+│        │                              mitmproxy  ──▶  target 172.28.0.20                 │
+│        │                                     │                                          │
+│        │                              addon + normalizer ──▶ store (SQLite + blob)      │
+│        │                                     │                    + indice EAV          │
+│        └──── refs = search(context/exec_id == exec_id) ◀─────────┘                      │
+└─────────────────────────────────────────────────────────────────────────────────────────┘
+                                            │
+                    frontiera del modello: escono SOLO view sanitizzate
+                    (niente body, header/cookie sensibili redatti)
+```
+
+Quattro confini da tenere a mente:
+
+| Confine | Regola |
+|---|---|
+| pod ↔ target | il pod non apre connessioni proprie: se non passa da `exec_fn` non viene registrato |
+| agent ↔ kali | solo il contratto MCP; nessuna condivisione di memoria o di filesystem |
+| kali ↔ target | il traffico esce dal namespace del lease (sorgente `172.30.0.x`), non dall'IP del container |
+| store ↔ modello | il body e i segreti non attraversano: solo `size`/`capture_state` e valori redatti |
+
+### 3.2 I componenti e chi possiede cosa
+
+| Componente | Responsabilità | Possiede | File |
+|---|---|---|---|
+| pod di recon | costruire il contesto di cattura e inoltrarlo | `capture_context`, `stats.capture` del pod | `recon/domain/pod.py` |
+| pipeline | fondere i frammenti dei pod | copertura per job (`sent`/`refs`/`warning`) | `recon/control/pipeline.py` |
+| `execute_command` (MCP) | superficie per il chiamante, sanitizzazione di stdout | contratto pubblico dello storico | `kali/mcp_server.py` |
+| `HttpHistoryService` | progetto/exec/lease/ref, replay, tetto di storage | `exec_id`, throttle dei limiti | `kali/http_history/service.py` |
+| `LeaseManager` + backend | namespace, REDIRECT, TTL, pool | l'isolamento di rete per esecuzione | `namespaces.py` |
+| addon mitmproxy + normalizer | trasformare un flow in un artifact | la verità registrata (record) | `addon.py`, `normalize.py` |
+| store | durabilità, indice, retention/cap, GC dei blob | il dato e la sua interrogabilità | `store.py`, `index.py` |
+| sanitizer | proiezione model-facing | ciò che è visibile a modello/Langfuse | `sanitize.py` |
+| replay (plan + sender) | rispedire una baseline con override dichiarati | lineage (`derived_from`, `replay_kind`) | `replay.py`, `sender.py` |
+
+### 3.3 I contratti (le firme che tengono insieme il modello)
+
+| Seam | Firma essenziale | Chi lo usa |
+|---|---|---|
+| esecuzione dal pod | `exec_fn(command, session_id, timeout_s, capture_context=None) -> ExecResult{stdout, stderr, returncode, duration_ms, exec_id, http_artifact_refs, capture_warning}` | pod |
+| esecuzione MCP | `execute_command(command, session_id, timeout_s, project_id, run_id, spec_id, variant_ref, derived_from, replay_kind)` | client sync, test |
+| ricerca | `search_http_history(project_id, filters, cursor, limit, text) -> {summaries, next_cursor}` | pod/hunter, UI, test |
+| lettura | `get_http_artifact(project_id, artifact_id) -> artifact sanitizzato` | pod/hunter, test |
+| replay | `replay_http_request(project_id, artifact_id, overrides, capture_context) -> {artifact_id, derived_from, replay_kind}` | pod/hunter, test |
+| stato | `proxy_status() -> {proxy, routing, namespaces, store, capture}` | healthcheck, diagnosi |
+| aggregazione | `capture_job_stats(pod_exports) -> {sent, refs, warning}` | pipeline |
+
+La proprietà è volutamente asimmetrica: il **contesto** è del chiamante (solo lui sa che cosa
+stava lavorando), l'**`exec_id`** e l'**artifact** sono di kali (solo il proxy sa cosa è
+passato sul filo), la **fusione** è della pipeline (solo lei vede tutti i pod di un job).
+
+### 3.4 Il modello dati
+
+```text
+flows            una riga per artifact: record_json (la verità, schema http-artifact/v1) + created_at
+attributes       indice sparsa: (side, namespace, key, text_value|numeric_value) per OGNI scalare
+flows_fts        indice full-text (ricerca libera su url/header/marker del body)
+bodies           blob content-addressed (sha256) + tabella di riferimento, GC quando nessuno li usa
+meta             last_purge (audit dell'ultima potatura)
+```
+
+| Elemento | Scelta | Perché |
+|---|---|---|
+| documento completo per artifact | JSON validato (pydantic) | l'artifact è autosufficiente: si legge senza join |
+| indice EAV | una riga per attributo, namespace `core/header/cookie/query/form/body/tls` | "interrogabile per qualunque attributo" senza migrazioni di schema |
+| body in blob | content-addressed | dedup, e il body non entra mai nelle viste |
+| id | ULID con prefisso `http_` | stabile, ordinabile, indirizzabile |
+| lineage | `derived_from` + `replay_kind` sul nuovo artifact | un replay è una richiesta **con storia**, non una richiesta nuova |
+| limiti | `retention_s` (0) e `project_max_bytes` (1 GiB) | il tetto è sui byte; l'età non cancella (vedi §9) |
+
+### 3.5 Ciclo di vita di un'esecuzione catturata
+
+```text
+1. il pod costruisce il contesto (project/run/spec/session) - o None se il progetto manca/feature off
+2. execute: mint dell'exec_id  →  acquire del lease (namespace + REDIRECT)  →  run del comando
+3. il proxy registra i flow del namespace, ognuno timbrato col contesto dell'exec_id
+4. a fine comando, in un finally: refs = search(context/exec_id)  →  release del lease
+5. il pod scrive l'esito nella sua export: {sent, refs, warning}
+6. la pipeline fonde le export dei pod in recon_jobs.stats[].capture
+7. (throttled, best-effort) enforce_limits sul progetto: byte cap
+```
+
+Il passo 4 è in `finally` di proposito: se il comando esplode, il lease **non** resta appeso e
+gli artifact già registrati vengono comunque restituiti.
+
+### 3.6 Modi di guasto: cosa fallisce aperto e cosa chiude
+
+| Situazione | Comportamento | Perché |
+|---|---|---|
+| proxy irraggiungibile | il comando gira, `capture_warning` valorizzato, `refs=[]` | la ricognizione non deve diventare inutile per un guasto del recorder |
+| pool di namespace esaurito | idem, con `PoolExhaustedError` nel warning | fail-open **dichiarato**, visibile in `stats.capture` |
+| nessun `project_id` (exec fuori dal percorso pod) | nessun lease, nessuna cattura, nessun errore | la cattura è per progetto: senza progetto non c'è dove scrivere |
+| body oltre il cap | artifact registrato con `capture_state="omitted"` | si perde il contenuto, non la transazione |
+| replay su baseline con body dichiarato ma assente | **rifiutato** (`body_unavailable`) | fail-**closed**: un replay senza corpo falsificherebbe l'esperimento |
+| indice corrotto o assente | ricostruibile dal `record_json` | l'indice è derivato, il documento è la verità |
+
+### 3.7 Invarianti di design
+
+1. **La cattura non è mai un gate.** Nessun percorso di ricon degrada perché il recorder è
+   giù: cambia solo ciò che si può dimostrare dopo.
+2. **Il fallimento è visibile.** `sent` distingue "non ho chiesto" da "ho chiesto e non è
+   arrivato niente"; un `refs=0` con `sent=true` non può essere scambiato per una cattura
+   riuscita.
+3. **Un solo scrittore per verità.** Il record lo scrive il proxy; la sanitizzazione è una
+   proiezione, non una seconda verità.
+4. **Il confine del modello è esplicito.** Ciò che non è nella proiezione (body, `source_ip`,
+   header sensibili) non esiste per il modello.
+5. **La lineage non si perde.** Ogni replay porta `derived_from`; ogni artifact porta il
+   contesto dell'esecuzione che l'ha prodotto.
+6. **I limiti sono dichiarati dove mordono.** Tetto di byte, cap del body, pool, porte
+   redirette: ognuno è un comportamento scritto in questo documento, non una sorpresa.
+
+## 4. Come funziona adesso
+
+### 4.1 Il percorso di una richiesta
 
 ```text
   POD (recon, in-process nell'agent)
@@ -101,7 +232,7 @@ I quattro pezzi, in parole semplici:
 | **proxy + normalizzatore** | trasforma un flow in un artifact (HAR-like) e lo scrive | `kali/http_history/addon.py`, `normalize.py` |
 | **store + indice** | tiene l'artifact e proietta ogni attributo in righe interrogabili | `kali/http_history/store.py`, `index.py` |
 
-### 3.2 Il contesto: le quattro chiavi
+### 4.2 Il contesto: le quattro chiavi
 
 Quando il pod invoca il terminale porta con sé:
 
@@ -121,7 +252,7 @@ giusto anche con più pod in parallelo.
 dell'asset): httpx è seedato con l'IP nudo `172.28.0.20`, katana consuma il `BaseURL`
 `http://172.28.0.20`, ed è esattamente quello che si vede nei due artifact.
 
-### 3.3 Cosa c'è dentro un artifact
+### 4.3 Cosa c'è dentro un artifact
 
 Struttura di un artifact (schema `http-artifact/v1`):
 
@@ -143,7 +274,7 @@ Il body **non** attraversa il confine verso il modello: nel view sanitizzato ci 
 nello store e li usa solo il percorso di replay. Gli header/cookie sensibili sono redatti
 (`[redacted]`) quando il *nome* matcha la lista sensibile.
 
-### 3.4 Risposta reale, vista dal lato artifact (run DOPO, httpx)
+### 4.4 Risposta reale, vista dal lato artifact (run DOPO, httpx)
 
 ```json
 {
@@ -176,7 +307,7 @@ quello vero mandato da httpx, che il tool **non** stampa nel proprio output.
 
 ---
 
-## 4. Tool log vs artifact: cosa sa ognuno dei due
+## 5. Tool log vs artifact: cosa sa ognuno dei due
 
 Il "tool log" è il registro che il test/recon tiene delle invocazioni: comando + stdout
 integrale + returncode + durata + (adesso) il contesto e i ref. È il punto di vista del
@@ -214,7 +345,7 @@ esattamente quello che il replay fa.
 
 ---
 
-## 5. PRIMA vs DOPO, sugli stessi job
+## 6. PRIMA vs DOPO, sugli stessi job
 
 | | PRIMA (`947cba53`) | DOPO (`ef27ec78`) |
 |---|---|---|
@@ -235,7 +366,7 @@ dei tool con il grafo. Il capture plane è un livello **in più**, e il fatto ch
 coincidano (`refs > 0` e delta invariato) dice che registrare non ha alterato ciò che il recon
 ha capito.
 
-### 5.1 Cosa si può chiedere allo store, adesso
+### 6.1 Cosa si può chiedere allo store, adesso
 
 ```text
 # tutto il traffico di un run
@@ -253,7 +384,7 @@ filters=[{"side":"request","namespace":"header","key":"user-agent","op":"contain
 filters=[{"side":"body","namespace":"body","key":"marker","op":"contains","value":"marker="}]
 ```
 
-### 5.2 Il replay, in pratica
+### 6.2 Il replay, in pratica
 
 ```text
 replay_http_request(project_id, artifact_id="http_01M2QEQ7DC6JM96BB3JFSFR20W",
@@ -270,7 +401,7 @@ query, header/cookie, body/form/json, rimozioni): nessuna shell, nessuna espress
 
 ---
 
-## 6. Perché il buco era invisibile, e cosa è stato cambiato
+## 7. Perché il buco era invisibile, e cosa è stato cambiato
 
 Due cause indipendenti, entrambe silenziose.
 
@@ -298,7 +429,7 @@ test veloci che pinnano la regressione silenziosa della firma.
 
 ---
 
-## 7. Le decisioni di design (e perché)
+## 8. Le decisioni di design (e perché)
 
 | Decisione | Motivo |
 |---|---|
@@ -311,7 +442,7 @@ test veloci che pinnano la regressione silenziosa della firma.
 
 ---
 
-## 8. Limiti attuali (dichiarati)
+## 9. Limiti attuali (dichiarati)
 
 | Limite | Cosa non copre | Dove è dichiarato |
 |---|---|---|
@@ -327,7 +458,7 @@ test veloci che pinnano la regressione silenziosa della firma.
 
 ---
 
-## 9. Dove sta il codice
+## 10. Dove sta il codice
 
 | Area | File |
 |---|---|
@@ -345,7 +476,7 @@ test veloci che pinnano la regressione silenziosa della firma.
 
 ---
 
-## 10. Glossario minimo
+## 11. Glossario minimo
 
 | Termine | Significato qui |
 |---|---|
@@ -360,10 +491,25 @@ test veloci che pinnano la regressione silenziosa della firma.
 
 ---
 
-## 11. Stato rispetto all'issue
+## 12. Stato rispetto all'issue
 
 Tre dei quattro criteri di #196 sono attuati e verificati (interrogabilità per attributo,
 durabilità + id stabile, riferimento per identificatore dal pod/hunter). Il primo — *"ogni
 request/response in uscita dal container kali è registrata"* — è **parziale**: vale per il
 traffico in lease sulle porte 80/443. La tabella criterio-per-criterio, con i run di
 accettazione, è in `http-proxy-history-hardening-decisions.md` §C.11.
+
+### 12.1 Che endpoint è stato testato davvero
+
+Sì, un endpoint HTTP **reale** — ma di **laboratorio**, non di produzione:
+
+| | Valore |
+|---|---|
+| Target | `172.28.0.20:80`, container `http-e2e-target` (server HTTP python che risponde su `/` e `/robots.txt`) |
+| Protocollo esercitato | **solo HTTP**, nessun TLS (negli artifact `connection.tls = false`) |
+| Cosa è stato provato sul filo | richieste vere del processo del tool (httpx, katana) verso un socket vero, `200` con body di 65 byte, header di risposta reali |
+| Cosa **non** è stato provato | un sito Internet, HTTPS/SNI, redirect/CDN, un target con WAF o challenge, porte ≠ 80 |
+| Perché | il perimetro della prova è `172.28.0.20` (target nudo, mai URL) e la rete è quella del compose; i limiti che ne derivano sono elencati in §9 |
+
+Conseguenza dichiarata: il costo del fingerprint TLS del proxy e la cattura su `:443` restano
+**non misurati** qui, anche se il percorso è implementato (`REDIRECT` su tcp/80 e tcp/443).
