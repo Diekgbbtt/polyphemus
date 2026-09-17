@@ -180,5 +180,5 @@ def test_source_note_ids_rides_the_surface_with_zero_prose() -> None:
     assert "source_note_ids" in schema["properties"]
     assert "description" not in schema["properties"]["source_note_ids"]
 
-    for name in ("meta-write-skill", "meta-usage-skill"):
+    for name in ("meta/meta-write-skill", "meta/meta-usage-skill"):
         assert "source_note" not in skills.skill_for(name)

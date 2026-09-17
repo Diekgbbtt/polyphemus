@@ -7,6 +7,7 @@ co-located with the session seam, its primary consumer. Import from there.
 This shim is removed after one cycle; no new imports of this path.
 """
 from polymerhus.app.llm.skills import (  # noqa: F401
+    META_SKILLS_PREFIX,
     META_USAGE_SKILL,
     META_WRITE_SKILL,
     PROTOCOL_SEPARATOR,
@@ -21,6 +22,7 @@ from polymerhus.app.llm.skills import (  # noqa: F401
     build_skill_tools,
     build_write_skill_tool,
     clear_cache,
+    is_meta_skill,
     list_skills,
     render_skill_index,
     skill_agent_seams,
@@ -31,6 +33,7 @@ from polymerhus.app.llm.skills import (  # noqa: F401
 )
 
 __all__ = [
+    "META_SKILLS_PREFIX",
     "META_USAGE_SKILL",
     "META_WRITE_SKILL",
     "PROTOCOL_SEPARATOR",
@@ -45,6 +48,7 @@ __all__ = [
     "build_skill_tools",
     "build_write_skill_tool",
     "clear_cache",
+    "is_meta_skill",
     "list_skills",
     "render_skill_index",
     "skill_agent_seams",
