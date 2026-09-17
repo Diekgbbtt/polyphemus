@@ -89,6 +89,76 @@ def _exec_window(t0: float, started_at: str) -> dict:
     }
 
 
+def _merge_scan_stats(target: dict, fragment: dict) -> dict:
+    """Fold one scan-coverage fragment into a job's running scan stats.
+
+    Counters add (a pod's resources are the run's resources), flags OR, and a
+    free-text reason is kept once per distinct value - so a job's persisted
+    statistics name every partial-completion reason its groups produced without
+    overwriting the fields another producer wrote.
+    """
+    for key, value in (fragment or {}).items():
+        if isinstance(value, bool):
+            target[key] = bool(target.get(key)) or value
+        elif isinstance(value, (int, float)) and not isinstance(value, bool):
+            existing = target.get(key)
+            target[key] = (existing if isinstance(existing, (int, float)) else 0) + value
+        elif isinstance(value, str):
+            if not value:
+                continue
+            existing = target.get(key)
+            if not existing:
+                target[key] = value
+            elif value not in existing:
+                target[key] = f"{existing}; {value}"
+        elif isinstance(value, dict):
+            target[key] = {**(target.get(key) or {}), **value}
+        elif value is not None:
+            target[key] = value
+    return target
+
+
+def capture_job_stats(pod_exports: list) -> dict:
+    """Fold every pod's #196 capture fragment into ONE per-job verdict.
+
+    The pod writes `{"sent", "refs", "warning"}` into its own export; until this
+    fold existed the fragment died there, so `recon_jobs.stats` could not answer
+    "was this job's traffic recorded?" and a run whose recon traffic was never
+    captured read exactly like a fully captured one. The fold is additive (no
+    other stats field is touched) and, per pod:
+
+    * `refs` ADD - the job's artifacts are the union of its pods' artifacts;
+    * `sent` ORs - true when at least ONE pod asked kali for capture, so a job
+      with a single legacy/capability-less pod cannot silently report as
+      captured, and a single captured pod is not hidden by its uncaptured peers;
+    * `warning` keeps every distinct reason (joined with "; ", the same rule
+      `_merge_scan_stats` applies) instead of letting a later clean pod erase a
+      pool-exhausted one's warning.
+
+    `sent=False, refs=0` and `sent=True, refs=0` are DIFFERENT facts ("never
+    asked" vs "asked and the traffic was not recorded"), so both keys are always
+    present together rather than defaulted away. A job whose pods carry no
+    capture fragment at all gains no key - additive, and an older pod never
+    acquires a claim it did not make.
+    """
+    merged: dict = {}
+    declared = False
+    for export in pod_exports or []:
+        stats = getattr(export, "stats", None) or {}
+        fragment = stats.get("capture")
+        if not isinstance(fragment, dict):
+            continue
+        declared = True
+        _merge_scan_stats(merged, fragment)
+    if not declared:
+        return {}
+    return {
+        "sent": bool(merged.get("sent")),
+        "refs": int(merged.get("refs") or 0),
+        "warning": merged.get("warning") or None,
+    }
+
+
 def seed_assets(settings: dict) -> list[dict]:
     """Phase-0 root input: the Domain node the phase-0 Domain-consuming jobs run
     against (or a deterministic placeholder if none is configured).
@@ -569,6 +639,14 @@ async def run_pipeline(
                 ]
                 if commands:
                     job_stats["commands"] = commands
+                # #196 capture coverage: the pods already declared whether each
+                # terminal call asked kali for capture and how many artifacts
+                # came back; fold those fragments into the job's own verdict so
+                # "this job's traffic was recorded" is answerable from persisted
+                # state (and a partial/failed capture can never read as clean).
+                capture_stats = capture_job_stats(pod_exports)
+                if capture_stats:
+                    job_stats["capture"] = capture_stats
                 # #208: the reprofile pass is ONE pod for the whole dedup'd probe
                 # set - surface the probe-set size from the export so the phase's
                 # lineage is verifiable from persisted state (the D12 `consumed`

@@ -650,6 +650,92 @@ def test_job_stats_include_per_pod_commands(monkeypatch):
     assert captured["subfinder"]["commands"] == ["subfinder -d example.com -all -json -silent"]
 
 
+def test_capture_job_stats_folds_every_pod_fragment():
+    """#196: the pod's capture outcome (`sent`/`refs`/`warning`) must survive the
+    aggregation into `recon_jobs.stats` - it was silently dropped, so a recon run
+    whose traffic was never recorded still read as a fully successful run.
+
+    The fold is additive and can never launder a partial capture into a complete
+    one: refs add, `sent` is true when at least ONE pod asked for capture, and no
+    pod's warning is dropped in favour of another pod's clean result."""
+    from polymerhus.recon.domain.types import PodExport as _PodExport
+
+    def pod(capture=None, **extra):
+        stats = dict(extra)
+        if capture is not None:
+            stats["capture"] = capture
+        return _PodExport(input_asset={}, verdict="success", stats=stats)
+
+    merged = pipeline.capture_job_stats([
+        pod({"sent": True, "refs": 2, "warning": None}),
+        pod({"sent": True, "refs": 3, "warning": None}),
+    ])
+    assert merged == {"sent": True, "refs": 5, "warning": None}
+
+    # "asked and got nothing" is NOT the same fact as "never asked".
+    assert pipeline.capture_job_stats([
+        pod({"sent": False, "refs": 0, "warning": None}),
+    ]) == {"sent": False, "refs": 0, "warning": None}
+
+    assert pipeline.capture_job_stats([
+        pod({"sent": False, "refs": 0, "warning": None}),
+        pod({"sent": True, "refs": 1, "warning": None}),
+    ])["sent"] is True
+
+    # A pool-exhausted pod and a pod whose ref lookup failed: no pod's warning is
+    # dropped, so the operator sees every partial-capture reason the job produced.
+    merged_warning = pipeline.capture_job_stats([
+        pod({"sent": True, "refs": 1, "warning": "capture unavailable: pool exhausted"}),
+        pod({"sent": True, "refs": 1, "warning": "capture lookup failed: timeout"}),
+    ])["warning"]
+    assert "pool exhausted" in merged_warning and "timeout" in merged_warning, merged_warning
+
+    # Additive: a job whose pods carry no capture fragment at all (an older pod,
+    # or a job that never reaches the terminal) gains no capture claim.
+    assert pipeline.capture_job_stats([pod(command="httpx -u x")]) == {}
+    assert pipeline.capture_job_stats([]) == {}
+
+
+def test_job_stats_surface_pod_capture_coverage(monkeypatch):
+    """The persisted per-job stats carry what the pod reported about #196
+    capture, for BOTH outcomes: a captured job and a pod that asked and got
+    nothing."""
+    captured: dict = {}
+    # The heartbeat driver is a background thread; the unit tier stubs it out
+    # (same as test_job_stats_include_per_pod_commands) so the assertions are
+    # about stats, not about the scheduler.
+    monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
+
+    class CaptureRegistry(FakeRegistry):
+        def upsert_job(self, run_id, phase, job, status, stats=None, error=None):
+            super().upsert_job(run_id, phase, job, status, stats=stats, error=error)
+            if status not in ("in_progress",):
+                captured.setdefault(job, stats)
+
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+        capture = (
+            {"sent": True, "refs": 2, "warning": None}
+            if job.tool == "subfinder"
+            else {"sent": False, "refs": 0, "warning": None}
+        )
+        return [
+            PodExport(input_asset=input_assets[0], verdict="success",
+                      stats={"command": job.command_template, "capture": capture}),
+        ]
+
+    asyncio.run(pipeline.run_pipeline(
+        "p1", run_id="r1", job_subset=["subfinder", "dnsx"],
+        run_job=fake_run_job,
+        load_settings=lambda pid: {"target_domain": "*.example.com"},
+        registry=CaptureRegistry(),
+        read_assets=lambda *a, **k: [{"name": "example.com"}],
+        read_steering_signals=lambda pid: [],
+    ))
+
+    assert captured["subfinder"]["capture"] == {"sent": True, "refs": 2, "warning": None}
+    assert captured["dnsx"]["capture"] == {"sent": False, "refs": 0, "warning": None}
+
+
 def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch):
     import asyncio
     from polymerhus.recon.control import pipeline
