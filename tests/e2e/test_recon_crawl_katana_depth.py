@@ -220,9 +220,26 @@ class ToolLog:
         self.log_path = run_dir / "tool-log.jsonl"
         self.calls: list[dict] = []
 
-    def exec_fn(self, command: str, session_id: str, timeout_s: int):
+    def exec_fn(
+        self,
+        command: str,
+        session_id: str,
+        timeout_s: int,
+        capture_context=None,
+    ):
+        """Forward the invocation VERBATIM, capture context included.
+
+        `capture_context` is declared here on purpose: `build_pod_graph` decides
+        whether to hand the pod's project/run/spec identity to the terminal by
+        INSPECTING THIS SIGNATURE, so a three-argument seam (the shape this test
+        used to have) silently ran every pod unleased and uncaptured while the
+        run still reported success. That regression is pinned by
+        `test_tool_log_seam_carries_the_capture_context`.
+        """
         started = time.monotonic()
-        result = pod_module.default_exec_fn(command, session_id, timeout_s)
+        result = pod_module.default_exec_fn(
+            command, session_id, timeout_s, capture_context=capture_context
+        )
         wall_ms = int((time.monotonic() - started) * 1000)
 
         index = len(self.calls) + 1
@@ -269,6 +286,11 @@ class ToolLog:
             "stdout_lines": stdout.count("\n") + (1 if stdout and not stdout.endswith("\n") else 0),
             "capture_state": capture_state,
             "capture_note": capture_note,
+            # The identity the pod sent to kali, so the report can prove the
+            # artifact search below uses the pod's OWN run/spec, not a guess.
+            "capture_context": (
+                capture_context.as_mcp_args() if capture_context is not None else None
+            ),
             "http_artifact_refs": list(result.http_artifact_refs or []),
             "capture_warning": result.capture_warning,
             "stderr": (result.stderr or "")[:2000],
@@ -283,6 +305,99 @@ class ToolLog:
             flush=True,
         )
         return result
+
+
+# --------------------------------------------------------------------------
+# The #196 seam contract (fast tier, no live infra).
+#
+# `build_pod_graph` forwards the capture context ONLY to a seam whose signature
+# declares it, so a three-argument seam drops it silently: the pods then run
+# unleased, nothing is recorded, and the run still reads as a success. That is
+# the exact regression this test pins - the live run's own seam must be
+# capture-aware, and the refs the MCP returned must reach the tool-log record
+# the report is built from.
+# --------------------------------------------------------------------------
+HTTPX_PROBE_LINE = (
+    '{"url":"http://172.28.0.20/","input":"172.28.0.20","status_code":200,'
+    '"scheme":"http","host":"172.28.0.20"}'
+)
+
+
+def _fast_pod_state(**overrides) -> dict:
+    state = {
+        "job": JOBS["httpx"],
+        "input_asset": {"url": f"http://{TARGET}"},
+        "asset_context": "",
+        "extra": {},
+        "session_id": "run-1-0-httpx-ab12cd34",
+        "iteration": 0,
+        "project_id": "proj-1",
+        "run_id": "run-1",
+    }
+    state.update(overrides)
+    return state
+
+
+def _fast_pod_graph(exec_fn):
+    """The pod graph with its two graph-writing collaborators faked out."""
+    return pod_module.build_pod_graph(
+        exec_fn=exec_fn,
+        curate_fn=lambda assets, obs, pid: (len(assets), len(obs), assets, obs),
+        triage_fn=lambda exec_result, assets, job: [],
+    )
+
+
+def test_tool_log_seam_carries_the_capture_context(tmp_path, monkeypatch):
+    from polymerhus.recon.domain.types import ExecResult
+
+    log = ToolLog(tmp_path)
+    assert pod_module._accepts_capture_context(log.exec_fn), (
+        "the E2E exec seam does not declare `capture_context`: the pod's signature "
+        "guard will drop it, no namespace is leased and the recon traffic is never "
+        "recorded - exactly the silent regression #196 closed"
+    )
+
+    seen: dict = {}
+
+    def fake_default_exec_fn(command, session_id, timeout_s, capture_context=None):
+        seen["context"] = capture_context
+        return ExecResult(
+            stdout=HTTPX_PROBE_LINE, stderr="", returncode=0, duration_ms=1,
+            http_artifact_refs=["http_01E2ESEAMARTIFACT00000000"],
+        )
+
+    monkeypatch.setattr(pod_module, "default_exec_fn", fake_default_exec_fn)
+    export = _fast_pod_graph(log.exec_fn).invoke(_fast_pod_state())["export"]
+
+    assert export.verdict == "success"
+    context = seen["context"]
+    assert context is not None, "the pod never handed a capture context to the seam"
+    assert context.project_id == "proj-1"
+    assert context.run_id == "run-1"
+    assert context.spec_id == f"http://{TARGET}"
+    # The MCP result's refs must survive into the record the report reads.
+    assert log.calls[0]["http_artifact_refs"] == ["http_01E2ESEAMARTIFACT00000000"]
+    assert log.calls[0]["capture_warning"] is None
+    assert export.stats["capture"] == {"sent": True, "refs": 1, "warning": None}
+
+
+def test_legacy_three_arg_seam_keeps_working_uncaptured():
+    """Every pre-#196 fake takes three positional args and must keep working -
+    the pod simply declares that this seam cannot carry a capture context."""
+    from polymerhus.recon.domain.types import ExecResult
+
+    calls = []
+
+    def legacy_exec_fn(command, session_id, timeout_s):
+        calls.append((command, session_id, timeout_s))
+        return ExecResult(stdout=HTTPX_PROBE_LINE, stderr="", returncode=0, duration_ms=1)
+
+    assert pod_module._accepts_capture_context(legacy_exec_fn) is False
+    export = _fast_pod_graph(legacy_exec_fn).invoke(_fast_pod_state())["export"]
+
+    assert export.verdict == "success"
+    assert len(calls) == 1
+    assert export.stats["capture"] == {"sent": False, "refs": 0, "warning": None}
 
 
 # --------------------------------------------------------------------------
@@ -632,7 +747,12 @@ def _delta_key_like(node: dict) -> str:
     return f"{node.get('type')}(name={props.get('name')},url={props.get('url')},path={props.get('path')})"
 
 
-def _write_delta_report_md(path: Path, report: dict, expected_render_note: str) -> None:
+def _write_delta_report_md(
+    path: Path,
+    report: dict,
+    expected_render_note: str,
+    capture: dict | None = None,
+) -> None:
     lines = [
         "# Delta report - tool log vs collected (katana, crawl-only)",
         "",
@@ -695,6 +815,31 @@ def _write_delta_report_md(path: Path, report: dict, expected_render_note: str) 
         f"- collected-but-not-in-log: `{[_delta_key_like(n) for n in report['_unexplained_collected']]}`",
         "",
     ]
+    if capture:
+        lines += [
+            "## Capture (#196)",
+            "",
+            "The recon traffic was recorded and is reproducible; the full detail is "
+            "in `capture-report.md`.",
+            "",
+        ]
+        for job, stats in capture["per_job"].items():
+            lines.append(
+                f"- **{job}**: `stats.capture = sent={stats['sent']}, "
+                f"refs={stats['refs']}, warning={stats['warning']!r}`"
+            )
+        base = capture["baseline"]
+        replay = capture["replay"]
+        lines += [
+            f"- artifacts found by `context/run_id={capture['run_id']}`: "
+            f"{capture['artifacts_by_run']['count']}",
+            f"- baseline `{base['artifact_id']}`: {base['method']} {base['url']} -> "
+            f"{base['status']}",
+            f"- replay `{replay['artifact_id']}` (declared mutation "
+            f"`{replay['declared_mutation']}`): {replay['method']} {replay['url']} -> "
+            f"{replay['status']}",
+            "",
+        ]
     path.write_text("\n".join(lines), encoding="utf-8")
 
 
@@ -711,6 +856,279 @@ EXPECTED_RENDER = (
 # --------------------------------------------------------------------------
 # The test.
 # --------------------------------------------------------------------------
+# --------------------------------------------------------------------------
+# #196 capture: what the recon ASKED must be recorded and reproducible.
+#
+# Every read goes through the kali MCP surface (the same server the pods used),
+# and every correlation key comes from the tool log's own record of what the pod
+# sent - never from a value this test recomputes. The chain is checked end to
+# end: tool log -> persisted job stats -> store -> replay.
+# --------------------------------------------------------------------------
+def _capture_mcp(tool: str, args: dict) -> dict:
+    async def _call():
+        async with Client(MCP_URL) as client:
+            result = await client.call_tool(tool, args)
+            return result.data
+
+    return asyncio.run(_call())
+
+
+def _capture_search(project_id: str, key: str, value: str, limit: int = 200) -> list[dict]:
+    page = _capture_mcp("search_http_history", {
+        "project_id": project_id,
+        "filters": [
+            {"side": "context", "namespace": "core", "key": key, "op": "eq", "value": value}
+        ],
+        "limit": limit,
+    })
+    assert not page.get("error"), f"search_http_history({key}={value!r}) failed: {page}"
+    return page.get("summaries") or []
+
+
+def _target_root(url: str) -> bool:
+    return url.rstrip("/") in (f"http://{TARGET}", f"https://{TARGET}")
+
+
+def _target_origin(url: str) -> bool:
+    """Every recorded URL must be this target (a crawl reaches /robots.txt too,
+    so the check is on the ORIGIN, not on the root path)."""
+    path = url.split("?", 1)[0]
+    return _target_root(url) or path.startswith(
+        (f"http://{TARGET}/", f"https://{TARGET}/")
+    )
+
+
+def _assert_capture(
+    run_dir: Path,
+    tool_log: ToolLog,
+    project_id: str,
+    run_id: str,
+    per_job: list[dict],
+) -> dict:
+    """The §5/A acceptance: recorded per invocation, per job, per context, and
+    replayable.
+
+    Fails loudly on every link of the chain the #196 defect broke: the pod must
+    have SENT a capture context (the signature guard silently dropped it), the
+    terminal must have RETURNED artifacts, the job's persisted stats must agree,
+    the store must answer for the run and for the pod's own spec_id, and the
+    recorded request must replay to the target.
+    """
+    per_call = []
+    for call in tool_log.calls:
+        context = call["capture_context"]
+        assert context is not None, (
+            f"{call['job']} invocation #{call['index']} reached the exec seam with NO "
+            "capture context: the pod ran unleased and nothing it asked was recorded"
+        )
+        assert context["project_id"] == project_id, context
+        assert context["run_id"] == run_id, (
+            f"{call['job']} sent context/run_id={context['run_id']!r}, not the run's "
+            f"{run_id!r}: its artifacts would not be findable per run"
+        )
+        assert call["http_artifact_refs"], (
+            f"{call['job']} returned no http_artifact_refs (capture_warning="
+            f"{call['capture_warning']!r}): the #196 plane recorded none of its traffic"
+        )
+        assert call["capture_warning"] is None, (
+            f"{call['job']} reported a capture warning: {call['capture_warning']!r}"
+        )
+        assert call["capture_state"] == "captured", call["capture_state"]
+        per_call.append({
+            "index": call["index"],
+            "job": call["job"],
+            "session_id": call["session_id"],
+            "spec_id": context["spec_id"],
+            "project_id": context["project_id"],
+            "run_id": context["run_id"],
+            "refs": list(call["http_artifact_refs"]),
+            "capture_warning": call["capture_warning"],
+        })
+
+    # The persisted per-job stats must carry what the pod reported, not an
+    # inference: `refs` is exactly the number of refs the tool log recorded for
+    # that job's invocations.
+    per_job_capture = {}
+    for job in per_job:
+        calls = [c for c in tool_log.calls if c["job"] == job["job"]]
+        expected_refs = sum(len(c["http_artifact_refs"]) for c in calls)
+        capture = (job.get("stats") or {}).get("capture")
+        assert capture == {"sent": True, "refs": expected_refs, "warning": None}, (
+            f"{job['job']}: recon_jobs.stats.capture is {capture!r}, expected "
+            f"{{'sent': True, 'refs': {expected_refs}, 'warning': None}} "
+            f"(the pod reported {expected_refs} refs over {len(calls)} invocation(s))"
+        )
+        per_job_capture[job["job"]] = capture
+
+    # 1. Findable by the RUN the pod worked for.
+    by_run = _capture_search(project_id, "run_id", run_id)
+    assert by_run, (
+        f"no recorded artifact carries context/run_id={run_id!r}: the pods' traffic "
+        "is not attributable to this run"
+    )
+    assert len(by_run) >= sum(len(c["refs"]) for c in per_call), (
+        f"{len(by_run)} artifacts found for the run but the tool log claims "
+        f"{sum(len(c['refs']) for c in per_call)}"
+    )
+
+    # 2. Findable by the POD's own spec_id (its unit of work), taken from the
+    #    tool log - never recomputed here.
+    per_spec = {}
+    for entry in per_call:
+        spec_id = entry["spec_id"]
+        assert spec_id, f"{entry['job']} sent an empty spec_id: nothing links traffic to a pod"
+        rows = _capture_search(project_id, "spec_id", spec_id)
+        assert rows, (
+            f"no artifact carries context/spec_id={spec_id!r} ({entry['job']}): the "
+            "artifacts cannot be traced back to the unit of work that asked"
+        )
+        for row in rows:
+            assert _target_origin(row.get("url") or ""), (
+                f"{entry['job']} spec_id={spec_id!r} matched a foreign origin: "
+                f"{row.get('url')!r}"
+            )
+        per_spec.setdefault(spec_id, {
+            "jobs": [],
+            "artifact_ids": [],
+            "methods": set(),
+            "statuses": set(),
+        })
+        bucket = per_spec[spec_id]
+        bucket["jobs"].append(entry["job"])
+        bucket["artifact_ids"] += [row["artifact_id"] for row in rows]
+        bucket["methods"] |= {row.get("method") for row in rows}
+        bucket["statuses"] |= {row.get("status") for row in rows if row.get("status")}
+    for bucket in per_spec.values():
+        bucket["methods"] = sorted(bucket["methods"])
+        bucket["statuses"] = sorted(bucket["statuses"])
+
+    # 3. Assert method/url/status on the concrete fact: the probe asks the
+    #    target root and the target answers 200.
+    probes = [row for row in by_run if _target_root(row.get("url") or "")]
+    assert probes, f"no target-root artifact among the {len(by_run)} run artifacts"
+    ok_probes = [row for row in probes
+                 if row.get("method") == "GET" and row.get("status") == 200]
+    assert ok_probes, f"target-root artifacts are not GET/200: {probes[:5]}"
+
+    baseline_summary = sorted(ok_probes, key=lambda row: row["artifact_id"])[0]
+    baseline_ref = baseline_summary["artifact_id"]
+    baseline = _capture_mcp(
+        "get_http_artifact", {"project_id": project_id, "artifact_id": baseline_ref}
+    )
+    assert not baseline.get("error"), baseline
+    assert baseline["request"]["method"] == baseline_summary["method"], baseline
+    assert baseline["response"]["status"] == baseline_summary["status"], baseline
+    assert baseline["capture_context"]["run_id"] == run_id, baseline["capture_context"]
+
+    # 4. Replay with a DECLARED mutation: add one header and re-issue the exact
+    #    recorded request from a leased namespace. The target must answer 200.
+    replay_header = f"X-Polymerhus-Replay-{run_id[:8]}"
+    replay = _capture_mcp("replay_http_request", {
+        "project_id": project_id,
+        "artifact_id": baseline_ref,
+        "overrides": {"headers": {replay_header: "e2e-crawl-depth"}},
+    })
+    assert not replay.get("error"), f"replay_http_request failed for {baseline_ref}: {replay}"
+    assert replay["derived_from"] == baseline_ref, replay
+    replayed = _capture_mcp(
+        "get_http_artifact", {"project_id": project_id, "artifact_id": replay["artifact_id"]}
+    )
+    assert not replayed.get("error"), replayed
+    replayed_headers = {name.lower(): value for name, value in replayed["request"]["headers"]}
+    assert replayed_headers.get(replay_header.lower()) == "e2e-crawl-depth", (
+        f"the declared replay mutation did not reach the wire: {sorted(replayed_headers)}"
+    )
+    assert replayed["response"]["status"] == 200, (
+        f"the replay did not get 200 from the target: {replayed['response']}"
+    )
+    assert replayed["replay_kind"] != "baseline", replayed
+
+    return {
+        "run_id": run_id,
+        "project_id": project_id,
+        "per_call": per_call,
+        "per_job": per_job_capture,
+        "artifacts_by_run": {
+            "count": len(by_run),
+            "artifact_ids": [row["artifact_id"] for row in by_run],
+            "urls": sorted({row.get("url") for row in by_run}),
+        },
+        "artifacts_by_spec": per_spec,
+        "baseline": {
+            "artifact_id": baseline_ref,
+            "method": baseline["request"]["method"],
+            "url": baseline["request"]["url"],
+            "status": baseline["response"]["status"],
+            "spec_id": baseline["capture_context"]["spec_id"],
+            "run_id": baseline["capture_context"]["run_id"],
+        },
+        "replay": {
+            "baseline_artifact_id": baseline_ref,
+            "artifact_id": replay["artifact_id"],
+            "derived_from": replay["derived_from"],
+            "replay_kind": replay["replay_kind"],
+            "declared_mutation": {"headers": {replay_header: "e2e-crawl-depth"}},
+            "status": replayed["response"]["status"],
+            "method": replayed["request"]["method"],
+            "url": replayed["request"]["url"],
+        },
+    }
+
+
+def _write_capture_report_md(path: Path, report: dict) -> None:
+    lines = [
+        "# Capture report - #196 recon HTTP history",
+        "",
+        f"- project_id: `{report['project_id']}`",
+        f"- run_id: `{report['run_id']}`",
+        "",
+        "## Per invocation (tool log -> kali -> artifacts)",
+        "",
+    ]
+    for entry in report["per_call"]:
+        lines += [
+            f"- **{entry['job']}** (#{entry['index']}, session `{entry['session_id']}`)",
+            f"  - capture_context: `run_id={entry['run_id']}` `spec_id={entry['spec_id']}`",
+            f"  - capture_warning: `{entry['capture_warning']}`",
+            f"  - artifacts: {len(entry['refs'])} -> `{entry['refs']}`",
+        ]
+    lines += ["", "## Per job (persisted in recon_jobs.stats[].capture)", ""]
+    for job, capture in report["per_job"].items():
+        lines.append(
+            f"- **{job}**: `sent={capture['sent']}` `refs={capture['refs']}` "
+            f"`warning={capture['warning']}`"
+        )
+    lines += [
+        "",
+        "## Findable by context",
+        "",
+        f"- by `context/run_id`: {report['artifacts_by_run']['count']} artifact(s)",
+        f"  - urls: `{report['artifacts_by_run']['urls']}`",
+        f"  - ids: `{report['artifacts_by_run']['artifact_ids'][:20]}`",
+    ]
+    for spec_id, info in report["artifacts_by_spec"].items():
+        lines += [
+            f"- by `context/spec_id`: `{spec_id}` (jobs {info['jobs']})",
+            f"  - methods: `{info['methods']}`, statuses: `{info['statuses']}`",
+            f"  - ids: `{info['artifact_ids'][:10]}`",
+        ]
+    base = report["baseline"]
+    replay = report["replay"]
+    lines += [
+        "",
+        "## Replay (declared mutation)",
+        "",
+        f"- baseline: `{base['artifact_id']}` {base['method']} {base['url']} -> {base['status']}",
+        f"  - context: `run_id={base['run_id']}` `spec_id={base['spec_id']}`",
+        f"- declared mutation: `{replay['declared_mutation']}`",
+        f"- replay artifact: `{replay['artifact_id']}` (derived_from `{replay['derived_from']}`, "
+        f"replay_kind `{replay['replay_kind']}`)",
+        f"- replay result: {replay['method']} {replay['url']} -> {replay['status']}",
+        "",
+    ]
+    path.write_text("\n".join(lines), encoding="utf-8")
+
+
 def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
     run_dir = _run_dir()
     print(f"[artifacts] {run_dir}", flush=True)
@@ -929,18 +1347,26 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
     }
     summary["katana_pg_stats"] = stats_check
 
+    # --- F. #196 capture: recorded, attributable, replayable -----------------
+    # Runs BEFORE the artifact writes so its outcome lands in every one of them
+    # (collected.json, delta-report.md, run-summary.json + capture-report.md).
+    capture = _assert_capture(run_dir, tool_log, project_id, run_id, per_job)
+    summary["capture"] = capture
+
     _write_json(run_dir / "collected.json", {
         "collected_source_katana": report["collected_source_katana"],
         "collected_by_label": report["collected_by_label"],
         "kept_by_label": report["kept_by_label"],
         "nodes_total": len(graph.get("nodes") or []),
+        "capture": capture,
         "collected_nodes": [
             {"type": n.get("type"), "name": n.get("name"), "properties": n.get("properties")}
             for n in (graph.get("nodes") or [])
             if (n.get("properties") or {}).get("source") == "katana"
         ],
     })
-    _write_delta_report_md(run_dir / "delta-report.md", report, EXPECTED_RENDER)
+    _write_delta_report_md(run_dir / "delta-report.md", report, EXPECTED_RENDER, capture)
+    _write_capture_report_md(run_dir / "capture-report.md", capture)
     _write_json(run_dir / "run-summary.json", summary)
 
     assert not report["unattributed_drops"], (
@@ -1012,6 +1438,16 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
           f"dropped={report['gate_dropped']} collected={report['collected_source_katana']} "
           f"unexplained={len(report['unexplained_kept']) + len(report['unexplained_collected'])}", flush=True)
     print(f"gate control: kept={control['kept']} rules_fired={control['dropped_rules']}", flush=True)
+    print(
+        "capture: "
+        + "; ".join(
+            f"{job} sent={stats['sent']} refs={stats['refs']} warning={stats['warning']!r}"
+            for job, stats in capture["per_job"].items()
+        )
+        + f" | run artifacts={capture['artifacts_by_run']['count']}"
+        + f" | replay {capture['replay']['artifact_id']} -> {capture['replay']['status']}",
+        flush=True,
+    )
     print(f"orchestrator: actor built={len(actors)} turns={len(turns)} "
           f"steering_signal_reads={signal_reads}", flush=True)
     print(f"artifacts: {run_dir}", flush=True)

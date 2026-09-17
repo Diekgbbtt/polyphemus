@@ -480,7 +480,7 @@ pod può servire più spec). Commit `4a48654`, più il fix finale `05e4a22`.
 | Cache degli handle store a LRU (`_STORE_CACHE_MAX=32`, `close()` dell'evitto) | **Attuato** `7595fee` | `kali/http_history/service.py` |
 | `stream_large_bodies` o cap esplicito sul buffering di mitmproxy | **Rinviato** | piano separato |
 | health-check che verifica anche il **listener** del proxy, non solo la regola REDIRECT | **Rinviato** | `proxy_status` / `healthcheck.py` |
-| retention e purge agganciate a uno **scheduler** | **Rinviato** — i metodi esistono (`enforce_limits`, `purge_project`) ma nessuno li invoca | ops doc, "Known limitations" |
+| retention e purge agganciate a uno **scheduler** | **Parziale** — `enforce_limits` è ora invocato dall'`execute` (throttled per progetto, best-effort); `retention_s` resta 0 per scelta, il byte cap è attivo (C.11) | `kali/http_history/service.py` |
 
 ## C.10 Ordine di intervento, con effetto e stato
 
@@ -500,6 +500,105 @@ I primi sei, presi insieme, trasformano un sistema *"funziona nei test"* in un s
 sicurezza/decidibilità (E.1). Il terzo — se il bersaglio è protetto — decide se i risultati
 sono **veri** o solo **plausibili**, e resta a metà: è il candidato naturale per il prossimo
 incremento.
+
+---
+
+# C.11 Il percorso recon non era collegato al capture plane (P0) — chiuso
+
+**Cosa succedeva.** Un run di recon completo, verde e con il delta `unexplained == 0`, non
+registrava **nulla** del traffico che aveva chiesto ai target:
+
+| Sintomo osservato | Valore |
+|---|---|
+| `tool-log.jsonl`, invocazioni `httpx` e `katana` | `http_artifact_refs: []`, `capture_warning: null` |
+| store del progetto, filtro `context/run_id = <run>` | **0** artifact |
+| unica riga presente nello store | il **preflight**, `capture_context.run_id = ""`, `spec_id = ""` |
+| `GET /projects/{id}/recon/{run_id}` → `per_job[].stats` | **nessuna** chiave `capture` |
+
+Due cause distinte, entrambe silenziose.
+
+1. **Il seam di esecuzione del test non dichiarava `capture_context`.** `build_pod_graph`
+   inoltra il contesto solo a un seam la cui firma lo dichiara
+   (`_accepts_capture_context`, ispezione di `inspect.signature`); il `ToolLog.exec_fn`
+   dell'E2E aveva tre parametri, quindi il pod eseguiva `exec_fn(command, session_id,
+   timeout)` senza contesto → kali riceveva `project_id` vuoto → nessun lease (il lease
+   scatta solo con `config.enabled and project_id and lease_manager`) → nessun `REDIRECT`
+   sulla veth del namespace → mitmdump non vedeva nulla. Nessun errore: solo un run che
+   *sembrava* completamente riuscito.
+2. **Le statistiche di copertura non sopravvivevano all'aggregazione.** `job_stats` in
+   `pipeline.py` era costruito con una lista esplicita di campi e il sotto-dizionario
+   `capture` del pod export non veniva mai foldato, quindi `recon_jobs.stats` non poteva
+   rispondere a *"il traffico di questo job è stato registrato?"*.
+
+**Decisione.**
+
+- Il seam del test **dichiara** `capture_context` e lo inoltra a
+  `pod_module.default_exec_fn`; il caso legacy a 3 argomenti resta supportato e dichiara
+  `sent=false` (mai un falso "catturato").
+- La copertura viaggia fino a `recon_jobs.stats[].capture` con un fold **additivo**:
+  `refs` somma, `sent` è vero se **almeno un** pod ha chiesto la cattura, i `warning`
+  distinti si conservano (uniti con `"; "`, la stessa regola di `_merge_scan_stats`) così
+  che un pod "pulito" non cancelli il warning di un pod andato in pool esaurito.
+  `sent=false, refs=0` ("non ha mai chiesto") e `sent=true, refs=0` ("ha chiesto e non è
+  stato registrato") sono fatti **diversi** e restano distinti.
+- `spec_id` = **discriminatore dell'asset del pod** (`url`, altrimenti hash dell'asset):
+  risponde a *"cosa ha chiesto il pod incaricato di X"*, ed è l'unica delle chiavi di
+  correlazione che nessun altro punto dello store riempie.
+- Cattura **accesa di default** (`POD_HTTP_CAPTURE`, letto all'import), con kill-switch
+  `POD_HTTP_CAPTURE=0`: il fallimento che chiude è la perdita silenziosa di evidenza
+  riproducibile, e il costo operativo (fingerprint TLS del proxy, latenza) è dichiarato.
+- Il **tetto di storage** diventa effettivo: `enforce_limits` era testato ma **nessuno lo
+  invocava**. Ora l'`execute` di kali lo chiama, throttled per progetto
+  (`KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S`, default 60 s) e completamente best-effort (un
+  errore di housekeeping non tocca il risultato del comando). Default di compose:
+  **1 GiB per progetto**; con un body-cap di 5 MiB per transazione significa centinaia di
+  body pieni prima che i più vecchi vengano evacuati.
+- **Retention resta 0** (deviazione consapevole dalla coppia "cap + retention"): cancellare
+  per età elimina evidenza anche quando il disco non ha alcuna pressione. Il byte cap
+  copre il caso "lo store cresce senza limite"; l'età non è un rischio da mitigare qui.
+
+**Attuazione.**
+
+| Pezzo | Dove |
+|---|---|
+| seam E2E capture-aware + contesto nel tool log | `tests/e2e/test_recon_crawl_katana_depth.py` |
+| `capture_job_stats` + fold in `job_stats` | `src/polymerhus/recon/control/pipeline.py` |
+| throttled best-effort di `enforce_limits` | `kali/http_history/service.py` |
+| knob `enforce_interval_s` + cap di default | `kali/http_history/config.py`, `docker-compose.yml` |
+| asserzioni di cattura/artifact/replay | `tests/e2e/test_recon_crawl_katana_depth.py` |
+
+**Evidenza (2026-09-17).**
+
+- E2E live crawl-only, `katana -d 3`, progetto `d1cc4864-0ab0-433a-af57-253db7288e68`,
+  run `eb31545c-a103-420d-a516-d8a5339ff06d`: `httpx` success (318 ms, 1 ref), `katana`
+  success (10.262 s, 2 ref), `stats.capture = {sent: true, refs: 1|2, warning: null}`,
+  3 artifact trovati per `context/run_id`, replay con mutazione dichiarata
+  (`X-Polymerhus-Replay-eb31545c`) → **200** dal target. Delta invariato: `total=8 kept=8
+  dropped=0 collected=1 unexplained=0`, gate control positivo.
+- Corroborazione **black-box** (stesso subset via API, container agent): run
+  `235a15dd-8498-46d5-a79e-e19199fdde52` → `httpx` success (1.033 s, `refs=1`), `katana`
+  success (10.62 s, `refs=2`), entrambi `sent=true, warning=null`; 3 artifact nello store
+  per quel run. **La produzione cattura già**, una volta che esegue il codice del branch: il
+  difetto era nel seam del test e nell'aggregazione delle stats.
+- Costo sotto proxy vs baseline registrata: `httpx` 318 ms contro ~0.6 s, `katana -d 3`
+  10.262 s contro ~10.5 s — dentro il rumore; il passaggio da mitmproxy non sposta la
+  durata di questi job.
+
+**Limiti residui (dichiarati, non mitigati qui).**
+
+| Limite | Effetto | Perché resta |
+|---|---|---|
+| `KALI_HTTP_NAMESPACE_POOL=8` vs `MAX_PODS=8` | oltre il pool l'esecuzione degrada **fail-open**: nessun lease, nessuna cattura, comando comunque eseguito | il numero di pod concorrenti per job è già il tetto; il degrado ora è **visibile** in `stats.capture` (`sent=true, refs=0, warning="capture unavailable: PoolExhaustedError…"`) invece che silenzioso |
+| `REDIRECT` solo su tcp/80 e tcp/443 | il traffico dei job su porte non standard non viene registrato | richiede una decisione di topologia (Parte D) |
+| fingerprint TLS del proxy + latenza | il target vede il proxy, non il client del pod | accettato: la riproducibilità vale il costo, e il costo non è misurabile come latenza su questo target |
+| tetto di storage per progetto (1 GiB) | a saturazione i **più vecchi** artifact vengono evacuati | con retention 0 il taglio avviene solo sotto pressione reale di byte |
+
+**Nota di deploy.** L'immagine agent **non** monta `src/` (il `COPY src/ /srv/src/` è del
+build), quindi `--force-recreate` da solo serve il codice dell'immagine, non quello del
+worktree: per la prova black-box il branch è stato reso visibile con un mount temporaneo di
+`src/` (file di override fuori dal repo, nessun rebuild e nessuna modifica all'immagine).
+
+**Stato: Attuato.**
 
 ---
 
@@ -581,6 +680,10 @@ di spazio per progetto, o un tempo di scrittura p95).
 | tool `replay` nel pod di produzione | `pod/agents.py`, `pod/graph.py`, `pod/llm.py`, `pod/pod.py`, `runtime.py`, `pod/prompts.py` | `tests/attack/pod/test_replay_tool.py` | `9552cf2` |
 | cache LRU degli handle store | `kali/http_history/service.py` | `tests/kali/test_http_history_service.py` | `7595fee` |
 | pacchetto come verità + forma sparsa come indice | `kali/http_history/models.py`, `store.py` | `tests/kali/test_http_history_models.py`, `test_http_history_store.py` | decisione preesistente (A) |
+| cattura recon nel pod (contesto + stats) | `recon/config.py`, `recon/domain/pod.py` | `tests/recon/test_pod_capture_context.py` | `12b55cb` |
+| copertura di cattura nelle stats del job | `recon/control/pipeline.py` | `tests/recon/test_pipeline.py` | `c797ce5` |
+| tetto di storage invocato dall'exec | `kali/http_history/service.py`, `kali/http_history/config.py`, `docker-compose.yml` | `tests/kali/test_http_history_service.py`, `test_http_history_config.py`, `test_http_history_deployment.py` | `f2e2ea1` |
+| seam E2E capture-aware + asserzioni artifact/replay | `tests/e2e/test_recon_crawl_katana_depth.py` | stesso file (2 test veloci + run live) | questo commit |
 
 ---
 
@@ -588,10 +691,22 @@ di spazio per progetto, o un tempo di scrittura p95).
 
 | Gate | Comando | Esito |
 |---|---|---|
-| unit tier Kali | `pytest tests/kali -q -p no:cacheprovider` | **103 passed** |
+| unit tier Kali | `pytest tests/kali -q -p no:cacheprovider` | **112 passed**, zero skip |
 | gate E2E live (zero skip) | `KALI_MCP_URL=http://localhost:8000/mcp KALI_HTTP_E2E_TARGET=http://172.28.0.20/ pytest tests/e2e/test_http_proxy_history.py -vv -rs` | **1 passed**, nessuno skip |
 | check live del client app-side | `default_http_search_fn('e2e-…', [], None, 1, None)` | artifact reale |
 | cablaggio in produzione | `_default_hunter_builder` instrumentato | `default_http_search_fn` / `default_http_get_fn` bindati |
+| cattura recon nel pod (unit) | `pytest tests/recon/test_pod_capture_context.py tests/recon/test_jobs.py -q` | **51 passed** |
+| copertura di cattura nelle job stats (unit) | `pytest tests/recon/test_pipeline.py -q -p ambient_ticker` | **25 passed** |
+| recon crawl-only live + cattura + replay | `pytest tests/e2e/test_recon_crawl_katana_depth.py -q -s` | **3 passed** (2 seam + 1 run live) |
+| cattura black-box in produzione | `POST /projects/{id}/recon` sul container agent, subset `["httpx","katana"]` | `stats.capture = {sent: true, refs: 1\|2, warning: null}` |
+
+**Workaround di sandbox dichiarato.** In questo ambiente la sveglia cross-thread del loop
+asyncio non viene servita: `asyncio.run(...)` + `asyncio.to_thread(...)` completa il lavoro ma
+non torna mai da `loop.shutdown_default_executor()`. I tier che usano quella coppia
+(`tests/recon/test_pipeline.py`) sono stati eseguiti **per file** con un plugin di test
+(`-p ambient_ticker`, fuori dal repo) che neutralizza quella attesa e tiene vivo il tick.
+Non è una modifica di prodotto: senza il plugin il file resta appeso a fine test, con i test
+già passati.
 
 **Limite noto dell'ambiente** (non un difetto di questo branch, verificato al commit di fork):
 il tier `tests/attack` non è eseguibile come albero intero in questo ambiente — diversi file
@@ -613,3 +728,7 @@ si bloccano (`test_hunting_runtime.py`, `pod/test_react_seams.py`, `pod/test_har
 3. **Filiera, body, controllo, contratto, lineage** → chiusi e testati.
 4. **Confine di sicurezza** → proiezione attuata; la politica sui valori resta una decisione
    dell'operatore, con un trade-off dichiarato fra sicurezza e decidibilità.
+5. **Percorso recon** → collegato al capture plane: ogni invocazione porta
+   `project_id`/`run_id`/`spec_id`, il traffico è ricercabile e riproducibile, la copertura
+   (`sent`/`refs`/`warning`) è nelle stats del job; restano fuori pool oltre il tetto,
+   porte ≠ 80/443 e il costo di fingerprint/latenza del proxy (C.11).
