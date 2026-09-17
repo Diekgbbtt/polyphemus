@@ -130,11 +130,11 @@ services:
       # Optional: a CA (file path INSIDE the container, e.g. on a mounted volume)
       # whose certificates the recording proxy may verify upstream. Needed for lab
       # targets with self-signed leaves; empty means "verify against the system
-      # store only" (see docs/design/http-proxy-history-hardening-decisions.md C.13).
+      # store only" (see docs/design/http-proxy-history-design.md §2.6).
       KALI_HTTP_UPSTREAM_CA: ${KALI_HTTP_UPSTREAM_CA:-}
       # Retention stays 0 on purpose: age-based deletion drops evidence even when
       # the disk is under no pressure - a deliberate deviation from the "cap +
-      # retention" default, see docs/design/http-proxy-history-hardening-decisions.md.
+      # retention" default, see docs/design/http-proxy-history-design.md §2.9.
       KALI_HTTP_RETENTION_S: ${KALI_HTTP_RETENTION_S:-0}
       # 1 GiB per project: with capture ON for every recon pod the store is the
       # only thing keeping it bounded, and bodies are capped at 5 MiB each, so

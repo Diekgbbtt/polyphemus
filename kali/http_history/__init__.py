@@ -1,6 +1,7 @@
 """Durable, per-project HTTP/HTTPS request/response history for Kali.
 
-See docs/superpowers/specs/2026-09-12-http-proxy-history-196-design.md.
+See docs/design/http-proxy-history-design.md (design) and
+docs/design/http-proxy-history-test-evidence.md (runs and limits).
 The package is stdlib-only at its core so it can be imported by the MCP
 process, by the mitmproxy addon (separate Python environment), and by the
 host test suite without side effects.
