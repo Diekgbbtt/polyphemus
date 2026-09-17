@@ -91,6 +91,17 @@ if [ -f "$MITM_CA" ]; then
   command -v update-ca-certificates >/dev/null 2>&1 && update-ca-certificates >/dev/null 2>&1 || true
 fi
 
+# Upstream TLS: mitmdump VERIFIES the certificate of the site it records (live
+# 2026-09-17: a lab target with a self-signed leaf answers the client with 502
+# and the artifact carries `Certificate verify failed: self-signed certificate`).
+# An operator who wants such a target recorded points KALI_HTTP_UPSTREAM_CA at
+# that CA's file - trusting one specific CA, never `ssl_insecure` for everything.
+# Best-effort: a missing/unreadable path only leaves that target uncapturable.
+if [ -n "${KALI_HTTP_UPSTREAM_CA:-}" ]; then
+  "${KALI_HTTP_MCP_BIN:-/opt/venv/bin/python}" -m kali.http_history.trust \
+    "${KALI_HTTP_UPSTREAM_CA}" 2>/dev/null || true
+fi
+
 # Leased namespaces (172.30.0.0/24) egress through the root namespace, whose
 # VPN/Docker routes stay authoritative. HTTP/3 is explicitly NOT captured:
 # QUIC (UDP/443) from a leased namespace is rejected and disclosed as a

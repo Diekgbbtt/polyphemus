@@ -127,6 +127,11 @@ services:
       KALI_HTTP_PROXY_HOST: 127.0.0.1
       KALI_HTTP_PROXY_PORT: ${KALI_HTTP_PROXY_PORT:-8080}
       KALI_HTTP_REGISTRY_PATH: /run/kali-http/registry.sqlite3
+      # Optional: a CA (file path INSIDE the container, e.g. on a mounted volume)
+      # whose certificates the recording proxy may verify upstream. Needed for lab
+      # targets with self-signed leaves; empty means "verify against the system
+      # store only" (see docs/design/http-proxy-history-hardening-decisions.md C.13).
+      KALI_HTTP_UPSTREAM_CA: ${KALI_HTTP_UPSTREAM_CA:-}
       # Retention stays 0 on purpose: age-based deletion drops evidence even when
       # the disk is under no pressure - a deliberate deviation from the "cap +
       # retention" default, see docs/design/http-proxy-history-hardening-decisions.md.

@@ -44,11 +44,21 @@ case "$(printf '%s' "$CAPTURE_ENABLED" | tr '[:upper:]' '[:lower:]')" in
     ;;
   *)
     if [ -x "$MITMDUMP_BIN" ]; then
+      # Upstream verification: mitmproxy trusts its own CA source (certifi), NOT
+      # the system store, so an operator CA (self-signed lab target) is only
+      # honoured if it rides the bundle postrun.sh builds. Absent one, nothing
+      # changes: the proxy verifies against its default store.
+      MITM_TLS_ARGS=()
+      UPSTREAM_BUNDLE="$MITM_CONFDIR/upstream-ca-bundle.pem"
+      if [ -f "$UPSTREAM_BUNDLE" ]; then
+        MITM_TLS_ARGS=(--set "ssl_verify_upstream_trusted_ca=$UPSTREAM_BUNDLE")
+      fi
       "$MITMDUMP_BIN" \
         --mode transparent \
         --listen-host "$MITMDUMP_LISTEN_HOST" --listen-port "$PROXY_PORT" \
         --set "confdir=$MITM_CONFDIR" \
         --set block_global=false \
+        "${MITM_TLS_ARGS[@]}" \
         -s /opt/kali/http_history/addon_entry.py \
         >"$MITM_LOG" 2>&1 &
       PROXY_PID="$!"

@@ -2,6 +2,7 @@
 from __future__ import annotations
 
 import subprocess
+from pathlib import Path
 
 import pytest
 import yaml
@@ -39,8 +40,30 @@ def test_kali_environment_exposes_the_capture_knobs():
         "KALI_HTTP_RETENTION_S",
         "KALI_HTTP_PROJECT_MAX_BYTES",
         "KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S",
+        "KALI_HTTP_UPSTREAM_CA",
     ):
         assert key in env
+
+
+def test_postrun_installs_the_operator_upstream_ca():
+    """The knob alone does nothing: the bootstrap must install the file into the
+    trust store the proxy verifies against (C.13, self-signed lab targets)."""
+    script = (Path(__file__).resolve().parents[2] / "kali" / "postrun.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "KALI_HTTP_UPSTREAM_CA" in script
+    assert "kali.http_history.trust" in script, "the CA file must actually be installed"
+
+
+def test_entrypoint_hands_the_proxy_the_upstream_bundle():
+    """mitmproxy verifies the upstream against its own CA source (certifi), not
+    the system store: without this flag the operator CA is trusted by curl and
+    ignored by the recorder (measured live, C.13)."""
+    script = (Path(__file__).resolve().parents[2] / "kali" / "entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "ssl_verify_upstream_trusted_ca" in script
+    assert "upstream-ca-bundle.pem" in script
 
 
 def test_kali_defaults_bound_the_store_without_age_based_deletion():
