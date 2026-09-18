@@ -5,8 +5,10 @@ Each test names the assertion it encodes (docs/design/L1-MVP-plan.md FR-AUTH led
 """
 import pytest
 
-from polymerhus.recon.control.auth import select_auth_context
-from polymerhus.recon.domain.pod import _iter_auth_headers
+from polymerhus.recon.control.auth_feed import (
+    _iter_auth_headers,
+    select_account_role as select_auth_context,
+)
 from polymerhus.project_management.auth_context import validate_auth_context
 
 

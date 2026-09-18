@@ -37,7 +37,12 @@ from datetime import datetime, timezone
 
 from polymerhus.app.config import config
 from polymerhus.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
-from polymerhus.recon.control.auth import select_auth_context
+from polymerhus.recon.control.auth_feed import (
+    project_auth_cookies,
+    project_request_auth,
+    project_steel_profile,
+    resolve_account,
+)
 from polymerhus.recon.domain.curator import ALLOWED_LABELS, curate
 from polymerhus.recon.control.jobs import JOBS, build_phase_plan, validate_job_subset
 from polymerhus.recon.control.scope import (
@@ -305,6 +310,7 @@ async def run_pipeline(
     read_steering_signals=None,
     decide_routing=None,
     orchestrator_factory=None,
+    auth_store=None,
     feed_mode: str | None = None,
     pass_fn=None,
     with_analysis: bool = True,
@@ -330,9 +336,13 @@ async def run_pipeline(
     Steel crawl, and the selected account's identifier (never its material)
     rides the pipeline state for `use_auth` jobs. A degraded gateway fails
     open (every phase, unauthenticated, loudly); missing credentials stop the
-    run loudly (`GatewayStop` -> `failed`, nothing runs). `orchestrator_factory`
+    run loudly (`GatewayStop` -> `failed`, nothing runs).     `orchestrator_factory`
     builds the actor (tests inject the production actor over scripted models
     and temp stores); the actor is stopped in the `finally` so no task leaks.
+
+    `auth_store` feeds the per-phase auth projection (the #223 T4 #243 lazy
+    feed): tests inject a temp store, production resolves the shared bucket
+    lazily inside the feed itself.
 
     Best-effort: a job whose pods all fail, or whose `run_job` call raises,
     is marked "degraded" and the pipeline continues - it always reaches a
@@ -521,22 +531,35 @@ async def run_pipeline(
                             input_assets = _services_to_probe_targets(input_assets)
 
                     extra = {"project_id": project_id}
-                    if job.use_auth and settings.get("auth_context"):
-                        # FR-AUTH: select the DEFAULT role's credential set (honours
-                        # default_role, else the flat unroled creds) so a role/realm-
-                        # tagged auth_context never leaks its `roles` map to the tool.
-                        # #243 (T4, removal): the settings-blob auth path retires
-                        # here (D223-4) - left in place until T4.
-                        selected = select_auth_context(settings["auth_context"])
-                        if selected:
-                            extra["auth_context"] = selected
                     if auth_account is not None and job.use_auth:
-                        # D223-19: the gateway-selected account's IDENTIFIER
-                        # rides the pipeline state (never its material); each
-                        # phase's tool configuration resolves it lazily from
-                        # the store at the point of use. `use_auth` stays the
-                        # single eligibility gate.
+                        # D223-19, the lazy feed (#243): the gateway-selected
+                        # account's IDENTIFIER rides the pipeline state (never
+                        # its material), and each phase's tool configuration
+                        # resolves it from the store HERE - at assembly, right
+                        # before the phase runs - projecting only the subset
+                        # this job's tools need. Request jobs get the flat
+                        # request projection through the existing
+                        # `extra["auth_context"]` transport (the pod
+                        # serialises it per tool at fill time); the
+                        # agent-driven crawl additionally gets the persisted
+                        # Steel profile key. `use_auth` stays the single
+                        # eligibility gate; a dead account fails open
+                        # (unauthenticated, loudly - resolve_account warns).
                         extra["auth_account"] = auth_account
+                        account = resolve_account(
+                            project_id, auth_account, store=auth_store)
+                        if account:
+                            if job.configurator_mode == "agent":
+                                profile = project_steel_profile(account)
+                                if profile:
+                                    extra["steel_profile"] = profile
+                                cookies = project_auth_cookies(account)
+                                if cookies:
+                                    extra["auth_context"] = {"cookies": cookies}
+                            else:
+                                material = project_request_auth(account)
+                                if material:
+                                    extra["auth_context"] = material
                     # Scope gate for URL-hosted assets (out-of-scope BaseURL
                     # drop in curate): the seed host/apex/IP, only when a target
                     # is actually configured (never the parse_scope placeholder).

@@ -50,8 +50,8 @@ def test_ffuf_template_writes_json_to_file_and_cats_it_with_autocalibration():
     # `&&` is kept so a real ffuf failure still propagates a non-zero exit.
     assert ">/dev/null && cat /work/{session}/ffuf.json" in template
     assert "-ac" in template
-    # auth + rate slots preserved
-    assert "{auth_header}" in template
+    # feed + rate slots preserved
+    assert "{auth_flags}" in template
     assert "{rate_flags}" in template
 
 
@@ -69,7 +69,7 @@ def test_arjun_template_seeds_default_suppresses_stdout_and_reads_file():
     assert "printf '{}' > /work/{session}/arjun.json" in template
     assert "-oJ /work/{session}/arjun.json" in template
     assert ">/dev/null && cat /work/{session}/arjun.json" in template
-    assert "{auth_header}" in template
+    assert "{auth_flags}" in template
 
 
 def test_arjun_template_caps_request_rate_for_deterministic_yield():
@@ -234,10 +234,10 @@ def test_arjun_runs_after_jsluice_so_recovered_endpoints_reach_it():
 def test_kiterunner_is_an_authenticated_job():
     # kiterunner scans REST routes behind auth just like ffuf/katana - it must
     # receive the project's cookies/headers, so it belongs to the use_auth set
-    # and its command_template has an {auth_header} slot to fill.
+    # and its command_template has an {auth_flags} slot to fill.
     job = JOBS["kiterunner"]
     assert job.use_auth is True
-    assert "{auth_header}" in job.command_template
+    assert "{auth_flags}" in job.command_template
 
 
 def test_graphql_cop_is_an_authenticated_job():
@@ -245,7 +245,7 @@ def test_graphql_cop_is_an_authenticated_job():
     # receive the project's cookies/headers like the other request-based tools.
     job = JOBS["graphql-cop"]
     assert job.use_auth is True
-    assert "{auth_header}" in job.command_template
+    assert "{auth_flags}" in job.command_template
 
 
 def test_kiterunner_is_gated_to_the_restapi_profile():
@@ -320,7 +320,7 @@ def test_httpx_reprofile_consumes_endpoints_for_per_endpoint_profiling():
     assert job.use_auth is True
     assert "{endpoints}" in job.command_template
     assert "{session}" in job.command_template
-    assert "{auth_header}" in job.command_template
+    assert "{auth_flags}" in job.command_template
     assert "{target}" not in job.command_template
     assert "httpx -l" in job.command_template
 

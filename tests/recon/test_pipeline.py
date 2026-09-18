@@ -169,7 +169,33 @@ def test_job_with_all_pods_failed_is_degraded_and_run_completes():
     assert registry.set_run_status_calls[-1] == ("run1", "complete", None)
 
 
-def test_auth_context_only_passed_to_use_auth_jobs():
+def test_feed_projects_store_material_only_to_use_auth_jobs(tmp_path):
+    """#243: the lazy feed - the gateway verdict binds the account IDENTIFIER
+    and each phase's tool configuration resolves the store material at
+    assembly. Request jobs get the flat request projection (snapshot +
+    located tokens); non-auth jobs are unchanged."""
+    from polymerhus.app.auth.store import AuthStore
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
+
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "proj1", overview={"login_endpoint": "https://x/login"},
+        accounts={"alice": {
+            "credentials": {"username": "u", "password": "p",
+                            "login_url": "https://x/login"},
+            "tokens": {"Authorization": {"value": "Bearer T",
+                                         "location": "header"}},
+            "steel": {"profile": "proj1-alice"},
+            "snapshot": {"cookies": [{"name": "sid", "value": "S"}]},
+        }})
+
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            return GatewayVerdict(outcome="authenticated", account="alice",
+                                  branch="request", rationale="t")
+
+        async def stop(self): pass
+
     seen_extra = {}
 
     async def run_job(job, input_assets, *, run_id, phase, extra):
@@ -177,7 +203,7 @@ def test_auth_context_only_passed_to_use_auth_jobs():
         return [PodExport(input_asset={}, verdict="success")]
 
     registry = FakeRegistry()
-    settings = {"target_domain": "*.t.com", "auth_context": {"cookies": []}}
+    settings = {"target_domain": "*.t.com"}
 
     asyncio.run(
         pipeline.run_pipeline(
@@ -187,21 +213,38 @@ def test_auth_context_only_passed_to_use_auth_jobs():
             load_settings=make_load_settings(settings),
             registry=registry,
             read_assets=make_read_assets(),
+            orchestrator_factory=lambda run_id: _Gateway(),
+            auth_store=store,
         )
     )
 
     # scope_domain rides in extra alongside project_id (D14/curator scope gate);
     # "*.t.com" -> seed_host "t.com".
     assert seen_extra["subfinder"] == {"project_id": "proj1", "scope_domain": "t.com"}
-    assert seen_extra["httpx"] == {
-        "project_id": "proj1", "scope_domain": "t.com", "auth_context": {"cookies": []}}
-    assert seen_extra["katana"] == {
-        "project_id": "proj1", "scope_domain": "t.com", "auth_context": {"cookies": []}}
-    assert seen_extra["kiterunner"] == {
-        "project_id": "proj1", "scope_domain": "t.com", "auth_context": {"cookies": []}}
+    assert seen_extra["httpx"]["auth_account"] == "alice"  # identifier rides
+    assert seen_extra["httpx"]["auth_context"] == {  # store-resolved projection
+        "cookies": [{"name": "sid", "value": "S"}],
+        "Authorization": "Bearer T"}
+    assert seen_extra["katana"]["auth_context"] == seen_extra["httpx"]["auth_context"]
+    # the agent-driven crawl gets the persisted profile key plus cookies only
+    assert seen_extra["steel_crawl"]["auth_account"] == "alice"
+    assert seen_extra["steel_crawl"]["steel_profile"] == "proj1-alice"
+    assert seen_extra["steel_crawl"]["auth_context"] == {
+        "cookies": [{"name": "sid", "value": "S"}]}
 
 
-def test_auth_context_absent_when_settings_have_none():
+def test_feed_absent_without_a_verdict_account():
+    """#243: no gateway account (anonymous verdict) - use_auth jobs run with
+    no auth keys at all, exactly like non-auth jobs."""
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
+
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            return GatewayVerdict(outcome="anonymous",
+                                  rationale="no authenticated surface")
+
+        async def stop(self): pass
+
     seen_extra = {}
 
     async def run_job(job, input_assets, *, run_id, phase, extra):
@@ -220,6 +263,7 @@ def test_auth_context_absent_when_settings_have_none():
             load_settings=make_load_settings(settings),
             registry=registry,
             read_assets=make_read_assets(),
+            orchestrator_factory=lambda run_id: _Gateway(),
         )
     )
 

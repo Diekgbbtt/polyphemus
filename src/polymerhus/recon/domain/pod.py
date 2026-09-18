@@ -28,6 +28,7 @@ from typing import Literal
 from polymerhus.recon.domain.types import (
     PodState, ToolInvocation, PodExport, ExecResult, AssetDelta, Observation, JobSpec,
 )
+from polymerhus.recon.control.auth_feed import serialize_auth_flags
 from polymerhus.recon.domain.parsers import get_parser
 from polymerhus.recon.domain.parsers import graphql_parser, takeover_parser
 from polymerhus.recon.domain.findings import finding_to_observation
@@ -133,10 +134,12 @@ def fill_template(
     - {endpoints} (#208): the reprofile pod's full endpoint list, shell-quoted
       and space-joined, so ONE httpx exec can be fed the whole probe set via a
       `printf ... > file && httpx -l file` command. Empty when not provided.
-    - {auth_header}: empty unless extra["auth_context"] is present, in which
-      case it is serialized to the tool-appropriate cookie flag via
-      `_auth_header`. Auth-eligibility is decided ONCE, upstream: the pipeline
-      (`run_pipeline`) injects `auth_context` into `extra` only for `use_auth`
+    - {auth_flags}: empty unless extra["auth_context"] carries the feed's
+      flat request projection, in which case it is serialized to the
+      tool-appropriate header flags via the auth feed (`control.auth_feed`,
+      resolved lazily from the store through the bound account identifier).
+      Auth-eligibility is decided ONCE, upstream: the pipeline
+      (`run_pipeline`) injects the projection into `extra` only for `use_auth`
       jobs, so a non-auth job never carries it and this gate needs no second
       `use_auth` check (C1 single-owner consolidation).
     """
@@ -144,9 +147,9 @@ def fill_template(
     target = input_asset.get("name") or input_asset.get("url") or input_asset.get("address") or ""
     domain = input_asset.get("name") or input_asset.get("domain") or target
     baseurl = input_asset.get("url") or input_asset.get("baseurl") or target
-    auth_header = ""
+    auth_flags = ""
     if extra.get("auth_context"):
-        auth_header = _auth_header(extra["auth_context"], tool)
+        auth_flags = serialize_auth_flags(extra["auth_context"], tool)
     rate_flags = _RATE_FLAGS.get(tool, "") if (extra.get("rate_profile") == "throttle") else ""
 
     result = command_template
@@ -154,22 +157,13 @@ def fill_template(
     result = result.replace("{domain}", str(domain))
     result = result.replace("{baseurl}", str(baseurl))
     result = result.replace("{session}", str(session_id))
-    result = result.replace("{auth_header}", auth_header)
+    result = result.replace("{auth_flags}", auth_flags)
     result = result.replace("{rate_flags}", rate_flags)
     if "{endpoints}" in result:
         quoted = " ".join(shlex.quote(u) for u in endpoints or [])
         result = result.replace("{endpoints}", quoted)
     return result
 
-
-# Tools whose auth-cookie flag is `--headers "Cookie: ..."` rather than the
-# `-H "Cookie: ..."` form shared by httpx/katana/ffuf/kiterunner (design §4 table).
-_HEADERS_FLAG_TOOLS = {"arjun"}
-
-# graphql-cop's own --headers format: ALL headers in one comma-joined
-# "Key:Value,Key2:Value2" argument (no space after the colon) - distinct from
-# both the default repeated -H flag and arjun's newline-joined --headers blob.
-_COMMA_HEADERS_FLAG_TOOLS = {"graphql-cop"}
 
 # Conservative preventive rate profile, applied ONLY when the pod CONFIGURATOR
 # marked this pod's extra["rate_profile"] == "throttle" (the per-pod agent turn
@@ -181,70 +175,6 @@ _COMMA_HEADERS_FLAG_TOOLS = {"graphql-cop"}
 # slot was a dead no-op and was removed. katana already carries -rl/-c and is
 # handled by routing, so it is absent too.
 _RATE_FLAGS = {"ffuf": "-rate 5 -p 0.2"}
-
-
-# auth_context is header-agnostic: `cookies` is the structured source of the
-# `Cookie` header, and every OTHER key (except these reserved structural ones,
-# which are not HTTP headers) is emitted verbatim as its own request header.
-# The role/realm structural keys (`roles`, `default_role`, `realm`; FR-AUTH) are
-# reserved too, so even if a caller hands a set that still carries them they can
-# never leak out as HTTP headers (defence in depth - the selector already strips
-# roles/default_role; `realm` is a role's own metadata tag).
-_RESERVED_AUTH_KEYS = {"cookies", "scope", "credentials", "roles", "default_role", "realm"}
-
-
-def _iter_auth_headers(auth_context: dict):
-    """Yield `(name, value)` HTTP header pairs from `auth_context`.
-
-    - `cookies` (`[{name, value}, ...]`) is joined into the peculiar pair-form
-      `Cookie` header value (`k=v; k2=v2`) - the Cookie header wants key=value
-      pairs, not one opaque token.
-    - every other key except the reserved structural keys (`scope`,
-      `credentials`) is an arbitrary header (Authorization, X-Api-Key, ...),
-      yielded verbatim. A literal `Cookie` key is skipped (the API layer
-      rejects it; the `cookies` list is the one source of the Cookie header).
-    """
-    cookies = auth_context.get("cookies") or []
-    cookie_str = "; ".join(
-        f"{c['name']}={c['value']}" for c in cookies if c.get("name") and c.get("value")
-    )
-    if cookie_str:
-        yield ("Cookie", cookie_str)
-    for name, value in auth_context.items():
-        if name in _RESERVED_AUTH_KEYS or name.lower() == "cookie":
-            continue
-        if isinstance(value, str) and value:
-            yield (name, value)
-
-
-def _auth_header(auth_context: dict, tool: str) -> str:
-    """Serialize `auth_context` into tool-appropriate header CLI flags.
-
-    Header-agnostic: the `cookies` list becomes the `Cookie` header and any
-    other key (except the reserved `scope`/`credentials`) becomes its own
-    header. Every `name: value` is shell-quoted (`shlex`) so an operator-
-    supplied token can never break the command string.
-
-    `-H`-flag tools take one repeatable flag per header; arjun's `--headers`
-    takes all headers in a single newline-separated argument; graphql-cop's
-    `--headers` takes all headers in a single comma-joined `Key:Value` argument
-    (no space after the colon). Returns "" when nothing applies, so a
-    template's `{auth_header}` placeholder collapses to nothing rather than
-    leaving a dangling flag behind. Request-tool only - the Steel crawl injects
-    cookies via CDP separately.
-    """
-    if not auth_context:
-        return ""
-    pairs = list(_iter_auth_headers(auth_context))
-    if not pairs:
-        return ""
-    if tool in _HEADERS_FLAG_TOOLS:
-        blob = "\n".join(f"{name}: {value}" for name, value in pairs)
-        return f"--headers {shlex.quote(blob)}"
-    if tool in _COMMA_HEADERS_FLAG_TOOLS:
-        blob = ",".join(f"{name}:{value}" for name, value in pairs)
-        return f"--headers {shlex.quote(blob)}"
-    return " ".join(f"-H {shlex.quote(f'{name}: {value}')}" for name, value in pairs)
 
 
 def _best_effort_triage(triage_fn, exec_result, assets, job) -> list:

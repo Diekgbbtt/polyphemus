@@ -367,14 +367,15 @@ def plan_authz_probes(
 ):
     """The inverse-pyramid probe (leg 3): for EACH role, emit an interface-B
     request that re-issues the same `action` (a target URL/handle) carrying THAT
-    role's SELECTED credentials (select_auth_context). origin=anatomy_skill so each
+    role's SELECTED credentials (the feed's record-shape role selector).
+    origin=anatomy_skill so each
     result routes back to this skill. Returns a list[AnalyserReconRequest]."""
-    from polymerhus.recon.control.auth import select_auth_context
+    from polymerhus.recon.control.auth_feed import select_account_role
     from polymerhus.recon.control.targeted import AnalyserReconRequest, ReconScope
 
     probes = []
     for role in roles:
-        creds = select_auth_context(auth_context, role)
+        creds = select_account_role(auth_context, role)
         probes.append(AnalyserReconRequest(
             job=_AUTHZ_PROBE_JOB,
             scope=ReconScope(

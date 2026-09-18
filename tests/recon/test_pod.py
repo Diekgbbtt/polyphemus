@@ -88,9 +88,9 @@ def test_fill_template_substitutes_session():
     assert "{session}" not in cmd
 
 
-def test_fill_template_auth_header_httpx_serializes_cookie_string_not_dict_repr():
+def test_fill_template_auth_flags_httpx_serializes_cookie_string_not_dict_repr():
     cmd = pod.fill_template(
-        "httpx -u {target} -json {auth_header}",
+        "httpx -u {target} -json {auth_flags}",
         {"name": "app.example.com"},
         {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}, "_use_auth": True},
         tool="httpx",
@@ -100,9 +100,9 @@ def test_fill_template_auth_header_httpx_serializes_cookie_string_not_dict_repr(
     assert "{" not in cmd  # no residual placeholder, no dict repr
 
 
-def test_fill_template_auth_header_arjun_uses_headers_flag():
+def test_fill_template_auth_flags_arjun_uses_headers_flag():
     cmd = pod.fill_template(
-        "arjun -u {target} {auth_header}",
+        "arjun -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}, "_use_auth": True},
         tool="arjun",
@@ -110,9 +110,9 @@ def test_fill_template_auth_header_arjun_uses_headers_flag():
     assert "--headers 'Cookie: session=abc'" in cmd
 
 
-def test_fill_template_auth_header_multi_cookie():
+def test_fill_template_auth_flags_multi_cookie():
     cmd = pod.fill_template(
-        "httpx -u {target} {auth_header}",
+        "httpx -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -128,11 +128,11 @@ def test_fill_template_auth_header_multi_cookie():
     assert "-H 'Cookie: session=abc; csrf=xyz'" in cmd
 
 
-def test_fill_template_auth_header_arbitrary_headers_httpx():
+def test_fill_template_auth_flags_arbitrary_headers_httpx():
     # Header-agnostic: Authorization + X-Api-Key emit as their own repeatable
     # -H flags alongside the Cookie header; reserved keys are not emitted.
     cmd = pod.fill_template(
-        "httpx -u {target} {auth_header}",
+        "httpx -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -151,10 +151,10 @@ def test_fill_template_auth_header_arbitrary_headers_httpx():
     assert "scope" not in cmd
 
 
-def test_fill_template_auth_header_arbitrary_headers_no_cookies():
+def test_fill_template_auth_flags_arbitrary_headers_no_cookies():
     # Authorization alone (no cookies key at all) still emits.
     cmd = pod.fill_template(
-        "httpx -u {target} {auth_header}",
+        "httpx -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {"auth_context": {"Authorization": "Bearer t0ken"}},
         tool="httpx",
@@ -163,10 +163,10 @@ def test_fill_template_auth_header_arbitrary_headers_no_cookies():
     assert "Cookie" not in cmd
 
 
-def test_fill_template_auth_header_arjun_joins_headers_with_newline():
+def test_fill_template_auth_flags_arjun_joins_headers_with_newline():
     # arjun's --headers takes all headers in one newline-separated argument.
     cmd = pod.fill_template(
-        "arjun -u {target} {auth_header}",
+        "arjun -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -179,11 +179,11 @@ def test_fill_template_auth_header_arjun_joins_headers_with_newline():
     assert "--headers 'Cookie: session=abc\nAuthorization: Bearer t0ken'" in cmd
 
 
-def test_fill_template_applies_auth_header_whenever_auth_context_present():
+def test_fill_template_applies_auth_flags_whenever_auth_context_present():
     # C1 single-owner: fill_template trusts the pipeline's decision. auth_context
     # in extra (which the pipeline only ever sets for a use_auth job) => header.
     cmd = pod.fill_template(
-        "httpx -u {target} {auth_header}",
+        "httpx -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}},
         tool="httpx",
@@ -192,10 +192,10 @@ def test_fill_template_applies_auth_header_whenever_auth_context_present():
     assert "{" not in cmd
 
 
-def test_fill_template_auth_header_kiterunner_uses_default_h_flag():
+def test_fill_template_auth_flags_kiterunner_uses_default_h_flag():
     # kiterunner (`kr`) takes repeated -H "k: v" flags, same as httpx/katana/ffuf.
     cmd = pod.fill_template(
-        "kr scan {target} -w /opt/localbin/routes-small.kite {auth_header}",
+        "kr scan {target} -w /opt/localbin/routes-small.kite {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -209,12 +209,12 @@ def test_fill_template_auth_header_kiterunner_uses_default_h_flag():
     assert "-H 'Authorization: Bearer t0ken'" in cmd
 
 
-def test_fill_template_auth_header_graphql_cop_uses_comma_joined_headers_flag():
+def test_fill_template_auth_flags_graphql_cop_uses_comma_joined_headers_flag():
     # graphql-cop's --headers flag takes ALL headers as one comma-joined
     # "Key:Value,Key2:Value2" argument (its own CLI format, distinct from both
     # the default repeated -H flag and arjun's newline-joined --headers blob).
     cmd = pod.fill_template(
-        "graphql-cop -t {target} -o json {auth_header}",
+        "graphql-cop -t {target} -o json {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -227,7 +227,7 @@ def test_fill_template_auth_header_graphql_cop_uses_comma_joined_headers_flag():
     assert "--headers 'Cookie:session=abc,Authorization:Bearer t0ken'" in cmd
 
 
-def test_fill_template_auth_header_empty_when_no_auth_context():
+def test_fill_template_auth_flags_empty_when_no_auth_context():
     # non-auth job: extra carries no auth_context at all (pipeline never threads
     # it for jobs where job.use_auth is False), so the header is empty.
     cmd = pod.fill_template(
@@ -273,7 +273,7 @@ def test_no_job_command_template_leaves_a_residual_placeholder():
 
     Matches named `{identifier}` placeholders only, so a legitimate literal
     like arjun's `printf '{}'` empty-JSON seed is not mistaken for an unfilled
-    slot - every real placeholder ({target}, {session}, {auth_header}, ...) is
+    slot - every real placeholder ({target}, {session}, {auth_flags}, ...) is
     a lowercase/underscore identifier in braces."""
     placeholder = re.compile(r"\{[a-z_]+\}")
     for name, job in JOBS.items():
@@ -575,7 +575,7 @@ _REPROFILE_STDOUT = (
 def test_fill_template_fills_endpoints_as_shell_quoted_list():
     cmd = pod.fill_template(
         "printf '%s\\n' {endpoints} > /work/{session}/e.txt && "
-        "httpx -l /work/{session}/e.txt {auth_header}",
+        "httpx -l /work/{session}/e.txt {auth_flags}",
         {}, {"auth_context": {"cookies": [{"name": "s", "value": "v"}]}},
         session_id="sess-1", tool="httpx_reprofile",
         endpoints=["https://h/a", "https://h/b c"],
