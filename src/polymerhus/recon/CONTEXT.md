@@ -37,7 +37,7 @@ The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_sco
 **Parameter / Header**:
 Parameter nodes are the input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
 Header nodes as minted today are RESPONSE headers (httpx `-irh` / katana `response.headers`), hung off their BaseURL via `HAS_HEADER` with `direction="response"` - observed surface, never replayed into requests.
-Request headers come only from the resolved auth account (pod `_auth_header`, injected solely for `use_auth` jobs); since #223 the material resolves lazily from the auth store via the account identifier bound into the pipeline state by the orchestrator (never the retired settings blob, D223-4 / D223-19); no code path reads `:Header` nodes to build a request, so a `Set-Cookie` value can never become a request `Cookie`.
+Request headers come only from the auth feed (the store-resolved account projection, serialised per tool into the `{auth_flags}` command slot solely for `use_auth` jobs); since #223 the material resolves lazily from the auth store via the account identifier bound into the pipeline state by the orchestrator (never the retired settings blob, D223-4 / D223-19); no code path reads `:Header` nodes to build a request, so a `Set-Cookie` value can never become a request `Cookie`.
 
 **Service (L0)**:
 A network service discovered on a Port (the descriptive node label).
@@ -110,10 +110,10 @@ STATEFUL as of #94: it runs on a per-concurrent-pod session (`PodSession`, `reco
 _Avoid_: analyst, classifier.
 
 **Configurator**:
-The role that resolves a Job's command for a target; a `deterministic` template by default, or an `agent` mode.
-STATEFUL as of feat/async-actor-agents: the pod graph's configurator node consults a per-concurrent-pod `configurator` session (`PodSession`, keyed like the triager) over the orchestration steering signals (`extra["steering"]`), decides the pod's `rate_profile` (throttling moved HERE from the job-level `decide_pod_selection`), and merges it before the command template is filled; fail-open (never a pod failure) and consulted once per pod even across gate retries.
+The role that resolves a Job's command for a target; a `deterministic` template fill by default, or an `agent` mode (the Steel crawl).
+The per-pod steering-fed throttle turn retired with the mid-run steering machinery (#243, D223-12): the configurator node fills the command deterministically and no `rate_profile` input exists - request phases run unthrottled in the interim until the #238 rate-limit work lands its profile-driven configuration, which the still-registered `configurator` session role (`LLM_CONFIGURATOR`) is reserved for.
 _Status_: registered `session` (`LLM_CONFIGURATOR`).
-_Avoid_: planner.
+_Avoid_: planner; mid-run routing.
 
 **Job orchestrator**:
 A resumable `session`-mode role (`role_id=job_orchestrator`) validated at app boot.
@@ -125,8 +125,8 @@ the authn loop over the armed surface - closing with the structured
 (never lazily, never behind a signal gate), awaits the verdict under heartbeat and a
 wall-clock bound, then configures from it: browser-only prunes the plan to the Steel
 crawl, and the selected account's identifier rides the pipeline state (`extra`
-`auth_account` on `use_auth` jobs, never the material). The per-phase routing turns
-are retired with the routing schema (`RoutingDecision` kept dead for #243); a degraded
+`auth_account` on `use_auth` jobs, never the material) for the feed to resolve.
+Mid-run steering is removed entirely (#243, D223-12); a degraded
 gateway fails open (every phase, unauthenticated, loudly); missing credentials stop the
 run loudly (`GatewayStop`, fail-close).
 _Status_: registered `session` (`LLM_JOB_ORCHESTRATOR`).
@@ -200,6 +200,10 @@ _Avoid_: a per-site auth binding (one seam, attached through `tools=` / `middlew
 **`authn` (per-project authentication procedure)**:
 The project-authored skill (no canonical catalogue copy) that the meta skill `meta/authn-skill-writing` produces; it is collected into an auth-capable agent's L1 index only when its bundle exists at `<data_root>/<project_id>/skills/authn/SKILL.md`.
 _Avoid_: a canonical `authn` skill (a project's copy is its original).
+
+**Auth feed** (#223 T4 #243, D223-19):
+How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (snapshot headers plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the persisted Steel profile key (`extra["steel_profile"]`) plus the cookie subset for the agent-driven crawl; nothing for non-auth jobs. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
+_Avoid_: threading material through the pipeline state (the identifier rides; the projection resolves per phase).
 
 **Authn loop** (the auth gateway, #223):
 The recon orchestrator's pre-pipeline stateful turn - used by that role only - that establishes or validates the run's auth state against the auth store BEFORE the pipeline is configured: one ReAct turn with a hunting-style passive state machine over its own tool calls (`recon/control/authn_loop.py`: GROUNDED -> RETRIEVED -> VALIDATION -> GENERATION -> DEBUG -> FINISH; detection pure of the observed call, pushes never gating, hints riding the triggering tool result only inside `<authn-loop-hint>`), closing with the structured gateway verdict.

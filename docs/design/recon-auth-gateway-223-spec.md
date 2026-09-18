@@ -2,7 +2,7 @@
 
 *Status: accepted, published as tracker issue #223 (`ready-for-agent`). This is the persisted repo copy of that specification; the tracker issue remains the work authority.*
 *Decision ledger: `docs/design/recon-job-auth-223-decisions.md` (D223-1..D223-19, all in force; plus the T3 #242 implementation record IR-1..IR-8). Amendments landed in `auth-store-220-decisions.md` (D220-9 amendment), `browser-cli-221-decisions.md` (D18 amendment), `src/polymerhus/recon/CONTEXT.md`, `src/polymerhus/project_management/CONTEXT.md`, and `docs/design/domain-model.md`.*
-*Implementation: T3 (#242) landed - the gateway turn, the armed surface, the verdict, and the pipeline treatment are built (`recon/control/authn_loop.py`, `recon/control/orchestrator_agent.py`, `recon/control/pipeline.py`); the T4 (#243) removals are marked `#243 (T4, removal)` at each site and left in place.*
+*Implementation: T3 (#242) landed - the gateway turn, the armed surface, the verdict, and the pipeline treatment are built (`recon/control/authn_loop.py`, `recon/control/orchestrator_agent.py`, `recon/control/pipeline.py`); T4 (#243) landed - the lazy auth feed (`recon/control/auth_feed.py`: identifier rides, assembly resolves, pod fills `{auth_flags}`) with the settings-blob, interactive-crawl, and mid-run-steering retirements removed with their footprints (ledger IR-9..IR-12 record the settlements).*
 *Scope: the auth gateway itself - the orchestrator's pre-pipeline authn loop - plus the feed path from the shared auth store to the pipeline's consumers.*
 
 ## Problem Statement
@@ -106,9 +106,9 @@ The state machine implements exactly this transition table:
 
 ### Retirements
 
-- The settings blob's `auth_context` is retired with its full footprint (D223-4), including the settings-side selector.
-- Mid-run steering is retired as redundant (D223-12): the signal reader, the phase-exclusion/routing machinery, and the steering payload are removed; the pod throttle becomes an orphan whose removal is sequenced with the rate-limit work (#238) so request phases are never left unthrottled.
-- The crawler's interactive auth path retires (D223-19): profile-mount only; the operator-prompt notification path goes with it.
+- The settings blob's `auth_context` is retired with its full footprint (D223-4), including the settings-side selector - landed in T4 (#243): the pipeline injection, the blob-side role selector, the project-management value object and its settings validation, and the blob-era `{auth_header}` template name are gone; the per-tool header serialisation lives on in the feed, re-sourced from the store.
+- Mid-run steering is retired as redundant (D223-12): the signal reader, the phase-exclusion/routing machinery, and the steering payload are removed; the pod throttle went with them as the recorded orphan - request phases run unthrottled in the interim (arjun's static cap excepted) until the rate-limit work (#238) lands its profile-driven configuration.
+- The crawler's interactive auth path retires (D223-19): profile-mount only - the persisted cookies seed the browser context, the profile key rides for the profile-capable tooling; the operator-prompt notification path and the autonomous credentialed login went with it.
 
 ### Rollout and integration
 

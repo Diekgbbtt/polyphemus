@@ -307,3 +307,71 @@ hold; no catalogue skill bears). The arming rides
 context from the shared skill primitives. The flag is compositional (it
 appends `write_skill` on bound roles too); no caller passes it today except
 the gateway.
+
+## T4 implementation record (#243, the auth feed and the retirements)
+
+Settled at implementation under the ticket's authority (implementer
+settlements, not operator rulings - numbered IR to distinguish them from the
+D-series above). All D223-1..D223-19 hold; nothing here amends them.
+
+### IR-9 - The feed: identifier rides, assembly resolves, pod fills
+
+The feed (`recon/control/auth_feed.py`) implements D223-19 as: the verdict's
+account IDENTIFIER rides `extra["auth_account"]` for `use_auth` jobs (bound
+beside, never instead of, the projection); the pipeline's per-job assembly
+resolves the account from the store at that point (per phase, right before
+the phase runs - the lazy point of use) and projects the subset: the flat
+request material (snapshot headers plus header-located tokens; snapshot
+cookies plus cookie-located tokens; storage-located tokens skipped as
+browser-bound) through the existing `extra["auth_context"] transport, plus
+`extra["steel_profile"]` and the cookie subset for the agent-driven crawl.
+The pod serialises the flat projection per tool at fill time into the
+`{auth_flags}` template slot. `use_auth` stays the single eligibility gate;
+an unresolvable account fails open (unauthenticated, loudly).
+
+### IR-10 - Reconciliation: the slot is renamed, the serialiser moved
+
+D223-19 keeps "the existing `extra["auth_context"]` transport, with the
+per-tool serialisation unchanged"; D223-4 and the ticket retire "the
+pod-side header serialisation and its flag/reserved-key tables" and "the
+command-template auth placeholders". Both are honoured by moving, not
+deleting, the mechanism: the serialiser (`_iter_auth_headers`, the
+`-H`/`--headers` flag tables, the reserved-key set, the shell quoting)
+moves pod-side to the feed module with byte-identical behaviour, and the
+template slot is renamed `{auth_header}` to `{auth_flags}` - the blob-era
+name is gone from every template while the insertion positions the retired
+mechanism needs (notably the mid-command slots in the ffuf/arjun chains)
+are preserved. The reserved set keeps the blob-shape keys (`roles`,
+`default_role`, `realm`) as defence in depth: the backward-recon seam
+still threads caller-supplied flat credential maps through the same
+serialiser. A repo-wide search finds no `{auth_header}`, no
+`select_auth_context`, no settings-blob auth path.
+
+### IR-11 - The crawl is persisted-state only; the D23 login retires with it
+
+The crawl node runs the plain crawl under the feed-projected cookies and
+carries no interactive path, no credentialed login, and no operator prompt
+(`notify.py`, the viewer-URL surfacing, the pipeline pass-through, and the
+provider's `steel_await_auth` tool with its detection predicates are all
+removed). The D23 autonomous credentialed login retires with the crawl
+path for one reason: its only credential source was the settings blob, and
+the ticket makes the crawl profile-mount only - post-gateway auth is
+established and persisted (profile key plus tokens), so a mid-run login is
+strictly worse. The in-process provider's mount mechanism is the persisted
+cookie seeding (the Steel SDK session path carries no profile concept);
+profile mounts through the `steel_exec` CLI discipline stay the gateway
+loop's sign-in business. If a record-sourced credentialed login is wanted
+back, it is a restoration with a new source, not a silent shadow.
+
+### IR-12 - Throttle interim posture (the D223-12 sequencing note)
+
+Removing the steering input leaves request phases UNTHROTTLED in the
+interim - recorded here, not silently accepted. What remains: arjun's
+static `--rate-limit 5` (the measured 5-rps cap, independent of steering)
+is the only request cap; the ffuf `{rate_flags}` throttle slot, the
+`configure_fn` turn, `PodConfig`, and the per-job steering input are gone
+with the steering machinery. The `configurator` ROLE record
+(`LLM_CONFIGURATOR`, session mode, roster-exempt) stays in place for the
+#238 rate-limit work to bind its profile-driven configuration onto - no new
+role is minted then. The pipeline performs no live-database reach per
+phase anymore (no signal refresh under the loop).
