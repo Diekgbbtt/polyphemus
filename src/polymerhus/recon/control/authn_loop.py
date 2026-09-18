@@ -20,10 +20,13 @@ mutates, never raises.
 Transition table (spec, D223-15):
 
 | Phase      | Entered on (observable tool call)                              | Hint on entry                          | Exits                                  |
-| GROUNDED   | start; `auth_store` read of `overview`/empty AND                | retrieve and select the account        | RETRIEVED on an `accounts` read        |
-|            | `load_skill("authn")` both observed (either order)              |                                        | GENERATION when the read holds no      |
+| GROUNDED   | start; `auth_store` read of `overview` AND `load_skill("authn")` | retrieve and select the account        | RETRIEVED on an `accounts` read        |
+|            | both observed (either order)                                    | (when grounding completes first)       | (listing, single record, or the empty  |
+|            |                                                                 |                                        | full-state read - unconditional);      |
+|            |                                                                 |                                        | GENERATION when the read holds no      |
 |            |                                                                 |                                        | usable account                         |
-| RETRIEVED  | `accounts` read holding a usable account                        | validate the selected account          | VALIDATION on the first probe          |
+| RETRIEVED  | `accounts` read holding a usable account (the empty       | validate the selected account          | VALIDATION on the first probe          |
+|            | full-state read retrieves too, recording grounding alongside)   |                                        |                                        |
 | VALIDATION | first probe (`execute_command` / `steel_exec`) after RETRIEVED  | conclude valid or not_valid            | GENERATION on the `not_valid` write;   |
 |            |                                                                 |                                        | FINISH on the `valid` write            |
 | GENERATION | `not_valid` write, or a no-usable-account read                  | run the sign-in procedure              | DEBUG at the second attempt call;      |
@@ -198,9 +201,12 @@ def _detect_store(args: Mapping[str, Any]) -> AuthnTransition:
     if not isinstance(path, str):
         return "none"
     if command == "read":
-        if path in ("", "overview"):
+        if path == "overview":
             return "ground"
-        if path == "accounts":
+        if path == "" or path == "accounts":
+            # the full-state read carries the accounts too: it retrieves (the
+            # GROUNDED exit is unconditional - "RETRIEVED on an accounts
+            # read" - and the push records the grounding evidence alongside)
             return "retrieve"
         segments = path.split(".")
         if segments[0] == "accounts" and len(segments) == 2:
@@ -384,12 +390,16 @@ def _push_retrieve(state: AuthnLoopState, observation: Mapping[str, Any]) -> Aut
         return new_state
     usable = _usable_names(accounts)
     new_state["usable_accounts"] = usable
+    if state["phase"] != "GROUNDED":
+        # a re-read later in the loop: recorded, never a second transition
+        new_state["injected_hint"] = None
+        return new_state
+    # the GROUNDED exit is unconditional (spec table): an accounts read moves
+    # the loop even when the skill half of grounding is still open - the model
+    # still loads the skill per its prompt order, observed silently.
     if usable:
-        if state["phase"] == "GROUNDED":
-            new_state["phase"] = "RETRIEVED"
-            new_state["injected_hint"] = RETRIEVED_HINT
-        else:
-            new_state["injected_hint"] = None
+        new_state["phase"] = "RETRIEVED"
+        new_state["injected_hint"] = RETRIEVED_HINT
         return new_state
     # no usable account (L3): straight into the sign-in span
     new_state["phase"] = "GENERATION"

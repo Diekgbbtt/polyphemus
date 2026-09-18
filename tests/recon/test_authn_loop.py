@@ -25,8 +25,13 @@ def _read_envelope(path, value):
 
 
 def test_detect_grounding_reads():
-    assert L.detect_transition(_obs("auth_store", {"command": "read", "path": ""})) == "ground"
     assert L.detect_transition(_obs("auth_store", {"command": "read", "path": "overview"})) == "ground"
+
+
+def test_detect_empty_path_read_retrieves():
+    # the full-state read carries the accounts: it retrieves (the GROUNDED
+    # exit is unconditional), recording grounding evidence alongside
+    assert L.detect_transition(_obs("auth_store", {"command": "read", "path": ""})) == "retrieve"
 
 
 def test_detect_narrow_overview_read_is_neutral():
@@ -164,11 +169,24 @@ def test_empty_path_read_grounds_and_retrieves_from_one_payload():
     full = {"overview": {"login_endpoint": "https://x/login"},
             "accounts": _accounts_payload(("alice",))}
     state = L.initial_state()
-    state = L.push_transition(state, "skill", _obs("load_skill", {"name": "authn"}, "body"))
     obs = _obs("auth_store", {"command": "read", "path": ""}, _read_envelope("", full))
     state = L.push_transition(state, "retrieve", obs)
     assert state["overview_seen"] is True
     assert state["phase"] == "RETRIEVED"
+
+
+def test_full_read_before_the_skill_still_retrieves():
+    # the GROUNDED exit is unconditional: a usable full-state read moves the
+    # loop even when the skill half of grounding is still open (the skill
+    # load is then observed silently, never re-hinted)
+    full = {"overview": {}, "accounts": _accounts_payload(("alice",))}
+    state = L.initial_state()
+    obs = _obs("auth_store", {"command": "read", "path": ""}, _read_envelope("", full))
+    state = L.push_transition(state, "retrieve", obs)
+    assert state["phase"] == "RETRIEVED"
+    state = L.push_transition(state, "skill", _obs("load_skill", {"name": "authn"}, "body"))
+    assert state["phase"] == "RETRIEVED"
+    assert state["injected_hint"] is None
 
 
 def test_first_probe_enters_validation_and_counts():
