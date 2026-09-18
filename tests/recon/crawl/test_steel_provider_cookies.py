@@ -117,3 +117,67 @@ def test_random_session_opts_region_is_a_known_region():
     from polymerhus.recon.crawl.steel_provider import _REGIONS, _random_session_opts
     for _ in range(20):
         assert _random_session_opts(False)["region"] in _REGIONS
+
+
+def test_provider_stores_steel_profile(monkeypatch):
+    from polymerhus.recon import config
+    from polymerhus.recon.crawl.steel_provider import SteelCrawlProvider
+    monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
+    assert SteelCrawlProvider(steel_profile="p1-alice")._steel_profile == "p1-alice"
+    assert SteelCrawlProvider()._steel_profile is None
+
+
+def test_session_opts_mount_profile_read_only_when_bound():
+    from polymerhus.recon.crawl.steel_provider import _random_session_opts
+    opts = _random_session_opts(False, "p1-alice")
+    assert opts["profile_id"] == "p1-alice"
+    assert "persist_profile" not in opts  # read-only mount, never write-back
+
+
+def test_session_opts_omit_profile_when_unbound():
+    from polymerhus.recon.crawl.steel_provider import _random_session_opts
+    assert "profile_id" not in _random_session_opts(False, None)
+    assert "profile_id" not in _random_session_opts(False)
+
+
+def test_create_session_forwards_profile_id_to_the_sdk(monkeypatch):
+    import steel as steel_module
+    from polymerhus.recon.crawl import steel_provider
+
+    seen = {}
+
+    class _Sessions:
+        def create(self, **kwargs):
+            seen.update(kwargs)
+            return object()
+
+    class _Steel:
+        def __init__(self, steel_api_key=None):
+            self.sessions = _Sessions()
+
+    monkeypatch.setattr(steel_module, "Steel", _Steel)
+    steel_provider._create_steel_session("k", False, "p1-alice")
+    assert seen["profile_id"] == "p1-alice"
+
+
+def test_create_session_falls_back_unprofiled_when_profile_rejected(monkeypatch):
+    import steel as steel_module
+    from polymerhus.recon.crawl import steel_provider
+
+    attempts = []
+
+    class _Sessions:
+        def create(self, **kwargs):
+            attempts.append(kwargs)
+            if "profile_id" in kwargs:
+                raise RuntimeError("unknown profile")
+            return object()
+
+    class _Steel:
+        def __init__(self, steel_api_key=None):
+            self.sessions = _Sessions()
+
+    monkeypatch.setattr(steel_module, "Steel", _Steel)
+    steel_provider._create_steel_session("k", False, "p1-alice")
+    assert attempts[0]["profile_id"] == "p1-alice"  # tried mounted first
+    assert all("profile_id" not in a for a in attempts[1:])  # ladder retries bare

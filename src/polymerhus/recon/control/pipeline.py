@@ -275,7 +275,7 @@ async def run_pipeline(
     Steel crawl, and the selected account's identifier (never its material)
     rides the pipeline state for `use_auth` jobs. A degraded gateway fails
     open (every phase, unauthenticated, loudly); missing credentials stop the
-    run loudly (`GatewayStop` -> `failed`, nothing runs).     `orchestrator_factory`
+    run loudly (`GatewayStop` -> `failed`, nothing runs). `orchestrator_factory`
     builds the actor (tests inject the production actor over scripted models
     and temp stores); the actor is stopped in the `finally` so no task leaks.
 

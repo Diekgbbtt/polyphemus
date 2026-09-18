@@ -76,14 +76,17 @@ async def run_crawl(
     max_depth: Optional[int] = None,
     max_iters: Optional[int] = None,
     auth_cookies: Optional[list] = None,
+    steel_profile: Optional[str] = None,
 ) -> dict:
     """Run the bounded agentic-crawl ReAct loop and return its manifest.
 
     `auth_cookies` (the feed-projected persisted session cookies, resolved
-    from the store through the bound account identifier) is forwarded to
-    `steel_client.get_crawl_tools` when the tools are built here, so the
-    default Steel provider seeds the browser context with them before the
-    crawl (profile-mount-only auth). Ignored when `tools` are injected
+    from the store through the bound account identifier) and `steel_profile`
+    (the feed-bound persisted profile key, mounted read-only) are forwarded
+    to `steel_client.get_crawl_tools` when the tools are built here, so the
+    default Steel provider opens the crawl session under the persisted
+    profile and seeds the browser context before the crawl
+    (profile-mount-only auth). Ignored when `tools` are injected
     (tests build the provider themselves).
 
     Best-effort: any exception (Steel unconfigured, tool/LLM failure, ...)
@@ -93,7 +96,8 @@ async def run_crawl(
     try:
         resolved_tools = tools
         if resolved_tools is None:
-            resolved_tools = await steel_client.get_crawl_tools(auth_cookies=auth_cookies)
+            resolved_tools = await steel_client.get_crawl_tools(
+                auth_cookies=auth_cookies, steel_profile=steel_profile)
         mcp_manager = _ToolsManager(resolved_tools)
 
         if llm is not None:

@@ -186,7 +186,7 @@ def _pod_state(url, extra=None):
 def test_scheme_prefixed_target_folds_to_registrable_domain_scope():
     seen = {}
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         seen["scope"] = scope
         return {"endpoints": [{"url": "x"}], "js_urls": []}
 
@@ -200,7 +200,7 @@ def test_scheme_prefixed_target_folds_to_registrable_domain_scope():
 def test_scheme_prefixed_extra_scope_entries_fold_and_dedup():
     seen = {}
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         seen["scope"] = scope
         return {"endpoints": [{"url": "x"}], "js_urls": []}
 

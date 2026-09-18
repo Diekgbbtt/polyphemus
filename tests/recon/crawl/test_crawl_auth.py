@@ -78,7 +78,7 @@ def base_pod_state(job, extra=None):
 def test_auth_job_with_feed_cookies_forwards_them_and_crawls_plain():
     run_calls = []
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         run_calls.append((target, scope, auth_cookies))
         return dict(CANNED_MANIFEST)
 
@@ -101,7 +101,7 @@ def test_auth_job_with_feed_cookies_forwards_them_and_crawls_plain():
 def test_non_auth_crawl_runs_anonymous():
     run_calls = []
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         run_calls.append(auth_cookies)
         return dict(CANNED_MANIFEST)
 
@@ -122,7 +122,7 @@ def test_auth_job_without_material_runs_anonymous():
     # so the crawl runs anonymous (fail-open) rather than prompting.
     run_calls = []
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         run_calls.append(auth_cookies)
         return dict(CANNED_MANIFEST)
 
@@ -139,7 +139,7 @@ def test_auth_job_without_material_runs_anonymous():
 
 
 def test_crawl_node_best_effort_on_run_failure():
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         raise RuntimeError("steel down")
 
     pod = crawl_pod.build_crawl_pod(

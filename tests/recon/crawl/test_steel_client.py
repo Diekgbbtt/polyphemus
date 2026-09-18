@@ -74,10 +74,11 @@ def test_default_factory_raises_provider_unavailable_when_deps_missing(monkeypat
         asyncio.run(SC.get_crawl_tools())
 
 
-def test_default_factory_returns_seven_steel_tools_when_deps_present(monkeypatch):
+def test_default_factory_returns_six_steel_tools_when_deps_present(monkeypatch):
     # With the provider deps installed, the real default factory returns the
-    # seven steel_* StructuredTools WITHOUT any network I/O (a steel.dev session
-    # is opened lazily only when steel_crawl_start is invoked). This exercises
+    # six steel_* StructuredTools WITHOUT any network I/O (a steel.dev session
+    # is opened lazily only when steel_crawl_start is invoked - the retired
+    # interactive await_auth tool is no longer bound). This exercises
     # the real _default_client_factory -> SteelCrawlProvider.get_tools() path.
     pytest.importorskip("playwright")
     pytest.importorskip("steel")
@@ -90,13 +91,14 @@ def test_default_factory_returns_seven_steel_tools_when_deps_present(monkeypatch
     assert all(hasattr(t, "ainvoke") and callable(t.ainvoke) for t in tools)
 
 
-def test_default_factory_passes_auth_cookies_to_provider(monkeypatch):
+def test_default_factory_passes_auth_cookies_and_profile_to_provider(monkeypatch):
     monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
     captured = {}
 
     class _FakeProvider:
-        def __init__(self, auth_cookies=None):
+        def __init__(self, auth_cookies=None, steel_profile=None):
             captured["auth_cookies"] = auth_cookies
+            captured["steel_profile"] = steel_profile
 
         async def get_tools(self):
             return []
@@ -104,21 +106,26 @@ def test_default_factory_passes_auth_cookies_to_provider(monkeypatch):
     import polymerhus.recon.crawl.steel_provider as SP
     monkeypatch.setattr(SP, "SteelCrawlProvider", _FakeProvider)
 
-    SC._default_client_factory(auth_cookies=[{"name": "a", "value": "b"}])
+    SC._default_client_factory(auth_cookies=[{"name": "a", "value": "b"}],
+                               steel_profile="p1-alice")
     assert captured["auth_cookies"] == [{"name": "a", "value": "b"}]
+    assert captured["steel_profile"] == "p1-alice"
 
 
-def test_get_crawl_tools_threads_auth_cookies_through_default_factory(monkeypatch):
+def test_get_crawl_tools_threads_auth_cookies_and_profile_through_default_factory(monkeypatch):
     monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
     seen = {}
 
-    def fake_default_factory(auth_cookies=None):
+    def fake_default_factory(auth_cookies=None, steel_profile=None):
         seen["auth_cookies"] = auth_cookies
+        seen["steel_profile"] = steel_profile
         return _FakeClient([_FakeTool("steel_crawl_start")])
 
     monkeypatch.setattr(SC, "_default_client_factory", fake_default_factory)
-    asyncio.run(SC.get_crawl_tools(auth_cookies=[{"name": "x", "value": "y"}]))
+    asyncio.run(SC.get_crawl_tools(auth_cookies=[{"name": "x", "value": "y"}],
+                                   steel_profile="p1-alice"))
     assert seen["auth_cookies"] == [{"name": "x", "value": "y"}]
+    assert seen["steel_profile"] == "p1-alice"
 
 
 def test_crawler_role_present():

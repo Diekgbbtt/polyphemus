@@ -152,16 +152,18 @@ def test_skill_has_fresh_session_rotation_hard_rule():
     assert "3" in hard_rules
 
 
-def test_run_crawl_forwards_auth_cookies_to_get_crawl_tools(monkeypatch):
+def test_run_crawl_forwards_auth_cookies_and_profile_to_get_crawl_tools(monkeypatch):
     # When tools are NOT injected, run_crawl builds them via
-    # steel_client.get_crawl_tools and must forward auth_cookies so the default
-    # provider seeds the browser context for profile-mount-only auth.
+    # steel_client.get_crawl_tools and must forward auth_cookies AND the
+    # persisted profile key so the default provider opens the session mounted
+    # and seeds the browser context for profile-mount-only auth.
     from polymerhus.recon.crawl import steel_client
 
     seen = {}
 
-    async def fake_get_crawl_tools(*, client_factory=None, auth_cookies=None):
+    async def fake_get_crawl_tools(*, client_factory=None, auth_cookies=None, steel_profile=None):
         seen["auth_cookies"] = auth_cookies
+        seen["steel_profile"] = steel_profile
         return []
 
     async def fake_run_agentic(body, mcp_manager, build_llm_fn=None):
@@ -172,6 +174,7 @@ def test_run_crawl_forwards_auth_cookies_to_get_crawl_tools(monkeypatch):
 
     asyncio.run(crawl_agent.run_crawl(
         "https://t.example", scope=["https://t.example"], llm=object(),
-        auth_cookies=[{"name": "a", "value": "b"}],
+        auth_cookies=[{"name": "a", "value": "b"}], steel_profile="p1-alice",
     ))
     assert seen["auth_cookies"] == [{"name": "a", "value": "b"}]
+    assert seen["steel_profile"] == "p1-alice"

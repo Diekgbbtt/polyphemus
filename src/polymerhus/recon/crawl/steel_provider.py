@@ -111,10 +111,17 @@ _UAS = [
 _VIEWPORTS = [(1920, 1080), (1536, 864), (1440, 900), (1366, 768), (1600, 900)]
 
 
-def _random_session_opts(use_proxy: bool) -> dict:
-    """Return a randomised set of Steel sessions.create kwargs for fingerprint diversity."""
+def _random_session_opts(use_proxy: bool, profile_id: str | None = None) -> dict:
+    """Return a randomised set of Steel sessions.create kwargs for fingerprint diversity.
+
+    `profile_id` (the feed-bound persisted profile key, #243) mounts the
+    account's profile READ-ONLY - no `persist_profile`, matching the skill
+    discipline (a mount writes back only past the verify gate, and concurrent
+    crawl pods must never race on one profile's last-writer state). Omitted
+    entirely when no profile rides, so anonymous sessions are byte-identical
+    to before."""
     w, h = random.choice(_VIEWPORTS)
-    return {
+    opts = {
         "use_proxy": use_proxy,
         "region": random.choice(_REGIONS),
         "user_agent": random.choice(_UAS),
@@ -122,6 +129,9 @@ def _random_session_opts(use_proxy: bool) -> dict:
         "headless": False,
         "stealth_config": {"humanize_interactions": True},
     }
+    if profile_id:
+        opts["profile_id"] = profile_id
+    return opts
 
 
 def _extract_links_expr() -> str:
@@ -264,15 +274,16 @@ def _build_manifest(crawl: _Crawl) -> dict:
     return {"endpoints": endpoints, "js_urls": sorted(js_urls)}
 
 
-def _create_steel_session(api_key: str, use_proxy: bool):
+def _create_steel_session(api_key: str, use_proxy: bool, profile_id: str | None = None):
     """Create a Steel session (SYNC SDK), with the reference's opts fallback ladder.
 
     Runs off the event loop via `asyncio.to_thread`. Returns the session object.
-    """
+    A profile mount that the platform rejects falls back to the unprofiled
+    ladder below - an auth-establishment concern, never a crawl crash."""
     from steel import Steel  # noqa: PLC0415
 
     client = Steel(steel_api_key=api_key)
-    opts = _random_session_opts(use_proxy)
+    opts = _random_session_opts(use_proxy, profile_id)
     try:
         return client, client.sessions.create(**opts)
     except Exception:
@@ -293,18 +304,22 @@ class SteelCrawlProvider:
     `StructuredTool`s bound to this instance's crawl registry.
     """
 
-    def __init__(self, api_key: str | None = None, *, session_lifetime_s: int | None = None, auth_cookies=None):
+    def __init__(self, api_key: str | None = None, *, session_lifetime_s: int | None = None, auth_cookies=None, steel_profile: str | None = None):
         self._api_key = api_key if api_key is not None else config.STEEL_API_KEY
         self._session_lifetime_s = (
             session_lifetime_s
             if session_lifetime_s is not None
             else int(getattr(config, "CRAWL_JOB_TIMEOUT_S", 480))
         )
-        # Profile-mount-only auth: persisted session cookies to seed the
-        # browser context with (via context.add_cookies) BEFORE the crawl, so
-        # it runs authenticated with no human step. Empty for an anonymous
-        # crawl.
+        # Profile-mount-only auth (#243): persisted session cookies to seed
+        # the browser context with (via context.add_cookies) BEFORE the
+        # crawl, so it runs authenticated with no human step. Empty for an
+        # anonymous crawl.
         self._auth_cookies = list(auth_cookies or [])
+        # Profile-mount-only auth (#243): the feed-bound persisted Steel
+        # profile key, mounted read-only at session creation (`profile_id`).
+        # None for an anonymous crawl or an account with no profile.
+        self._steel_profile = steel_profile or None
         self._crawls: dict[str, _Crawl] = {}
         self._lock = threading.Lock()
 
@@ -371,7 +386,7 @@ class SteelCrawlProvider:
 
         await self._reap_expired()
         client, session = await asyncio.to_thread(
-            _create_steel_session, self._api_key, use_proxy
+            _create_steel_session, self._api_key, use_proxy, self._steel_profile
         )
         p = await async_playwright().start()
         cdp_url = f"wss://connect.steel.dev?apiKey={self._api_key}&sessionId={session.id}"

@@ -82,6 +82,16 @@ def test_select_account_role_returns_the_named_roles_credentials(tmp_path):
     assert select_account_role(account, "ghost") == {}  # never another role's
 
 
+def test_select_account_role_malformed_roles_shape_degrades_to_empty():
+    # A non-dict `roles` (malformed store shape) never raises into the
+    # caller - explicit roles miss, and role=None falls to flat credentials.
+    assert select_account_role({"roles": ["admin"]}, "admin") == {}
+    assert select_account_role(
+        {"roles": ["admin"],
+         "credentials": {"username": "u", "password": "p",
+                         "login_url": "https://x/login"}}, None)["username"] == "u"
+
+
 def test_select_account_role_none_uses_default_role_then_flat_credentials(tmp_path):
     account = resolve_account("p1", "alice", store=_seeded_store(tmp_path))
     selected = select_account_role(account, None)

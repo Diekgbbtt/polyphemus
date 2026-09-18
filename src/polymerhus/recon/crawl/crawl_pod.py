@@ -18,11 +18,12 @@ Nothing from this node ever propagates as an unhandled exception.
 The crawl path is profile-mount only (#223 T4 #243, D223-19): the node runs
 under the gateway-established auth state - the feed-projected persisted
 cookies (`extra["auth_context"]`, resolved from the store through the bound
-account identifier) seed the browser context, and the persisted Steel
-profile key (`extra["steel_profile"]`) rides for the profile-capable
-tooling. There is no interactive `steel_await_auth` human-in-the-loop path,
-no credentialed login, and no operator prompt - post-gateway, auth is
-already established and a mid-run prompt is strictly worse.
+account identifier) seed the browser context, and the bound persisted Steel
+profile key (`extra["steel_profile"]`) mounts read-only at session creation
+(the SDK `profile_id`, no write-back). There is no interactive
+`steel_await_auth` human-in-the-loop path, no credentialed login, and no
+operator prompt - post-gateway, auth is already established and a mid-run
+prompt is strictly worse.
 
 `default_run_crawl_fn` wraps the async `crawl_agent.run_crawl` behind
 `polymerhus.recon.control.async_bridge.run_coro_blocking`, exactly like
@@ -84,20 +85,22 @@ def _coverage_observation(input_asset: dict, reason: str) -> Observation:
     )
 
 
-def default_run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None):
+def default_run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None, steel_profile=None):
     """Real collaborator: run the agentic Steel crawl loop synchronously.
 
     Wraps `crawl_agent.run_crawl` (async) behind `run_coro_blocking`,
     resolving the crawl-agent module lazily so importing this module
     performs no I/O. `auth_cookies` (the feed-projected persisted session
-    cookies, resolved from the store through the bound account identifier)
-    is forwarded so the Steel browser context is seeded for
-    profile-mount-only auth; it is empty for an anonymous crawl.
+    cookies) and `steel_profile` (the feed-bound persisted profile key,
+    mounted read-only) are forwarded so the Steel session opens under the
+    persisted profile with its browser context seeded for profile-mount-only
+    auth; both are empty for an anonymous crawl.
     """
     from polymerhus.recon.crawl import crawl_agent
     from polymerhus.recon.control.async_bridge import run_coro_blocking
 
-    return run_coro_blocking(crawl_agent.run_crawl(target, scope=scope, auth_cookies=auth_cookies))
+    return run_coro_blocking(crawl_agent.run_crawl(
+        target, scope=scope, auth_cookies=auth_cookies, steel_profile=steel_profile))
 
 
 def _host_of(url: str) -> str:
@@ -145,13 +148,14 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
     Profile-mount only (#223 T4 #243): the `crawl` node runs the plain
     `run_crawl_fn` under the feed-projected persisted state - the
     `auth_context` cookies the pipeline resolved from the store seed the
-    Steel browser context (`context.add_cookies`) before the crawl, so the
-    crawl runs authenticated with no human step. Auth-eligibility is the
-    pipeline's single concern (C1): `auth_context` is present in extra only
-    for a `use_auth` job with a resolved account, so its presence IS the
-    signal. A non-auth crawl, or an auth-capable job run without a resolved
-    account, crawls anonymously. There is no interactive path and no
-    operator prompt.
+    Steel browser context (`context.add_cookies`), and the bound
+    `steel_profile` key mounts the persisted profile read-only at session
+    creation - so the crawl runs authenticated with no human step.
+    Auth-eligibility is the pipeline's single concern (C1): `auth_context`
+    is present in extra only for a `use_auth` job with a resolved account,
+    so its presence IS the signal. A non-auth crawl, or an auth-capable job
+    run without a resolved account, crawls anonymously. There is no
+    interactive path and no operator prompt.
     """
 
     def crawl(state: CrawlPodState) -> dict:
@@ -166,8 +170,10 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
 
         auth_context = extra.get("auth_context") or {}
         auth_cookies = auth_context.get("cookies") or []
+        steel_profile = extra.get("steel_profile") or None
         try:
-            manifest = run_crawl_fn(target, scope=scope, auth_cookies=auth_cookies)
+            manifest = run_crawl_fn(target, scope=scope, auth_cookies=auth_cookies,
+                                    steel_profile=steel_profile)
         except Exception as exc:  # noqa: BLE001 - best-effort, never raise
             return {"manifest": None, "crawl_error": str(exc)}
 

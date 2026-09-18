@@ -59,7 +59,7 @@ def base_pod_state(extra=None):
 
 
 def test_crawl_pod_success_merges_baseurl_endpoint_parameter():
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         assert target == "https://app.example.com"
         # scope is folded to the registrable domain of the seed host (Change A)
         assert scope == ["example.com"]
@@ -85,7 +85,7 @@ def test_crawl_pod_success_merges_baseurl_endpoint_parameter():
 
 
 def test_crawl_pod_steel_not_configured_yields_failed_export_and_coverage_observation():
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         raise SteelNotConfigured("STEEL_API_KEY (steel.dev credential) must be set")
 
     curate_fn = make_capturing_curate_fn()
@@ -110,7 +110,7 @@ def test_crawl_pod_steel_not_configured_yields_failed_export_and_coverage_observ
 
 
 def test_crawl_pod_generic_exception_yields_failed_export_no_crash():
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         raise RuntimeError("boom")
 
     curate_fn = make_capturing_curate_fn()
@@ -130,7 +130,7 @@ def test_crawl_pod_generic_exception_yields_failed_export_no_crash():
 
 
 def test_crawl_pod_empty_manifest_yields_failed_export():
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         return {"endpoints": [], "js_urls": []}
 
     curate_fn = make_capturing_curate_fn()
@@ -186,7 +186,7 @@ def test_crawl_scope_folds_to_registrable_domain_of_seed_host():
 
     captured = {}
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         captured["target"] = target
         captured["scope"] = scope
         return dict(CANNED_MANIFEST)
@@ -214,7 +214,7 @@ def test_curator_threads_registrable_scope_domain_to_curate_fn():
     `curate_fn`, so out-of-scope BaseURLs (js.stripe.com, *.auth0.com, ...)
     are dropped by the agnostic noise filter. For target app.daytona.io the
     threaded scope_domain is the registrable domain daytona.io."""
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         return dict(CANNED_MANIFEST)
 
     curate_fn = make_capturing_curate_fn()
@@ -235,17 +235,18 @@ def test_curator_threads_registrable_scope_domain_to_curate_fn():
     assert curate_fn.calls[0]["scope_domain"] == "daytona.io"
 
 
-def test_crawl_node_forwards_feed_cookies_as_auth_cookies():
+def test_crawl_node_forwards_feed_cookies_and_profile():
     """Profile-mount only: the feed-projected cookies ride into run_crawl_fn
-    as auth_cookies so the provider seeds the browser context - no interactive
-    path, no prompt."""
+    as auth_cookies and the bound profile key as steel_profile - no
+    interactive path, no prompt."""
     from polymerhus.recon.crawl.crawl_pod import build_crawl_pod
     from polymerhus.recon.domain.types import JobSpec
 
     seen = {}
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         seen["auth_cookies"] = auth_cookies
+        seen["steel_profile"] = steel_profile
         return dict(CANNED_MANIFEST)
 
     graph = build_crawl_pod(
@@ -259,8 +260,10 @@ def test_crawl_node_forwards_feed_cookies_as_auth_cookies():
                   configurator_mode="agent")
     cookies = [{"name": "sid", "value": "S"}]
     state = {"job": job, "input_asset": {"url": "https://app.example.com"},
-             "extra": {"auth_context": {"cookies": cookies}},
+             "extra": {"auth_context": {"cookies": cookies},
+                       "steel_profile": "p1-alice"},
              "project_id": "p1"}
     result = graph.invoke(state)
     assert seen["auth_cookies"] == cookies
+    assert seen["steel_profile"] == "p1-alice"
     assert result["export"].verdict == "success"

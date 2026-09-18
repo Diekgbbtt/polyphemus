@@ -201,7 +201,7 @@ def _build_fake_steel_tools(manifest: dict, calls: dict[str, int]):
 
 
 def _run_crawl_fn_factory(tools):
-    def run_crawl_fn(target: str, *, scope: list[str]) -> dict:
+    def run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None, steel_profile=None) -> dict:
         # Real crawler LLM: llm=None so crawl_agent.run_crawl resolves it
         # itself via chat_model_for("crawler") - the actual production seam,
         # not a test-side substitute.

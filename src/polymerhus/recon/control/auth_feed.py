@@ -55,7 +55,9 @@ def select_account_role(account: dict | None, role: str | None = None) -> dict:
     is safe to hand straight to the header serialiser."""
     if not isinstance(account, dict):
         return {}
-    roles = account.get("roles") or {}
+    roles = account.get("roles")
+    if not isinstance(roles, dict):
+        roles = {}  # a malformed store shape degrades to no roles, never a raise
     if role is None:
         role = account.get("default_role")
     if role is not None:

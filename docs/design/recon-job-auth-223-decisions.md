@@ -339,29 +339,33 @@ deleting, the mechanism: the serialiser (`_iter_auth_headers`, the
 `-H`/`--headers` flag tables, the reserved-key set, the shell quoting)
 moves pod-side to the feed module with byte-identical behaviour, and the
 template slot is renamed `{auth_header}` to `{auth_flags}` - the blob-era
-name is gone from every template while the insertion positions the retired
-mechanism needs (notably the mid-command slots in the ffuf/arjun chains)
-are preserved. The reserved set keeps the blob-shape keys (`roles`,
+name is gone from every live template, pod, and feed reference (dated
+plan histories intentionally keep it as the record of what was removed)
+while the insertion positions the retired mechanism needs (notably the
+mid-command slots in the ffuf/arjun chains) are preserved. The reserved set keeps the blob-shape keys (`roles`,
 `default_role`, `realm`) as defence in depth: the backward-recon seam
 still threads caller-supplied flat credential maps through the same
-serialiser. A repo-wide search finds no `{auth_header}`, no
-`select_auth_context`, no settings-blob auth path.
+serialiser. A repo-wide search finds no `{auth_header}` in any live template, pod, or
+feed reference, no `select_auth_context`, no settings-blob auth path.
 
-### IR-11 - The crawl is persisted-state only; the D23 login retires with it
+### IR-11 - The crawl mounts the persisted profile through the SDK
 
-The crawl node runs the plain crawl under the feed-projected cookies and
-carries no interactive path, no credentialed login, and no operator prompt
-(`notify.py`, the viewer-URL surfacing, the pipeline pass-through, and the
-provider's `steel_await_auth` tool with its detection predicates are all
-removed). The D23 autonomous credentialed login retires with the crawl
-path for one reason: its only credential source was the settings blob, and
-the ticket makes the crawl profile-mount only - post-gateway auth is
-established and persisted (profile key plus tokens), so a mid-run login is
-strictly worse. The in-process provider's mount mechanism is the persisted
-cookie seeding (the Steel SDK session path carries no profile concept);
-profile mounts through the `steel_exec` CLI discipline stay the gateway
-loop's sign-in business. If a record-sourced credentialed login is wanted
-back, it is a restoration with a new source, not a silent shadow.
+The crawl node threads the bound profile key the whole way down - pod
+extra to `run_crawl_fn` to `run_crawl` to `get_crawl_tools` to the
+provider - which mounts it read-only at session creation (the Steel SDK's
+native `profile_id` session-create kwarg, no `persist_profile` write-back,
+so concurrent pods never race on one profile's last-writer state; a mount
+the platform rejects falls back to the unprofiled session ladder). The
+feed-projected cookies still seed the browser context beside the mount.
+No interactive path, no credentialed login, no operator prompt (`notify.py`,
+the viewer-URL surfacing, the pipeline pass-through, and the provider's
+`steel_await_auth` tool with its detection predicates are all removed).
+The D23 autonomous credentialed login retires with the crawl path for one
+reason: its only credential source was the settings blob, and the ticket
+makes the crawl profile-mount only - post-gateway auth is established and
+persisted (profile key plus tokens), so a mid-run login is strictly worse.
+If a record-sourced credentialed login is wanted back, it is a restoration
+with a new source, not a silent shadow.
 
 ### IR-12 - Throttle interim posture (the D223-12 sequencing note)
 
