@@ -95,8 +95,8 @@ def test_C06_session_neither_resolves_to_tool_strategy():
     cap._PROFILE_CACHE.clear()
     neg._PROBE_CACHE.clear()
     # Use a dummy schema, session seam should return ToolStrategy not json_object
-    orig = os.environ.get("LLM_MODEL_TRIAGER")
-    os.environ["LLM_MODEL_TRIAGER"] = "fake:matrix-neither"
+    orig = os.environ.get("LLM_TRIAGER")
+    os.environ["LLM_TRIAGER"] = "fake:matrix-neither"
     # inject profile directly via cache
     cap._PROFILE_CACHE[("fake", "matrix-neither")] = _profile(supports_structured_output=False, supports_tool_calling=False)
     try:
@@ -108,9 +108,9 @@ def test_C06_session_neither_resolves_to_tool_strategy():
     finally:
         cap._PROFILE_CACHE.clear()
         if orig is None:
-            os.environ.pop("LLM_MODEL_TRIAGER", None)
+            os.environ.pop("LLM_TRIAGER", None)
         else:
-            os.environ["LLM_MODEL_TRIAGER"] = orig
+            os.environ["LLM_TRIAGER"] = orig
 
 
 # C7

@@ -55,7 +55,7 @@ def clean_llm_env(monkeypatch):
     """Drop the LLM env vars so the fail-open window/profile resolution stays
     deterministic and never touches a gateway (hermetic unit tier)."""
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
-    monkeypatch.delenv("LLM_MODEL_HUNTING_HUNTER", raising=False)
+    monkeypatch.delenv("LLM_HUNTING_HUNTER", raising=False)
     monkeypatch.delenv("LLM_ROLE_MODEL_CONTEXT_LIMIT", raising=False)
     monkeypatch.delenv("LLM_ATTEMPT_TIMEOUTS_S", raising=False)
 
@@ -114,7 +114,7 @@ def _patch_summary_model(monkeypatch, budgets=None, objective=GOOD_SUMMARY_TEXT)
     path applies it (`read_timeout=budget` at construction, never an invoke kwarg)."""
     import polymerhus.app.llm.providers as P
 
-    monkeypatch.setenv("LLM_MODEL_HUNTING_HUNTER", "openai:gpt-test")
+    monkeypatch.setenv("LLM_HUNTING_HUNTER", "openai:gpt-test")
 
     def spy(provider, model, **kw):
         if budgets is not None:
@@ -215,7 +215,7 @@ def test_hunter_summariser_failure_degrades_never_spawns(clean_llm_env, monkeypa
         def _llm_type(self) -> str:
             return "fake"
 
-    monkeypatch.setenv("LLM_MODEL_HUNTING_HUNTER", "openai:gpt-test")
+    monkeypatch.setenv("LLM_HUNTING_HUNTER", "openai:gpt-test")
 
     def spy(provider, model, **kw):
         return _BareText(body="")
@@ -262,7 +262,7 @@ def test_hunter_profile_resolution_fails_open(clean_llm_env, monkeypatch):
     middleware constructs anyway and never breaks the hunter."""
     import polymerhus.app.llm.capability as cap
 
-    monkeypatch.setenv("LLM_MODEL_HUNTING_HUNTER", "openai:gpt-test")
+    monkeypatch.setenv("LLM_HUNTING_HUNTER", "openai:gpt-test")
 
     def _boom(provider, model):
         raise RuntimeError("gateway unreachable")

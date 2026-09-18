@@ -210,7 +210,7 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatc
     # role's env model key and capability profile. Point it at a tool-calling-
     # only profile so the fake's TriagerDecision tool_calls become the
     # structured output (ToolStrategy) instead of an unmet json_schema probe.
-    monkeypatch.setenv("LLM_MODEL_POD_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
     import polymerhus.app.llm.session as S
 
     monkeypatch.setattr(
@@ -276,7 +276,7 @@ def test_triager_turn_binds_its_react_tools_and_never_exec(tmp_path, monkeypatch
                                             "executed": []})
     store.write_variant_summary(SPEC_ID, 0, "the verbatim consolidation")
     seen: list = []
-    monkeypatch.setenv("LLM_MODEL_POD_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
     import polymerhus.app.llm.session as S
 
     monkeypatch.setattr(
@@ -334,7 +334,7 @@ def test_production_pod_degrades_to_a_safe_terminal_without_model_env(tmp_path,
     """D84-14: a direct pod run with NO model env configured hard-fails at the
     stateful seam and `arun_pod` degrades the run - never a silent symbolic
     fallback, never a raise into the caller."""
-    monkeypatch.delenv("LLM_MODEL_POD_RUNNER", raising=False)
+    monkeypatch.delenv("LLM_POD_RUNNER", raising=False)
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     env = _run(arun_pod(SPEC, exec_fn=_exec(_OK), trace_fn=_no_trace,
                         memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID))

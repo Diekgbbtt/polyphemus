@@ -125,7 +125,7 @@ def test_hunter_tool_calling_lane_compacts_e2e(monkeypatch):
     through the manager's last report (D11)."""
     import polymerhus.app.llm.providers as P
 
-    monkeypatch.setenv("LLM_MODEL_HUNTING_HUNTER", "opencode:gpt-test")
+    monkeypatch.setenv("LLM_HUNTING_HUNTER", "opencode:gpt-test")
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
 
     def spy(provider, model, **kw):
@@ -334,7 +334,7 @@ def test_mechanism_typist_chained_lane_compacts_e2e(monkeypatch):
     import polymerhus.app.llm.providers as P
     import polymerhus.app.llm.roles as R
 
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "opencode:gpt-test")
+    monkeypatch.setenv("LLM_ANALYSER", "opencode:gpt-test")
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     # The default analyser window is a production context budget; a tiny threshold
     # makes the scripted (realistic-but-small) usages cross it reliably so the pass
@@ -420,7 +420,7 @@ def test_over_window_thread_compacts_never_terminal_e2e(monkeypatch):
     import polymerhus.app.llm.providers as P
     import polymerhus.app.llm.roles as R
 
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "opencode:gpt-test")
+    monkeypatch.setenv("LLM_ANALYSER", "opencode:gpt-test")
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     # A tiny threshold makes the scripted-but-huge spans cross the window budget,
     # so the summariser's OWN composed input exceeds it and window-splitting fires.

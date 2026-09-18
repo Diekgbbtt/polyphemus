@@ -30,14 +30,14 @@ from polymerhus.attack.hunting.runtime import hunting_module_context
 
 def _hunter_model_available() -> bool:
     return bool(
-        os.environ.get("LLM_MODEL_HUNTING_HUNTER")
+        os.environ.get("LLM_HUNTING_HUNTER")
         and (os.environ.get("API_KEY_OPENCODE") or os.environ.get("API_KEY_OPENCODE_GO"))
     )
 
 
 @pytest.mark.skipif(
     not _hunter_model_available(),
-    reason="live LLM not configured (LLM_MODEL_HUNTING_HUNTER + API_KEY_OPENCODE)",
+    reason="live LLM not configured (LLM_HUNTING_HUNTER + API_KEY_OPENCODE)",
 )
 def test_hunter_lane_compacts_against_the_real_model():
     """The live walkthrough: real author turns grow the per-hunt thread past the

@@ -112,7 +112,7 @@ _Avoid_: analyst, classifier.
 **Configurator**:
 The role that resolves a Job's command for a target; a `deterministic` template by default, or an `agent` mode.
 STATEFUL as of feat/async-actor-agents: the pod graph's configurator node consults a per-concurrent-pod `configurator` session (`PodSession`, keyed like the triager) over the orchestration steering signals (`extra["steering"]`), decides the pod's `rate_profile` (throttling moved HERE from the job-level `decide_pod_selection`), and merges it before the command template is filled; fail-open (never a pod failure) and consulted once per pod even across gate retries.
-_Status_: registered `session` (`LLM_MODEL_CONFIGURATOR`).
+_Status_: registered `session` (`LLM_CONFIGURATOR`).
 _Avoid_: planner.
 
 **Job orchestrator**:

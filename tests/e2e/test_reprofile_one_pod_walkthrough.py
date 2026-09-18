@@ -48,7 +48,7 @@ _LLM_KEY_ENVS = ("API_KEY_OPENROUTER", "OPENAI_API_KEY")
 def _triager_key_present() -> bool:
     if any(os.environ.get(k) for k in _LLM_KEY_ENVS):
         return True
-    model = os.environ.get("LLM_MODEL_TRIAGER", "")
+    model = os.environ.get("LLM_TRIAGER", "")
     provider = model.split(":", 1)[0] if ":" in model else ""
     return bool(provider) and bool(
         os.environ.get("API_KEY_" + provider.upper().replace("-", "_"))
@@ -57,7 +57,7 @@ def _triager_key_present() -> bool:
 
 pytestmark = pytest.mark.skipif(
     not _triager_key_present(),
-    reason="live triager model key required (the LLM_MODEL_TRIAGER provider's "
+    reason="live triager model key required (the LLM_TRIAGER provider's "
     "API_KEY_<PROVIDER>, or OPENAI_API_KEY / API_KEY_OPENROUTER)",
 )
 
@@ -86,7 +86,7 @@ def _bridge_env_to_localhost() -> None:
     co-located gateway."""
     key = os.environ.get("API_KEY_OPENROUTER") or os.environ.get("OPENAI_API_KEY")
     os.environ["API_KEY_OPENROUTER"] = key
-    os.environ["LLM_MODEL_TRIAGER"] = os.environ.get(
+    os.environ["LLM_TRIAGER"] = os.environ.get(
         "SB_REPROFILE_MODEL", "openrouter:deepseek/deepseek-v4-flash")
     os.environ["NEO4J_URI"] = "bolt://localhost:7687"
     os.environ["NEO4J_USER"] = "neo4j"

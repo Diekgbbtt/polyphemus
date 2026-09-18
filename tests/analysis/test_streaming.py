@@ -254,7 +254,7 @@ def test_analyse_chunked_threads_delivered_observations_into_the_chunk_builder(m
     from polymerhus.analysis.feed import AssetDelta, L0Chunk
     from polymerhus.recon.domain.types import Observation
 
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "openai:gpt-4o-mini")
+    monkeypatch.setenv("LLM_ANALYSER", "openai:gpt-4o-mini")
     monkeypatch.setenv("API_KEY_OPENAI", "sk-test-not-used")
     captured = {}
 

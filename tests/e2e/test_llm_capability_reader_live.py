@@ -31,7 +31,7 @@ pytestmark = pytest.mark.live_neo4j
 skip = gs.skip_reason()
 pytestmark = pytest.mark.skipif(skip is not None, reason=skip or "agent stack not up for the gateway live tier")
 
-# The triager's configured model (LLM_MODEL_TRIAGER=opencode-go:deepseek/...).
+# The triager's configured model (LLM_TRIAGER=opencode-go:deepseek/...).
 PROVIDER = "opencode-go"
 MODEL = "deepseek/deepseek-v4-flash"
 

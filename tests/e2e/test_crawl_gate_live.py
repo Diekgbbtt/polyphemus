@@ -27,7 +27,7 @@ pytestmark = pytest.mark.skipif(skip is not None, reason=skip or "agent stack no
 
 GATEWAY_ENV = {"LLM_GATEWAY_URL": gs.GATEWAY_URL}
 
-# The configured crawler model, verbatim from .env (LLM_MODEL_CRAWLER).
+# The configured crawler model, verbatim from .env (LLM_CRAWLER).
 CRAWLER_IDENTITY = "opencode-go:deepseek/deepseek-v4-flash"
 
 PROBE = """

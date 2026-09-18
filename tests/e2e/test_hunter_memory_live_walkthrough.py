@@ -4,7 +4,7 @@
 The walkthrough runs the stack at RUNTIME STATE through the hunter's proper
 interface: the real turn-by-turn ReAct host (`build_sync_hunting_agent` ->
 `dispatch_fn(HuntConfig)`, the seam the inbox surfer feeds) with the REAL model
-resolved through the co-located gateway (`LLM_MODEL_HUNTING_HUNTER`), the real
+resolved through the co-located gateway (`LLM_HUNTING_HUNTER`), the real
 per-project `HunterMemoryStore` on the filesystem, the real five-tool surface,
 and the real compiled state graph. The LLM drives the full happy path -
 grounding -> hypothesise -> verify -> commit-specification -> conclude - with

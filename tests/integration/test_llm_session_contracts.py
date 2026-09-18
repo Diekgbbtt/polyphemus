@@ -53,7 +53,7 @@ _PINNED = (1, 3, 2)
 
 
 def _env(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
 
 
 class _Recorder:
@@ -106,7 +106,7 @@ def _run_no_tools_session(monkeypatch, profile, schema, expected_label):
         transport=httpx.MockTransport(recorder.handler))
     monkeypatch.setattr(S, "resolve_capability",
                         lambda provider, model: profile)
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
 
     # The REAL negotiation through the REAL create_agent graph.
     response_format = S._structured_response_format("triager", schema)

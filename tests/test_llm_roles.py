@@ -63,7 +63,7 @@ class _FakeLLM:
 
 
 def _env(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
 
 
 def _wire(monkeypatch, profile, results):

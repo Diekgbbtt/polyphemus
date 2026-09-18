@@ -160,7 +160,7 @@ def test_steel_crawl_agentic_loop_flows_to_neo4j():
 
     key = os.environ.get("API_KEY_OPENROUTER") or os.environ.get("OPENAI_API_KEY")
     os.environ["API_KEY_OPENROUTER"] = key
-    os.environ.setdefault("LLM_MODEL_CRAWLER", "openrouter:openai/gpt-4.1-mini")
+    os.environ.setdefault("LLM_CRAWLER", "openrouter:openai/gpt-4.1-mini")
     neo4j_client = _bridge_neo4j_to_localhost()
     neo4j_client.ensure_schema()
 

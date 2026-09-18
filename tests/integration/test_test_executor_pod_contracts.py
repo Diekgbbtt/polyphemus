@@ -343,7 +343,7 @@ def _negotiation_for_pod_triager(monkeypatch):
     role's env model key + capability profile. Point it at a tool-calling-only
     profile so the fake's TriagerDecision tool_calls become the structured
     output (ToolStrategy) instead of an unmet json_schema probe."""
-    monkeypatch.setenv("LLM_MODEL_POD_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
     import polymerhus.app.llm.session as S
 
     monkeypatch.setattr(

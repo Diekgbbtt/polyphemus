@@ -17,7 +17,7 @@ This tier pins the pure functions the harness relies on:
         a typed predicate facet (#66 non-conflation).
 
   ROLES - the `hunting` role joins the LLM role registry keyed by
-      `LLM_MODEL_HUNTING` (Q1).
+      `LLM_HUNTING` (Q1).
 """
 from polymerhus.attack.hunting.hunting_agent import (
     HypothesisVerdict,

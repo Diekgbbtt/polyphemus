@@ -1,7 +1,7 @@
 """TRUE end-to-end walkthrough for the Bootstrapper redesign (#26, agent spec #7).
 
 NO MOCKS: the whole system executes at runtime - the REAL analyser LLM
-(LLM_MODEL_ANALYSER via OpenRouter) runs the two-call reasoning, and the REAL
+(LLM_ANALYSER via OpenRouter) runs the two-call reasoning, and the REAL
 l1_curator sole-writer persists the L1 skeleton to a LIVE Neo4j. Every assertion
 is over the concrete OBSERVED data artifacts read back from the graph.
 
@@ -23,8 +23,8 @@ from polymerhus.analysis.bootstrap import _LINCHPIN_SERVICES, bootstrap_reasoned
 from polymerhus.app.clients import neo4j_client
 
 pytestmark = pytest.mark.skipif(
-    not (os.environ.get("API_KEY_OPENROUTER") and os.environ.get("LLM_MODEL_ANALYSER")),
-    reason="live analyser LLM env (API_KEY_OPENROUTER + LLM_MODEL_ANALYSER) not configured",
+    not (os.environ.get("API_KEY_OPENROUTER") and os.environ.get("LLM_ANALYSER")),
+    reason="live analyser LLM env (API_KEY_OPENROUTER + LLM_ANALYSER) not configured",
 )
 
 PROJECT = "e2e-boot-juiceshop"
@@ -187,7 +187,7 @@ def test_E2_empty_kb_real(clean):
 def test_E3_fail_closed_real(clean, monkeypatch):
     # induce a REAL LLM failure (not a mock): point the analyser at a non-existent
     # model so the live OpenRouter call genuinely errors; the bounded retry exhausts.
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "openrouter:invalid/does-not-exist-xyz")
+    monkeypatch.setenv("LLM_ANALYSER", "openrouter:invalid/does-not-exist-xyz")
     out = bootstrap_reasoned(PROJECT, JUICE_SHOP_KB, run_id="e2e-3")
     assert out.blocked is True
     assert out.services_written == 0 and out.systems_written == 0

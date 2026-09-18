@@ -133,7 +133,7 @@ def test_stateful_turn_tool_calling_only_profile_uses_toolstrategy(monkeypatch):
         anchor: dict = {}
         label: str = "y"
 
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
 
     seen = {}
     capability_calls = 0
@@ -177,7 +177,7 @@ def test_stateful_turn_unknown_profile_fails_open_to_json_schema(monkeypatch):
         raise RuntimeError("gateway unreachable")
 
     monkeypatch.setattr(S, "resolve_capability", fake_capability)
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
     seen = {}
 
     def fake_run(role_id, thread_id, msgs, *, response_format=None, **kw):
@@ -207,7 +207,7 @@ def test_stateful_turn_neither_profile_uses_toolstrategy(monkeypatch):
         anchor: dict = {}
         label: str = "y"
 
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
 
     seen = {}
 

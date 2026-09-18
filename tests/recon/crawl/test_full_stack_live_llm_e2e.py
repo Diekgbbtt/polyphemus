@@ -66,13 +66,13 @@ _CRAWL_MAX_ITERS = 6
 def _bridge_openrouter_env():
     """Bridge the operator's `.env` OpenRouter key (stored as OPENAI_API_KEY)
     into the names `polymerhus.app.llm.providers` actually reads
-    (`API_KEY_OPENROUTER` + `LLM_MODEL_<ROLE>="openrouter:<model>"`). Only
+    (`API_KEY_OPENROUTER` + `LLM_<ROLE>="openrouter:<model>"`). Only
     touches this process's os.environ - never writes to .env."""
     key = os.environ.get("API_KEY_OPENROUTER") or os.environ.get("OPENAI_API_KEY")
     assert key, "no OpenRouter/OpenAI key found in env"
     os.environ["API_KEY_OPENROUTER"] = key
     for role in ("configurator", "triager", "job_orchestrator", "crawler"):
-        os.environ[f"LLM_MODEL_{role.upper()}"] = f"openrouter:{_LIVE_MODEL}"
+        os.environ[f"LLM_{role.upper()}"] = f"openrouter:{_LIVE_MODEL}"
 
 
 def fake_upstream_exec_fn(command: str, session_id: str, timeout_s: int) -> ExecResult:

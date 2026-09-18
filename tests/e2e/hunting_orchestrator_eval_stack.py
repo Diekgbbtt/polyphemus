@@ -14,7 +14,7 @@ No seam is mocked:
   filled from the deterministic stage's pass evidence - the minimal adapter
   the contract requires, never a substitute for a built seam;
 - the orchestrator phase turns run the REAL actor (real LLM through the
-  co-located gateway, ``LLM_MODEL_HUNTING_ORCHESTRATOR``);
+  co-located gateway, ``LLM_HUNTING_ORCHESTRATOR``);
 - the KB grounding is the real ``fault_kb.load_materialisation``;
 - the memory store is a scratch ``HuntStore`` so the eval never pollutes the
   branch's ``data/hunts``.

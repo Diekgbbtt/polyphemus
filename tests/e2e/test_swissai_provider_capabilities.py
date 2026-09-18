@@ -1,7 +1,7 @@
 """E2E capability run (runtime tier) for the SwissAI provider swap.
 
 Verifies the new provider/model at RUNTIME - the actual `polymerhus-agent`
-container's environment (`API_KEY_SWISSAI` + `LLM_MODEL_ANALYSER=swissai:...`
+container's environment (`API_KEY_SWISSAI` + `LLM_ANALYSER=swissai:...`
 etc, set in `.env` and picked up on the last container recreate), not a
 monkeypatched value. This drives one model instance through three generic
 capabilities back to back - summarization, structured extraction, a follow-up
