@@ -16,13 +16,16 @@ rather than (jobs in phase) x MAX_PODS. The next phase does not start (its
 jobs' `input_assets` are not even resolved) until every job in the current
 phase has returned.
 
-`run_job`, `load_settings`, `registry`, `read_assets`, and `decide_routing` are
-all injected so tests can fully mock Neo4j/Postgres/pod-graph collaborators;
-production defaults to the real `polymerhus.recon.control.job_agent.run_job`,
-`polymerhus.app.clients.pg.load_settings`, the `pg` module itself as the
-registry, the `read_assets` helper below, and - since feat/async-actor-agents -
-a mailbox-actor recon-orchestrator (`ReconOrchestratorActor`, see
-`orchestrator_agent.py`) as the steering seam between phases.
+`run_job`, `load_settings`, `registry`, and `read_assets` are all injected
+so tests can fully mock Neo4j/Postgres/pod-graph collaborators; production
+defaults to the real `polymerhus.recon.control.job_agent.run_job`,
+`polymerhus.app.clients.pg.load_settings`, and the `pg` module itself as the
+registry. The auth gateway is the production default
+(feat/stateful-recon-job-auth): the recon-orchestrator runs its ONE gateway
+turn before phase 0 and the typed verdict configures the run (pruned phases,
+the bound account identifier). `orchestrator_factory` builds the actor (tests
+inject the production actor over scripted models and temp stores) - there is
+NO gateway injection seam; tests exercise this real boundary.
 """
 from __future__ import annotations
 
@@ -57,6 +60,10 @@ def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+# #243 (T4, removal): the per-phase routing dispatch retires with the
+# mid-run steering machinery (D223-12). T3 (#242) only stops CALLING it - the
+# pipeline no longer takes per-phase routing turns. Left in place, dead,
+# until T4.
 async def _phase_exclusions(decide, signals: list[dict], phase_jobs: list[str]) -> dict[str, list[str]]:
     """Resolve one phase's routing decision through the `run_pipeline` steering seam.
 
@@ -277,6 +284,15 @@ async def _heartbeat_loop(run_id: str) -> None:
         return
 
 
+def _default_orchestrator_factory(run_id: str):
+    """Build the production gateway actor for a run: ONE actor per run (the
+    module-level home of the default, so tests can observe the production
+    default through the `orchestrator_factory` seam)."""
+    from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor  # noqa: PLC0414
+
+    return ReconOrchestratorActor(run_id=run_id)
+
+
 async def run_pipeline(
     project_id: str,
     *,
@@ -300,16 +316,23 @@ async def run_pipeline(
     dispatch) recon only pushes chunks to the run's FIFO and a later analysis-only
     dispatch drains them. Either way recon NEVER waits on analysis.
 
-    `decide_routing` is the steering seam between phases. It is INJECTABLE for
-    tests and rollback: a sync callable (the historical one-shot `decide_routing`
-    lambda) runs via `to_thread`, an async callable is awaited. When None (the
-    production default, feat/async-actor-agents), the recon-orchestrator runs as a
-    persistent MAILBOX ACTOR for the run (`ReconOrchestratorActor`, one
-    `job_orchestrator` session thread) - each phase's steering is fed to its inbox
-    and the parsed `RoutingDecision` awaited, with the actor's checkpointed memory
-    carrying the reasoning across phases; the actor is stopped in the `finally`
-    so no task leaks. `orchestrator_factory(run_id)` builds the actor (tests
-    inject a fake or a real actor with a fake model).
+    `decide_routing` is RETIRED (the per-phase routing turns are gone with the
+    routing schema, #223 T3 #242): accepted for signature compatibility but no
+    longer consulted - inputs pass unfiltered. #243 (T4) removes the parameter
+    with the rest of the steering machinery (`read_steering_signals`,
+    `extra["steering"]`, the exclusion map).
+
+    The auth gateway (#223, T3 #242) is the production default
+    (feat/stateful-recon-job-auth): the recon-orchestrator starts
+    DETERMINISTICALLY on run start (never lazily, never behind a signal gate)
+    and its ONE gateway turn resolves before phase 0, under heartbeat. The
+    typed verdict configures the run: browser-only prunes the plan to the
+    Steel crawl, and the selected account's identifier (never its material)
+    rides the pipeline state for `use_auth` jobs. A degraded gateway fails
+    open (every phase, unauthenticated, loudly); missing credentials stop the
+    run loudly (`GatewayStop` -> `failed`, nothing runs). `orchestrator_factory`
+    builds the actor (tests inject the production actor over scripted models
+    and temp stores); the actor is stopped in the `finally` so no task leaks.
 
     Best-effort: a job whose pods all fail, or whose `run_job` call raises,
     is marked "degraded" and the pipeline continues - it always reaches a
@@ -327,18 +350,11 @@ async def run_pipeline(
         read_steering_signals = globals()["read_steering_signals"]
 
     orchestrator = None
-    if decide_routing is None:
-        if orchestrator_factory is None:
-            from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor
-
-            def _default_factory(_run_id: str):
-                return ReconOrchestratorActor(run_id=_run_id)
-
-            orchestrator_factory = _default_factory
-        orchestrator = orchestrator_factory(run_id)
-        _decide = orchestrator.decide_routing  # async client method
-    else:
-        _decide = decide_routing  # injected sync or async seam
+    # The gateway starts deterministically (D223-8): the actor is ALWAYS
+    # constructed on run start, with no signal gate in front of it.
+    if orchestrator_factory is None:
+        orchestrator_factory = _default_orchestrator_factory
+    orchestrator = orchestrator_factory(run_id)
 
     # All DB helpers below (pg + neo4j) are synchronous/blocking. run_pipeline
     # runs on the API event loop, so every one is offloaded via asyncio.to_thread
@@ -415,10 +431,46 @@ async def run_pipeline(
 
     hb = asyncio.create_task(_heartbeat_loop(run_id))
     signals: list[dict] = []
+    # The gateway turn (D223-8): deterministic, before phase 0, under
+    # heartbeat (the reaper window, D223-10) - and with no signal gate (the
+    # empty-signal short-circuit must never skip it). The verdict configures
+    # the run below; the loop over phases takes NO routing turns.
+    from polymerhus.recon.control.authn_loop import prune_plan  # noqa: PLC0414
+    from polymerhus.recon.control.orchestrator_agent import GatewayStop  # noqa: PLC0414
+    gateway_verdict = None
+    auth_account: str | None = None
     try:
+        try:
+            gateway_verdict = await orchestrator.run_gateway(project_id=project_id)
+        except GatewayStop:
+            # D223-17 fail-close: a declared surface with no credentials is a
+            # missing bootstrap prerequisite, not a gateway failure - stop the
+            # run loudly, run nothing, mark failed (never complete).
+            logger.error("run %s stopped by the auth gateway (fail-close: no credentials)", run_id)
+            await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+            return
+        if gateway_verdict is None:
+            logger.warning("run %s gateway degraded (no verdict); fail-open: every phase runs unauthenticated", run_id)
+        elif gateway_verdict.outcome == "anonymous":
+            logger.warning("run %s no authenticated surface; running the full plan anonymously", run_id)
+        elif gateway_verdict.outcome == "failed":
+            logger.warning("run %s authentication failed (%s); fail-open: collection runs unauthenticated",
+                           run_id, gateway_verdict.rationale)
+        elif gateway_verdict.branch == "browser_only":
+            plan = prune_plan(plan, "browser_only")
+            logger.warning("run %s browser-only release: pruned to the Steel crawl alone", run_id)
+            if gateway_verdict.account:
+                auth_account = gateway_verdict.account
+        elif gateway_verdict.account:
+            auth_account = gateway_verdict.account
+            logger.info("run %s authenticated as account %s", run_id, auth_account)
+        else:
+            logger.warning("run %s authenticated verdict names no account; running unauthenticated", run_id)
+        if gateway_verdict is not None and gateway_verdict.replayability_resolved:
+            logger.warning("run %s in-loop replayability resolved to %s (run-scoped, never persisted)",
+                           run_id, gateway_verdict.replayability)
         for phase_idx, phase_jobs in enumerate(plan):
             job_configs: dict[str, tuple] = {}
-            exclusions = await _phase_exclusions(_decide, signals, phase_jobs)
             for name in phase_jobs:
                 job = JOBS[name]
                 try:
@@ -456,18 +508,23 @@ async def run_pipeline(
                         elif job.consumes == "Service":
                             input_assets = _services_to_probe_targets(input_assets)
 
-                    excluded = set(exclusions.get(name, []))
-                    if excluded:
-                        input_assets = [a for a in input_assets if a.get("url") not in excluded]
-
                     extra = {"project_id": project_id}
                     if job.use_auth and settings.get("auth_context"):
                         # FR-AUTH: select the DEFAULT role's credential set (honours
                         # default_role, else the flat unroled creds) so a role/realm-
                         # tagged auth_context never leaks its `roles` map to the tool.
+                        # #243 (T4, removal): the settings-blob auth path retires
+                        # here (D223-4) - left in place until T4.
                         selected = select_auth_context(settings["auth_context"])
                         if selected:
                             extra["auth_context"] = selected
+                    if auth_account is not None and job.use_auth:
+                        # D223-19: the gateway-selected account's IDENTIFIER
+                        # rides the pipeline state (never its material); each
+                        # phase's tool configuration resolves it lazily from
+                        # the store at the point of use. `use_auth` stays the
+                        # single eligibility gate.
+                        extra["auth_account"] = auth_account
                     # Scope gate for URL-hosted assets (out-of-scope BaseURL
                     # drop in curate): the seed host/apex/IP, only when a target
                     # is actually configured (never the parse_scope placeholder).
@@ -500,6 +557,9 @@ async def run_pipeline(
                                 else registrable_domain(seed)
                             )
                     if signals:
+                        # #243 (T4, removal): the per-job steering payload
+                        # retires with the mid-run steering machinery (D223-12)
+                        # - left threaded until T4.
                         extra["steering"] = signals
 
                     await asyncio.to_thread(

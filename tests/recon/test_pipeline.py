@@ -650,7 +650,11 @@ def test_job_stats_include_per_pod_commands(monkeypatch):
     assert captured["subfinder"]["commands"] == ["subfinder -d example.com -all -json -silent"]
 
 
-def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch):
+def test_no_per_phase_routing_inputs_pass_unfiltered_and_signals_threaded(monkeypatch):
+    """#223 T3 (#242): the per-phase routing turns are retired - inputs pass
+    unfiltered even when a legacy `decide_routing` is injected (the seam is
+    accepted but no longer consulted; #243 removes it). The steering-signal
+    threading (`extra["steering"]`) stays until T4 removes it."""
     import asyncio
     from polymerhus.recon.control import pipeline
 
@@ -677,7 +681,16 @@ def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch)
         def set_run_status(self, *a, **k): pass
         def upsert_job(self, *a, **k): pass
 
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            from polymerhus.recon.control.authn_loop import GatewayVerdict
+            return GatewayVerdict(outcome="authenticated", account="alice",
+                                  branch="request", rationale="t")
+
+        async def stop(self): pass
+
     signals = [{"url": X, "macro_kind": "waf_protected", "evidence": "Incapsula"}]
+    seen = []
 
     monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
 
@@ -689,39 +702,37 @@ def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch)
         registry=FakeRegistry(),
         read_assets=fake_read_assets,
         read_steering_signals=lambda project_id, driver=None: signals,
-        decide_routing=lambda sigs, phase_jobs, llm=None: {"katana": [X]},
+        # the legacy seam would have routed X away from katana: never consulted
+        decide_routing=lambda sigs, phase_jobs, llm=None: seen.append((sigs, phase_jobs)) or {"katana": [X]},
+        orchestrator_factory=lambda run_id: _Gateway(),
     ))
 
-    assert captured_inputs["katana"] == [Y]                 # routed away by the orchestrator agent
-    assert set(captured_inputs["steel_crawl"]) == {X, Y}    # steel keeps the flagged host
-    assert captured_steering["katana"] == signals           # signals threaded to the job agent
+    assert seen == []                                # the retired seam is dead
+    assert set(captured_inputs["katana"]) == {X, Y}  # inputs pass unfiltered
+    assert captured_steering["katana"] == signals    # signals still threaded (T4)
 
 
-def test_pipeline_default_seam_is_the_mailbox_actor_and_reaps_it(monkeypatch):
-    """feat/async-actor-agents: with NO `decide_routing` injected, the pipeline's
-    steering seam is the recon-orchestrator MAILBOX ACTOR - one actor constructed
-    for the run, fed each signal-carrying phase, STOPPED on the run's exit path -
-    and its per-phase exclusions drive the same input filtering."""
+def test_pipeline_default_seam_is_the_gateway_actor_and_reaps_it(monkeypatch, tmp_path):
+    """#223 T3 (#242): with no `orchestrator_factory` injected, the pipeline's
+    production default is the recon-orchestrator GATEWAY actor - constructed
+    once for the run through the module default factory, its single turn
+    resolving before any phase, STOPPED on the run's exit path - and the
+    verdict's account identifier rides the `use_auth` jobs' state."""
     import asyncio
     from langgraph.checkpoint.memory import InMemorySaver
 
     from polymerhus.recon.control import pipeline
     from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor
 
-    X = "https://ib.example.com"
-    Y = "https://app.example.com"
-
     def fake_read_assets(node_type, project_id, where=None, *, driver=None):
         if node_type == "Subdomain":
             return [{"name": "app.example.com"}]
-        if node_type == "BaseURL":
-            return [{"url": X}, {"url": Y}]
         return []
 
-    captured_inputs = {}
+    captured_extras = {}
 
     async def fake_run_job(job, input_assets, *, run_id, phase, extra):
-        captured_inputs[job.tool] = [a.get("url") or a.get("name") for a in input_assets]
+        captured_extras[job.tool] = dict(extra)
         return []
 
     class FakeRegistry:
@@ -733,13 +744,16 @@ def test_pipeline_default_seam_is_the_mailbox_actor_and_reaps_it(monkeypatch):
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
 
+    from polymerhus.app.auth.store import AuthStore
+    from polymerhus.app.llm.skills import SkillStore
+
     class _ToolFake(BaseChatModel):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             return ChatResult(generations=[ChatGeneration(message=AIMessage(
                 content="",
-                tool_calls=[{"name": "RoutingDecision",
-                             "args": {"exclusions": [{"job": "katana", "exclude_urls": [X]}],
-                                      "rationale": "waf"},
+                tool_calls=[{"name": "GatewayVerdict",
+                             "args": {"outcome": "authenticated", "account": "alice",
+                                      "branch": "request", "rationale": "live"},
                              "id": "c1", "type": "tool_call"}],
             ))])
 
@@ -750,41 +764,45 @@ def test_pipeline_default_seam_is_the_mailbox_actor_and_reaps_it(monkeypatch):
         def bind_tools(self, tools, **kwargs):
             return self
 
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "p1", overview={"login_endpoint": "https://x/login"},
+        accounts={"alice": {"credentials": {"username": "u", "password": "p",
+                                            "login_url": "https://x/login"}}})
+
     spawned = []
     stopped = []
+    real_default = pipeline._default_orchestrator_factory
 
     class _SpyActor(ReconOrchestratorActor):
-        def __init__(self, run_id, **kw):
-            super().__init__(run_id, **kw)
-            spawned.append(run_id)
-
         async def stop(self):
             stopped.append(self.thread_id)
             await super().stop()
 
-    def _factory(run_id):
+    def _recording_default(run_id):
+        spawned.append(run_id)
         return _SpyActor(
-            run_id,
-            checkpointer=InMemorySaver(),
-            model_factory=lambda role_id: _ToolFake(),
-            observe=False,
+            run_id, project_id="p1", checkpointer=InMemorySaver(),
+            model_factory=lambda role_id: _ToolFake(), observe=False,
+            compaction=False, auth_store=store,
+            skill_store=SkillStore(tmp_path), kali_tools=[],
         )
 
-    signals = [{"url": X, "macro_kind": "waf_protected", "evidence": "Incapsula"}]
-
+    monkeypatch.setattr(pipeline, "_default_orchestrator_factory", _recording_default)
     monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
+    assert real_default("probe") is not None  # the production default builds
 
     asyncio.run(pipeline.run_pipeline(
         "p1", run_id="r1",
-        job_subset=["subfinder", "httpx", "katana", "steel_crawl"],
+        job_subset=["subfinder", "httpx"],
         run_job=fake_run_job,
         load_settings=lambda pid: {"target_domain": "*.example.com"},
         registry=FakeRegistry(),
         read_assets=fake_read_assets,
-        read_steering_signals=lambda project_id, driver=None: signals,
-        orchestrator_factory=_factory,
+        read_steering_signals=lambda project_id, driver=None: [],
     ))
 
     assert spawned == ["r1"]                    # ONE actor per run (production default)
     assert stopped == ["r1:job_orchestrator"]   # actor reaped on the run's exit path
-    assert captured_inputs["katana"] == [Y]     # the actor's RoutingDecision excluded X
+    assert captured_extras["httpx"].get("auth_account") == "alice"  # verdict bound
+    assert "auth_account" not in captured_extras["subfinder"]
