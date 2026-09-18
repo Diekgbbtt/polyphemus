@@ -3,7 +3,8 @@
 # The base `docker-compose.yml` reads `env_file: .env` (missing in a
 # worktree - .env is gitignored and lives only in the main checkout), so
 # without this overlay the agent would boot without API keys or Langfuse.
-# This file points the service at the MAIN tree .env (absolute path):
+# This file points the service at the MAIN tree .env (`../../.env` from a
+# `.worktrees/<name>` checkout, or whatever `POLYPHEMUS_MAIN_ENV` names):
 # same credentials, same components as production. Test knobs
 # (detection bound, threshold, model override, output budget) are NOT set
 # here - they ride `docker compose exec -e` on the driven snippets only,
@@ -15,8 +16,12 @@
 services:
   agent:
     env_file:
-      - path: /Users/diekgbbtt/polymerhus/.env
-        required: true
+      # Overridable so the overlay is not tied to one machine's absolute path;
+      # `required: false` keeps a worktree that has its own `.env` symlink
+      # working, and degrades to "agent boots without the overlay keys" only
+      # when neither the symlink nor the main-tree file exists.
+      - path: ${POLYPHEMUS_MAIN_ENV:-../../.env}
+        required: false
   # --- WAF fixtures (#196) -------------------------------------------------
   # Two shapes of "the target defends itself", both on port 80 so the lease's
   # REDIRECT (tcp/80 and tcp/443) captures them:
