@@ -21,7 +21,6 @@ from pathlib import Path
 from polymerhus.app import data_root
 from polymerhus.app.clients import pg
 from polymerhus.app.config import config
-from polymerhus.project_management.auth_context import validate_auth_context
 from polymerhus.recon.control.jobs import JOBS, validate_job_subset
 from polymerhus.recon.control.scope import resolve_seed, seed_kind
 from polymerhus.recon.domain.graph_read import fetch_project_graph
@@ -75,13 +74,12 @@ def running_runs(now: datetime | None = None) -> dict:
 
 
 def save_project_settings(project_id: str, recon: dict) -> None:
-    """Validate (the AuthContext contract) and persist a partial settings PUT.
-    Raises ProjectNotFound if unknown, ValueError on a malformed auth_context."""
+    """Persist a partial settings PUT (#223 T4 #243: the settings blob carries
+    no auth - the AuthContext value object and its validation are retired
+    with the blob footprint, D223-4; auth lives in the shared store, seeded
+    through `seed_project_auth`). Raises ProjectNotFound if unknown."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
-    auth_context = recon.get("auth_context")
-    if auth_context is not None:
-        validate_auth_context(auth_context)  # ValueError on any shape violation
     pg.save_settings(project_id, recon)
 
 

@@ -2,12 +2,12 @@
 
 Pure logic, no I/O: importing this module touches no driver, no file, and
 needs no env var (CODING_STANDARD section 6). The record rules mirror the
-operator-section shape rules of the settings-blob validator
-(`project_management/auth_context.py`: credential fields, `{name, value}`
-cookies, the header-name token rule, no literal `Cookie` header, no CR/LF,
-role-shape discipline) plus the new closed origin/location enums and the
-steel-reference / request-snapshot shapes - mirrored, never imported upward,
-since the shared bottom must not point at the operator surface (D220-7).
+retired settings-blob validator's shape rules (credential fields,
+`{name, value}` cookies, the header-name token rule, no literal `Cookie`
+header, no CR/LF, role-shape discipline) plus the new closed origin/location
+enums and the steel-reference / request-snapshot shapes - mirrored, never
+imported upward, since the shared bottom must not point at the operator
+surface (D220-7). The blob validator itself is retired (#223 T4 #243, D223-4).
 
 Record-level keys are a closed contract (anything else is a loud refusal);
 nested entry bags follow the mirrored lenient posture (required keys
@@ -76,7 +76,7 @@ _CREDENTIAL_OPTIONAL_STRINGS = frozenset(
     {"domain", "username_selector", "password_selector", "submit_selector"}
 )
 
-# Mirror of the settings-blob header-name rule (`_HTTP_HEADER_NAME_RE`): RFC
+# Mirror of the retired settings-blob header-name rule: RFC
 # 7230 field-names are tokens; the realistic subset (letters, digits, hyphen)
 # covers every auth header and excludes shell/CRLF-dangerous characters.
 _HEADER_NAME_RE = re.compile(r"^[A-Za-z0-9-]+$")
@@ -136,9 +136,10 @@ def _check_snapshot(snapshot: object) -> None:
 
 
 def _check_header_map(headers: dict, field: str) -> None:
-    # Mirror of the settings-blob header loop: `cookies` stays the one source
-    # of the `Cookie` header (a literal one is refused to avoid two sources of
-    # truth); names must be header tokens; values are non-empty CR/LF-free.
+    # Mirror of the retired settings-blob header loop: `cookies` stays the one
+    # source of the `Cookie` header (a literal one is refused to avoid two
+    # sources of truth); names must be header tokens; values are non-empty
+    # CR/LF-free.
     for name, value in headers.items():
         entry_field = f"{field}.{name}"
         if not isinstance(name, str) or not _HEADER_NAME_RE.match(name):

@@ -1,8 +1,10 @@
-"""FR-AUTH integration tier — role/realm-tagged auth_context deep-merge
-(AST-AUTH-03). A partial PUT that sets one role must MERGE into the stored
-auth_context via jsonb_deep_merge, never wiping a previously-stored sibling role.
-This is a live-Postgres behaviour (the merge is a SQL function), so it needs the
-docker-compose postgres up.
+"""Settings deep-merge integration tier - a partial PUT that sets one nested
+block must MERGE into the stored settings via jsonb_deep_merge, never wiping
+a previously-stored sibling block. This is a live-Postgres behaviour (the
+merge is a SQL function), so it needs the docker-compose postgres up.
+
+(#243: rewritten neutral - the role/realm-tagged auth_context example the
+blob retirement removed; the merge contract itself is generic and stays.)
 """
 import os
 import re
@@ -47,7 +49,7 @@ def _working_dsn() -> str | None:
 def pg_mod():
     dsn = _working_dsn()
     if not dsn:
-        pytest.skip("no reachable Postgres for the auth-roles merge integration test")
+        pytest.skip("no reachable Postgres for the settings deep-merge integration test")
     # override the config instance's cached (dummy) DSN so pg uses the live one
     from polymerhus.app.config import config
     config.POSTGRES_DSN = dsn
@@ -60,32 +62,30 @@ def project(pg_mod):
     from polymerhus.app.config import config
     import psycopg
     pid = str(uuid.uuid4())
-    pg_mod.create_project(pid, "auth-roles-merge")
+    pg_mod.create_project(pid, "settings-merge")
     yield pid
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute("DELETE FROM settings WHERE project_id = %s", (pid,))
         cur.execute("DELETE FROM projects WHERE project_id = %s", (pid,))
 
 
-def test_partial_role_put_preserves_sibling_roles(pg_mod, project):
-    # PUT 1: configure the shopper role
+def test_partial_nested_put_preserves_sibling_blocks(pg_mod, project):
+    # PUT 1: configure the scope block
     pg_mod.save_settings(project, {"target_domain": "shop.example",
-        "auth_context": {"roles": {"shopper": {"cookies": [{"name": "sid", "value": "S"}]}}}})
-    # PUT 2: a partial PUT adding ONLY the admin role
-    pg_mod.save_settings(project, {"auth_context": {"roles": {"admin": {"Authorization": "Bearer A"}}}})
+        "scope": {"mode": "wildcard", "exclusions": ["static.example"]}})
+    # PUT 2: a partial PUT adding ONLY a notes block
+    pg_mod.save_settings(project, {"notes": {"owner": "ops"}})
 
     settings = pg_mod.load_settings(project)
-    roles = settings["auth_context"]["roles"]
-    # both roles coexist - the partial admin PUT did NOT wipe the shopper sibling
-    assert set(roles) == {"shopper", "admin"}
-    assert roles["shopper"]["cookies"] == [{"name": "sid", "value": "S"}]
-    assert roles["admin"]["Authorization"] == "Bearer A"
+    # both blocks coexist - the partial notes PUT did NOT wipe the scope sibling
+    assert settings["scope"] == {"mode": "wildcard", "exclusions": ["static.example"]}
+    assert settings["notes"] == {"owner": "ops"}
     # and the unrelated top-level sibling (target_domain) survived too
     assert settings["target_domain"] == "shop.example"
 
-    # PUT 3: updating one field of admin must not wipe its Authorization sibling
-    pg_mod.save_settings(project, {"auth_context": {"roles": {"admin": {"realm": "credential"}}}})
-    roles = pg_mod.load_settings(project)["auth_context"]["roles"]
-    assert roles["admin"]["Authorization"] == "Bearer A"  # sibling field preserved
-    assert roles["admin"]["realm"] == "credential"
-    assert roles["shopper"]["cookies"] == [{"name": "sid", "value": "S"}]  # other role untouched
+    # PUT 3: updating one field of scope must not wipe its exclusions sibling
+    pg_mod.save_settings(project, {"scope": {"mode": "exact"}})
+    scope = pg_mod.load_settings(project)["scope"]
+    assert scope["mode"] == "exact"
+    assert scope["exclusions"] == ["static.example"]  # sibling field preserved
+    assert pg_mod.load_settings(project)["notes"] == {"owner": "ops"}  # untouched

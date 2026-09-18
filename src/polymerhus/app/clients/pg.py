@@ -303,14 +303,14 @@ def save_settings(project_id: str, recon: dict) -> None:
     keys into any existing settings (RECURSIVE JSONB merge, jsonb_deep_merge).
 
     A partial update must not wipe siblings it did not mention - at any depth:
-    - a PUT that only adds `auth_context` must NOT drop `target_domain`
+    - a PUT that only adds `scope` must NOT drop `target_domain`
       (otherwise the run falls back to the example.com placeholder), and
-    - a PUT that only sets `auth_context.credentials` must NOT drop a
-      previously-stored `auth_context.cookies` (they are independent items).
-    A plain `||` merges only the top level, so the nested auth_context would be
+    - a PUT that only sets `scope.mode` must NOT drop a
+      previously-stored `scope.exclusions` (they are independent items).
+    A plain `||` merges only the top level, so a nested block would be
     replaced wholesale; jsonb_deep_merge descends into nested objects. Scalars
-    and arrays (e.g. the cookies list) are still replaced by the incoming
-    value, so setting cookies overwrites the whole list as expected."""
+    and arrays (e.g. an exclusions list) are still replaced by the incoming
+    value, so setting exclusions overwrites the whole list as expected."""
     with psycopg.connect(config.POSTGRES_DSN) as conn, conn.cursor() as cur:
         cur.execute(
             "INSERT INTO settings (project_id, recon) VALUES (%s, %s) "
