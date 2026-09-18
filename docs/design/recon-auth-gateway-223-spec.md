@@ -1,7 +1,8 @@
 # Recon auth gateway - spec (the orchestrator's authn loop)
 
 *Status: accepted, published as tracker issue #223 (`ready-for-agent`). This is the persisted repo copy of that specification; the tracker issue remains the work authority.*
-*Decision ledger: `docs/design/recon-job-auth-223-decisions.md` (D223-1..D223-19, all in force). Amendments landed in `auth-store-220-decisions.md` (D220-9 amendment), `browser-cli-221-decisions.md` (D18 amendment), `src/polymerhus/recon/CONTEXT.md`, `src/polymerhus/project_management/CONTEXT.md`, and `docs/design/domain-model.md`.*
+*Decision ledger: `docs/design/recon-job-auth-223-decisions.md` (D223-1..D223-19, all in force; plus the T3 #242 implementation record IR-1..IR-8). Amendments landed in `auth-store-220-decisions.md` (D220-9 amendment), `browser-cli-221-decisions.md` (D18 amendment), `src/polymerhus/recon/CONTEXT.md`, `src/polymerhus/project_management/CONTEXT.md`, and `docs/design/domain-model.md`.*
+*Implementation: T3 (#242) landed - the gateway turn, the armed surface, the verdict, and the pipeline treatment are built (`recon/control/authn_loop.py`, `recon/control/orchestrator_agent.py`, `recon/control/pipeline.py`); the T4 (#243) removals are marked `#243 (T4, removal)` at each site and left in place.*
 *Scope: the auth gateway itself - the orchestrator's pre-pipeline authn loop - plus the feed path from the shared auth store to the pipeline's consumers.*
 
 ## Problem Statement

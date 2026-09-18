@@ -218,3 +218,92 @@ The crawler's auth path becomes profile-mount only: the interactive `steel_await
 None - the sequential walk is complete.
 Consolidated: the spec is `docs/design/recon-auth-gateway-223-spec.md`, published as the rewritten tracker issue #223 (`ready-for-agent`), superseding the ticket's earlier per-job auth-phase framing.
 The decision-record and glossary amendments are applied: `auth-store-220-decisions.md` (D220-9 amendment), `browser-cli-221-decisions.md` (D18 amendment), `src/polymerhus/recon/CONTEXT.md` (auth gateway entry + updated store/binding/profile entries), `src/polymerhus/project_management/CONTEXT.md` (AuthContext retired), `docs/design/domain-model.md` (orchestrator activation note).
+
+## T3 implementation record (#242, the core auth gateway)
+
+Settled at implementation under the ticket's authority (implementer
+settlements, not operator rulings - numbered IR to distinguish them from the
+D-series above). All D223-8..D223-19 hold; nothing here amends them.
+
+### IR-1 - The empty-path read retrieves (the unconditional GROUNDED exit)
+
+`detect_transition` maps an empty-path `auth_store` read to `retrieve`, not
+`ground`: the full-state payload carries the accounts, and the spec table's
+GROUNDED exit ("RETRIEVED on an accounts read", D223-15) is unconditional.
+`push_transition` records the grounding evidence from the same payload
+alongside. A usable full-state read therefore moves the loop even when the
+skill half of grounding is still open; the skill load is then observed
+silently. The grounding hint still fires for the classic
+overview-then-skill order.
+
+### IR-2 - The validity boundary is the assertion act, not its persistence
+
+`invalidate` / `validate` are detected on the write CALL args (path plus
+carried `status`), regardless of the result envelope. Rationale: on an
+operator-stamped account the store refuses `operator_immutable` (the trust
+split), and the loop must still cross its success/failure boundary - the
+validity then rides the verdict instead. The prompt instructs exactly this
+(carry on after `operator_immutable`).
+
+### IR-3 - The no-auth-surface marker is `overview.notes`
+
+The D223-17 structural discriminator is settled: `overview.notes` carrying
+"no authenticated surface" (case-insensitive; the only free-text overview
+field). Gate rule (`classify_gate`): any accounts at all run the loop (even
+all-`not_valid` - the loop judges, the gate does not); with no accounts, a
+marked or undeclared surface is the expected-shape anonymous path, while a
+declared surface (any truthy non-`notes` field) with no accounts is the
+missing prerequisite that stops the run.
+
+### IR-4 - Browser-only prunes literally to the Steel crawl
+
+`prune_plan` keeps exactly `steel_crawl` jobs on `browser_only` (D223-11,
+implemented literally - discovery included). The pipeline obeys the
+verdict's `branch` through this one rule; the verdict carries no separate
+job list (sole-decider discipline, D223-8). The verdict `branch` vocabulary
+is the collapsed pair (`request` | `browser_only`); the pre-loop manner
+directives (`request_browser_first`, `resolve_in_loop`) do not survive the
+turn.
+
+### IR-5 - The gateway await is bounded at one hour, never cancels
+
+`GATEWAY_AWAIT_TIMEOUT_S = 3600.0`: a hung turn returns None (fail-open,
+loudly) instead of stalling run start. The turn itself is NOT cancelled at
+the bound (its harness bounds own turn length); the reply inbox drains
+best-effort, and the actor is per-run with a single gateway turn, so no
+later consumer can meet a stale reply. The pipeline reaps the actor in its
+existing `finally`.
+
+### IR-6 - T3/T4 boundary as built
+
+T3 retires: the per-phase routing turns (actor `response_format` is now the
+gateway verdict), the pipeline's per-phase routing calls and exclusion
+filter, the `decide_routing` consultation (parameter kept, ignored).
+T4 (#243) owns the full REMOVAL, left in place dead or bypassed and marked
+`#243 (T4, removal)` at each site: `RoutingDecision` + `_exclusions_map`,
+`_phase_exclusions`, the `decide_routing` parameter, `read_steering_signals`
+(the read still runs), `extra["steering"]` threading, the settings-blob
+`auth_context` path (`select_auth_context`, `{auth_header}` templates, pod
+serialization), and the crawler interactive auth path (`steel_await_auth`).
+The `use_auth` gate and per-job `extra["auth_context"]` transport are
+unchanged; `extra["auth_account"]` (identifier only) rides beside them until
+T4 rewires the consumers to lazy resolution.
+
+### IR-7 - In-scope test expectation updates
+
+`test_H5_tool_schemas_ride_the_session_turn` now expects the armed hunter
+surface (`auth_store` appended last - the f7e2bfd binding, asserted here).
+`test_actor_binds_the_three_tools_plus_load_skill` is renamed to
+`test_actor_binds_exactly_the_three_tools`: the hunt orchestrator stays
+roster-exempt (no skill surface), so the surface is exactly the three G3
+tools. The #223 arming targets `job_orchestrator` only (IR-8).
+
+### IR-8 - The exemption is lifted through the binding, never the roster
+
+`ROLE_SKILLS["job_orchestrator"]` stays `()` (the skill-seam exempt pins
+hold; no catalogue skill bears). The arming rides
+`auth_capable_binding(..., with_write_skill=True)`, which composes the
+`[load_skill, write_skill, auth_store]` surface with the `authn`-only skill
+context from the shared skill primitives. The flag is compositional (it
+appends `write_skill` on bound roles too); no caller passes it today except
+the gateway.

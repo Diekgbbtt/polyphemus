@@ -117,20 +117,20 @@ _Avoid_: planner.
 
 **Job orchestrator**:
 A resumable `session`-mode role (`role_id=job_orchestrator`) validated at app boot.
-Since feat/async-actor-agents it runs as a per-run MAILBOX actor
+Since #223 (T3 #242) it runs as the per-run AUTH GATEWAY
 (`orchestrator_agent.py::ReconOrchestratorActor`): one `run_session_agent` on the
-run's `OrchestratorSession` thread, fed each phase's steering signals and replying a
-structured `RoutingDecision` per phase, so its checkpointed memory carries the
-steering reasoning across the run's phases. `run_pipeline` also accepts an
-injected `decide_routing` seam for tests, but the production routing path is the
-actor.
-As of #186 its turns run PER-TURN ISOLATED on the shared actor runtime: a raising
-phase turn (transport/timeout/5xx/429 retried under the bounded escalating budget,
-then degraded) posts a NO-DECISION reply - the parent's fail-open fires per-turn
-(`{}` = no routing adaptation for THAT phase) and the actor task SURVIVES, so the
-run's later phases still get real routing (the pre-#186 dead-task race made every
-later phase silently routeless).
-_Avoid_: planner.
+run's `OrchestratorSession` thread taking exactly ONE gateway turn before phase 0 -
+the authn loop over the armed surface - closing with the structured
+`GatewayVerdict`. `run_pipeline` constructs the actor deterministically on run start
+(never lazily, never behind a signal gate), awaits the verdict under heartbeat and a
+wall-clock bound, then configures from it: browser-only prunes the plan to the Steel
+crawl, and the selected account's identifier rides the pipeline state (`extra`
+`auth_account` on `use_auth` jobs, never the material). The per-phase routing turns
+are retired with the routing schema (`RoutingDecision` kept dead for #243); a degraded
+gateway fails open (every phase, unauthenticated, loudly); missing credentials stop the
+run loudly (`GatewayStop`, fail-close).
+_Status_: registered `session` (`LLM_JOB_ORCHESTRATOR`).
+_Avoid_: planner; mid-run routing.
 
 **Operator**:
 The only human, and the source of intent the system is blind to by design: supplies the target, scope, `operator_kb` framing, and settings.
@@ -194,7 +194,7 @@ _Avoid_: a second tool face (one implementation, bound per project).
 
 **Auth-capable binding** (`auth_capable_binding`, `app/auth/seams.py`):
 The auth-capable extension of `skill_agent_binding`: the same L1 index middleware, skill tools, and invocation context, plus the `auth_store` tool and the per-project `authn` procedure in the bounded skill set.
-The analysis-domain agents never bind it; since #223 it binds to the recon orchestrator only - the auth gateway is fully armed in one step (the roster exemption lifted; `auth_store`, `authn`, `load_skill`, `write_skill`, kali `exec`, `steel_exec`, D223-13) - and the recon job-specialised agents deliberately never take it (D223-5).
+The analysis-domain agents never bind it; since #223 it arms the recon orchestrator write-capable in one step (the roster still declares it exempt - no catalogue skill bears - so the arming rides `with_write_skill`, never the roster: `auth_store`, `authn`, `load_skill`, `write_skill`, kali `exec`, `steel_exec`, D223-13) - and the recon job-specialised agents deliberately never take it (D223-5).
 _Avoid_: a per-site auth binding (one seam, attached through `tools=` / `middleware=` / `context=` like every other capability).
 
 **`authn` (per-project authentication procedure)**:
@@ -202,9 +202,10 @@ The project-authored skill (no canonical catalogue copy) that the meta skill `me
 _Avoid_: a canonical `authn` skill (a project's copy is its original).
 
 **Authn loop** (the auth gateway, #223):
-The recon orchestrator's pre-pipeline stateful turn - used by that role only - that establishes or validates the run's auth state against the auth store BEFORE the pipeline is configured: one ReAct turn with a hunting-style passive state machine over its own tool calls (GROUNDED -> RETRIEVED -> VALIDATION -> GENERATION -> DEBUG -> FINISH, transitions detected on specific store/probe/browser call boundaries, hints riding the triggering tool result only), closing with the structured gateway verdict.
-The verdict carries the selected account identifier, the no-auth-surface finding, or the failure mode; the orchestrator alone prunes phases and configures the pipeline from it (mid-run steering is retired, D223-12), and the account identifier - never its material - rides the pipeline state for lazy per-phase resolution by each phase's tool configuration (D223-19).
-An empty store with no authenticated surface is the expected shape with its own path - loop skipped, pipeline run anonymously, verdict records it (D223-17); a missing prerequisite with no credentials fail-closes by stopping.
+The recon orchestrator's pre-pipeline stateful turn - used by that role only - that establishes or validates the run's auth state against the auth store BEFORE the pipeline is configured: one ReAct turn with a hunting-style passive state machine over its own tool calls (`recon/control/authn_loop.py`: GROUNDED -> RETRIEVED -> VALIDATION -> GENERATION -> DEBUG -> FINISH; detection pure of the observed call, pushes never gating, hints riding the triggering tool result only inside `<authn-loop-hint>`), closing with the structured gateway verdict.
+The verdict (`GatewayVerdict`: `outcome` authenticated | anonymous | failed, `account` identifier-only, `branch` request | browser_only, run-scoped `replayability_resolved` / `replayability`, `rationale`) carries the selected account identifier, the no-auth-surface finding, or the failure mode; the orchestrator alone prunes phases and configures the pipeline from it (mid-run steering is retired, D223-12), and the account identifier - never its material - rides the pipeline state for lazy per-phase resolution by each phase's tool configuration (D223-19).
+The pre-loop branch directive follows the four-way overview contract (`request` | `browser_only` | `request_browser_first` | `resolve_in_loop`, D223-11); the null case resolves in-loop and is logged loudly, never persisted.
+An empty store with no authenticated surface is the expected shape with its own path - loop skipped, pipeline run anonymously, verdict records it; the structural marker is `overview.notes` carrying "no authenticated surface" (D223-17, settled #242); a declared surface with no accounts fail-closes by stopping.
 _Avoid_: a per-job auth loop (the job-specialised agents never authenticate, D223-5); a "coverage exhausted" verdict state (exhaustion is a failed authentication, D223-3); re-adding mid-run auth steering.
 
 ## Prompts, skills, and the loader
