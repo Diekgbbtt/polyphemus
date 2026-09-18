@@ -358,8 +358,7 @@ _ROLE_BY_ID: dict[str, Role] = {r.role_id: r for r in ROLES + HUNTING_ROLES}
 
 def role_record(role_id: str) -> Role | None:
     """The registered `Role` for a role_id, or None for an unregistered one (which
-    `resolve_role` still resolves via the `LLM_{ROLE_ID}` convention for
-    back-compat)."""
+    `resolve_role` still resolves via the live `LLM_{ROLE_ID}` convention)."""
     return _ROLE_BY_ID.get(role_id)
 
 
@@ -387,13 +386,13 @@ def _key_env(provider: str) -> str:
     `provider_api_key` all agree on the same convention."""
     return f"API_KEY_{provider.upper().replace('-', '_')}"
 
+
 def resolve_role(role: str) -> tuple[str, str]:
     """Resolve a role_id to (provider, model) via its record's `model_key`.
 
     A registered role_id reads its declared `model_key` (several ids may share one,
-    e.g. every analysis role -> `LLM_ANALYSER`). An UNregistered id falls back
-    to the `LLM_{ID}` convention, so a legacy caller still on `"analyser"`
-    keeps resolving `LLM_ANALYSER` unchanged during the migration."""
+    e.g. every analysis role -> `LLM_ANALYSER`). An UNregistered id resolves via
+    the live `LLM_{ID}` convention (e.g. `"analyser"` reads `LLM_ANALYSER`)."""
     r = _ROLE_BY_ID.get(role)
     model_key = r.model_key if r is not None else f"LLM_{role.upper()}"
     raw = os.environ.get(model_key)

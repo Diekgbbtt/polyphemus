@@ -76,8 +76,8 @@ def test_role_record_carries_agent_mode():
 
 def test_resolve_role_uses_the_shared_key_for_split_analysis_roles(monkeypatch):
     """Distinct analysis role_ids resolve the SAME model via LLM_ANALYSER, and
-    a legacy caller still on the bare `"analyser"` id resolves it via the fallback
-    convention - so callers can migrate incrementally."""
+    the bare `"analyser"` id resolves it via the live unregistered-id
+    convention."""
     monkeypatch.setenv("LLM_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("assigner") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("mechanism_typist") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
@@ -757,7 +757,7 @@ def test_model_key_spellings_use_the_new_infix_free_names():
         assert r.model_key.startswith("LLM_"), r.model_key
 
 
-def test_resolve_role_prefers_the_new_name_when_both_are_set(monkeypatch):
+def test_resolve_role_ignores_the_old_name_when_both_are_set(monkeypatch):
     """#240 contract: the legacy spelling is ignored - the new name selects
     the model even when both are set."""
     monkeypatch.setenv("LLM_TRIAGER", "openai:gpt-new")
