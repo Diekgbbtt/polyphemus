@@ -87,6 +87,42 @@ def test_every_cited_reference_file_exists():
         ), f"dangling reference: {ref}"
 
 
+def test_names_the_parametrizable_project_skill_write_location():
+    """The external agent knows the skill's content AND where to persist it:
+    the parametrized bundle path, never a hardcoded absolute one."""
+    body = _body()
+    assert "skills/authn/SKILL.md" in body
+    assert "skills/authn/references/" in body
+    assert "<data_root>" in body
+    assert "<project_id>" in body
+
+
+def test_profile_discipline_mounts_by_name_not_by_id():
+    """The CLI's `--profile` takes the name and the store holds the name, so the
+    skill must not say "mount by id" (the #237 e2e wording defect)."""
+    body = _body()
+    assert "Mount by name:" in body
+    assert "Mount by id" not in body
+    assert "Record the profile name from the mint" in body
+
+
+def test_bootstrap_workflow_prompt_is_target_agnostic_and_request_first():
+    """The reusable prompt is generalisable (placeholders, no target) and never
+    presumes the browser: it defaults to request-based and takes the browser
+    only on a defence signal."""
+    prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    for placeholder in ("<project_id>", "<target>", "<login_url>", "<data_root>"):
+        assert placeholder in prompt
+    assert "moodique" not in prompt.lower(), "the prompt must stay target-agnostic"
+    assert "defaults to request-based" in prompt
+    assert "Probe request-side first" in prompt
+    assert "no defence signal -> request-based" in prompt
+    for name in ("waf_protected", "waf_detection", "rate_limited"):
+        assert name in prompt
+
+
 def test_worked_example_seed_overviews_validate_and_cover_both_verdicts():
     fixture = SKILL_DIR / "references" / "worked-example.yaml"
     data = yaml.safe_load(fixture.read_text(encoding="utf-8"))

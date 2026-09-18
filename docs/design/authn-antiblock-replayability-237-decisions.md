@@ -40,7 +40,7 @@ The `anti-bot` field is a different axis - the vendor/product/challenge NAME, no
 
 The external agent holds the target, generic request tooling, the authenticated steel CLI, and the two auth faces - no repository.
 The dangling references are fixed: the published steel references are the scripts beside the steel-browser skill under `skills/steel-browser/references/` (`catalogue.sh`, `session-lifecycle.sh`, `stop-owner.sh`, `profile-mount.sh`, `extract-reads.sh`, `eval-inline.sh`, `eval-interact.sh`), so the skill cites those names and drops the non-existent `steel-browser-commands.md` and `steel-browser-lifecycle.md`.
-The steel profile write discipline (the #221 stream's D16/D17) is INLINED rather than cited from an in-repo decision record: mint the profile in flow on first login (`start --profile <name> --update-profile`); mount by id (`start --profile <name>`), read-only by default, `--update-profile` present accumulates; settle-then-verify on every mount because the API's poll-READY has no CLI equivalent (`profile list` returns name plus id only); release is the persistence call, so any abnormal end forces re-verify; one live session per profile holds the last writer; hard timeout at create plus the platform inactivity backstop; explicit stop on every path.
+The steel profile write discipline (the #221 stream's D16/D17) is INLINED rather than cited from an in-repo decision record: mint the profile in flow on first login (`start --profile <name> --update-profile`); mount by name (`start --profile <name>`), read-only by default, `--update-profile` present accumulates; settle-then-verify on every mount because the API's poll-READY has no CLI equivalent (`profile list` returns name plus id only); release is the persistence call, so any abnormal end forces re-verify; one live session per profile holds the last writer; hard timeout at create plus the platform inactivity backstop; explicit stop on every path.
 No `docs/design/...` citation appears in the skill.
 
 ## D237-5 - The seed face needs no new code path
@@ -67,3 +67,23 @@ This document is the new ledger, and the #220 ledger gains a pointer noting the 
 `src/polymerhus/recon/CONTEXT.md` gains `anti-bot` and `http-client-replayability` entries in the auth-store section.
 `docs/design/domain-model.md` is unchanged: this is capability vocabulary inside Recon, not a new primitive, relationship, or open question (the #221 D18 precedent).
 `src/polymerhus/project_management/CONTEXT.md` is unchanged: the seed face is unchanged, so the existing auth-endpoint pointer still holds.
+
+## D237-9 - The meta skill names the parametrizable project-skill write location
+
+The skill's P5 gains the project-skill write location as a PARAMETRIZED path, not a hardcoded absolute one: `<data_root>/<project_id>/skills/authn/SKILL.md`, with login-specific scripts under `<data_root>/<project_id>/skills/authn/references/`, where `<data_root>` is the app-owned data root (`<codebase_root>/data/`), `<project_id>` the target project, and `authn` the fixed project-skill name a follower resolves first (`app/llm/skills.py` names `authn` as the project-authored skill in `render_skill_index`).
+This closes the gap surfaced by the e2e: the external agent knew the skill's content but not where to persist it, and no seed/bootstrap path exists for project skills (no catalogue `skills/authn/`, so the in-system `SkillStore.write` would refuse for lack of bootstrapped frontmatter).
+The seed-face contract section is reworded to "the single write path for STORE facts", with the bundle named as the distinct second write path, so the two planes stay non-overlapping at the write boundary as well as in content.
+Surgical by design: no absolute path, no repository coupling, no `docs/design` citation in the skill; the parametrized form preserves D237-4's location-agnosticism.
+The content tier pins the location text.
+
+## D237-10 - The reusable bootstrap prompt ships beside the skill
+
+The external bootstrapper's first prompt is published as `skills/meta/authn-skill-writing/references/bootstrap-workflow.md`: the reusable, target-agnostic prompt with `<...>` placeholders (project id, target, login/signup URL, credentials, seed/read face, data root, skill name, meta-skill path) and the request-first anti-bot workflow.
+It is the prompt form of the skill's mandatory block and defaults to request-based, taking the browser only on a defence signal - the correction of the e2e's first prompt, which presumed the browser.
+The skill cites the file in its worked-example and references sections, so the existing cited-reference test resolves it; a content test pins the placeholders, the request-first default, the shared vocabulary, and the absence of any target name.
+
+## D237-11 - The profile discipline mounts by name, not by id
+
+The e2e surfaced a wording defect (not a code defect): the profile discipline said "Mount by id" while the command it gave is `--profile <profile-name>`, and D237-4 repeated "mount by id".
+The CLI's `--profile` takes the profile NAME (the `profileId` also resolves, verified live, but the discipline as written mounts by name), and the store holds the name under `steel: {profile}`.
+The wording is corrected to "Mount by name", P3 records "the profile name from the mint", and D237-4 is amended; a content test forbids "Mount by id" and requires "Mount by name".

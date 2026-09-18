@@ -2,7 +2,7 @@
 name: authn-skill-writing
 description: Use when executing authentication against a target project by hand and authoring that target's per-project authentication skill from verified state.
 metadata:
-  version: '2.0'
+  version: '2.3'
 ---
 # Authn skill writing
 
@@ -16,7 +16,8 @@ Record nothing until its gate passes.
 You need generic request tooling for probe and replay work.
 You need the steel CLI, authenticated (`steel login`, `steel doctor --preflight`, smoke test `steel scrape https://example.com`).
 You need reachability of the seed face `PUT /projects/{project_id}/auth` and the state-read face `GET /projects/{project_id}/auth`.
-You need no polymerhus internals beyond the seed-face contract stated below.
+You need write access to the target project's skill bundle at `<data_root>/<project_id>/skills/authn/` (the location P5 pins).
+You need no polymerhus internals beyond the seed-face contract and that parametrized bundle location.
 
 ## The two planes and the one join
 
@@ -28,7 +29,7 @@ Keep the planes non-overlapping: facts live in the store, steps live in the skil
 
 ## Seed-face contract (mirror, kept terse by design)
 
-The following mirrors the seed-face contract only, which is the single write path available to you.
+The following mirrors the seed-face contract only, which is the single write path for STORE facts available to you; the project skill bundle is your other write path (P5).
 Write facts with `PUT /projects/{project_id}/auth` and body `{overview?, accounts?}`.
 Read state with `GET /projects/{project_id}/auth`, which returns the full `{"overview": ..., "accounts": ...}` state.
 Each present section REPLACES the operator-owned state wholesale.
@@ -44,6 +45,7 @@ Overview fields, all optional: `login_endpoint`, `required_headers`, `mechanism`
 `anti-bot` is the defence type (a vendor, product, or challenge name such as `akamai_v3`, `cf_clearance`, `datadome`, `incapsula`, or `waf:<name>`) or null when none; `http-client-replayability` is `true` or `false`, and leaving it unset means UNKNOWN, never false.
 Procedural prose never lands in the store.
 Secret values never land in the skill.
+The skill bundle is a separate write path from the seed face: write facts to the store, steps to the bundle, and never cross the two.
 
 ## P0 - Read state
 
@@ -91,7 +93,7 @@ A static element that proves to be a stable target property graduates into the o
 
 Durable browser identity is a Steel profile; the store holds only its `{profile}` key, and a follower rebinds it.
 Mint the profile in flow on first login: `steel browser start --session <name> --profile <profile-name> --update-profile --session-timeout 600000 --json`.
-Mount by id: `steel browser start --session <name> --profile <profile-name> --json`.
+Mount by name: `steel browser start --session <name> --profile <profile-name> --json` (the `--profile` flag takes the profile name; the store holds the name, not the id).
 A mount is read-only by default; without `--update-profile` the session's state is not written back, so pass `--update-profile` only past the P3 verify gate.
 Settle then verify every mount: there is no CLI state-poll primitive (`steel profile list --json` returns name plus id only), so navigate to the authenticated landing URL and read it back before trusting the mount; an unverified mount never passes a verdict.
 Release is the persistence call, so any abnormal end (a timeout, a failure) forces a re-verify before the profile is trusted again.
@@ -103,6 +105,7 @@ The scripts beside the steel-browser skill are optional helpers for these acts: 
 
 `references/worked-example.yaml` beside this skill carries a request-replayable scenario (a defence classified, `http-client-replayability: true`) and a browser-only scenario (a JS-challenge defence, `http-client-replayability: false`), each with its probe trace and its seed payload.
 Read it before your first probe.
+`references/bootstrap-workflow.md` is the reusable, target-agnostic first prompt for the external bootstrapper: fill its placeholders, then work P0 through P6; it defaults to request-based and takes the browser only on a defence signal.
 
 Gate: the classification is stated with the evidence that forced it; the defence is named or null; the replay verdict is recorded with its continuation facts, or the flow is honestly browser-only.
 
@@ -117,7 +120,7 @@ Gate: each flow states its endpoint or form plus its required headers and anti-f
 
 Request path: reproduce the request shape exactly, then verify success before capturing anything.
 Browser path: mint or mount the profile per the fallback discipline above, settle, and verify.
-Record the profile id or name from the mint to the account `steel` reference in P4.
+Record the profile name from the mint to the account `steel` reference in P4.
 Verify with concrete commands: `navigate` to the target URL, `wait --load networkidle` to settle, then `eval` or `get url` to read the current URL and confirm the authenticated landing state.
 Gate: a verification predicate fired for the flow, where request success means a new session cookie plus a non-login URL and browser success means navigation to the authenticated landing state.
 An unverified flow never yields a verdict and never advances to P4.
@@ -139,7 +142,13 @@ When it is `false`, the procedure carries the browser steps instead, and says pl
 Name for every steel step the profile to load, the concrete CLI commands, and the script they come from.
 Resolve script citations to the steel-browser skill's published references beside that skill (`references/session-lifecycle.sh`, `references/profile-mount.sh`, `references/extract-reads.sh`, `references/eval-inline.sh`, `references/eval-interact.sh`) or the authn skill's own `references/` scripts.
 Keep login-specific scripts in the authn skill's own `references/`, and mechanics in the steel-browser references.
-Gate: a follower can replay each flow step by step, and the text reads as ordered steps rather than a fact dump.
+
+### Where the project skill lands
+
+Write the authn skill as one whole file at `<data_root>/<project_id>/skills/authn/SKILL.md`, with login-specific scripts under `<data_root>/<project_id>/skills/authn/references/`.
+`<data_root>` is the system's app-owned data root (`<codebase_root>/data/`), visible to you as an operator path; `<project_id>` is the target project you were pointed at; `authn` is the fixed project-skill name, so a follower resolves the project bundle first.
+Write frontmatter and body together in that one file, atomically; never route the skill through the store seed face, and never route store facts through this path.
+Gate: the skill file exists at that path with valid frontmatter (name equal to the bundle directory, a description, a `metadata.version`), and no store write touched it.
 
 ## P6 - Wire the join and self-check
 
@@ -199,3 +208,4 @@ Say in the skill which step fails loudly when its session or profile is stale.
 ## References
 
 - `references/worked-example.yaml` - two worked scenarios (a request-replayable target and a browser-only target) with their probe traces, classifications, and seed payloads.
+- `references/bootstrap-workflow.md` - the reusable, target-agnostic first prompt for the external bootstrapper, with placeholders and the request-first anti-bot workflow.
