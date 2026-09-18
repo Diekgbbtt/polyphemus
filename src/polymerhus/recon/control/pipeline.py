@@ -676,29 +676,6 @@ async def run_pipeline(
                 )
                 if endpoints_total is not None:
                     job_stats["endpoints_total"] = endpoints_total
-                # Surface a crawl job's Steel viewer URL (interactive
-                # steel_await_auth MVP path, see crawl_pod.py) so
-                # GET /recon/{run_id} lets the operator complete manual login -
-                # pass through the first pod export that carries one.
-                # C2 (operator-accepted 2026-07-13): the viewer_url is the POD's
-                # to own; the pod already surfaced it mid-flight (crawl_pod.
-                # default_status_sink) because this pipeline is blocked on
-                # `await run_job` above and cannot surface it in time itself.
-                # This terminal pass-through only RE-ASSERTS it so the final
-                # full-stats write does not clobber the pod's mid-flight write.
-                # Left as-is (not critical). ENHANCEMENT (D24): per-component
-                # logs (orchestrator / job / pod) let the viewer_url surface from
-                # the pod's own log, retiring this two-writer coordination.
-                viewer_url = next(
-                    (
-                        e.stats.get("viewer_url")
-                        for e in pod_exports
-                        if e.stats and e.stats.get("viewer_url")
-                    ),
-                    None,
-                )
-                if viewer_url:
-                    job_stats["viewer_url"] = viewer_url
 
                 await asyncio.to_thread(
                     registry.upsert_job,

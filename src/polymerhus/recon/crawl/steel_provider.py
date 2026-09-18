@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import asyncio
 import random
-import re
 import threading
 import time
 import uuid
@@ -44,11 +43,8 @@ from urllib.parse import parse_qsl, urlparse
 from polymerhus.recon import config
 
 # ---------------------------------------------------------------------------
-# Auth-detection predicates (used by steel_await_auth) - ported verbatim
+# Scope predicate (the crawl-frontier / recorded-asset scope filter)
 # ---------------------------------------------------------------------------
-
-_SESSION_COOKIE_RE = re.compile(r"(session|sess|sid|auth|token|jwt|__secure|csrf)", re.I)
-_LOGIN_PATH_RE = re.compile(r"/(login|signin|sign-in|sso|oauth|account/login|session)", re.I)
 
 
 def _registrable_in_scope(host: str, scope: list) -> bool:
@@ -92,47 +88,6 @@ def _is_html_content_type(ct: str | None) -> bool:
         return True
     ct = ct.lower()
     return "text/html" in ct or "application/xhtml" in ct
-
-
-def _is_session_like_cookie(c: dict) -> bool:
-    """A cookie that plausibly represents an authenticated session."""
-    return bool(_SESSION_COOKIE_RE.search(c.get("name", "") or "")) or bool(c.get("httpOnly"))
-
-
-def _cookie_domain_in_scope(c: dict, scope: list) -> bool:
-    dom = (c.get("domain") or "").lstrip(".").lower()
-    if not scope:
-        return True
-    return any(dom == s.lower() or dom.endswith("." + s.lower()) for s in scope)
-
-
-def _has_new_session_cookie(baseline_names: set, current: list, scope: list) -> bool:
-    """True if an in-scope session-like cookie appeared that wasn't in the baseline set."""
-    for c in current or []:
-        if c.get("name") in baseline_names:
-            continue
-        if _cookie_domain_in_scope(c, scope) and _is_session_like_cookie(c):
-            return True
-    return False
-
-
-def _url_is_authenticated_app(url: str, scope: list) -> bool:
-    """In-scope app page that is NOT a login/SSO route (so we wait for the SSO return)."""
-    p = urlparse(url or "")
-    if not _registrable_in_scope(p.netloc, scope):
-        return False
-    return not _LOGIN_PATH_RE.search(p.path or "/")
-
-
-def login_succeeded(baseline_names: set, current_cookies: list, url: str, scope: list) -> bool:
-    """D23 hardened success test: an autonomous login counts as authenticated
-    ONLY when BOTH hold - a NEW in-scope session-like cookie appeared vs the
-    pre-login baseline AND the browser navigated to an in-scope non-login page.
-    Either alone is a false positive (a CSRF/visitor cookie on the login page,
-    or an off-login bounce with no session), which unattended login cannot
-    afford. Pure; composes the existing steel_await_auth predicates."""
-    return _has_new_session_cookie(baseline_names, current_cookies, scope) and \
-        _url_is_authenticated_app(url, scope)
 
 
 # ---------------------------------------------------------------------------
@@ -224,7 +179,6 @@ class _Crawl:
         self.requests: list = []
         self.responses: dict = {}
         self._req_lock = threading.Lock()
-        self.baseline_cookies: list = []
         self._attach_listeners()
 
     def _attach_listeners(self):
@@ -449,10 +403,6 @@ class SteelCrawlProvider:
         crawl.enqueue([target], depth=0)
         with self._lock:
             self._crawls[crawl_id] = crawl
-        try:
-            crawl.baseline_cookies = await crawl.page.context.cookies()
-        except Exception:
-            crawl.baseline_cookies = []
         return {
             "crawl_id": crawl_id,
             "frontier": list(crawl.frontier),
@@ -590,34 +540,6 @@ class SteelCrawlProvider:
         except Exception as e:
             return {"error": str(e)}
 
-    async def _steel_await_auth(self, crawl_id: str, timeout_s: int = 600, poll_ms: int = 2000) -> dict:
-        with self._lock:
-            crawl = self._crawls.get(crawl_id)
-        if not crawl:
-            return {"authenticated": False, "timed_out": False, "reason": "unknown crawl_id"}
-        baseline = {c.get("name") for c in (getattr(crawl, "baseline_cookies", []) or [])}
-        deadline = time.time() + timeout_s
-        stable_since = None
-        while time.time() < deadline:
-            crawl.last_active = time.time()  # keepalive - prevents the reaper killing the idle session
-            try:
-                cookies = await crawl.page.context.cookies()
-                url = crawl.page.url or ""
-            except Exception:
-                cookies, url = [], ""
-            if _has_new_session_cookie(baseline, cookies, crawl.scope) and _url_is_authenticated_app(url, crawl.scope):
-                if stable_since is None:
-                    stable_since = time.time()
-                elif time.time() - stable_since >= 2.0:
-                    return {"authenticated": True, "timed_out": False, "reason": "cookie+url"}
-            else:
-                stable_since = None
-            try:
-                await crawl.page.wait_for_timeout(poll_ms)
-            except Exception:
-                await asyncio.sleep(poll_ms / 1000.0)
-        return {"authenticated": False, "timed_out": True, "reason": "timeout"}
-
     @staticmethod
     async def _extract_links(page) -> list:
         hrefs = await page.eval_on_selector_all("a[href]", _extract_links_expr())
@@ -626,7 +548,7 @@ class SteelCrawlProvider:
     # -- provider contract --------------------------------------------------
 
     async def get_tools(self) -> list:
-        """Return the seven `steel_*` tools as LangChain StructuredTools."""
+        """Return the six `steel_*` tools as LangChain StructuredTools."""
         from langchain_core.tools import StructuredTool  # noqa: PLC0415
 
         specs = [
@@ -672,14 +594,6 @@ class SteelCrawlProvider:
                 "Escape hatch: evaluate arbitrary JavaScript in the current page "
                 "context (sync expression that returns a value). Returns {result} or "
                 "{error}.",
-            ),
-            (
-                "steel_await_auth",
-                self._steel_await_auth,
-                "Block until the operator has authenticated in the live Steel session "
-                "(a new in-scope session cookie on an in-scope non-login URL, debounced "
-                "~2s) or until timeout. Polling keeps the session alive. Returns "
-                "{authenticated, timed_out, reason}.",
             ),
         ]
         return [

@@ -118,8 +118,8 @@ def test_off_frontier_url_is_now_allowed():
     assert "https://app.example.com/dashboard" in crawl.visited
 
 
-def test_credentialed_login_url_navigable_without_frontier_exception():
-    # The credentialed agent navigates straight to an off-target login host; no
+def test_login_url_navigable_without_frontier_exception():
+    # The crawl agent navigates straight to an off-target login host; no
     # login-host frontier exception is needed anymore.
     crawl = _make_crawl()
     p = _provider_with(crawl)

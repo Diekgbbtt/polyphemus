@@ -152,7 +152,7 @@ def _looping_steel_tools_and_llm():
 
 
 def _run_crawl_fn_factory(tools, llm):
-    def run_crawl_fn(target: str, *, scope: list[str]) -> dict:
+    def run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None) -> dict:
         return asyncio.run(
             crawl_agent.run_crawl(target, scope=scope, tools=tools, llm=llm, max_iters=5)
         )

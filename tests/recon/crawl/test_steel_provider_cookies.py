@@ -117,21 +117,3 @@ def test_random_session_opts_region_is_a_known_region():
     from polymerhus.recon.crawl.steel_provider import _REGIONS, _random_session_opts
     for _ in range(20):
         assert _random_session_opts(False)["region"] in _REGIONS
-
-
-def test_login_succeeded_requires_both_cookie_and_off_login_nav():
-    from polymerhus.recon.crawl.steel_provider import login_succeeded
-    scope = ["example.com"]
-    baseline = {"visitor"}
-    new_session = [{"name": "sessionid", "value": "x", "domain": "example.com", "httpOnly": True}]
-
-    # both conditions -> success
-    assert login_succeeded(baseline, new_session, "https://app.example.com/dashboard", scope) is True
-    # new cookie but still on the login path -> NOT success (failed submit)
-    assert login_succeeded(baseline, new_session, "https://login.example.com/login", scope) is False
-    # off-login page but no new session cookie -> NOT success
-    assert login_succeeded(baseline, [{"name": "visitor", "value": "x", "domain": "example.com"}],
-                           "https://app.example.com/home", scope) is False
-    # new cookie scoped to the wrong (out-of-scope) domain -> NOT success
-    assert login_succeeded(baseline, [{"name": "sessionid", "value": "x", "domain": "idp.other.com",
-                                       "httpOnly": True}], "https://app.example.com/home", scope) is False

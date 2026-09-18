@@ -1,20 +1,20 @@
-"""Authenticated agentic crawl: steel_await_auth precreate + viewer URL
-surfacing.
+"""Profile-mount-only agentic crawl (#243, D223-19): the crawl runs under the
+gateway-established auth state and carries no interactive auth path.
 
 Fully mocked - no live Steel/LLM. Covers three seams:
 
-  * `crawl_agent.run_crawl_authenticated` threads a fake `precreate_fn`
-    result (`crawl_id`, `awaiting_status`) into `run_crawl`'s
-    `pre_created_crawl_id` and returns both the manifest and the
-    awaiting_status dict (which carries the viewer URL).
-  * `crawl_pod`'s `crawl` node only calls the authenticated path (and
-    therefore precreate) for a `use_auth` job whose `extra` carries an
-    `auth_context` signal; a non-auth crawl (or an auth job with no
-    `auth_context`) calls the plain `run_crawl_fn` and never precreates.
-    The viewer URL, when present, is recorded on the pod export's `stats`.
-  * `pipeline.run_pipeline` aggregates a crawl job's `viewer_url` (read off
-    its pod exports' `stats`) into the job status row it upserts, so
-    `GET /recon/{run_id}` surfaces it via `per_job[...]stats.viewer_url`.
+* `crawl_pod`'s `crawl` node runs the plain `run_crawl_fn` for every crawl,
+  forwarding the feed-projected `auth_context` cookies (resolved from the
+  store through the bound account identifier) so the provider seeds the
+  browser context - and nothing else. There is no precreate, no viewer URL,
+  no operator prompt: a `use_auth` job with feed material crawls
+  authenticated, a non-auth crawl (or an auth job with no material) crawls
+  anonymously.
+* `crawl_agent.run_crawl` forwards `auth_cookies` to `get_crawl_tools`
+  (the provider seam), unchanged.
+* `pipeline.run_pipeline` binds the persisted Steel profile key plus the
+  cookie subset onto the crawl job's extra, and carries no `viewer_url`
+  into the job status row.
 """
 import asyncio
 
@@ -49,102 +49,7 @@ CANNED_MANIFEST = {
     "js_urls": [],
 }
 
-
-# ---------------------------------------------------------------------------
-# crawl_agent.run_crawl_authenticated
-# ---------------------------------------------------------------------------
-
-
-def test_run_crawl_authenticated_threads_precreated_crawl_id_and_returns_awaiting_status():
-    captured_pre_created_id = {}
-
-    async def fake_precreate_fn(mcp_manager, body):
-        return "crawl-123", {"status": "awaiting_auth", "viewer_url": "https://steel.example/v/abc", "crawl_id": "crawl-123"}
-
-    class FakeTool:
-        def __init__(self, name):
-            self.name = name
-
-    async def run_crawl_capture(target, *, scope, model_role="crawler", tools=None, llm=None,
-                                 max_pages=None, max_depth=None, max_iters=None,
-                                 pre_created_crawl_id=None):
-        captured_pre_created_id["value"] = pre_created_crawl_id
-        return dict(CANNED_MANIFEST)
-
-    manifest, awaiting_status = asyncio.run(
-        crawl_agent.run_crawl_authenticated(
-            "https://app.example.com",
-            scope=["https://app.example.com"],
-            tools=[FakeTool("steel_crawl_start")],
-            precreate_fn=fake_precreate_fn,
-            _run_crawl_fn=run_crawl_capture,
-        )
-    )
-
-    assert captured_pre_created_id["value"] == "crawl-123"
-    assert manifest == CANNED_MANIFEST
-    assert awaiting_status == {
-        "status": "awaiting_auth",
-        "viewer_url": "https://steel.example/v/abc",
-        "crawl_id": "crawl-123",
-    }
-
-
-def test_run_crawl_authenticated_emits_viewer_url_before_blocking_crawl():
-    # EARLY SURFACING: on_awaiting_auth must fire the instant the session is
-    # precreated - BEFORE the blocking crawl runs - so job status can carry the
-    # viewer_url while the operator still has the session window to log in.
-    events = []
-
-    async def fake_precreate_fn(mcp_manager, body):
-        events.append("precreate")
-        return "crawl-123", {"status": "awaiting_auth", "viewer_url": "https://steel.example/v/abc", "crawl_id": "crawl-123"}
-
-    async def run_crawl_capture(target, *, scope, model_role="crawler", tools=None, llm=None,
-                                 max_pages=None, max_depth=None, max_iters=None,
-                                 pre_created_crawl_id=None):
-        events.append("crawl")
-        return dict(CANNED_MANIFEST)
-
-    def on_awaiting_auth(awaiting_status):
-        events.append(("surfaced", awaiting_status.get("viewer_url")))
-
-    manifest, awaiting_status = asyncio.run(
-        crawl_agent.run_crawl_authenticated(
-            "https://app.example.com",
-            scope=["https://app.example.com"],
-            tools=[],
-            precreate_fn=fake_precreate_fn,
-            _run_crawl_fn=run_crawl_capture,
-            on_awaiting_auth=on_awaiting_auth,
-        )
-    )
-
-    # surfaced BEFORE the crawl ran
-    assert events == ["precreate", ("surfaced", "https://steel.example/v/abc"), "crawl"]
-    assert manifest == CANNED_MANIFEST
-
-
-def test_run_crawl_authenticated_best_effort_on_precreate_failure():
-    async def failing_precreate_fn(mcp_manager, body):
-        raise RuntimeError("steel unreachable")
-
-    manifest, awaiting_status = asyncio.run(
-        crawl_agent.run_crawl_authenticated(
-            "https://app.example.com",
-            scope=["https://app.example.com"],
-            tools=[],
-            precreate_fn=failing_precreate_fn,
-        )
-    )
-
-    assert manifest == {"endpoints": [], "js_urls": []}
-    assert awaiting_status is None
-
-
-# ---------------------------------------------------------------------------
-# crawl_pod: auth-signal detection + viewer_url -> PodExport.stats
-# ---------------------------------------------------------------------------
+COOKIES = [{"name": "sid", "value": "S"}]
 
 
 def make_capturing_curate_fn():
@@ -165,117 +70,87 @@ def base_pod_state(job, extra=None):
     }
 
 
-def test_auth_job_with_auth_context_calls_precreate_and_records_viewer_url():
-    precreate_calls = []
+# ---------------------------------------------------------------------------
+# crawl_pod: profile-mount only - feed cookies in, plain crawl out
+# ---------------------------------------------------------------------------
 
-    def run_crawl_authenticated_fn(target, *, scope, on_awaiting_auth=None):
-        precreate_calls.append((target, scope))
-        return dict(CANNED_MANIFEST), {"status": "awaiting_auth", "viewer_url": "https://steel.example/v/abc", "crawl_id": "crawl-123"}
 
-    def run_crawl_fn(target, *, scope):
-        raise AssertionError("non-auth run_crawl_fn must not be called on the auth path")
+def test_auth_job_with_feed_cookies_forwards_them_and_crawls_plain():
+    run_calls = []
+
+    def run_crawl_fn(target, *, scope, auth_cookies=None):
+        run_calls.append((target, scope, auth_cookies))
+        return dict(CANNED_MANIFEST)
 
     pod = crawl_pod.build_crawl_pod(
         run_crawl_fn=run_crawl_fn,
-        run_crawl_authenticated_fn=run_crawl_authenticated_fn,
         parse_fn=lambda stdout: [],
         triage_fn=lambda exec_result, assets, job: [],
         curate_fn=make_capturing_curate_fn(),
     )
 
-    result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": []}}))
+    result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": COOKIES}}))
     export = result["export"]
 
-    assert len(precreate_calls) == 1
-    # scope folds to the registrable domain at the crawl-node resolution point (Change A)
-    assert precreate_calls[0] == ("https://app.example.com", ["example.com"])
+    # scope folds to the registrable domain at the crawl-node resolution point
+    assert run_calls == [("https://app.example.com", ["example.com"], COOKIES)]
     assert export.verdict == "success"
-    assert export.stats == {"viewer_url": "https://steel.example/v/abc"}
+    assert not (export.stats or {}).get("viewer_url")  # no operator prompt, ever
 
 
-def test_non_auth_crawl_skips_precreate():
-    precreate_calls = []
+def test_non_auth_crawl_runs_anonymous():
+    run_calls = []
 
-    def run_crawl_authenticated_fn(target, *, scope, on_awaiting_auth=None):
-        precreate_calls.append((target, scope))
-        return dict(CANNED_MANIFEST), {"viewer_url": "should-not-be-called"}
-
-    def run_crawl_fn(target, *, scope):
+    def run_crawl_fn(target, *, scope, auth_cookies=None):
+        run_calls.append(auth_cookies)
         return dict(CANNED_MANIFEST)
 
     pod = crawl_pod.build_crawl_pod(
         run_crawl_fn=run_crawl_fn,
-        run_crawl_authenticated_fn=run_crawl_authenticated_fn,
         parse_fn=lambda stdout: [],
         triage_fn=lambda exec_result, assets, job: [],
         curate_fn=make_capturing_curate_fn(),
     )
 
     result = pod.invoke(base_pod_state(NON_AUTH_JOB, extra={}))
-    export = result["export"]
-
-    assert precreate_calls == []
-    assert export.verdict == "success"
-    assert not (export.stats or {}).get("viewer_url")
+    assert result["export"].verdict == "success"
+    assert run_calls == [[]]
 
 
-def test_auth_job_without_auth_context_skips_precreate():
-    precreate_calls = []
+def test_auth_job_without_material_runs_anonymous():
+    # A use_auth job whose account resolved to nothing: no cookies present,
+    # so the crawl runs anonymous (fail-open) rather than prompting.
+    run_calls = []
 
-    def run_crawl_authenticated_fn(target, *, scope, on_awaiting_auth=None):
-        precreate_calls.append((target, scope))
-        return dict(CANNED_MANIFEST), {"viewer_url": "should-not-be-called"}
-
-    def run_crawl_fn(target, *, scope):
+    def run_crawl_fn(target, *, scope, auth_cookies=None):
+        run_calls.append(auth_cookies)
         return dict(CANNED_MANIFEST)
 
     pod = crawl_pod.build_crawl_pod(
         run_crawl_fn=run_crawl_fn,
-        run_crawl_authenticated_fn=run_crawl_authenticated_fn,
         parse_fn=lambda stdout: [],
         triage_fn=lambda exec_result, assets, job: [],
         curate_fn=make_capturing_curate_fn(),
     )
 
     result = pod.invoke(base_pod_state(AUTH_JOB, extra={}))
-    export = result["export"]
-
-    assert precreate_calls == []
-    assert export.verdict == "success"
+    assert result["export"].verdict == "success"
+    assert run_calls == [[]]
 
 
-def test_crawl_node_status_sink_writes_viewer_url_early_to_registry():
-    # The crawl node, on the interactive-auth path, must call the injected
-    # status_sink(run_id, phase, job, viewer_url) as soon as the session is
-    # precreated - the mid-flight registry write that surfaces viewer_url to
-    # GET /recon/{run_id} before the blocking crawl finishes.
-    sink_calls = []
-
-    def run_crawl_authenticated_fn(target, *, scope, on_awaiting_auth=None):
-        # emulate the real fn: fire the early callback, THEN "block" and return
-        if on_awaiting_auth is not None:
-            on_awaiting_auth({"viewer_url": "https://steel.example/v/early", "crawl_id": "c1"})
-        return dict(CANNED_MANIFEST), {"viewer_url": "https://steel.example/v/early", "crawl_id": "c1"}
-
-    def status_sink(run_id, phase, job, viewer_url):
-        sink_calls.append((run_id, phase, job, viewer_url))
+def test_crawl_node_best_effort_on_run_failure():
+    def run_crawl_fn(target, *, scope, auth_cookies=None):
+        raise RuntimeError("steel down")
 
     pod = crawl_pod.build_crawl_pod(
-        run_crawl_fn=lambda target, *, scope: (_ for _ in ()).throw(AssertionError("auth path expected")),
-        run_crawl_authenticated_fn=run_crawl_authenticated_fn,
+        run_crawl_fn=run_crawl_fn,
         parse_fn=lambda stdout: [],
         triage_fn=lambda exec_result, assets, job: [],
         curate_fn=make_capturing_curate_fn(),
-        status_sink=status_sink,
     )
 
-    state = base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": []}})
-    state["run_id"] = "run-9"
-    state["phase"] = 4
-    result = pod.invoke(state)
-
-    assert sink_calls == [("run-9", 4, "steel_crawl", "https://steel.example/v/early")]
-    assert result["export"].stats == {"viewer_url": "https://steel.example/v/early"}
+    result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": COOKIES}}))
+    assert result["export"].verdict == "failed"
 
 
 # ---------------------------------------------------------------------------
@@ -287,12 +162,12 @@ def test_pod_export_stats_defaults_to_none_and_accepts_dict():
     export = PodExport(input_asset={}, verdict="success")
     assert export.stats is None
 
-    export_with_stats = PodExport(input_asset={}, verdict="success", stats={"viewer_url": "x"})
-    assert export_with_stats.stats == {"viewer_url": "x"}
+    export_with_stats = PodExport(input_asset={}, verdict="success", stats={"commands": ["x"]})
+    assert export_with_stats.stats == {"commands": ["x"]}
 
 
 # ---------------------------------------------------------------------------
-# pipeline: viewer_url pass-through into recon_jobs.stats
+# pipeline: steel profile binding, and no viewer_url in job stats
 # ---------------------------------------------------------------------------
 
 
@@ -312,16 +187,56 @@ class FakeRegistry:
         )
 
 
-def test_pipeline_surfaces_crawl_job_viewer_url_in_job_stats():
+def test_pipeline_binds_steel_profile_and_cookies_to_crawl(tmp_path):
+    from polymerhus.app.auth.store import AuthStore
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
+
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "proj1", overview={"login_endpoint": "https://x/login"},
+        accounts={"alice": {
+            "credentials": {"username": "u", "password": "p",
+                            "login_url": "https://x/login"},
+            "steel": {"profile": "proj1-alice"},
+            "snapshot": {"cookies": COOKIES},
+        }})
+
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            return GatewayVerdict(outcome="authenticated", account="alice",
+                                  branch="request", rationale="t")
+
+        async def stop(self): pass
+
+    seen = {}
+
+    async def run_job(job, input_assets, *, run_id, phase, extra):
+        seen[job.tool] = extra
+        return [PodExport(input_asset={}, verdict="success")]
+
+    asyncio.run(
+        pipeline.run_pipeline(
+            "proj1",
+            run_id="run1",
+            job_subset=["subfinder", "httpx", "steel_crawl"],
+            run_job=run_job,
+            load_settings=lambda project_id: {"target_domain": "t.com"},
+            registry=FakeRegistry(),
+            read_assets=lambda node_type, project_id: [{"name": "seed"}],
+            orchestrator_factory=lambda run_id: _Gateway(),
+            auth_store=store,
+        )
+    )
+
+    assert seen["steel_crawl"]["steel_profile"] == "proj1-alice"
+    assert seen["steel_crawl"]["auth_context"] == {"cookies": COOKIES}
+    assert seen["steel_crawl"]["auth_account"] == "alice"
+
+
+def test_pipeline_carries_no_viewer_url_into_crawl_job_stats():
     async def run_job(job, input_assets, *, run_id, phase, extra):
         if job.tool == "steel_crawl":
-            return [
-                PodExport(
-                    input_asset={},
-                    verdict="success",
-                    stats={"viewer_url": "https://steel.example/v/abc"},
-                )
-            ]
+            return [PodExport(input_asset={}, verdict="success")]
         return [PodExport(input_asset={}, verdict="success")]
 
     registry = FakeRegistry()
@@ -341,61 +256,4 @@ def test_pipeline_surfaces_crawl_job_viewer_url_in_job_stats():
 
     crawl_calls = [c for c in registry.upsert_job_calls if c["job"] == "steel_crawl" and c["status"] != "in_progress"]
     assert crawl_calls, "expected a terminal upsert_job call for steel_crawl"
-    assert crawl_calls[-1]["stats"]["viewer_url"] == "https://steel.example/v/abc"
-
-
-# ---------------------------------------------------------------------------
-# crawl_pod: non-interactive cookie injection (cookies present -> skip viewer)
-# ---------------------------------------------------------------------------
-
-
-def test_auth_job_with_cookies_injects_and_skips_precreate():
-    precreate_calls = []
-    run_calls = []
-
-    def run_crawl_authenticated_fn(target, *, scope, on_awaiting_auth=None):
-        precreate_calls.append(target)
-        return dict(CANNED_MANIFEST), {"viewer_url": "should-not-be-used"}
-
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
-        run_calls.append((target, scope, auth_cookies))
-        return dict(CANNED_MANIFEST)
-
-    pod = crawl_pod.build_crawl_pod(
-        run_crawl_fn=run_crawl_fn,
-        run_crawl_authenticated_fn=run_crawl_authenticated_fn,
-        parse_fn=lambda stdout: [],
-        triage_fn=lambda exec_result, assets, job: [],
-        curate_fn=make_capturing_curate_fn(),
-    )
-
-    cookies = [{"name": ".AspNet.Cookies", "value": "TOK"}]
-    result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": cookies}}))
-
-    assert precreate_calls == []  # non-interactive path, no human viewer
-    # scope folds to the registrable domain at the crawl-node resolution point (Change A)
-    assert run_calls == [("https://app.example.com", ["example.com"], cookies)]
-    assert result["export"].verdict == "success"
-
-
-def test_auth_job_empty_cookies_still_uses_interactive_path():
-    precreate_calls = []
-
-    def run_crawl_authenticated_fn(target, *, scope, on_awaiting_auth=None):
-        precreate_calls.append(target)
-        return dict(CANNED_MANIFEST), {"viewer_url": "https://steel.example/v/abc", "crawl_id": "c1"}
-
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
-        raise AssertionError("empty cookies must fall to the interactive path")
-
-    pod = crawl_pod.build_crawl_pod(
-        run_crawl_fn=run_crawl_fn,
-        run_crawl_authenticated_fn=run_crawl_authenticated_fn,
-        parse_fn=lambda stdout: [],
-        triage_fn=lambda exec_result, assets, job: [],
-        curate_fn=make_capturing_curate_fn(),
-    )
-
-    result = pod.invoke(base_pod_state(AUTH_JOB, extra={"auth_context": {"cookies": []}}))
-    assert precreate_calls == ["https://app.example.com"]
-    assert result["export"].stats == {"viewer_url": "https://steel.example/v/abc"}
+    assert not ((crawl_calls[-1]["stats"] or {}).get("viewer_url"))

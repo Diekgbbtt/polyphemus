@@ -1,7 +1,7 @@
 """Steel agentic-crawl tool provider.
 
-Correct architecture (operator correction, SP4). The seven `steel_*` MCP tools
-(`steel_crawl_start`/`navigate`/`frontier`/`eval`/`click`/`crawl_finish`/`await_auth`)
+Correct architecture (operator correction, SP4). The six `steel_*` MCP tools
+(`steel_crawl_start`/`navigate`/`frontier`/`eval`/`click`/`crawl_finish`)
 are provided by a Steel MCP tool provider instantiated **in-process** - they are
 NOT reached over a remote MCP HTTP host. steel.dev is the authenticated CLOUD
 BROWSER; the provider opens a steel.dev session and drives it with Playwright
@@ -36,7 +36,6 @@ CRAWL_TOOL_NAMES = frozenset({
     "steel_eval",
     "steel_click",
     "steel_crawl_finish",
-    "steel_await_auth",
 })
 
 
@@ -74,9 +73,10 @@ def _default_client_factory(auth_cookies=None):
     only when `steel_crawl_start` is invoked - so constructing the provider
     performs no network I/O.
 
-    `auth_cookies` (a list of `{name, value, [domain], [path]}` dicts, from the
-    project's `auth_context.cookies`) is forwarded to the provider, which seeds
-    the browser context with them before the crawl (non-interactive auth).
+    `auth_cookies` (a list of `{name, value, [domain], [path]}` dicts, the
+    feed-projected persisted session cookies) is forwarded to the provider,
+    which seeds the browser context with them before the crawl
+    (profile-mount-only auth).
 
     Raises `SteelProviderUnavailable` when the provider's runtime dependencies
     (`playwright` and `steel-sdk`) are not importable in this build, so the
@@ -107,8 +107,9 @@ async def get_crawl_tools(*, client_factory=None, auth_cookies=None) -> list:
 
     The default provider (`_default_client_factory`) exposes
     `async get_tools() -> list`; the result is filtered to `CRAWL_TOOL_NAMES`.
-    `auth_cookies` (from the project's `auth_context.cookies`) is threaded to the
-    default provider so the browser context is seeded for non-interactive auth.
+    `auth_cookies` (the feed-projected persisted session cookies) is threaded
+    to the default provider so the browser context is seeded for
+    profile-mount-only auth.
     An injected `client_factory` stays a zero-arg callable (tests build the
     provider themselves) and receives nothing. Raises `SteelNotConfigured` when
     the steel.dev credential is absent.
