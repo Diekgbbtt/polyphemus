@@ -268,8 +268,13 @@ JOBS: dict[str, JobSpec] = {
             # baseline junk requests so a SPA soft-404 catch-all (every path -> 200,
             # uniform body) is filtered while genuinely-distinct paths like /api
             # still surface.
+            # #243: the steering-fed `{rate_flags}` throttle slot retired with
+            # the mid-run steering machinery (D223-12) - request phases run
+            # unthrottled in the interim (the #238 rate-limit work lands the
+            # profile-driven replacement); arjun's static `--rate-limit 5`
+            # below is the only request cap until then.
             "ffuf -u {target}/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt "
-            "-mc 200,403 -ac -o /work/{session}/ffuf.json -of json {rate_flags} {auth_flags} "
+            "-mc 200,403 -ac -o /work/{session}/ffuf.json -of json {auth_flags} "
             ">/dev/null && cat /work/{session}/ffuf.json"
         ),
         produces=["Endpoint"],

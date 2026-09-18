@@ -694,11 +694,10 @@ def test_job_stats_include_per_pod_commands(monkeypatch):
     assert captured["subfinder"]["commands"] == ["subfinder -d example.com -all -json -silent"]
 
 
-def test_no_per_phase_routing_inputs_pass_unfiltered_and_signals_threaded(monkeypatch):
-    """#223 T3 (#242): the per-phase routing turns are retired - inputs pass
-    unfiltered even when a legacy `decide_routing` is injected (the seam is
-    accepted but no longer consulted; #243 removes it). The steering-signal
-    threading (`extra["steering"]`) stays until T4 removes it."""
+def test_no_mid_run_steering_inputs_pass_unfiltered_and_no_steering_key(monkeypatch):
+    """#243 (T4): the mid-run steering machinery is removed entirely - no
+    per-phase routing turn, no signal refresh, no per-job steering input.
+    Inputs pass unfiltered and no `steering` key rides any job's extra."""
     import asyncio
     from polymerhus.recon.control import pipeline
 
@@ -713,11 +712,11 @@ def test_no_per_phase_routing_inputs_pass_unfiltered_and_signals_threaded(monkey
         return []
 
     captured_inputs = {}
-    captured_steering = {}
+    captured_extras = {}
 
     async def fake_run_job(job, input_assets, *, run_id, phase, extra):
         captured_inputs[job.tool] = [a.get("url") or a.get("name") for a in input_assets]
-        captured_steering[job.tool] = extra.get("steering")
+        captured_extras[job.tool] = dict(extra)
         return []
 
     class FakeRegistry:
@@ -733,9 +732,6 @@ def test_no_per_phase_routing_inputs_pass_unfiltered_and_signals_threaded(monkey
 
         async def stop(self): pass
 
-    signals = [{"url": X, "macro_kind": "waf_protected", "evidence": "Incapsula"}]
-    seen = []
-
     monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
 
     asyncio.run(pipeline.run_pipeline(
@@ -745,15 +741,13 @@ def test_no_per_phase_routing_inputs_pass_unfiltered_and_signals_threaded(monkey
         load_settings=lambda pid: {"target_domain": "*.example.com"},
         registry=FakeRegistry(),
         read_assets=fake_read_assets,
-        read_steering_signals=lambda project_id, driver=None: signals,
-        # the legacy seam would have routed X away from katana: never consulted
-        decide_routing=lambda sigs, phase_jobs, llm=None: seen.append((sigs, phase_jobs)) or {"katana": [X]},
         orchestrator_factory=lambda run_id: _Gateway(),
     ))
 
-    assert seen == []                                # the retired seam is dead
     assert set(captured_inputs["katana"]) == {X, Y}  # inputs pass unfiltered
-    assert captured_steering["katana"] == signals    # signals still threaded (T4)
+    for tool, extra in captured_extras.items():
+        assert "steering" not in extra, f"{tool} carries a steering key"  # T4 removed
+    assert "read_steering_signals" not in dir(pipeline)  # the reader is gone too
 
 
 def test_pipeline_default_seam_is_the_gateway_actor_and_reaps_it(monkeypatch, tmp_path):
@@ -843,7 +837,6 @@ def test_pipeline_default_seam_is_the_gateway_actor_and_reaps_it(monkeypatch, tm
         load_settings=lambda pid: {"target_domain": "*.example.com"},
         registry=FakeRegistry(),
         read_assets=fake_read_assets,
-        read_steering_signals=lambda project_id, driver=None: [],
     ))
 
     assert spawned == ["r1"]                    # ONE actor per run (production default)

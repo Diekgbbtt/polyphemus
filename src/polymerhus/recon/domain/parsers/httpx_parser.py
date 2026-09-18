@@ -135,9 +135,9 @@ def parse(stdout: str) -> list[AssetDelta]:
         # edge from the BaseURL: (BaseURL)-[:HAS_HEADER]->(Header). The
         # `direction="response"` marker is structural, not documentary: Header
         # nodes are OBSERVED surface (what the host sent us) and must never be
-        # replayed into requests - request headers come only from the
-        # operator's auth_context (pod._auth_header). A future request-side
-        # Header would need direction="request", never a bare node.
+        # replayed into requests - request headers come only from the feed's
+        # store-resolved account projection (control.auth_feed). A future
+        # request-side Header would need direction="request", never a bare node.
         headers = entry.get("header") or {}
         if isinstance(headers, dict):
             for name, value in headers.items():

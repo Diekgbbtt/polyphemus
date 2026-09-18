@@ -50,9 +50,10 @@ def test_ffuf_template_writes_json_to_file_and_cats_it_with_autocalibration():
     # `&&` is kept so a real ffuf failure still propagates a non-zero exit.
     assert ">/dev/null && cat /work/{session}/ffuf.json" in template
     assert "-ac" in template
-    # feed + rate slots preserved
+    # feed slot preserved for the store-resolved auth flags; the steering-fed
+    # {rate_flags} throttle slot retired with the mid-run steering (#243)
     assert "{auth_flags}" in template
-    assert "{rate_flags}" in template
+    assert "{rate_flags}" not in template
 
 
 def test_arjun_template_seeds_default_suppresses_stdout_and_reads_file():

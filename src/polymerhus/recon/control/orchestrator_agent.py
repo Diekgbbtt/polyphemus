@@ -39,8 +39,6 @@ import asyncio
 import logging
 from typing import Any
 
-from pydantic import BaseModel, Field
-
 from polymerhus.recon.control.authn_loop import (
     GatewayVerdict,
     PROBE_TOOLS,
@@ -71,33 +69,6 @@ def _load_gateway_prompt() -> str:
             Path(__file__).resolve().parent / "prompts" / "auth-gateway.md"
         ).read_text(encoding="utf-8")
     return _GATEWAY_PROMPT
-
-
-# --- the retired routing schema (removal belongs to #243, T4) -------------------
-
-# #243 (T4, removal): the routing schema and the exclusion map retire with the
-# mid-run steering machinery (D223-12). T3 (#242) only retires the per-phase
-# routing TURNS - the actor's `response_format` is now the gateway verdict and
-# the pipeline no longer calls per phase. Left in place, dead, until T4.
-
-
-class _JobExclusion(BaseModel):
-    job: str
-    exclude_urls: list[str] = Field(default_factory=list)
-
-
-class RoutingDecision(BaseModel):
-    exclusions: list[_JobExclusion] = Field(default_factory=list)
-    rationale: str = ""
-
-
-def _exclusions_map(decision: "RoutingDecision | None", phase_jobs: list[str]) -> dict[str, list[str]]:
-    """Map a parsed `RoutingDecision` to {job_name: [urls]} filtered to the phase's
-    jobs. A `None` decision (parse failure, dead actor) maps to {} - the neutral
-    fail-open decision."""
-    if decision is None:
-        return {}
-    return {e.job: e.exclude_urls for e in decision.exclusions if e.job in phase_jobs}
 
 
 # --- the authn-loop harness middleware (the hunting pod-harness precedent) ------
@@ -602,6 +573,5 @@ __all__ = [
     "GatewayStop",
     "GATEWAY_AWAIT_TIMEOUT_S",
     "ReconOrchestratorActor",
-    "RoutingDecision",
     "build_authn_loop_middleware",
 ]

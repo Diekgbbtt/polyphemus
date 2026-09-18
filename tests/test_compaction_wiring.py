@@ -71,9 +71,9 @@ def test_all_three_proposers_pass_compaction_middleware(monkeypatch):
         assert "_skill_index" not in {type(m).__name__ for m in seen[role]}
 
 
-# --- the recon-pod roles pass a shared per-role middleware ---------------------
+# --- the recon-pod triager passes its shared per-role middleware -----------------
 
-def test_recon_pod_configurator_and_triager_pass_compaction_middleware(monkeypatch):
+def test_recon_pod_triager_passes_compaction_middleware(monkeypatch):
     from polymerhus.app.llm.session_address import PodSession, SessionContext
     from polymerhus.recon.domain import pod
     from polymerhus.recon.domain.types import ExecResult, JobSpec
@@ -93,20 +93,17 @@ def test_recon_pod_configurator_and_triager_pass_compaction_middleware(monkeypat
     token = pod._pod_ctx().set(ctx)
     try:
         pod.default_triage_fn(exec_result, [], job)
-        pod.default_configure_fn(job, {"url": "https://a.example"}, [])
     finally:
         pod._pod_ctx().reset(token)
 
-    assert set(seen) == {"triager", "configurator"}
-    # The two recon-pod roles differ by roster state (ADR A9): the triager is
-    # BOUND (it reads delivered web artefacts, so compaction + the L1 index),
-    # the configurator is EXEMPT (compaction alone - no dead skill surface).
+    # The per-pod throttle turn retired with the steering machinery (#243),
+    # so only the triager's stateful turn remains - still carrying the
+    # compaction middleware plus the L1 skill index (ADR A9: the triager is
+    # BOUND - it reads delivered web artefacts).
+    assert set(seen) == {"triager"}
     assert len(seen["triager"]) == 2
     _assert_compaction_middleware(seen["triager"][0])
     assert type(seen["triager"][1]).__name__ == "_skill_index"
-    assert len(seen["configurator"]) == 1
-    _assert_compaction_middleware(seen["configurator"][0])
-    assert "_skill_index" not in {type(m).__name__ for m in seen["configurator"]}
 
 
 def test_cached_role_middleware_is_shared_per_role():

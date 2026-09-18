@@ -30,7 +30,6 @@ NO gateway injection seam; tests exercise this real boundary.
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import time
 from datetime import datetime, timezone
@@ -63,27 +62,6 @@ _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-# #243 (T4, removal): the per-phase routing dispatch retires with the
-# mid-run steering machinery (D223-12). T3 (#242) only stops CALLING it - the
-# pipeline no longer takes per-phase routing turns. Left in place, dead,
-# until T4.
-async def _phase_exclusions(decide, signals: list[dict], phase_jobs: list[str]) -> dict[str, list[str]]:
-    """Resolve one phase's routing decision through the `run_pipeline` steering seam.
-
-    Empty signals short-circuit to {} (the orchestrator is only invoked with a
-    non-empty signal list). The seam is polymorphic: an injected SYNC callable
-    (the historical one-shot `decide_routing` lambda) is offloaded via
-    `to_thread`; an async callable (the actor client method,
-    feat/async-actor-agents) is awaited. Either way the decision is
-    {job_name: [urls to exclude]} and a steering blip degrades adaptivity, never
-    the run (fail-open is the collaborator's own contract)."""
-    if not signals or not phase_jobs:
-        return {}
-    if inspect.iscoroutinefunction(decide):
-        return await decide(signals, phase_jobs)
-    return await asyncio.to_thread(decide, signals, phase_jobs)
 
 
 def _exec_window(t0: float, started_at: str) -> dict:
@@ -242,37 +220,6 @@ def read_assets(
     return apply_selector(assets, where)
 
 
-def read_steering_signals(project_id: str, *, driver=None) -> list[dict]:
-    """Return the live WAF steering signals (fail-open to []).
-
-    Each signal is {"url", "macro_kind", "evidence"} for a BaseURL carrying a
-    WAF observation. A DELIBERATELY separate read from read_assets, which is
-    label-allowlist-clean and must never read Observation nodes. Any error ->
-    [], so a steering-read blip degrades adaptivity, never the run (mirrors the
-    heartbeat/upsert_job best-effort ethos). WAF observations anchor to BaseURL
-    with identity {"url": ...} (curator ANCHOR_ALLOWLIST)."""
-    from polymerhus.recon.control.steering import WAF_MACRO_KINDS
-    try:
-        if driver is None:
-            from polymerhus.app.clients import neo4j_client
-            driver = neo4j_client._driver
-        query = (
-            "MATCH (a:BaseURL {project_id: $project_id})-[:HAS_OBSERVATION]->"
-            "(o:Observation {project_id: $project_id}) "
-            "WHERE o.macro_kind IN $kinds "
-            "RETURN DISTINCT a.url AS url, o.macro_kind AS macro_kind, o.evidence AS evidence"
-        )
-        with driver.session() as session:
-            result = session.run(query, project_id=project_id, kinds=sorted(WAF_MACRO_KINDS))
-            return [
-                {"url": r["url"], "macro_kind": r["macro_kind"], "evidence": r["evidence"]}
-                for r in result if r["url"]
-            ]
-    except Exception:
-        logger.warning("read_steering_signals failed for %s; no adaptation", project_id, exc_info=True)
-        return []
-
-
 async def _heartbeat_loop(run_id: str) -> None:
     """Refresh the run heartbeat every HEARTBEAT_TICK_SECONDS until cancelled."""
     try:
@@ -307,8 +254,6 @@ async def run_pipeline(
     load_settings=None,
     registry=None,
     read_assets=None,
-    read_steering_signals=None,
-    decide_routing=None,
     orchestrator_factory=None,
     auth_store=None,
     feed_mode: str | None = None,
@@ -321,12 +266,6 @@ async def run_pipeline(
     independent analysis consumer for this run; when False (the recon-only
     dispatch) recon only pushes chunks to the run's FIFO and a later analysis-only
     dispatch drains them. Either way recon NEVER waits on analysis.
-
-    `decide_routing` is RETIRED (the per-phase routing turns are gone with the
-    routing schema, #223 T3 #242): accepted for signature compatibility but no
-    longer consulted - inputs pass unfiltered. #243 (T4) removes the parameter
-    with the rest of the steering machinery (`read_steering_signals`,
-    `extra["steering"]`, the exclusion map).
 
     The auth gateway (#223, T3 #242) is the production default
     (feat/stateful-recon-job-auth): the recon-orchestrator starts
@@ -356,8 +295,6 @@ async def run_pipeline(
         from polymerhus.app.clients import pg as registry
     if read_assets is None:
         read_assets = globals()["read_assets"]
-    if read_steering_signals is None:
-        read_steering_signals = globals()["read_steering_signals"]
 
     orchestrator = None
     # The gateway starts deterministically (D223-8): the actor is ALWAYS
@@ -440,7 +377,6 @@ async def run_pipeline(
         await asyncio.to_thread(curate, [root], [], project_id)
 
     hb = asyncio.create_task(_heartbeat_loop(run_id))
-    signals: list[dict] = []
     # The gateway turn (D223-8): deterministic, before phase 0, under
     # heartbeat (the reaper window, D223-10) - and with no signal gate (the
     # empty-signal short-circuit must never skip it). The verdict configures
@@ -591,11 +527,6 @@ async def run_pipeline(
                                 scope["seed_host"] if scope["mode"] == "host"
                                 else registrable_domain(seed)
                             )
-                    if signals:
-                        # #243 (T4, removal): the per-job steering payload
-                        # retires with the mid-run steering machinery (D223-12)
-                        # - left threaded until T4.
-                        extra["steering"] = signals
 
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "in_progress"
@@ -733,7 +664,6 @@ async def run_pipeline(
             # katana/ffuf/kiterunner/graphql-cop/paramspider/steel_crawl).
             for name in job_configs:
                 await _run_one(name)
-            signals = await asyncio.to_thread(read_steering_signals, project_id)
 
         # #75: recon and analysis are DECOUPLED. For the INLINE rollback path only,
         # analysis ran on this task, so record its stats onto the recon run as

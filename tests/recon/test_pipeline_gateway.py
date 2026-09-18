@@ -104,19 +104,24 @@ def _verdict_call(**fields):
 
 def _account(name="alice"):
     return {name: {"credentials": {"username": "u", "password": "p",
-                                   "login_url": "https://x/login"}}}
+                                   "login_url": "https://x/login"},
+                   "tokens": {"Authorization": {"value": "Bearer T",
+                                                "location": "header"},
+                              "vault": {"value": "VAULT-SECRET",
+                                        "location": "storage"}},
+                   "steel": {"profile": "p1-alice"},
+                   "snapshot": {"cookies": [{"name": "sid", "value": "S"}]}}}
 
 
 def _run(calls, factory, fake_run_job, fake_read_assets, *, registry=None,
-         settings=None, subset=None, **kw):
+         settings=None, subset=None, auth_store=None, **kw):
     registry = registry or _FakeRegistry()
     asyncio.run(pipeline.run_pipeline(
         "p1", run_id="r1", job_subset=subset or ["subfinder", "httpx"],
         run_job=fake_run_job,
         load_settings=lambda pid: settings or {"target_domain": "*.example.com"},
         registry=registry, read_assets=fake_read_assets,
-        read_steering_signals=lambda project_id, driver=None: [],
-        orchestrator_factory=factory, **kw,
+        orchestrator_factory=factory, auth_store=auth_store, **kw,
     ))
     return registry
 
@@ -124,10 +129,10 @@ def _run(calls, factory, fake_run_job, fake_read_assets, *, registry=None,
 # --- deterministic start --------------------------------------------------------
 
 
-def test_gateway_runs_before_phase_zero_with_empty_signals(tmp_path):
+def test_gateway_runs_before_phase_zero(tmp_path):
     """The gateway is the deterministic first step: the actor is constructed
-    on run start and its turn resolves before any job runs - and the retired
-    empty-signal short-circuit cannot skip it (signals are empty here)."""
+    on run start and its turn resolves before any job runs - unconditionally
+    (no signal gate stands in front of it)."""
     store, calls, factory, fake_run_job, fake_read_assets = _harness(
         tmp_path, model_steps=[[_verdict_call()]],
         overview={"login_endpoint": "https://x/login"}, accounts=_account())
@@ -221,19 +226,24 @@ def test_browser_only_without_a_browser_path_fails_honestly(tmp_path, caplog):
 def test_account_identifier_bound_for_use_auth_jobs_only(tmp_path):
     """D223-19: the selected account's IDENTIFIER - never its material - is
     bound into the pipeline state for `use_auth` jobs; other jobs get
-    nothing."""
+    nothing. Each phase's tool configuration resolves the store material at
+    assembly and projects only the request subset - login credentials and
+    storage-bound tokens never ride."""
     store, calls, factory, fake_run_job, fake_read_assets = _harness(
         tmp_path, model_steps=[[_verdict_call()]],
         overview={"login_endpoint": "https://x/login"}, accounts=_account())
 
-    _run(calls, factory, fake_run_job, fake_read_assets)
+    _run(calls, factory, fake_run_job, fake_read_assets, auth_store=store)
 
     httpx_extra = calls["httpx"]["extra"]
     assert httpx_extra.get("auth_account") == "alice"
+    assert httpx_extra.get("auth_context") == {
+        "cookies": [{"name": "sid", "value": "S"}],
+        "Authorization": "Bearer T"}
     subfinder_extra = calls["subfinder"]["extra"]
     assert "auth_account" not in subfinder_extra
     blob = repr(calls)
-    assert "password" not in blob and "tokens" not in blob  # identifier only
+    assert "password" not in blob and "VAULT-SECRET" not in blob  # never rides
 
 
 def test_anonymous_verdict_runs_all_phases_without_account(tmp_path):
@@ -318,15 +328,21 @@ def test_degraded_gateway_fails_open_with_all_phases(tmp_path, caplog):
     assert "fail-open" in caplog.text.lower()
 
 
-def test_legacy_routing_seam_is_not_consulted(tmp_path):
-    """The per-phase routing turns are retired: an injected legacy
-    `decide_routing` is never called and inputs pass unfiltered."""
-    seen = []
+def test_mid_run_steering_seam_is_gone(tmp_path):
+    """#243: the mid-run steering machinery is removed entirely - the retired
+    per-phase routing seam no longer exists on the pipeline signature, and
+    inputs pass unfiltered."""
+    import inspect
+
+    assert "decide_routing" not in inspect.signature(pipeline.run_pipeline).parameters
+    assert "read_steering_signals" not in inspect.signature(pipeline.run_pipeline).parameters
+    assert not hasattr(pipeline, "read_steering_signals")
+
     store, calls, factory, fake_run_job, fake_read_assets = _harness(
         tmp_path, model_steps=[[_verdict_call()]],
         overview={"login_endpoint": "https://x/login"}, accounts=_account())
 
     _run(calls, factory, fake_run_job, fake_read_assets,
-         decide_routing=lambda sigs, jobs: seen.append((sigs, jobs)) or {"httpx": ["https://app.example.com"]})
+         subset=["subfinder", "httpx"])
 
-    assert seen == []
+    assert {tool for _, tool in calls["order"]} == {"subfinder", "httpx"}

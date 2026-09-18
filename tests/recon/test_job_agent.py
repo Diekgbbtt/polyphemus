@@ -133,7 +133,7 @@ def test_job_agent_passes_extra_through_without_restripping_auth(monkeypatch):
     # injects auth_context only for use_auth jobs. The job agent no longer
     # re-decides it - it threads `extra` through as the pipeline built it. The
     # pipeline-level guarantee is covered by test_pipeline.py::
-    # test_auth_context_only_passed_to_use_auth_jobs.
+    # test_feed_projects_store_material_only_to_use_auth_jobs.
     monkeypatch.setattr(ja, "MAX_PODS", 5)
     pod_invoke = make_recording_pod_invoke()
     agent = ja.build_job_agent(pod_invoke=pod_invoke, preprocess_fn=ja.default_preprocess_fn)
@@ -266,27 +266,26 @@ def test_default_job_agent_is_import_safe_module_level_instance():
     assert callable(ja.default_preprocess_fn)
 
 
-def test_preprocess_threads_steering_signals_into_pod_extras():
-    # #94: per-asset throttling moved from the job agent (decide_pod_selection,
-    # #81) into the POD CONFIGURATOR. The recon-job agent is purely
-    # deterministic again: the steering signals are threaded through to every
-    # pod_input verbatim, and the pod itself decides how to run.
+def test_preprocess_threads_extra_through_to_pod_inputs_verbatim():
+    """#243: mid-run steering retired - the recon-job agent stays purely
+    deterministic: the orchestration `extra` (whatever the pipeline bound)
+    is threaded through to every pod_input verbatim, and the pod fills its
+    command from it. No job-level throttling, no per-pod steering input."""
     from polymerhus.recon.control import job_agent
     from polymerhus.recon.domain.types import JobSpec
 
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
                   produces=["Endpoint"], consumes="BaseURL")
-    signals = [{"url": "https://a", "macro_kind": "waf_protected", "evidence": "e"}]
     pod_inputs = job_agent.default_preprocess_fn(
         [{"url": "https://a"}, {"url": "https://b"}], job,
-        {"project_id": "p1", "steering": signals}, "",
+        {"project_id": "p1", "auth_account": "alice"}, "",
     )
-    # Every budget-capped asset still becomes a pod - asset selection remains
-    # the orchestrator's decide_routing concern, never this agent's.
+    # Every budget-capped asset still becomes a pod.
     assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a", "https://b"]
-    assert pod_inputs[0]["extra"]["steering"] == signals
-    assert pod_inputs[1]["extra"]["steering"] == signals  # each pod decides for itself
-    assert "rate_profile" not in pod_inputs[0]["extra"]  # no job-level throttling anymore
+    assert pod_inputs[0]["extra"] == {"project_id": "p1", "auth_account": "alice"}
+    assert pod_inputs[1]["extra"] == {"project_id": "p1", "auth_account": "alice"}
+    assert "rate_profile" not in pod_inputs[0]["extra"]  # no job-level throttling
+    assert "steering" not in pod_inputs[0]["extra"]  # no mid-run steering input
 
 
 def test_preprocess_without_signals_stays_deterministic():
