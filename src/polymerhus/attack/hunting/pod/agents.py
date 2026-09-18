@@ -32,6 +32,9 @@ from typing import Callable, Literal
 from langchain_core.tools import tool
 from pydantic import BaseModel, Field
 
+from polymerhus.attack.hunting.http_history_contract import (
+    REPLAY_HTTP_REQUEST_DESCRIPTION,
+)
 from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
 from polymerhus.attack.hunting.pod.prompts import (
     POD_RUNNER_SYSTEM,
@@ -228,12 +231,11 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
     if replay_fn is not None:
-        @tool
+        # The description is the canonical contract (#196) imported from
+        # `http_history_contract` - the pod and the hunter's read pair teach the
+        # SAME artifact model; a local docstring here would be a second source.
+        @tool(description=REPLAY_HTTP_REQUEST_DESCRIPTION)
         def replay(artifact_id: str, overrides: dict | None = None) -> str:
-            """Replay a recorded request by artifact_id applying the declared
-            deterministic overrides, and return the new artifact's status. Use
-            this when the spec carries payload_vector_space.request_ref instead
-            of authoring a curl by hand."""
             return json.dumps(replay_fn(project_id, artifact_id, overrides or {}))
 
         tools.append(replay)

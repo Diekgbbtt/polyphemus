@@ -198,6 +198,15 @@ Il vocabolario degli override di replay è **chiuso**: `method`, `url`/`path`, `
 un'espressione. La proprietà è asimmetrica di proposito: il **contesto** è del chiamante, l'**id**
 e il **record** sono di kali, la **fusione** è della pipeline.
 
+Il contratto qui sopra è anche ciò che il modello legge. Le tre descrizioni model-facing
+(`search_http_history` / `get_http_artifact` sull'hunter, `replay` sul pod runner) vivono in una
+unica sede, `attack/hunting/http_history_contract.py`, e sono importate verbatim dai due binder:
+una sola descrizione canonica per verbo, che porta il contratto del verbo **e** il modello minimo
+dell'artifact (`capture_state`, lineage `derived_from`/`replay_kind`, proiezione sanificata), così
+le tre viste non possono divergere. Lo split read/replay fra hunter e pod è la scelta, non un
+binding mancante: la superficie dell'orchestratore resta `hunts_store`/`notes`/`graph_view`
+(spec 3.4, G3) e il triager del pod non tocca mai il target (D84-27).
+
 Configurazione (compose → container kali):
 
 | Variabile | Default | Significato |

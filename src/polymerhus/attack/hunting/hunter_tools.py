@@ -63,6 +63,10 @@ from .hunter_memory import (
     HunterMemoryStore,
     config_key_from_fault_key,
 )
+from .http_history_contract import (
+    GET_HTTP_ARTIFACT_DESCRIPTION,
+    SEARCH_HTTP_HISTORY_DESCRIPTION,
+)
 from .hunter_state import FAULT_STATUSES
 from .hunt_store import HuntStore, config_file_name, semantic_key
 from polymerhus.recon.config import EXEC_TIMEOUT_S
@@ -802,16 +806,10 @@ class HttpHistorySearchTool(BaseTool):
     Fail-open: unwired or failing search degrades to a denoted error bundle."""
 
     name: str = "search_http_history"
-    description: str = (
-        "Search this project's recorded HTTP request/response history. Filters "
-        "are conjunctive: {side, namespace, key, op, value} with side in "
-        "request|response|connection|context|timing, namespace in core|header|"
-        "cookie|query|form|body|tls, op in eq|contains|prefix|gte|lte|absent "
-        "(absent = the transaction does NOT carry that key: use it for the "
-        "control group). Returns sanitized summaries: a list of candidates, not "
-        "a verification. Use the returned artifact_id as "
-        "payload_vector_space.request_ref to replay a baseline."
-    )
+    # The canonical contract + domain model, single-sourced with the pod's
+    # `replay` (http_history_contract.py) so the hunter and the pod can never
+    # describe the same artifact differently.
+    description: str = SEARCH_HTTP_HISTORY_DESCRIPTION
     args_schema: type[BaseModel] = HttpHistorySearchArgs
 
     def __init__(self, *, http_search_fn=None, project_id: str = "", **kwargs):
@@ -840,14 +838,7 @@ class HttpHistoryGetTool(BaseTool):
     """Read-only fetch of one sanitized artifact by id."""
 
     name: str = "get_http_artifact"
-    description: str = (
-        "Fetch one recorded HTTP transaction by artifact_id from this project. "
-        "Use it to inspect a candidate before committing it as a request_ref "
-        "(header names are visible here, values of sensitive headers are "
-        "redacted) and to check request.body.capture_state: only `captured` is "
-        "replayable. The view is sanitized: no body content is returned. "
-        "Cross-project ids are not found."
-    )
+    description: str = GET_HTTP_ARTIFACT_DESCRIPTION
     args_schema: type[BaseModel] = HttpHistoryGetArgs
 
     def __init__(self, *, http_get_fn=None, project_id: str = "", **kwargs):

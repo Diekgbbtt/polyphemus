@@ -11,6 +11,7 @@ from polymerhus.attack.hunting.hunter_tools import (
     build_hunter_tools,
 )
 from polymerhus.attack.hunting.hunting_pod import HuntingHttpPod
+from polymerhus.attack.hunting.pod.agents import runner_react_tools
 
 
 def test_search_tool_returns_sanitized_summaries():
@@ -55,6 +56,64 @@ def test_descriptions_teach_the_chain():
     assert "candidate" in tools["search_http_history"].description
     assert "capture_state" in tools["get_http_artifact"].description
     assert "lineage" in tools["exec"].description
+
+
+def _pod_tools():
+    return {
+        tool.name: tool
+        for tool in runner_react_tools(
+            exec_fn=lambda *a, **k: None, memory_store=None, spec_id="s",
+            log=None, variant_ref="v0",
+            replay_fn=lambda *a: {"status": 200}, project_id="proj-1",
+        )
+    }
+
+
+def test_the_http_history_descriptions_come_from_one_single_sourced_contract():
+    """#196 stability: the three model-facing verbs (search/get on the hunter,
+    replay on the pod runner) read ONE canonical description each, so no binding
+    site can drift from the others."""
+    from polymerhus.attack.hunting import http_history_contract as contract
+
+    hunter = {t.name: t for t in build_hunter_tools()}
+    assert hunter["search_http_history"].description == \
+        contract.SEARCH_HTTP_HISTORY_DESCRIPTION
+    assert hunter["get_http_artifact"].description == \
+        contract.GET_HTTP_ARTIFACT_DESCRIPTION
+    assert _pod_tools()["replay"].description == \
+        contract.REPLAY_HTTP_REQUEST_DESCRIPTION
+
+
+def test_every_http_history_description_states_the_contract_and_the_model():
+    from polymerhus.attack.hunting.http_history_contract import (
+        GET_HTTP_ARTIFACT_DESCRIPTION,
+        REPLAY_HTTP_REQUEST_DESCRIPTION,
+        SEARCH_HTTP_HISTORY_DESCRIPTION,
+    )
+
+    for text in (SEARCH_HTTP_HISTORY_DESCRIPTION, GET_HTTP_ARTIFACT_DESCRIPTION,
+                 REPLAY_HTTP_REQUEST_DESCRIPTION):
+        # the minimal domain model rides EVERY verb
+        assert "artifact_id" in text
+        assert "capture_state" in text
+        assert "derived_from" in text and "replay_kind" in text
+
+    # search: the filter grammar, the deterministic paging, the role in the chain
+    search = SEARCH_HTTP_HISTORY_DESCRIPTION
+    assert "conjunctive" in search.lower()
+    assert "next_cursor" in search
+    assert "absent" in search
+    assert "request_ref" in search
+
+    # get: what makes a baseline replayable, and what is visible
+    get = GET_HTTP_ARTIFACT_DESCRIPTION
+    assert "captured" in get
+    assert "request_ref" in get
+
+    # replay: the CLOSED override vocabulary and the lineage of the new artifact
+    replay = REPLAY_HTTP_REQUEST_DESCRIPTION
+    for key in ("remove_header", "form", "json", "mutated"):
+        assert key in replay
 
 
 def test_request_ref_precedence_is_reported():
