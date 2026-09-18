@@ -1186,7 +1186,6 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
         curate_fn=pod_module.curate,
         triage_fn=pod_module.default_triage_fn,
         configure_fn=pod_module.default_configure_fn,
-        resource_sink=pod_module.default_evidence_sink,
     )
     monkeypatch.setattr(pod_module, "pod_graph", tee_graph)
 
