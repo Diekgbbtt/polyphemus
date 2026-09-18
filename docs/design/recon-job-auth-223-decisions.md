@@ -198,7 +198,7 @@ The "no accounts AND no `authn` skill" state has two distinct causes, discrimina
 The selection rule is deterministic: the loop picks the most recently updated usable account.
 Recency is grounded by a server-stamped `updated_at` written on every account write - seed and agent alike, symmetric with the server-stamped `origin`, so no client can forge the ordering.
 Settled (#241): the recency key is `updated_at` (an ISO-8601 UTC string from the one `_utcnow_iso` seam, stamped on every account write and operator seed - one stamp per seed, so seeded accounts tie; a client-supplied value is overwritten, never trusted).
-Selection is `records.select_account`: most-recent `updated_at` first (a missing stamp sorts oldest), ties fall back to the account's position in the store list, newest last, `not_valid` records skipped as unusable, no usable account yielding None for the gateway's missing-data path.
+Selection is `records.select_recent_usable_account`: most-recent `updated_at` first (a missing stamp sorts oldest), ties fall back to the account's position in the store list, newest last, `not_valid` records skipped as unusable, no usable account yielding None for the gateway's missing-data path.
 
 ### D223-19 - Account feeding: the account identifier rides the pipeline state, consumers resolve lazily (H1)
 

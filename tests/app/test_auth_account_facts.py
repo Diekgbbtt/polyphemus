@@ -10,7 +10,7 @@ import pytest
 from polymerhus.app.auth import (
     AuthInvalidError,
     AuthStore,
-    select_account,
+    select_recent_usable_account,
     validate_account,
 )
 from polymerhus.app.auth.tool import build_auth_store_tool
@@ -171,7 +171,7 @@ def test_select_picks_the_most_recently_updated_usable_account():
         "new": {"origin": "agent", "updated_at": "2026-09-18T00:00:00+00:00"},
         "mid": {"origin": "agent", "updated_at": "2026-09-17T00:00:00+00:00"},
     }
-    assert select_account(accounts) == "new"
+    assert select_recent_usable_account(accounts) == "new"
 
 
 def test_select_tie_breaks_by_list_position_newest_last():
@@ -180,7 +180,7 @@ def test_select_tie_breaks_by_list_position_newest_last():
         "first": {"origin": "agent", "updated_at": stamp},
         "second": {"origin": "agent", "updated_at": stamp},
     }
-    assert select_account(accounts) == "second"
+    assert select_recent_usable_account(accounts) == "second"
 
 
 def test_select_skips_not_valid_accounts():
@@ -190,7 +190,7 @@ def test_select_skips_not_valid_accounts():
         "fresh-bad": {"origin": "agent", "status": "not_valid",
                       "updated_at": "2026-09-18T00:00:00+00:00"},
     }
-    assert select_account(accounts) == "stale-good"
+    assert select_recent_usable_account(accounts) == "stale-good"
 
 
 def test_select_treats_a_missing_stamp_as_oldest():
@@ -198,15 +198,38 @@ def test_select_treats_a_missing_stamp_as_oldest():
         "unstamped": {"origin": "agent"},
         "stamped": {"origin": "agent", "updated_at": "2026-09-16T00:00:00+00:00"},
     }
-    assert select_account(accounts) == "stamped"
+    assert select_recent_usable_account(accounts) == "stamped"
 
 
 def test_select_returns_none_when_no_account_is_usable():
-    assert select_account({}) is None
-    assert select_account({
+    assert select_recent_usable_account({}) is None
+    assert select_recent_usable_account({
         "bad": {"origin": "agent", "status": "not_valid",
                 "updated_at": "2026-09-18T00:00:00+00:00"},
     }) is None
+
+
+def test_select_resolves_degenerate_inputs_as_oldest_or_none():
+    assert select_recent_usable_account(None) is None
+    assert select_recent_usable_account({"ghost": "not-a-record"}) is None
+    # A non-string stamp never parses - it sorts oldest, so the stamped
+    # sibling wins while the odd record stays usable, never a raise.
+    assert select_recent_usable_account({
+        "odd": {"origin": "agent", "updated_at": 5},
+        "stamped": {"origin": "agent", "updated_at": "2026-09-18T00:00:00+00:00"},
+    }) == "stamped"
+
+
+def test_utcnow_iso_is_an_aware_utc_isoformat_string():
+    from datetime import datetime
+
+    import polymerhus.app.auth.store as store_mod
+
+    stamp = store_mod._utcnow_iso()
+    # The selection order is a plain string comparison, pinned correct by
+    # this one shape: aware UTC, always the same `+00:00` suffix.
+    assert stamp.endswith("+00:00")
+    assert datetime.fromisoformat(stamp).utcoffset() is not None
 
 
 # --- tool face: coded envelopes, forgery never trusted ------------------------

@@ -84,6 +84,16 @@ def _utcnow_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
 
 
+def _stamp_recency(record: dict, stamp: str) -> None:
+    """Stamp the server-side recency fact (#223 D223-18): drop any
+    client-supplied `updated_at` (never trusted) and set the server stamp,
+    so no client can forge the selection ordering. The caller owns the stamp
+    value - writes stamp `_utcnow_iso()` per record, seeds pass one stamp
+    for the whole seed so seeded accounts tie on list position."""
+    record.pop("updated_at", None)
+    record["updated_at"] = stamp
+
+
 # Per-project write serialisation (D220-6, the `hunt_store` I2 pattern): a
 # per-project lock covers the whole check-then-write and read-modify-write
 # critical section, so concurrent writers converge instead of forking records.
@@ -215,7 +225,10 @@ class AuthStore:
         overview likewise refuses agent-origin writes. The merged record
         re-validates through the T1 seam (shape violations refuse naming the
         field); an unreadable bucket file refuses `StoreUnavailableError`
-        rather than overwriting blind. Every file write is atomic."""
+        rather than overwriting blind. Every account write also refreshes the
+        server-stamped `updated_at` recency fact (D223-18), overwriting any
+        client-supplied value - a forged recency is never trusted. Every file
+        write is atomic."""
         if not path:
             raise AuthInvalidError("path", "must name a single field to write")
         if origin not in _ORIGINS:
@@ -251,11 +264,8 @@ class AuthStore:
                             "creating a second record")
                     record = copy.deepcopy(value)
                     record["origin"] = origin
-                    # #223 D223-18: the recency fact is stamped server-side on
-                    # the write - a client-supplied `updated_at` is dropped
-                    # (never trusted), so no client can forge the ordering.
-                    record.pop("updated_at", None)
-                    record["updated_at"] = _utcnow_iso()
+                    # CREATE stamps recency alongside origin (D223-18).
+                    _stamp_recency(record, _utcnow_iso())
                     accounts[name] = validate_account(record)
                     self._dump_yaml_atomic(
                         self._credentials_file(project_id), {"accounts": accounts})
@@ -283,11 +293,9 @@ class AuthStore:
                 # stamped on the mapping server-side - stored stamp wins, else
                 # the call origin, so a forged origin inside `value` never lands.
                 record["origin"] = stamped if stamped in _ORIGINS else origin
-                # #223 D223-18: same stamping discipline as CREATE - the merge
-                # overwrites whatever `updated_at` the call carried (a deep
-                # write to `accounts.<name>.updated_at` included), so every
-                # account write refreshes recency and forgery never lands.
-                record["updated_at"] = _utcnow_iso()
+                # Every account write refreshes recency (D223-18 - a deep
+                # write to `accounts.<name>.updated_at` included).
+                _stamp_recency(record, _utcnow_iso())
                 accounts[name] = validate_account(record)
                 self._dump_yaml_atomic(
                     self._credentials_file(project_id), {"accounts": accounts})
@@ -323,10 +331,9 @@ class AuthStore:
                 if not isinstance(current, dict):
                     current = {}
                 seeded = {}
-                # #223 D223-18: seeds stamp recency server-side too - one stamp
-                # for the whole seed, so seeded accounts tie and list position
-                # (newest last) decides their relative order. A forged
-                # `updated_at` inside a seeded entry is dropped, never trusted.
+                # Seeds stamp recency server-side too - one stamp for the whole
+                # seed, so seeded accounts tie and list position (newest last)
+                # decides their relative order.
                 seed_stamp = _utcnow_iso()
                 for name, record in accounts.items():
                     if not isinstance(record, dict):
@@ -334,8 +341,7 @@ class AuthStore:
                             f"accounts.{name}", "must be an object to seed")
                     entry = copy.deepcopy(record)
                     entry["origin"] = "operator"
-                    entry.pop("updated_at", None)
-                    entry["updated_at"] = seed_stamp
+                    _stamp_recency(entry, seed_stamp)
                     seeded[name] = validate_account(entry)
                 kept = {n: r for n, r in current.items()
                         if isinstance(r, dict) and r.get("origin") == "agent"}

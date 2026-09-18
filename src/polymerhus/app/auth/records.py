@@ -242,7 +242,8 @@ def validate_overview(record: object) -> dict:
 
 def validate_account(record: object) -> dict:
     """Validate one named account bundle (credentials, tokens, steel
-    reference, request snapshot): value in, validated value out."""
+    reference, request snapshot, the loop-asserted validity fact, the
+    server-stamped recency fact): value in, validated value out."""
     if not isinstance(record, dict):
         _fail("account", "must be an object")
     for key in record:
@@ -296,14 +297,18 @@ def validate_account(record: object) -> dict:
     return copy.deepcopy(record)
 
 
-def select_account(accounts: object) -> str | None:
+def select_recent_usable_account(accounts: object) -> str | None:
     """The deterministic account selection (#223 D223-18): the most recently
     updated USABLE account's name (`updated_at` descending - a missing stamp
     sorts oldest, so pre-#241 records lose to stamped ones); ties fall back
-    to list position, newest last. Usable means not known-bad: a `not_valid`
-    record is skipped (the loop asserted it failed - re-selecting it would
-    replay a dead session). No usable account (or no mapping at all) is None,
-    never a raise - the gateway maps that onto its missing-data path."""
+    to list position, newest last. The descending order is a plain string
+    comparison, correct because every stamp comes from the store's one
+    `_utcnow_iso` seam (aware UTC ISO-8601, always the same `+00:00` shape) -
+    never parse here, the format is pinned by the seam's own test. Usable
+    means not known-bad: a `not_valid` record is skipped (the loop asserted
+    it failed - re-selecting it would replay a dead session). No usable
+    account (or no mapping at all) is None, never a raise - the gateway maps
+    that onto its missing-data path."""
     if not isinstance(accounts, dict):
         return None
     best: str | None = None

@@ -176,6 +176,9 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
             except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
                 return {"ok": False, "error": "store_unavailable",
                         "detail": f"store_unavailable: {exc}"}
+            # The envelope echoes the REQUEST value, not the stored record -
+            # the store keeps its own server stamp (`updated_at`), so a read
+            # back is the only view of what landed.
             return {"ok": True, "command": "write", "path": at, "value": value}
         return {"ok": False, "error": "auth_invalid",
                 "detail": 'auth_invalid: command must be "read" or "write"'}
