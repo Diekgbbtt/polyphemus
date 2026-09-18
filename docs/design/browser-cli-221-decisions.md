@@ -185,6 +185,16 @@ The #220 `auth_store` tool binds to an agent exactly as the #221 `steel_exec` to
 
 Project scope is TOOL-OWNED, never threaded through an agent harness: `build_auth_store_tool(project_id=None)` and `build_load_skill_tool(project_id=None)` default to the control-plane project (`config.PROJECT_ID`, the deployment's single project - the same "effectively single-project execution" ruling recorded against the hunting dispatch gate), resolved lazily inside the factory so import never touches config or env. Binding scope by role: the analysis-domain agents (assigner, mechanism_typist, data_modeller) are EXEMPT from authentication capability by domain rule - they never bind `auth_store` nor the `authn` procedure; the recon job-specific agents take the binding when #223 lands (the same forward note the skill roster carries).
 
+### D18 amendment (#223, 2026-09-18)
+
+The #223 rulings land the binding D18 anticipated and retire the interactive auth path:
+
+- **The binding lands on the recon orchestrator only, fully armed in one step** (D223-13): it is the sole auth-gateway decider (D223-8) and binds `auth_store`, the per-project `authn` procedure, `load_skill` / `write_skill`, kali `exec` and `steel_exec` together through the native seams; the recon job-specialised agents deliberately never take it (D223-5). This supersedes the forward note at the end of D18.
+- **The D17 profile discipline is exercised gateway-side with a project-scoped key** (D223-14): `<project_id>-<account>`; the loop mints through `steel start --profile <key> --update-profile`, persists the profile key plus the extracted tokens back to the account record, and on a missing or unauthenticated mount asserts the account `not_valid` and fail-opens into sign-in - never a silent anonymous turn. Browser-only targets (defence present, replayability false) run exclusively through `steel_crawl`.
+- **The crawler becomes profile-mount only** (D223-19): the interactive `steel_await_auth` path and its operator prompt (`notify_awaiting_auth`) retire - post-gateway, auth is already established and a mid-run prompt is strictly worse.
+
+Full record: `docs/design/recon-job-auth-223-decisions.md` D223-1..D223-19; spec `docs/design/recon-auth-gateway-223-spec.md`.
+
 ## What was deliberately NOT decided here
 
 - `domain-model.md` is unchanged by this ticket: the seam introduces capability infrastructure inside Recon, not a new primitive, relationship, or open question in the reasoned ontology. Per `CONTEXT-MAP.md`'s helper-modules ruling, capability vocabulary lives in the owning context's glossary (`recon/CONTEXT.md`: exec gateway, named session, the #220-owned profile split; the redaction-boundary entry retired with D4/D5), never as ontology.

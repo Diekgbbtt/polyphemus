@@ -97,6 +97,17 @@ The overview key set gains `anti-bot` (the defence type, a free-form vendor/chal
 The seed body is unchanged (`Any`-typed), so no new code path is introduced.
 The full decisions for the producing procedure and the meta skill live in `docs/design/authn-antiblock-replayability-237-decisions.md` (D237-0..D237-8); this ledger records only that the overview contract it owns now carries these two facts.
 
+### D220-9 amendment (#223, 2026-09-18)
+
+The binding this record anticipated lands, and it lands on the recon orchestrator ONLY.
+The auth gateway is fully armed in one step (D223-13): the roster exemption lifted, `auth_store` + the per-project `authn` procedure + `load_skill` / `write_skill` + kali `exec` + `steel_exec` bind together through the native `tools=` / `middleware=` / `context=` seams.
+This supersedes the line above: the recon job-specific agents deliberately never take the binding (D223-5) - there is no per-job auth loop.
+
+Two server-stamped facts join the account record for the gateway's bookkeeping (both exact shapes settled at implementation): a typed validity status (`valid | not_valid`, D223-14) and `updated_at` for recency-based selection (D223-18).
+The selected account's IDENTIFIER - never its material - rides the pipeline state, and each phase's tool configuration resolves the account lazily from the store, projecting only the subset its tools need; role selection (`roles` / `default_role`, already record keys) resolves over that record, replacing selection over the settings blob D223-4 retires (D223-19).
+
+Full record: `docs/design/recon-job-auth-223-decisions.md` D223-1..D223-19; spec `docs/design/recon-auth-gateway-223-spec.md`.
+
 ## Follow-up: AUTH-SKILL-1 RESOLVED
 
 AUTH-SKILL-1 is delivered as the META skill `skills/meta/authn-skill-writing/` (meta family: exempt from the usage-protocol append by loader path, `is_meta_skill`), which the operator's external agent runs to author a TARGET PROJECT's `authn` procedure.

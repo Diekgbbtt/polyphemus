@@ -37,7 +37,7 @@ The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_sco
 **Parameter / Header**:
 Parameter nodes are the input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
 Header nodes as minted today are RESPONSE headers (httpx `-irh` / katana `response.headers`), hung off their BaseURL via `HAS_HEADER` with `direction="response"` - observed surface, never replayed into requests.
-Request headers come only from the operator's `auth_context` (pod `_auth_header`, injected solely for `use_auth` jobs); no code path reads `:Header` nodes to build a request, so a `Set-Cookie` value can never become a request `Cookie`.
+Request headers come only from the resolved auth account (pod `_auth_header`, injected solely for `use_auth` jobs); since #223 the material resolves lazily from the auth store via the account identifier bound into the pipeline state by the orchestrator (never the retired settings blob, D223-4 / D223-19); no code path reads `:Header` nodes to build a request, so a `Set-Cookie` value can never become a request `Cookie`.
 
 **Service (L0)**:
 A network service discovered on a Port (the descriptive node label).
@@ -141,10 +141,10 @@ Deliberately kept blind to the target's true identity (it analyses `soupmarket.s
 **Auth store**:
 The per-project shared auth bucket served by `AuthStore` (`app/auth/store.py`) over `data/<project_id>/auth/` under the app-owned data root (`app.data_root.DATA_ROOT`, `<repo>/data/`, resolved through the one layout owner `project_dir`): `credentials.yaml` (the `{accounts: ...}` map) plus the operator-owned `overview.yaml` header, lazily created at the first write.
 Reads are `read(project_id, path)` dotted projections (empty path returns the full `{"overview": ..., "accounts": ...}` state; a missing path is a valid empty); writes are `write(project_id, path, value, origin=...)` single-field merges, every file write atomic (temp file + `os.replace`) under a per-project `threading.Lock`.
-_Avoid_: the settings blob (the `AuthContext` value object is a different bucket; the store is the agents' shared runtime state).
+_Avoid_: the retired settings blob (`AuthContext`; #223 D223-4 removes its footprint, the store is the agents' shared runtime state).
 
 **Account record**:
-One named bundle validated by `validate_account` (`app/auth/records.py`, mirrored never imported upward): `origin` (stamped server-side, `operator` or `agent`), optional `procedure` label, `credentials`, `tokens` (each `{value, location: cookie | header | storage, target?, expiry?}`), `steel`, `snapshot`, `notes`, plus FR-AUTH `roles` / `default_role`.
+One named bundle validated by `validate_account` (`app/auth/records.py`, mirrored never imported upward): `origin` (stamped server-side, `operator` or `agent`), optional `procedure` label, `credentials`, `tokens` (each `{value, location: cookie | header | storage, target?, expiry?}`), `steel`, `snapshot`, `notes`, plus FR-AUTH `roles` / `default_role`, the #223 validity fact (`status: valid | not_valid`, D223-14) and the server-stamped `updated_at` (the selection-recency fact, D223-18; ties fall back to list position).
 Record identity is the account name; creating a known name fails with `DuplicateAuthError` (`duplicate_auth`) instead of forking.
 _Avoid_: forking a record (first writer wins; reflect, merge, or refresh).
 
@@ -171,6 +171,7 @@ _Avoid_: procedural prose in the store (steps live in the skill, facts live in t
 
 **Browser-profile reference** (`steel: {profile}`):
 The minimal durable Steel profile key on an account record: the next agent rebinds the same profile through its browser tool, secrets never touching the store.
+Since #223 the key is project-scoped (`<project_id>-<account>`, D223-14); the browser path mints through `steel start --profile <key> --update-profile` and persists the key plus extracted tokens back to the record; a missing or unauthenticated mount fail-opens into sign-in with the account asserted `not_valid`, never a silent anonymous turn.
 _Avoid_: storing browser state itself (only the key lives here).
 
 **Concrete snapshot** (`snapshot: {headers, cookies, params, captured_at}`):
@@ -193,12 +194,18 @@ _Avoid_: a second tool face (one implementation, bound per project).
 
 **Auth-capable binding** (`auth_capable_binding`, `app/auth/seams.py`):
 The auth-capable extension of `skill_agent_binding`: the same L1 index middleware, skill tools, and invocation context, plus the `auth_store` tool and the per-project `authn` procedure in the bounded skill set.
-The analysis-domain agents never bind it, and the recon job-specific agents take it when #223 lands (`docs/design/browser-cli-221-decisions.md` D18).
+The analysis-domain agents never bind it; since #223 it binds to the recon orchestrator only - the auth gateway is fully armed in one step (the roster exemption lifted; `auth_store`, `authn`, `load_skill`, `write_skill`, kali `exec`, `steel_exec`, D223-13) - and the recon job-specialised agents deliberately never take it (D223-5).
 _Avoid_: a per-site auth binding (one seam, attached through `tools=` / `middleware=` / `context=` like every other capability).
 
 **`authn` (per-project authentication procedure)**:
 The project-authored skill (no canonical catalogue copy) that the meta skill `meta/authn-skill-writing` produces; it is collected into an auth-capable agent's L1 index only when its bundle exists at `<data_root>/<project_id>/skills/authn/SKILL.md`.
 _Avoid_: a canonical `authn` skill (a project's copy is its original).
+
+**Authn loop** (the auth gateway, #223):
+The recon orchestrator's pre-pipeline stateful turn - used by that role only - that establishes or validates the run's auth state against the auth store BEFORE the pipeline is configured: one ReAct turn with a hunting-style passive state machine over its own tool calls (GROUNDED -> RETRIEVED -> VALIDATION -> GENERATION -> DEBUG -> FINISH, transitions detected on specific store/probe/browser call boundaries, hints riding the triggering tool result only), closing with the structured gateway verdict.
+The verdict carries the selected account identifier, the no-auth-surface finding, or the failure mode; the orchestrator alone prunes phases and configures the pipeline from it (mid-run steering is retired, D223-12), and the account identifier - never its material - rides the pipeline state for lazy per-phase resolution by each phase's tool configuration (D223-19).
+An empty store with no authenticated surface is the expected shape with its own path - loop skipped, pipeline run anonymously, verdict records it (D223-17); a missing prerequisite with no credentials fail-closes by stopping.
+_Avoid_: a per-job auth loop (the job-specialised agents never authenticate, D223-5); a "coverage exhausted" verdict state (exhaustion is a failed authentication, D223-3); re-adding mid-run auth steering.
 
 ## Prompts, skills, and the loader
 

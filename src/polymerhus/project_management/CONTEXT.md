@@ -19,15 +19,14 @@ It carries settings and owns the runs launched against it.
 `Project` is a term shared with Recon (which stamps `project_id` as the identity partition of every L0 node); its full definition is here, Recon carries the one-line pointer.
 
 **Settings**:
-The operator's configuration of a project's recon: `target_domain`, scope, the [AuthContext](#authcontext), and feature toggles.
+The operator's configuration of a project's recon: `target_domain`, scope, and feature toggles (the [AuthContext](#authcontext) entry below is retired, #223).
 Persisted as a JSON document and updated by PARTIAL PUT - a settings update deep-merges into the stored document (recursive jsonb merge in the gateway), so setting one field never wipes its siblings.
 Concrete settings for the live e2e targets are held in the eval dataset `tests/e2e/fixtures/eval-targets.yaml`.
 
-**AuthContext**:
-The operator's declaration of how authenticated recon should authenticate: an optional `cookies` list, an optional autonomous-login `credentials` set, optional role/realm-tagged credential sets (FR-AUTH), and otherwise arbitrary HTTP headers emitted verbatim by the request-based tools.
-It is a **value object** - defined wholly by its attributes, replaced rather than mutated - so its contract and validation invariant live in one place (`auth_context.py`), independent of both the HTTP surface that receives it and the settings use-case that persists it.
-`cookies` (request-based crawling) and `credentials` (agentic login) are INDEPENDENT items; a partial PUT may set either without the other.
-Operator seeding of the shared auth store lives beside this entry: `PUT /projects/{project_id}/auth` (`seed_auth` -> `seed_project_auth` -> `AuthStore.replace_operator_state`, present-section replace, never 409) and `GET /projects/{project_id}/auth` (`read_auth` -> `read_project_auth`); the settings blob itself is untouched.
+**AuthContext** (retired, #223):
+The superseded operator value object - how authenticated recon used to declare its credentials (cookies, autonomous-login credentials, role/realm-tagged sets, arbitrary request headers) and the settings-blob anchor of auth.
+Since #223 (D223-4) it is retired with its full footprint: its validation invariants move to the shared auth store's account records, and the orchestrator binds the selected account identifier into the pipeline state for lazy per-phase resolution (D223-19) - no settings-blob auth path survives.
+Operator seeding of the shared auth store remains the operator's face over that state: `PUT /projects/{project_id}/auth` (`seed_auth` -> `seed_project_auth` -> `AuthStore.replace_operator_state`, present-section replace, never 409) and `GET /projects/{project_id}/auth` (`read_auth` -> `read_project_auth`).
 
 **Run-request**:
 An operator's request to recon a project - `POST /projects/{id}/recon`.
@@ -46,4 +45,4 @@ The handler exercises are thin adapters over the hunting launcher seams and the 
 
 - `api.py` - the thin HTTP adapter. Every handler delegates to `repository` and maps its domain errors onto status codes (`ProjectNotFound`/`RunNotFound` -> 404, `ValueError` -> 400). It owns the one bit of orchestration that is HTTP-adjacent: the `_launch_pipeline` fire-and-forget seam, plus the module-lifecycle handlers that route `pause`/`resume`/`drain` through the runtime manager.
 - `repository.py` - the operator use-case layer (the application layer). Each project/settings/run operation is a plain function over the Postgres gateway that raises domain errors, never HTTP. A deep module over a thin gateway (CODING_STANDARD §0).
-- `auth_context.py` - the AuthContext value-object contract and its validation invariant.
+- `auth_context.py` - the retired AuthContext value-object contract (#223 D223-4 removes it with the settings-blob footprint).
