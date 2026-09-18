@@ -140,3 +140,44 @@ def test_reseed_replaces_operators_but_preserves_agents(pg_mod, project, tmp_sto
         "detail": "auth_invalid: overview.bogus is not a known overview field",
     }
     assert client.get(f"/projects/{project}/auth").json() == body
+
+
+def test_the_anti_bot_and_replayability_facts_round_trip_over_http(pg_mod, project, tmp_store):
+    """#237 acceptance: the seed face validates the two typed facts and the
+    state-read face returns them, over real HTTP and on-disk state."""
+    overview = {
+        **OVERVIEW,
+        "anti-bot": "akamai_v3",
+        "http-client-replayability": False,
+    }
+
+    put = client.put(f"/projects/{project}/auth", json={"overview": overview})
+    assert put.status_code == 200
+
+    got = client.get(f"/projects/{project}/auth").json()["overview"]
+    assert got["anti-bot"] == "akamai_v3"
+    assert got["http-client-replayability"] is False
+
+
+def test_replayability_absent_reads_back_unknown_never_false(pg_mod, project, tmp_store):
+    """#237 acceptance: unset replayability is UNKNOWN, distinct from false."""
+    client.put(f"/projects/{project}/auth", json={"overview": {"mechanism": "password"}})
+
+    got = client.get(f"/projects/{project}/auth").json()["overview"]
+    assert "http-client-replayability" not in got
+
+
+def test_bad_replayability_type_is_a_400_naming_the_field(pg_mod, project, tmp_store):
+    """#237 acceptance: a shape violation (a string for a boolean) is the 400
+    `auth_invalid` envelope naming the offending field, and lands nothing."""
+    resp = client.put(
+        f"/projects/{project}/auth",
+        json={"overview": {"http-client-replayability": "true"}},
+    )
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"] == "auth_invalid"
+    assert "overview.http-client-replayability" in body["detail"]
+    assert client.get(f"/projects/{project}/auth").json()["overview"] == {}

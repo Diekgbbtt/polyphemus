@@ -273,3 +273,49 @@ def test_get_unseeded_project_returns_empty_state(monkeypatch, tmp_path):
 
     assert resp.status_code == 200
     assert resp.json() == {"overview": {}, "accounts": {}}
+
+
+# --- #237: the anti-bot + HTTP-client replayability facts round-trip ---
+
+
+def test_put_seed_round_trips_the_anti_bot_and_replayability_facts(monkeypatch, tmp_path):
+    _live_pg(monkeypatch)
+    _tmp_store(monkeypatch, tmp_path)
+    overview = {
+        **OVERVIEW,
+        "anti-bot": "akamai_v3",
+        "http-client-replayability": False,
+    }
+
+    put = client.put("/projects/p1/auth", json={"overview": overview})
+    assert put.status_code == 200
+
+    body = client.get("/projects/p1/auth").json()
+    assert body["overview"]["anti-bot"] == "akamai_v3"
+    assert body["overview"]["http-client-replayability"] is False
+
+
+def test_put_absent_replayability_reads_back_absent_never_false(monkeypatch, tmp_path):
+    _live_pg(monkeypatch)
+    _tmp_store(monkeypatch, tmp_path)
+
+    client.put("/projects/p1/auth", json={"overview": {"anti-bot": None}})
+
+    body = client.get("/projects/p1/auth").json()
+    assert body["overview"]["anti-bot"] is None
+    assert "http-client-replayability" not in body["overview"]
+
+
+def test_put_bad_replayability_type_400_names_the_field(monkeypatch, tmp_path):
+    _live_pg(monkeypatch)
+    _tmp_store(monkeypatch, tmp_path)
+
+    resp = client.put(
+        "/projects/p1/auth", json={"overview": {"http-client-replayability": "true"}}
+    )
+
+    assert resp.status_code == 400
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"] == "auth_invalid"
+    assert "overview.http-client-replayability" in body["detail"]

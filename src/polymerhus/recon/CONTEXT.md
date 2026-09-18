@@ -156,6 +156,19 @@ _Avoid_: agent writes to operator-owned state (they refuse loudly, never silentl
 An optional overview-level list of `{name, check}` entries (absent by default), validated by `validate_overview`: the assertable procedure conditions to verify when a login fails unexpectedly while following the procedure in the overview.
 _Avoid_: replay-manner (the deleted enum; conditions are data, not a manner).
 
+**Anti-bot defence type** (`overview.anti-bot`), #237:
+The optional typed fact naming the target's WAF or anti-bot defence - a vendor, product, challenge, or `waf:<name>` string, or null when none - validated by `validate_overview`; the external authn bootstrapper establishes it by probing and response-shape inspection.
+It is a different axis from the blocking-signal classification (`waf_protected` / `waf_detection` / `rate_limited`): the signal says a block fired, the type names the defence behind it.
+_Avoid_: a closed vendor enum (the vendor space is open; research the block pattern before naming it).
+
+**HTTP-client replayability** (`overview.http-client-replayability`), #237:
+The optional typed fact stating whether the browser-trusted authenticated context replays through a plain HTTP client: `true` (replayable, its static/dynamic continuation facts carried in the authn skill) or `false` (browser-only), validated by `validate_overview`; unset means UNKNOWN and is deliberately distinct from `false`.
+_Avoid_: reading absence as false (unknown is a third state).
+
+**Continuation facts** (static vs dynamic shape elements), #237:
+The replay procedure content - which headers, cookies, parameters, and token locations are replayable as-is versus must be re-minted or are browser-bound - authored into the per-project `authn` skill rather than stored; the store keeps the concrete values (`snapshot`, `tokens`) and the two typed facts.
+_Avoid_: procedural prose in the store (steps live in the skill, facts live in the store).
+
 **Browser-profile reference** (`steel: {profile}`):
 The minimal durable Steel profile key on an account record: the next agent rebinds the same profile through its browser tool, secrets never touching the store.
 _Avoid_: storing browser state itself (only the key lives here).

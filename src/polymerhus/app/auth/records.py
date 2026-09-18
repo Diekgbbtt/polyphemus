@@ -40,6 +40,8 @@ _OVERVIEW_KEYS = frozenset(
         "defences",
         "fingerprinting",
         "technical_conditions",
+        "anti-bot",
+        "http-client-replayability",
         "notes",
     }
 )
@@ -205,6 +207,15 @@ def validate_overview(record: object) -> dict:
             or not all(isinstance(v, str) and v for v in record[key])
         ):
             _fail(f"overview.{key}", "must be a list of non-empty strings")
+    # #237: the anti-bot defence type (a free-form vendor/challenge name, or
+    # null for none) and the HTTP-client replayability fact (a real boolean;
+    # absent or null is UNKNOWN, deliberately distinct from a recorded false).
+    anti_bot = record.get("anti-bot")
+    if anti_bot is not None and (not isinstance(anti_bot, str) or not anti_bot):
+        _fail("overview.anti-bot", "must be a non-empty string or null")
+    replayability = record.get("http-client-replayability")
+    if replayability is not None and not isinstance(replayability, bool):
+        _fail("overview.http-client-replayability", "must be a boolean or null")
     conditions = record.get("technical_conditions")
     if conditions is not None:
         if not isinstance(conditions, list):

@@ -24,6 +24,8 @@ def _full_overview() -> dict:
         "technical_conditions": [
             {"name": "session-fresh", "check": "re-login when the session cookie is absent"},
         ],
+        "anti-bot": "cf_clearance",
+        "http-client-replayability": True,
         "notes": "operator ground truth",
     }
 
@@ -65,6 +67,36 @@ def test_full_overview_validates_clean():
 
 def test_empty_overview_is_valid():
     assert validate_overview({}) == {}
+
+
+# --- #237: the anti-bot defence type and the HTTP-client replayability fact ---
+
+def test_overview_carries_the_anti_bot_and_replayability_facts():
+    good = {"anti-bot": "akamai_v3", "http-client-replayability": False}
+    assert validate_overview(good) == good
+
+
+def test_overview_anti_bot_is_a_nonempty_string_or_null():
+    for good in ("cf_clearance", "datadome", "incapsula", "waf:acme", None):
+        assert validate_overview({"anti-bot": good}) == {"anti-bot": good}
+    for bad in ("", 5, ["akamai_v3"], {"vendor": "x"}):
+        with pytest.raises(AuthInvalidError) as exc:
+            validate_overview({"anti-bot": bad})
+        assert exc.value.field == "overview.anti-bot"
+
+
+def test_overview_replayability_is_a_boolean_or_null_and_unknown_is_not_false():
+    for good in (True, False, None):
+        assert validate_overview({"http-client-replayability": good}) == {
+            "http-client-replayability": good
+        }
+    # absent is valid and is UNKNOWN, deliberately distinct from a recorded false
+    assert validate_overview({}) == {}
+    assert "http-client-replayability" not in validate_overview({"notes": "x"})
+    for bad in ("true", "false", 1, 0, [], {}):
+        with pytest.raises(AuthInvalidError) as exc:
+            validate_overview({"http-client-replayability": bad})
+        assert exc.value.field == "overview.http-client-replayability"
 
 
 def test_full_account_validates_clean():

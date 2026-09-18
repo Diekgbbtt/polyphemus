@@ -91,6 +91,12 @@ The analysis-domain agents (assigner, mechanism_typist, data_modeller) never bin
 The `authn` skill is project-authored (no canonical catalogue copy), so its L1 index line renders only when its bundle exists at `<data_root>/<project_id>/skills/authn/SKILL.md` - the project-scoped index resolution (`SkillStore.meta` + the `dynamic_prompt` middleware reading the context's `project_id`).
 Full record: `docs/design/browser-cli-221-decisions.md` D18.
 
+## D220-10 - Overview contract extended by #237
+
+The overview key set gains `anti-bot` (the defence type, a free-form vendor/challenge name or null) and `http-client-replayability` (a real boolean; unset means UNKNOWN, distinct from false), validated by `validate_overview` and round-tripped by the read face; the closed-key refusal (D220-5) makes the extension explicit and tested.
+The seed body is unchanged (`Any`-typed), so no new code path is introduced.
+The full decisions for the producing procedure and the meta skill live in `docs/design/authn-antiblock-replayability-237-decisions.md` (D237-0..D237-8); this ledger records only that the overview contract it owns now carries these two facts.
+
 ## Follow-up: AUTH-SKILL-1 RESOLVED
 
 AUTH-SKILL-1 is delivered as the META skill `skills/meta/authn-skill-writing/` (meta family: exempt from the usage-protocol append by loader path, `is_meta_skill`), which the operator's external agent runs to author a TARGET PROJECT's `authn` procedure.

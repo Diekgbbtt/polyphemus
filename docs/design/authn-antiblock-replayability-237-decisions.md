@@ -1,0 +1,69 @@
+# Authn anti-bot + HTTP-client replayability (#237) - design decisions
+
+Status: decided.
+This document is the decision ledger for ticket #237 (the anti-bot defence type and the HTTP-client replayability fact in the auth-store overview contract, plus the meta-skill procedure that produces them).
+It is the ADR equivalent for this change (`docs/agents/domain.md:42-49`).
+Parent ticket: #237.
+It amends the #220 auth-store contract (`docs/design/auth-store-220-decisions.md`) and authors the #220-owner meta skill `skills/meta/authn-skill-writing/SKILL.md`.
+Consumer: #223 (the recon orchestrator's outer loop).
+Runtime enforcement stays in #223 and is out of scope here: this ticket only produces and types the facts.
+
+## D237-0 - Base and scope
+
+The ticket modifies the auth store (`src/polymerhus/app/auth/`) and the meta skill, neither of which was on `dev` at dispatch; they land with the #220/#221/#222/#234 stack (tip `c126f86`, `feat/220-auth-store` == `feat/223-stateful-recon-job-auth`).
+By operator ruling the branch is cut from that stack, and the #237 diff is confined to the overview contract, the meta skill, and their docs/tests - no recon-orchestrator change (out of scope), no settings-blob change (a different bucket, D220-7).
+
+## D237-1 - The two facts are typed overview fields, named exactly as the operator interface
+
+The overview contract gains `anti-bot` and `http-client-replayability`.
+The names are hyphenated deliberately, against the repo's snake_case house style: they are the operator-to-system interface names fixed by the ticket and the target-agnostic verbatim block the operator feeds the external agent, and the acceptance criterion requires the skill text stay consistent with that block; the closed-key validator makes this a single explicit, tested exception.
+`anti-bot` is optional; when present it is a non-empty string naming the defence type (for example `akamai_v3`, `cf_clearance`, `datadome`, `incapsula`, a named challenge, or `waf:<name>`), or `null` for none; absent also means none or not established.
+The `anti-bot` value is free-form, never a closed enum: the vendor space is open, and the skill requires researching an unfamiliar block pattern before naming it.
+`http-client-replayability` is optional; when present it is a real boolean (`true`/`false`); absent or `null` is UNKNOWN, deliberately distinct from `false`.
+The fact is therefore three-valued - `true` / `false` / unknown - and a consumer must never read absence as `false`.
+Closed-schema validation lands in `records._OVERVIEW_KEYS` and `validate_overview`, the one enforcement point; the seed body stays `Any` so a violation flows to the 400 `auth_invalid` envelope naming the field (D220-5 unchanged).
+
+## D237-2 - The continuation facts live in the authn skill, not the store
+
+The static-vs-dynamic shape elements are the replay procedure's content (the HOW), so they live in the per-project authn skill's HTTP-client-replayability section; the store keeps the concrete values they refer to (`snapshot`, `tokens`) and the two branchable typed facts.
+This follows the two-planes rule (facts in the store, steps in the skill; D220-2) and "procedural prose never lands in the store" (D220-3): a follower replaying the context reads the skill, and a static-element finding that is a stable target property graduates into an existing typed overview field (`required_headers`, `defences`, `fingerprinting`), never a new field.
+Rejected placements: `overview.notes` (procedural prose in the store), a new typed field (new persistence with no branchable consumer), the account `snapshot`/`notes` (the snapshot is the captured concrete state, not the replay judgement about it), and the `procedure` label (one identifier, not a list).
+
+## D237-3 - The blocking-signature vocabulary is shared with #36 verbatim
+
+The meta skill classifies each probe response into three signals and uses the recon harness's own names verbatim: `waf_protected` and `waf_detection` (the live blocking macro kinds, `src/polymerhus/recon/control/steering.py:16`) and `rate_limited` (the #36/AMV-17 rate-limit macro kind).
+It never coins synonyms: the operator's classification and the harness's signals must speak one language, which is what #36's "build the detection once" requires.
+The classification is: a 401, or a 403 whose body and headers show an application-level denial, is an authentication failure; a 403 or a 200 interstitial carrying block fingerprints, a JS-challenge script, or bot-management cookies is `waf_protected` / `waf_detection`; a 429 or a documented retry signal is `rate_limited`.
+The `anti-bot` field is a different axis - the vendor/product/challenge NAME, not the classification signal - and the skill keeps the two apart: the classification decides which of the three signals fired; `anti-bot` names the defence behind a block.
+
+## D237-4 - The meta skill is location-agnostic and self-contained
+
+The external agent holds the target, generic request tooling, the authenticated steel CLI, and the two auth faces - no repository.
+The dangling references are fixed: the published steel references are the scripts beside the steel-browser skill under `skills/steel-browser/references/` (`catalogue.sh`, `session-lifecycle.sh`, `stop-owner.sh`, `profile-mount.sh`, `extract-reads.sh`, `eval-inline.sh`, `eval-interact.sh`), so the skill cites those names and drops the non-existent `steel-browser-commands.md` and `steel-browser-lifecycle.md`.
+The steel profile write discipline (the #221 stream's D16/D17) is INLINED rather than cited from an in-repo decision record: mint the profile in flow on first login (`start --profile <name> --update-profile`); mount by id (`start --profile <name>`), read-only by default, `--update-profile` present accumulates; settle-then-verify on every mount because the API's poll-READY has no CLI equivalent (`profile list` returns name plus id only); release is the persistence call, so any abnormal end forces re-verify; one live session per profile holds the last writer; hard timeout at create plus the platform inactivity backstop; explicit stop on every path.
+No `docs/design/...` citation appears in the skill.
+
+## D237-5 - The seed face needs no new code path
+
+The seed body is `Any`-typed, so the new fields need no API change: `repository.seed_project_auth` delegates to `AuthStore.replace_operator_state`, which validates the overview through `validate_overview` before anything lands, and `repository.read_project_auth` returns the stored overview unchanged.
+No new endpoint, no new persistence, and no store logic beyond the corrected docstring; reuse is the point (D220-5).
+
+## D237-6 - The verbatim block is embedded exactly and pinned by a content test
+
+The ticket's target-agnostic block is embedded in the skill verbatim inside a fenced block.
+A unit content test holds a canonical copy of the block as an independent literal and asserts it appears in the skill body, so the skill text and the operator's block can never drift.
+The same test asserts the skill conforms to the data-section contract (`validate_skill`), names the two new fields, names the shared blocking vocabulary, and carries no dangling or in-repo references.
+
+## D237-7 - The worked example is a machine-checked fixture beside the skill
+
+A worked example fixture (`skills/meta/authn-skill-writing/references/worked-example.yaml`) carries at least two scenarios: one defence classification with a `true` replayability verdict (request-replayable) and one browser-only case with `false`.
+Each scenario carries the probe trace (status, headers, body markers), the classification signal, the anti-bot name, the continuation facts, and the seed overview payload.
+A test loads the fixture and runs `validate_overview` over every payload, so the worked example can never drift from the schema.
+The fixture travels with the skill, so the external agent can read it.
+
+## D237-8 - Ledger and glossary homes
+
+This document is the new ledger, and the #220 ledger gains a pointer noting the overview extension.
+`src/polymerhus/recon/CONTEXT.md` gains `anti-bot` and `http-client-replayability` entries in the auth-store section.
+`docs/design/domain-model.md` is unchanged: this is capability vocabulary inside Recon, not a new primitive, relationship, or open question (the #221 D18 precedent).
+`src/polymerhus/project_management/CONTEXT.md` is unchanged: the seed face is unchanged, so the existing auth-endpoint pointer still holds.
