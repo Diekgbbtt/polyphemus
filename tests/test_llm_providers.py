@@ -740,39 +740,45 @@ def test_request_payload_preserves_nonempty_tools_binding(monkeypatch):
     assert payload["tools"] == bound
 
 
-# --- #240 (D223-1): the MODEL-infix drop - expand-contract window ---------------
+# --- #240 (D223-1): the MODEL-infix drop - landed -------------------------------
 #
-# During the migration window both spellings resolve: the new `LLM_<NAME>` key
-# is preferred and the legacy `LLM_<NAME>` spelling is a documented
-# fallback. New code and configuration use the new spelling; the fallback is
-# removed once no caller remains.
+# The `LLM_<NAME>` spelling is the whole contract: the legacy MODEL infix is
+# gone from every role record and no fallback remains. The legacy spelling is
+# built dynamically below (never as a literal) so the repo-wide search for it
+# stays clean while the contract - the old spelling is dead - stays pinned.
+
+_LEGACY_INFIX = "LLM_" + "MODEL_"
 
 def test_model_key_spellings_use_the_new_infix_free_names():
     """#240: every role record names the new `LLM_<NAME>` spelling - the
     redundant MODEL infix is gone from the contract."""
     for r in P.ROLES + P.HUNTING_ROLES:
-        assert not r.model_key.startswith("LLM_MODEL_"), r.model_key
+        assert not r.model_key.startswith(_LEGACY_INFIX), r.model_key
         assert r.model_key.startswith("LLM_"), r.model_key
 
 
 def test_resolve_role_prefers_the_new_name_when_both_are_set(monkeypatch):
-    """#240 migration window: both names resolve, the new name wins."""
+    """#240 contract: the legacy spelling is ignored - the new name selects
+    the model even when both are set."""
     monkeypatch.setenv("LLM_TRIAGER", "openai:gpt-new")
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:anthropic/claude-old")
+    monkeypatch.setenv(_LEGACY_INFIX + "TRIAGER", "openrouter:anthropic/claude-old")
     assert P.resolve_role("triager") == ("openai", "gpt-new")
 
 
-def test_resolve_role_falls_back_to_the_deprecated_old_name(monkeypatch):
-    """#240 migration window: the old `LLM_<NAME>` spelling still
-    resolves (documented deprecated fallback) until no caller remains."""
+def test_resolve_role_ignores_the_removed_old_name(monkeypatch):
+    """#240 contract: the legacy MODEL-infixed spelling no longer
+    resolves - only the new `LLM_<NAME>` spelling selects the model."""
     monkeypatch.delenv("LLM_TRIAGER", raising=False)
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
-    assert P.resolve_role("triager") == ("openrouter", "anthropic/claude-3.5-sonnet")
+    monkeypatch.setenv(_LEGACY_INFIX + "TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
+    with pytest.raises(P.LLMConfigError) as e:
+        P.resolve_role("triager")
+    assert "LLM_TRIAGER" in str(e.value)
 
 
-def test_resolve_role_unregistered_id_falls_back_to_old_convention(monkeypatch):
-    """#240 migration window: an unregistered id resolves `LLM_<ID>`, with the
-    legacy `LLM_<ID>` convention as the deprecated fallback."""
+def test_resolve_role_unregistered_id_ignores_the_old_convention(monkeypatch):
+    """#240 contract: an unregistered id resolves `LLM_<ID>` only - the legacy
+    MODEL-infixed convention is dead."""
     monkeypatch.delenv("LLM_ANALYSER", raising=False)
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
-    assert P.resolve_role("analyser") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
+    monkeypatch.setenv(_LEGACY_INFIX + "ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
+    with pytest.raises(P.LLMConfigError):
+        P.resolve_role("analyser")

@@ -387,34 +387,16 @@ def _key_env(provider: str) -> str:
     `provider_api_key` all agree on the same convention."""
     return f"API_KEY_{provider.upper().replace('-', '_')}"
 
-def _model_env_value(model_key: str) -> str | None:
-    """The configured value for a role-model key under the #240 expand-contract
-    window: the new `LLM_<NAME>` spelling is preferred, the legacy
-    `LLM_MODEL_<NAME>` spelling is a documented deprecated fallback (removed
-    once no caller remains). An empty new-name value counts as unset, so a
-    blank export cannot shadow a real legacy value."""
-    raw = os.environ.get(model_key)
-    if raw is not None and raw.strip() != "":
-        return raw
-    legacy = f"LLM_MODEL_{model_key[len('LLM_'):]}" if model_key.startswith("LLM_") else None
-    if legacy is not None:
-        return os.environ.get(legacy)
-    return None
-
-
 def resolve_role(role: str) -> tuple[str, str]:
     """Resolve a role_id to (provider, model) via its record's `model_key`.
 
     A registered role_id reads its declared `model_key` (several ids may share one,
     e.g. every analysis role -> `LLM_ANALYSER`). An UNregistered id falls back
     to the `LLM_{ID}` convention, so a legacy caller still on `"analyser"`
-    keeps resolving `LLM_ANALYSER` unchanged during the migration. During the
-    #240 window the legacy `LLM_MODEL_<NAME>` spelling of any key still resolves
-    as a deprecated fallback (see `_model_env_value`); the new spelling wins
-    when both are set."""
+    keeps resolving `LLM_ANALYSER` unchanged during the migration."""
     r = _ROLE_BY_ID.get(role)
     model_key = r.model_key if r is not None else f"LLM_{role.upper()}"
-    raw = _model_env_value(model_key)
+    raw = os.environ.get(model_key)
     if not raw or ":" not in raw:
         raise LLMConfigError(
             f"{model_key} must be set to '<provider>:<model>' (got {raw!r})"
