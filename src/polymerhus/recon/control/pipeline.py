@@ -458,6 +458,18 @@ async def run_pipeline(
                            run_id, gateway_verdict.rationale)
         elif gateway_verdict.branch == "browser_only":
             plan = prune_plan(plan, "browser_only")
+            if not any(plan):
+                # The verdict released browser-only collection but the plan
+                # holds no browser path (e.g. a subset without the Steel
+                # crawl): nothing could run, so "complete" would be a lie.
+                # Fail loudly (the run-level terminals are complete|failed;
+                # a contradicted release is a failure, never silent).
+                # Request phases are NOT kept: the verdict said browser-only.
+                logger.error("run %s browser-only release pruned every phase "
+                             "(no steel_crawl in plan); marking failed, nothing ran",
+                             run_id)
+                await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+                return
             logger.warning("run %s browser-only release: pruned to the Steel crawl alone", run_id)
             if gateway_verdict.account:
                 auth_account = gateway_verdict.account

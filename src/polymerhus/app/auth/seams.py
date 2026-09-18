@@ -83,6 +83,10 @@ def auth_capable_binding(
     context["skills"] = [*context.get("skills", ()), AUTHN_SKILL]
     tools = list(binding.tools)
     if with_write_skill:
+        # Future-use (ledger IR-8): no caller arms a bound role with the
+        # write capability today - only the gateway takes it, via the exempt
+        # path above. Kept compositional so the flag means the same on every
+        # role if a future skill-evolving agent needs it.
         tools.append(build_write_skill_tool(context.get("project_id"), store=skill_store))
     return replace(
         binding,

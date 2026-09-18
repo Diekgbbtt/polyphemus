@@ -36,10 +36,6 @@ class _ScriptFake(BaseChatModel):
 
     steps: list = []
 
-    def _generate(self, messages, stop=None, run_manager=None, **kwargs):
-        calls = self.steps[min(len(self.steps) - 1, 0)] if False else None
-        raise NotImplementedError  # replaced per-instance below
-
     @property
     def _llm_type(self) -> str:
         return "fake"
@@ -222,6 +218,30 @@ def test_gateway_hint_rides_only_the_triggering_result(tmp_path):
     later = _run("auth_store", {"command": "read", "path": "overview.notes"},
                  '{"ok": true, "value": "n"}')
     assert "authn-loop-hint" not in later.content
+
+
+def test_gateway_hint_attaches_to_list_content():
+    """A list-shaped tool result gains the hint as a text block (not
+    silently dropped); an unshaped response passes through with a loud
+    line."""
+    from polymerhus.recon.control.authn_loop import GROUNDED_HINT, wrap_hint
+    from polymerhus.recon.control.orchestrator_agent import build_authn_loop_middleware
+
+    mw = build_authn_loop_middleware()
+    skill_request = types.SimpleNamespace(
+        tool_call={"name": "load_skill", "args": {"name": "authn"},
+                   "id": "s", "type": "tool_call"})
+    mw.wrap_tool_call(
+        skill_request, lambda req: ToolMessage(content="the procedure", tool_call_id="s",
+                                               name="load_skill"))
+    request = types.SimpleNamespace(
+        tool_call={"name": "auth_store", "args": {"command": "read", "path": "overview"},
+                   "id": "c", "type": "tool_call"})
+    out = mw.wrap_tool_call(
+        request, lambda req: ToolMessage(
+            content=[{"type": "text", "text": "the overview"}],
+            tool_call_id="c", name="auth_store"))
+    assert out.content[-1] == {"type": "text", "text": wrap_hint(GROUNDED_HINT)}
 
 
 # --- missing-data paths ----------------------------------------------------------

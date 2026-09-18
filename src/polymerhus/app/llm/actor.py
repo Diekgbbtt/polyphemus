@@ -138,6 +138,16 @@ class AgentInbox:
     def qsize(self) -> int:
         return self._q.qsize()
 
+    def try_get_nowait(self) -> AgentMessage | None:
+        """Non-blocking take: the next message, or None when the inbox is
+        empty (never raises). The drain seam for bounded awaits - a timed-out
+        waiter discards stale replies through here instead of reaching into
+        the queue."""
+        try:
+            return self._q.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
 
 # `on_message(message, last_turn)` -> the next turn's messages (take a turn), `None`
 # (consumed; keep listening), or `STOP` (end the agent). May be sync or async.

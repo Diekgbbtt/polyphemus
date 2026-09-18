@@ -44,6 +44,8 @@ transition, never hinted.
 """
 from __future__ import annotations
 
+import ast
+import json
 import logging
 from typing import Any, Literal, Mapping, TypedDict
 
@@ -169,9 +171,12 @@ TRANSITION_HINTS: dict[str, str] = {
     "invalidate": GENERATION_HINT,
     "validate": FINISH_HINT,
 }
-"""The static hint per transition ("none" and "skill_absent" carry none:
-"none" is not a transition; the absent-skill case resolves its hint at
-retrieval, when usability is known)."""
+"""The single-sourced hint per transition (the hunting `TRANSITION_HINTS`
+precedent): every push site below reads its hint from this map, never the
+named constant directly. Three hints live OUTSIDE the map because they are
+phase-conditional, not transition-pure: `DEBUG_HINT` (a `probe` inside the
+sign-in span), `GENERATION_SIGNIN_HINT` / `SELF_SERVICE_HINT` (a `retrieve`
+holding no usable account). "none" and "skill_absent" carry no hint."""
 
 _HINT_TAG = "authn-loop-hint"
 """The wrapper tagging an injected hint (the hunting
@@ -190,10 +195,6 @@ def wrap_hint(hint: str) -> str:
 
 
 # --- detection: pure function of the observed call ------------------------------
-
-def _bool_arg(value: Any) -> bool:
-    return isinstance(value, bool) and value
-
 
 def _detect_store(args: Mapping[str, Any]) -> AuthnTransition:
     command = args.get("command")
@@ -288,17 +289,15 @@ def _parse_result(result: Any) -> Any | None:
         return content
     if not isinstance(content, str):
         return None
-    import json as _json  # noqa: PLC0415 - stdlib, local to the parse
     text = content.strip()
     if not text:
         return None
     try:
-        return _json.loads(text)
+        return json.loads(text)
     except Exception:  # noqa: BLE001 - fall through to the literal parse
         pass
     try:
-        import ast as _ast  # noqa: PLC0415 - stdlib, local to the parse
-        return _ast.literal_eval(text)
+        return ast.literal_eval(text)
     except Exception:  # noqa: BLE001 - unparseable stays unknown
         return None
 
@@ -355,7 +354,7 @@ def _push_ground(state: AuthnLoopState) -> AuthnLoopState:
     new_state["overview_seen"] = True
     if (state["phase"] == "GROUNDED" and state["skill_seen"] and not state["grounded"]):
         new_state["grounded"] = True
-        new_state["injected_hint"] = GROUNDED_HINT
+        new_state["injected_hint"] = TRANSITION_HINTS["ground"]
     else:
         new_state["injected_hint"] = None
     return new_state
@@ -368,7 +367,7 @@ def _push_skill(state: AuthnLoopState, *, missing: bool) -> AuthnLoopState:
         new_state["skill_missing"] = True
     if (state["phase"] == "GROUNDED" and state["overview_seen"] and not state["grounded"]):
         new_state["grounded"] = True
-        new_state["injected_hint"] = GROUNDED_HINT
+        new_state["injected_hint"] = TRANSITION_HINTS["skill"]
     else:
         new_state["injected_hint"] = None
     return new_state
@@ -399,7 +398,7 @@ def _push_retrieve(state: AuthnLoopState, observation: Mapping[str, Any]) -> Aut
     # still loads the skill per its prompt order, observed silently.
     if usable:
         new_state["phase"] = "RETRIEVED"
-        new_state["injected_hint"] = RETRIEVED_HINT
+        new_state["injected_hint"] = TRANSITION_HINTS["retrieve"]
         return new_state
     # no usable account (L3): straight into the sign-in span
     new_state["phase"] = "GENERATION"
@@ -410,7 +409,7 @@ def _push_retrieve(state: AuthnLoopState, observation: Mapping[str, Any]) -> Aut
 def _push_probe(state: AuthnLoopState) -> AuthnLoopState:
     phase = state["phase"]
     if phase == "RETRIEVED":
-        return _move(state, "VALIDATION", VALIDATION_HINT, probe_count=1)
+        return _move(state, "VALIDATION", TRANSITION_HINTS["probe"], probe_count=1)
     if phase == "VALIDATION":
         return _move(state, "VALIDATION", None, probe_count=state["probe_count"] + 1)
     if phase == "GENERATION":
@@ -453,7 +452,7 @@ def push_transition(
         if transition == "invalidate":
             if state["phase"] == "FINISH":
                 return _move(state, "FINISH")
-            return _move(state, "GENERATION", GENERATION_HINT,
+            return _move(state, "GENERATION", TRANSITION_HINTS["invalidate"],
                          attempt_count=0, account=_account_from_write(obs.get("args", {})))
         if transition == "validate":
             if state["phase"] == "FINISH":
@@ -462,7 +461,7 @@ def push_transition(
             # args), not its persistence: on an operator-stamped account the
             # store refuses operator_immutable and the validity rides the
             # verdict instead - the boundary still moved.
-            return _move(state, "FINISH", FINISH_HINT,
+            return _move(state, "FINISH", TRANSITION_HINTS["validate"],
                          account=_account_from_write(obs.get("args", {})))
         return _move(state, state["phase"])
     except Exception:  # noqa: BLE001 - the tracker never breaks the turn

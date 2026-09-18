@@ -195,6 +195,29 @@ def test_browser_only_verdict_prunes_to_the_steel_crawl(tmp_path):
     assert ran == {"steel_crawl"}
 
 
+def test_browser_only_without_a_browser_path_fails_honestly(tmp_path, caplog):
+    """A browser-only release over a plan with no Steel crawl prunes to
+    nothing: zero phases running to a silent "complete" would be a lie, so
+    the run is marked failed loudly - and request phases are NOT kept (the
+    verdict said browser-only)."""
+    import logging
+    store, calls, factory, fake_run_job, fake_read_assets = _harness(
+        tmp_path, model_steps=[[_verdict_call(branch="browser_only")]],
+        overview={"anti-bot": "waf:x", "http-client-replayability": False},
+        accounts=_account())
+
+    registry = _FakeRegistry()
+    with caplog.at_level(logging.ERROR):
+        _run(calls, factory, fake_run_job, fake_read_assets,
+             subset=["subfinder", "httpx"], registry=registry)
+
+    assert calls["order"] == []  # nothing ran, and nothing was kept
+    flat = [str(s) for s in registry.statuses]
+    assert any("failed" in s for s in flat)
+    assert not any(s[:2] == ("r1", "complete") for s in registry.statuses)
+    assert "pruned every phase" in caplog.text.lower()
+
+
 def test_account_identifier_bound_for_use_auth_jobs_only(tmp_path):
     """D223-19: the selected account's IDENTIFIER - never its material - is
     bound into the pipeline state for `use_auth` jobs; other jobs get

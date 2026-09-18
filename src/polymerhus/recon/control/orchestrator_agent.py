@@ -42,8 +42,8 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from polymerhus.recon.control.authn_loop import (
-    BRANCH_DIRECTIVES,
     GatewayVerdict,
+    PROBE_TOOLS,
     classify_gate,
     detect_transition,
     initial_state,
@@ -137,15 +137,25 @@ def build_authn_loop_middleware():
                 return None
 
         def _attach(self, response: Any, hint: str | None) -> Any:
-            """Append the hint to the triggering response, when the shape
-            allows; any other shape passes through (the tracker still moved)."""
+            """Append the hint to the triggering response: string content
+            grows the wrapped hint inline; list content gains a text block.
+            Any other shape passes through with a loud line (the tracker still
+            moved - injection is advisory, tracking is authoritative)."""
             if not hint:
                 return response
             try:
                 from langchain_core.messages import ToolMessage  # noqa: PLC0415
-                if isinstance(response, ToolMessage) and isinstance(response.content, str):
-                    return response.model_copy(update={
-                        "content": f"{response.content}\n\n{wrap_hint(hint)}"})
+                if isinstance(response, ToolMessage):
+                    if isinstance(response.content, str):
+                        return response.model_copy(update={
+                            "content": f"{response.content}\n\n{wrap_hint(hint)}"})
+                    if isinstance(response.content, list):
+                        return response.model_copy(update={
+                            "content": [*response.content,
+                                        {"type": "text", "text": wrap_hint(hint)}]})
+                logger.warning(
+                    "authn loop hint unattachable (response shape %s); "
+                    "tracker moved, hint dropped", type(response).__name__)
             except Exception:  # noqa: BLE001 - injection never breaks the turn
                 logger.warning("authn loop hint injection degraded")
             return response
@@ -234,10 +244,12 @@ class GatewayStop(Exception):
 
 
 async def _fetch_kali_tools() -> list:
-    """Fetch the Kali exec surface (`execute_command`, `steel_exec`) from the
-    Kali MCP gateway (the `pod.default_exec_fn` precedent: lazily built per
-    use, never at import). Fail-open to [] - the gateway still runs its
-    store/skill span and the verdict carries the degradation loudly."""
+    """Fetch the Kali exec surface from the Kali MCP gateway (the
+    `pod.default_exec_fn` precedent: lazily built per use, never at import).
+    The names are the shared `PROBE_TOOLS` the detector matches, so a rename
+    cannot drift the filter apart from the state machine. Fail-open to [] -
+    the gateway still runs its store/skill span and the verdict carries the
+    degradation loudly."""
     try:
         from langchain_mcp_adapters.client import MultiServerMCPClient  # noqa: PLC0415
         from polymerhus.app.config import config  # noqa: PLC0415
@@ -245,7 +257,7 @@ async def _fetch_kali_tools() -> list:
         client = MultiServerMCPClient(
             {"kali": {"url": config.KALI_MCP_URL, "transport": "streamable_http"}})
         tools = await client.get_tools()
-        return [t for t in tools if t.name in ("execute_command", "steel_exec")]
+        return [t for t in tools if t.name in PROBE_TOOLS]
     except Exception:  # noqa: BLE001 - fail-open, loudly
         logger.warning(
             "auth gateway: kali exec tools unavailable; gateway proceeds "
@@ -514,6 +526,12 @@ class ReconOrchestratorActor:
         reply whose content parses to the wrong schema is logged LOUDLY."""
         reply_task = asyncio.ensure_future(self._replies.get())
         try:
+            # `asyncio.wait` (not `wait_for`) is the precise primitive here:
+            # FIRST_COMPLETED over exactly the reply and the actor task races
+            # "verdict arrived" against "actor died" with neither cancelled -
+            # the actor task must NEVER be cancelled by the waiter (its
+            # harness bounds own turn length); only the reply waiter is
+            # cancelled below, and the inbox drains best-effort.
             done, _pending = await asyncio.wait(
                 {reply_task, self._task},
                 timeout=GATEWAY_AWAIT_TIMEOUT_S,
@@ -549,8 +567,10 @@ class ReconOrchestratorActor:
         """Best-effort drain of the reply inbox: a timed-out await must not
         leave a stale reply for a later consumer."""
         try:
-            while not self._replies.empty():
-                self._replies._q.get_nowait()
+            if self._replies is None:
+                return
+            while self._replies.try_get_nowait() is not None:
+                pass
         except Exception:  # noqa: BLE001 - teardown best-effort, never raises
             pass
 
