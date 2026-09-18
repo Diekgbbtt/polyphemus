@@ -296,8 +296,8 @@ JOBS: dict[str, JobSpec] = {
         consumes_where=AssetSelector(field="profile", op="equals", values=["restapi"]),
         api_scope=True,
         # kr scans routes that may sit behind auth, so it receives the
-        # project's cookies/headers like the other request-based tools (`kr`
-        # takes repeated -H "k: v" flags, the shared default format).
+        # feed-projected cookies/headers like the other request-based tools
+        # (`kr` takes repeated -H "k: v" flags, the shared default format).
         use_auth=True,
     ),
     "jsluice": JobSpec(
@@ -331,8 +331,8 @@ JOBS: dict[str, JobSpec] = {
         consumes="Endpoint",
         consumes_where=AssetSelector(field="profile", op="equals", values=["graphql_api"]),
         # graphql-cop probes a GraphQL surface that may sit behind auth, so it
-        # receives the project's cookies/headers (its own --headers format:
-        # comma-joined `Key:Value` pairs, see pod._COMMA_HEADERS_FLAG_TOOLS).
+        # receives the feed-projected cookies/headers (its own --headers
+        # format: comma-joined `Key:Value` pairs, see the auth feed).
         use_auth=True,
     ),
     "steel_crawl": JobSpec(

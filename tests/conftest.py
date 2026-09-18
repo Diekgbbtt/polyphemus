@@ -127,12 +127,12 @@ def _no_live_neo4j_in_unit_tier(request, monkeypatch):
     for fn in ("read", "merge", "check", "ensure_schema", "ensure_l1_schema"):
         monkeypatch.setattr(neo4j_client, fn, _forbidden(fn), raising=False)
 
-    # Guarding the helper functions alone is NOT enough: some call sites reach
-    # past them for the raw driver (`pipeline.read_steering_signals` does
-    # `driver = neo4j_client._driver`, then `driver.session()`), which sails
-    # straight through a helper-level patch. That is exactly how the arjun
-    # pipeline e2e leaked to a live database undetected. Block the driver too,
-    # so there is no path left.
+    # Guarding the helper functions alone is NOT enough: some call sites used
+    # to reach past them for the raw driver (the retired
+    # `pipeline.read_steering_signals` did `driver = neo4j_client._driver`,
+    # then `driver.session()`), which sailed straight through a helper-level
+    # patch. That is exactly how the arjun pipeline e2e leaked to a live
+    # database undetected. Block the driver too, so there is no path left.
     class _ForbiddenDriver:
         def __getattr__(self, attr):
             raise RuntimeError(

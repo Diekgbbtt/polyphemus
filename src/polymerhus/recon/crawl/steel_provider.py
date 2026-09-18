@@ -300,9 +300,10 @@ class SteelCrawlProvider:
             if session_lifetime_s is not None
             else int(getattr(config, "CRAWL_JOB_TIMEOUT_S", 480))
         )
-        # Non-interactive auth: session cookies to seed the browser context with
-        # (via context.add_cookies) BEFORE the crawl, so it runs authenticated
-        # without the human steel_await_auth step. Empty for an anonymous crawl.
+        # Profile-mount-only auth: persisted session cookies to seed the
+        # browser context with (via context.add_cookies) BEFORE the crawl, so
+        # it runs authenticated with no human step. Empty for an anonymous
+        # crawl.
         self._auth_cookies = list(auth_cookies or [])
         self._crawls: dict[str, _Crawl] = {}
         self._lock = threading.Lock()
@@ -378,10 +379,10 @@ class SteelCrawlProvider:
             browser = await p.chromium.connect_over_cdp(cdp_url)
             ctx = browser.contexts[0]
             if self._auth_cookies:
-                # NON-INTERACTIVE AUTH: seed the browser context with the
-                # project's session cookies BEFORE any navigation, so the crawl
-                # runs authenticated without the human steel_await_auth step.
-                # Best-effort: a malformed cookie must degrade to an
+                # PROFILE-MOUNT-ONLY AUTH: seed the browser context with the
+                # feed-projected persisted session cookies BEFORE any
+                # navigation, so the crawl runs authenticated with no human
+                # step. Best-effort: a malformed cookie must degrade to an
                 # unauthenticated crawl, never crash the session.
                 try:
                     await ctx.add_cookies(_to_playwright_cookies(self._auth_cookies, target))
