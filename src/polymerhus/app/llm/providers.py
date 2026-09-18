@@ -308,7 +308,7 @@ class Role:
 
 # Roles validated at APP BOOT (`validate_llm_config`, from `app/main.py`). The
 # former single `analyser` key is split per cognitive job (#93): each analysis
-# agent is its own role_id but they SHARE `LLM_MODEL_ANALYSER` for now (many-to-one),
+# agent is its own role_id but they SHARE `LLM_ANALYSER` for now (many-to-one),
 # so no new env var is required and per-agent tuning is a one-line `model_key` edit.
 # The hunting module is deliberately ABSENT - it is validated at the HUNTING module
 # bootstrap, never at app boot (operator ruling 2026-08-06).
@@ -324,18 +324,18 @@ class Role:
 # per-pod triager and configurator (their own pod session thread each), the
 # per-run orchestrator actor, and the analysis proposers (per-pass stateful turns).
 ROLES: tuple[Role, ...] = (
-    Role("configurator",     "LLM_MODEL_CONFIGURATOR",     "session"),
-    Role("triager",          "LLM_MODEL_TRIAGER",          "session",  "medium"),
-    Role("job_orchestrator", "LLM_MODEL_JOB_ORCHESTRATOR", "session",  "medium"),
-    Role("crawler",          "LLM_MODEL_CRAWLER",          "session"),
-    Role("bootstrapper",     "LLM_MODEL_ANALYSER",         "one_shot"),
-    Role("assigner",         "LLM_MODEL_ANALYSER",         "session",  "medium"),
-    Role("mechanism_typist", "LLM_MODEL_ANALYSER",         "session",  "medium"),
-    Role("data_modeller",    "LLM_MODEL_ANALYSER",         "session",  "medium"),
-    Role("anatomy",          "LLM_MODEL_ANALYSER",         "one_shot"),
-    Role("curation",         "LLM_MODEL_ANALYSER",         "one_shot"),
-    Role("sweep",            "LLM_MODEL_ANALYSER",         "one_shot"),
-    Role("anti_cluttering",  "LLM_MODEL_ANALYSER",         "one_shot"),
+    Role("configurator",     "LLM_CONFIGURATOR",     "session"),
+    Role("triager",          "LLM_TRIAGER",          "session",  "medium"),
+    Role("job_orchestrator", "LLM_JOB_ORCHESTRATOR", "session",  "medium"),
+    Role("crawler",          "LLM_CRAWLER",          "session"),
+    Role("bootstrapper",     "LLM_ANALYSER",         "one_shot"),
+    Role("assigner",         "LLM_ANALYSER",         "session",  "medium"),
+    Role("mechanism_typist", "LLM_ANALYSER",         "session",  "medium"),
+    Role("data_modeller",    "LLM_ANALYSER",         "session",  "medium"),
+    Role("anatomy",          "LLM_ANALYSER",         "one_shot"),
+    Role("curation",         "LLM_ANALYSER",         "one_shot"),
+    Role("sweep",            "LLM_ANALYSER",         "one_shot"),
+    Role("anti_cluttering",  "LLM_ANALYSER",         "one_shot"),
 )
 
 # The hunting module's OWN roles (one model per agent), validated by the hunting
@@ -347,10 +347,10 @@ ROLES: tuple[Role, ...] = (
 # the operator directs high-cost reasoning for the looped, feedback-driven
 # probe/interpret work.
 HUNTING_ROLES: tuple[Role, ...] = (
-    Role("hunting_orchestrator", "LLM_MODEL_HUNTING_ORCHESTRATOR", "session", "medium"),
-    Role("hunting_hunter",       "LLM_MODEL_HUNTING_HUNTER",       "session", "high"),
-    Role("pod_runner",           "LLM_MODEL_POD_RUNNER",           "session", "high"),
-    Role("pod_triager",          "LLM_MODEL_POD_TRIAGER",          "session", "high"),
+    Role("hunting_orchestrator", "LLM_HUNTING_ORCHESTRATOR", "session", "medium"),
+    Role("hunting_hunter",       "LLM_HUNTING_HUNTER",       "session", "high"),
+    Role("pod_runner",           "LLM_POD_RUNNER",           "session", "high"),
+    Role("pod_triager",          "LLM_POD_TRIAGER",          "session", "high"),
 )
 
 _ROLE_BY_ID: dict[str, Role] = {r.role_id: r for r in ROLES + HUNTING_ROLES}
@@ -358,7 +358,7 @@ _ROLE_BY_ID: dict[str, Role] = {r.role_id: r for r in ROLES + HUNTING_ROLES}
 
 def role_record(role_id: str) -> Role | None:
     """The registered `Role` for a role_id, or None for an unregistered one (which
-    `resolve_role` still resolves via the `LLM_MODEL_{ROLE_ID}` convention for
+    `resolve_role` still resolves via the `LLM_{ROLE_ID}` convention for
     back-compat)."""
     return _ROLE_BY_ID.get(role_id)
 
@@ -387,16 +387,34 @@ def _key_env(provider: str) -> str:
     `provider_api_key` all agree on the same convention."""
     return f"API_KEY_{provider.upper().replace('-', '_')}"
 
+def _model_env_value(model_key: str) -> str | None:
+    """The configured value for a role-model key under the #240 expand-contract
+    window: the new `LLM_<NAME>` spelling is preferred, the legacy
+    `LLM_MODEL_<NAME>` spelling is a documented deprecated fallback (removed
+    once no caller remains). An empty new-name value counts as unset, so a
+    blank export cannot shadow a real legacy value."""
+    raw = os.environ.get(model_key)
+    if raw is not None and raw.strip() != "":
+        return raw
+    legacy = f"LLM_MODEL_{model_key[len('LLM_'):]}" if model_key.startswith("LLM_") else None
+    if legacy is not None:
+        return os.environ.get(legacy)
+    return None
+
+
 def resolve_role(role: str) -> tuple[str, str]:
     """Resolve a role_id to (provider, model) via its record's `model_key`.
 
     A registered role_id reads its declared `model_key` (several ids may share one,
-    e.g. every analysis role -> `LLM_MODEL_ANALYSER`). An UNregistered id falls back
-    to the `LLM_MODEL_{ID}` convention, so a legacy caller still on `"analyser"`
-    keeps resolving `LLM_MODEL_ANALYSER` unchanged during the migration."""
+    e.g. every analysis role -> `LLM_ANALYSER`). An UNregistered id falls back
+    to the `LLM_{ID}` convention, so a legacy caller still on `"analyser"`
+    keeps resolving `LLM_ANALYSER` unchanged during the migration. During the
+    #240 window the legacy `LLM_MODEL_<NAME>` spelling of any key still resolves
+    as a deprecated fallback (see `_model_env_value`); the new spelling wins
+    when both are set."""
     r = _ROLE_BY_ID.get(role)
-    model_key = r.model_key if r is not None else f"LLM_MODEL_{role.upper()}"
-    raw = os.environ.get(model_key)
+    model_key = r.model_key if r is not None else f"LLM_{role.upper()}"
+    raw = _model_env_value(model_key)
     if not raw or ":" not in raw:
         raise LLMConfigError(
             f"{model_key} must be set to '<provider>:<model>' (got {raw!r})"

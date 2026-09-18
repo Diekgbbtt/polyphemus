@@ -11,14 +11,14 @@ def test_known_providers_have_base_urls():
     assert "swissai" in P.PROVIDERS
 
 def test_resolve_role_parses_provider_and_model(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
     assert P.resolve_role("triager") == ("openrouter", "anthropic/claude-3.5-sonnet")
 
 def test_validate_raises_when_key_missing(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
-    monkeypatch.setenv("LLM_MODEL_CONFIGURATOR", "openai:gpt-4o")
-    monkeypatch.setenv("LLM_MODEL_JOB_ORCHESTRATOR", "openai:gpt-4o")
-    monkeypatch.setenv("LLM_MODEL_CRAWLER", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_CONFIGURATOR", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_JOB_ORCHESTRATOR", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_CRAWLER", "openai:gpt-4o")
     monkeypatch.delenv("API_KEY_OPENROUTER", raising=False)
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
     with pytest.raises(P.LLMConfigError) as e:
@@ -27,10 +27,10 @@ def test_validate_raises_when_key_missing(monkeypatch):
 
 def test_validate_raises_on_unknown_provider(monkeypatch):
     # Derive from P.ROLES so adding a role never breaks this test; each role now
-    # carries its own model_key (records, #93/#94), not `LLM_MODEL_{role.upper()}`.
+    # carries its own model_key (records, #93/#94), not `LLM_{role.upper()}`.
     for r in P.ROLES:
         monkeypatch.setenv(r.model_key, "openai:gpt-4o")
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "bogus:model")
+    monkeypatch.setenv("LLM_TRIAGER", "bogus:model")
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
     with pytest.raises(P.LLMConfigError):
         P.validate_llm_config()
@@ -44,16 +44,16 @@ def test_validate_passes_when_all_present(monkeypatch):
 
 def test_analysis_roles_share_the_analyser_key_and_it_is_required(monkeypatch):
     """#93: `analyser` is split into per-cognitive-job role_ids (assigner,
-    mechanism_typist, data_modeller, ...) that SHARE `LLM_MODEL_ANALYSER`
+    mechanism_typist, data_modeller, ...) that SHARE `LLM_ANALYSER`
     (many-to-one), so validate_llm_config still requires that key at boot."""
     ids = {r.role_id for r in P.ROLES}
     assert {"assigner", "mechanism_typist", "data_modeller"} <= ids
     assert "analyser" not in ids  # the conflated single role is gone
-    assert P.role_record("assigner").model_key == "LLM_MODEL_ANALYSER"
-    assert P.role_record("mechanism_typist").model_key == "LLM_MODEL_ANALYSER"
+    assert P.role_record("assigner").model_key == "LLM_ANALYSER"
+    assert P.role_record("mechanism_typist").model_key == "LLM_ANALYSER"
     for r in P.ROLES:
         monkeypatch.setenv(r.model_key, "swissai:x")
-    monkeypatch.delenv("LLM_MODEL_ANALYSER", raising=False)  # the shared analysis key unset
+    monkeypatch.delenv("LLM_ANALYSER", raising=False)  # the shared analysis key unset
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     with pytest.raises(P.LLMConfigError) as e:
         P.validate_llm_config()
@@ -75,10 +75,10 @@ def test_role_record_carries_agent_mode():
 
 
 def test_resolve_role_uses_the_shared_key_for_split_analysis_roles(monkeypatch):
-    """Distinct analysis role_ids resolve the SAME model via LLM_MODEL_ANALYSER, and
+    """Distinct analysis role_ids resolve the SAME model via LLM_ANALYSER, and
     a legacy caller still on the bare `"analyser"` id resolves it via the fallback
     convention - so callers can migrate incrementally."""
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
+    monkeypatch.setenv("LLM_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("assigner") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("mechanism_typist") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("analyser") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")  # fallback
@@ -151,7 +151,7 @@ def test_resolve_role_parses_the_qwen_swissai_swap(monkeypatch):
     is also the provider/model separator `resolve_role` splits on. Pin that the
     split is on the FIRST colon only, so a slash inside the model id never
     truncates it."""
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
+    monkeypatch.setenv("LLM_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("analyser") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
 
 
@@ -372,8 +372,8 @@ def test_chat_model_for_carries_the_roles_thinking_baseline(monkeypatch):
     """The wiring: a model built for a thinking role reasons at its baseline, so a
     session/stateful agent off `chat_model_for` inherits it without extra plumbing."""
     from polymerhus.app.llm.roles import chat_model_for
-    monkeypatch.setenv("LLM_MODEL_HUNTING_HUNTER", "openrouter:openai/gpt-5-mini")
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "openrouter:openai/gpt-4.1-mini")
+    monkeypatch.setenv("LLM_HUNTING_HUNTER", "openrouter:openai/gpt-5-mini")
+    monkeypatch.setenv("LLM_ANALYSER", "openrouter:openai/gpt-4.1-mini")
     monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
     assert chat_model_for("hunting_hunter").reasoning_effort == "high"
     assert chat_model_for("assigner").reasoning_effort == "medium"
@@ -738,3 +738,41 @@ def test_request_payload_preserves_nonempty_tools_binding(monkeypatch):
     monkeypatch.setattr(P.ChatOpenAI, "_get_request_payload", _bound_tools)
     payload = m._get_request_payload([{"role": "user", "content": "hi"}], stop=None)
     assert payload["tools"] == bound
+
+
+# --- #240 (D223-1): the MODEL-infix drop - expand-contract window ---------------
+#
+# During the migration window both spellings resolve: the new `LLM_<NAME>` key
+# is preferred and the legacy `LLM_<NAME>` spelling is a documented
+# fallback. New code and configuration use the new spelling; the fallback is
+# removed once no caller remains.
+
+def test_model_key_spellings_use_the_new_infix_free_names():
+    """#240: every role record names the new `LLM_<NAME>` spelling - the
+    redundant MODEL infix is gone from the contract."""
+    for r in P.ROLES + P.HUNTING_ROLES:
+        assert not r.model_key.startswith("LLM_MODEL_"), r.model_key
+        assert r.model_key.startswith("LLM_"), r.model_key
+
+
+def test_resolve_role_prefers_the_new_name_when_both_are_set(monkeypatch):
+    """#240 migration window: both names resolve, the new name wins."""
+    monkeypatch.setenv("LLM_TRIAGER", "openai:gpt-new")
+    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:anthropic/claude-old")
+    assert P.resolve_role("triager") == ("openai", "gpt-new")
+
+
+def test_resolve_role_falls_back_to_the_deprecated_old_name(monkeypatch):
+    """#240 migration window: the old `LLM_<NAME>` spelling still
+    resolves (documented deprecated fallback) until no caller remains."""
+    monkeypatch.delenv("LLM_TRIAGER", raising=False)
+    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
+    assert P.resolve_role("triager") == ("openrouter", "anthropic/claude-3.5-sonnet")
+
+
+def test_resolve_role_unregistered_id_falls_back_to_old_convention(monkeypatch):
+    """#240 migration window: an unregistered id resolves `LLM_<ID>`, with the
+    legacy `LLM_<ID>` convention as the deprecated fallback."""
+    monkeypatch.delenv("LLM_ANALYSER", raising=False)
+    monkeypatch.setenv("LLM_MODEL_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
+    assert P.resolve_role("analyser") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")

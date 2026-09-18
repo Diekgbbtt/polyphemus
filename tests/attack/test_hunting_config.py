@@ -28,6 +28,6 @@ def test_pod_role_model_keys_are_distinct():
     precedent) - actor (probe/execute) and critic (classify/mine) are distinct
     cognitive jobs with independent tuning surfaces. A future many-to-one share
     stays a one-line `model_key` edit (D84-1)."""
-    assert P.role_record("pod_runner").model_key == "LLM_MODEL_POD_RUNNER"
-    assert P.role_record("pod_triager").model_key == "LLM_MODEL_POD_TRIAGER"
+    assert P.role_record("pod_runner").model_key == "LLM_POD_RUNNER"
+    assert P.role_record("pod_triager").model_key == "LLM_POD_TRIAGER"
     assert P.role_record("pod_runner").model_key != P.role_record("pod_triager").model_key
