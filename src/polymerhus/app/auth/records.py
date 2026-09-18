@@ -57,8 +57,17 @@ _ACCOUNT_KEYS = frozenset(
         "notes",
         "roles",
         "default_role",
+        # #223 D223-14/D223-18 (settled): the loop-asserted validity fact and
+        # the server-stamped selection-recency fact. Both are validated here;
+        # `updated_at` is STAMPED by the store (never trusted from the client).
+        "status",
+        "updated_at",
     }
 )
+
+# #223 D223-14 (settled): the typed validity fact the loop writes when it
+# validates or fails a session - absent until asserted, never any third value.
+_ACCOUNT_STATUSES = frozenset({"valid", "not_valid"})
 
 _ORIGINS = frozenset({"operator", "agent"})
 
@@ -271,4 +280,42 @@ def validate_account(record: object) -> dict:
         _check_snapshot(snapshot)
     if "notes" in record and not isinstance(record["notes"], str):
         _fail("account.notes", "must be a string")
+    # #223 D223-14 (settled): absent until the loop asserts it; any present
+    # value outside the closed pair is a loud refusal (never a third state,
+    # D223-3 - exhaustion is a failed authentication, recorded `not_valid`).
+    if "status" in record:
+        status = record["status"]
+        if not isinstance(status, str) or status not in _ACCOUNT_STATUSES:
+            _fail("account.status", 'must be "valid" or "not_valid"')
+    # #223 D223-18 (settled): the server-stamped recency fact. Validation
+    # requires only the stamp shape (a string) - the STORE decides the value
+    # (stamped on every write and seed, a client-supplied value overwritten,
+    # never trusted), so no forged ordering can ever validate its way in.
+    if "updated_at" in record and not isinstance(record["updated_at"], str):
+        _fail("account.updated_at", "must be a string")
     return copy.deepcopy(record)
+
+
+def select_account(accounts: object) -> str | None:
+    """The deterministic account selection (#223 D223-18): the most recently
+    updated USABLE account's name (`updated_at` descending - a missing stamp
+    sorts oldest, so pre-#241 records lose to stamped ones); ties fall back
+    to list position, newest last. Usable means not known-bad: a `not_valid`
+    record is skipped (the loop asserted it failed - re-selecting it would
+    replay a dead session). No usable account (or no mapping at all) is None,
+    never a raise - the gateway maps that onto its missing-data path."""
+    if not isinstance(accounts, dict):
+        return None
+    best: str | None = None
+    best_stamp = ""
+    best_pos = -1
+    for pos, (name, record) in enumerate(accounts.items()):
+        if not isinstance(record, dict):
+            continue
+        if record.get("status") == "not_valid":
+            continue
+        stamp = record.get("updated_at")
+        key = stamp if isinstance(stamp, str) else ""
+        if best is None or key > best_stamp or (key == best_stamp and pos > best_pos):
+            best, best_stamp, best_pos = name, key, pos
+    return best

@@ -31,6 +31,7 @@ import logging
 import os
 import threading
 import uuid
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Any
 
@@ -74,6 +75,14 @@ class StoreUnavailableError(ValueError):
     """The denoted degraded-store signal: a write that cannot load or persist
     its bucket file (corrupt YAML, I/O failure) fails loudly - never a silent
     corruption, never an overwrite of unreadable state."""
+
+
+def _utcnow_iso() -> str:
+    """Server time as an ISO-8601 UTC string: the one `updated_at` source
+    (#223 D223-18). A module-level seam (not inlined `datetime.now`) so tests
+    pin recency deterministically by monkeypatching one name."""
+    return datetime.now(timezone.utc).isoformat()
+
 
 # Per-project write serialisation (D220-6, the `hunt_store` I2 pattern): a
 # per-project lock covers the whole check-then-write and read-modify-write
@@ -242,6 +251,11 @@ class AuthStore:
                             "creating a second record")
                     record = copy.deepcopy(value)
                     record["origin"] = origin
+                    # #223 D223-18: the recency fact is stamped server-side on
+                    # the write - a client-supplied `updated_at` is dropped
+                    # (never trusted), so no client can forge the ordering.
+                    record.pop("updated_at", None)
+                    record["updated_at"] = _utcnow_iso()
                     accounts[name] = validate_account(record)
                     self._dump_yaml_atomic(
                         self._credentials_file(project_id), {"accounts": accounts})
@@ -269,6 +283,11 @@ class AuthStore:
                 # stamped on the mapping server-side - stored stamp wins, else
                 # the call origin, so a forged origin inside `value` never lands.
                 record["origin"] = stamped if stamped in _ORIGINS else origin
+                # #223 D223-18: same stamping discipline as CREATE - the merge
+                # overwrites whatever `updated_at` the call carried (a deep
+                # write to `accounts.<name>.updated_at` included), so every
+                # account write refreshes recency and forgery never lands.
+                record["updated_at"] = _utcnow_iso()
                 accounts[name] = validate_account(record)
                 self._dump_yaml_atomic(
                     self._credentials_file(project_id), {"accounts": accounts})
@@ -304,12 +323,19 @@ class AuthStore:
                 if not isinstance(current, dict):
                     current = {}
                 seeded = {}
+                # #223 D223-18: seeds stamp recency server-side too - one stamp
+                # for the whole seed, so seeded accounts tie and list position
+                # (newest last) decides their relative order. A forged
+                # `updated_at` inside a seeded entry is dropped, never trusted.
+                seed_stamp = _utcnow_iso()
                 for name, record in accounts.items():
                     if not isinstance(record, dict):
                         raise AuthInvalidError(
                             f"accounts.{name}", "must be an object to seed")
                     entry = copy.deepcopy(record)
                     entry["origin"] = "operator"
+                    entry.pop("updated_at", None)
+                    entry["updated_at"] = seed_stamp
                     seeded[name] = validate_account(entry)
                 kept = {n: r for n, r in current.items()
                         if isinstance(r, dict) and r.get("origin") == "agent"}

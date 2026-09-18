@@ -2,6 +2,7 @@
 
 from polymerhus.app.auth.records import (
     AuthInvalidError,
+    select_account,
     validate_account,
     validate_overview,
 )
@@ -21,6 +22,7 @@ __all__ = [
     "OperatorImmutableError",
     "StoreUnavailableError",
     "build_auth_store_tool",
+    "select_account",
     "validate_account",
     "validate_overview",
 ]

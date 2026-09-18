@@ -95,7 +95,7 @@ def test_contract_carries_the_overall_schema():
     for marker in ("login_endpoint", "required_headers", "mechanism",
                    "defences", "fingerprinting", "technical_conditions",
                    "credentials", "tokens", "steel", "snapshot",
-                   "procedure", "origin"):
+                   "procedure", "origin", "status", "updated_at"):
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
 
@@ -120,19 +120,22 @@ def test_each_parameter_documents_its_role(tmp_path):
 
 def test_read_empty_path_returns_the_full_state(tmp_path):
     tool = build_auth_store_tool(PROJECT, _seeded_store(tmp_path))
-    assert tool.invoke({"command": "read", "path": ""}) == {
-        "ok": True, "command": "read", "path": "",
-        "value": {"overview": {"notes": "operator ground truth"},
-                  "accounts": {"alice": {"origin": "agent",
-                                         "notes": "agent-minted note"}}},
+    out = tool.invoke({"command": "read", "path": ""})
+    assert out["ok"] is True and out["command"] == "read" and out["path"] == ""
+    assert isinstance(out["value"]["accounts"]["alice"].pop("updated_at"), str)
+    assert out["value"] == {
+        "overview": {"notes": "operator ground truth"},
+        "accounts": {"alice": {"origin": "agent", "notes": "agent-minted note"}},
     }
 
 
 def test_read_narrow_path_projects_the_field(tmp_path):
     tool = build_auth_store_tool(PROJECT, _seeded_store(tmp_path))
     out = tool.invoke({"command": "read", "path": "accounts.alice"})
-    assert out == {"ok": True, "command": "read", "path": "accounts.alice",
-                   "value": {"origin": "agent", "notes": "agent-minted note"}}
+    assert out["ok"] is True and out["command"] == "read"
+    assert out["path"] == "accounts.alice"
+    assert isinstance(out["value"].pop("updated_at"), str)
+    assert out["value"] == {"origin": "agent", "notes": "agent-minted note"}
 
 
 def test_read_scalar_leaf_returns_the_scalar(tmp_path):
@@ -195,10 +198,10 @@ def test_write_record_mapping_at_a_fresh_name_creates(tmp_path):
                        "value": {"notes": "fresh test account",
                                  "procedure": "password-login"}})
     assert out["ok"] is True
-    assert tool.invoke({"command": "read",
-                        "path": "accounts.bob"})["value"] == {
-        "origin": "agent", "notes": "fresh test account",
-        "procedure": "password-login"}
+    record = tool.invoke({"command": "read", "path": "accounts.bob"})["value"]
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "agent", "notes": "fresh test account",
+                      "procedure": "password-login"}
 
 
 def test_write_to_the_overview_refuses_operator_immutable(tmp_path):

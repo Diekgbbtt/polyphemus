@@ -147,7 +147,7 @@ Open: the browser-path profile discipline (the profile key when an account carri
 The profile key convention is project-scoped and account-derived: `<project_id>-<account>`, combining the account-derived key with a project scope so profiles never collide across projects on the shared Steel account.
 When the loop needs the browser and the account carries no `steel.profile`, or a mounted profile does not yield an authenticated session, the loop fails open: it still enters the browser branch, asserts the account `not_valid` in the store, and proceeds with the sign-in flow.
 The sign-in flow mints under the project-scoped key (`start --profile <project_id>-<account> --update-profile`), verifies, and persists the profile key plus the extracted tokens back under the account.
-The `not_valid` assertion requires a small account-schema addition (a typed validity fact, e.g. `status: valid | not_valid`); the exact key is settled at implementation because the account key set is closed in `records.py`.
+Settled (#241): the validity key is `status`, closed values `valid | not_valid`, absent until asserted; any other value refuses with the existing in-band coded error (`auth_invalid` naming `account.status`).
 
 ### D223-15 - Loop mechanics: one ReAct gateway turn, hunting-style passive transitions (L1)
 
@@ -197,8 +197,8 @@ The "no accounts AND no `authn` skill" state has two distinct causes, discrimina
 
 The selection rule is deterministic: the loop picks the most recently updated usable account.
 Recency is grounded by a server-stamped `updated_at` written on every account write - seed and agent alike, symmetric with the server-stamped `origin`, so no client can forge the ordering.
-This is the second small account-schema addition alongside D223-14's validity fact; both exact shapes are settled at implementation.
-Ties (identical timestamps) fall back to the account's position in the store list, newest last.
+Settled (#241): the recency key is `updated_at` (an ISO-8601 UTC string from the one `_utcnow_iso` seam, stamped on every account write and operator seed - one stamp per seed, so seeded accounts tie; a client-supplied value is overwritten, never trusted).
+Selection is `records.select_account`: most-recent `updated_at` first (a missing stamp sorts oldest), ties fall back to the account's position in the store list, newest last, `not_valid` records skipped as unusable, no usable account yielding None for the gateway's missing-data path.
 
 ### D223-19 - Account feeding: the account identifier rides the pipeline state, consumers resolve lazily (H1)
 

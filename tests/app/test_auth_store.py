@@ -53,15 +53,19 @@ def test_first_write_creates_exactly_the_two_spec_files(tmp_path):
 def test_write_account_field_stamps_the_agent_origin_server_side(tmp_path):
     store = AuthStore(tmp_path)
     store.write(PROJECT, "accounts.alice.notes", "agent-minted note")
-    assert store.read(PROJECT, "accounts.alice") == {
-        "origin": "agent", "notes": "agent-minted note"}
+    record = store.read(PROJECT, "accounts.alice")
+    # #241: every write stamps the server-side recency fact beside the origin.
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "agent", "notes": "agent-minted note"}
 
 
 def test_read_full_state_after_seeded_writes(tmp_path):
     store = AuthStore(tmp_path)
     store.write(PROJECT, "overview.notes", "operator ground truth", origin="operator")
     store.write(PROJECT, "accounts.alice.notes", "agent-minted note")
-    assert store.read(PROJECT) == {
+    state = store.read(PROJECT)
+    assert isinstance(state["accounts"]["alice"].pop("updated_at"), str)
+    assert state == {
         "overview": {"notes": "operator ground truth"},
         "accounts": {"alice": {"origin": "agent", "notes": "agent-minted note"}},
     }
@@ -73,7 +77,9 @@ def test_read_dotted_paths_project_the_field(tmp_path):
     store.write(PROJECT, "accounts.alice.notes", "agent-minted note")
     assert store.read(PROJECT, "overview") == {"notes": "operator ground truth"}
     assert store.read(PROJECT, "overview.notes") == "operator ground truth"
-    assert store.read(PROJECT, "accounts.alice") == {"origin": "agent", "notes": "agent-minted note"}
+    record = store.read(PROJECT, "accounts.alice")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "agent", "notes": "agent-minted note"}
 
 
 def test_read_nested_token_path_projects_the_token_entry(tmp_path):
@@ -113,8 +119,9 @@ def _credentials(name="ops-admin") -> dict:
 def test_create_account_root_upserts_the_whole_record_stamped_agent(tmp_path):
     store = AuthStore(tmp_path)
     store.write(PROJECT, "accounts.bob", {"credentials": _credentials("bob")})
-    assert store.read(PROJECT, "accounts.bob") == {
-        "origin": "agent", "credentials": _credentials("bob")}
+    record = store.read(PROJECT, "accounts.bob")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "agent", "credentials": _credentials("bob")}
 
 
 def test_create_ignores_a_forged_origin_inside_the_value(tmp_path):
@@ -130,8 +137,9 @@ def test_create_of_a_known_name_fails_duplicate_leaving_the_record(tmp_path):
                 origin="operator")
     with pytest.raises(DuplicateAuthError):
         store.write(PROJECT, "accounts.bob", {"notes": "forked"})
-    assert store.read(PROJECT, "accounts.bob") == {
-        "origin": "operator", "credentials": _credentials("bob")}
+    record = store.read(PROJECT, "accounts.bob")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "operator", "credentials": _credentials("bob")}
 
 
 def test_write_merges_leaving_sibling_fields_untouched(tmp_path):
@@ -139,7 +147,9 @@ def test_write_merges_leaving_sibling_fields_untouched(tmp_path):
     store.write(PROJECT, "accounts.alice.notes", "agent-minted note")
     store.write(PROJECT, "accounts.alice.tokens.session",
                 {"value": "abc123", "location": "cookie"})
-    assert store.read(PROJECT, "accounts.alice") == {
+    record = store.read(PROJECT, "accounts.alice")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {
         "origin": "agent",
         "notes": "agent-minted note",
         "tokens": {"session": {"value": "abc123", "location": "cookie"}},
@@ -150,7 +160,9 @@ def test_null_removes_an_optional_field_keeping_the_record_valid(tmp_path):
     store = AuthStore(tmp_path)
     store.write(PROJECT, "accounts.alice.notes", "agent-minted note")
     store.write(PROJECT, "accounts.alice.notes", None)
-    assert store.read(PROJECT, "accounts.alice") == {"origin": "agent"}
+    record = store.read(PROJECT, "accounts.alice")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "agent"}
     assert store.read(PROJECT, "accounts.alice.notes") == {}
 
 
@@ -161,8 +173,9 @@ def test_shape_violation_refuses_naming_the_field_leaving_state(tmp_path):
         store.write(PROJECT, "accounts.alice.tokens.session",
                     {"value": "abc123", "location": "side-channel"})
     assert "account.tokens.session.location" in str(exc.value)
-    assert store.read(PROJECT, "accounts.alice") == {
-        "origin": "agent", "notes": "agent-minted note"}
+    record = store.read(PROJECT, "accounts.alice")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "agent", "notes": "agent-minted note"}
 
 
 def test_agent_write_into_an_operator_account_is_refused_immutable(tmp_path):
@@ -171,8 +184,9 @@ def test_agent_write_into_an_operator_account_is_refused_immutable(tmp_path):
                 origin="operator")
     with pytest.raises(OperatorImmutableError):
         store.write(PROJECT, "accounts.bob.notes", "agent graffito")
-    assert store.read(PROJECT, "accounts.bob") == {
-        "origin": "operator", "credentials": _credentials("bob")}
+    record = store.read(PROJECT, "accounts.bob")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "operator", "credentials": _credentials("bob")}
 
 
 def test_agent_write_to_the_operator_overview_is_refused_immutable(tmp_path):
@@ -224,8 +238,9 @@ def test_operator_seed_stamps_accounts_operator_server_side(tmp_path):
     store = AuthStore(tmp_path)
     store.replace_operator_state(
         PROJECT, accounts={"ops": {"origin": "agent", "notes": "seeded"}})
-    assert store.read(PROJECT, "accounts.ops") == {
-        "origin": "operator", "notes": "seeded"}
+    record = store.read(PROJECT, "accounts.ops")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "operator", "notes": "seeded"}
 
 
 def test_reseed_replaces_operator_accounts_but_keeps_agent_ones(tmp_path):
@@ -235,7 +250,10 @@ def test_reseed_replaces_operator_accounts_but_keeps_agent_ones(tmp_path):
     store.write(PROJECT, "accounts.agent1", {"notes": "agent-minted"})
     store.replace_operator_state(
         PROJECT, accounts={"ops2": {"credentials": _credentials("o2")}})
-    assert store.read(PROJECT, "accounts") == {
+    accounts = store.read(PROJECT, "accounts")
+    for name in ("agent1", "ops2"):
+        assert isinstance(accounts[name].pop("updated_at"), str)
+    assert accounts == {
         "agent1": {"origin": "agent", "notes": "agent-minted"},
         "ops2": {"origin": "operator", "credentials": _credentials("o2")},
     }
@@ -250,8 +268,9 @@ def test_absent_seed_sections_leave_state_untouched(tmp_path):
 
     assert store.read(PROJECT, "overview") == {"notes": "v1"}
     store.replace_operator_state(PROJECT, overview={"notes": "v2"})
-    assert store.read(PROJECT, "accounts.agent1") == {
-        "origin": "agent", "notes": "agent-minted"}
+    record = store.read(PROJECT, "accounts.agent1")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "agent", "notes": "agent-minted"}
 
 
 def test_seed_name_colliding_with_a_live_agent_record_keeps_the_agent(tmp_path, caplog):
@@ -262,8 +281,9 @@ def test_seed_name_colliding_with_a_live_agent_record_keeps_the_agent(tmp_path, 
     with caplog.at_level(logging.WARNING, logger="polymerhus.app.auth.store"):
         store.replace_operator_state(
             PROJECT, accounts={"scout": {"notes": "operator ground truth"}})
-    assert store.read(PROJECT, "accounts.scout") == {
-        "origin": "agent", "notes": "agent-minted"}
+    record = store.read(PROJECT, "accounts.scout")
+    assert isinstance(record.pop("updated_at"), str)
+    assert record == {"origin": "agent", "notes": "agent-minted"}
     assert "scout" in caplog.text
 
 
