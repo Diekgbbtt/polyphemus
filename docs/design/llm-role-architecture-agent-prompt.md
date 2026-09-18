@@ -7,7 +7,7 @@
 ## 0. Ratified decisions (2026-08-07) and where they live
 
 - **The role record** is `Role(role_id, model_key, agent_mode)` in `src/polymerhus/app/llm/providers.py`.
-  `role_id` is the cognitive-job identity (the observability label); `model_key` is the env var selecting the model and is MANY-to-one (every analysis role_id shares `LLM_MODEL_ANALYSER` for now, so a per-agent split is a one-line `model_key` edit); `agent_mode` is `one_shot | session`.
+  `role_id` is the cognitive-job identity (the observability label); `model_key` is the env var selecting the model and is MANY-to-one (every analysis role_id shares `LLM_ANALYSER` for now, so a per-agent split is a one-line `model_key` edit); `agent_mode` is `one_shot | session`.
 - **Terminology.** The turn-mode values are `one_shot` and `session` (not "resumable"); a session agent's memory is carried in LangGraph checkpointer thread-state, not in the conversation-as-prompt.
 - **`analyser` is split** per cognitive job (`bootstrapper`, `assigner`, `mechanism_typist`, `data_modeller`, `anatomy`, `curation`, `sweep`, `anti_cluttering`); the hunting roles (`hunting_orchestrator`, `hunting_hunter`) live in `HUNTING_ROLES`, validated at the hunting module bootstrap, NEVER app boot (operator ruling 2026-08-06).
 - **The session path** is `src/polymerhus/app/llm/session.py::run_session_turn` / `arun_session_turn`, built on `langchain.agents.create_agent`: a long-horizon **tool_calling** agent (via `bind_tools`), checkpointer-backed short-term memory keyed by `thread_id = f"{run_id}:{role_id}"`, `response_format` for structured output.
@@ -98,7 +98,7 @@ Where a call site cannot pass the instance identity through its seam contract (t
 ## 1. The hole
 
 `src/polymerhus/app/llm/providers.py` keys every LLM-gated agent by a role string in the `ROLES` tuple: `("configurator", "triager", "job_orchestrator", "crawler", "analyser")`.
-Each role maps to exactly one model environment variable (`LLM_MODEL_ANALYSER` and so on) and is invoked single-shot through `invoke_role(role, messages, schema=...)` (`src/polymerhus/app/llm/roles.py`).
+Each role maps to exactly one model environment variable (`LLM_ANALYSER` and so on) and is invoked single-shot through `invoke_role(role, messages, schema=...)` (`src/polymerhus/app/llm/roles.py`).
 
 Two facts do not fit the vocabulary:
 
@@ -114,7 +114,7 @@ The consequence is a choice between two bad options: either every new agent reus
 The role record should carry three independent properties:
 
 - `role_id`: the stable identity of the cognitive job (e.g. `mechanism_typist`, `assigner`, `hunting`).
-- `model_key`: the environment variable selecting the model (e.g. `LLM_MODEL_ANALYSER`, `LLM_MODEL_HUNTING`).
+- `model_key`: the environment variable selecting the model (e.g. `LLM_ANALYSER`, `LLM_HUNTING`).
 - `agent_mode`: `one_shot` | `resumable`.
 
 `one_shot`: a stateless single call; the conversation is complete in one invocation; nothing persists between calls.
@@ -127,7 +127,7 @@ The role record should carry three independent properties:
 
 ### 3.1 The hunting role (the first consumer, #83)
 
-Role record: `role_id: "hunting"`, `model_key: "LLM_MODEL_HUNTING"`, `agent_mode: "resumable"`.
+Role record: `role_id: "hunting"`, `model_key: "LLM_HUNTING"`, `agent_mode: "resumable"`.
 
 The hunting agent's system prompt is the stable cognitive-architecture prompt ratified in `docs/design/hunting-83-hunting-agent-implementation.md` section 4.1-4.6 (decision tree, passes, loop discipline, working set, few-shot examples); its user prompt is the per-invocation grounding (HuntConfig parts, KB retrieval, working set state).
 
@@ -147,7 +147,7 @@ The resumable mode contract, as consumed by the hunting agent:
 
 - Ratify the three-property role record and the `one_shot`/`resumable` vocabulary.
 - Decide whether `resumable` carries the working set in the prompt (as the hunting agent does) or through a dedicated state seam in `invoke_role`.
-- Decide whether `LLM_MODEL_ANALYSER` stays as the shared model key for the three analysis roles (many-to-one) or is split.
+- Decide whether `LLM_ANALYSER` stays as the shared model key for the three analysis roles (many-to-one) or is split.
 - Migrate `ROLES` and `validate_llm_config` (`providers.py`) accordingly, with the hunting role as the proof case.
 
 ## 5. Non-goals

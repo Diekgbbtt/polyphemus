@@ -29,12 +29,12 @@
 **Interfaces - Produces:**
 - `config.py`: `STEEL_MCP_URL = os.environ.get("STEEL_MCP_URL", "")`, `STEEL_API_KEY = os.environ.get("STEEL_API_KEY", "")`, `CRAWL_MAX_PAGES` (default 50), `CRAWL_MAX_DEPTH` (3), `CRAWL_MAX_ITERS` (30), `CRAWL_JOB_TIMEOUT_S` (480).
 - `steel_client.py`: `CRAWL_TOOL_NAMES: frozenset` (the 7 steel_* tool names); `steel_configured() -> bool` (both env vars present); `async def get_crawl_tools(*, client_factory=None) -> list` (builds a `MultiServerMCPClient({"steel": {"url": STEEL_MCP_URL, "transport": "streamable_http", "headers": {"Authorization": f"Bearer {STEEL_API_KEY}"}}})`, returns the tools filtered to `CRAWL_TOOL_NAMES`; `client_factory` injectable for tests). Raise `SteelNotConfigured` if `not steel_configured()`.
-- `providers.py`: `ROLES` gains `"crawler"`; `validate_llm_config` now also requires `LLM_MODEL_CRAWLER`'s provider key (so bootstrap fails fast if the crawler role is misconfigured).
+- `providers.py`: `ROLES` gains `"crawler"`; `validate_llm_config` now also requires `LLM_CRAWLER`'s provider key (so bootstrap fails fast if the crawler role is misconfigured).
 
 - [ ] **Step 1:** Write `tests/recon/crawl/test_steel_client.py`: `steel_configured()` False when env unset, True when both set (monkeypatch); `get_crawl_tools` with an injected fake client_factory returns only the CRAWL_TOOL_NAMES tools; `get_crawl_tools` raises `SteelNotConfigured` when unconfigured; `"crawler" in providers.ROLES`.
 - [ ] **Step 2:** Run `.venv/bin/pytest tests/recon/crawl/test_steel_client.py -v` → FAIL.
 - [ ] **Step 3:** Implement config additions, `steel_client.py`, add `"crawler"` to ROLES.
-- [ ] **Step 4:** Run → PASS; `.venv/bin/pytest tests/recon tests/test_llm_providers.py -v` green (the ROLES change - ensure existing llm tests set LLM_MODEL_CRAWLER or the validate test accounts for it; adjust the provider tests minimally).
+- [ ] **Step 4:** Run → PASS; `.venv/bin/pytest tests/recon tests/test_llm_providers.py -v` green (the ROLES change - ensure existing llm tests set LLM_CRAWLER or the validate test accounts for it; adjust the provider tests minimally).
 - [ ] **Step 5:** `git commit -m "feat(recon): Steel MCP client + crawl config + crawler LLM role"`.
 
 ---

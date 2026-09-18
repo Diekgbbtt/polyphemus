@@ -12,13 +12,14 @@
 
 *Superseded in part (operator ruling, 2026-09-18, carried by the workflow-overview pass and D223-8 / D223-13): no new role id is minted.*
 *The auth-gateway duty attaches to the existing `job_orchestrator` role, so the `LLM_RECON_PHASE_SPECIALIST` key does not apply - the gateway uses the orchestrator's model key.*
-*The `LLM_MODEL_*` -> `LLM_*` global rename below stands unchanged.*
+*The global MODEL-infix-drop env-key rename below stands unchanged.*
+*Landed 2026-09-18 (#240, `feat/223-stateful-recon-job-auth`): the rename is complete - every role record, caller, test, compose file, and environment document uses the infix-free `LLM_<NAME>` spelling; the migration-window fallback is removed and no legacy-infix reference remains.*
 
 A new role id is minted for the stateful recon phase specialist; the existing `job_orchestrator` id is NOT reused.
 Capability and policy attach to the role id (model, turn mode, `ROLE_SKILLS` surface, compaction, trace tags), so two different agents sharing one id would share one capability set - and sharing would arm the run-level macro-router with the specialist's surface.
 The role's exact duty is being redefined in the operator's workflow-overview pass (D223-5); the identity and naming decisions are settled now.
 
-The model-key environment variables are renamed from `LLM_MODEL_<NAME>` to `LLM_<NAME>`: the `MODEL` infix is redundant with the `LLM` acronym.
+The model-key environment variables drop the redundant `MODEL` infix (the `LLM_<NAME>` spelling): the infix repeats what the `LLM` acronym already says.
 The rename is global (the established keys in `app/llm/providers.py`, their environment documentation, tests, compose files, and image config; 179 textual occurrences at decision time).
 The new role's model key is `LLM_RECON_PHASE_SPECIALIST`.
 Reusing an existing model key via many-to-one is the established pattern (the analysis roles share one key), but the operator ruled a dedicated key for this role.

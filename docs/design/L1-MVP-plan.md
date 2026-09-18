@@ -295,7 +295,7 @@ Do not start a second area until the first is verifier-APPROVED.
 - id: AST-ANALYSER-02
   kind: functional
   requirement_ref: providers.py:14,44-57
-  statement: "The analyser is a first-class LLM role; adding it makes validate_llm_config require LLM_MODEL_ANALYSER at boot."
+  statement: "The analyser is a first-class LLM role; adding it makes validate_llm_config require LLM_ANALYSER at boot."
   tier: unit
   test: tests/test_llm_providers.py::test_analyser_role_is_registered_and_required
   langfuse_score: ast_analyser_02
@@ -330,7 +330,7 @@ Do not start a second area until the first is verifier-APPROVED.
   status: green
 ```
 
-> **§ FR-ANALYSER notes.** (1) **Operator .env gate:** adding `analyser` to `ROLES` makes the app require `LLM_MODEL_ANALYSER=<provider>:<model>` at boot; the operator chose a dedicated role + stronger model and must set it before the next restart (tests mock the LLM). (2) **Proposal/delta split:** the LLM emits provenance-free *proposals*; `proposals_to_deltas` stamps system provenance — the same "LLM can't spoof identity/provenance" discipline as `l1_curator`'s reserved-prop stripping. (3) **Scaffolding only:** the analyser's system prompt is a minimal placeholder; FR-SKILLIF replaces it with a `skill_for`-loaded prompt and FR-ELICIT/FR-ENRICH supply the reasoning behaviours.
+> **§ FR-ANALYSER notes.** (1) **Operator .env gate:** adding `analyser` to `ROLES` makes the app require `LLM_ANALYSER=<provider>:<model>` at boot; the operator chose a dedicated role + stronger model and must set it before the next restart (tests mock the LLM). (2) **Proposal/delta split:** the LLM emits provenance-free *proposals*; `proposals_to_deltas` stamps system provenance — the same "LLM can't spoof identity/provenance" discipline as `l1_curator`'s reserved-prop stripping. (3) **Scaffolding only:** the analyser's system prompt is a minimal placeholder; FR-SKILLIF replaces it with a `skill_for`-loaded prompt and FR-ELICIT/FR-ENRICH supply the reasoning behaviours.
 
 ### FR-PODSTREAM — full assertion ledger (delivery/completeness, authored at area start)
 
@@ -764,7 +764,7 @@ Do not start a second area until the first is verifier-APPROVED.
 ```
 
 ### Headline assertions for the remaining areas (full ledger authored at area start)
-- **FR-ELICIT — DONE** (7 unit + 3 integration, `test_bootstrap*.py`). `operator_kb` = free-text (operator decision; typed template = AMV-4). `bootstrap_from_kb` elicits the Service skeleton via the analyser LLM, always ensures the linchpin `AuthenticationMechanism`/`AuthorizationSystem`, seeds `SystemKind`, writes **no L0 refs** (aggregates dropped — pure business projection), idempotent, fail-open. Bootstrap→assignment flow verified. Live smoke confirmed fail-open on a real LLM 400 (the operator's `LLM_MODEL_ANALYSER` id is currently invalid — see STATE Waiting-on-human).
+- **FR-ELICIT — DONE** (7 unit + 3 integration, `test_bootstrap*.py`). `operator_kb` = free-text (operator decision; typed template = AMV-4). `bootstrap_from_kb` elicits the Service skeleton via the analyser LLM, always ensures the linchpin `AuthenticationMechanism`/`AuthorizationSystem`, seeds `SystemKind`, writes **no L0 refs** (aggregates dropped — pure business projection), idempotent, fail-open. Bootstrap→assignment flow verified. Live smoke confirmed fail-open on a real LLM 400 (the operator's `LLM_ANALYSER` id is currently invalid — see STATE Waiting-on-human).
 - **FR-ENRICH — DONE** (15 unit + 5 integration, `test_l1_enrich_*.py`). **DataItem flexible identity** `(project_id, item_key)` — a semantic key, `identity ⊥ membership` (verified: item survives a growing `SURFACES_AT` set) (operator pulled `L1OP-1` into MVP). **Extensible DataRelationship vocabulary** — `DataRelationshipKind` catalogue (6 seeds) + one `DATA_RELATIONSHIP` edge carrying `{kind, predicate, rationale}` (`L1OP-2` resolved, `L1D-21`). `PRODUCES`/`CONSUMES` with the trust **assumption on CONSUMES** (`L1D-14`); `SURFACES_AT` native cross-layer edge (L0 MATCHed never created); systems as typed §6 edges (`L1D-18`). Analyser can propose all of it in one batch (`default_curate_with_enrichment_fn`); LLM-facing proposals carry no provenance (system-stamped).
 - **FR-PODSTREAM** — every curated `AssetDelta` and `Observation` reaches the analyser exactly once; at-least-once + dedup semantics defined and tested. Full ledger authored above (AST-PODSTREAM-01..05).
 - **FR-TEMPLATE — DONE** (10 unit + 1 integration, `test_l1_template_key.py` + `test_l1_curator_merge.py::test_endpoint_template_key_persisted_and_shared_across_instances`). `l1_curator.endpoint_template(path)` collapses numeric/UUID segments to `{id}` (idempotent; non-id words like `2fa`/`v2` untouched); written as `r.endpoint_template` on the `AGGREGATES` edge at assignment when the L0 target is an `Endpoint` (kept L1-side since l1_curator must not write L0). Two concrete instance endpoints of one template share the key while the raw member set stays distinct — the concretisation dedup handle (`L1D-32`, ratified door D5). Full equivalence-class reducer stays deferred (`NM-10`).

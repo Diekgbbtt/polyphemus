@@ -62,14 +62,14 @@ Expected: FAIL - role not found
 - [ ] **Step 3: Add roles to HUNTING_ROLES**
 ```python
 HUNTING_ROLES: tuple[Role, ...] = (
-    Role("hunting_orchestrator", "LLM_MODEL_HUNTING_ORCHESTRATOR", "session", "medium"),
-    Role("hunting_hunter",       "LLM_MODEL_HUNTING_HUNTER",       "session", "high"),
-    Role("pod_runner",           "LLM_MODEL_POD_RUNNER",           "session", "high"),
-    Role("pod_triager",          "LLM_MODEL_POD_TRIAGER",          "session", "high"),
+    Role("hunting_orchestrator", "LLM_HUNTING_ORCHESTRATOR", "session", "medium"),
+    Role("hunting_hunter",       "LLM_HUNTING_HUNTER",       "session", "high"),
+    Role("pod_runner",           "LLM_POD_RUNNER",           "session", "high"),
+    Role("pod_triager",          "LLM_POD_TRIAGER",          "session", "high"),
 )
 ```
 
-- [ ] **Step 4: Add LLM_MODEL_POD_RUNNER / LLM_MODEL_POD_TRIAGER to .env.example, run test to pass**
+- [ ] **Step 4: Add LLM_POD_RUNNER / LLM_POD_TRIAGER to .env.example, run test to pass**
 Run: `.venv/bin/python -m pytest tests/test_llm_config.py::test_pod_roles_registered -v`
 Expected: PASS
 

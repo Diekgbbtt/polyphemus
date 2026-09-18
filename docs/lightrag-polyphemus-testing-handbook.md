@@ -46,8 +46,8 @@ environment):
 
 ```bash
 export API_KEY_SWISSAI="$LLM_BINDING_API_KEY"
-export LLM_MODEL_HUNTING_HUNTER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
-export LLM_MODEL_HUNTING_ORCHESTRATOR=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
+export LLM_HUNTING_HUNTER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
+export LLM_HUNTING_ORCHESTRATOR=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
 export LIGHTRAG_BASE_API_URL=http://127.0.0.1:9621
 export QUERY_LLM_API_KEY="$LLM_BINDING_API_KEY"
 export QUERY_LLM_BASE_URL=https://api.swissai.svc.cscs.ch/v1
@@ -124,8 +124,8 @@ This exercises the production registry path: the model gets the real
 ```bash
 set -a; source .env; set +a
 export API_KEY_SWISSAI="$LLM_BINDING_API_KEY"
-export LLM_MODEL_HUNTING_HUNTER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
-export LLM_MODEL_HUNTING_ORCHESTRATOR=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
+export LLM_HUNTING_HUNTER=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
+export LLM_HUNTING_ORCHESTRATOR=swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731
 export LIGHTRAG_BASE_API_URL=http://127.0.0.1:9621
 export QUERY_LLM_API_KEY="$LLM_BINDING_API_KEY"
 export QUERY_LLM_BASE_URL=https://api.swissai.svc.cscs.ch/v1

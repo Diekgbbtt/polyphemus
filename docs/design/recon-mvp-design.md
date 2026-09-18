@@ -378,7 +378,7 @@ Volumes: `neo4j-data`, `pg-data`, `seclists`, `resolvers`, `work` (per-session w
 | `POSTGRES_DSN` | agent | app data + checkpoints + `pgvector` |
 | `KALI_MCP_URL` | agent | fastmcp `execute_command` endpoint |
 | `MAX_PODS` / `MAX_POD_ITERS` | agent | fan-out width + pod loop ceiling |
-| `LLM_MODEL_TRIAGER` / `_CONFIGURATOR` | agent | per-role model ids |
+| `LLM_TRIAGER` / `_CONFIGURATOR` | agent | per-role model ids |
 | `EXEC_TIMEOUT_S` / `OUTPUT_BYTE_CAP` | agent/kali | execution + context bounds |
 | `LANGGRAPH_STRICT_MSGPACK=true` | agent | safe checkpoint deserialization |
 | `EMBEDDING_BINDING` / `EMBEDDING_MODEL` / `EMBEDDING_DIM` | lightrag | runtime embedding at insert time |

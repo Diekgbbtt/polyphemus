@@ -13,7 +13,7 @@
 - Target the `redamon-agent` base image's Python 3.11; do not add new heavy deps - `langchain-openai`, `openai`, `langchain-core`, `langgraph`, `langchain-mcp-adapters`, `neo4j`, `pydantic` are already present.
 - Neo4j identity keys carry `project_id`, never `user_id` (Phase-1 constraints in `db/neo4j/schema.py` already drop `user_id`). Every node gets `project_id`, `first_seen`, `last_seen`; `first_seen` only `ON CREATE`.
 - All graph writes are parameterised `MERGE` via `agent/app/clients/neo4j_client.py::merge`. No f-string interpolation of values into Cypher.
-- LLM config is env-driven: per role `LLM_MODEL_<ROLE>` = `"<provider>:<model>"`; keys are `API_KEY_<PROVIDER>` (uppercased provider). Bootstrap MUST tear down the app if any referenced provider is unknown or its key is missing.
+- LLM config is env-driven: per role `LLM_<ROLE>` = `"<provider>:<model>"`; keys are `API_KEY_<PROVIDER>` (uppercased provider). Bootstrap MUST tear down the app if any referenced provider is unknown or its key is missing.
 - Providers are OpenAI-compatible; known base URLs: `openai` -> `https://api.openai.com/v1`, `openrouter` -> `https://openrouter.ai/api/v1`, `swissai` -> `https://api.swissai.svc.cscs.ch/v1` (verify exact path at build via the swissai docs; keep it in one registry constant).
 - `execute_command(command, session_id, timeout_s=300) -> {stdout, stderr, returncode, duration_ms}`; timeout maps to `returncode==124`. Never re-derive this contract.
 - Configurator is deterministic on iteration 1 (template placeholder fill only); an LLM configurator is out of scope for foundation. Pod loop bounded by `MAX_POD_ITERS` (default 3).
@@ -35,7 +35,7 @@
   - `PROVIDERS: dict[str, str]` - provider name -> base URL.
   - `build_chat_model(provider: str, model: str, *, temperature: float = 0) -> ChatOpenAI`
   - `ROLES: tuple[str, ...] = ("configurator", "triager", "job_orchestrator")`
-  - `resolve_role(role: str) -> tuple[str, str]` - reads `LLM_MODEL_<ROLE>`, returns `(provider, model)`.
+  - `resolve_role(role: str) -> tuple[str, str]` - reads `LLM_<ROLE>`, returns `(provider, model)`.
   - `validate_llm_config() -> None` - raises `LLMConfigError` if any role's provider is unknown or `API_KEY_<PROVIDER>` is unset.
   - `class LLMConfigError(RuntimeError)`
 
@@ -52,13 +52,13 @@ def test_known_providers_have_base_urls():
     assert "swissai" in P.PROVIDERS
 
 def test_resolve_role_parses_provider_and_model(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
     assert P.resolve_role("triager") == ("openrouter", "anthropic/claude-3.5-sonnet")
 
 def test_validate_raises_when_key_missing(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
-    monkeypatch.setenv("LLM_MODEL_CONFIGURATOR", "openai:gpt-4o")
-    monkeypatch.setenv("LLM_MODEL_JOB_ORCHESTRATOR", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_CONFIGURATOR", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_JOB_ORCHESTRATOR", "openai:gpt-4o")
     monkeypatch.delenv("API_KEY_OPENROUTER", raising=False)
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
     with pytest.raises(P.LLMConfigError) as e:
@@ -67,15 +67,15 @@ def test_validate_raises_when_key_missing(monkeypatch):
 
 def test_validate_raises_on_unknown_provider(monkeypatch):
     for r in ("TRIAGER", "CONFIGURATOR", "JOB_ORCHESTRATOR"):
-        monkeypatch.setenv(f"LLM_MODEL_{r}", "openai:gpt-4o")
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "bogus:model")
+        monkeypatch.setenv(f"LLM_{r}", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_TRIAGER", "bogus:model")
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
     with pytest.raises(P.LLMConfigError):
         P.validate_llm_config()
 
 def test_validate_passes_when_all_present(monkeypatch):
     for r in ("TRIAGER", "CONFIGURATOR", "JOB_ORCHESTRATOR"):
-        monkeypatch.setenv(f"LLM_MODEL_{r}", "swissai:meta-llama/Llama-3.3-70B-Instruct")
+        monkeypatch.setenv(f"LLM_{r}", "swissai:meta-llama/Llama-3.3-70B-Instruct")
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     P.validate_llm_config()  # no raise
 
@@ -113,10 +113,10 @@ def _key_env(provider: str) -> str:
     return f"API_KEY_{provider.upper()}"
 
 def resolve_role(role: str) -> tuple[str, str]:
-    raw = os.environ.get(f"LLM_MODEL_{role.upper()}")
+    raw = os.environ.get(f"LLM_{role.upper()}")
     if not raw or ":" not in raw:
         raise LLMConfigError(
-            f"LLM_MODEL_{role.upper()} must be set to '<provider>:<model>' (got {raw!r})"
+            f"LLM_{role.upper()} must be set to '<provider>:<model>' (got {raw!r})"
         )
     provider, model = raw.split(":", 1)
     return provider.strip(), model.strip()

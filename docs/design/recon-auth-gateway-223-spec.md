@@ -101,7 +101,7 @@ The state machine implements exactly this transition table:
 
 - The orchestrator is **fully armed in one step** (D223-13): the roster exemption is lifted and `auth_store`, the project's `authn` skill, `load_skill`, `write_skill`, kali exec, and the Steel exec tool bind together through the native tool/middleware/context seams. The actor's response format moves from the retired routing schema to the gateway/loop outcome once the routing turns retire.
 - The job-specialised agents deliberately never authenticate and never take the binding (D223-5).
-- The gateway attaches to the existing orchestrator role (`job_orchestrator`); no new role id is minted (D223-1 superseded in part). The global `LLM_MODEL_*` -> `LLM_*` env-key rename stands (D223-1).
+- The gateway attaches to the existing orchestrator role (`job_orchestrator`); no new role id is minted (D223-1 superseded in part). The global MODEL-infix-drop env-key rename stands, landed in #240 (D223-1).
 
 ### Retirements
 

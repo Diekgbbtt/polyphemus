@@ -247,7 +247,7 @@ PROVIDERS = {"openai": "...", "openrouter": "...", "swissai": "..."}
 ROLES = ("configurator", "triager", "job_orchestrator", "crawler")
 ```
 
-`resolve_role(role)` reads `LLM_MODEL_{ROLE}` as `"<provider>:<model>"`, raising `LLMConfigError` if unset or malformed (`providers.py:19-26`).
+`resolve_role(role)` reads `LLM_{ROLE}` as `"<provider>:<model>"`, raising `LLMConfigError` if unset or malformed (`providers.py:19-26`).
 `build_chat_model` raises `LLMConfigError` on an unknown provider or a missing `API_KEY_{PROVIDER}` (`providers.py:28-33`) - **fail-fast at bootstrap**, not per-call: `validate_llm_config()` (`providers.py:44-57`) is meant to be called at startup so a misconfigured role is caught before any pod runs, not mid-run.
 Every `ChatOpenAI` instance is constructed with `callbacks=get_langfuse_callbacks()` at build time (`providers.py:38-42`) so tracing survives being invoked inside a worker thread where LangGraph's callback contextvar does not propagate (`async_bridge.run_coro_blocking`).
 `chat_model_for(role)` (`roles.py:3-6`) is the one-line façade every LLM-role call site uses (`pod.py:331`, `crawl_agent.py:90-91`).
@@ -517,7 +517,7 @@ Seven operator-validation items (V1-V7: LLM-preprocess cost/latency gating, the 
 | `MAX_PODS` | 20 | fan-out cap in `default_preprocess_fn` |
 | `STEEL_API_KEY` | "" | steel.dev cloud-browser credential (in-process Playwright-over-CDP; **no** URL setting - correction vs `recon-mvp-design.md`'s "Steel MCP endpoint" phrasing, see forward-decisions D3) |
 | `CRAWL_MAX_PAGES` / `_MAX_DEPTH` / `_MAX_ITERS` / `_JOB_TIMEOUT_S` | 50 / 3 / 30 / 480 | agentic-crawl loop bounds |
-| `LLM_MODEL_{TRIAGER,CROSS,...}` | required, `"<provider>:<model>"` | per-role model id (`providers.resolve_role`) |
+| `LLM_{TRIAGER,CROSS,...}` | required, `"<provider>:<model>"` | per-role model id (`providers.resolve_role`) |
 | `API_KEY_{OPENAI,OPENROUTER,SWISSAI}` | required per configured provider | provider credential |
 | `KALI_MCP_URL` | (in `agent.app.config`, not `recon/config.py`) | fastmcp `execute_command` endpoint |
 
