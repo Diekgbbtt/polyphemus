@@ -271,12 +271,14 @@ def test_H4_phase_hints_ride_tool_responses_and_graph_tracks_the_loop(tmp_path):
 
 
 def test_H5_tool_schemas_ride_the_session_turn(tmp_path, monkeypatch):
-    """The six tool schemas are bound REQUEST-ONLY to the session turn: each
+    """The seven tool schemas are bound REQUEST-ONLY to the session turn: each
     `convert_to_openai_tool` dict carries the tool's JSON schema in the
     generation request's `tools` body (the standard tool interface), so the
     model can emit valid args - and no ToolNode is created, so the harness stays
     the sole executor. The sixth is `load_skill` (ADR A4): the hunter declares it
-    request-only alongside its five memory/exec tools."""
+    request-only alongside its five memory/exec tools; the seventh is
+    `auth_store` (#223: the auth-capable binding arms the hunter's skill
+    surface with the shared auth store, last in the surface)."""
     import polymerhus.app.llm.session as S
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
@@ -309,6 +311,7 @@ def test_H5_tool_schemas_ride_the_session_turn(tmp_path, monkeypatch):
     names = [t["function"]["name"] for t in tools]
     assert names == [
         "hunts_store", "notes", "graph_view", "kb_query", "exec", "load_skill",
+        "auth_store",
     ]
     for t in tools:
         assert t["type"] == "function"

@@ -472,10 +472,13 @@ def test_all_slots_degraded_still_runs(tmp_path):
 
 # --- C17: exactly three tools bound; no HuntConfig writer ----------------------
 
-def test_actor_binds_the_three_tools_plus_load_skill(tmp_path, monkeypatch):
-    """The agent the actor builds binds the three tool names of
-    `TOOL_SURFACE` - `hunts_store`, `notes`, `graph_view` (G3) - plus the
-    shared `load_skill` tool, never a HuntConfig-writing or budget tool."""
+def test_actor_binds_exactly_the_three_tools(tmp_path, monkeypatch):
+    """The agent the actor builds binds exactly the three tool names of
+    `TOOL_SURFACE` - `hunts_store`, `notes`, `graph_view` (G3) - and no skill
+    tool: `hunting_orchestrator` is roster-exempt (no catalogue skill bears),
+    so the auth-capable binding stays inert here. Never a HuntConfig-writing
+    or budget tool. (#223 arms the recon orchestrator instead, through the
+    write-capable binding - this actor is untouched by that.)"""
     store = HuntStore(tmp_path)
     seen = {}
 
@@ -497,8 +500,8 @@ def test_actor_binds_the_three_tools_plus_load_skill(tmp_path, monkeypatch):
 
     asyncio.run(_drive())
     names = {t.name for t in seen["tools"]}
-    assert names == set(TOOL_SURFACE) | {"load_skill"}  # the three + load_skill
-    assert len(seen["tools"]) == 4
+    assert names == set(TOOL_SURFACE)  # exactly the three, no skill surface
+    assert len(seen["tools"]) == 3
     assert all(hasattr(t, "invoke") for t in seen["tools"])  # real tool callables
 
 
