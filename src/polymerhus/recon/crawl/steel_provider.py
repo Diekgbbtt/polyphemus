@@ -298,7 +298,7 @@ def _create_steel_session(api_key: str, use_proxy: bool, profile_id: str | None 
 
 
 class SteelCrawlProvider:
-    """In-process provider exposing the seven `steel_*` crawl tools.
+    """In-process provider exposing the six `steel_*` crawl tools.
 
     One instance drives one crawl job. `get_tools()` returns LangChain
     `StructuredTool`s bound to this instance's crawl registry.

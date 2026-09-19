@@ -379,3 +379,83 @@ with the steering machinery. The `configurator` ROLE record
 #238 rate-limit work to bind its profile-driven configuration onto - no new
 role is minted then. The pipeline performs no live-database reach per
 phase anymore (no signal refresh under the loop).
+
+## T5 verification record (#244, live verification and integration)
+
+Live runs against soupmarket.shop (the juice-shop-remote shape: OWASP Juice
+Shop 20.1.1, request branch, operator-seeded shopper account with a freshly
+minted JWT) from the worktree stack, 2026-09-18/19. Entries are V-numbered
+(verification evidence, not implementer settlements). No secret values are
+recorded here; the run rows live in the shared postgres.
+
+### V-1 - Positive run: gateway verdict before phase 0, authenticated collection
+
+Run `9a9161ad-5fb0-47c4-9466-ae43d588cecf` (project
+`t5-gateway-verify`, jobs `[httpx, steel_crawl]`, `with_analysis=false`):
+the gateway turn ran 00:09:53-00:10:27Z and the pipeline logged
+`authenticated as account shopper` at 00:10:27, before phase-0 httpx started
+at 00:10:27.5. The httpx command carried the feed-projected live token
+(`-H 'Authorization: Bearer <jwt>'`); phase 0 succeeded (16 assets).
+Langfuse trace `4d246a1a426fc286071263e0f429e651` (session
+`9a9161ad-...:job_orchestrator`, cloud.langfuse.com, 45 observations) shows
+the ReAct surface: `auth_store` + `load_skill` reads, `execute_command`
+replay probes, the terminal `write_skill` outer-loop call, then the verdict.
+No mid-run steering or operator prompt fired (both retired in T4; the trace
+carries no such call). The account carries no `status` fact: it is
+operator-seeded, so the store refuses the loop's write (`operator_immutable`)
+and validity rides the verdict instead (IR-2, observed as designed).
+
+### V-2 - Degraded run: harness failure fails open, loudly, unauthenticated
+
+Run `91a20b6a-f4fc-471d-870a-09385de1f44f` (same project, same jobs):
+the gateway turn hit upstream 500s on the configured orchestrator model
+(see V-4), retried per the harness schedule, degraded at 00:58:46Z - the
+actor posted its no-decision reply and both the gateway client and the
+pipeline logged the fail-open (`gateway degraded (no verdict); fail-open:
+every phase runs unauthenticated`). Phase-0 httpx then ran with NO auth
+flags and succeeded. D223-10 observed live, including the actor-survives
+path; the unauthenticated command shape proves no material leaks into the
+fail-open run.
+
+### V-3 - Negative run: missing credentials stop the run, loudly, with no collection
+
+Run `4c4a53e2-39e3-4c8d-ac4a-9d8df0195a90` (project
+`t5-gateway-negative`: declared auth surface, zero accounts): the gateway
+refused within one second (`declares an auth surface but stores no
+credentials; stopping the run (fail-close: seed accounts via PUT
+.../auth)`), the pipeline logged `stopped by the auth gateway
+(fail-close: no credentials)`, and the run reads `failed` with
+`current_phase: null` and an empty job list. Authentication that cannot be
+established never runs silently anonymous (D223-17).
+
+### V-4 - Environment blockers (no code impact)
+
+- The configured orchestrator/crawler model
+  (`opencode:opencode/muse-spark-1.3-contributor-free`) is unusable here:
+  the bare id 500s upstream (`Internal server error`) and paid ids refuse
+  with `Insufficient balance` on the `API_KEY_OPENCODE` workspace; the
+  `API_KEY_OPENCODE_GO` workspace reports `Monthly usage limit reached`.
+  Direct provider probes, same results outside the stack.
+- Verification substituted `swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731`
+  for `LLM_JOB_ORCHESTRATOR` and `LLM_CRAWLER` in the worktree `.env` only
+  (gitignored, never committed); the operator's configured defaults and all
+  code are untouched.
+- The live crawl tool-loop did not run: the #108 capability gate refuses
+  models whose registry record lacks `supports_function_calling`, and every
+  reachable (funded) model resolves `unknown` - all 106 `true` records sit
+  behind the exhausted opencode keys. The steel_crawl pod degraded to the
+  empty manifest loudly (`crawl REFUSED the tool-loop ... bind_tools not
+  attempted`). The profile-mount path (IR-11) therefore stays covered by the
+  unit tier (`tests/recon/crawl`, `test_auth_feed` - 163 passed, 5 skipped);
+  a live mount needs a funded tool-capable key and is operator-side work.
+- `tests/e2e/fixtures/eval-targets.yaml` exists only outside this branch
+  and still describes the retired settings-blob `auth_context` input; the
+  runs above seed through the current faces instead (`PUT settings` with
+  `target_seed`, `PUT .../auth`, the `skills/authn` bundle).
+
+### V-5 - Integration outcome
+
+`feat/223-stateful-recon-job-auth` pushed to origin per D223-7. `dev` was
+NOT fast-forwarded here: `origin/dev` does not contain this branch's base
+(`c126f86`), so a true fast-forward is impossible - the lineage conflict is
+surfaced, not forced, and `main` was never touched.
