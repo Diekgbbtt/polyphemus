@@ -92,6 +92,10 @@ def test_default_factory_returns_six_steel_tools_when_deps_present(monkeypatch):
 
 
 def test_default_factory_passes_auth_cookies_and_profile_to_provider(monkeypatch):
+    # The real factory raises SteelProviderUnavailable when the provider
+    # deps are absent, so skip there (same discipline as the six-tools test).
+    pytest.importorskip("playwright")
+    pytest.importorskip("steel")
     monkeypatch.setattr(config, "STEEL_API_KEY", "secret")
     captured = {}
 

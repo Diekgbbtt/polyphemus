@@ -8,6 +8,8 @@ Secret handling: these tests use fabricated placeholder values only; cookie
 NAMES mirror the real peoplecert fixture (`.AspNet.Cookies`, `ASP.NET_SessionId`,
 `__RequestVerificationToken`) but every value here is a dummy.
 """
+import pytest
+
 from polymerhus.recon.crawl.steel_provider import _to_playwright_cookies, SteelCrawlProvider
 
 
@@ -141,6 +143,7 @@ def test_session_opts_omit_profile_when_unbound():
 
 
 def test_create_session_forwards_profile_id_to_the_sdk(monkeypatch):
+    pytest.importorskip("steel")
     import steel as steel_module
     from polymerhus.recon.crawl import steel_provider
 
@@ -161,6 +164,7 @@ def test_create_session_forwards_profile_id_to_the_sdk(monkeypatch):
 
 
 def test_create_session_falls_back_unprofiled_when_profile_rejected(monkeypatch):
+    pytest.importorskip("steel")
     import steel as steel_module
     from polymerhus.recon.crawl import steel_provider
 

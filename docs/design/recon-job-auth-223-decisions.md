@@ -446,8 +446,14 @@ established never runs silently anonymous (D223-17).
   behind the exhausted opencode keys. The steel_crawl pod degraded to the
   empty manifest loudly (`crawl REFUSED the tool-loop ... bind_tools not
   attempted`). The profile-mount path (IR-11) therefore stays covered by the
-  unit tier (`tests/recon/crawl`, `test_auth_feed` - 163 passed, 5 skipped);
-  a live mount needs a funded tool-capable key and is operator-side work.
+  unit tier only: `PYTHONPATH=src python -m pytest
+  tests/recon/test_authn_loop.py tests/recon/test_auth_feed.py
+  tests/recon/test_pipeline_gateway.py tests/recon/test_orchestrator_actor.py
+  tests/recon/test_pipeline.py tests/recon/test_pipeline_e2e.py
+  tests/recon/crawl/ -q` gives 163 passed, 5 skipped where the steel SDK and
+  playwright are installed; where they are absent the dep-guarded tests skip
+  and the mount coverage is unwitnessed in that env. A live mount needs a
+  funded tool-capable key and is operator-side work.
 - `tests/e2e/fixtures/eval-targets.yaml` exists only outside this branch
   and still describes the retired settings-blob `auth_context` input; the
   runs above seed through the current faces instead (`PUT settings` with
@@ -459,3 +465,13 @@ established never runs silently anonymous (D223-17).
 NOT fast-forwarded here: `origin/dev` does not contain this branch's base
 (`c126f86`), so a true fast-forward is impossible - the lineage conflict is
 surfaced, not forced, and `main` was never touched.
+
+### V-6 - Integration precondition: the eval-target e2e tier is unverified on-branch
+
+`tests/e2e/fixtures/eval-targets.yaml` does not exist on this branch, and
+the copy outside it still describes the retired settings-blob
+`auth_context` input (V-4). The T5 runs above therefore prove the gateway
+live through the current faces, but the mechanical eval-target e2e
+assertion tier for the gateway is unverified on-branch: the dataset must be
+brought current (seed faces plus the `skills/authn` bundle, no blob auth)
+before evals run against it.

@@ -203,6 +203,10 @@ class ReconState(TypedDict):
     run_id: str
     project_id: str
     settings: dict            # project settings incl. recon.auth_context
+                              # (superseded by #223, D223-4: settings carry
+                              # no auth; the shared auth store is the sole
+                              # source - dated history kept as the record
+                              # of what was removed, cf. ledger IR-10)
     phase_plan: list[Phase]
     current_phase: int
     pod_exports: Annotated[list[PodExport], operator.add]
@@ -299,8 +303,8 @@ A single generic tool (not per-tool wrappers). The pod passes `session_id = {run
 | Method + path | Body (defaults) | Returns |
 |---|---|---|
 | `POST /projects` | `{ name }` | `{ project_id }` |
-| `PUT /projects/{id}/settings` | `{ recon: { max_pods?, auth_context?: AuthContext } }` — the settings-writing endpoint; **authN cookies live here** | `{ ok }` |
-| `POST /projects/{id}/recon` | `{ jobs?, settings? }` — `jobs` omitted ⇒ full pipeline (phase-DAG-ordered from subdomain discovery); the run **loads project settings incl. `auth_context`** | `{ run_id }` |
+| `PUT /projects/{id}/settings` | `{ recon: { max_pods?, auth_context?: AuthContext } }` — the settings-writing endpoint; **authN cookies live here** (both superseded by #223, D223-4: the settings face carries no auth, the shared auth store seeded via `PUT /projects/{id}/auth` is the sole source) | `{ ok }` |
+| `POST /projects/{id}/recon` | `{ jobs?, settings? }` — `jobs` omitted ⇒ full pipeline (phase-DAG-ordered from subdomain discovery); the run **loads project settings incl. `auth_context`** (superseded: the run resolves auth from the store through the gateway feed) | `{ run_id }` |
 | `GET /projects/{id}/recon/{run_id}` | — | `{ status, current_phase, per_job:[…], pod_exports:[…] }` |
 | `POST /projects/{id}/ingest` | `{ sources:[{ type, ref }] }` | `{ ingest_id }` |
 
@@ -366,7 +370,7 @@ Volumes: `neo4j-data`, `pg-data`, `seclists`, `resolvers`, `work` (per-session w
 ### 11.5 Postgres + pgvector
 
 - `pgvector/pgvector:pg16`; `CREATE EXTENSION IF NOT EXISTS vector;`
-- App schema: `projects`, `settings` (**holds `recon.auth_context`**), `recon_runs`, `recon_jobs` (registry: `id, run_id, phase, job, status, started_at, finished_at, stats, error`). LangGraph checkpoint tables via `AsyncPostgresSaver.setup()`.
+- App schema: `projects`, `settings` (**holds `recon.auth_context`** - superseded by #223, D223-4: settings carry no auth), `recon_runs`, `recon_jobs` (registry: `id, run_id, phase, job, status, started_at, finished_at, stats, error`). LangGraph checkpoint tables via `AsyncPostgresSaver.setup()`.
 - Doc store: `doc_chunks(id, doc_ref, source_type, anchor, chunk_text, embedding vector(D), created_at)` + HNSW index; immutable.
 - Embeddings: the LightRAG runtime embeds at insert time (`EMBEDDING_MODEL` / `EMBEDDING_DIM`, `.env`); the `doc_chunks` pgvector path is dormant (schema present, no writer).
 
