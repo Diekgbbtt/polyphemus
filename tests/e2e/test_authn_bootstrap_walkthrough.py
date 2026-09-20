@@ -254,38 +254,75 @@ def test_e5_profile_is_mountable_in_a_new_session():
     if not steel:
         pytest.skip("the steel CLI is not on PATH")
 
+    # A WAF target answers an anonymous session with its own landing (the root
+    # or a block page), so "not the login page" alone is too weak: the mounted
+    # profile must land somewhere an anonymous session does not.
+    url_anon = _steel_landing(steel, LANDING_URL)
+    url_profile = _steel_landing(steel, LANDING_URL, profile=profile)
+    assert "/login" not in url_profile.lower(), (
+        f"the mounted profile reached the login page, not an authenticated "
+        f"state: {url_profile}"
+    )
+    assert url_profile != url_anon, (
+        f"the mounted profile reached the same page as an anonymous session "
+        f"({url_profile}); the profile carries no authenticated state"
+    )
+
+
+def _steel_landing(steel: str, url: str, profile: str | None = None) -> str:
+    """Mount an optional profile in a fresh session, navigate to `url`, and
+    return the settled URL. Always `--wait-until load`, never `networkidle`: a
+    target with continuous network activity never reaches network idle and the
+    navigate errors (observed live on magnific)."""
     session = f"polymerhus-authn-e2e-{uuid.uuid4().hex[:8]}"
     started = False
     try:
+        start_cmd = [steel, "browser", "start", "--session", session]
+        if profile:
+            start_cmd += ["--profile", profile]
+        start_cmd += ["--json"]
         start = subprocess.run(
-            [steel, "browser", "start", "--session", session,
-             "--profile", profile, "--json"],
-            capture_output=True, text=True, timeout=180,
+            start_cmd, capture_output=True, text=True, timeout=180,
         )
-        assert start.returncode == 0, f"profile mount failed: {start.stderr}"
+        assert start.returncode == 0, f"session start failed: {start.stderr}"
         started = True
         nav = subprocess.run(
-            [steel, "browser", "navigate", LANDING_URL, "--session", session,
-             "--wait-until", "networkidle", "--json"],
+            [steel, "browser", "navigate", url, "--session", session,
+             "--wait-until", "load", "--json"],
             capture_output=True, text=True, timeout=180,
         )
         assert nav.returncode == 0, f"navigate failed: {nav.stderr}"
-        url = subprocess.run(
+        out = subprocess.run(
             [steel, "browser", "get", "url", "--session", session, "--json"],
             capture_output=True, text=True, timeout=60,
         )
-        assert url.returncode == 0, f"url read failed: {url.stderr}"
-        final_url = _json_field(url.stdout, "url") or url.stdout
-        assert "/login" not in final_url.lower(), (
-            f"the mounted profile reached the login page, not an authenticated "
-            f"state: {final_url}"
-        )
+        assert out.returncode == 0, f"url read failed: {out.stderr}"
+        return _settled_url(out.stdout)
     finally:
         if started:
             subprocess.run(
                 [steel, "browser", "stop", "--session", session, "--json"],
                 capture_output=True, text=True, timeout=60,
             )
+
+
+def _settled_url(raw: str) -> str:
+    """The URL out of a `steel browser get url --json` line: `{"data": "<url>"}`
+    (or a `{"data": {"url": ...}}` shape), falling back to the raw text."""
+    for line in raw.splitlines():
+        line = line.strip()
+        if not line:
+            continue
+        try:
+            body = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        data = body.get("data") if isinstance(body, dict) else None
+        if isinstance(data, str):
+            return data
+        if isinstance(data, dict) and isinstance(data.get("url"), str):
+            return data["url"]
+    return raw.strip()
 
 
 def _json_field(raw: str, field: str):
