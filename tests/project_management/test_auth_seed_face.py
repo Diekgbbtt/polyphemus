@@ -248,6 +248,43 @@ def test_put_shape_violation_writes_nothing(monkeypatch, tmp_path):
     assert set(body["accounts"]) == {"op"}
 
 
+def test_put_identity_collision_is_a_500_duplicate_identity(monkeypatch, tmp_path):
+    """A seed that forks one credential identity is a HARD contract breach
+    (D220-11): 500 `duplicate_identity`, nothing lands."""
+    _live_pg(monkeypatch)
+    _tmp_store(monkeypatch, tmp_path)
+    creds = {"username": "u@example.com", "password": "pw",
+             "login_url": "https://app.example.com/login"}
+
+    resp = client.put("/projects/p1/auth", json={
+        "accounts": {"u-signup": {"credentials": creds, "procedure": "sign-up"},
+                     "u-signin": {"credentials": creds, "procedure": "sign-in"}},
+    })
+
+    assert resp.status_code == 500
+    body = resp.json()
+    assert body["ok"] is False
+    assert body["error"] == "duplicate_identity"
+    assert "u@example.com" in body["detail"]
+    assert client.get("/projects/p1/auth").json() == {"overview": {}, "accounts": {}}
+
+
+def test_put_seed_colliding_with_a_kept_agent_identity_is_a_500(monkeypatch, tmp_path):
+    _live_pg(monkeypatch)
+    store = _tmp_store(monkeypatch, tmp_path)
+    store.write("p1", "accounts.agentbot", {"credentials": {
+        "username": "agent@example.com", "password": "pw",
+        "login_url": "https://app.example.com/login"}})
+
+    resp = client.put("/projects/p1/auth", json={"accounts": {"op": {"credentials": {
+        "username": "agent@example.com", "password": "pw",
+        "login_url": "https://app.example.com/login"}}}})
+
+    assert resp.status_code == 500
+    assert resp.json()["error"] == "duplicate_identity"
+    assert set(client.get("/projects/p1/auth").json()["accounts"]) == {"agentbot"}
+
+
 def test_put_accounts_not_object_400(monkeypatch, tmp_path):
     _live_pg(monkeypatch)
     _tmp_store(monkeypatch, tmp_path)

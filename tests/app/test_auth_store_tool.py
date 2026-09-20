@@ -91,18 +91,29 @@ def test_contract_teaches_the_domain_model():
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
 
+def test_contract_carries_the_account_identity_rule():
+    """The account NAME carries the credential identity, so a second name for
+    the same identity is a fork, not a second account (the #237 e2e defect:
+    sign-up and sign-in forked two accounts sharing one username)."""
+    for marker in ("ACCOUNT IDENTITY", "<email>-<minting_context>",
+                   "minting context", "never the procedure",
+                   "not an identity axis", "roles.*.username", "new ROLE"):
+        assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
+
+
 def test_contract_carries_the_overall_schema():
     for marker in ("login_endpoint", "required_headers", "mechanism",
                    "defences", "fingerprinting", "technical_conditions",
                    "credentials", "tokens", "steel", "snapshot",
-                   "procedure", "origin", "status", "updated_at"):
+                   "procedure", "origin", "status", "updated_at",
+                   "roles", "default_role"):
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
 
 def test_contract_carries_the_read_write_rules():
     for marker in ("read", "write", "valid empty", "single-field",
-                   "operator_immutable", "duplicate_auth", "auth_invalid",
-                   "store_unavailable"):
+                   "operator_immutable", "duplicate_auth", "duplicate_identity",
+                   "auth_invalid", "store_unavailable"):
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
 
@@ -231,6 +242,21 @@ def test_create_of_a_known_name_signals_duplicate_auth(tmp_path):
     assert out["ok"] is False
     assert out["error"] == "duplicate_auth"
     assert "alice" in out["detail"]
+
+
+def test_create_sharing_a_credential_identity_signals_duplicate_identity(tmp_path):
+    """A second account for an existing credential identity refuses with the
+    identity envelope (the #237 e2e fork): the repair is a role, not a fork."""
+    creds = {"username": "u@example.com", "password": "p",
+             "login_url": "https://t/login"}
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, "accounts.u-signup", {"credentials": creds})
+    tool = build_auth_store_tool(PROJECT, store)
+    out = tool.invoke({"command": "write", "path": "accounts.u-signin",
+                       "value": {"credentials": creds}})
+    assert out["ok"] is False
+    assert out["error"] == "duplicate_identity"
+    assert "u@example.com" in out["detail"]
 
 
 def test_shape_violation_is_auth_invalid_naming_the_field(tmp_path):

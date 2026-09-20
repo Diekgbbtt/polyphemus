@@ -2,7 +2,7 @@
 name: authn-skill-writing
 description: Use when executing authentication against a target project by hand and authoring that target's per-project authentication skill from verified state.
 metadata:
-  version: '2.3'
+  version: '2.4'
 ---
 # Authn skill writing
 
@@ -40,6 +40,8 @@ A seeded operator name colliding with a live agent record keeps the agent record
 Shape violations return 400 `{ok: false, error: "auth_invalid", detail}` and land nothing.
 An unknown project returns 404.
 The in-process agent store tool is the in-system agent path, not yours: do not use it and do not document it.
+Name every account `<email>-<minting_context>`: the credential username, a hyphen, then the run or flow that minted it (`first_authn_bootstrap`, `hunting_misauthr`, ...), which you assess at write time.
+The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share ONE account name; a second name for the same credential identity is a fork, not a second account.
 Per account record: `credentials` (username, password, login_url, plus optional domain and form selectors), `tokens` (each `{value, location: cookie|header|storage, target?, expiry?}`), `steel` (`{profile}` key only, never browser state), `snapshot` (`{headers, cookies, params, captured_at}`), `roles` with `default_role` where multiple roles exist, `notes`.
 Overview fields, all optional: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` (a list of `{name, check}`), `anti-bot`, `http-client-replayability`, `notes`.
 `anti-bot` is the defence type (a vendor, product, or challenge name such as `akamai_v3`, `cf_clearance`, `datadome`, `incapsula`, or `waf:<name>`) or null when none; `http-client-replayability` is `true` or `false`, and leaving it unset means UNKNOWN, never false.
@@ -113,7 +115,8 @@ Gate: the classification is stated with the evidence that forced it; the defence
 
 Find the sign-in feature (endpoint, form or API shape, required headers, CSRF or anti-forgery handling, selectors).
 Find the sign-up feature separately where one exists, with the same shape detail.
-Keep sign-in and sign-up DISTINGUISHABLE as separate flows with separate accounts.
+Keep sign-in and sign-up DISTINGUISHABLE as separate flows, each with its own procedure.
+An account is keyed by its credential identity, so flows that share credentials share ONE account (sign-up mints it, sign-in serves it); they are separate accounts only when their credentials differ.
 Gate: each flow states its endpoint or form plus its required headers and anti-forgery handling, or states which element could not be found.
 
 ## P3 - Execute and verify
@@ -196,7 +199,7 @@ Say in the skill which step fails loudly when its session or profile is stale.
 | Unverified flow recorded | Delete the record, return to P3 |
 | Secret value in skill text | Move value to store, leave name citation |
 | Procedure prose in store notes | Move steps to skill, keep facts only |
-| Sign-up and sign-in merged | Split into separate procedures and accounts |
+| Sign-up and sign-in merged | Split into separate procedures; keep ONE account per credential identity |
 | Account without `procedure` label | Set label in P6 |
 | Procedure without account citation | Cite account and token names |
 | Step without tool plus reason | Add both before calling the flow replayable |
