@@ -28,7 +28,8 @@ You are the operator, by hand: you write store facts only through the seed face,
 Read `<meta_skill_path>` and follow its phases P0 through P6 in order, including its seed-face contract and its steel profile discipline.
 Interfaces: write store facts with `PUT <seed_face_url>` and body `{overview?, accounts?}`; read state with `GET <read_face_url>`; write the project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md` with references beside it.
 Target: sign-in at `<login_url>`; sign-up at `<signup_url>`; account `<credentials>`.
-If `<signup_url>` is not `none`, run sign-up and sign-in as SEPARATE flows with separate accounts, and never merge them.
+If `<signup_url>` is not `none`, run sign-up and sign-in as SEPARATE flows, never merged.
+An account is keyed by its credential identity: when both flows use the same credentials they share ONE account (sign-up mints it, sign-in serves it), never a second account for the same identity.
 
 ## Anti-bot posture and HTTP-client replayability (mandatory, probe FIRST)
 
@@ -46,6 +47,6 @@ The interaction mode defaults to request-based; the browser is taken only when t
 
 ## Deliverable
 
-- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`) and, per account, `credentials`, `tokens` (with locations), `steel` (profile key only), `snapshot`, and the `procedure` label joining the account to the skill procedure.
+- Store facts via the seed face: the typed overview (`login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions`, `anti-bot`, `http-client-replayability`) and, per account named `<email>-<minting_context>` (the credential username plus the run or flow that minted it, never the procedure), `credentials`, `tokens` (with locations), `steel` (profile key only), `snapshot`, and the `procedure` label joining the account to the skill procedure.
 - The project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md`, with the mandatory block embedded verbatim and target-specific ordered steps (tool plus why per step), sign-up and sign-in as separate named procedures, and secret values cited by name only.
 - Report: the mode decision with its forcing evidence; the `anti-bot` name or null; the replayability verdict and continuation facts; the steel profile key and token names/locations if a browser was used; the written skill path; and any error verbatim.

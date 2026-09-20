@@ -23,6 +23,7 @@ from polymerhus.app.auth.store import (
     AuthInvalidError,
     AuthStore,
     DuplicateAuthError,
+    DuplicateIdentityError,
     OperatorImmutableError,
     StoreUnavailableError,
 )
@@ -51,12 +52,28 @@ AUTH_STORE_CONTRACT = (
     "seed is the operator's wholesale replace of the operator-owned state - "
     "your agent-minted accounts survive it untouched. A procedure label names "
     "the skill procedure that minted or serves an account.\n\n"
+    "ACCOUNT IDENTITY - an account is keyed by the credential identity it "
+    "authenticates, and the account NAME carries that identity. Name an "
+    "account `<email>-<minting_context>`: the credential username, a hyphen, "
+    "then the context that minted it, which you assess at write time (for "
+    "example `<email>-first_authn_bootstrap` or `<email>-hunting_misauthr`). "
+    "The minting context is the run or flow that created the account, never "
+    "the procedure: sign-up and sign-in in one bootstrap share one name, so "
+    "the second write collides on `duplicate_auth` and you merge instead of "
+    "forking. One credential identity is ONE account per minting context: the "
+    "identity is the default `credentials.username` plus every "
+    "`roles.*.username`, so adding access for a known identity is a new ROLE on "
+    "the existing account (`accounts.<name>.roles.<role>`), never a second "
+    "account; `procedure` labels which flow serves it and is not an identity "
+    "axis.\n\n"
     "SCHEMA - overview (all optional): `login_endpoint`, `required_headers`, "
     "`mechanism`, `defences`, `fingerprinting`, `technical_conditions` "
     "(optional list of `{name, check}`, absent by default), `notes`. Account "
     "record: `origin` (operator or agent, stamped server-side), optional "
     "`procedure` label, optional `credentials` (`username`, `password`, "
-    "`login_url` plus optional `domain` and form selectors), optional "
+    "`login_url` plus optional `domain` and form selectors), optional `roles` "
+    "(role name -> credential set) with `default_role` naming a configured "
+    "role, optional "
     "`tokens` (each `{value, location: cookie | header | storage, target?, "
     "expiry?}`), optional `steel` (`{profile}` key only), optional concrete "
     "`snapshot` (`{headers, cookies, params, captured_at}`), optional "
@@ -71,6 +88,10 @@ AUTH_STORE_CONTRACT = (
     "merges into the known record. Operator-owned paths refuse with "
     "`operator_immutable`. Creating an already-known account name fails with "
     "`duplicate_auth` - reflect, merge, or refresh instead of duplicating. "
+    "Creating an account whose credential username (default or any role) "
+    "already belongs to another account fails with `duplicate_identity` - add "
+    "a role to the existing account, never a second account for the same "
+    "identity. "
     "Shape violations fail with `auth_invalid` naming the offending field. A "
     "degraded store fails with `store_unavailable`. Every outcome arrives as "
     "an in-band coded envelope; nothing raises into the turn."
@@ -162,6 +183,9 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
                         "detail": str(exc)}
             except DuplicateAuthError as exc:
                 return {"ok": False, "error": "duplicate_auth",
+                        "detail": str(exc)}
+            except DuplicateIdentityError as exc:
+                return {"ok": False, "error": "duplicate_identity",
                         "detail": str(exc)}
             except AuthInvalidError as exc:
                 return {"ok": False, "error": "auth_invalid",

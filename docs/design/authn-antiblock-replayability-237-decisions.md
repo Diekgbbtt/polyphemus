@@ -87,3 +87,17 @@ The skill cites the file in its worked-example and references sections, so the e
 The e2e surfaced a wording defect (not a code defect): the profile discipline said "Mount by id" while the command it gave is `--profile <profile-name>`, and D237-4 repeated "mount by id".
 The CLI's `--profile` takes the profile NAME (the `profileId` also resolves, verified live, but the discipline as written mounts by name), and the store holds the name under `steel: {profile}`.
 The wording is corrected to "Mount by name", P3 records "the profile name from the mint", and D237-4 is amended; a content test forbids "Mount by id" and requires "Mount by name".
+
+## D237-12 - Account identity is the credential, named `<email>-<minting_context>`
+
+The e2e left two White Jotter accounts sharing one username and password, `whitejotter-signup` (procedure `sign-up`) and `whitejotter-signin` (procedure `sign-in`): a fork produced by treating `procedure` as an identity axis.
+The account's identity is the credential it authenticates, and the NAME carries that identity: the tool contract (`AUTH_STORE_CONTRACT`), the meta skill's seed-face contract, and the reusable prompt now require `<email>-<minting_context>` (the credential username plus the run or flow that minted it, `first_authn_bootstrap`, `hunting_misauthr`, ...), assessed at write time.
+The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share one account name and the second write collides on `duplicate_auth` to be merged.
+The meta skill's "separate flows with separate accounts" instruction, its red-flag row, and the prompt's matching line are sharpened to "separate procedures; one account per credential identity".
+The store does NOT yet enforce credential-identity uniqueness (the fork remains storable under two names); that gate and the `procedure` cardinality (a single optional string cannot name two procedures) are recorded as open design questions below.
+Content tests pin the tool-contract markers and the meta-skill/prompt wording; the throwaway store-seam loop that showed two names sharing one username is deleted (it is the evidence for the open gate, not a regression test).
+
+### Resolved (operator ruling, 2026-09-20)
+
+- Hard identity gate: YES. The store refuses a create or seed whose credential username (default or any role) already belongs to another account, with the `duplicate_identity` tool envelope and HTTP 500 on the seed face; the repair is a ROLE on the existing account, never a second account. A fork is an agent that misread the record's role-assignment contract, not merely a naming miss. Decision recorded as D220-11 in `docs/design/auth-store-220-decisions.md`.
+- `procedure` cardinality: ONE procedure. It stays a single optional string; a credential identity is one account and the label names the serving procedure, so no list is introduced.

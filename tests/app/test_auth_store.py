@@ -12,6 +12,7 @@ from polymerhus.app.auth.records import AuthInvalidError
 from polymerhus.app.auth.store import (
     AuthStore,
     DuplicateAuthError,
+    DuplicateIdentityError,
     OperatorImmutableError,
     StoreUnavailableError,
 )
@@ -132,6 +133,68 @@ def test_create_of_a_known_name_fails_duplicate_leaving_the_record(tmp_path):
         store.write(PROJECT, "accounts.bob", {"notes": "forked"})
     assert store.read(PROJECT, "accounts.bob") == {
         "origin": "operator", "credentials": _credentials("bob")}
+
+
+# --- credential-identity gate (D220-11): one identity is ONE account ----------
+
+def test_create_sharing_a_credential_identity_refuses_duplicate_identity(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, "accounts.u-signup",
+                {"credentials": _credentials("u@example.com"), "procedure": "sign-up"})
+    with pytest.raises(DuplicateIdentityError) as exc:
+        store.write(PROJECT, "accounts.u-signin",
+                    {"credentials": _credentials("u@example.com"),
+                     "procedure": "sign-in"})
+    assert "u@example.com" in str(exc.value)
+    assert "roles" in str(exc.value)
+    assert set(store.read(PROJECT, "accounts")) == {"u-signup"}
+
+
+def test_create_sharing_a_role_identity_refuses_duplicate_identity(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, "accounts.alice",
+                {"credentials": _credentials("alice@example.com")})
+    with pytest.raises(DuplicateIdentityError):
+        store.write(PROJECT, "accounts.evil",
+                    {"roles": {"admin": _credentials("alice@example.com")}})
+    assert set(store.read(PROJECT, "accounts")) == {"alice"}
+
+
+def test_adding_a_role_to_the_existing_account_is_the_repair(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, "accounts.alice",
+                {"credentials": _credentials("alice@example.com")})
+    store.write(PROJECT, "accounts.alice.roles.admin",
+                _credentials("alice@example.com"))
+    assert store.read(PROJECT, "accounts.alice.roles.admin") == \
+        _credentials("alice@example.com")
+
+
+def test_distinct_identities_create_freely(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, "accounts.a", {"credentials": _credentials("a@example.com")})
+    store.write(PROJECT, "accounts.b", {"credentials": _credentials("b@example.com")})
+    assert set(store.read(PROJECT, "accounts")) == {"a", "b"}
+
+
+def test_seed_forking_one_identity_refuses_duplicate_identity(tmp_path):
+    store = AuthStore(tmp_path)
+    with pytest.raises(DuplicateIdentityError):
+        store.replace_operator_state(PROJECT, accounts={
+            "u-signup": {"credentials": _credentials("u@example.com")},
+            "u-signin": {"credentials": _credentials("u@example.com")},
+        })
+    assert store.read(PROJECT, "accounts") == {}
+
+
+def test_seed_colliding_with_a_kept_agent_identity_refuses(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, "accounts.agentbot",
+                {"credentials": _credentials("agent@example.com")})
+    with pytest.raises(DuplicateIdentityError):
+        store.replace_operator_state(PROJECT, accounts={
+            "op": {"credentials": _credentials("agent@example.com")}})
+    assert set(store.read(PROJECT, "accounts")) == {"agentbot"}
 
 
 def test_write_merges_leaving_sibling_fields_untouched(tmp_path):

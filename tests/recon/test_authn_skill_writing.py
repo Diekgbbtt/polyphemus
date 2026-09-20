@@ -106,6 +106,26 @@ def test_profile_discipline_mounts_by_name_not_by_id():
     assert "Record the profile name from the mint" in body
 
 
+def test_account_identity_is_the_credential_not_the_procedure():
+    """An account is keyed by its credential identity, so sign-up and sign-in
+    for the same credentials share ONE account, not two records differing only
+    by `procedure` (the #237 e2e fork defect)."""
+    body = _body()
+    assert "<email>-<minting_context>" in body
+    assert "never the procedure" in body
+    assert "ONE account per credential identity" in body
+    assert "separate flows with separate accounts" not in body
+
+
+def test_bootstrap_prompt_keys_accounts_by_credential_identity():
+    prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    assert "<email>-<minting_context>" in prompt
+    assert "share ONE account" in prompt
+    assert "separate accounts" not in prompt
+
+
 def test_bootstrap_workflow_prompt_is_target_agnostic_and_request_first():
     """The reusable prompt is generalisable (placeholders, no target) and never
     presumes the browser: it defaults to request-based and takes the browser

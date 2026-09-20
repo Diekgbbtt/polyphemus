@@ -145,8 +145,9 @@ _Avoid_: the settings blob (the `AuthContext` value object is a different bucket
 
 **Account record**:
 One named bundle validated by `validate_account` (`app/auth/records.py`, mirrored never imported upward): `origin` (stamped server-side, `operator` or `agent`), optional `procedure` label, `credentials`, `tokens` (each `{value, location: cookie | header | storage, target?, expiry?}`), `steel`, `snapshot`, `notes`, plus FR-AUTH `roles` / `default_role`.
-Record identity is the account name; creating a known name fails with `DuplicateAuthError` (`duplicate_auth`) instead of forking.
-_Avoid_: forking a record (first writer wins; reflect, merge, or refresh).
+Record identity is the account name, which carries the credential identity: name an account `<email>-<minting_context>` (the credential username plus the run or flow that minted it, never the procedure), so two procedures serving one credential identity share one name and the second write fails with `DuplicateAuthError` (`duplicate_auth`) instead of forking.
+The store also gates the credential identity itself (D220-11): a create or seed whose username (default `credentials.username` or any `roles.*.username`) already belongs to another account fails with `DuplicateIdentityError` (`duplicate_identity`), because access for a known identity is a new ROLE on the existing account, never a second account.
+_Avoid_: forking a record (first writer wins; reflect, merge, or refresh), and naming by role or procedure (`primary`, `sign-up`) instead of by the credential identity.
 
 **Operator section vs agent section**:
 The trust split inside the bucket: the operator section (the `overview.yaml` header plus `operator`-stamped accounts) is the operator's ground truth and refuses agent-origin writes with `OperatorImmutableError` (`operator_immutable`); the agent section (`agent`-stamped accounts) is what the `auth_store` tool mints and merges.
@@ -188,7 +189,7 @@ _Avoid_: procedural knowledge in the store (the store carries only the label).
 
 **Auth-store tool** (`auth_store`, built by `build_auth_store_tool`):
 The one shared read/write agent tool over the store, bound to its project id at build time; the id defaults to the control-plane project (`config.PROJECT_ID`) resolved lazily inside the factory, so no agent harness threads identity; its usage contract (`AUTH_STORE_CONTRACT`) rides the tool description verbatim.
-Origin through this tool is always agent; every failure arrives as an in-band coded envelope (`operator_immutable`, `duplicate_auth`, `auth_invalid`, `store_unavailable`) - nothing raises into the turn.
+Origin through this tool is always agent; every failure arrives as an in-band coded envelope (`operator_immutable`, `duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`) - nothing raises into the turn.
 _Avoid_: a second tool face (one implementation, bound per project).
 
 **Auth-capable binding** (`auth_capable_binding`, `app/auth/seams.py`):

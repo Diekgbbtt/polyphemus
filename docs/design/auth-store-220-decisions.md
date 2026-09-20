@@ -97,6 +97,17 @@ The overview key set gains `anti-bot` (the defence type, a free-form vendor/chal
 The seed body is unchanged (`Any`-typed), so no new code path is introduced.
 The full decisions for the producing procedure and the meta skill live in `docs/design/authn-antiblock-replayability-237-decisions.md` (D237-0..D237-8); this ledger records only that the overview contract it owns now carries these two facts.
 
+## D220-11 - Credential-identity uniqueness gate (hard, at the store seam)
+
+An account is keyed by the credential identity it authenticates, not by its name: the store refuses to create (or seed) an account whose credential username already belongs to another account.
+The identity set is the default `credentials.username` plus every `roles.*.username`, so the gate compares per credential set, never per account (the `roles` shape is why).
+The refusal is the new `DuplicateIdentityError` (`duplicate_identity`), raised inside `AuthStore.write`'s create path and inside `AuthStore.replace_operator_state` (each incoming seeded account is checked against the merged set, so a seed that forks itself or that collides with a kept agent account refuses; a pre-existing agent fork never blocks a later seed).
+The repair the error names is role assignment: access for a known identity is a new ROLE on the existing account (`accounts.<name>.roles.<role>`), never a second account - the failure mode is an agent that has not understood the role-assignment aspect of the record.
+Delivery semantics are explicit and distinct from the recoverable shape violation: the in-process `auth_store` tool returns the `duplicate_identity` coded envelope (never a raise), and the operator seed face `PUT /projects/{project_id}/auth` returns 500 with `{ok: false, error: "duplicate_identity", detail}` and lands nothing.
+500 - not the 400 `auth_invalid` of a shape violation, and not a 409 (the "replace, never 409" ruling stands for name collisions) - because a fork is a HARD contract breach the operator must see, not a recoverable field error.
+The gate covers both write faces because it lives at the shared store seam both delegate to; the account NAME stays the record identity, so the existing `DuplicateAuthError` name gate is unchanged and still fires first on a same-name create.
+Forced by the #237 e2e defect recorded in `docs/design/authn-antiblock-replayability-237-decisions.md` D237-12.
+
 ## Follow-up: AUTH-SKILL-1 RESOLVED
 
 AUTH-SKILL-1 is delivered as the META skill `skills/meta/authn-skill-writing/` (meta family: exempt from the usage-protocol append by loader path, `is_meta_skill`), which the operator's external agent runs to author a TARGET PROJECT's `authn` procedure.

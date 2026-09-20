@@ -64,6 +64,14 @@ class DuplicateAuthError(ValueError):
     name may never shadow an operator name."""
 
 
+class DuplicateIdentityError(ValueError):
+    """The denoted identity-collision signal (D220-11): a create or seed whose
+    credential identity (the default `credentials.username` or any role set's
+    username) already belongs to another account fails loudly instead of
+    forking. The repair is a ROLE on the existing account, never a second
+    account for the same identity."""
+
+
 class OperatorImmutableError(ValueError):
     """The denoted trust-boundary refusal: an agent-origin write touching
     operator-owned state (an operator-stamped account, the operator overview)
@@ -80,6 +88,43 @@ class StoreUnavailableError(ValueError):
 # critical section, so concurrent writers converge instead of forking records.
 _PROJECT_LOCKS: dict[str, threading.Lock] = {}
 _PROJECT_LOCKS_GUARD = threading.Lock()
+
+
+def _identity_usernames(record: dict) -> set[str]:
+    """The credential identities a record carries: the default
+    `credentials.username` plus every role set's username. The account NAME is
+    not an identity; these are the values a second account may not re-use."""
+    names: set[str] = set()
+    credentials = record.get("credentials")
+    if isinstance(credentials, dict) and isinstance(credentials.get("username"), str):
+        names.add(credentials["username"])
+    roles = record.get("roles")
+    if isinstance(roles, dict):
+        for role_set in roles.values():
+            if isinstance(role_set, dict) and isinstance(role_set.get("username"), str):
+                names.add(role_set["username"])
+    return names
+
+
+def _assert_identity_is_new(accounts: dict, name: str, record: dict) -> None:
+    """The credential-identity gate (D220-11): an incoming account whose
+    identity already belongs to another account refuses with
+    `DuplicateIdentityError`. The repair is a ROLE on the existing account
+    (`accounts.<name>.roles.<role>`), never a second account."""
+    incoming = _identity_usernames(record)
+    if not incoming:
+        return
+    for other_name, other in accounts.items():
+        if other_name == name or not isinstance(other, dict):
+            continue
+        clash = incoming & _identity_usernames(other)
+        if clash:
+            identity = sorted(clash)[0]
+            raise DuplicateIdentityError(
+                f"duplicate_identity: the credential identity {identity!r} "
+                f"already belongs to account {other_name!r}; add a role to that "
+                "account (accounts.<name>.roles.<role>) instead of creating a "
+                "second account for the same identity")
 
 
 def _lock_for(project_id: str) -> threading.Lock:
@@ -242,7 +287,9 @@ class AuthStore:
                             "creating a second record")
                     record = copy.deepcopy(value)
                     record["origin"] = origin
-                    accounts[name] = validate_account(record)
+                    validated = validate_account(record)
+                    _assert_identity_is_new(accounts, name, validated)
+                    accounts[name] = validated
                     self._dump_yaml_atomic(
                         self._credentials_file(project_id), {"accounts": accounts})
                     return
@@ -323,6 +370,8 @@ class AuthStore:
                             "record; the operator entry is dropped", name)
                         del seeded[name]
                 merged = {**seeded, **kept}
+                for name, record in seeded.items():
+                    _assert_identity_is_new(merged, name, record)
             if validated_overview is not None:
                 self._dump_yaml_atomic(
                     self._overview_file(project_id), validated_overview)

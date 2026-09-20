@@ -20,7 +20,7 @@ from fastapi import APIRouter, HTTPException
 from fastapi.responses import JSONResponse
 from pydantic import BaseModel, Field
 
-from polymerhus.app.auth.store import AuthInvalidError
+from polymerhus.app.auth.store import AuthInvalidError, DuplicateIdentityError
 from polymerhus.project_management import repository
 from polymerhus.project_management.repository import (
     BootstrapBlocked,
@@ -129,13 +129,22 @@ def seed_auth(project_id: str, body: AuthSeed) -> dict:
     raises the domain errors, this maps them (unknown project -> 404, shape
     violation -> the 400 `auth_invalid` envelope naming the field). A shape
     violation lands nothing - the store validates both sections BEFORE any
-    write. No conflict path exists: reseed replaces, never 409."""
+    write. No conflict path exists: reseed replaces, never 409.
+    A credential-identity collision (D220-11) is a HARD contract breach, not a
+    recoverable shape violation: a seed re-using an existing account's
+    credential username is the agent misunderstanding role assignment, so it
+    refuses with 500 `duplicate_identity` and lands nothing."""
     try:
         repository.seed_project_auth(
             project_id, overview=body.overview, accounts=body.accounts
         )
     except ProjectNotFound:
         raise HTTPException(status_code=404, detail="unknown project")
+    except DuplicateIdentityError as exc:
+        return JSONResponse(
+            status_code=500,
+            content={"ok": False, "error": "duplicate_identity", "detail": str(exc)},
+        )
     except AuthInvalidError as exc:
         return JSONResponse(
             status_code=400,
