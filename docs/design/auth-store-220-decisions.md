@@ -119,6 +119,29 @@ Delivery semantics are explicit and distinct from the recoverable shape violatio
 The gate covers both write faces because it lives at the shared store seam both delegate to; the account NAME stays the record identity, so the existing `DuplicateAuthError` name gate is unchanged and still fires first on a same-name create.
 Forced by the #237 e2e defect recorded in `docs/design/authn-antiblock-replayability-237-decisions.md` D237-12.
 
+## D220-12 - The operator section is writable; the trust-boundary refusal is retired
+
+Operator ruling (2026-09-19): auth-store immutability is a DEFECT.
+Neither the overview, nor the credentials (accounts), nor the project authn skill may be immutable to an agent.
+This SUPERSEDES the `operator_immutable` refusal of D220-5, the "operator section stays agent-immutable" line of D220-3, and the D220-6 shadowing clause insofar as it refused merges.
+It also supersedes #223 requirement 6 ("operator-seeded accounts stay immutable by agents, so that my ground truth remains trustworthy"), which requirement 15 (persist the profile key plus extracted tokens back to the account) cannot satisfy: the two requirements contradict, and 15 is the system's core loop.
+
+The replacement, decided and stated:
+- every agent write MERGES, into the overview and into operator-stamped accounts alike (tokens, status, snapshot, steel.profile, notes);
+- `origin` is a PROVENANCE LABEL only (still server-stamped; an operator account keeps `origin: operator` through agent writes);
+- `updated_at` refreshes on every write and seed (the store owns it, D223-18);
+- `duplicate_auth` still protects account names and `duplicate_identity` still protects credential identities;
+- `replace_operator_state` still never removes or modifies agent-stamped accounts (a seed replaces the operator section wholesale, so an agent's edits inside a seeded account are replaced by the next seed - accepted: the operator's ground truth wins on reseed).
+
+The `OperatorImmutableError` class and the `operator_immutable` envelope are RETIRED ENTIRELY (operator ruling): the store no longer raises it, `app/auth/tool.py` no longer maps it, and `app/auth/__init__.py` no longer exports it.
+The live envelopes are `duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`; the coded-envelope discipline is unchanged.
+Unchanged by this decision: `records.validate_account` / `validate_overview`, the per-project lock and atomic writes, the duplicate-create gate (any origin), and the server-stamped `origin` / `updated_at`.
+
+### Coupled #223 interface change (reported, not applied here)
+
+The #223 gateway consumer text flips from "never persist" to "persist": `recon/control/prompts/auth-gateway.md:24-26,52-56,89-93`, `recon/control/orchestrator_agent.py:167-173,452-458`, `recon/control/authn_loop.py:460-463,563-568`, and `docs/design/recon-job-auth-223-decisions.md` IR-2 plus `docs/design/recon-auth-gateway-223-spec.md` (requirement 6 and the account-resolution line).
+Those files are owned by the #223 branch; #223 applies the flip when it rebases on this branch's new status.
+
 ## Follow-up: AUTH-SKILL-1 RESOLVED
 
 AUTH-SKILL-1 is delivered as the META skill `skills/meta/authn-skill-writing/` (meta family: exempt from the usage-protocol append by loader path, `is_meta_skill`), which the operator's external agent runs to author a TARGET PROJECT's `authn` procedure.

@@ -76,6 +76,11 @@ The seed-face contract section is reworded to "the single write path for STORE f
 Surgical by design: no absolute path, no repository coupling, no `docs/design` citation in the skill; the parametrized form preserves D237-4's location-agnosticism.
 The content tier pins the location text.
 
+### Resolved (operator ruling, 2026-09-19)
+
+The missing-frontmatter case is NOT taken into account: it is a failure local to the skill domain and low risk, so `SkillStore._compose_procedure`'s refusal for a never-bootstrapped bundle stands unchanged.
+A BOOTSTRAPPED project skill's procedure write already lands (the store composes from the project's own frontmatter and bumps the version), so the "the project authn skill may not be immutable" half of the operator's auth-store ruling is satisfied for every bundle the bootstrap created; the un-bootstrapped case remains the external bootstrap's job at the write location this decision pins.
+
 ## D237-10 - The reusable bootstrap prompt ships beside the skill
 
 The external bootstrapper's first prompt is published as `skills/meta/authn-skill-writing/references/bootstrap-workflow.md`: the reusable, target-agnostic prompt with `<...>` placeholders (project id, target, login/signup URL, credentials, seed/read face, data root, skill name, meta-skill path) and the request-first anti-bot workflow.

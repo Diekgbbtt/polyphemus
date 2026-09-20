@@ -6,7 +6,7 @@ hunting stores write under), lazily created at the first write:
 
     data/<project_id>/auth/
       credentials.yaml   ({accounts: {<name>: <account record>}})
-      overview.yaml      (the operator-owned login-mechanism header, bare map)
+      overview.yaml      (the login-mechanism header, bare map; agent-writable, D220-12)
 
 Record identity is the account name; file names never encode it. Reads are
 field-arbitrary dotted projections over the full state
@@ -71,12 +71,6 @@ class DuplicateIdentityError(ValueError):
     username) already belongs to another account fails loudly instead of
     forking. The repair is a ROLE on the existing account, never a second
     account for the same identity."""
-
-
-class OperatorImmutableError(ValueError):
-    """The denoted trust-boundary refusal: an agent-origin write touching
-    operator-owned state (an operator-stamped account, the operator overview)
-    fails loudly instead of silently no-op-ing."""
 
 
 class StoreUnavailableError(ValueError):
@@ -265,9 +259,11 @@ class AuthStore:
         novelty-gated (`DuplicateAuthError` when known, any origin) and the
         origin is stamped server-side. Deeper writes MERGE into the existing
         record (creating the parent account stamped with the call origin when
-        absent) and refuse `OperatorImmutableError` when the stored record is
-        operator-stamped and the call origin is agent; the operator-owned
-        overview likewise refuses agent-origin writes. The merged record
+        absent), whatever its origin: the operator section is writable (D220-12
+        retires the trust-boundary refusal), so an agent refreshes tokens,
+        status, snapshot, steel, or notes on an operator-seeded account while
+        the stored `origin: operator` stamp is preserved. The overview is
+        agent-writable on the same terms. The merged record
         re-validates through the T1 seam (shape violations refuse naming the
         field); an unreadable bucket file refuses `StoreUnavailableError`
         rather than overwriting blind. Every account write also refreshes the
@@ -282,10 +278,6 @@ class AuthStore:
         with _lock_for(project_id):
             self._ensure_bucket(project_id)
             if segments[0] == "overview":
-                if origin == "agent":
-                    raise OperatorImmutableError(
-                        "operator_immutable: the overview is operator-owned; "
-                        "an agent write is refused at the trust boundary")
                 overview = self._load_file_strict(self._overview_file(project_id))
                 self._assign(overview, segments[1:], value, "overview")
                 self._dump_yaml_atomic(
@@ -318,11 +310,6 @@ class AuthStore:
                         self._credentials_file(project_id), {"accounts": accounts})
                     return
                 if isinstance(stored, dict):
-                    if stored.get("origin") == "operator" and origin == "agent":
-                        raise OperatorImmutableError(
-                            f"operator_immutable: account {name!r} is "
-                            "operator-owned; an agent write is refused at the "
-                            "trust boundary")
                     record = stored
                     stamped = stored.get("origin")
                 else:

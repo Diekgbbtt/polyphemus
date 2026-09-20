@@ -112,7 +112,7 @@ def test_contract_carries_the_overall_schema():
 
 def test_contract_carries_the_read_write_rules():
     for marker in ("read", "write", "valid empty", "single-field",
-                   "operator_immutable", "duplicate_auth", "duplicate_identity",
+                   "duplicate_auth", "duplicate_identity",
                    "auth_invalid", "store_unavailable"):
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
@@ -215,24 +215,29 @@ def test_write_record_mapping_at_a_fresh_name_creates(tmp_path):
                       "procedure": "password-login"}
 
 
-def test_write_to_the_overview_refuses_operator_immutable(tmp_path):
+def test_write_to_the_overview_lands(tmp_path):
+    """D220-12: the overview is agent-writable; the write lands, no refusal."""
     tool = build_auth_store_tool(PROJECT, _seeded_store(tmp_path))
     out = tool.invoke({"command": "write", "path": "overview.notes",
-                       "value": "agent overwrite"})
-    assert out["ok"] is False
-    assert out["error"] == "operator_immutable"
+                       "value": "agent-persisted"})
+    assert out["ok"] is True
     assert tool.invoke({"command": "read",
-                        "path": "overview.notes"})["value"] == "operator ground truth"
+                        "path": "overview.notes"})["value"] == "agent-persisted"
 
 
-def test_write_to_an_operator_stamped_account_refuses(tmp_path):
+def test_write_to_an_operator_stamped_account_lands(tmp_path):
+    """D220-12: an agent merges into an operator-seeded account, keeping the
+    `origin: operator` provenance stamp."""
     store = AuthStore(tmp_path)
     store.replace_operator_state(PROJECT, accounts={"root": {"notes": "seeded"}})
     tool = build_auth_store_tool(PROJECT, store)
-    out = tool.invoke({"command": "write", "path": "accounts.root.notes",
-                       "value": "agent overwrite"})
-    assert out["ok"] is False
-    assert out["error"] == "operator_immutable"
+    out = tool.invoke({"command": "write", "path": "accounts.root.tokens.session",
+                       "value": {"value": "tok-1", "location": "cookie"}})
+    assert out["ok"] is True
+    record = tool.invoke({"command": "read", "path": "accounts.root"})["value"]
+    assert isinstance(record.pop("updated_at"), str)
+    assert record["origin"] == "operator"
+    assert record["tokens"]["session"]["value"] == "tok-1"
 
 
 def test_create_of_a_known_name_signals_duplicate_auth(tmp_path):

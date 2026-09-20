@@ -7,10 +7,12 @@ fail-open coded results - nothing raises into the turn. Import performs no
 I/O (CODING_STANDARD section 6): the default production store is constructed
 lazily inside the factory call, never at import.
 
-Trust split: origin is always agent through this tool. Agent writes to the
-operator-owned overview or to operator-stamped accounts refuse with the
-`operator_immutable` envelope; overview changes arrive only via the operator
-seed primitive (`AuthStore.replace_operator_state`, the T4 face).
+Origin is always agent through this tool. Both sections are writable (D220-12
+retires the trust-boundary refusal): an agent write merges into the overview
+and into operator-stamped accounts alike, the stored `origin` stamp is
+preserved as provenance, and `updated_at` refreshes. The operator seed
+primitive (`AuthStore.replace_operator_state`, the T4 face) remains the
+operator's wholesale replace of the operator section.
 """
 from __future__ import annotations
 
@@ -24,7 +26,6 @@ from polymerhus.app.auth.store import (
     AuthStore,
     DuplicateAuthError,
     DuplicateIdentityError,
-    OperatorImmutableError,
     StoreUnavailableError,
 )
 
@@ -36,11 +37,13 @@ AUTH_STORE_CONTRACT = (
     "holding every credential the agents may reuse, so sibling agents "
     "authenticate from known state instead of re-deriving access from scratch.\n\n"
     "DOMAIN MODEL - an auth store is the per-project `data/<project_id>/auth/` "
-    "bucket (a credentials file plus the operator-owned overview file). An "
+    "bucket (a credentials file plus the login-mechanism overview file). An "
     "account record is one named bundle of credentials, tokens, and Steel "
     "browser-state. The operator section (the overview plus operator-stamped "
-    "accounts) is the operator's ground truth and is immutable to you; the "
-    "agent section (agent-stamped accounts) is yours to mint and merge. A "
+    "accounts) is the operator's ground truth and is WRITABLE to you: you "
+    "merge into it (tokens, status, snapshot, steel, notes), and the stored "
+    "`origin: operator` stamp stays as provenance; the agent section "
+    "(agent-stamped accounts) is yours to mint. A "
     "technical condition is an optional assertable procedure condition "
     "(`{name, check}`) to verify when a login fails unexpectedly while "
     "following the procedure in the overview. A browser-profile reference is "
@@ -49,8 +52,9 @@ AUTH_STORE_CONTRACT = (
     "tool, secrets never touching the store. A concrete snapshot is "
     "point-in-time captured request state (`{headers, cookies, params, "
     "captured_at}`) that request-based followers replay exactly. An operator "
-    "seed is the operator's wholesale replace of the operator-owned state - "
-    "your agent-minted accounts survive it untouched. A procedure label names "
+    "seed is the operator's wholesale replace of the operator section - your "
+    "agent-minted accounts survive it untouched, while your edits inside a "
+    "seeded account are replaced by the seed. A procedure label names "
     "the skill procedure that minted or serves an account.\n\n"
     "ACCOUNT IDENTITY - an account is keyed by the credential identity it "
     "authenticates, and the account NAME carries that identity. Name an "
@@ -89,8 +93,8 @@ AUTH_STORE_CONTRACT = (
     "per call, siblings untouched, and a null value removes an optional "
     "field. Creating an account writes its record mapping at "
     "`accounts.<name>`; writing deeper (`accounts.<name>.tokens.session`) "
-    "merges into the known record. Operator-owned paths refuse with "
-    "`operator_immutable`. Creating an already-known account name fails with "
+    "merges into the known record, operator-stamped or agent-stamped alike. "
+    "Creating an already-known account name fails with "
     "`duplicate_auth` - reflect, merge, or refresh instead of duplicating. "
     "Creating an account whose credential username (default or any role) "
     "already belongs to another account fails with `duplicate_identity` - add "
@@ -128,7 +132,8 @@ class AuthStoreArgs(BaseModel):
             "conditions). On write it names the single field to merge: "
             "`accounts.bob` with a record mapping creates the account, "
             "`accounts.alice.tokens.session` with a token entry merges "
-            "one token, `overview.notes` is operator-owned and refuses."
+            "one token, `overview.notes` merges into the login-mechanism "
+            "header."
         ),
     )
     value: Any = Field(
@@ -182,9 +187,6 @@ def build_auth_store_tool(project_id: str | None = None, store: AuthStore | None
         if command == "write":
             try:
                 seam.write(project_id, at, value, origin="agent")
-            except OperatorImmutableError as exc:
-                return {"ok": False, "error": "operator_immutable",
-                        "detail": str(exc)}
             except DuplicateAuthError as exc:
                 return {"ok": False, "error": "duplicate_auth",
                         "detail": str(exc)}

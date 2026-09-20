@@ -150,8 +150,8 @@ The store also gates the credential identity itself (D220-11): a create or seed 
 _Avoid_: forking a record (first writer wins; reflect, merge, or refresh), and naming by role or procedure (`primary`, `sign-up`) instead of by the credential identity.
 
 **Operator section vs agent section**:
-The trust split inside the bucket: the operator section (the `overview.yaml` header plus `operator`-stamped accounts) is the operator's ground truth and refuses agent-origin writes with `OperatorImmutableError` (`operator_immutable`); the agent section (`agent`-stamped accounts) is what the `auth_store` tool mints and merges.
-_Avoid_: agent writes to operator-owned state (they refuse loudly, never silently no-op).
+The provenance split inside the bucket (D220-12 retires the trust-boundary refusal): the operator section (the `overview.yaml` header plus `operator`-stamped accounts) is the operator's ground truth and is WRITABLE by agents, who merge into it (tokens, status, snapshot, steel, notes) while the stored `origin: operator` stamp is preserved as provenance; the agent section (`agent`-stamped accounts) is what the `auth_store` tool mints.
+_Avoid_: treating `origin` as a permission (it is a provenance label; the only refusals are `duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`).
 
 **Technical condition** (`overview.technical_conditions`):
 An optional overview-level list of `{name, check}` entries (absent by default), validated by `validate_overview`: the assertable procedure conditions to verify when a login fails unexpectedly while following the procedure in the overview.
@@ -180,7 +180,7 @@ Point-in-time captured request state on an account record, validated by `_check_
 _Avoid_: graph queries (no `cypher` lives in the store; static queries against a changing surface fail silently open).
 
 **Operator seed** (`PUT /projects/{project_id}/auth` -> `seed_project_auth` -> `AuthStore.replace_operator_state`):
-The operator's wholesale replace of the operator-owned state: each present section (`overview`, `accounts`) replaces wholesale (absent sections untouched), seeded accounts stamped `operator` server-side, `agent`-stamped accounts never modified or removed, both sections validated before anything lands.
+The operator's wholesale replace of the operator section: each present section (`overview`, `accounts`) replaces wholesale (absent sections untouched), seeded accounts stamped `operator` server-side, `agent`-stamped accounts never modified or removed, both sections validated before anything lands; an agent's edits inside a seeded account are replaced by the seed (D220-12).
 A seeded operator name colliding with a live agent record warn-drops the operator entry, preserving the agent record; there is no conflict path (replace, never 409).
 _Avoid_: extending the settings blob (the seed is a separate face over a separate bucket).
 
@@ -190,7 +190,7 @@ _Avoid_: procedural knowledge in the store (the store carries only the label).
 
 **Auth-store tool** (`auth_store`, built by `build_auth_store_tool`):
 The one shared read/write agent tool over the store, bound to its project id at build time; the id defaults to the control-plane project (`config.PROJECT_ID`) resolved lazily inside the factory, so no agent harness threads identity; its usage contract (`AUTH_STORE_CONTRACT`) rides the tool description verbatim.
-Origin through this tool is always agent; every failure arrives as an in-band coded envelope (`operator_immutable`, `duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`) - nothing raises into the turn.
+Origin through this tool is always agent; every failure arrives as an in-band coded envelope (`duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`) - nothing raises into the turn.
 _Avoid_: a second tool face (one implementation, bound per project).
 
 **Auth-capable binding** (`auth_capable_binding`, `app/auth/seams.py`):

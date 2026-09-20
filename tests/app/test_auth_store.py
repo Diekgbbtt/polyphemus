@@ -13,7 +13,6 @@ from polymerhus.app.auth.store import (
     AuthStore,
     DuplicateAuthError,
     DuplicateIdentityError,
-    OperatorImmutableError,
     StoreUnavailableError,
 )
 from polymerhus.app.data_root import DATA_ROOT
@@ -241,22 +240,54 @@ def test_shape_violation_refuses_naming_the_field_leaving_state(tmp_path):
     assert record == {"origin": "agent", "notes": "agent-minted note"}
 
 
-def test_agent_write_into_an_operator_account_is_refused_immutable(tmp_path):
+def test_agent_refresh_of_an_operator_account_lands_keeping_origin(tmp_path):
+    """D220-12: the operator section is writable. An agent merges tokens,
+    status, snapshot, and steel into an operator-seeded account, the
+    `origin: operator` provenance stamp is preserved, and `updated_at`
+    refreshes."""
     store = AuthStore(tmp_path)
     store.write(PROJECT, "accounts.bob", {"credentials": _credentials("bob")},
                 origin="operator")
-    with pytest.raises(OperatorImmutableError):
-        store.write(PROJECT, "accounts.bob.notes", "agent graffito")
+    store.write(PROJECT, "accounts.bob.tokens.session",
+                {"value": "tok-1", "location": "cookie"})
+    store.write(PROJECT, "accounts.bob.status", "valid")
+    store.write(PROJECT, "accounts.bob.snapshot",
+                {"headers": {"Accept": "text/html"}, "cookies": [],
+                 "captured_at": "2026-09-20T00:00:00Z"})
+    store.write(PROJECT, "accounts.bob.steel", {"profile": "proj-bob"})
     record = store.read(PROJECT, "accounts.bob")
     assert isinstance(record.pop("updated_at"), str)
-    assert record == {"origin": "operator", "credentials": _credentials("bob")}
+    assert record["origin"] == "operator"
+    assert record["credentials"] == _credentials("bob")
+    assert record["tokens"]["session"]["value"] == "tok-1"
+    assert record["status"] == "valid"
+    assert record["steel"] == {"profile": "proj-bob"}
+    assert record["snapshot"]["captured_at"] == "2026-09-20T00:00:00Z"
 
 
-def test_agent_write_to_the_operator_overview_is_refused_immutable(tmp_path):
+def test_agent_write_refreshes_updated_at_on_an_operator_account(tmp_path, monkeypatch):
+    from polymerhus.app.auth import store as store_mod
+
     store = AuthStore(tmp_path)
-    with pytest.raises(OperatorImmutableError):
-        store.write(PROJECT, "overview.notes", "agent graffito")
-    assert store.read(PROJECT) == {"overview": {}, "accounts": {}}
+    monkeypatch.setattr(store_mod, "_utcnow_iso",
+                        lambda: "2020-01-01T00:00:00+00:00")
+    store.replace_operator_state(
+        PROJECT, accounts={"bob": {"credentials": _credentials("bob")}})
+    assert store.read(PROJECT, "accounts.bob.updated_at") == \
+        "2020-01-01T00:00:00+00:00"
+    monkeypatch.setattr(store_mod, "_utcnow_iso",
+                        lambda: "2021-01-01T00:00:00+00:00")
+    store.write(PROJECT, "accounts.bob.notes", "agent note")
+    assert store.read(PROJECT, "accounts.bob.updated_at") == \
+        "2021-01-01T00:00:00+00:00"
+
+
+def test_agent_write_to_the_overview_lands(tmp_path):
+    """D220-12: the overview is agent-writable (the gateway persists the
+    replayability resolution and fresh facts)."""
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, "overview.notes", "agent-persisted fact")
+    assert store.read(PROJECT, "overview.notes") == "agent-persisted fact"
 
 
 def test_operator_write_to_the_overview_merges(tmp_path):

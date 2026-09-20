@@ -9,7 +9,6 @@ from polymerhus.app.auth.records import (
 from polymerhus.app.auth.store import (
     AuthStore,
     DuplicateAuthError,
-    OperatorImmutableError,
     StoreUnavailableError,
 )
 from polymerhus.app.auth.tool import AUTH_STORE_CONTRACT, build_auth_store_tool
@@ -19,7 +18,6 @@ __all__ = [
     "AuthInvalidError",
     "AuthStore",
     "DuplicateAuthError",
-    "OperatorImmutableError",
     "StoreUnavailableError",
     "build_auth_store_tool",
     "select_recent_usable_account",
