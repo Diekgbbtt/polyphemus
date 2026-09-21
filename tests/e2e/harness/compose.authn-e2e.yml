@@ -63,6 +63,14 @@ services:
       LLM_HUNTING_ORCHESTRATOR: ${LLM_MODEL_HUNTING_ORCHESTRATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_POD_RUNNER: ${LLM_MODEL_POD_RUNNER:-opencode-go:opencode-go/deepseek-v4.1-flash}
       LLM_POD_TRIAGER: ${LLM_MODEL_POD_TRIAGER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      # A6: models.dev cannot express this relay's true surface - live probes
+      # (2026-09-21) show deepseek-v4.1-flash refuses BOTH response_format
+      # json_schema ("This response_format type is unavailable now") and a forced
+      # tool_choice ("Thinking mode does not support this tool_choice"), while
+      # auto tool choice and json_object work. The operator declares the truth
+      # here; the method negotiation then picks the voluntary rung (A6) and the
+      # model relaxes any forced tool_choice to "auto" at bind time.
+      LLM_CAPABILITY_OVERRIDES: '{"opencode-go/deepseek-v4.1-flash": {"supports_structured_output": false, "supports_forced_tool_choice": false}}'
     env_file:
       - path: "/Users/diekgbbtt/polymerhus/.env"
         required: false
