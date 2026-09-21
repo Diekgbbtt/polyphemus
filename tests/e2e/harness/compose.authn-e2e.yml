@@ -49,6 +49,20 @@ services:
       LITELLM_SKIP_MIGRATIONS: "1"
       # Live source edits (the dev overlay convention).
       AGENT_UVICORN_ARGS: "--reload --reload-dir /srv/src"
+      # This branch reads the infix-free role keys (#240 rename) while the
+      # operator's .env still carries the legacy LLM_MODEL_<ROLE> spellings.
+      # Derive every new key from its legacy counterpart; the default is the
+      # operator's current model, so the sibling resolves even if the legacy
+      # key is absent. The values are interpolated from this worktree's .env.
+      LLM_TRIAGER: ${LLM_MODEL_TRIAGER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_CONFIGURATOR: ${LLM_MODEL_CONFIGURATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_JOB_ORCHESTRATOR: ${LLM_MODEL_JOB_ORCHESTRATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_CRAWLER: ${LLM_MODEL_CRAWLER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_ANALYSER: ${LLM_MODEL_ANALYSER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_HUNTING_HUNTER: ${LLM_MODEL_HUNTING_HUNTER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_HUNTING_ORCHESTRATOR: ${LLM_MODEL_HUNTING_ORCHESTRATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_POD_RUNNER: ${LLM_MODEL_POD_RUNNER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_POD_TRIAGER: ${LLM_MODEL_POD_TRIAGER:-opencode-go:opencode-go/deepseek-v4.1-flash}
     env_file:
       - path: "/Users/diekgbbtt/polymerhus/.env"
         required: false
