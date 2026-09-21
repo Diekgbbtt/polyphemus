@@ -27,10 +27,10 @@ Authentication failure is explicit and loud, never silent-anonymous; the no-auth
 3. As the operator, I want auth established once up front by a single gateway turn, so that mid-run operator prompts and mid-run steering disappear.
 4. As the operator, I want the selected account chosen deterministically (most recently updated usable account), so that repeated runs pick the same account given the same store.
 5. As the operator, I want account validity recorded as a typed fact on the record, so that I can see what the system believes and when.
-6. As the operator, I want operator-seeded accounts to stay immutable by agents, so that my ground truth remains trustworthy.
+6. As the operator, I want agent writes to merge into the store (the overview and operator-stamped accounts alike), so that verified facts persist while my ground truth and its provenance stamp survive (D220-12).
 7. As the operator, I want the no-authenticated-surface case recognised structurally, so that simple targets do not look like bootstrap failures.
 8. As the operator, I want a run with no credentials at all to stop loudly, so that I know the bootstrap prerequisite was missing.
-9. As the operator, I want the operator-owned overview facts (anti-bot defence, HTTP-client replayability) to steer the gateway's branch choice, so that the topology is respected without mid-run guessing.
+9. As the operator, I want the stored overview facts (anti-bot defence, HTTP-client replayability) to steer the gateway's branch choice, so that the topology is respected without mid-run guessing.
 10. As the orchestrator, I want one ReAct gateway turn with a hunting-style passive state machine over my own tool calls, so that the loop's progress is machine-observable without micromanaging my judgment.
 11. As the orchestrator, I want transition hints injected onto the triggering tool result only, so that my context carries one clear next step per transition.
 12. As the orchestrator, I want to validate a request-replayable account by replaying its stored request state first, so that a live session is proven, not assumed.
@@ -83,7 +83,7 @@ The state machine implements exactly this transition table:
 | FINISH | success: the `auth_store` write asserting `status: valid`, or the terminal gateway verdict; failure: the terminal `exhausted` verdict | record the verdict; run the outer loop; return the gateway result | terminal |
 
 - The `status: valid` assertion is written on success for the same reason as `not_valid`: it gives the harness a call-level boundary instead of inferring it from the verdict.
-- The consumed attribute contract (D223-11) has four branches: no defence (including absent or empty overview) -> request path; defence present with replayability false -> browser-only path, exclusively the Steel crawl; defence present with replayability true -> request path with a browser-first validation; defence present with replayability null -> the orchestrator resolves it in-loop by attempting the fingerprint replay, and the verdict then releases or prunes the run. The contract is run-scoped and logged loudly; the overview is operator-owned, so disagreement is recorded, never silently patched.
+- The consumed attribute contract (D223-11) has four branches: no defence (including absent or empty overview) -> request path; defence present with replayability false -> browser-only path, exclusively the Steel crawl; defence present with replayability true -> request path with a browser-first validation; defence present with replayability null -> the orchestrator resolves it in-loop by attempting the fingerprint replay, and the verdict then releases or prunes the run. The resolution is logged loudly and persisted to the overview by the loop (D220-12); disagreement is still recorded, never silently patched.
 - Debug bounding (D223-16): no bespoke attempt cap, no duplicate-command rejection; attempt calls are observed and traced; the terminal `exhausted` verdict is the model's declaration; the only hard bounds are the harness's generic ones (the ReAct turn's recursion limit and the escalating per-attempt LLM budgets).
 - Missing-data states (D223-17) are discriminated structurally in the store:
   - no authenticated surface (overview absent or carrying the structural no-auth marker): its own path - authn loop skipped, pipeline run anonymously, verdict records the finding; an empty store is the EXPECTED shape here;
@@ -96,7 +96,7 @@ The state machine implements exactly this transition table:
 - The account record gains two server-stamped facts, exact shapes settled at implementation: a typed validity status (`valid | not_valid`, D223-14) and `updated_at` (D223-18).
 - Selection is deterministic: the most recently updated usable account; ties fall back to list position, newest last.
 - The browser path mints with `steel start --profile <project_id>-<account> --update-profile` and persists the profile key plus the extracted tokens back to the account (D223-14).
-- The operator seed faces (`PUT` / `GET /projects/{project_id}/auth`) are unchanged; the operator section stays agent-immutable; agents write the agent section.
+- The operator seed faces (`PUT` / `GET /projects/{project_id}/auth`) are unchanged; the operator section is agent-writable - agent writes merge and keep the `origin: operator` stamp as provenance (D220-12) - and the agent section is the agents' own.
 
 ### Arming and roles
 
@@ -135,6 +135,21 @@ The state machine implements exactly this transition table:
 - Pull-request-based integration for this work (D223-7: the integration override applies).
 - The hunting module (its agent already carries statefulness; nothing here changes it).
 - The context-memory scaffold that also reserves the orchestrator role.
+
+## Design Risks
+
+### Network identity is not persisted with the browser profile (2026-09-21)
+
+User stories 15, 16, and 22 rest on one profile key standing for the account's browser identity across runs, and D223-14 mints `<project_id>-<account>` with `--update-profile` and rebinds it later.
+That key persists **browser** identity (cookies, storage, history) but not **network** identity: Steel states it directly ("Profiles persist browser identity, not network identity - pair with a dedicated IP for account-based agents"), and the observable consequence is the "impossible travel problem" - the same cookies return from a new origin, which is how accounts get challenged or flagged.
+Measured on 2026-09-21: three sessions in one sitting egressed from three distinct datacenter ASNs (`216.246.40.79` CacheFly, `152.233.48.155` Datacamp, `64.34.81.170` Latitude.sh), with and without the profile mounted, while the browser reported one stable user-agent and `America/New_York`.
+The session proxy is disabled by default and this spec puts proxy support out of scope, so nothing in the current design pins an egress; the store holds no network-identity fact and the profile key cannot express one.
+Impact on this spec's design: every rebind is a same-cookies/new-IP event, and the fail-open branch (user story 16) then performs the single most score-punished action - a fresh credential login - from yet another new origin.
+A magnific.com bootstrap on 2026-09-21 was held by a visible reCAPTCHA Enterprise challenge after exactly that sequence; a mount-and-verify of the same stored profile reached the authenticated landing with no challenge at all, so the risky path was also the unnecessary one.
+The gateway's browser sign-in path additionally carries no humanization (`--stealth`, whose automatic CAPTCHA-solving half is excluded by operator ruling), no interaction-cadence discipline, no challenge protocol, and a 10-minute session cap that expires while a human solves, so a low score has no recovery.
+The crawl path is separate: the Steel crawl provider sets `humanize_interactions` through the SDK and rotates its region per session, neither of which the CLI sign-in path can reach.
+Remediation, and where each half landed: mount-and-verify with a warm write-back is implemented in the external bootstrap (#237, D237-15); one stable egress origin and a consistent environment are the subject of #245 (a local Steel open-source runtime deployment), because no proxy work in this repo supplies an egress; and Steel-side CAPTCHA solving is excluded by operator ruling, being costly and not portable to a local runtime.
+Full evidence and the reproducible probe: `docs/design/authn-antiblock-replayability-237-decisions.md` D237-14 and `tests/e2e/harness/recaptcha_challenge_probe.py`.
 
 ## Further Notes
 

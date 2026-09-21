@@ -24,7 +24,7 @@ _SCRIPT_RUNNERS = {"sh": "sh", "py": "python3"}
 # `batch` takes `[COMMANDS]...`. clap's variadic greedily consumes a flag that
 # follows the first positional, folding it into the value silently - a trailing
 # `--session` folds too, dropping the command onto an auto-provisioned billable
-# `default` session. The CLI's own end-of-options marker is the fix (D18).
+# `default` session. The CLI's own end-of-options marker is the fix (D19).
 _VARIADIC_VERBS = frozenset({"fill", "type", "setvalue", "select", "upload", "batch"})
 _BOUNDARY = "--"
 # The canonical form per verb, quoted back on refusal so re-encoding is trivial.

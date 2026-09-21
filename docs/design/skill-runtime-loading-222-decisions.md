@@ -66,7 +66,7 @@ The README's stale selection-contract section (a `agent/recon/skills.py` path th
 
 ## D7 - coordination with #220 (convention alignment, not code blocking)
 
-#220 (the per-project auth store read/write tool) is open and unimplemented, so #222 establishes the factory shape #220 follows rather than following it: a `build_<x>_tool(...)` factory in the owning module, a contract constant rendered verbatim into the tool description, fail-open returns, injectable seams where side effects exist, no I/O at import.
+#220 (the per-project auth store read/write tool) was open and unimplemented at decision time (it landed later on the #220 stream), so #222 established the factory shape #220 follows rather than following it: a `build_<x>_tool(...)` factory in the owning module, a contract constant rendered verbatim into the tool description, fail-open returns, injectable seams where side effects exist, no I/O at import.
 This is the `graph_view_tool.build_graph_view_tool` shape, which #220's ticket already names as its pattern.
 No code dependency runs either way; this ADR is the explicit alignment record.
 

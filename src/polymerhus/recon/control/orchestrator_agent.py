@@ -168,9 +168,10 @@ _BRANCH_MANNER = {
         "Replayability UNKNOWN. Attempt the fingerprint replay from the "
         "browser state per the authn skill: replayable releases the request "
         "branch (record replayability true), not replayable prunes to "
-        "browser-only (record false). Record the resolution loudly in the "
-        "rationale and verdict; NEVER write it to the overview "
-        "(operator-owned)."),
+        "browser-only (record false). Persist the resolved fact to the "
+        "overview with an auth_store write (your write merges; the operator "
+        "stamp stays), and record the resolution loudly in the rationale "
+        "and verdict."),
 }
 
 
@@ -455,11 +456,12 @@ class ReconOrchestratorActor:
                 f"PUT /projects/{pid}/auth and re-run")
         directive = select_branch(overview)
         if directive == "resolve_in_loop":
-            # D223-11: run-scoped and loud, never persisted (the overview is
-            # operator-owned - disagreement is recorded, never patched).
+            # D223-11 as amended by D220-12: the loop resolves the unknown
+            # fact and persists it to the overview (agent writes merge); the
+            # warning stays loud for the operator's next seed.
             logger.warning(
                 "auth gateway: project %s overview replayability unknown; "
-                "the loop resolves it in-loop (run-scoped, never persisted)",
+                "the loop resolves and persists it in-loop",
                 pid)
         candidate = select_recent_usable_account(
             accounts if isinstance(accounts, dict) else {})
@@ -487,7 +489,8 @@ class ReconOrchestratorActor:
         if verdict.replayability_resolved:
             logger.warning(
                 "auth gateway: project %s in-loop replayability resolved to %s "
-                "(run-scoped, never persisted; operator to re-seed)",
+                "(persisted to the overview by the loop; logged loudly for the "
+                "operator)",
                 pid, verdict.replayability)
         return verdict
 

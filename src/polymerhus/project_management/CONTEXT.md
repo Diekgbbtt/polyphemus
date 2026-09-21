@@ -27,6 +27,7 @@ Concrete settings for the live e2e targets are held in the eval dataset `tests/e
 The superseded operator value object - how authenticated recon used to declare its credentials (cookies, autonomous-login credentials, role/realm-tagged sets, arbitrary request headers) and the settings-blob anchor of auth.
 Since #223 (D223-4) it is retired with its full footprint: the value-object module and its settings validation are deleted, the per-tool header serialisation lives on in the recon auth feed re-sourced from the shared auth store, and the orchestrator binds the selected account identifier into the pipeline state for lazy per-phase resolution (D223-19) - no settings-blob auth path survives.
 Operator seeding of the shared auth store remains the operator's face over that state: `PUT /projects/{project_id}/auth` (`seed_auth` -> `seed_project_auth` -> `AuthStore.replace_operator_state`, present-section replace, never 409) and `GET /projects/{project_id}/auth` (`read_auth` -> `read_project_auth`).
+A seed whose credential username already belongs to another account is refused with the `duplicate_identity` envelope and HTTP 500 (D220-11): the repair is a role on the existing account, never a second account.
 
 **Run-request**:
 An operator's request to recon a project - `POST /projects/{id}/recon`.

@@ -282,10 +282,11 @@ def test_gateway_stops_loudly_without_credentials(tmp_path, caplog):
     asyncio.run(actor.stop())
 
 
-def test_gateway_null_replayability_is_logged_loudly_never_persisted(tmp_path, caplog):
-    """The null-replayability resolution is run-scoped and loud: the gateway
-    logs it before the loop, the verdict carries it, and the overview file
-    on disk is untouched."""
+def test_gateway_null_replayability_is_logged_loudly_harness_writes_nothing(tmp_path, caplog):
+    """The null-replayability resolution is loud: the gateway logs it before
+    the loop and the verdict carries it; the harness itself never writes, so
+    the overview on disk is untouched by this turn - persistence is the loop
+    model's in-turn `auth_store` write (D223-11 as amended by D220-12)."""
     make, _ = _script_model([_verdict_call(branch="browser_only",
                                            replayability_resolved=True,
                                            replayability=False,
@@ -301,7 +302,7 @@ def test_gateway_null_replayability_is_logged_loudly_never_persisted(tmp_path, c
     assert verdict.branch == "browser_only"
     assert verdict.replayability_resolved is True
     assert "replayability" in caplog.text.lower()
-    assert store.read("p1", "overview") == {"anti-bot": "waf:x"}  # never persisted
+    assert store.read("p1", "overview") == {"anti-bot": "waf:x"}  # harness writes nothing; the loop model persists
 
 
 # --- failure posture ---------------------------------------------------------------

@@ -92,6 +92,7 @@ The skill cites the file in its worked-example and references sections, so the e
 The e2e surfaced a wording defect (not a code defect): the profile discipline said "Mount by id" while the command it gave is `--profile <profile-name>`, and D237-4 repeated "mount by id".
 The CLI's `--profile` takes the profile NAME (the `profileId` also resolves, verified live, but the discipline as written mounts by name), and the store holds the name under `steel: {profile}`.
 The wording is corrected to "Mount by name", P3 records "the profile name from the mint", and D237-4 is amended; a content test forbids "Mount by id" and requires "Mount by name".
+The same correction is applied to the #221 records that carried the wording (`docs/design/browser-cli-221-decisions.md` D17, `docs/design/browser-cli-221-spec.md`), and the recon glossary's browser-profile entry now carries the mount-first ordering.
 
 ## D237-12 - Account identity is the credential, named `<username>-<minting_context>`
 
@@ -99,7 +100,7 @@ The e2e left two White Jotter accounts sharing one username and password, `white
 The account's identity is the credential it authenticates, and the NAME carries that identity: the tool contract (`AUTH_STORE_CONTRACT`), the meta skill's seed-face contract, and the reusable prompt now require `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, `first_authn_bootstrap`, `hunting_misauthr`, ...), assessed at write time.
 The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share one account name and the second write collides on `duplicate_auth` to be merged.
 The meta skill's "separate flows with separate accounts" instruction, its red-flag row, and the prompt's matching line are sharpened to "separate procedures; one account per credential identity".
-The store does NOT yet enforce credential-identity uniqueness (the fork remains storable under two names); that gate and the `procedure` cardinality (a single optional string cannot name two procedures) are recorded as open design questions below.
+The store did not yet enforce credential-identity uniqueness at the time of writing (the fork was storable under two names); the gate and the `procedure` cardinality (a single optional string cannot name two procedures) were recorded as open design questions and are resolved in the Resolved block below (D220-11).
 Content tests pin the tool-contract markers and the meta-skill/prompt wording; the throwaway store-seam loop that showed two names sharing one username is deleted (it is the evidence for the open gate, not a regression test).
 
 ### Resolved (operator ruling, 2026-09-20)
@@ -124,3 +125,57 @@ The root cause was a missing cross-reference, not a missing primitive: `skills/s
 Fix (three edits, all doc-level): (1) the bootstrap prompt gains `<mechanics_skill_path>` and instructs reading the mechanics skill (and its `references/` scripts) before the first browser step, "do not re-derive the steel CLI from `--help`"; (2) P3's verification line stops prescribing `wait --load networkidle` and instead uses `--wait-until load` plus a `wait --url/--text` condition, with the networkidle trap named; (3) the skill gains a "Browser fast path" block inlining the four habits - `snapshot -i`, `batch` to share a ref, options-before-the-`--`-boundary variadic encoding, and an observable `wait` over a fixed sleep.
 The tool-level fold (D19 in `browser-cli-221-decisions.md`) is the complementary fix and lands by rebasing this branch onto `feat/221-browser-cli`.
 Content tests pin the fast-path markers, the networkidle prohibition, and the prompt's mechanics-skill citation.
+
+### D237-13 measurement (2026-09-21, re-run of the same magnific bootstrap)
+
+A same-prompt re-run measured the fix; full record in `docs/design/authn-bootstrap-latency-237-experiment.md`.
+The primitive fingerprint is clean and confound-resistant: `steel --help` re-derivation 5 -> 0, `networkidle` 1 -> 0, live stale-ref failures 3 -> 0, `batch` 0 -> 8, `snapshot -i` 0 -> 6, condition `wait` 0 -> 5, fixed `sleep` 8 -> 3.
+Wall-clock did **not** improve (394 s -> 1168 s raw), and the cause is a target-side confound: magnific escalated to a visible reCAPTCHA Enterprise challenge that cost 251 s of human solving plus a 90 s recovery loop, larger than the effect the fix targets; the wall-clock result is therefore INCONCLUSIVE and no latency win is claimed in this ledger.
+A new failure mode was observed from the fix-adjacent pattern: the agent replaced `sleep` with `wait --url /app`, but `/app` is reachable only after the out-of-band human reCAPTCHA solve, so the wait timed out three times (90 s) waiting on a human step it could not observe.
+Follow-up applied: the mechanics rule now carries the qualifier - a `wait` never synchronises on an outcome gated by an out-of-band human action; wait on the challenge's own marker with a bounded timeout and escalate, instead.
+The `steel_exec` D19 guard was not exercised by this run: the external bootstrapper drives the raw `steel` CLI, so only the skill-text half of the fix was measured.
+
+## D237-14 - The browser bootstrap is fragile against reCAPTCHA scoring (grounded diagnosis)
+
+*Diagnosed 2026-09-21 on the run-2 failure (a visible reCAPTCHA Enterprise challenge), following the diagnosing-bugs procedure.*
+
+**The failure.** Run 2's fresh login was held by a visible reCAPTCHA Enterprise image challenge (400x580 frame), costing 251 s of human solving plus a 90 s blind-retry loop; the operator read the proximate cause as a low score.
+
+**The loop (Phase 1).** `tests/e2e/harness/recaptcha_challenge_probe.py` drives the exact path under test - an optional profile, the homepage to `/log-in` route, the consent gate, the email-first form, and one submit - and detects the challenge's own frame without solving it: exit 0 GREEN (authenticated landing), exit 1 RED (challenge), exit 2 UNKNOWN.
+It is red-capable (it asserts the exact symptom) and agent-runnable, and it is the closest available seam: the symptom is live and probabilistic, so no unit or integration seam can carry it.
+
+**Reproduction (Phase 2).** The loop ran three times and did **not** reproduce the challenge (two single-submit runs and one retry-storm run, all GREEN; the storm never fired because the first submit succeeded).
+The observed red is therefore 1 of 4 controlled-plus-observed attempts, and the honest reading is that the symptom is **intermittent**, consistent with a score near the threshold rather than a deterministic trigger; the loop's rate is too low to debug behaviourally without many credentialed attempts, each of which burns a login and further risks the account and the egress IP.
+The minimised trigger from run 2 is: navigate `/log-in` (lands on the homepage), click the "Log in" link, dismiss consent, set the email, click Continue, set the password, click "Log in" - and then, in run 2, up to four blind submissions (three clicks plus a `requestSubmit()`) with 30 s `wait --url` timeouts between them.
+
+**The safe path, proven.** Mounting the stored `magnific-authn` profile read-only and navigating to `/app` reached the authenticated landing with no login and no challenge (re-verified 2026-09-21), so the risky fresh login was also the unnecessary one.
+
+**Grounded mechanisms.** Steel's own docs state that "Profiles persist browser identity, not network identity - pair with a dedicated IP for account-based agents", and name the failure mode the "impossible travel problem"; the CLI exposes `--proxy`, `--stealth` (humanize plus auto-CAPTCHA), `--session-solve-captcha`, and a `captcha` command family.
+Measured directly: three sessions in one sitting egressed from three distinct datacenter ASNs (`216.246.40.79` CacheFly, `152.233.48.155` Datacamp, `64.34.81.170` Latitude.sh), with and without the profile mounted, while the user-agent stayed one value and the timezone stayed `America/New_York`.
+The run-2 transcript supplies the interaction evidence: the fresh login ran on a disposable scratch profile (`magnific-scratch-tmp`, deleted afterwards), never wrote back to `magnific-authn`, used no `--stealth`, and retried the submit blindly.
+
+**Implementation defects that contributed.**
+1. No stable egress: proxy is off by default, sessions rotate datacenter IPs, and neither the store nor the profile key can express a pinned origin.
+2. Fresh-login-by-default verification: the workflow re-authenticates even when a mounted profile already verifies, exposing the account to the most score-punished action for no information gain.
+3. Disposable browser identity for the login: the login runs on an empty scratch profile, the least trustworthy identity, and its state is discarded.
+4. No humanization: `--stealth` is never used, so interactions are fast and robotic.
+5. No interaction cadence: repeated blind submits with fixed `sleep`s, themselves a bot signal.
+6. No challenge protocol: no detection of the challenge's own marker, no bounded wait, no escalation - the agent improvised a viewer-URL prompt after minutes of retries.
+7. Session lifetime versus a human in the loop: `--session-timeout 600000` expired mid-flow, and the default 120 s inactivity timeout can release the session while a human solves.
+8. No network-identity continuity across mounts: even the safe mount path changes origin every time, so the authenticated profile is re-presented from a new network each run.
+
+**Design risk report.** The systemic half is recorded as a Design Risk in `docs/design/recon-auth-gateway-223-spec.md` ("Network identity is not persisted with the browser profile"), because the same profile-rebind design governs the runtime gateway; the skill-and-prompt half is owned here.
+
+**Seam finding (Phase 5).** There is no correct seam for a behavioural regression test of the symptom itself: it is live, third-party-scored, and intermittent, so the probe script is the regression vehicle and the fix hypotheses are recorded separately rather than locked into a unit test.
+
+## D237-15 - Mount-first, and the non-reactive login discipline
+
+*Implemented 2026-09-21 on the operator's ruling: proactive prevention only, no Steel-side solving, and the mount verification stays mandatory.*
+
+The fix is three text-only edits, no schema change and no tool change.
+The authn meta skill's profile discipline now orders the browser path: mount the stored profile read-only first, verify it against the authenticated landing, and log in only when the mount does not yield that landing - a missing OR unauthenticated mount being one fail-open trigger, mirroring the runtime gateway's D223-14 rule; that login runs on the account's own profile with `--update-profile` and is never disposable, so the warm identity (cookies and history) is written back rather than discarded.
+The bootstrap prompt carries the same ordering for the external bootstrapper.
+The mechanics skill carries the non-reactive hardening: submit once and wait on the condition rather than resubmitting blind, and size the session clock for a human step (`--session-timeout` covers a solve, `--inactivity-timeout` raised or `0` keeps the session alive while a person acts).
+Explicitly excluded: any Steel-side CAPTCHA solving (`--stealth`'s auto-CAPTCHA half, `--session-solve-captcha`, the `captcha` family), because it is costly and does not port to a local Steel deployment; and any tool-layer guard, because the defended-target knowledge belongs to the procedure, not to the thin `steel_exec` gateway.
+The residual score risk is the environment and network identity: the local Steel deployment that removes the `UNEXPECTED_ENVIRONMENT` and impossible-travel exposure is filed as #245, and the design risk stays recorded in `docs/design/recon-auth-gateway-223-spec.md` until that lands.
+Content tests pin the ordering markers in both artifacts and the cadence and clock rules in the mechanics skill.

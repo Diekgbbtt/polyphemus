@@ -8,7 +8,7 @@ description: >-
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '1.6'
+  version: '1.7'
 ---
 
 # Steel browser operation
@@ -47,6 +47,7 @@ survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
 - **single** - one atomic act whose result is the answer; no sequencing, no ref to discover.
 - **batch** - several ops in one spawn to share state (a discovered ref, an entered value) or amortise spawn cost.
 - **wait** - when the page, not you, is the unknown; synchronise on an observable before reading it.
+  Wait on the challenge's OWN marker (its iframe or selector) with a bounded `--timeout`, then escalate to the operator: an outcome gated by an out-of-band human action (a CAPTCHA solve, an operator click, a manual approval) cannot appear until the human acts, so a wait on it burns its whole timeout first.
 - **script** - a whole flow with a lifecycle, a loop, or several operations; it owns its stop.
 
 **Close.** Stop the session with `steel browser stop --session <name> --json` when you own it, or let the stop owner fire, then prove it gone against the catalogue (`sessions --json` back to `[]`). Where the mount was write-oriented, that stop is what backs the profile up.
@@ -81,6 +82,8 @@ survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
 
 **Synchronisation**
 - Steel's `--timeout` (milliseconds) governs a wait; keep the tool `timeout_s` above it so the outer clock never cuts a wait short. `steel_exec` refuses a wait that reaches `timeout_s` (`refused:timeout-ordering`); on a bare CLI you enforce it.
+- Submit once, then wait on the condition: a blind resubmit is an `AUTOMATION`-shaped bot signal, so read the outcome and escalate on the marker instead of clicking again.
+- Size the session clock for the slowest human step in the flow: `--session-timeout` covers a solve, and `--inactivity-timeout` raised (or `0`) keeps the session alive while a person acts, since the 120 s default releases it mid-solve.
 
 **Lifecycle**
 - Every session gets a stop owner. One script invocation owns it with `trap ... EXIT INT TERM`; a flow spanning separate calls arms a dead-man watchdog (`references/stop-owner.sh`) or wraps the calls in a stopping script.
@@ -99,7 +102,8 @@ Every `steel browser` command carries `--session <name>`; every command in this 
 The `steel scrape` and `steel profile` families are sessionless and carry only `--json`.
 
 - Session: `start [--session-timeout ms] [--inactivity-timeout ms] [--stealth] [--proxy url] [--profile name] [--update-profile]`, `stop [-a]`, `sessions`, `live` (viewer).
-- Navigation: `navigate <url> [--wait-until load|domcontentloaded|networkidle]` (aliases `open`, `goto`), `back`, `forward`, `reload`.
+- `--stealth` on `start` bundles humanization with automatic CAPTCHA solving; on a challenge, wait on the challenge's own marker with a bounded timeout and escalate to the operator - the solving half is excluded by operator ruling (D237-15).
+- Navigation: `navigate <url> [--wait-until load|domcontentloaded|networkidle]` (aliases `open`, `goto`), `back`, `forward`, `reload`. Settle on a condition (`wait --url`/`wait --text`) for a login or SPA page: `networkidle` never arrives on a continuously-active page and burns the whole timeout.
 - Page reading: `snapshot [-i] [-c] [-s css] [-d n] [-u]`, `get text|html|value|attr|url|title|count|box|styles`, `find <css>`, `content`, `is visible|enabled|checked`.
 - Interaction: `click`, `dblclick`, `press`, `hover`, `focus`, `check`, `uncheck`, `clear`, `selectall`, `scroll`, `scrollintoview`, `drag`.
 - Variadic verbs (boundary mandatory, options before the `--`): text entry `fill`, `type`, `setvalue`; `select`; `upload`.

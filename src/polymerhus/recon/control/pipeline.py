@@ -426,7 +426,7 @@ async def run_pipeline(
         else:
             logger.warning("run %s authenticated verdict names no account; running unauthenticated", run_id)
         if gateway_verdict is not None and gateway_verdict.replayability_resolved:
-            logger.warning("run %s in-loop replayability resolved to %s (run-scoped, never persisted)",
+            logger.warning("run %s in-loop replayability resolved to %s (persisted to the overview by the loop)",
                            run_id, gateway_verdict.replayability)
         for phase_idx, phase_jobs in enumerate(plan):
             job_configs: dict[str, tuple] = {}

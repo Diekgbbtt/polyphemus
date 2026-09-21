@@ -92,7 +92,7 @@ Storing "rendering model" on a Service is a category error: a rendering fault is
 
 ### 2.4 Where trust enters, and between which parties
 
-Trust in this domain is not a single relation; it enters at two distinct pairs of parties.
+Trust in this domain is not a single relation; it enters at three distinct pairs of parties.
 
 The primary pair is **inter-service**: service A consumes data produced by service B and assumes some property P of it (`L1D-14`, the Tier-1 trust substrate).
 
@@ -103,6 +103,10 @@ That is the ontological guarantee that the model's trust boundaries are the real
 The second pair is **tester-and-target**, and it is the pair a human holds silently: every self-report of the black box (a status code, a header, a rendered page) is the target speaking about itself, and the tester trusts it only provisionally.
 
 This second trust relation is the reason the automation-forced primitives of Section 3 exist at all: a machine that cannot represent "how much do I trust this claim, and who told it to me" cannot hold the tester-target boundary the way a human does reflexively.
+
+The third pair is **operator-and-agents**, held in the shared auth store: the operator seeds ground truth and the agents verify, correct, and merge what they learn.
+
+That boundary is provenance, not permission - an agent write merges into the operator's section and the server-stamped `origin` records who made the claim (`docs/design/auth-store-220-decisions.md` D220-12) - so trust is attributed, never enforced by refusing the write.
 
 ### 2.5 Coverage - and coverage of what
 
@@ -212,6 +216,8 @@ A human re-testing a target next week silently knows it is the same target; a ma
 The model's answer is a single principle applied everywhere: **identity is a stable intrinsic key, and every write is an idempotent MERGE on it** (`L1D-22`, `src/polymerhus/analysis/l1_curator.py:15-19`).
 
 A Service is keyed on `(project_id, business_function_slug)` (`L1D-12`); a System on `(project_id, kind, discriminator)` with a non-null `__singleton__` sentinel so a null discriminator cannot silently duplicate a singleton (`L1D-9`, `src/polymerhus/analysis/l1_types.py:32-36`); an L0 Observation on a deterministic SHA1 of its content so the same finding converges rather than duplicating (`src/polymerhus/recon/domain/curator.py:176-177` per recon design §4.1).
+
+The auth store applies the same principle to accounts: an account's identity is the credential it authenticates and its name carries it (`<email>-<minting_context>`), so a second name for one credential is a fork the store refuses with `duplicate_identity` (`docs/design/authn-antiblock-replayability-237-decisions.md` D237-12, `docs/design/auth-store-220-decisions.md` D220-11).
 
 This primitive is realised only at the project boundary, and closing the gap beyond it is a stated goal, not a curiosity.
 

@@ -2,7 +2,7 @@
 name: authn-skill-writing
 description: Use when executing authentication against a target project by hand and authoring that target's per-project authentication skill from verified state.
 metadata:
-  version: '2.5'
+  version: '2.6'
 ---
 # Authn skill writing
 
@@ -32,7 +32,7 @@ Keep the planes non-overlapping: facts live in the store, steps live in the skil
 The following mirrors the seed-face contract only, which is the single write path for STORE facts available to you; the project skill bundle is your other write path (P5).
 Write facts with `PUT /projects/{project_id}/auth` and body `{overview?, accounts?}`.
 Read state with `GET /projects/{project_id}/auth`, which returns the full `{"overview": ..., "accounts": ...}` state.
-Each present section REPLACES the operator-owned state wholesale.
+Each present section REPLACES the operator's section wholesale (an in-system agent write merges instead, D220-12).
 Each absent section is left untouched.
 Seeded accounts are stamped `origin: operator` server-side, so never put `origin` in the payload.
 Agent-stamped accounts survive every seed untouched.
@@ -72,7 +72,7 @@ Whatever the target, establish and record these two facts before you record its 
 5. Record the verdict honestly. When a plain-client replay reaches the authenticated state, record `http-client-replayability: true` and record which shape elements are static (replayable as-is) and which are dynamic (must be re-minted or are browser-bound): the continuation facts a follower needs. When replay cannot reach the authenticated state, record `http-client-replayability: false`; browser-only is a complete, honest result, never a failure.
 6. Script-driven logins. When the sign-in is programmed by client-side script, fetch and read the script; replay the exact request shape it builds (endpoints, headers, nonces, parameter order); where the script derives values dynamically (nonces, signatures, fingerprints), say so and treat those parts as browser-bound.
 7. Re-verify stale state. Treat an expired or missing session or profile as a loud failure. Re-run the verification predicate before recording or replaying; never fall back silently to anonymous state.
-8. Persist through the operator seed face. Write both facts into the operator-owned overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. Never write with the in-process agent tool; never put `origin` in the payload.
+8. Persist through the operator seed face. Write both facts into the overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. This seed face is your write path: the in-process agent store tool is the in-system agents' path (their writes merge into the same overview, D220-12), so never use it here and never put `origin` in the payload.
 
 Two rules bind every target: facts live in the store, steps live in the skill; secret values stay in the store, the skill cites names only.
 ```
@@ -94,9 +94,11 @@ A static element that proves to be a stable target property graduates into the o
 ### Browser fallback: the steel profile discipline
 
 Durable browser identity is a Steel profile; the store holds only its `{profile}` key, and a follower rebinds it.
-Mint the profile in flow on first login: `steel browser start --session <name> --profile <profile-name> --update-profile --session-timeout 600000 --json`.
-Mount by name: `steel browser start --session <name> --profile <profile-name> --json` (the `--profile` flag takes the profile name; the store holds the name, not the id).
-A mount is read-only by default; without `--update-profile` the session's state is not written back, so pass `--update-profile` only past the P3 verify gate.
+Mount by name: `steel browser start --session <name> --profile <profile-name> --json` (the `--profile` flag takes the name the store holds, not the id).
+Mount first, every time, and read-only: the account's profile accumulates nothing until a write is earned.
+Mint only when the store holds no profile: add `--update-profile`, so the login that follows is written back.
+Log in only when the mount does not yield the authenticated landing: a missing OR unauthenticated mount is one fail-open trigger (the runtime gateway's D223-14 rule), and that login runs on the account's own profile with `--update-profile`, never on a disposable one.
+A warm profile is the point: it carries the site's cookies and history, so the mount presents a returning user, while a fresh profile on a fresh login presents a stranger.
 Settle then verify every mount: there is no CLI state-poll primitive (`steel profile list --json` returns name plus id only), so navigate to the authenticated landing URL and read it back before trusting the mount; an unverified mount never passes a verdict.
 Release is the persistence call, so any abnormal end (a timeout, a failure) forces a re-verify before the profile is trusted again.
 One live session per profile holds the last writer; there is no merge, so never mount one profile in two sessions at once.
@@ -133,7 +135,7 @@ Gate: each flow states its endpoint or form plus its required headers and anti-f
 ## P3 - Execute and verify
 
 Request path: reproduce the request shape exactly, then verify success before capturing anything.
-Browser path: mint or mount the profile per the fallback discipline above, settle, and verify.
+Browser path: mount the profile first and verify it per the fallback discipline above; log in only when the mount does not yield the authenticated landing, and pace that login per the mechanics skill's cadence and escalation rules.
 Record the profile name from the mint to the account `steel` reference in P4.
 Verify with concrete commands: `navigate` to the target URL, then settle with `wait --url <authenticated-landing-substr>` or `wait --text <marker>` (a condition, not a fixed pause), then `eval` or `get url` to read the current URL and confirm the authenticated landing state.
 Do not settle with `navigate --wait-until networkidle`: a login page or SPA with continuous activity (polling, websockets, analytics beacons) never reaches network idle, so the navigate times out and wastes its whole timeout; use `--wait-until load` (or `domcontentloaded`) and a `wait` condition instead.

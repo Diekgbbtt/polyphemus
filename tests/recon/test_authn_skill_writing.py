@@ -35,7 +35,7 @@ Whatever the target, establish and record these two facts before you record its 
 5. Record the verdict honestly. When a plain-client replay reaches the authenticated state, record `http-client-replayability: true` and record which shape elements are static (replayable as-is) and which are dynamic (must be re-minted or are browser-bound): the continuation facts a follower needs. When replay cannot reach the authenticated state, record `http-client-replayability: false`; browser-only is a complete, honest result, never a failure.
 6. Script-driven logins. When the sign-in is programmed by client-side script, fetch and read the script; replay the exact request shape it builds (endpoints, headers, nonces, parameter order); where the script derives values dynamically (nonces, signatures, fingerprints), say so and treat those parts as browser-bound.
 7. Re-verify stale state. Treat an expired or missing session or profile as a loud failure. Re-run the verification predicate before recording or replaying; never fall back silently to anonymous state.
-8. Persist through the operator seed face. Write both facts into the operator-owned overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. Never write with the in-process agent tool; never put `origin` in the payload.
+8. Persist through the operator seed face. Write both facts into the overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. This seed face is your write path: the in-process agent store tool is the in-system agents' path (their writes merge into the same overview, D220-12), so never use it here and never put `origin` in the payload.
 
 Two rules bind every target: facts live in the store, steps live in the skill; secret values stay in the store, the skill cites names only."""
 
@@ -193,3 +193,33 @@ def test_bootstrap_prompt_cites_the_mechanics_skill():
     assert "<mechanics_skill_path>" in prompt
     assert "steel-browser" in prompt
     assert "do not re-derive the steel CLI from `--help`" in prompt
+
+
+def test_browser_discipline_mounts_first_and_logs_in_only_on_failure():
+    """The reCAPTCHA diagnosis (D237-14): a fresh login is the score-gated
+    action, so the profile is mounted first and a login happens only when the
+    mount does not verify - never on a disposable profile (D237-15)."""
+    body = _body()
+    assert "Mount first, every time" in body
+    assert "log in only when the mount does not yield the authenticated landing" in body
+    assert "never on a disposable one" in body
+    assert "mint or mount" not in body
+
+
+def test_bootstrap_prompt_mounts_first_and_keeps_the_login_warm():
+    prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Mount first, read-only" in prompt
+    assert "Log in only when the mount does not yield the authenticated landing" in prompt
+    assert "warm identity is written back and never discarded" in prompt
+    assert "Mint the profile in flow on first login" not in prompt
+
+
+def test_mechanics_skill_paces_the_login_and_sizes_the_clock():
+    """The non-reactive half of the fix: one submit (no blind resubmits) and a
+    session clock sized for a human step. No solving surface is taught."""
+    body = skills.skill_for("steel-browser")
+    assert "Submit once, then wait on the condition" in body
+    assert "--inactivity-timeout" in body
+    assert "the 120 s default releases it mid-solve" in body

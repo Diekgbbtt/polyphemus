@@ -19,6 +19,11 @@ It is the prompt form of the mandatory workflow in `../SKILL.md`; the skill is t
 - `<skill_name>` - the fixed project-skill name `authn`.
 - `<meta_skill_path>` - the path to `SKILL.md` beside this file.
 - `<mechanics_skill_path>` - the path to the `steel-browser` operation-mechanics skill (`skills/steel-browser/SKILL.md`), with its `references/` scripts beside it.
+- `<session_name>` - the agent-chosen session name for a browser step.
+- `<profile_name>` - the Steel profile name the account's `steel` reference holds.
+- `<session_timeout_ms>` - the session hard timeout in milliseconds.
+- `<authenticated_landing_substr>` - a substring of the authenticated landing URL.
+- `<marker>` - a text marker that appears only in the authenticated state.
 
 ## Prompt
 
@@ -46,6 +51,21 @@ The interaction mode defaults to request-based; the browser is taken only when t
 6. Re-verify stale state loudly: an expired or missing session or profile is a failure to re-run the verification predicate, never a silent fall back to anonymous state.
 7. Persist both facts through the seed face, merging the overview you read first; a shape violation returns 400 `auth_invalid` and lands nothing.
 8. Keep the shared vocabulary: `waf_protected` and `waf_detection` for a block, `rate_limited` for a throttle; an application-level 401/403 takes no blocking-signature name.
+
+## Browser branch (only when the probe forces it)
+
+Mount first, read-only: `steel browser start --session <session_name> --profile <profile_name> --json`.
+Log in only when the mount does not yield the authenticated landing.
+Run that login on the account's own profile - add `--update-profile`, minting with `--session-timeout <session_timeout_ms>` only when the store holds no profile - so the warm identity is written back and never discarded.
+Pace the login per the mechanics skill's cadence rules, and settle with a condition rather than a fixed pause or network idle: `steel browser wait --url <authenticated_landing_substr>` or `steel browser wait --text <marker>`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.
+Wait on the challenge's own marker with a bounded `--timeout`, then escalate to the operator: the post-gate state cannot appear until the human acts, so a wait on it burns its whole timeout.
+Stop every session with `steel browser stop --session <session_name> --json` and prove it gone against `steel browser sessions --json`.
+Record the profile NAME (not the id) under the account's `steel: {profile: <profile_name>}`.
+
+## Report back
+
+Return a concise report: the mode decision with its forcing evidence (status codes, headers, body markers); the `anti-bot` name or null; the `http-client-replayability` verdict with its static and dynamic continuation facts; the steel profile name and the authenticated landing URL; the token names and locations; the exact skill path written and the store read-back with secret values redacted; and any error verbatim, plus anything you could not establish.
+Cite secret names only: no secret VALUE in the report or in the skill.
 
 ## Deliverable
 

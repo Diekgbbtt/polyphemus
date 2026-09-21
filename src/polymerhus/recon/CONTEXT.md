@@ -210,7 +210,7 @@ _Avoid_: threading material through the pipeline state (the identifier rides; th
 **Authn loop** (the auth gateway, #223):
 The recon orchestrator's pre-pipeline stateful turn - used by that role only - that establishes or validates the run's auth state against the auth store BEFORE the pipeline is configured: one ReAct turn with a hunting-style passive state machine over its own tool calls (`recon/control/authn_loop.py`: GROUNDED -> RETRIEVED -> VALIDATION -> GENERATION -> DEBUG -> FINISH; detection pure of the observed call, pushes never gating, hints riding the triggering tool result only inside `<authn-loop-hint>`), closing with the structured gateway verdict.
 The verdict (`GatewayVerdict`: `outcome` authenticated | anonymous | failed, `account` identifier-only, `branch` request | browser_only, run-scoped `replayability_resolved` / `replayability`, `rationale`) carries the selected account identifier, the no-auth-surface finding, or the failure mode; the orchestrator alone prunes phases and configures the pipeline from it (mid-run steering is retired, D223-12), and the account identifier - never its material - rides the pipeline state for lazy per-phase resolution by each phase's tool configuration (D223-19).
-The pre-loop branch directive follows the four-way overview contract (`request` | `browser_only` | `request_browser_first` | `resolve_in_loop`, D223-11); the null case resolves in-loop and is logged loudly, never persisted.
+The pre-loop branch directive follows the four-way overview contract (`request` | `browser_only` | `request_browser_first` | `resolve_in_loop`, D223-11); the null case resolves in-loop, is logged loudly, and is persisted to the overview by the loop (D220-12).
 An empty store with no authenticated surface is the expected shape with its own path - loop skipped, pipeline run anonymously, verdict records it; the structural marker is `overview.notes` carrying "no authenticated surface" (D223-17, settled #242); a declared surface with no accounts fail-closes by stopping.
 _Avoid_: a per-job auth loop (the job-specialised agents never authenticate, D223-5); a "coverage exhausted" verdict state (exhaustion is a failed authentication, D223-3); re-adding mid-run auth steering.
 
@@ -286,7 +286,7 @@ The verb set is read from the pinned CLI's `--help`, so a pin bump re-derives it
 _Avoid_: the leading-options habit, a hand-maintained flag denylist, reordering a command to guess the boundary.
 
 **Browser profiles**:
-Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by id only and defines no profile terms here.
+Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by NAME, read-only first, and logs in only when the mount does not yield the authenticated landing, so the warm identity is written back on the account's own profile (D237-15).
 _Avoid_: duplicating #220's profile vocabulary.
 ## Invariants owned here
 
