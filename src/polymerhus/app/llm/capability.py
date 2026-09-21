@@ -120,6 +120,23 @@ CONTEXT_LIMIT_ENV = "LLM_ROLE_MODEL_CONTEXT_LIMIT"
 GATEWAY_URL_ENV = "LLM_GATEWAY_URL"
 MASTER_KEY_ENV = "LITELLM_MASTER_KEY"
 
+# The operator capability override (A6): a JSON object mapping
+# `<provider>/<model>` to a partial capability record, correcting a registry
+# claim the wire disproves (e.g. a thinking-mode relay refusing a forced
+# `tool_choice`). Applied AFTER the profile is built/fetched and BEFORE it is
+# cached, so it rides the held profile and applies to untagged/unknown records
+# too. Empty/unset -> no-op. Malformed JSON, a malformed key, an unknown key,
+# or a non-bool value is a config lie: fail fast with `LLMConfigError`
+# (mirroring the `_context_env_override` precedent).
+CAPABILITY_OVERRIDES_ENV = "LLM_CAPABILITY_OVERRIDES"
+
+# The closed key set an override record may carry (booleans only).
+_CAPABILITY_OVERRIDE_KEYS = frozenset({
+    "supports_structured_output",
+    "supports_tool_calling",
+    "supports_forced_tool_choice",
+})
+
 # A single bounded read budget for the metadata GET. Short by design: this is
 # a one-shot capability probe inside the same container (D1), NOT a generation
 # call - a hung metadata read must not park session construction; fail-open
@@ -166,6 +183,11 @@ class CapabilityProfile:
       other field (Rule 1: absent tag or absent field = None); the consumer
       (`negotiation.py` `negotiate_thinking`) adapts the declared thinking
       level to this surface.
+    - `supports_forced_tool_choice` (A6): whether the upstream accepts a
+      FORCED tool choice (`required` or a named function); `None` = unknown
+      (never gates); `False` = the method negotiation must pick the voluntary
+      rung. It has no models.dev source, so it is operator-declared via
+      `LLM_CAPABILITY_OVERRIDES`.
     """
 
     context_limit: int | None = None
@@ -180,6 +202,7 @@ class CapabilityProfile:
     reasoning_control: str | None = None
     reasoning_efforts: tuple[str, ...] | None = None
     thinking_budget_bounds: tuple[int, int] | None = None
+    supports_forced_tool_choice: bool | None = None
 
 
 # The process-lifetime hold (resolve-and-hold, D7): one resolution per
@@ -195,6 +218,80 @@ def _registered_name(provider: str, model: str) -> str:
     the key the sync registered and the client seam sends (C13/E4/E7)."""
     from polymerhus.app.llm.sync_mapping import registered_model_name
     return registered_model_name(provider, model)
+
+
+def _capability_overrides() -> dict[str, dict[str, bool]]:
+    """A6: parse `LLM_CAPABILITY_OVERRIDES` (fail-fast on a config lie).
+
+    Returns the validated override map (empty when unset/empty). Each key is a
+    `<provider>/<model>` pair, each record a closed set of boolean flags. Any
+    deviation - malformed JSON, a non-object envelope, a malformed key, an
+    unknown key, or a non-bool value - raises `LLMConfigError`."""
+    import json
+
+    raw = os.environ.get(CAPABILITY_OVERRIDES_ENV)
+    if raw is None or raw.strip() == "":
+        return {}
+    try:
+        body = json.loads(raw)
+    except ValueError:
+        raise LLMConfigError(
+            f"{CAPABILITY_OVERRIDES_ENV} must be a JSON object mapping "
+            f"'<provider>/<model>' to a capability record (got {raw!r})"
+        ) from None
+    if not isinstance(body, dict):
+        raise LLMConfigError(
+            f"{CAPABILITY_OVERRIDES_ENV} must be a JSON object mapping "
+            f"'<provider>/<model>' to a capability record (got {raw!r})"
+        )
+    out: dict[str, dict[str, bool]] = {}
+    for key, record in body.items():
+        if not isinstance(key, str) or "/" not in key.strip() or not isinstance(record, dict):
+            raise LLMConfigError(
+                f"{CAPABILITY_OVERRIDES_ENV} keys must be '<provider>/<model>' "
+                f"mapping to an object (got {key!r})"
+            )
+        clean: dict[str, bool] = {}
+        for field, value in record.items():
+            if field not in _CAPABILITY_OVERRIDE_KEYS:
+                raise LLMConfigError(
+                    f"{CAPABILITY_OVERRIDES_ENV}[{key!r}] carries unknown key "
+                    f"{field!r}; known: {sorted(_CAPABILITY_OVERRIDE_KEYS)}"
+                )
+            if not isinstance(value, bool):
+                raise LLMConfigError(
+                    f"{CAPABILITY_OVERRIDES_ENV}[{key!r}][{field!r}] must be a "
+                    f"boolean (got {value!r})"
+                )
+            clean[field] = value
+        out[key.strip()] = clean
+    return out
+
+
+def _apply_capability_overrides(
+    provider: str, model: str, profile: CapabilityProfile,
+) -> CapabilityProfile:
+    """A6: apply the operator override for (provider, model), if any.
+
+    Matches the raw `provider/model` string AND the registered model name, so
+    the operator may write either form. Returns the (possibly replaced)
+    profile; logs when an override is applied."""
+    from dataclasses import replace
+
+    overrides = _capability_overrides()
+    if not overrides:
+        return profile
+    candidates = {f"{provider}/{model}", _registered_name(provider, model)}
+    for key in candidates:
+        record = overrides.get(key)
+        if record:
+            applied = replace(profile, **record)
+            logger.info(
+                "capability override: %s/%s via %s fields=%s",
+                provider, model, key, sorted(record),
+            )
+            return applied
+    return profile
 
 
 def _gateway_url() -> str | None:
@@ -386,6 +483,7 @@ def resolve_capability(
     gateway. Resolution order (D6): gateway -> env -> 150k default for
     `context_limit`; gateway -> None for `output_limit`. Auth: bearer
     `LITELLM_MASTER_KEY` when set, never hardcoded, never logged."""
+    _capability_overrides()  # fail-fast on a config lie, even on a cache hit
     cached = _PROFILE_CACHE.get((provider, model))
     if cached is not None:
         return cached
@@ -432,6 +530,12 @@ def resolve_capability(
         reasoning_control=profile.reasoning_control if profile is not None else None,
         reasoning_efforts=profile.reasoning_efforts if profile is not None else None,
         thinking_budget_bounds=profile.thinking_budget_bounds if profile is not None else None,
+        supports_forced_tool_choice=(
+            profile.supports_forced_tool_choice if profile is not None else None
+        ),
     )
+    # A6: the operator override rides the held profile (applies to
+    # untagged/unknown records too), BEFORE the cache write.
+    held = _apply_capability_overrides(provider, model, held)
     _PROFILE_CACHE[(provider, model)] = held
     return held

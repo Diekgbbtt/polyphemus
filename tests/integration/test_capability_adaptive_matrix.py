@@ -115,7 +115,8 @@ def test_C06_session_neither_resolves_to_tool_strategy():
 
 # C7
 def test_C07_degrade_chain_and_next_rung_order():
-    assert DEGRADE_CHAIN == ("json_schema", "function_calling", "json_mode")
+    assert DEGRADE_CHAIN == ("json_schema", "function_calling",
+                             "voluntary_function_calling", "json_mode")
     assert next_rung("json_schema") == "function_calling"
     assert next_rung("function_calling") == "json_mode"
     assert next_rung("json_mode") is None

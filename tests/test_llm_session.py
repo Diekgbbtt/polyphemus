@@ -413,3 +413,108 @@ def test_session_turns_bind_the_thread_as_the_conversation(monkeypatch):
     asyncio.run(arun_session_turn("triager", "run-3:triager", [],
                                   checkpointer=None, observe=False))
     assert seen == ["run-3:triager", "run-3:triager"]
+
+
+def test_a6_structured_response_format_tools_bound_constrained_is_toolstrategy(monkeypatch):
+    """A6: tools-bound + constrained profile -> ToolStrategy (the relaxed model
+    makes it voluntary at bind time)."""
+    from langchain.agents.structured_output import ToolStrategy
+    from pydantic import BaseModel
+    import polymerhus.app.llm.session as S
+
+    class _Schema(BaseModel):
+        x: int = 0
+
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
+
+    def fake_capability(provider, model):
+        from polymerhus.app.llm.capability import CapabilityProfile
+        return CapabilityProfile(supports_structured_output=True,
+                                 supports_tool_calling=True,
+                                 supports_forced_tool_choice=False,
+                                 source="operator-override")
+
+    monkeypatch.setattr(S, "resolve_capability", fake_capability)
+    rf = S.structured_response_format("triager", _Schema, tools_bound=True)
+    assert isinstance(rf, ToolStrategy)
+
+
+def test_a6_structured_response_format_no_tools_structured_is_providerstrategy(monkeypatch):
+    from langchain.agents.structured_output import ProviderStrategy
+    from pydantic import BaseModel
+    import polymerhus.app.llm.session as S
+
+    class _Schema(BaseModel):
+        x: int = 0
+
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
+
+    def fake_capability(provider, model):
+        from polymerhus.app.llm.capability import CapabilityProfile
+        return CapabilityProfile(supports_structured_output=True,
+                                 supports_tool_calling=True)
+
+    monkeypatch.setattr(S, "resolve_capability", fake_capability)
+    rf = S.structured_response_format("triager", _Schema, tools_bound=False)
+    assert isinstance(rf, ProviderStrategy)
+
+
+def test_a6_stateful_turn_passes_the_tools_fact(monkeypatch):
+    """A6: `stateful_turn` passes tools_bound=True when tools are bound."""
+    from pydantic import BaseModel
+    import polymerhus.app.llm.session as S
+
+    class _Schema(BaseModel):
+        x: int = 0
+
+    seen = {}
+
+    def fake_format(role_id, schema, *, tools_bound):
+        seen["tools_bound"] = tools_bound
+        return None
+
+    monkeypatch.setattr(S, "structured_response_format", fake_format)
+
+    def fake_run(role_id, thread_id, msgs, *, response_format=None, **kw):
+        return S.SessionTurn(content="ok", messages=[], thread_id=thread_id)
+
+    monkeypatch.setattr(S, "run_session_turn", fake_run)
+    from langchain_core.messages import HumanMessage
+    from langchain_core.tools import tool
+
+    @tool
+    def _t(x: str) -> str:
+        """T."""
+        return x
+
+    S.stateful_turn("triager", "t", [HumanMessage(content="x")],
+                    checkpointer=None, schema=_Schema, observe=False, tools=[_t])
+    assert seen["tools_bound"] is True
+    S.stateful_turn("triager", "t", [HumanMessage(content="x")],
+                    checkpointer=None, schema=_Schema, observe=False)
+    assert seen["tools_bound"] is False
+
+
+def test_a6_fail_open_degrades_to_the_axis_semantic_default(monkeypatch):
+    """A6/D7: a resolution failure degrades to the AXIS semantic default -
+    `ProviderStrategy` (json_schema) for a pure turn, `ToolStrategy`
+    (function_calling) for a tool-bound loop - so a tool loop never strands
+    on the wrong rung."""
+    from langchain.agents.structured_output import ProviderStrategy, ToolStrategy
+    from pydantic import BaseModel
+    import polymerhus.app.llm.session as S
+
+    class _Schema(BaseModel):
+        x: int = 0
+
+    def boom(provider, model):
+        raise RuntimeError("gateway unreachable")
+
+    monkeypatch.setattr(S, "resolve_capability", boom)
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
+    assert isinstance(
+        S.structured_response_format("triager", _Schema, tools_bound=False),
+        ProviderStrategy)
+    assert isinstance(
+        S.structured_response_format("triager", _Schema, tools_bound=True),
+        ToolStrategy)

@@ -380,3 +380,12 @@ def test_structured_output_for_passes_an_unclassifiable_schema_verbatim():
         "schema": raw,
         "kwargs": {"method": "json_schema", "strict": False},
     }]
+
+def test_a6_structured_output_for_voluntary_uses_function_calling_construction():
+    """A6: `voluntary_function_calling` rides `with_structured_output(method=
+    "function_calling")` on the pydantic class - the relaxed model drops the
+    force at bind time."""
+    llm = _FakeLLM(_Closed(label="x"))
+    roles.structured_output_for(llm, _Closed, "voluntary_function_calling")
+    assert llm.wso_calls[0]["kwargs"].get("method") == "function_calling"
+    assert llm.wso_calls[0]["schema"] is _Closed

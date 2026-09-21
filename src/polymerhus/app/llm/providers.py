@@ -7,6 +7,7 @@ import httpx
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration
 from langchain_openai import ChatOpenAI
+from pydantic import PrivateAttr
 
 from polymerhus.app.llm.conversation import current_conversation_id
 
@@ -443,6 +444,22 @@ def resolve_role(role: str) -> tuple[str, str]:
     provider, model = raw.split(":", 1)
     return provider.strip(), model.strip()
 
+def _is_forced_tool_choice(tool_choice) -> bool:
+    """Whether a `bind_tools` `tool_choice` FORCES a tool call (A6): `"any"`,
+    `"required"`, `True`, a `{"type": "function", ...}` dict, or any other
+    value but the untouched `None` / `"auto"` / `"none"` (a named tool string
+    forces that tool). The relaxed model rewrites exactly these to `"auto"`."""
+    if tool_choice is None or tool_choice is False:
+        return False
+    if tool_choice is True:
+        return True
+    if isinstance(tool_choice, str):
+        return tool_choice not in ("auto", "none")
+    if isinstance(tool_choice, dict):
+        return tool_choice.get("type") == "function"
+    return False
+
+
 class ReasoningPreservingChatOpenAI(ChatOpenAI):
     """The T6 reasoning-replay seam (D11 items 3-5): a ChatOpenAI subclass
     that preserves the wire reasoning fields the pinned langchain-openai
@@ -463,12 +480,40 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
     (`reasoning_content` / `reasoning_details`) - exactly the shape T1
     verified the gateway forwards verbatim on the request transport.
 
+    The A6 voluntary rung (operator ruling 2026-09-21): `relax_forced_tool_choice`
+    (construction-time, default False) rewrites a FORCED `tool_choice`
+    (`"any"`, `"required"`, `True`, or a `{"type": "function", ...}` dict -
+    anything but `None`/`"auto"`/`"none"`) to `"auto"` in `bind_tools`, so a
+    thinking-mode relay that refuses a forced choice still serves the tool
+    loop. It is a PRIVATE attr (not a pydantic field - the pinned SDK's model
+    config drops extra fields) popped in `__init__`, so unrelaxed
+    construction stays byte-identical.
+
     The subclass is the ticket-sanctioned role-construction path fix (D4
     additive: the seam lives in `app/llm`, no agent module touched). It is
     pinned to langchain-openai 1.3.x's internals (`_create_chat_result`,
     `_get_request_payload`); the unit tier pins the behavioral contract
     (wire capture + message-level re-emit) so a future SDK bump that moves
     these seams turns the tests red on purpose."""
+
+    _relax_forced_tool_choice: bool = PrivateAttr(default=False)
+    _relax_logged: bool = PrivateAttr(default=False)
+
+    def __init__(self, *args, relax_forced_tool_choice: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._relax_forced_tool_choice = bool(relax_forced_tool_choice)
+
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+        if self._relax_forced_tool_choice and _is_forced_tool_choice(tool_choice):
+            if not self._relax_logged:
+                logger.info("relaxed forced tool_choice %r -> 'auto' (A6 voluntary rung)",
+                            tool_choice)
+                self._relax_logged = True
+            else:
+                logger.debug("relaxed forced tool_choice %r -> 'auto' (A6 voluntary rung)",
+                             tool_choice)
+            tool_choice = "auto"
+        return super().bind_tools(tools, tool_choice=tool_choice, **kwargs)
 
     def _create_chat_result(self, response, generation_info=None):
         result = super()._create_chat_result(response, generation_info)
@@ -585,6 +630,21 @@ def _thinking_wire_form(provider: str, model: str, thinking: "ThinkingLevel") ->
     return {}
 
 
+def _relaxes_forced_tool_choice(provider: str, model: str) -> bool:
+    """A6: whether this (provider, model) gets the relaxed wire (the forced
+    `tool_choice` -> `"auto"` rewrite at bind time). True iff the held
+    capability profile explicitly declares `supports_forced_tool_choice is
+    False`. Fail-open (D7): any failure - unresolved role, degraded reader -
+    means no relax, so construction without the constraint is byte-identical."""
+    try:
+        from polymerhus.app.llm.capability import resolve_capability
+
+        profile = resolve_capability(provider, model)
+        return getattr(profile, "supports_forced_tool_choice", None) is False
+    except Exception:  # noqa: BLE001 - fail-open: never into construction
+        return False
+
+
 def build_chat_model(provider: str, model: str, *, temperature: float = 0,
                      read_timeout: float | None = None,
                      max_retries: int | None = None,
@@ -659,12 +719,19 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     # id. Empty headers keep the construction byte-identical for every provider
     # with no declared primitives.
     headers = request_headers(provider)
+    # A6: the voluntary rung's wire relax - the profile declares
+    # `supports_forced_tool_choice is False` (operator override) iff the
+    # upstream refuses a forced `tool_choice`. Fail-open: any resolution
+    # failure means no relax, and unrelaxed construction stays byte-identical.
+    relax_forced_tool_choice = _relaxes_forced_tool_choice(provider, model)
     return ReasoningPreservingChatOpenAI(model=model, api_key=api_key,
                                          base_url=base_url, temperature=temperature,
                                          timeout=timeout, max_retries=retries,
                                          model_kwargs=model_kwargs,
                                          default_headers=headers or None,
-                                         callbacks=get_langfuse_callbacks(), **extra)
+                                         callbacks=get_langfuse_callbacks(),
+                                         relax_forced_tool_choice=relax_forced_tool_choice,
+                                         **extra)
 
 def validate_llm_config(roles: Sequence[Role] | None = None) -> None:
     """Fail fast: every configured role must name a known provider with a present key.

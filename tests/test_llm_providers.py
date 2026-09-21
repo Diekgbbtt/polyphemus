@@ -844,3 +844,65 @@ def test_build_chat_model_leaves_other_providers_untouched(monkeypatch):
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
     assert getattr(m, "default_headers", None) in (None, {})
+
+
+# ---------------------------------------------------------------------------
+# A6 - relaxed forced tool_choice (operator ruling 2026-09-21) ---------------
+# ---------------------------------------------------------------------------
+
+def test_a6_relaxed_model_rewrites_forced_tool_choice_to_auto():
+    import asyncio
+    from langchain_core.messages import AIMessage
+    from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
+    seen = {}
+    class _Probe(ReasoningPreservingChatOpenAI):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            seen.update(kwargs)
+            from langchain_core.outputs import ChatGeneration, ChatResult
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="x"))])
+    kwargs = dict(model="m", api_key="k", base_url="https://x.test/v1",
+                  relax_forced_tool_choice=True)
+    for forced in ("any", "required", True, {"type": "function", "function": {"name": "f"}}):
+        seen.clear()
+        m = _Probe(**kwargs)
+        bound = m.bind_tools([], tool_choice=forced)
+        assert bound.kwargs.get("tool_choice") == "auto", forced
+
+
+def test_a6_relaxed_model_leaves_none_auto_none_untouched():
+    from langchain_core.messages import AIMessage
+    from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
+    m = ReasoningPreservingChatOpenAI(model="m", api_key="k",
+                                      base_url="https://x.test/v1",
+                                      relax_forced_tool_choice=True)
+    for untouched in (None, "auto", "none"):
+        bound = m.bind_tools([], tool_choice=untouched)
+        assert bound.kwargs.get("tool_choice") == untouched
+
+
+def test_a6_unrelaxed_model_passes_forced_choice_through():
+    from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
+    m = ReasoningPreservingChatOpenAI(model="m", api_key="k",
+                                      base_url="https://x.test/v1")
+    bound = m.bind_tools([], tool_choice="required")
+    assert bound.kwargs.get("tool_choice") == "required"
+
+
+def test_a6_build_chat_model_passes_relax_flag_from_profile(monkeypatch):
+    from polymerhus.app.llm import providers as P
+    monkeypatch.setenv("LLM_TRIAGER", "openai:gpt-4o")
+    monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
+    from polymerhus.app.llm.capability import CapabilityProfile
+    import polymerhus.app.llm.capability as C
+    monkeypatch.setattr(C, "resolve_capability",
+                        lambda pv, m: CapabilityProfile(supports_forced_tool_choice=False))
+    import langchain_openai
+    seen = {}
+    real = P.ReasoningPreservingChatOpenAI
+    def spy(**kw):
+        seen.update(kw)
+        return real(model=kw.get("model", "m"), api_key="k",
+                    base_url="https://x.test/v1")
+    monkeypatch.setattr(P, "ReasoningPreservingChatOpenAI", spy)
+    P.build_chat_model("openai", "gpt-4o")
+    assert seen.get("relax_forced_tool_choice") is True

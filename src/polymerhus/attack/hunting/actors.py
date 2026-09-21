@@ -92,7 +92,6 @@ class _TurnActor:
         pays for an actor), wiring the reply middleware into its turns."""
         if self._task is not None:
             return
-        from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
         from polymerhus.app.llm.actor import (  # noqa: PLC0415
             AgentInbox,
             build_inbox_delivery,
@@ -498,7 +497,7 @@ class HuntOrchestratorActor(_TurnActor):
             RatifyDecision,
         )
         from polymerhus.attack.hunting.llm import _gate_skill  # noqa: PLC0415
-        from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
+        from polymerhus.app.llm.session import structured_response_format  # noqa: PLC0415
         if self._compaction is None:
             from polymerhus.app.llm import compaction as C  # noqa: PLC0415
             self._compaction = C.build_role_compaction_middleware(
@@ -521,10 +520,19 @@ class HuntOrchestratorActor(_TurnActor):
         # gate/ratify/note turn - the ~145K of ~14 stale copies behind the
         # timeout). The phase-transition verbatims stay in the tool-call
         # responses (G1/G3), never here.
+        # A6: the structured verdict is negotiated, not pinned - computed from
+        # the REAL binding fact (the surface may be empty); a
+        # forced-choice-constrained profile lands on ToolStrategy over the
+        # relaxed model (voluntary).
+        tools = list(surface) or None
+        response_format = structured_response_format(
+            "hunting_orchestrator",
+            GateDecision | RatifyDecision | NoteDecision | MatchVerdict,
+            tools_bound=bool(tools),
+        )
         await super()._ensure_started(
-            response_format=ToolStrategy(
-                GateDecision | RatifyDecision | NoteDecision | MatchVerdict),
-            tools=list(surface) or None,
+            response_format=response_format,
+            tools=tools,
             middleware_extra=middleware_extra,
             system_prompt=_gate_skill(),
         )

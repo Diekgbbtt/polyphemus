@@ -393,3 +393,57 @@ def test_gateway_stop_is_idempotent_without_spawn(tmp_path):
         await actor.stop()  # idempotent
 
     asyncio.run(_drive())  # must not raise
+
+
+# --- A6: the gateway verdict strategy is negotiated, not pinned -----------------
+
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _a6_negotiated_tool_strategy(monkeypatch):
+    """A6: the actor's `structured_response_format` negotiation resolves to
+    `ToolStrategy` in this scripted-model suite (the fakes emit the
+    ToolStrategy tool-call shape), while production negotiates per profile."""
+    from langchain.agents.structured_output import ToolStrategy
+    import polymerhus.app.llm.session as _S
+
+    def _fake(role_id, schema, *, tools_bound):
+        return ToolStrategy(schema)
+
+    monkeypatch.setattr(_S, "structured_response_format", _fake)
+
+
+def test_a6_gateway_verdict_uses_the_negotiated_strategy(monkeypatch, tmp_path):
+    """A6: the gateway turn computes `response_format` AFTER the tool binding
+    via `structured_response_format("job_orchestrator", GatewayVerdict,
+    tools_bound=True)` - the gateway always binds tools - and passes its
+    result through to the session agent (no raw pin)."""
+    import polymerhus.app.llm.actor as _A
+    import polymerhus.app.llm.session as _S
+
+    calls = {}
+    from langchain.agents.structured_output import ToolStrategy
+    sentinel = ToolStrategy(GatewayVerdict)
+
+    def _fake_format(role_id, schema, *, tools_bound):
+        calls.update(role_id=role_id, schema=schema, tools_bound=tools_bound)
+        return sentinel
+
+    monkeypatch.setattr(_S, "structured_response_format", _fake_format)
+    seen = {}
+
+    async def _fake_run(*args, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr(_A, "run_session_agent", _fake_run)
+    make, _ = _script_model([_verdict_call()])
+    store = _seeded_store(tmp_path, accounts=_account())
+    actor = _actor("r1", store=store, model_factory=make, tmp_path=tmp_path,
+                   kali_tools=[])
+    asyncio.run(actor._ensure_started())
+    asyncio.run(actor.stop())
+    assert calls == {"role_id": "job_orchestrator", "schema": GatewayVerdict,
+                     "tools_bound": True}
+    assert seen["response_format"] is sentinel

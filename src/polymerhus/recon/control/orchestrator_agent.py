@@ -329,7 +329,6 @@ class ReconOrchestratorActor:
         armed tool surface, the loop tracker, and the reply delivery."""
         if self._task is not None:
             return
-        from langchain.agents.structured_output import ToolStrategy  # noqa: PLC0415
         from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
         from polymerhus.app.llm.actor import (  # noqa: PLC0415
             AgentInbox,
@@ -373,6 +372,12 @@ class ReconOrchestratorActor:
         loop_middleware = build_authn_loop_middleware()
         self._loop_middleware = loop_middleware
         middleware_list = (middleware_list + binding.middleware + [loop_middleware])
+        # A6: the structured verdict is negotiated, not pinned - the gateway
+        # always binds tools, so tools_bound=True; a forced-choice-constrained
+        # profile lands on ToolStrategy over the relaxed model (voluntary).
+        from polymerhus.app.llm.session import structured_response_format  # noqa: PLC0415
+        response_format = structured_response_format(
+            "job_orchestrator", GatewayVerdict, tools_bound=True)
         self._task = asyncio.ensure_future(
             run_session_agent(
                 self._address.role_id,
@@ -382,7 +387,7 @@ class ReconOrchestratorActor:
                 inbox=self._inbox,
                 on_message=self._on_message,
                 tools=[*binding.tools, *kali_tools],
-                response_format=ToolStrategy(GatewayVerdict),
+                response_format=response_format,
                 middleware=middleware_list,
                 context=binding.context,
                 on_turn_degraded=degraded_hook,

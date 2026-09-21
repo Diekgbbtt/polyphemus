@@ -724,3 +724,63 @@ def test_thinking_surface_round_trips_the_authored_wire(monkeypatch):
     assert p.reasoning_control == "effort"
     assert p.reasoning_efforts == ("none", "low", "high", "max")
     assert p.thinking_budget_bounds == (1024, 32768)
+
+# ---------------------------------------------------------------------------
+# A6 - LLM_CAPABILITY_OVERRIDES (operator ruling 2026-09-21) -----------------
+# ---------------------------------------------------------------------------
+
+def _a6_clear_cache(monkeypatch):
+    from polymerhus.app.llm import capability as C
+    C._PROFILE_CACHE.clear()
+    monkeypatch.delenv("LLM_CAPABILITY_OVERRIDES", raising=False)
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.delenv("LLM_ROLE_MODEL_CONTEXT_LIMIT", raising=False)
+
+
+def test_a6_override_applies_to_matching_pair_raw_and_registered(monkeypatch):
+    import json
+    from polymerhus.app.llm import capability as C
+    _a6_clear_cache(monkeypatch)
+    monkeypatch.setenv("LLM_CAPABILITY_OVERRIDES", json.dumps({
+        "opencode-go/deepseek-v4-flash": {"supports_forced_tool_choice": False},
+    }))
+    monkeypatch.setenv("LLM_TRIAGER", "opencode-go:deepseek/deepseek-v4-flash")
+    provider, model = ("opencode-go", "deepseek/deepseek-v4-flash")
+    p = C.resolve_capability(provider, model)
+    assert p.supports_forced_tool_choice is False
+    # registered-name key form also matches
+    _a6_clear_cache(monkeypatch)
+    from polymerhus.app.llm.sync_mapping import registered_model_name
+    monkeypatch.setenv("LLM_CAPABILITY_OVERRIDES", json.dumps({
+        registered_model_name(provider, model): {"supports_forced_tool_choice": False},
+    }))
+    p2 = C.resolve_capability(provider, model)
+    assert p2.supports_forced_tool_choice is False
+
+
+def test_a6_override_non_matching_untouched_and_unset_noop(monkeypatch):
+    import json
+    from polymerhus.app.llm import capability as C
+    _a6_clear_cache(monkeypatch)
+    monkeypatch.setenv("LLM_CAPABILITY_OVERRIDES", json.dumps({
+        "other/model": {"supports_forced_tool_choice": False},
+    }))
+    p = C.resolve_capability("opencode-go", "deepseek/deepseek-v4-flash")
+    assert p.supports_forced_tool_choice is None
+    _a6_clear_cache(monkeypatch)
+    p2 = C.resolve_capability("opencode-go", "deepseek/deepseek-v4-flash")
+    assert p2.supports_forced_tool_choice is None
+
+
+def test_a6_override_malformed_raises(monkeypatch):
+    import json
+    import pytest
+    from polymerhus.app.llm import capability as C
+    from polymerhus.app.llm.providers import LLMConfigError
+    for bad in ('{"a": ', '{"a": 1}', '{"a/b": {"bogus_key": true}}',
+                '{"a/b": {"supports_forced_tool_choice": "yes"}}',
+                '{"a/b": {"supports_tool_calling": 1}}'):
+        _a6_clear_cache(monkeypatch)
+        monkeypatch.setenv("LLM_CAPABILITY_OVERRIDES", bad)
+        with pytest.raises(LLMConfigError):
+            C.resolve_capability("a", "b")

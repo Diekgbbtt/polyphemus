@@ -53,15 +53,18 @@ def _prof(**kw) -> CapabilityProfile:
 # ---------------------------------------------------------------------------
 
 def test_methods_map_onto_with_structured_output_method_values():
-    """The negotiated method strings are EXACTLY the `with_structured_output`
-    `method=` values (`json_schema`, `function_calling`, `json_mode`) - the
-    chosen rung must be passable straight into the construction seam."""
-    assert set(N.Method.__args__) == {"json_schema", "function_calling", "json_mode"}
+    """The negotiated method strings are the `with_structured_output`
+    `method=` values (`json_schema`, `function_calling`, `json_mode`) PLUS the
+    A6 voluntary rung (which rides the `function_calling` construction on a
+    relaxed model) - the chosen rung must reach the construction seam."""
+    assert set(N.Method.__args__) == {"json_schema", "function_calling",
+                                      "voluntary_function_calling", "json_mode"}
 
 
 def test_degrade_chain_is_the_ratified_order():
-    """A1: the profile-corrected degrade chain, in order."""
-    assert N.DEGRADE_CHAIN == ("json_schema", "function_calling", "json_mode")
+    """A1 (corrected by A6): the profile-corrected degrade chain, in order."""
+    assert N.DEGRADE_CHAIN == ("json_schema", "function_calling",
+                               "voluntary_function_calling", "json_mode")
 
 
 def test_next_rung_descends_the_chain():
@@ -80,9 +83,11 @@ def test_next_rung_refuses_unknown_method():
 # ---------------------------------------------------------------------------
 
 def test_tools_bound_always_function_calling():
-    """A1 rung 2: a tool-bound call (session/crawl tool loop) NEVER method-
-    swaps - regardless of the profile, the rung is `function_calling`. The T5
-    gate (crawl_agentic.py) refuses crawl on unsupported/unknown and stays."""
+    """A1 rung 2 (corrected by A6): a tool-bound call (session/crawl tool loop)
+    NEVER method-swaps to a non-tool rung - but the tool rung consults the
+    profile: unconstrained profiles hold `function_calling` (the T5 gate
+    refuses crawl on unsupported/unknown and stays); a forced-choice-
+    constrained profile picks the voluntary rung."""
     for profile in (None,
                     _prof(supports_structured_output=True, supports_tool_calling=True),
                     _prof(supports_structured_output=False, supports_tool_calling=False),
@@ -398,3 +403,88 @@ def test_json_mode_rung_is_covered_by_the_validation_contract():
     assert negotiated == "json_mode"
     assert N.result_validates({"observations": []}, _Batch) is True
     assert N.result_validates({"observations": "oops"}, _Batch) is False
+
+# ---------------------------------------------------------------------------
+# A6 - the voluntary rung (operator ruling 2026-09-21) ----------------------
+# ---------------------------------------------------------------------------
+
+def _constrained(**kw) -> CapabilityProfile:
+    kw.setdefault("supports_forced_tool_choice", False)
+    return CapabilityProfile(**kw)
+
+
+def test_a6_degrade_chain_carries_the_voluntary_rung():
+    assert N.DEGRADE_CHAIN == ("json_schema", "function_calling",
+                               "voluntary_function_calling", "json_mode")
+
+
+def test_a6_tools_bound_constrained_profile_is_voluntary():
+    p = _constrained(supports_structured_output=True, supports_tool_calling=True)
+    for shape in N.SchemaShape.__args__:
+        assert N.negotiate_method(p, no_tools_bound=False, schema_shape=shape) == \
+            "voluntary_function_calling"
+
+
+def test_a6_tools_bound_unconstrained_stays_function_calling():
+    for profile in (None,
+                    CapabilityProfile(),
+                    _prof(supports_structured_output=True, supports_tool_calling=True),
+                    CapabilityProfile(supports_forced_tool_choice=True),
+                    CapabilityProfile(supports_forced_tool_choice=None,
+                                      supports_tool_calling=True)):
+        assert N.negotiate_method(profile, no_tools_bound=False,
+                                  schema_shape="open") == "function_calling"
+
+
+def test_a6_no_tools_constrained_tool_calling_profile_is_voluntary():
+    p = _constrained(supports_structured_output=False, supports_tool_calling=True)
+    assert N.negotiate_method(p, no_tools_bound=True, schema_shape="open") == \
+        "voluntary_function_calling"
+
+
+def test_a6_no_tools_other_branches_unchanged_when_constrained():
+    assert N.negotiate_method(
+        _constrained(supports_structured_output=True), no_tools_bound=True,
+        schema_shape="open") == "json_schema"
+    assert N.negotiate_method(
+        _constrained(supports_structured_output=False, supports_tool_calling=False),
+        no_tools_bound=True, schema_shape="open") == "json_mode"
+    assert N.negotiate_method(None, no_tools_bound=True, schema_shape="open") == "json_schema"
+
+
+def test_a6_effective_chain_drops_voluntary_unless_constrained():
+    assert N.effective_chain(None) == ("json_schema", "function_calling", "json_mode")
+    assert N.effective_chain(CapabilityProfile()) == ("json_schema", "function_calling", "json_mode")
+    assert N.effective_chain(CapabilityProfile(supports_forced_tool_choice=True)) == \
+        ("json_schema", "function_calling", "json_mode")
+    assert N.effective_chain(_constrained()) == N.DEGRADE_CHAIN
+
+
+def test_a6_next_rung_skips_voluntary_unless_constrained():
+    assert N.next_rung("function_calling") == "json_mode"
+    assert N.next_rung("function_calling", _constrained()) == "voluntary_function_calling"
+    assert N.next_rung("voluntary_function_calling", _constrained()) == "json_mode"
+    assert N.next_rung("json_schema", _constrained()) == "function_calling"
+
+
+def test_a6_probe_walks_the_effective_chain(monkeypatch):
+    seen = []
+    def invoker(method):
+        seen.append(method)
+        raise RuntimeError("miss")
+    N.clear_probe_cache()
+    N.probe_with_invoker("pv", "m-a6-nochain", object(), invoker, None)
+    assert seen == ["json_schema", "function_calling", "json_mode"]
+    seen.clear()
+    N.probe_with_invoker("pv", "m-a6-chain", object(), invoker, _constrained())
+    assert seen == ["json_schema", "function_calling", "voluntary_function_calling", "json_mode"]
+
+
+def test_a6_resolve_method_tools_bound_consults_profile():
+    p = _constrained(supports_structured_output=True, supports_tool_calling=True,
+                     source="operator-override")
+    method, provenance = N.resolve_method(p, _Batch, False, provider="pv", model="m")
+    assert method == "voluntary_function_calling"
+    assert provenance == "operator-override"
+    method, _ = N.resolve_method(None, _Batch, False, provider="pv", model="m")
+    assert method == "function_calling"

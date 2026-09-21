@@ -31,13 +31,18 @@ def structured_output_for(llm, schema, method: Method):
     construction honouring `strict=False` on the wire - a pydantic-CLASS
     schema silently defaults to `"strict": true`, the exact #44 open-dict 400
     the negotiation exists to avoid. `function_calling` / `json_mode` pass the
-    pydantic class, the proven mainline construction. A non-pydantic target
+    pydantic class, the proven mainline construction. The A6
+    `voluntary_function_calling` rung rides `method="function_calling"` on the
+    pydantic class - the RELAXED model drops the force at bind time, so the
+    wire carries a voluntary structured tool call. A non-pydantic target
     (a raw JSON-schema dict) rides the rung verbatim."""
     if method == "json_schema":
         as_dict = getattr(schema, "model_json_schema", None)
         construction = as_dict() if callable(as_dict) else schema
         return llm.with_structured_output(construction, method="json_schema",
                                           strict=False)
+    if method == "voluntary_function_calling":
+        return llm.with_structured_output(schema, method="function_calling")
     return llm.with_structured_output(schema, method=method)
 
 

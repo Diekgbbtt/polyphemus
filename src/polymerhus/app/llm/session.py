@@ -403,25 +403,24 @@ async def arun_session_turn(
 _session_probe_invoker = None
 
 
-def _structured_response_format(
-    role_id: str, schema, *, session_probe_invoker=None
+def structured_response_format(
+    role_id: str, schema, *, tools_bound: bool, session_probe_invoker=None,
 ):
     """The session seam's structured-output `response_format`, chosen by the A1
-    negotiation (#99) instead of pinning `ToolStrategy` unconditionally.
+    negotiation (#99, corrected by A6) instead of pinning `ToolStrategy`
+    unconditionally.
 
-    A no-tools structured session turn (`stateful_turn(schema=...)`) negotiates
-    like the one-shot seam: a structured-output-capable (or unknown) profile ->
-    `ProviderStrategy(schema, strict=False)` (the provider-native json_schema
-    rung - an open `dict` field survives under strict=False without the dict-form
-    workaround, unlike the one-shot `with_structured_output` path), a
-    tool-calling-only profile -> `ToolStrategy` (the proven force-tool rung).
-    TOOL-BOUND sessions and the session seam's json_mode rung stay on
-    `ToolStrategy`: a tool loop has no method-swap (A1 rung 2), and json_mode is
-    NOT expressible through `create_agent` (operator-confirmed 2026-08-21 - its
-    response_format vocabulary is ToolStrategy|ProviderStrategy|AutoStrategy
-    only; a pre-bound json_mode model raises NotImplementedError in the graph),
-    so a neither-capability no-tools turn falls back to ToolStrategy - the
-    current safe default that keeps a structured session turn working.
+    `tools_bound` is the REAL axis: True for a tool-bound session/crawl loop,
+    False for a pure structured turn. It is passed as `no_tools_bound=not
+    tools_bound` to the shared `resolve_method`, so the tools-bound rung
+    consults the profile: a forced-choice-constrained profile
+    (`supports_forced_tool_choice is False`) negotiates
+    `voluntary_function_calling`, which lands on `ToolStrategy` here - the
+    RELAXED model makes it voluntary at bind time. `function_calling` and
+    `voluntary_function_calling` both land on `ToolStrategy`; `json_mode`
+    collapses to `ToolStrategy` unchanged (inexpressible through
+    `create_agent`, operator-confirmed 2026-08-21); `json_schema` lands on
+    `ProviderStrategy(schema, strict=False)`.
 
     Capability resolution is resolve-and-hold at turn construction (D6), off the
     #73 retry axis; D7 fail-open (unknown profile / resolution failure) degrades
@@ -482,7 +481,7 @@ def _structured_response_format(
         _method, _provenance = resolve_method(
             profile,
             schema,
-            True,
+            not tools_bound,
             invoker=_invoker,
             role=role_id,
             provider=provider,
@@ -492,10 +491,25 @@ def _structured_response_format(
         )
         method = _method
     except Exception:  # noqa: BLE001 - fail-open: the session must always start
-        method = "json_schema"
+        # D7 fail-open degrades to the AXIS semantic default (A1): json_schema
+        # for a pure structured turn, function_calling (ToolStrategy) for a
+        # tool-bound loop - never the wrong rung for the axis.
+        method = "json_schema" if not tools_bound else "function_calling"
     if method == "json_schema":
         return ProviderStrategy(schema, strict=False)
     return ToolStrategy(schema)
+
+
+def _structured_response_format(
+    role_id: str, schema, *, session_probe_invoker=None, tools_bound: bool = False,
+):
+    """Back-compat alias for `structured_response_format` (the probe-tier tests
+    call the private name positionally without the tools axis); prefer the
+    public name. Defaults to the no-tools branch, preserving the pre-A6 call."""
+    return structured_response_format(
+        role_id, schema, tools_bound=tools_bound,
+        session_probe_invoker=session_probe_invoker,
+    )
 
 
 def stateful_turn(
@@ -526,7 +540,8 @@ def stateful_turn(
     on a tool-calling-only profile. Returns the parsed `schema` object (or None), or the
     text content when no schema - the same shape the legacy `invoke_role` seam returned,
     so a call site swaps in place."""
-    response_format = _structured_response_format(role_id, schema) if schema is not None else None
+    response_format = (structured_response_format(role_id, schema, tools_bound=bool(tools))
+                       if schema is not None else None)
     try:
         turn = run_session_turn(
             role_id, _as_thread_id(thread), new_messages,

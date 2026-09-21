@@ -31,3 +31,8 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 - Provider request primitives live in the provider table and are evaluated at construction (D12): the session seam binds the conversation as an ambient scope, the construction reads it, and unlisted providers stay byte-identical.
 - A pattern that fails open (tracing, capability resolution, an absent conversation) must say so loudly and never gate the caller; fail-loud is reserved for write corruption and contract violations.
 - Write the decision down in the owning ledger before or with the code, and keep the module path pointers honest.
+
+## Glossary
+
+- **voluntary function calling** - the A6 negotiated rung for a model whose upstream refuses a forced `tool_choice`: the schema tool is bound, the choice is not forced, the provider decides (a relaxed model rewrites the force to `"auto"` at bind time).
+- **capability override** - the operator-declared correction of a registry claim, via `LLM_CAPABILITY_OVERRIDES` (e.g. a thinking-mode relay refusing a forced tool choice that models.dev cannot express).
