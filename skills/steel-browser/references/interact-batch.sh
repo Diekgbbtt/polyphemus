@@ -1,9 +1,12 @@
 #!/usr/bin/env bash
 # Operation family: interaction - snapshot for refs, then act in ONE batch.
 # The batch is a choice to share the discovered ref and one spawn, not a
-# workaround: standalone `fill`/`type`/`setvalue` resolve fine when every flag
-# leads the positionals (a trailing `--session`/`--json` is swallowed as another
-# VALUE). A runtime VALUE is interpolated through the shell as "${VALUE}" -
+# workaround: standalone `fill`/`type`/`setvalue` resolve fine once each
+# variadic verb carries its `--` boundary (without it, clap folds a trailing
+# `--session`/`--json` into the entered VALUE, silently). The encoding is
+# `[OPTIONS] <selector> -- <value>`; `batch` itself is variadic too, so its
+# options lead its `--`, and every element that is variadic carries its own
+# boundary. A runtime VALUE is interpolated through the shell as "${VALUE}" -
 # variable expansion never re-expands a `$` or backtick inside the value's
 # contents, so this is the safe form; only a literal value would need
 # single-quoting. The read-back prints a boolean, never the value.
@@ -71,7 +74,9 @@ if [ "$REF" = "MISS" ]; then
   exit 4
 fi
 
-# One batch: a fresh snapshot, then the text entry, options ahead of the value.
+# One batch: a fresh snapshot, then the text entry. `batch` carries its own
+# boundary (options lead the `--`); the inner `fill` carries its own too, so no
+# trailing flag can fold into ${VALUE}.
 # Results are reported by op index and success, plus one deliberate exception on
 # failure - a bounded typed `error`. The result envelope also echoes each
 # `command` string, and a text-entry command carries its value, so that field is
@@ -86,7 +91,7 @@ fi
 # instead: `if BATCH_JSON=$(...)` clears the errexit flag for this command, and
 # the parser also receives the exit code as its last argument.
 set +e
-if BATCH_JSON=$(steel browser batch 'snapshot -i' "fill @${REF} ${VALUE}" --session "$SESSION" --json); then
+if BATCH_JSON=$(steel browser batch --session "$SESSION" --json -- 'snapshot -i' "fill @${REF} -- ${VALUE}"); then
   BATCH_RC=0
 else
   BATCH_RC=$?

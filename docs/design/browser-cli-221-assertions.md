@@ -38,6 +38,10 @@ C8 - Skill resolves through the one loader.
 Given `skill_for("steel-browser")` and `render_skill_index(["steel-browser"])`, exercising the single-loader semantic, the body returns non-empty with frontmatter stripped and the index renders the name-plus-description line.
 Yields `tests/recon/test_skills.py` plus the runner one-liner recorded in the PR body.
 
+C9 - Variadic boundary.
+Given a command-mode invocation of a variadic verb (`fill`, `type`, `setvalue`, `select`, `upload`, `batch`) without a top-level `--` boundary, exercising the D19 semantic, the tool yields `refused:variadic-boundary` with nothing executed; a canonical command passes through byte-identical, a flag-like value after the boundary is preserved verbatim, a `--` quoted inside a value is not treated as the boundary, a non-variadic verb keeps accepting trailing flags, and a script is never scanned.
+Yields `tests/test_steel_exec.py::test_misordered_variadic_refused_never_executed`, `::test_canonical_text_entry_passes_through_byte_identical`, `::test_flaglike_value_under_sentinel_preserved_verbatim`, `::test_batch_boundary_required_at_both_levels`, `::test_quoted_double_dash_value_is_not_the_boundary`, `::test_non_variadic_verbs_accept_trailing_flags`, `::test_script_text_not_scanned_for_boundary`.
+
 ## Walkthrough predicates
 
 The same five contract predicates also run against a live kali with no cloud key at all (`tests/test_steel_exec_live.py`, seven assertions: version pin, the routing refusals, timeout ordering, envelope shape on a keyless script, and the key-absence guard), so the gateway is proven on the real transport without spending a Steel session.
@@ -65,6 +69,8 @@ Observed: the commands and outputs recorded below; the verbatim script text was 
 
 ### E3 evidence (2026-09-16, host CLI `/Users/diekgbbtt/.steel/bin/steel`)
 
+Command shapes below are the 2026-09-16 captures: where a variadic verb appears without its `--`, the capture predates D19 and is evidence, not a canonical encoding.
+
 - `steel --version` -> `steel 0.4.4`; `steel doctor` -> `overall pass`.
 - Session catalogue before/after: `steel browser sessions --json` -> `{"data":[{id,mode,name,status,viewerUrl}],"success":true}` while live, `{"data":[],"success":true}` once stopped; `steel sessions list --status live --json` agrees on the id but carries no name; a `default` session appears when a start omits `--session`.
 - Oracle taken (after start): -> `{"data":"https://app.steel.dev/sessions/<id>","success":true}`.
@@ -84,3 +90,22 @@ Grounds the skill's rules (all PASS at every critic gate; evidence traces under 
 - Surfaces exercised live on real logins: fully sequential (one process per operation), batched (3-100 ops), scripted (`.sh` and `.py`, summary line, trap-owned stop proven on SIGTERM), and eval-driven submit (all five routes: `element.click()`, dispatched pointer/mouse, `form.requestSubmit()`, `form.submit()`, framework trigger).
 - Rule reversals the campaign produced (all folded, D2/D13/D14 amended): standalone text entry is not broken - the spike's failures were flag-order swallowing by the variadic `fill`/`type`/`setvalue`; `batch` is a choice for latency/state, not a defect workaround; a swallowed `--session` can auto-provision a billable `default` session; a failing batch has two envelope shapes (op-level two lines, batch-level one); count answers presence while `is visible` answers showness; `form.submit()` and framework triggers bypass handlers and native validation; there is no automatic eval-result bounding.
 - Reproducible failure modes recorded for the PR: stale-ref silent re-bind after `navigate` (deterministic, 3/3), `select` with a no-match value silently landing on the first option (3/3), a `default`-session leak from the bad flag shape (2/2), and a trap that marks its name after `start` orphaning on a signal inside the start window (1/5 versus 0/5 with the rule).
+
+### Integration note - the variadic fold, live red/green (defect report, 2026-09-18)
+
+Recorded from the external authn-bootstrapper e2e (Steel session `fc26ae1f-d483-4fb1-81de-3a0f9f13c870`, read back with `steel sessions traces <id> --json`); the entered value is redacted as `<value>` (25 characters).
+
+- RED: `steel browser fill --session <s> '<selector>' '<value>' --json` -> `get value` reads `<value> --json`, and the recorded `input#field-password` value length moved 22 -> 15 across the fill and a corrected fill - exactly `len(value) + 7` for `" --json"`, behind `success:true`.
+- GREEN control: `steel browser fill --session <s> --json '<selector>' '<value>'` -> `get value` reads `<value>`.
+- Tool loop with no live session: before D19 the same mis-ordered command executed byte-identical through `steel_exec` (stubbed binary, no argument normalization); after D19 it is `refused:variadic-boundary` with nothing executed.
+- The sentinel live control (`fill [OPTIONS] '<selector>' -- '<value>'`, and the flag-like value `'-x'`) is covered by C9 at the host seam; the live tier confirms it end to end in E1, whose ground truth now includes the canonical encoding.
+
+### Ungrounded skill rules to re-verify (named, not faked)
+
+Two rules in `skills/steel-browser/SKILL.md` are not corroborated by any record in this repo, and the campaign traces that would have carried them are no longer available.
+The next live tier (E1) must re-verify or delete them rather than leave them asserted:
+
+- `press` takes one key: a single character types, a multi-character string is a silent no-op behind `success:true`, and a modifier chord such as `Control+a` does nothing.
+  The pinned CLI documents `Control+a` as a key example, so the negative half of this claim either needs a fresh live capture or should be dropped.
+- A `navigate` can fail transiently with `ERR_HTTP_RESPONSE_CODE_FAILURE`, so one retry is a sound default.
+

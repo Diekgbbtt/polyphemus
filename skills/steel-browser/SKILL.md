@@ -8,7 +8,7 @@ description: >-
   or login flow driven end to end, session or token extraction, bot-gated
   navigation, or a live page read that plain HTTP cannot provide.
 metadata:
-  version: '1.5'
+  version: '1.6'
 ---
 
 # Steel browser operation
@@ -20,8 +20,8 @@ Reach for it when a target needs JavaScript to render, an element driven, or cli
 ## The tool surface
 
 `steel_exec` takes exactly one of `command` (a string carrying a `steel` token) or `script` with `script_lang` in `sh`/`py`.
-Script text is not scanned, so a script owns its own timeout ordering and session-name uniqueness.
-A refusal is typed and nothing runs (`returncode` 2): `refused:ambiguous-input`, `refused:not-steel-command`, `refused:steel-version-mismatch`, `refused:timeout-ordering`, `refused:unsupported-script-lang`, `refused:session-taken`.
+Script text is not scanned, so a script owns its own timeout ordering, session-name uniqueness, and variadic boundary.
+A refusal is typed and nothing runs (`returncode` 2): `refused:ambiguous-input`, `refused:not-steel-command`, `refused:steel-version-mismatch`, `refused:timeout-ordering`, `refused:unsupported-script-lang`, `refused:session-taken`, `refused:variadic-boundary`.
 Fix the input and reissue; a refusal is not a transient to retry.
 On a bare CLI you hold the same guards yourself.
 
@@ -43,7 +43,7 @@ survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
 
 **Mount a profile (optional).** `start --profile <name>` mounts server-side identity and state; read-only by default, `--update-profile` accumulates it back on release. There is no state-poll primitive, so prove a mount with a settle pause then a navigation - an unverified mount never passes a verdict. One live session per profile holds the last writer.
 
-**Operate.** Any web-interaction operation or client-side browser-state inspection: the command families below proxy to the CDP API. Choose each operation's shape:
+**Operate.** Any web-interaction operation or client-side browser-state inspection: the command families below proxy to the CDP API, and they are the taught subset, not an allowlist - `steel_exec` routes on the `steel` token, so any `steel browser` subcommand runs. Choose each operation's shape:
 - **single** - one atomic act whose result is the answer; no sequencing, no ref to discover.
 - **batch** - several ops in one spawn to share state (a discovered ref, an entered value) or amortise spawn cost.
 - **wait** - when the page, not you, is the unknown; synchronise on an observable before reading it.
@@ -55,7 +55,14 @@ survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
 
 **Refs**
 - Take every ref and accessible name from the `snapshot -i` you just read; never from what a field is called in the source.
-- Lead a text-entry value with its options (`fill`, `type`, `setvalue`; the variadic `[OPTIONS] <SELECTOR> [VALUE]...` shape honours an option only before the first value token; after it the option folds into the value verbatim, so a trailing `--session` folds too and the verb silently addresses `default`, answering `Unknown ref: eN` or `Element not found: <css>` that read as a resolution defect - the habit is options first, and `select` and the non-variadic verbs accept trailing flags fine). A leading `--` ends option parsing, so a flag-like value lands: `fill --session S --json '<sel>' -- '-x'` - without it the CLI exits 2. With the flags leading, both a ref and a CSS selector resolve standalone, so `single` is valid - choose `batch` to share state or save a spawn, never as a workaround.
+- Give every variadic verb its `--` boundary: `steel browser <verb> [OPTIONS] <selector> -- <value>...` for `fill`, `type`, `setvalue`, `select`, and `upload` (each `[VALUE(S)]...`), and `steel browser batch [OPTIONS] -- "<cmd>" "<cmd>"...` for `batch` (`[COMMANDS]...`).
+  The boundary sits where options end and positionals begin - never a trailing terminator: `[OPTIONS]` are `--flag[ value]` tokens, then the one required `<selector>` (where the verb has one), then the `--`, then the value(s) - taken verbatim, joined with spaces, and never reinterpreted as an option.
+  The boundary is mandatory, not a nicety: these verbs are variadic, so clap swallows a flag that follows the first value token and folds it into the entered text behind `success:true` - a trailing `--session` folds the same way and drops the verb onto an auto-provisioned billable `default` session, answering `Unknown ref: eN` or `Element not found: <css>` that read as a resolution defect.
+  `steel_exec` refuses a variadic command with no top-level `--` (`refused:variadic-boundary`) instead of guessing where the boundary is, so encode the boundary and the fold cannot happen.
+  Worked forms: `steel browser fill --session S --json '#user-name' -- 'standard_user'`, `steel browser type --session S --json '#user-name' -- 'standard_user'`, `steel browser setvalue --session S --json '#user-name' -- 'standard_user'`.
+  A flag-like value needs no special casing, only the boundary: `steel browser fill --session S --json '#user-name' -- '-x'` types `-x` verbatim.
+  Inside a `batch`, each element is its own command over the same grammar and carries its own boundary: `steel browser batch --session S --json -- 'snapshot -i' 'fill @e6 -- 42'`.
+  With the boundary declared, a ref and a CSS selector both resolve standalone, so `single` is valid - choose `batch` to share state or save a spawn, never as a workaround.
 - `press` takes one key (a single character types, a multi-char string is a silent no-op behind `success:true`, and a modifier chord like `Control+a` does nothing), while the `selectall` verb is what selects.
 - Re-snapshot after every `navigate`. Within one document the ref registry is append-only, so an earlier ref still resolves; after a `navigate` the old ref no longer names its element - it answers `Unknown ref` until the new document's refs exist, then silently resolves to whatever now carries it.
 - Retry a `navigate` once on a transport failure (`ERR_HTTP_RESPONSE_CODE_FAILURE` with no flag involvement): it can fail transiently, and one retry is a sound default.
@@ -88,17 +95,18 @@ survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
 
 ## Command families
 
-Every command carries `--session <name>` and `--json`.
+Every `steel browser` command carries `--session <name>`; every command in this skill carries `--json`.
+The `steel scrape` and `steel profile` families are sessionless and carry only `--json`.
 
-- Session: `start [--session-timeout ms] [--stealth] [--proxy url] [--profile name] [--update-profile]`, `stop [-a]`, `sessions`, `live` (viewer).
+- Session: `start [--session-timeout ms] [--inactivity-timeout ms] [--stealth] [--proxy url] [--profile name] [--update-profile]`, `stop [-a]`, `sessions`, `live` (viewer).
 - Navigation: `navigate <url> [--wait-until load|domcontentloaded|networkidle]` (aliases `open`, `goto`), `back`, `forward`, `reload`.
 - Page reading: `snapshot [-i] [-c] [-s css] [-d n] [-u]`, `get text|html|value|attr|url|title|count|box|styles`, `find <css>`, `content`, `is visible|enabled|checked`.
-- Interaction: `click`, `dblclick`, `press`, `hover`, `focus`, `check`, `uncheck`, `select`, `clear`, `selectall`, `scroll`, `scrollintoview`, `drag`, `upload`.
-- Text entry (flags lead positionals): `fill`, `type`, `setvalue`.
+- Interaction: `click`, `dblclick`, `press`, `hover`, `focus`, `check`, `uncheck`, `clear`, `selectall`, `scroll`, `scrollintoview`, `drag`.
+- Variadic verbs (boundary mandatory, options before the `--`): text entry `fill`, `type`, `setvalue`; `select`; `upload`.
 - Waiting: `wait -t <text> | --selector <css> | -u <substr> | -f <js> | -l <load-state>` with `--timeout <ms>`.
 - JS: `eval <js>`.
 - Cookies and storage: `cookies [set|clear]`, `storage local|session [key] [set|clear]`.
-- Batch: `batch "cmd" "cmd" ... [--bail]`.
+- Batch: `batch -- "cmd" "cmd" ... [--bail]` (options before the `--`; each element carries its own boundary when variadic).
 - One-shot scraping (no session): `steel scrape <url> [--format html|readability|cleaned_html|markdown] [--pdf] [--screenshot] [--use-proxy]`.
 - Spidering: enumerate links with `eval`, `navigate` per link, both capped.
 - Profiles: `steel profile list|import|sync|delete`; mount through `start --profile`.
