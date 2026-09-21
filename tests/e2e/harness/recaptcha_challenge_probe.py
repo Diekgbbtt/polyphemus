@@ -114,6 +114,10 @@ def main() -> int:
     parser.add_argument("--profile", default=None)
     parser.add_argument("--timeout", type=int, default=60)
     parser.add_argument(
+        "--mount-only", action="store_true",
+        help="E1: mount the profile and assert the authenticated landing, "
+             "performing no login at all")
+    parser.add_argument(
         "--retry-storm", action="store_true",
         help="mimic the observed failing pattern: after the first submit, "
              "blindly resubmit up to 3 times instead of waiting on a "
@@ -122,7 +126,7 @@ def main() -> int:
 
     user = os.environ.get("MAGNIFIC_USER")
     password = os.environ.get("MAGNIFIC_PASS")
-    if not user or not password:
+    if not args.mount_only and (not user or not password):
         print("set MAGNIFIC_USER and MAGNIFIC_PASS", file=sys.stderr)
         return 2
 
@@ -146,6 +150,31 @@ def main() -> int:
             print(f"start failed: {out[:200]}", file=sys.stderr)
             return 2
         started = True
+
+        if args.mount_only:
+            if scratch:
+                print("--mount-only needs --profile", file=sys.stderr)
+                return 2
+            _steel("browser", "navigate", "https://www.magnific.com/app",
+                   "--session", session, "--wait-until", "load", "--json",
+                   timeout=120)
+            time.sleep(2)
+            raw = _eval(session, _STATE_JS, timeout=30)
+            try:
+                state = json.loads(raw)
+            except (json.JSONDecodeError, TypeError):
+                state = {}
+            path = str(state.get("path", ""))
+            verdict = "GREEN" if path.startswith(AUTHENTICATED_PREFIX) else (
+                "RED" if state.get("challenge") else "UNKNOWN")
+            print(json.dumps({
+                "verdict": verdict,
+                "mount_only": True,
+                "profile": profile,
+                "landing_path": path,
+                "session": session,
+            }))
+            return {"GREEN": 0, "RED": 1, "UNKNOWN": 2}[verdict]
 
         _steel("browser", "navigate", LOGIN_URL, "--session", session,
                "--wait-until", "load", "--json", timeout=120)
