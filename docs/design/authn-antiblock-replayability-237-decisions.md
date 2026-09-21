@@ -115,3 +115,12 @@ The root cause was a missing cross-reference, not a missing primitive: `skills/s
 Fix (three edits, all doc-level): (1) the bootstrap prompt gains `<mechanics_skill_path>` and instructs reading the mechanics skill (and its `references/` scripts) before the first browser step, "do not re-derive the steel CLI from `--help`"; (2) P3's verification line stops prescribing `wait --load networkidle` and instead uses `--wait-until load` plus a `wait --url/--text` condition, with the networkidle trap named; (3) the skill gains a "Browser fast path" block inlining the four habits - `snapshot -i`, `batch` to share a ref, options-before-the-`--`-boundary variadic encoding, and an observable `wait` over a fixed sleep.
 The tool-level fold (D19 in `browser-cli-221-decisions.md`) is the complementary fix and lands by rebasing this branch onto `feat/221-browser-cli`.
 Content tests pin the fast-path markers, the networkidle prohibition, and the prompt's mechanics-skill citation.
+
+### D237-13 measurement (2026-09-21, re-run of the same magnific bootstrap)
+
+A same-prompt re-run measured the fix; full record in `docs/design/authn-bootstrap-latency-237-experiment.md`.
+The primitive fingerprint is clean and confound-resistant: `steel --help` re-derivation 5 -> 0, `networkidle` 1 -> 0, live stale-ref failures 3 -> 0, `batch` 0 -> 8, `snapshot -i` 0 -> 6, condition `wait` 0 -> 5, fixed `sleep` 8 -> 3.
+Wall-clock did **not** improve (394 s -> 1168 s raw), and the cause is a target-side confound: magnific escalated to a visible reCAPTCHA Enterprise challenge that cost 251 s of human solving plus a 90 s recovery loop, larger than the effect the fix targets; the wall-clock result is therefore INCONCLUSIVE and no latency win is claimed in this ledger.
+A new failure mode was observed from the fix-adjacent pattern: the agent replaced `sleep` with `wait --url /app`, but `/app` is reachable only after the out-of-band human reCAPTCHA solve, so the wait timed out three times (90 s) waiting on a human step it could not observe.
+Follow-up recorded: qualify the mechanics rule so a `wait` never synchronises on an outcome gated by an out-of-band human action - wait on the challenge's own marker with a bounded timeout and escalate, instead.
+The `steel_exec` D19 guard was not exercised by this run: the external bootstrapper drives the raw `steel` CLI, so only the skill-text half of the fix was measured.

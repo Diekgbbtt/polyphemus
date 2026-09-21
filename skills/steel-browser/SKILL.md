@@ -47,6 +47,8 @@ survey -> open or reuse -> [mount a profile] -> OPERATE ... -> close
 - **single** - one atomic act whose result is the answer; no sequencing, no ref to discover.
 - **batch** - several ops in one spawn to share state (a discovered ref, an entered value) or amortise spawn cost.
 - **wait** - when the page, not you, is the unknown; synchronise on an observable before reading it.
+  Never synchronise on an outcome gated by an out-of-band human action (a CAPTCHA solve, an operator click, a manual approval): that outcome cannot appear until the human acts, so the wait burns its whole timeout first.
+  Wait on the challenge's OWN marker (its iframe or selector) with a bounded `--timeout`, then escalate to the operator; do not wait on the post-gate URL.
 - **script** - a whole flow with a lifecycle, a loop, or several operations; it owns its stop.
 
 **Close.** Stop the session with `steel browser stop --session <name> --json` when you own it, or let the stop owner fire, then prove it gone against the catalogue (`sessions --json` back to `[]`). Where the mount was write-oriented, that stop is what backs the profile up.
