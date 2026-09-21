@@ -124,3 +124,36 @@ Wall-clock did **not** improve (394 s -> 1168 s raw), and the cause is a target-
 A new failure mode was observed from the fix-adjacent pattern: the agent replaced `sleep` with `wait --url /app`, but `/app` is reachable only after the out-of-band human reCAPTCHA solve, so the wait timed out three times (90 s) waiting on a human step it could not observe.
 Follow-up recorded: qualify the mechanics rule so a `wait` never synchronises on an outcome gated by an out-of-band human action - wait on the challenge's own marker with a bounded timeout and escalate, instead.
 The `steel_exec` D19 guard was not exercised by this run: the external bootstrapper drives the raw `steel` CLI, so only the skill-text half of the fix was measured.
+
+## D237-14 - The browser bootstrap is fragile against reCAPTCHA scoring (grounded diagnosis)
+
+*Diagnosed 2026-09-21 on the run-2 failure (a visible reCAPTCHA Enterprise challenge), following the diagnosing-bugs procedure.*
+
+**The failure.** Run 2's fresh login was held by a visible reCAPTCHA Enterprise image challenge (400x580 frame), costing 251 s of human solving plus a 90 s blind-retry loop; the operator read the proximate cause as a low score.
+
+**The loop (Phase 1).** `tests/e2e/harness/recaptcha_challenge_probe.py` drives the exact path under test - an optional profile, the homepage to `/log-in` route, the consent gate, the email-first form, and one submit - and detects the challenge's own frame without solving it: exit 0 GREEN (authenticated landing), exit 1 RED (challenge), exit 2 UNKNOWN.
+It is red-capable (it asserts the exact symptom) and agent-runnable, and it is the closest available seam: the symptom is live and probabilistic, so no unit or integration seam can carry it.
+
+**Reproduction (Phase 2).** The loop ran three times and did **not** reproduce the challenge (two single-submit runs and one retry-storm run, all GREEN; the storm never fired because the first submit succeeded).
+The observed red is therefore 1 of 4 controlled-plus-observed attempts, and the honest reading is that the symptom is **intermittent**, consistent with a score near the threshold rather than a deterministic trigger; the loop's rate is too low to debug behaviourally without many credentialed attempts, each of which burns a login and further risks the account and the egress IP.
+The minimised trigger from run 2 is: navigate `/log-in` (lands on the homepage), click the "Log in" link, dismiss consent, set the email, click Continue, set the password, click "Log in" - and then, in run 2, up to four blind submissions (three clicks plus a `requestSubmit()`) with 30 s `wait --url` timeouts between them.
+
+**The safe path, proven.** Mounting the stored `magnific-authn` profile read-only and navigating to `/app` reached the authenticated landing with no login and no challenge (re-verified 2026-09-21), so the risky fresh login was also the unnecessary one.
+
+**Grounded mechanisms.** Steel's own docs state that "Profiles persist browser identity, not network identity - pair with a dedicated IP for account-based agents", and name the failure mode the "impossible travel problem"; the CLI exposes `--proxy`, `--stealth` (humanize plus auto-CAPTCHA), `--session-solve-captcha`, and a `captcha` command family.
+Measured directly: three sessions in one sitting egressed from three distinct datacenter ASNs (`216.246.40.79` CacheFly, `152.233.48.155` Datacamp, `64.34.81.170` Latitude.sh), with and without the profile mounted, while the user-agent stayed one value and the timezone stayed `America/New_York`.
+The run-2 transcript supplies the interaction evidence: the fresh login ran on a disposable scratch profile (`magnific-scratch-tmp`, deleted afterwards), never wrote back to `magnific-authn`, used no `--stealth`, and retried the submit blindly.
+
+**Implementation defects that contributed.**
+1. No stable egress: proxy is off by default, sessions rotate datacenter IPs, and neither the store nor the profile key can express a pinned origin.
+2. Fresh-login-by-default verification: the workflow re-authenticates even when a mounted profile already verifies, exposing the account to the most score-punished action for no information gain.
+3. Disposable browser identity for the login: the login runs on an empty scratch profile, the least trustworthy identity, and its state is discarded.
+4. No humanization: `--stealth` is never used, so interactions are fast and robotic.
+5. No interaction cadence: repeated blind submits with fixed `sleep`s, themselves a bot signal.
+6. No challenge protocol: no detection of the challenge's own marker, no bounded wait, no escalation - the agent improvised a viewer-URL prompt after minutes of retries.
+7. Session lifetime versus a human in the loop: `--session-timeout 600000` expired mid-flow, and the default 120 s inactivity timeout can release the session while a human solves.
+8. No network-identity continuity across mounts: even the safe mount path changes origin every time, so the authenticated profile is re-presented from a new network each run.
+
+**Design risk report.** The systemic half is recorded as a Design Risk in `docs/design/recon-auth-gateway-223-spec.md` ("Network identity is not persisted with the browser profile"), because the same profile-rebind design governs the runtime gateway; the skill-and-prompt half is owned here.
+
+**Seam finding (Phase 5).** There is no correct seam for a behavioural regression test of the symptom itself: it is live, third-party-scored, and intermittent, so the probe script is the regression vehicle and the fix hypotheses are recorded separately rather than locked into a unit test.
