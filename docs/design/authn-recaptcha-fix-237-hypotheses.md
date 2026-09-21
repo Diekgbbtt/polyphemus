@@ -200,4 +200,5 @@ H1's mechanism is therefore confirmed: when a stored profile verifies, the score
 
 Root cause (mechanism confirmed by E1): the bootstrap performs a fresh login even when a mounted profile verifies, and the fresh login is the reCAPTCHA-score-gated action that can be challenged; the system then has no stable network identity, no humanization, and no bounded challenge protocol, so a low score blocks the run and the recovery degrades the score further.
 The remaining hypotheses (H2-H6) govern the paths that must still log in - a first bootstrap, or a genuinely stale profile - and their experiments are designed but not run.
-No production fix is written in this change: per `debug-hypothesis`, the fix and its regression test follow E1's confirmation, and the probe script is the regression vehicle because no unit seam can carry a live, third-party-scored, intermittent symptom.
+H1's fix landed as D237-15 (mount-first, verification-gated login, warm write-back, and the non-reactive cadence and clock rules); no Steel-side solving is adopted, per the operator's proactive-only ruling.
+The probe script remains the regression vehicle because no unit seam can carry a live, third-party-scored, intermittent symptom.

@@ -157,3 +157,15 @@ The run-2 transcript supplies the interaction evidence: the fresh login ran on a
 **Design risk report.** The systemic half is recorded as a Design Risk in `docs/design/recon-auth-gateway-223-spec.md` ("Network identity is not persisted with the browser profile"), because the same profile-rebind design governs the runtime gateway; the skill-and-prompt half is owned here.
 
 **Seam finding (Phase 5).** There is no correct seam for a behavioural regression test of the symptom itself: it is live, third-party-scored, and intermittent, so the probe script is the regression vehicle and the fix hypotheses are recorded separately rather than locked into a unit test.
+
+## D237-15 - Mount-first, and the non-reactive login discipline
+
+*Implemented 2026-09-21 on the operator's ruling: proactive prevention only, no Steel-side solving, and the mount verification stays mandatory.*
+
+The fix is three text-only edits, no schema change and no tool change.
+The authn meta skill's profile discipline now orders the browser path: mount the stored profile read-only first, verify it against the authenticated landing, and log in only when the mount does not yield that landing - a missing OR unauthenticated mount being one fail-open trigger, mirroring the runtime gateway's D223-14 rule; that login runs on the account's own profile with `--update-profile` and is never disposable, so the warm identity (cookies and history) is written back rather than discarded.
+The bootstrap prompt carries the same ordering for the external bootstrapper.
+The mechanics skill carries the non-reactive hardening: submit once and wait on the condition rather than resubmitting blind, and size the session clock for a human step (`--session-timeout` covers a solve, `--inactivity-timeout` raised or `0` keeps the session alive while a person acts).
+Explicitly excluded: any Steel-side CAPTCHA solving (`--stealth`'s auto-CAPTCHA half, `--session-solve-captcha`, the `captcha` family), because it is costly and does not port to a local Steel deployment; and any tool-layer guard, because the defended-target knowledge belongs to the procedure, not to the thin `steel_exec` gateway.
+The residual score risk is the environment and network identity: the local Steel deployment that removes the `UNEXPECTED_ENVIRONMENT` and impossible-travel exposure is filed as a separate ticket, and the design risk stays recorded in `docs/design/recon-auth-gateway-223-spec.md` until that lands.
+Content tests pin the ordering markers in both artifacts and the cadence and clock rules in the mechanics skill.

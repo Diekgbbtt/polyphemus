@@ -94,9 +94,11 @@ A static element that proves to be a stable target property graduates into the o
 ### Browser fallback: the steel profile discipline
 
 Durable browser identity is a Steel profile; the store holds only its `{profile}` key, and a follower rebinds it.
-Mint the profile in flow on first login: `steel browser start --session <name> --profile <profile-name> --update-profile --session-timeout 600000 --json`.
-Mount by name: `steel browser start --session <name> --profile <profile-name> --json` (the `--profile` flag takes the profile name; the store holds the name, not the id).
-A mount is read-only by default; without `--update-profile` the session's state is not written back, so pass `--update-profile` only past the P3 verify gate.
+Mount by name: `steel browser start --session <name> --profile <profile-name> --json` (the `--profile` flag takes the name the store holds, not the id).
+Mount first, every time, and read-only: the account's profile accumulates nothing until a write is earned.
+Mint only when the store holds no profile: add `--update-profile`, so the login that follows is written back.
+Log in only when the mount does not yield the authenticated landing: a missing OR unauthenticated mount is one fail-open trigger (the runtime gateway's D223-14 rule), and that login runs on the account's own profile with `--update-profile`, never on a disposable one.
+A warm profile is the point: it carries the site's cookies and history, so the mount presents a returning user, while a fresh profile on a fresh login presents a stranger.
 Settle then verify every mount: there is no CLI state-poll primitive (`steel profile list --json` returns name plus id only), so navigate to the authenticated landing URL and read it back before trusting the mount; an unverified mount never passes a verdict.
 Release is the persistence call, so any abnormal end (a timeout, a failure) forces a re-verify before the profile is trusted again.
 One live session per profile holds the last writer; there is no merge, so never mount one profile in two sessions at once.
@@ -133,7 +135,7 @@ Gate: each flow states its endpoint or form plus its required headers and anti-f
 ## P3 - Execute and verify
 
 Request path: reproduce the request shape exactly, then verify success before capturing anything.
-Browser path: mint or mount the profile per the fallback discipline above, settle, and verify.
+Browser path: mount the profile first and verify it per the fallback discipline above; log in only when the mount does not yield the authenticated landing, and pace that login per the mechanics skill's cadence and escalation rules.
 Record the profile name from the mint to the account `steel` reference in P4.
 Verify with concrete commands: `navigate` to the target URL, then settle with `wait --url <authenticated-landing-substr>` or `wait --text <marker>` (a condition, not a fixed pause), then `eval` or `get url` to read the current URL and confirm the authenticated landing state.
 Do not settle with `navigate --wait-until networkidle`: a login page or SPA with continuous activity (polling, websockets, analytics beacons) never reaches network idle, so the navigate times out and wastes its whole timeout; use `--wait-until load` (or `domcontentloaded`) and a `wait` condition instead.

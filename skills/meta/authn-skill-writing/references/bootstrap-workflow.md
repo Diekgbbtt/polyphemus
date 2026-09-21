@@ -54,10 +54,11 @@ The interaction mode defaults to request-based; the browser is taken only when t
 
 ## Browser branch (only when the probe forces it)
 
-Mint the profile in flow on first login: `steel browser start --session <session_name> --profile <profile_name> --update-profile --session-timeout <session_timeout_ms> --json`.
-Mount an existing profile read-only with `steel browser start --session <session_name> --profile <profile_name> --json`; pass `--update-profile` only past the verify gate, since a mount is read-only by default.
-Settle with a condition, never a fixed pause and never network idle: `steel browser wait --url <authenticated_landing_substr>` or `steel browser wait --text <marker>`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.
-Never wait on an outcome gated by an out-of-band human action (a CAPTCHA solve, an operator click): wait on the challenge's own marker with a bounded `--timeout` and escalate to the operator, because the post-gate state cannot appear until the human acts.
+Mount first, read-only: `steel browser start --session <session_name> --profile <profile_name> --json`.
+Log in only when the mount does not yield the authenticated landing.
+Run that login on the account's own profile - add `--update-profile`, minting with `--session-timeout <session_timeout_ms>` only when the store holds no profile - so the warm identity is written back and never discarded.
+Pace the login per the mechanics skill's cadence rules, and settle with a condition rather than a fixed pause or network idle: `steel browser wait --url <authenticated_landing_substr>` or `steel browser wait --text <marker>`, because `navigate --wait-until networkidle` never settles on a continuously-active page and burns its whole timeout.
+Wait on the challenge's own marker with a bounded `--timeout`, then escalate to the operator: the post-gate state cannot appear until the human acts, so a wait on it burns its whole timeout.
 Stop every session with `steel browser stop --session <session_name> --json` and prove it gone against `steel browser sessions --json`.
 Record the profile NAME (not the id) under the account's `steel: {profile: <profile_name>}`.
 

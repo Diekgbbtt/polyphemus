@@ -191,3 +191,33 @@ def test_bootstrap_prompt_cites_the_mechanics_skill():
     assert "<mechanics_skill_path>" in prompt
     assert "steel-browser" in prompt
     assert "do not re-derive the steel CLI from `--help`" in prompt
+
+
+def test_browser_discipline_mounts_first_and_logs_in_only_on_failure():
+    """The reCAPTCHA diagnosis (D237-14): a fresh login is the score-gated
+    action, so the profile is mounted first and a login happens only when the
+    mount does not verify - never on a disposable profile (D237-15)."""
+    body = _body()
+    assert "Mount first, every time" in body
+    assert "log in only when the mount does not yield the authenticated landing" in body
+    assert "never on a disposable one" in body
+    assert "mint or mount" not in body
+
+
+def test_bootstrap_prompt_mounts_first_and_keeps_the_login_warm():
+    prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    assert "Mount first, read-only" in prompt
+    assert "Log in only when the mount does not yield the authenticated landing" in prompt
+    assert "warm identity is written back and never discarded" in prompt
+    assert "Mint the profile in flow on first login" not in prompt
+
+
+def test_mechanics_skill_paces_the_login_and_sizes_the_clock():
+    """The non-reactive half of the fix: one submit (no blind resubmits) and a
+    session clock sized for a human step. No solving surface is taught."""
+    body = skills.skill_for("steel-browser")
+    assert "Submit once, then wait on the condition" in body
+    assert "--inactivity-timeout" in body
+    assert "the 120 s default releases it mid-solve" in body
