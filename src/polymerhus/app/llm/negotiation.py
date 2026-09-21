@@ -61,12 +61,12 @@ field tree is `open`, anything unprovably typed is conservatively `open`.
 
 The negotiation contract includes the parse-validation step as a companion
 pure predicate, `result_validates`: each degrade rung's outcome is the PARSED
- result validated against the target schema - not an exception-caught miss, so
- `json_mode`'s silent wrong-shape failure (HTTP 200, wrong JSON) is caught and
- renegotiated per A2. The probe-on-miss orchestration walks the profile's
- `effective_chain` directly, validating the parsed result at each rung - it does
- not call `next_rung` (that predicate is the one-shot construction/degrade
- helper for a single held rung). No vendor error string is ever parsed (A2).
+result validated against the target schema - not an exception-caught miss, so
+`json_mode`'s silent wrong-shape failure (HTTP 200, wrong JSON) is caught and
+renegotiated per A2. The probe-on-miss orchestration walks the profile's
+`effective_chain` directly, validating the parsed result at each rung - it does
+not call `next_rung` (that predicate is the one-shot construction/degrade
+helper for a single held rung). No vendor error string is ever parsed (A2).
 
 Importing this module performs no I/O and requires no env var (CODING_STANDARD
 section 6).
