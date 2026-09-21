@@ -95,20 +95,76 @@ def resolve_account(project_id: str, account_name: str, *, store=None) -> dict:
     return {}
 
 
-def project_request_auth(account: dict | None) -> dict:
-    """Project an account record onto the flat request material: snapshot
-    headers plus header-located tokens as headers, snapshot cookies plus
-    cookie-located tokens as the `cookies` list. Storage-located tokens are
-    browser-bound and never replay over plain HTTP, so they are skipped."""
+def resolve_overview(project_id: str, *, store=None) -> dict:
+    """Read the operator-owned overview (the login-mechanism header fact)
+    from the shared store (fail-open to {}).
+
+    `store` injects the bucket (tests); None resolves the production
+    `AuthStore` lazily, so importing this module performs no I/O. A missing
+    overview or an unreadable store is a loud warn, never a raise - the
+    caller projects with no headers (D223-2)."""
+    try:
+        if store is None:
+            from polymerhus.app.auth.store import AuthStore  # noqa: PLC0415
+
+            store = AuthStore()
+        overview = store.read(project_id, "overview")
+        if isinstance(overview, dict) and overview:
+            return overview
+    except Exception:  # noqa: BLE001 - fail-open, loudly
+        logger.warning("auth feed: overview unresolvable for project %s; "
+                       "projecting no headers", project_id, exc_info=True)
+        return {}
+    logger.warning("auth feed: no overview on record for project %s; "
+                   "projecting no headers", project_id)
+    return {}
+
+
+def _parse_required_headers(overview: dict | None) -> dict:
+    """Parse `overview.required_headers` (a list of `"Name: value"` strings)
+    into a header map, split on the FIRST colon. A malformed entry (no
+    colon, an empty name/value, a non-string) is skipped with a warning,
+    never fatal - the header set degrades, the run never blocks."""
+    if not isinstance(overview, dict):
+        return {}
+    required = overview.get("required_headers") or []
+    if not isinstance(required, list):
+        logger.warning("auth feed: overview required_headers is not a list; "
+                       "projecting no headers")
+        return {}
+    headers: dict = {}
+    for entry in required:
+        if not isinstance(entry, str) or ":" not in entry:
+            logger.warning("auth feed: skipping malformed required header "
+                           "entry %r (want 'Name: value')", entry)
+            continue
+        name, _, value = entry.partition(":")
+        name, value = name.strip(), value.strip()
+        if not name or not value:
+            logger.warning("auth feed: skipping malformed required header "
+                           "entry %r (want 'Name: value')", entry)
+            continue
+        headers[name] = value
+    return headers
+
+
+def project_request_auth(account: dict | None,
+                         overview: dict | None = None) -> dict:
+    """Project an account record onto the flat request material.
+
+    The header fact single-sources on the overview: `overview`'s
+    `required_headers` plus header-located tokens as headers; the snapshot
+    supplies cookies only (a stale `snapshot.headers` is ignored, never
+    replayed), plus cookie-located tokens as the `cookies` list.
+    Storage-located tokens are browser-bound and never replay over plain
+    HTTP, so they are skipped. An absent/empty overview projects no headers,
+    never a crash."""
     if not isinstance(account, dict):
         return {}
     material: dict = {}
+    material.update(_parse_required_headers(overview))
     snapshot = account.get("snapshot") or {}
     if isinstance(snapshot, dict):
-        headers = snapshot.get("headers") or {}
-        if isinstance(headers, dict):
-            material.update({k: v for k, v in headers.items()
-                             if isinstance(k, str) and isinstance(v, str) and v})
         cookies = snapshot.get("cookies") or []
         if isinstance(cookies, list):
             material["cookies"] = [

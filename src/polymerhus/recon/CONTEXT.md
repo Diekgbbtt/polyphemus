@@ -176,7 +176,8 @@ Since #223 the key is project-scoped (`<project_id>-<account>`, D223-14); the br
 _Avoid_: storing browser state itself (only the key lives here).
 
 **Concrete snapshot** (`snapshot: {headers, cookies, params, captured_at}`):
-Point-in-time captured request state on an account record, validated by `_check_snapshot`: the exact state request-based followers replay, never a stored graph query.
+Point-in-time captured request state on an account record, validated by `_check_snapshot`: the point-in-time cookies (plus `captured_at`) request-based followers replay, never a stored graph query.
+The header fact is NOT duplicated here - it single-sources on `overview.required_headers` (D220-2 amendment); the projection ignores a stale `snapshot.headers`.
 _Avoid_: graph queries (no `cypher` lives in the store; static queries against a changing surface fail silently open).
 
 **Operator seed** (`PUT /projects/{project_id}/auth` -> `seed_project_auth` -> `AuthStore.replace_operator_state`):
@@ -203,7 +204,7 @@ The project-authored skill (no canonical catalogue copy) that the meta skill `me
 _Avoid_: a canonical `authn` skill (a project's copy is its original).
 
 **Auth feed** (#223 T4 #243, D223-19):
-How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (snapshot headers plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the persisted Steel profile key (`extra["steel_profile"]`, mounted read-only at Steel session creation via the SDK `profile_id`) plus the cookie subset seeding the browser context for the agent-driven crawl; nothing for non-auth jobs. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
+How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the persisted Steel profile key (`extra["steel_profile"]`, mounted read-only at Steel session creation via the SDK `profile_id`) plus the cookie subset seeding the browser context for the agent-driven crawl; nothing for non-auth jobs. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
 _Avoid_: threading material through the pipeline state (the identifier rides; the projection resolves per phase).
 
 **Authn loop** (the auth gateway, #223):

@@ -28,6 +28,12 @@ That skill implies agent read/write/generation capability, which lands with #222
 The store-to-skill coupling is a per-account `procedure` label naming the skill procedure that minted or serves the account, plus the reserved `references/` convention: optionally configurable credential-bound scripts automating request-based login (where no anti-bot defence blocks it), end-to-end Steel-CLI browser login, and registration automation - one script per method, all authored with the skill.
 `location: cookie | header | storage` on token records is retained: it is where a token lives, orthogonal to how a procedure uses it.
 
+### D220-2 amendment (#223 - the header fact single-sources on the overview)
+
+The header fact lives in `overview.required_headers` (the operator-owned login-mechanism fact, a list of `"Name: value"` strings); the account snapshot carries the point-in-time cookies (`+ captured_at`) and never duplicates the required headers.
+The request-material projection (`recon/control/auth_feed.py::project_request_auth`) reads headers from the overview (parsed on the first colon; a malformed entry is skipped loudly, never fatal) and cookies from the snapshot, with header-located tokens overriding/merging as before.
+Rationale: one fact, one owner - routing two fields of differing reliability doubles the divergence surface for no gain.
+
 ## D220-3 - Simplified two-file bucket layout
 
 The bucket is `data/<project_id>/auth/` under the app-owned data root (`app.data_root.DATA_ROOT`, `<repo>/data/`, no env var; explicit-root constructor for tests), resolved through the one layout owner `app.data_root.project_dir` so the auth bucket sits beside `skills/` and `hunting/`; the fixed bucket dir joins `PROJECT_SCAFFOLD`, so `ensure_project` creates it at project creation like every other module bucket. It is lazily created at the first write.

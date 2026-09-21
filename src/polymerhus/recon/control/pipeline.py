@@ -41,6 +41,7 @@ from polymerhus.recon.control.auth_feed import (
     project_request_auth,
     project_steel_profile,
     resolve_account,
+    resolve_overview,
 )
 from polymerhus.recon.domain.curator import ALLOWED_LABELS, curate
 from polymerhus.recon.control.jobs import JOBS, build_phase_plan, validate_job_subset
@@ -485,6 +486,10 @@ async def run_pipeline(
                         account = resolve_account(
                             project_id, auth_account, store=auth_store)
                         if account:
+                            # The header fact single-sources on the overview's
+                            # required_headers; the snapshot supplies cookies.
+                            overview = resolve_overview(
+                                project_id, store=auth_store)
                             if job.configurator_mode == "agent":
                                 profile = project_steel_profile(account)
                                 if profile:
@@ -493,7 +498,7 @@ async def run_pipeline(
                                 if cookies:
                                     extra["auth_context"] = {"cookies": cookies}
                             else:
-                                material = project_request_auth(account)
+                                material = project_request_auth(account, overview)
                                 if material:
                                     extra["auth_context"] = material
                     # Scope gate for URL-hosted assets (out-of-scope BaseURL

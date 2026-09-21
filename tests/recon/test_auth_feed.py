@@ -20,6 +20,7 @@ from polymerhus.recon.control.auth_feed import (
     project_request_auth,
     project_steel_profile,
     resolve_account,
+    resolve_overview,
     select_account_role,
     serialize_auth_flags,
 )
@@ -29,7 +30,9 @@ def _seeded_store(tmp_path):
     store = AuthStore(tmp_path)
     store.replace_operator_state(
         "p1",
-        overview={"login_endpoint": "https://x/login"},
+        overview={"login_endpoint": "https://x/login",
+                  "required_headers": ["X-Api-Key: K",
+                                       "Authorization: Bearer OLD"]},
         accounts={
             "alice": {
                 "credentials": {"username": "u", "password": "p",
@@ -41,7 +44,9 @@ def _seeded_store(tmp_path):
                 },
                 "steel": {"profile": "p1-alice"},
                 "snapshot": {
-                    "headers": {"X-Api-Key": "K"},
+                    # Stale by design: snapshot headers are NEVER replayed -
+                    # the header fact single-sources on overview.required_headers.
+                    "headers": {"X-Snapshot": "OLD"},
                     "cookies": [{"name": "sid", "value": "S"}],
                 },
                 "roles": {
@@ -53,6 +58,14 @@ def _seeded_store(tmp_path):
         },
     )
     return store
+
+
+def _request_material(store, project="p1", name="alice"):
+    # The caller shape: the pipeline resolves the account AND the overview
+    # from the store, then projects with the overview passed in.
+    account = resolve_account(project, name, store=store)
+    overview = resolve_overview(project, store=store)
+    return project_request_auth(account, overview)
 
 
 # --- resolve_account: identifier in, record out, fail-open ---
@@ -115,21 +128,72 @@ def test_select_account_role_keeps_blob_map_shape_for_interface_b_probes():
         "cookies": [{"name": "s", "value": "S"}]}
 
 
-# --- project_request_auth: snapshot + tokens by location ---
+# --- resolve_overview: operator header fact in, fail-open out ---
 
-def test_project_request_auth_merges_snapshot_and_located_tokens(tmp_path):
-    account = resolve_account("p1", "alice", store=_seeded_store(tmp_path))
-    material = project_request_auth(account)
-    assert material["X-Api-Key"] == "K"  # snapshot header
-    assert material["Authorization"] == "Bearer T"  # header-located token
+def test_resolve_overview_returns_the_operator_header_fact(tmp_path):
+    store = _seeded_store(tmp_path)
+    overview = resolve_overview("p1", store=store)
+    assert overview["required_headers"] == ["X-Api-Key: K",
+                                            "Authorization: Bearer OLD"]
+
+
+def test_resolve_overview_unknown_project_fails_open_to_empty(tmp_path):
+    store = AuthStore(tmp_path)  # never seeded: empty bucket
+    assert resolve_overview("p1", store=store) == {}
+
+
+# --- project_request_auth: overview headers + snapshot cookies + tokens ---
+
+def test_project_request_auth_merges_overview_headers_and_located_tokens(tmp_path):
+    material = _request_material(_seeded_store(tmp_path))
+    assert material["X-Api-Key"] == "K"  # overview.required_headers
+    # A header-located token overrides the same-named overview entry.
+    assert material["Authorization"] == "Bearer T"
     names = {c["name"] for c in material["cookies"]}
     assert names == {"sid", "session"}  # snapshot + cookie-located token
     assert "csrf-store" not in str(material)  # storage-located: browser-bound
 
 
+def test_project_request_auth_ignores_snapshot_headers(tmp_path):
+    # The scrubbed redundancy: a stale snapshot.headers entry never replays,
+    # even when the overview carries no such header.
+    material = _request_material(_seeded_store(tmp_path))
+    assert "X-Snapshot" not in material
+
+
+def test_project_request_auth_malformed_required_header_skipped_loudly(caplog):
+    import logging
+    account = {"snapshot": {"cookies": [{"name": "sid", "value": "S"}]}}
+    overview = {"required_headers": ["X-Ok: v", "bogus-no-colon",
+                                     "X-Empty: ", ": no-name", 42]}
+    with caplog.at_level(logging.WARNING):
+        material = project_request_auth(account, overview)
+    assert material["X-Ok"] == "v"  # the well-formed entry still lands
+    assert material["cookies"] == [{"name": "sid", "value": "S"}]
+    assert "bogus-no-colon" in caplog.text  # skipped loudly, never fatal
+
+
+def test_project_request_auth_empty_overview_projects_no_headers(tmp_path):
+    # Absent/empty overview: the header set is empty (never a crash), while
+    # snapshot cookies and located tokens still ride.
+    account = resolve_account("p1", "alice", store=_seeded_store(tmp_path))
+    for overview in (None, {}, {"login_endpoint": "https://x/login"}):
+        material = project_request_auth(account, overview)
+        assert "X-Api-Key" not in material
+        assert "Authorization" in material  # header-located token still lands
+        assert {c["name"] for c in material["cookies"]} == {"sid", "session"}
+
+
+def test_project_request_auth_first_colon_splits_name_from_value():
+    # A value carrying its own colon parses on the FIRST colon only.
+    material = project_request_auth(
+        {}, {"required_headers": ["X-Callback: https://x.example/cb"]})
+    assert material == {"X-Callback": "https://x.example/cb"}
+
+
 def test_project_request_auth_empty_account_projects_empty():
-    assert project_request_auth({}) == {}
-    assert project_request_auth(None) == {}
+    assert project_request_auth({}, {}) == {}
+    assert project_request_auth(None, None) == {}
 
 
 def test_project_auth_cookies_carries_only_cookies(tmp_path):
