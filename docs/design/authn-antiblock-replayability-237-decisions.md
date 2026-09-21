@@ -92,6 +92,7 @@ The skill cites the file in its worked-example and references sections, so the e
 The e2e surfaced a wording defect (not a code defect): the profile discipline said "Mount by id" while the command it gave is `--profile <profile-name>`, and D237-4 repeated "mount by id".
 The CLI's `--profile` takes the profile NAME (the `profileId` also resolves, verified live, but the discipline as written mounts by name), and the store holds the name under `steel: {profile}`.
 The wording is corrected to "Mount by name", P3 records "the profile name from the mint", and D237-4 is amended; a content test forbids "Mount by id" and requires "Mount by name".
+The same correction is applied to the #221 records that carried the wording (`docs/design/browser-cli-221-decisions.md` D17, `docs/design/browser-cli-221-spec.md`), and the recon glossary's browser-profile entry now carries the mount-first ordering.
 
 ## D237-12 - Account identity is the credential, named `<email>-<minting_context>`
 
@@ -99,7 +100,7 @@ The e2e left two White Jotter accounts sharing one username and password, `white
 The account's identity is the credential it authenticates, and the NAME carries that identity: the tool contract (`AUTH_STORE_CONTRACT`), the meta skill's seed-face contract, and the reusable prompt now require `<email>-<minting_context>` (the credential username plus the run or flow that minted it, `first_authn_bootstrap`, `hunting_misauthr`, ...), assessed at write time.
 The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share one account name and the second write collides on `duplicate_auth` to be merged.
 The meta skill's "separate flows with separate accounts" instruction, its red-flag row, and the prompt's matching line are sharpened to "separate procedures; one account per credential identity".
-The store does NOT yet enforce credential-identity uniqueness (the fork remains storable under two names); that gate and the `procedure` cardinality (a single optional string cannot name two procedures) are recorded as open design questions below.
+The store did not yet enforce credential-identity uniqueness at the time of writing (the fork was storable under two names); the gate and the `procedure` cardinality (a single optional string cannot name two procedures) were recorded as open design questions and are resolved in the Resolved block below (D220-11).
 Content tests pin the tool-contract markers and the meta-skill/prompt wording; the throwaway store-seam loop that showed two names sharing one username is deleted (it is the evidence for the open gate, not a regression test).
 
 ### Resolved (operator ruling, 2026-09-20)
@@ -122,7 +123,7 @@ A same-prompt re-run measured the fix; full record in `docs/design/authn-bootstr
 The primitive fingerprint is clean and confound-resistant: `steel --help` re-derivation 5 -> 0, `networkidle` 1 -> 0, live stale-ref failures 3 -> 0, `batch` 0 -> 8, `snapshot -i` 0 -> 6, condition `wait` 0 -> 5, fixed `sleep` 8 -> 3.
 Wall-clock did **not** improve (394 s -> 1168 s raw), and the cause is a target-side confound: magnific escalated to a visible reCAPTCHA Enterprise challenge that cost 251 s of human solving plus a 90 s recovery loop, larger than the effect the fix targets; the wall-clock result is therefore INCONCLUSIVE and no latency win is claimed in this ledger.
 A new failure mode was observed from the fix-adjacent pattern: the agent replaced `sleep` with `wait --url /app`, but `/app` is reachable only after the out-of-band human reCAPTCHA solve, so the wait timed out three times (90 s) waiting on a human step it could not observe.
-Follow-up recorded: qualify the mechanics rule so a `wait` never synchronises on an outcome gated by an out-of-band human action - wait on the challenge's own marker with a bounded timeout and escalate, instead.
+Follow-up applied: the mechanics rule now carries the qualifier - a `wait` never synchronises on an outcome gated by an out-of-band human action; wait on the challenge's own marker with a bounded timeout and escalate, instead.
 The `steel_exec` D19 guard was not exercised by this run: the external bootstrapper drives the raw `steel` CLI, so only the skill-text half of the fix was measured.
 
 ## D237-14 - The browser bootstrap is fragile against reCAPTCHA scoring (grounded diagnosis)

@@ -54,7 +54,10 @@ steel browser navigate "$URL" --wait-until domcontentloaded --session "$SESSION"
 
 # Explicit synchronisation with steel's own clock: --timeout 15000 ms sits well
 # below the tool's 600000 ms budget, so the outer clock never cuts the wait short.
-steel browser wait --load-state networkidle --timeout 15000 --session "$SESSION" --json \
+# `load`, not `networkidle`: a continuously-active page never reaches network
+# idle, so that wait burns its whole timeout (D237-13); prefer a real condition
+# (`--url`/`--text`) whenever the flow has one.
+steel browser wait --load-state load --timeout 15000 --session "$SESSION" --json \
   | python3 -c 'import json,sys; print("wait ->", "ok" if json.load(sys.stdin).get("success") else "not ok")'
 
 # Discover the ref from the snapshot, then act in a batch whose FIRST element is

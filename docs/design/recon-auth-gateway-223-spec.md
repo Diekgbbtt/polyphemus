@@ -30,7 +30,7 @@ Authentication failure is explicit and loud, never silent-anonymous; the no-auth
 6. As the operator, I want agent writes to merge into the store (the overview and operator-stamped accounts alike), so that verified facts persist while my ground truth and its provenance stamp survive (D220-12).
 7. As the operator, I want the no-authenticated-surface case recognised structurally, so that simple targets do not look like bootstrap failures.
 8. As the operator, I want a run with no credentials at all to stop loudly, so that I know the bootstrap prerequisite was missing.
-9. As the operator, I want the operator-owned overview facts (anti-bot defence, HTTP-client replayability) to steer the gateway's branch choice, so that the topology is respected without mid-run guessing.
+9. As the operator, I want the stored overview facts (anti-bot defence, HTTP-client replayability) to steer the gateway's branch choice, so that the topology is respected without mid-run guessing.
 10. As the orchestrator, I want one ReAct gateway turn with a hunting-style passive state machine over my own tool calls, so that the loop's progress is machine-observable without micromanaging my judgment.
 11. As the orchestrator, I want transition hints injected onto the triggering tool result only, so that my context carries one clear next step per transition.
 12. As the orchestrator, I want to validate a request-replayable account by replaying its stored request state first, so that a live session is proven, not assumed.

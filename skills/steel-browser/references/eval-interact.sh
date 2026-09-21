@@ -97,8 +97,9 @@ if ! steel browser navigate "$URL" --wait-until domcontentloaded --session "$SES
   REASON="navigate-failed"
   exit 5
 fi
-# Inner clock 15000 ms, well below the 600000 ms session budget.
-steel browser wait --load-state networkidle --timeout 15000 --session "$SESSION" --json >/dev/null 2>&1 || true
+# Inner clock 15000 ms, well below the 600000 ms session budget; `load` rather
+# than `networkidle`, which a continuously-active page never reaches (D237-13).
+steel browser wait --load-state load --timeout 15000 --session "$SESSION" --json >/dev/null 2>&1 || true
 
 # Set both values with the events the page listens for. python JSON-encodes the
 # runtime values, so a quote, `$`, or backtick in a secret cannot break out of

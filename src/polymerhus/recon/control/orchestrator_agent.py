@@ -484,7 +484,8 @@ class ReconOrchestratorActor:
         if verdict.replayability_resolved:
             logger.warning(
                 "auth gateway: project %s in-loop replayability resolved to %s "
-                "(run-scoped, never persisted; operator to re-seed)",
+                "(persisted to the overview by the loop; logged loudly for the "
+                "operator)",
                 pid, verdict.replayability)
         return verdict
 

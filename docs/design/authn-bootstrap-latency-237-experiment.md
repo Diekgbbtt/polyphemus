@@ -155,7 +155,7 @@ Do not claim a latency win on this evidence; do claim the failure-mode eliminati
 
 | Action | Owner | Due Date |
 |--------|-------|----------|
-| Add the "do not wait on an out-of-band human outcome" qualifier to the steel-browser mechanics skill | operator session | with #221 |
+| Add the "do not wait on an out-of-band human outcome" qualifier to the steel-browser mechanics skill | operator session | DONE - shipped in the mechanics skill's wait guardrail |
 | Re-measure on a non-escalating target, using provider timestamps | operator session | next e2e |
 | Keep D237-13 as shipped; do not claim a wall-clock win in the ledger | operator session | this change |
 

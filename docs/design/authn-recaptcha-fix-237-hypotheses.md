@@ -8,7 +8,7 @@ status: draft
 # Hypothesis: challenge-free browser bootstrap (reCAPTCHA fragility)
 
 This document follows `define-hypothesis` for the claim and `debug-hypothesis` for the loop (Observations -> Hypotheses -> Experiments -> Conclude).
-The fix is **not** implemented here: `debug-hypothesis` forbids writing fix code before an experiment confirms the cause, and the confirming experiments are specified below.
+The fix landed once an experiment confirmed the cause: E1 confirmed H1 and D237-15 implemented the fix; see the Conclude section for the result.
 Grounding: `docs/design/authn-antiblock-replayability-237-decisions.md` D237-14 (diagnosis), `docs/design/recon-auth-gateway-223-spec.md` (Design Risks), `tests/e2e/harness/recaptcha_challenge_probe.py` (the loop).
 
 ## Hypothesis Statement
@@ -62,7 +62,7 @@ Two agent paths, one shared profile discipline; the target set is any WAF- or bo
 
 ### Current Behavior
 
-The bootstrap re-authenticates on every run, in a disposable browser, from a rotating datacenter origin, with default humanization and blind retries; a low score therefore blocks the run with no bounded recovery.
+Pre-fix baseline: the bootstrap re-authenticated on every run, in a disposable browser, from a rotating datacenter origin, with default humanization and blind retries; a low score therefore blocked the run with no bounded recovery.
 
 ## Success Metrics
 
@@ -127,9 +127,9 @@ H1 needs **no credentialed login** (mount-only), so it is cheap and safe to test
 | Phase | Dates | Duration |
 |-------|-------|----------|
 | Setup & instrumentation | 2026-09-21 | done (probe script committed) |
-| Test running | next session | one sitting |
-| Analysis | next session | immediate |
-| Decision | next session | - |
+| Test running | 2026-09-21 | done (E1: 3/3 GREEN via `--mount-only`) |
+| Analysis | 2026-09-21 | H1 confirmed (mount-first removes the score-gated action) |
+| Decision | 2026-09-21 | fix landed as D237-15 |
 
 ---
 
@@ -177,8 +177,9 @@ H1 needs **no credentialed login** (mount-only), so it is cheap and safe to test
 - Conflicts: none.
 - Test: a human-gated run with a longer session timeout and a raised inactivity timeout; assert no lapse.
 
-## Experiments (planned, not yet run)
+## Experiments
 
+E1 ran and confirmed H1 (see the Conclude section); the remaining experiments are specified here for a future session.
 Each experiment changes one variable and is run through the committed probe.
 The order is deliberate: H1 first, because it needs no login and, if confirmed, removes the score-gated action from the bootstrap entirely.
 
