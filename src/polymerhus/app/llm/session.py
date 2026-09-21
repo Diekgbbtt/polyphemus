@@ -452,6 +452,7 @@ def structured_response_format(
     if schema is None:
         return None
     from polymerhus.app.llm.negotiation import (
+        is_union_schema,
         negotiate_method,
         probe_with_invoker,
         resolve_method,
@@ -495,8 +496,12 @@ def structured_response_format(
         # for a pure structured turn, function_calling (ToolStrategy) for a
         # tool-bound loop - never the wrong rung for the axis.
         method = "json_schema" if not tools_bound else "function_calling"
-    if method == "json_schema":
+    if method == "json_schema" and not is_union_schema(schema):
         return ProviderStrategy(schema, strict=False)
+    # A union schema is ToolStrategy-carried ONLY: `ProviderStrategy` rejects a
+    # union leaf on the pinned SDK, while `ToolStrategy` flattens the variants
+    # into one structured-output tool per variant (the hunt orchestrator's
+    # four-way verdict union is the production case).
     return ToolStrategy(schema)
 
 

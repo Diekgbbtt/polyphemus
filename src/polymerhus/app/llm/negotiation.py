@@ -74,7 +74,8 @@ section 6).
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Literal, get_args, get_origin
+from types import UnionType
+from typing import Any, Callable, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -122,6 +123,20 @@ def _unknown_profile(profile: CapabilityProfile | None) -> bool:
         profile.supports_structured_output is None
         and profile.supports_tool_calling is None
     )
+
+
+def is_union_schema(schema: Any) -> bool:
+    """Whether a schema TARGET is a union (`A | B` or `typing.Union[A, B]`).
+
+    A union is carried by `ToolStrategy` ONLY on the pinned SDK: its
+    `_iter_variants` flattens the variants into one structured-output tool per
+    variant, while `ProviderStrategy` rejects a union leaf in `_SchemaSpec`
+    (`Unsupported schema type: types.UnionType`) and the one-shot
+    `with_structured_output` refuses it in both methods (`Unsupported
+    function`). The construction seams therefore never route a union to the
+    json_schema rung; `roles.structured_output_for` refuses it loudly (the
+    one-shot seam has no union carrier). Pure; no I/O."""
+    return get_origin(schema) in (UnionType, Union)
 
 
 def schema_shape_of(schema: Any) -> SchemaShape:

@@ -518,3 +518,33 @@ def test_a6_fail_open_degrades_to_the_axis_semantic_default(monkeypatch):
     assert isinstance(
         S.structured_response_format("triager", _Schema, tools_bound=True),
         ToolStrategy)
+
+
+def test_union_schema_never_builds_providerstrategy(monkeypatch):
+    """A union schema is carried by `ToolStrategy` ONLY: the pinned langchain
+    `ProviderStrategy` rejects a `types.UnionType` (`_SchemaSpec` raises
+    `Unsupported schema type`), while `ToolStrategy` flattens the variants
+    (`_iter_variants`). The A6 seam must never hand a union to
+    `ProviderStrategy`, whatever the negotiated/fail-open method says
+    (regression: the hunt orchestrator's four-way verdict union)."""
+    from langchain.agents.structured_output import ToolStrategy
+    from pydantic import BaseModel
+    import polymerhus.app.llm.session as S
+
+    class _Gate(BaseModel):
+        outcome: str = "failed"
+
+    class _Note(BaseModel):
+        note: str = ""
+
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
+
+    def fake_capability(provider, model):
+        from polymerhus.app.llm.capability import CapabilityProfile
+        return CapabilityProfile(supports_structured_output=True,
+                                 supports_tool_calling=True)
+
+    monkeypatch.setattr(S, "resolve_capability", fake_capability)
+    rf = S.structured_response_format("triager", _Gate | _Note, tools_bound=False)
+    assert isinstance(rf, ToolStrategy)
+    assert len(rf.schema_specs) == 2

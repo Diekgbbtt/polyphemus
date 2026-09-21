@@ -389,3 +389,16 @@ def test_a6_structured_output_for_voluntary_uses_function_calling_construction()
     roles.structured_output_for(llm, _Closed, "voluntary_function_calling")
     assert llm.wso_calls[0]["kwargs"].get("method") == "function_calling"
     assert llm.wso_calls[0]["schema"] is _Closed
+
+
+def test_union_schema_is_refused_loudly_on_the_one_shot_seam():
+    """A union schema is session-seam only (ToolStrategy carries it); the
+    one-shot `with_structured_output` cannot express a union on the pinned SDK
+    (both methods raise 'Unsupported function'), so the seam refuses it with a
+    named limitation instead of leaking the SDK error."""
+    import pytest as _pytest
+
+    llm = _FakeLLM(_Closed(label="x"))
+    with _pytest.raises(ValueError, match="union"):
+        roles.structured_output_for(llm, _Closed | _OpenDict, "json_schema")
+    assert llm.wso_calls == []
