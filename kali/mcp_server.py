@@ -19,6 +19,20 @@ _STEEL_WAIT = re.compile(r"(?<!\S)--timeout[= ]+(\d+)")
 _CATALOGUE_TIMEOUT_S = 30
 _VERSION_TIMEOUT_S = 15
 _SCRIPT_RUNNERS = {"sh": "sh", "py": "python3"}
+# Every variadic verb the pinned CLI exposes (`<--help>`): `fill`/`type`/
+# `setvalue`/`select`/`upload` take `[VALUE(S)]...` after `<SELECTOR>`, and
+# `batch` takes `[COMMANDS]...`. clap's variadic greedily consumes a flag that
+# follows the first positional, folding it into the value silently - a trailing
+# `--session` folds too, dropping the command onto an auto-provisioned billable
+# `default` session. The CLI's own end-of-options marker is the fix (D18).
+_VARIADIC_VERBS = frozenset({"fill", "type", "setvalue", "select", "upload", "batch"})
+_BOUNDARY = "--"
+# The canonical form per verb, quoted back on refusal so re-encoding is trivial.
+_CANONICAL_FORM = {
+    **{v: f"steel browser {v} [OPTIONS] <selector> -- <value>..." for v in
+       ("fill", "type", "setvalue", "select", "upload")},
+    "batch": 'steel browser batch [OPTIONS] -- "<cmd>" "<cmd>"...',
+}
 
 def _workdir(session_id: str) -> str:
     # KALI_WORKDIR redirects only the root for host-side tests; in-container
@@ -62,6 +76,60 @@ def _session_name(command: str) -> str | None:
     if not m:
         return None
     return m.group(1) or m.group(2) or m.group(3)
+
+
+def _shlex_tokens(text: str) -> list[str] | None:
+    # Shell-aware tokenization, so a `--` inside a quoted value stays one token
+    # and is not mistaken for the boundary. None on unparseable text: the shell
+    # rejects that itself, so the guard stays out of it rather than guess.
+    try:
+        return shlex.split(text)
+    except ValueError:
+        return None
+
+
+def _verb_of(tokens: list[str]) -> str | None:
+    # The dispatched subcommand: the token after `browser` for a top-level
+    # command, the first token for a `batch` element (which carries no `browser`).
+    for i, tok in enumerate(tokens):
+        if tok == "browser" and i > 0:
+            return tokens[i + 1] if i + 1 < len(tokens) else None
+    return tokens[0] if tokens else None
+
+
+def _boundary_gap(command: str) -> str | None:
+    # The offending verb when a variadic command omits the `--` boundary, else
+    # None. This never guesses where the boundary is and never reorders: it
+    # requires the caller to declare it with the CLI's own end-of-options token,
+    # so a canonical command cannot fold and a non-canonical one fails loudly
+    # rather than folding a trailing flag into the entered value.
+    tokens = _shlex_tokens(command)
+    if not tokens:
+        return None
+    verb = _verb_of(tokens)
+    if verb not in _VARIADIC_VERBS:
+        return None
+    if _BOUNDARY not in tokens:
+        return verb
+    if verb == "batch":
+        # Each batch element is its own command over the same variadic grammar,
+        # so a text-entry element must carry its own boundary too.
+        for element in tokens[tokens.index(_BOUNDARY) + 1:]:
+            sub = _shlex_tokens(element)
+            sub_verb = _verb_of(sub) if sub else None
+            if sub_verb in _VARIADIC_VERBS and sub_verb != "batch" \
+                    and _BOUNDARY not in sub:
+                return sub_verb
+    return None
+
+
+def _boundary_refused(verb: str) -> dict:
+    target = "commands" if verb == "batch" else "value"
+    return _refused(
+        "variadic-boundary",
+        f"{verb} needs its -- boundary before the {target}: "
+        f"{_CANONICAL_FORM[verb]} (options precede the --; everything after it "
+        "is the value, verbatim)")
 
 
 def _live_session_names() -> set[str] | None:
@@ -128,8 +196,11 @@ def steel_exec(command: str = "", script: str = "", script_lang: str = "sh",
     Guards, in order: pinned steel version re-check; longest steel --timeout
     must sit below timeout_s (default 600, steel clock authoritative); a
     command-mode start on a name the live session catalogue reports is refused
-    with `<name> is already used`. Scripts carry timeout ordering and unique
-    names by skill construction and are never scanned."""
+    with `<name> is already used`; a variadic command (fill/type/setvalue/
+    select/upload/batch) without the `--` boundary is refused, because clap
+    would silently fold a trailing flag into the value. Scripts carry timeout
+    ordering, unique names, and the boundary by skill construction and are
+    never scanned."""
     if bool(command) == bool(script):
         return _refused("ambiguous-input", "pass exactly one of command or script")
     if command:
@@ -147,6 +218,9 @@ def steel_exec(command: str = "", script: str = "", script_lang: str = "sh",
             live = _live_session_names()
             if live is not None and name in live:
                 return _refused("session-taken", f"{name} is already used")
+        gap = _boundary_gap(command)
+        if gap is not None:
+            return _boundary_refused(gap)
         return _run(command, session_id, timeout_s)
     if script_lang not in _SCRIPT_RUNNERS:
         return _refused("unsupported-script-lang", f"want one of {sorted(_SCRIPT_RUNNERS)}")

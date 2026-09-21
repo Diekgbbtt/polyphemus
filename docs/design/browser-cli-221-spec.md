@@ -49,11 +49,13 @@ Agents browse by calling the tool; multi-op flows chain steel commands in script
 - Profiles: server-side profile identity replaces session-context shuttling (D17) - mint-with-persist, mount-by-id with read-only default, settle-plus-verify (no CLI state poll exists), explicit release as the persistence call, one live session per profile, bearer-id handling per #220.
 - The crawl duplicate readers are already consolidated upstream (#222): `crawl_agent._load_skill` and `crawl_agentic._load_steel_crawl_skill` both serve the crawler role prompt `recon/crawl/prompts/steel-crawl.md`, so this stream edits no crawl content; the browser skill is a flat repo skill (`skills/steel-browser/SKILL.md` with `references/*.sh`) loaded through the shared loader (`src/polymerhus/app/llm/skills.py::skill_for`) and, on demand, the `load_skill` tool (D8 amended on rebase).
 - D2's batch-routing survives as skill knowledge (a latency/state choice; the spike's `fill` failure was a flag-order artifact - D2 amended 2026-09-16), not code.
+- Variadic boundary: the CLI's variadic verbs (`fill`/`type`/`setvalue`/`select`/`upload`, and `batch`) require the `--` end-of-options marker, and `steel_exec` refuses a variadic command without a top-level one (`refused:variadic-boundary`) rather than guess where the value ends or reorder the command; the canonical `[OPTIONS] <selector> -- <value>...` encoding is taught by the skill (D18).
 
 ## Testing Decisions
 
 - A good test asserts external behaviour at the tool function (args in, envelope out, refusal reasons), never steel internals or live cloud state.
 - Tool function with stubbed steel binary: routing refusals, uniqueness guard with a faked session catalogue, timeout plumbing, envelope shape on success/malformed/error.
+- The variadic boundary guard is pinned at the same seam: a mis-ordered command is refused with nothing executed, a canonical command passes through byte-identical, a flag-like value after the sentinel is preserved verbatim, both `batch` levels are checked, and a `--` quoted inside a value is not mistaken for the boundary.
 - Crawl boundary: existing crawl suites green plus the skill byte-identity check.
 - Live tier only: fixture-login script end to end, stop proof via the session catalogue, orphan check.
 - Prior art: the pod/exec unit tests with injected fakes; the skill-loader tests; the YAML store tests with explicit temp roots.

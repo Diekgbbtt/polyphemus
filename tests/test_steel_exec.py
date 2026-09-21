@@ -235,3 +235,100 @@ def test_stale_steel_version_refused_never_executed(workroot, steel_stub_stale):
     assert "0.4.4" in out["stderr"]
     assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
     assert _calls(steel_stub_stale) == ["--version"]
+
+
+def test_misordered_variadic_refused_never_executed(workroot, steel_stub):
+    # The reported defect: a flag after the first value token folds into the
+    # value silently. Every variadic verb without the `--` boundary is refused,
+    # so the encoded-boundary rule never has to guess where the value ends.
+    for command in (
+        "steel browser fill '#user-name' 'standard_user' --json",
+        "steel browser fill '#user-name' 'standard_user' --session taken-sess --json",
+        "steel browser type --session s1 '#user-name' 'standard_user' --json",
+        "steel browser setvalue --session s1 '#user-name' 'standard_user'",
+        "steel browser select --session s1 '#drop' 'opt2' --json",
+        "steel browser upload --session s1 '#file' '/tmp/a' --json",
+    ):
+        out = STEEL_EXEC(command=command, session_id="s1")
+        assert out["returncode"] != 0, command
+        assert out["stderr"].startswith("refused:variadic-boundary"), (command, out)
+        assert set(out) == {"stdout", "stderr", "returncode", "duration_ms"}
+    # Only the version probe ran; no refused command reached the steel binary.
+    calls = _calls(steel_stub)
+    assert calls and set(calls) == {"--version"}
+
+
+def test_canonical_text_entry_passes_through_byte_identical(workroot, steel_stub):
+    cases = {
+        "steel browser fill --session s1 --json '#user-name' -- 'standard_user'":
+            "browser fill --session s1 --json #user-name -- standard_user",
+        "steel browser type --session s1 --json '#user-name' -- 'standard_user'":
+            "browser type --session s1 --json #user-name -- standard_user",
+        "steel browser setvalue --session s1 --json '#user-name' -- 'standard_user'":
+            "browser setvalue --session s1 --json #user-name -- standard_user",
+    }
+    for command, expected in cases.items():
+        out = STEEL_EXEC(command=command, session_id="s1")
+        assert out["returncode"] == 0, out
+        # `steel` is the program; the stub logs the argv verbatim, so an exact
+        # match proves the tool inserted nothing and reordered nothing.
+        assert _calls(steel_stub)[-1] == expected, command
+
+
+def test_flaglike_value_under_sentinel_preserved_verbatim(workroot, steel_stub):
+    # A value after the boundary is data, never an option: a flag-like value
+    # rides through untouched, which is the case the boundary exists for.
+    for value in ("--json", "-x"):
+        out = STEEL_EXEC(
+            command=f"steel browser fill --session s1 --json '#user-name' -- '{value}'",
+            session_id="s1")
+        assert out["returncode"] == 0, out
+        assert _calls(steel_stub)[-1] == \
+            f"browser fill --session s1 --json #user-name -- {value}"
+
+
+def test_batch_boundary_required_at_both_levels(workroot, steel_stub):
+    # Outer: `batch` is `[COMMANDS]...` variadic, so a trailing option would fold
+    # into the last command string.
+    out = STEEL_EXEC(
+        command="steel browser batch 'snapshot -i' 'click @e4' --session s1 --json",
+        session_id="s1")
+    assert out["stderr"].startswith("refused:variadic-boundary"), out
+    assert "batch" in out["stderr"]
+    # Inner: an element that is itself variadic carries its own boundary.
+    out = STEEL_EXEC(
+        command="steel browser batch --session s1 --json -- 'snapshot -i' 'fill @e6 42'",
+        session_id="s1")
+    assert out["stderr"].startswith("refused:variadic-boundary"), out
+    assert "fill" in out["stderr"]
+    # Canonical at both levels passes byte-identical.
+    command = "steel browser batch --session s1 --json -- 'snapshot -i' 'fill @e6 -- 42'"
+    out = STEEL_EXEC(command=command, session_id="s1")
+    assert out["returncode"] == 0, out
+    assert _calls(steel_stub)[-1] == \
+        "browser batch --session s1 --json -- snapshot -i fill @e6 -- 42"
+
+
+def test_quoted_double_dash_value_is_not_the_boundary(workroot, steel_stub):
+    # Tokenization is shell-aware: a `--` inside a quoted value is data, so the
+    # command still lacks the boundary and is refused, not mistaken as canonical.
+    out = STEEL_EXEC(
+        command="steel browser fill --session s1 --json '#x' 'a -- b'",
+        session_id="s1")
+    assert out["stderr"].startswith("refused:variadic-boundary"), out
+
+
+def test_non_variadic_verbs_accept_trailing_flags(workroot, steel_stub):
+    out = STEEL_EXEC(
+        command="steel browser press Enter --session s1 --json", session_id="s1")
+    assert out["returncode"] == 0, out
+    assert _calls(steel_stub)[-1] == "browser press Enter --session s1 --json"
+
+
+def test_script_text_not_scanned_for_boundary(workroot, steel_stub):
+    # The boundary guard is command-mode only; a script owns its own encoding
+    # (D13: script text is never scanned).
+    script = "steel browser fill --session s1 '#x' 'v' --json\necho done\n"
+    out = STEEL_EXEC(script=script, script_lang="sh", session_id="s2")
+    assert out["returncode"] == 0, out
+    assert "done" in out["stdout"]

@@ -195,11 +195,17 @@ _Avoid_: the note-dump (prose without steps, observables, or pointers).
 
 **Exec gateway**:
 The single loosely-coupled `steel_exec` tool beside `execute_command`, accepting either a `steel`-token-routed command or a `.sh`/`.py` automation script, carrying no operation knowledge (that lives in the skill).
-_Avoid_: per-subcommand allowlist, in-process driver.
+Its only knowledge is grammar-shape guards: the steel token, timeout ordering, session-name uniqueness, and the variadic boundary.
+_Avoid_: per-subcommand allowlist, in-process driver, operation knowledge in the tool.
 
 **Named session**:
 A cloud-browser session under an agent-chosen semantic `polymerhus-<flow>-<id>` name whose uniqueness is checked at creation against the live session catalogue (`steel browser sessions --json`: one read lists every live session with its name), stopped by script-trap on every path with platform inactivity as the backstop.
 _Avoid_: the default session, an unchecked name, an orphaned session.
+
+**Variadic boundary**:
+The mandatory `--` end-of-options marker separating a variadic CLI verb's `[OPTIONS]` and required `<selector>` from its value(s); `steel_exec` refuses a variadic command (text entry, `select`, `upload`, `batch`) without a top-level one (`refused:variadic-boundary`) because clap otherwise folds a trailing flag into the entered value behind `success:true`, and a folded `--session` onto an auto-provisioned `default` session.
+The verb set is read from the pinned CLI's `--help`, so a pin bump re-derives it.
+_Avoid_: the leading-options habit, a hand-maintained flag denylist, reordering a command to guess the boundary.
 
 **Browser profiles**:
 Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by id only and defines no profile terms here.

@@ -30,10 +30,10 @@ release() {
 }
 trap release EXIT INT TERM
 
-# Catalogue guard (D13 amended). One live session per profile holds the last
-# This read is also the pre-call baseline: a `default` seen here is foreign and
-# never addressed by this run.
-# writer, so the semantic name keeps this flow's session addressable.
+# Catalogue guard (D13 amended). This read is also the pre-call baseline: a
+# `default` seen here is foreign and never addressed by this run. One live
+# session per profile holds the last writer, so the semantic name keeps this
+# flow's session addressable.
 if steel browser sessions --json 2>/dev/null | python3 -c '
 import json,sys
 try:

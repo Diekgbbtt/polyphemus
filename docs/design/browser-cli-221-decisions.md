@@ -8,6 +8,8 @@ Companion precedent is the #220 auth-store tool contract (single implementation,
 
 Fixture target `https://the-internet.herokuapp.com/login` (canonical test login page), session `spike221a`, CLI-only, `--json` throughout.
 Raw captures live under `/tmp/spike221_*.json` (host scratch, never committed); secret-bearing assertions below quote key names and presence booleans only, never values.
+Historical capture (2026-09-10, pre-D2-amendment and pre-D18): the command shapes below are shown as observed, not as canonical encodings.
+A variadic verb shown without its `--` boundary predates D18 and must not be copied.
 
 | Command | Verdict | Latency | Evidence note |
 |---|---|---|---|
@@ -31,6 +33,8 @@ Overall spike verdict: PASS with one encoded constraint (D2). The single-shape `
 
 ## D1 - The allowlist is exactly the ticket's eleven, no `get`
 
+*Superseded 2026-09-11: there is no per-subcommand allowlist - `steel_exec` routes on the `steel` token, so the eleven-command list and the `get url` exclusion below are historical, not enforced.*
+
 `start, navigate, fill, click, wait, snapshot, cookies, storage, eval, batch, stop`.
 `get url` (used in the spike to read the current URL) is NOT admitted: the login-verification predicate (D9) reads the URL through `eval` (`window.location.href`), so no twelfth command is needed.
 Anything outside the eleven (tabs, screenshots, PDFs, file upload, drag, `set headers/useragent/geo`, profiles, credentials injection) is refused by the seam: the capability targets login-scale interaction, and each admitted command must earn its place against a login/extraction need.
@@ -51,14 +55,18 @@ The spike's "CLI 0.4.4 single-command ref-resolution defect" was a flag-order ar
 
 ## D3 - `eval` is permitted, purpose-bounded by skill discipline, audit-logged
 
-`eval` stays in the surface (the ticket lists it as login-relevant, and D1's URL-read plus D9's extraction reads depend on it).
+`eval` stays in the surface (the ticket lists it as login-relevant, and D9's extraction reads plus the URL read depend on it).
 No mechanical JavaScript subset is enforced: a read-only-JS allowlist is unenforceable at the seam (any expression can mutate), and claiming one would be false closure (`CODING_STANDARD.md` §12).
-The real bounds are three: the SKILL restricts `eval` to login/extraction purposes (reads plus the D2 interaction fallback); every evaluated expression is recorded verbatim in the tool result (audit, so a reviewer sees exactly what ran); the eleven-command allowlist (D1) keeps `eval` from becoming a general compute escape - it runs in the page, against the target, for the flow.
+The real bounds are two since `D1`'s allowlist was retired (the third bound below is historical): the SKILL restricts `eval` to login/extraction purposes (reads plus the D2 interaction fallback); every evaluated expression is recorded verbatim in the tool result (audit, so a reviewer sees exactly what ran).
+The retired third bound, for the record: the eleven-command allowlist (D1) kept `eval` from becoming a general compute escape - it runs in the page, against the target, for the flow.
 
 **Rationale.**
 The ticket pre-decided inclusion; the grill's job was the scope question. Purpose-discipline plus audit is the strongest HONEST bound: it admits what cannot be mechanically prevented and makes it reviewable instead.
 
 ## D4 - Redaction sits at the seam, ahead of results, context, and logs
+
+*Retired 2026-09-11: no redaction boundary - outputs pass through.
+Secret hygiene is skill discipline (name/count reads, no value echoes), not a seam guarantee.*
 
 The seam strips Steel platform secrets from raw CLI stdout BEFORE constructing tool results: `data.connectUrl` (bearing `apiKey=` + `sessionId=`, proven present in the spike's raw `start` output) and viewer URLs (`liveUrl`, the `viewerUrl` in `sessions` output) are dropped wholesale.
 The tool result for `start` carries only `{id, name, mode, timeouts}` - everything the flow needs to name its session, nothing that authenticates as the operator.
@@ -71,6 +79,9 @@ Tool results flow into agent context and Langfuse traces; redacting only at the 
 
 ## D5 - Two secret classes: platform secrets are stripped, target-secret values are withheld from logs
 
+*Retired 2026-09-11 with D4: no seam value-withholding stage.
+The two-secret-class discipline survives in the skill, which reads names and counts and never echoes a text-entry command string or a value.*
+
 The spike's audit-logging answer (D3) collides with credential hygiene: `fill` arguments carry TARGET secrets (operator-supplied test passwords), and echoing them into results/logs would trade one leak for another.
 The seam therefore keeps two classes apart: platform secrets (D4 - stripped everywhere, never executed-with except by the CLI's own env resolution) and target-secret command values (`fill`/`type`/`setvalue` text, `storage set` values, `cookies set` values), which ARE executed (the page needs them) but are withheld from tool results and logs - results echo `{filled: @eN}` (the CLI's own shape, which never echoes values) and logs record command names plus refs, never values.
 The auth store (#220) remains the home of target credentials at rest; the seam only ever holds them in flight.
@@ -79,6 +90,8 @@ The auth store (#220) remains the home of target credentials at rest; the seam o
 Not distinguishing the classes fails both ways: treating passwords like API keys breaks login, treating API keys like passwords leaks platform access. The CLI's value-never-echoed result shape makes the distinction cheap to hold.
 
 ## D6 - Stop is unconditional; the seam owns the whole named-session lifecycle
+
+*Amended 2026-09-11 (substrate ruling): the context-manager/`finally` shape is retired with the just-exec design - the stop owner is the script trap plus the D13 watchdog, names are the agent-chosen `polymerhus-<flow>-<id>` (never `<id8>`), and "unconditional" is enforced by the skill and the reference scripts, not by a seam context manager.*
 
 Sessions are named `polymerhus-<flow>-<id8>` (never the `default` session - the spike showed a foreign `default` session live, which the seam must neither use nor stop).
 The seam creates the session at flow start and stops it in a `finally` (context-manager shape): success, failure, and timeout paths all stop - stop-on-failure is enforced, never advisory, per the ticket.
@@ -89,6 +102,9 @@ Orphan detection is a seam helper, not agent duty: `reap_orphans(prefix)` lists 
 Whoever names a session must bury it; splitting creation from cleanup across caller and seam is how orphans happen. The finally-shape plus the inactivity backstop gives two independent guards (deterministic stop + self-release), either sufficient alone.
 
 ## D7 - One tool factory mirrors `get_crawl_tools`; the contract rides the tool description
+
+*Superseded 2026-09-11 (substrate ruling): there is no `get_browser_tools` factory - the tool is the `steel_exec` fastmcp gateway with dual command/script input.
+The surviving principle is D7's second half: the contract rides the tool description, and the skill restates it.*
 
 `get_browser_tools(*, exec_fn=None)` returns the browser tools filtered to `BROWSER_TOOL_NAMES`, injectable `exec_fn` defaulting to the real CLI runner - the exact shape of `steel_client.get_crawl_tools` (`src/polymerhus/recon/crawl/steel_client.py:105-125`) with subprocess in place of the in-process provider.
 Per #220, the tool description IS the contract (single implementation, no per-consumer paraphrase), and the repo skill quotes it verbatim.
@@ -103,7 +119,7 @@ Per #220, the tool description IS the contract (single implementation, no per-co
 
 The skill is `skills/steel-browser/SKILL.md`, with its operation references beside it as `references/*.sh` (#222/#234 catalogue: flat, `name` == directory, no role-routing layers; role prompts are NOT skills and live in module `prompts/` dirs).
 It loads through the shared loader `skill_for` (`src/polymerhus/app/llm/skills.py`) and, on demand, through the agent-callable `load_skill(name)` tool that calls that same loader internally - so bake-time mounts and runtime loads return byte-identical bodies.
-The skill body quotes the `steel_exec` contract verbatim and carries only the discipline the tool description cannot: the snapshot-then-act ref flow, the batch-routed text entry, the inline-`eval` escaping and result bounding (D14), the trap-owned stop on every path (D13), and the timeout ordering (D11).
+The skill body restates the `steel_exec` contract (the tool description stays the single source; the skill carries no byte-for-byte copy) and carries only the discipline it cannot: the snapshot-then-act ref flow, the boundary-mandated text entry, the inline-`eval` escaping and result bounding (D14), the trap-owned stop on every path (D13), and the timeout ordering (D11).
 Per-agent binding of the skill into the L1 index (`context={"skills": [...]}`) is deferred past #221: the #222 D3 reversal wires `load_skill` and the index middleware on every stateful agent but leaves per-agent skill-set configuration open, so this stream ships catalogue content plus the operation references and records the gap.
 The ticket's "duplicate skill readers" concern is already resolved upstream: `crawl_agent._load_skill` and `crawl_agentic._load_steel_crawl_skill` both serve the crawler role prompt `recon/crawl/prompts/steel-crawl.md`, so this stream touches no crawl content and `steel-crawl`'s own text is untouched (D10).
 
@@ -120,6 +136,9 @@ The CLI has no network-capture command (confirmed across the full `browser --hel
 Reusing the hardened predicate shape (cookie AND url, neither alone - `steel_provider.py:128-135`) inherits the false-positive analysis the crawl path already paid for (CSRF-cookie-on-login-page, off-login bounce without session) instead of re-learning it.
 
 ## D10 - steel_crawl is untouched; the seam is a new module; the CLI is pinned
+
+*Amended 2026-09-11 (substrate ruling): there is no agent-side `recon/browser/` module and no added Dockerfile layer - the CLI is installed eagerly by `kali/postrun.sh` into the persisted `/opt/localbin` volume (D12).
+The crawl non-regression boundary, the CLI pin, and the "no edits under `crawl/`, `parsers/`, `skills.py`, or the curators" rule below stand; read the `recon/browser/` and Dockerfile sentences as historical.*
 
 Non-regression boundary: NO edits under `crawl/` (`steel_client.py`, `steel_provider.py`), `parsers/` (no `PARSERS` registration - browser outputs are parsed by pure `parse(stdout)`-shaped functions in the new module, same signature discipline per `parsers/__init__.py:17`, without touching the registry), `skills.py`, or the curators.
 New code lives in `src/polymerhus/recon/browser/` (seam + tools + redaction + session lifecycle).
@@ -178,6 +197,47 @@ Reusable browsing-operation scripts live as `references/` beside the steel CLI s
 ## D17 - Server-side profiles replace session-context shuttling
 
 Operator decision from the #220 stream: durable browser identity lives in Steel profiles (long-lived named server-side state), not in client-side session-context JSON. What the skill procedures and references must encode, concisely: mint on first login (`start --profile <name> --update-profile`, profile id recorded to the auth store steel reference); mount by id with an explicit write discipline (`--update-profile` present accumulates, absent mounts read-only - recon-style browsing defaults read-only, write-back only past the verify gate); settle-then-verify on every mount (the API's poll-READY has NO CLI equivalent - `profile list` returns name plus id only, verified live - so settle pause plus verify-by-navigation is the procedure, and an unverified mount never passes a verdict); explicit release on every path (release is the persistence call; timed-out sessions still write, Failed ones skip it, so any abnormal end forces re-verify); one live session per profile (last-writer-wins, no merge - skill rule plus the #220 per-project locks); hard timeout at create plus inactivity backstop. Tool side impacts: none on the tool contract (profile flags ride in command strings; the uniqueness oracle is orthogonal); two honest constraints - no state-poll primitive exists to offer, concurrent-mount guarding stays out of the tool (would couple it to flag parsing), and `stop --all` is unusable for reaping (kills foreign sessions) while prefix-scoped reaping is blocked by the unreliable `sessions` listing, so platform inactivity is the primary orphan defense with best-effort reaping over skill-tracked names.
+
+## D18 - The variadic `--` boundary is mandatory; the tool refuses a command without it
+
+*Added 2026-09-18, on the external-authn-bootstrapper defect report.*
+
+The CLI's variadic verbs take `[VALUE]...` (or `[COMMANDS]...` for `batch`) after their required positional: `fill`, `type`, `setvalue`, `select`, `upload`, `batch`, enumerated from `browser <verb> --help` on the pinned 0.4.4.
+The report named the first three; the help surface shows `select` and `upload` carry the same variadic shape, so the guard covers them too, which also corrects the skill's earlier note that `select` accepts trailing flags.
+clap's variadic greedily consumes a flag that follows the first positional, folding it into the value silently: the observed `steel browser fill '<selector>' '<value>' --json` wrote `<value> --json` into the field behind `success:true`, and a trailing `--session` folds the same way, resolving the verb to an auto-provisioned billable `default` session - worse than the wrong value, since it leaks a live session rather than failing a login.
+This is D2's amended flag-order finding turned into a guard rather than a caution.
+The earlier proposal (hoist a denylist of known flags ahead of the first value) is rejected: it re-implements clap's grammar with a hand-maintained flag list, breaks on unknown flags, cannot tell a flag-like value from a flag, and silently reorders instead of surfacing the ambiguity.
+
+**Decision.** Every variadic command must declare the CLI's own end-of-options boundary `--`; `steel_exec` refuses a variadic command without a top-level `--` (`refused:variadic-boundary`) and never reorders or guesses.
+
+**Canonical encoding (the three roles).**
+`steel browser <verb> [OPTIONS] <selector> -- <value>...` for the value verbs, and `steel browser batch [OPTIONS] -- "<cmd>" "<cmd>"...` for `batch`.
+`[OPTIONS]` are `--flag[ value]` tokens, all before the `--`; the selector is the one required positional immediately before it; everything after the `--` is the value, taken verbatim, joined with spaces, and never reinterpreted as an option.
+A value that begins with `-` needs no special casing beyond the boundary: `-- '-x'` types `-x` verbatim, and `-- '--json'` types `--json`.
+Quoting follows the existing shell rules (single-quote literals, runtime values via `"${VALUE}"`); the boundary is a distinct argv token, not a shell escape.
+Inside a `batch`, each element is its own command over the same grammar and carries its own boundary, so `batch --session S --json -- 'snapshot -i' 'fill @e6 -- 42'` is canonical at both levels.
+
+**Enforcement is fail-closed and static.**
+`_boundary_gap` tokenizes with shlex (so a `--` inside a quoted value is data, not the boundary), identifies the dispatched verb, and refuses when a variadic verb lacks the marker, including the outer `batch` and each variadic `batch` element.
+The refusal names the verb and quotes its canonical form, so re-encoding is mechanical.
+The command is never reshaped and never executed on refusal, and the guard sits after the four existing guards (D11-D13 semantics unchanged) as a pure shape check.
+Script text stays unscanned (D13): a script owns its own encoding, and the reference scripts are canonical by construction.
+
+**Why reliable, not heuristic.** The check does not decide where the boundary is; it requires the caller to declare it with the CLI's documented token, and a canonical command then cannot fold, because no option sits in the value region - clap only folds a flag that follows the first value, and the first value now follows `--`.
+It is one token-presence predicate over the command, not a re-implementation of the flag grammar, and it never reorders.
+
+**Ranked alternatives (by reliability, with failure modes).**
+1. Enforced `--` boundary at the tool (chosen): total over command mode, `batch` and unmodeled future flags included; failure modes are a loud re-encode requirement and a verb set that a pin bump's skill review must extend (bounded by D10). Enforceable in the tool, taught by the skill.
+2. Typed/structured tool surface (the tool builds argv): structurally unambiguous for the verbs it models, but it cannot cover `script`, `batch` element strings, or unmodeled verbs, so it is opt-in and bypassable; it also changes the just-exec contract of D2/D8 (thin gateway, no operation knowledge, the skill quotes the contract verbatim). Enforceable in the tool; rejected as the primary seam.
+3. Known-option-after-selector refusal (denylist): rejected above - re-implements clap, breaks on new flags, cannot distinguish flag-like values, and over-refuses.
+4. Upstream CLI fix (error or auto-insert when a flag follows the first value): structurally best, but unavailable at the pinned 0.4.4 and unenforceable from the tool; filed as the long-term fix, never a dependency. Only upstream.
+
+**Chosen seam and justification.** The tool is the single chokepoint every browser act funnels through (the D4 rationale), so it is the one place the guarantee can be total; the sentinel is the CLI's own boundary, so the tool constrains the encoding without owning the grammar.
+The skill carries the same rule for a bare CLI (no `steel_exec`) and for the reference scripts, and the refusal message quotes the canonical form so the tool and the skill teach one encoding.
+
+**Accepted failure modes, named not papered over.** A caller who writes a stray positional before the boundary (a value before `--`) can still fold; that is not the habitual options-last encoding and is not detectable without flag parsing, so it is recorded here rather than guessed at.
+An unparseable command (unbalanced quotes) is passed through, since the shell rejects it itself and the guard does not guess.
+The live red/green repro is recorded in the assertions file.
 
 ## What was deliberately NOT decided here
 
