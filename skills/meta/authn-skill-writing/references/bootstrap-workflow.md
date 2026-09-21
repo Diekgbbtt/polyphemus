@@ -18,6 +18,7 @@ It is the prompt form of the mandatory workflow in `../SKILL.md`; the skill is t
 - `<data_root>` - the system's app-owned data root (`<codebase_root>/data/`), visible to you.
 - `<skill_name>` - the fixed project-skill name `authn`.
 - `<meta_skill_path>` - the path to `SKILL.md` beside this file.
+- `<mechanics_skill_path>` - the path to the `steel-browser` operation-mechanics skill (`skills/steel-browser/SKILL.md`), with its `references/` scripts beside it.
 
 ## Prompt
 
@@ -26,6 +27,7 @@ You run outside the system under test, with your own request tooling and the aut
 You are the operator, by hand: you write store facts only through the seed face, and you write the procedure only as the project skill bundle. Facts live in the store, steps live in the skill, and secret values never leave the store.
 
 Read `<meta_skill_path>` and follow its phases P0 through P6 in order, including its seed-face contract and its steel profile discipline.
+Before the first browser step, read `<mechanics_skill_path>` (and its `references/` scripts beside it) for the operation MECHANICS - snapshot, batch, waiting, ref flow, variadic encoding, session lifecycle; do not re-derive the steel CLI from `--help`.
 Interfaces: write store facts with `PUT <seed_face_url>` and body `{overview?, accounts?}`; read state with `GET <read_face_url>`; write the project skill at `<data_root>/<project_id>/skills/<skill_name>/SKILL.md` with references beside it.
 Target: sign-in at `<login_url>`; sign-up at `<signup_url>`; account `<credentials>`.
 If `<signup_url>` is not `none`, run sign-up and sign-in as SEPARATE flows, never merged.

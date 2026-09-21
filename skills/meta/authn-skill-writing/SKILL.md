@@ -2,7 +2,7 @@
 name: authn-skill-writing
 description: Use when executing authentication against a target project by hand and authoring that target's per-project authentication skill from verified state.
 metadata:
-  version: '2.4'
+  version: '2.5'
 ---
 # Authn skill writing
 
@@ -103,6 +103,17 @@ One live session per profile holds the last writer; there is no merge, so never 
 Stop on every path with `steel browser stop --session <name> --json`, then prove it gone against `steel browser sessions --json`.
 The scripts beside the steel-browser skill are optional helpers for these acts: `references/profile-mount.sh`, `references/session-lifecycle.sh`, `references/catalogue.sh`, `references/extract-reads.sh`.
 
+### Browser fast path (read this before you touch the CLI)
+
+The operation MECHANICS are the `steel-browser` skill (`skills/steel-browser/SKILL.md`) and its `references/` scripts; this skill owns only the login PROCEDURE.
+Read the mechanics skill before the first browser step; do not re-derive the CLI from `--help`.
+Four habits carry almost all the latency and reliability:
+1. Snapshot with `-i`: `steel browser snapshot -i --session <name> --json` returns only interactive elements with their refs, not the whole tree.
+2. Batch to share state: `steel browser batch --session <name> --json -- 'snapshot -i' 'fill @e6 -- <value>'` reads a ref and uses it in one spawn, instead of a snapshot round-trip then an act.
+3. Options lead, and a variadic verb carries its `--` boundary: `steel browser fill --session <name> --json '#email' -- '<value>'` (the value is taken verbatim; without the boundary a trailing flag folds into the value behind `success:true`).
+4. Synchronise on an observable, never a fixed `sleep`: `steel browser wait --url <substr>` / `--text <marker>` / `--selector <css>` with `--timeout <ms>`.
+Re-snapshot after every `navigate`: refs do not cross a navigation (an old ref answers `Unknown ref` or silently re-binds), so refs come only from the snapshot you just read.
+
 ### Worked example
 
 `references/worked-example.yaml` beside this skill carries a request-replayable scenario (a defence classified, `http-client-replayability: true`) and a browser-only scenario (a JS-challenge defence, `http-client-replayability: false`), each with its probe trace and its seed payload.
@@ -124,7 +135,8 @@ Gate: each flow states its endpoint or form plus its required headers and anti-f
 Request path: reproduce the request shape exactly, then verify success before capturing anything.
 Browser path: mint or mount the profile per the fallback discipline above, settle, and verify.
 Record the profile name from the mint to the account `steel` reference in P4.
-Verify with concrete commands: `navigate` to the target URL, `wait --load networkidle` to settle, then `eval` or `get url` to read the current URL and confirm the authenticated landing state.
+Verify with concrete commands: `navigate` to the target URL, then settle with `wait --url <authenticated-landing-substr>` or `wait --text <marker>` (a condition, not a fixed pause), then `eval` or `get url` to read the current URL and confirm the authenticated landing state.
+Do not settle with `navigate --wait-until networkidle`: a login page or SPA with continuous activity (polling, websockets, analytics beacons) never reaches network idle, so the navigate times out and wastes its whole timeout; use `--wait-until load` (or `domcontentloaded`) and a `wait` condition instead.
 Gate: a verification predicate fired for the flow, where request success means a new session cookie plus a non-login URL and browser success means navigation to the authenticated landing state.
 An unverified flow never yields a verdict and never advances to P4.
 

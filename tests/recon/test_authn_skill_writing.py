@@ -158,3 +158,36 @@ def test_worked_example_seed_overviews_validate_and_cover_both_verdicts():
         assert isinstance(scenario["http_client_replayability"], bool)
     verdicts = {s["http_client_replayability"] for s in scenarios}
     assert verdicts == {True, False}, "the example must show both verdicts"
+
+
+def test_skill_carries_the_browser_fast_path():
+    """The e2e latency finding: the bootstrapper re-derived the CLI from `--help`
+    and paid snapshot round-trips and a networkidle timeout. The skill must inline
+    the four habits (interactive snapshot, batch, variadic boundary, observable
+    wait) and point at the operation-mechanics skill."""
+    body = _body()
+    assert "steel-browser` skill" in body
+    assert "snapshot -i" in body
+    assert "batch --session" in body
+    assert "-- <value>" in body
+    assert "wait --url" in body
+
+
+def test_skill_warns_against_networkidle_settle():
+    """A login page or SPA with continuous activity never reaches network idle,
+    so `navigate --wait-until networkidle` times out; the skill must steer to
+    `load` plus a condition, and must not prescribe the networkidle wait."""
+    body = _body()
+    assert "wait --load networkidle" not in body
+    assert "never reaches network idle" in body
+
+
+def test_bootstrap_prompt_cites_the_mechanics_skill():
+    """The prompt must point the bootstrapper at the operation-mechanics skill
+    before the first browser step, so it is not re-derived from `--help`."""
+    prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
+        encoding="utf-8"
+    )
+    assert "<mechanics_skill_path>" in prompt
+    assert "steel-browser" in prompt
+    assert "do not re-derive the steel CLI from `--help`" in prompt
