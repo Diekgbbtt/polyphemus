@@ -106,7 +106,7 @@ The `steel scrape` and `steel profile` families are sessionless and carry only `
 - Waiting: `wait -t <text> | --selector <css> | -u <substr> | -f <js> | -l <load-state>` with `--timeout <ms>`.
 - JS: `eval <js>`.
 - Cookies and storage: `cookies [set|clear]`, `storage local|session [key] [set|clear]`.
-- Batch: `batch -- "cmd" "cmd" ... [--bail]` (options before the `--`; each element carries its own boundary when variadic).
+- Batch: `batch [OPTIONS] -- "cmd" "cmd" ...` (options such as `--bail` precede the `--`; each element carries its own boundary when variadic).
 - One-shot scraping (no session): `steel scrape <url> [--format html|readability|cleaned_html|markdown] [--pdf] [--screenshot] [--use-proxy]`.
 - Spidering: enumerate links with `eval`, `navigate` per link, both capped.
 - Profiles: `steel profile list|import|sync|delete`; mount through `start --profile`.

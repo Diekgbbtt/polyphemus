@@ -75,7 +75,7 @@ Command shapes below are the 2026-09-16 captures: where a variadic verb appears 
 - Session catalogue before/after: `steel browser sessions --json` -> `{"data":[{id,mode,name,status,viewerUrl}],"success":true}` while live, `{"data":[],"success":true}` once stopped; `steel sessions list --status live --json` agrees on the id but carries no name; a `default` session appears when a start omits `--session`.
 - Oracle taken (after start): -> `{"data":"https://app.steel.dev/sessions/<id>","success":true}`.
 - `start --session <name> --session-timeout 600000 --json` -> `data` keys `connectUrl, id, inactivityTimeoutMs, liveUrl, mode, name, remainingMs` (the `connectUrl` embeds `apiKey=` and a JWT, so start stdout is sensitive - the reference scripts print `name`/`mode` only).
-- Standalone `fill @e6` -> `{"error":"Unknown ref: e6",...,"success":false}` (the 0.4.4 defect the batch rule answers).
+- Standalone `fill @e6` -> `{"error":"Unknown ref: e6",...,"success":false}` (captured 2026-09-16; D2's amendment attributes it to flag-order swallowing, not a ref-resolution defect, and D18 guards the encoding).
 - `batch "snapshot -i" "fill @e6 tomsmith" "fill @e8 ..." "click @e4" --json` -> per-op `data` with the fill echoing `{"filled":"@e6"}`.
 - `wait -t "Secure Area" --timeout 10000 --json` -> hit; `cookies --json` -> 5 cookies incl. `rack.session`; `eval "window.location.href"` -> the `/secure` URL; `stop` -> `{"stoppedSessions":["<name>"]}`, the catalogue then empty.
 - `steel scrape https://example.com --format markdown --json` -> `{content.markdown, links, metadata}`.

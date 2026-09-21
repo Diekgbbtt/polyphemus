@@ -195,7 +195,7 @@ _Avoid_: the note-dump (prose without steps, observables, or pointers).
 
 **Exec gateway**:
 The single loosely-coupled `steel_exec` tool beside `execute_command`, accepting either a `steel`-token-routed command or a `.sh`/`.py` automation script, carrying no operation knowledge (that lives in the skill).
-Its only knowledge is grammar-shape guards: the steel token, timeout ordering, session-name uniqueness, and the variadic boundary.
+Its only knowledge is grammar-shape guards: the steel token, the pinned-version re-check, timeout ordering, session-name uniqueness, and the variadic boundary.
 _Avoid_: per-subcommand allowlist, in-process driver, operation knowledge in the tool.
 
 **Named session**:

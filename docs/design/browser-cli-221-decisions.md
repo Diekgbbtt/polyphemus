@@ -17,7 +17,7 @@ A variadic verb shown without its `--` boundary predates D18 and must not be cop
 | `navigate` | pass | 1 s | Returns `{title, url}`; reached the login page. |
 | `snapshot -i` | pass | 1 s | Accessibility tree with `@eN` refs; username `@e6`, password `@e8`, login `@e4`. |
 | `fill @eN` standalone | FAIL | - | `Unknown ref: e6`, 4/4 across `fill`/`type`/`setvalue`, CSS selector also fails (`Element not found: #username`) while the element provably exists (`find input` returns 2, `eval` reads `id="username"`). CLI 0.4.4 ref-resolution defect in the single-command path; `focus @e6` + `click @e4` on the same refs succeed. **Amended 2026-09-16: the cause is flag order, not ref resolution - the invocation put `--session`/`--json` after the value, and the variadic verb swallowed them as VALUE, addressing a missing/`default` session. With options leading, all three verbs resolve a ref and a CSS selector standalone (ladder rounds 2-3, `a1_control.raw`).** |
-| `fill` inside `batch` | pass | ~4 s for 3 ops | `batch "snapshot -i" "fill @e6 tomsmith"` returns `{filled: @e6}` and `eval` reads `#username.value == "tomsmith"` - the value provably landed. D2 routes all text entry through `batch`. |
+| `fill` inside `batch` | pass | ~4 s for 3 ops | `batch "snapshot -i" "fill @e6 tomsmith"` returns `{filled: @e6}` and `eval` reads `#username.value == "tomsmith"` - the value provably landed. D2 prefers `batch` for multi-act text entry; the standalone form works with the `--` boundary (D2 amended). |
 | `click` | pass | 1 s | `{clicked: @e4}`; empty-credential submit behaved as the page specifies. |
 | `wait -t` | pass | ~1 s hit / 11 s timeout path | `wait -t "Secure Area" --timeout 10000` succeeds post-login; pre-login it times out with a typed error (no hang past the timeout). |
 | full login | pass | - | `batch(snapshot, fill pw, click)` lands on `/secure` with `You logged into a secure area!` - the acceptance-criterion path works through CLI commands only. |
@@ -120,7 +120,9 @@ Per #220, the tool description IS the contract (single implementation, no per-co
 The skill is `skills/steel-browser/SKILL.md`, with its operation references beside it as `references/*.sh` (#222/#234 catalogue: flat, `name` == directory, no role-routing layers; role prompts are NOT skills and live in module `prompts/` dirs).
 It loads through the shared loader `skill_for` (`src/polymerhus/app/llm/skills.py`) and, on demand, through the agent-callable `load_skill(name)` tool that calls that same loader internally - so bake-time mounts and runtime loads return byte-identical bodies.
 The skill body restates the `steel_exec` contract (the tool description stays the single source; the skill carries no byte-for-byte copy) and carries only the discipline it cannot: the snapshot-then-act ref flow, the boundary-mandated text entry, the inline-`eval` escaping and result bounding (D14), the trap-owned stop on every path (D13), and the timeout ordering (D11).
-Per-agent binding of the skill into the L1 index (`context={"skills": [...]}`) is deferred past #221: the #222 D3 reversal wires `load_skill` and the index middleware on every stateful agent but leaves per-agent skill-set configuration open, so this stream ships catalogue content plus the operation references and records the gap.
+Per-agent binding of the skill into the L1 index (`context={"skills": [...]}`) is no longer deferred: A9 (2026-09-17) rosters every tool-calling role in `ROLE_SKILLS`, and each bound site attaches the whole surface through `skill_agent_binding` (index middleware + skill tools + the invocation context).
+A role with no bearing skill is declared EXEMPT and binds nothing.
+The earlier deferral, and the #222 D3 note that per-agent skill-set configuration was open, is closed by A9.
 The ticket's "duplicate skill readers" concern is already resolved upstream: `crawl_agent._load_skill` and `crawl_agentic._load_steel_crawl_skill` both serve the crawler role prompt `recon/crawl/prompts/steel-crawl.md`, so this stream touches no crawl content and `steel-crawl`'s own text is untouched (D10).
 
 **Rationale.**
@@ -220,7 +222,7 @@ Inside a `batch`, each element is its own command over the same grammar and carr
 **Enforcement is fail-closed and static.**
 `_boundary_gap` tokenizes with shlex (so a `--` inside a quoted value is data, not the boundary), identifies the dispatched verb, and refuses when a variadic verb lacks the marker, including the outer `batch` and each variadic `batch` element.
 The refusal names the verb and quotes its canonical form, so re-encoding is mechanical.
-The command is never reshaped and never executed on refusal, and the guard sits after the four existing guards (D11-D13 semantics unchanged) as a pure shape check.
+The command is never reshaped and never executed on refusal, and the guard runs last, after the routing, version, timeout-ordering, and session-name checks, as a pure shape check.
 Script text stays unscanned (D13): a script owns its own encoding, and the reference scripts are canonical by construction.
 
 **Why reliable, not heuristic.** The check does not decide where the boundary is; it requires the caller to declare it with the CLI's documented token, and a canonical command then cannot fold, because no option sits in the value region - clap only folds a flag that follows the first value, and the first value now follows `--`.
@@ -228,7 +230,7 @@ It is one token-presence predicate over the command, not a re-implementation of 
 
 **Ranked alternatives (by reliability, with failure modes).**
 1. Enforced `--` boundary at the tool (chosen): total over command mode, `batch` and unmodeled future flags included; failure modes are a loud re-encode requirement and a verb set that a pin bump's skill review must extend (bounded by D10). Enforceable in the tool, taught by the skill.
-2. Typed/structured tool surface (the tool builds argv): structurally unambiguous for the verbs it models, but it cannot cover `script`, `batch` element strings, or unmodeled verbs, so it is opt-in and bypassable; it also changes the just-exec contract of D2/D8 (thin gateway, no operation knowledge, the skill quotes the contract verbatim). Enforceable in the tool; rejected as the primary seam.
+2. Typed/structured tool surface (the tool builds argv): structurally unambiguous for the verbs it models, but it cannot cover `script`, `batch` element strings, or unmodeled verbs, so it is opt-in and bypassable; it also changes the just-exec contract of D2/D8 (thin gateway, no operation knowledge, the skill restates the contract). Enforceable in the tool; rejected as the primary seam.
 3. Known-option-after-selector refusal (denylist): rejected above - re-implements clap, breaks on new flags, cannot distinguish flag-like values, and over-refuses.
 4. Upstream CLI fix (error or auto-insert when a flag follows the first value): structurally best, but unavailable at the pinned 0.4.4 and unenforceable from the tool; filed as the long-term fix, never a dependency. Only upstream.
 
@@ -239,8 +241,11 @@ The skill carries the same rule for a bare CLI (no `steel_exec`) and for the ref
 An unparseable command (unbalanced quotes) is passed through, since the shell rejects it itself and the guard does not guess.
 The live red/green repro is recorded in the assertions file.
 
+**Sibling-branch convergence.** The auth-context branches (220, 223, 237, meta) branched off this branch at `8e3d1b3`, before D18 landed, and one of them re-applied the same fix as its own `D19` (`c332329`).
+A rebase of those branches onto the D18 tip must drop the duplicate so the fix carries one number.
+
 ## What was deliberately NOT decided here
 
-- `domain-model.md` is unchanged by this ticket: the seam introduces capability infrastructure inside Recon, not a new primitive, relationship, or open question in the reasoned ontology. Per `CONTEXT-MAP.md`'s helper-modules ruling, capability vocabulary lives in the owning context's glossary (`recon/CONTEXT.md`: exec gateway, named session, the #220-owned profile split; the redaction-boundary entry retired with D4/D5), never as ontology.
+- `domain-model.md` is unchanged by this ticket: the seam introduces capability infrastructure inside Recon, not a new primitive, relationship, or open question in the reasoned ontology. Per `CONTEXT-MAP.md`'s helper-modules ruling, capability vocabulary lives in the owning context's glossary (`recon/CONTEXT.md`: exec gateway, named session, variadic boundary, skill binding; the #220-owned profile split; the redaction-boundary entry retired with D4/D5), never as ontology.
 - The exact Dockerfile install stanza (binary download URL, checksum) is fixed at implementation with a built-image `steel --version` proof, not guessed here.
 - The consuming login flow (ticket 5) and the fallback leg (ticket 4) are out of scope; this ticket ends at proven primitives plus the skill.
