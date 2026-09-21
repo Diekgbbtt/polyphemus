@@ -40,7 +40,7 @@ A seeded operator name colliding with a live agent record keeps the agent record
 Shape violations return 400 `{ok: false, error: "auth_invalid", detail}` and land nothing.
 An unknown project returns 404.
 The in-process agent store tool is the in-system agent path, not yours: do not use it and do not document it.
-Name every account `<email>-<minting_context>`: the credential username, a hyphen, then the run or flow that minted it (`first_authn_bootstrap`, `hunting_misauthr`, ...), which you assess at write time.
+Name every account `<username>-<minting_context>`: the credential username with its email location suffix stripped (`diegogobbetti69@gmail.com` -> `diegogobbetti69`), a hyphen, then the run or flow that minted it (`first_authn_bootstrap`, `hunting_misauthr`, ...), which you assess at write time.
 The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share ONE account name; a second name for the same credential identity is a fork, not a second account.
 Per account record: `credentials` (username, password, login_url, plus optional domain and form selectors), `tokens` (each `{value, location: cookie|header|storage, target?, expiry?}`), `steel` (`{profile}` key only, never browser state), `snapshot` (`{cookies, params, captured_at}`; the required header fact single-sources on the overview's `required_headers`, never duplicated here), `roles` with `default_role` where multiple roles exist, `notes`.
 Overview fields, all optional: `login_endpoint`, `required_headers`, `mechanism`, `defences`, `fingerprinting`, `technical_conditions` (a list of `{name, check}`), `anti-bot`, `http-client-replayability`, `notes`.

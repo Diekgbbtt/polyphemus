@@ -109,6 +109,58 @@ def test_read_returns_copies_never_store_handles(tmp_path):
     assert store.read(PROJECT, "overview.notes") == "operator ground truth"
 
 
+# --- account names: the email location suffix is stripped systematically ------
+# #247: an account named by an email username carries the identity's local
+# part; the tool's symbolic layer strips the email location suffix (`@<domain>`)
+# so `diegogobbetti69@gmail.com-first_authn_bootstrap` and
+# `diegogobbetti69-first_authn_bootstrap` are ONE key - never a fork.
+
+_EMAIL_NAME = "diegogobbetti69@gmail.com-first_authn_bootstrap"
+_LOCAL_NAME = "diegogobbetti69-first_authn_bootstrap"
+
+
+def test_write_with_the_full_email_name_lands_on_the_stripped_name(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, f"accounts.{_EMAIL_NAME}.notes", "minted via the full form")
+    assert store.read(PROJECT, f"accounts.{_LOCAL_NAME}.notes") == "minted via the full form"
+    assert store.read(PROJECT, f"accounts.{_EMAIL_NAME}.notes") == "minted via the full form"
+    assert list(store.read(PROJECT, "accounts")) == [_LOCAL_NAME]
+
+
+def test_create_with_the_full_email_name_lands_on_the_stripped_name(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, f"accounts.{_EMAIL_NAME}",
+                {"credentials": _credentials("diegogobbetti69@gmail.com")})
+    accounts = store.read(PROJECT, "accounts")
+    assert list(accounts) == [_LOCAL_NAME]
+    # The identity itself stays the full credential username - only the NAME
+    # carries the local part.
+    assert accounts[_LOCAL_NAME]["credentials"]["username"] == "diegogobbetti69@gmail.com"
+
+
+def test_create_duplicate_via_the_full_email_form_collides_on_the_stripped_name(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, f"accounts.{_LOCAL_NAME}",
+                {"credentials": _credentials("diegogobbetti69@gmail.com")})
+    with pytest.raises(DuplicateAuthError):
+        store.write(PROJECT, f"accounts.{_EMAIL_NAME}",
+                {"credentials": _credentials("diegogobbetti69@gmail.com")})
+
+
+def test_names_without_an_email_location_are_untouched(tmp_path):
+    store = AuthStore(tmp_path)
+    store.write(PROJECT, "accounts.alice.notes", "plain name")
+    assert store.read(PROJECT, "accounts.alice.notes") == "plain name"
+    assert list(store.read(PROJECT, "accounts")) == ["alice"]
+
+
+def test_operator_seed_canonicalises_the_full_email_name(tmp_path):
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(PROJECT, accounts={
+        _EMAIL_NAME: {"credentials": _credentials("diegogobbetti69@gmail.com")}})
+    assert list(store.read(PROJECT, "accounts")) == [_LOCAL_NAME]
+
+
 # --- writes: CREATE at the account root, merge below it, null removes --------
 
 def _credentials(name="ops-admin") -> dict:

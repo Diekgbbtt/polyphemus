@@ -93,10 +93,10 @@ The e2e surfaced a wording defect (not a code defect): the profile discipline sa
 The CLI's `--profile` takes the profile NAME (the `profileId` also resolves, verified live, but the discipline as written mounts by name), and the store holds the name under `steel: {profile}`.
 The wording is corrected to "Mount by name", P3 records "the profile name from the mint", and D237-4 is amended; a content test forbids "Mount by id" and requires "Mount by name".
 
-## D237-12 - Account identity is the credential, named `<email>-<minting_context>`
+## D237-12 - Account identity is the credential, named `<username>-<minting_context>`
 
 The e2e left two White Jotter accounts sharing one username and password, `whitejotter-signup` (procedure `sign-up`) and `whitejotter-signin` (procedure `sign-in`): a fork produced by treating `procedure` as an identity axis.
-The account's identity is the credential it authenticates, and the NAME carries that identity: the tool contract (`AUTH_STORE_CONTRACT`), the meta skill's seed-face contract, and the reusable prompt now require `<email>-<minting_context>` (the credential username plus the run or flow that minted it, `first_authn_bootstrap`, `hunting_misauthr`, ...), assessed at write time.
+The account's identity is the credential it authenticates, and the NAME carries that identity: the tool contract (`AUTH_STORE_CONTRACT`), the meta skill's seed-face contract, and the reusable prompt now require `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, `first_authn_bootstrap`, `hunting_misauthr`, ...), assessed at write time.
 The minting context is the run or flow, never the procedure, so sign-up and sign-in in one bootstrap share one account name and the second write collides on `duplicate_auth` to be merged.
 The meta skill's "separate flows with separate accounts" instruction, its red-flag row, and the prompt's matching line are sharpened to "separate procedures; one account per credential identity".
 The store does NOT yet enforce credential-identity uniqueness (the fork remains storable under two names); that gate and the `procedure` cardinality (a single optional string cannot name two procedures) are recorded as open design questions below.
@@ -106,6 +106,15 @@ Content tests pin the tool-contract markers and the meta-skill/prompt wording; t
 
 - Hard identity gate: YES. The store refuses a create or seed whose credential username (default or any role) already belongs to another account, with the `duplicate_identity` tool envelope and HTTP 500 on the seed face; the repair is a ROLE on the existing account, never a second account. A fork is an agent that misread the record's role-assignment contract, not merely a naming miss. Decision recorded as D220-11 in `docs/design/auth-store-220-decisions.md`.
 - `procedure` cardinality: ONE procedure. It stays a single optional string; a credential identity is one account and the label names the serving procedure, so no list is introduced.
+
+### Amendment (#247 - the email location suffix is stripped)
+
+The dotted email in the name made every email-keyed account unaddressable through the tool's dot-path grammar: `accounts.diegogobbetti69@gmail.com-first_authn_bootstrap.status` split at the email's dots, so the store truncated the name (`account.com-first_authn_bootstrap is not a known account field`) and the live gateway loop could not persist a status or a re-minted token.
+The name pattern becomes `<username>-<minting_context>`: the credential username with its email location suffix stripped (`diegogobbetti69@gmail.com` -> `diegogobbetti69`), a hyphen, then the minting context.
+The strip is applied systematically in the store's symbolic layer (`store.py::_strip_email_location`, `_canonical_account_path`): every `accounts.` path and every seeded name is canonicalised before splitting, so the full-email form and the canonical form address ONE record, and a seed whose stripped names collide refuses loudly.
+The credential identity itself is unchanged: `credentials.username` stays the full email, and the duplicate-identity gate still keys on it.
+Consequence recorded: two usernames sharing a local part across domains (`a@x.com-ctx`, `a@y.com-ctx`) collapse to one name `a-ctx` and collide on `duplicate_auth`; the pattern assumes the local part identifies the person.
+The tool contract, the meta skill, the reusable prompt, the recon glossary, the store's tests, and the stored accounts carry the new pattern; the location strip assumes a hyphen-free domain (the minting context follows the first hyphen).
 
 ## D237-13 - The browser fast path is inlined and the mechanics skill is cited (latency finding)
 

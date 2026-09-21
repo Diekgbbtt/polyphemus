@@ -95,9 +95,10 @@ def test_contract_carries_the_account_identity_rule():
     """The account NAME carries the credential identity, so a second name for
     the same identity is a fork, not a second account (the #237 e2e defect:
     sign-up and sign-in forked two accounts sharing one username)."""
-    for marker in ("ACCOUNT IDENTITY", "<email>-<minting_context>",
-                   "minting context", "never the procedure",
-                   "not an identity axis", "roles.*.username", "new ROLE"):
+    for marker in ("ACCOUNT IDENTITY", "<username>-<minting_context>",
+                   "email location suffix", "minting context",
+                   "never the procedure", "not an identity axis",
+                   "roles.*.username", "new ROLE"):
         assert marker in AUTH_STORE_CONTRACT, f"contract missing {marker!r}"
 
 
@@ -213,6 +214,26 @@ def test_write_record_mapping_at_a_fresh_name_creates(tmp_path):
     assert isinstance(record.pop("updated_at"), str)
     assert record == {"origin": "agent", "notes": "fresh test account",
                       "procedure": "password-login"}
+
+
+def test_write_with_the_full_email_name_lands_on_the_stripped_name(tmp_path):
+    """#247: the tool's symbolic layer strips the email location suffix, so the
+    refused live writes (`accounts.<email>-<context>.status`) land on the
+    canonical name instead of forking or erroring."""
+    tool = build_auth_store_tool(PROJECT, _seeded_store(tmp_path))
+    out = tool.invoke({
+        "command": "write",
+        "path": "accounts.diegogobbetti69@gmail.com-first_authn_bootstrap.status",
+        "value": "not_valid"})
+    assert out["ok"] is True
+    assert tool.invoke({
+        "command": "read",
+        "path": "accounts.diegogobbetti69-first_authn_bootstrap.status",
+    })["value"] == "not_valid"
+    assert tool.invoke({
+        "command": "read",
+        "path": "accounts.diegogobbetti69@gmail.com-first_authn_bootstrap.status",
+    })["value"] == "not_valid"
 
 
 def test_write_to_the_overview_lands(tmp_path):

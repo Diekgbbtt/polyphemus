@@ -111,7 +111,8 @@ def test_account_identity_is_the_credential_not_the_procedure():
     for the same credentials share ONE account, not two records differing only
     by `procedure` (the #237 e2e fork defect)."""
     body = _body()
-    assert "<email>-<minting_context>" in body
+    assert "<username>-<minting_context>" in body
+    assert "email location suffix" in body
     assert "never the procedure" in body
     assert "ONE account per credential identity" in body
     assert "separate flows with separate accounts" not in body
@@ -121,7 +122,8 @@ def test_bootstrap_prompt_keys_accounts_by_credential_identity():
     prompt = (SKILL_DIR / "references" / "bootstrap-workflow.md").read_text(
         encoding="utf-8"
     )
-    assert "<email>-<minting_context>" in prompt
+    assert "<username>-<minting_context>" in prompt
+    assert "email location suffix" in prompt
     assert "share ONE account" in prompt
     assert "separate accounts" not in prompt
 

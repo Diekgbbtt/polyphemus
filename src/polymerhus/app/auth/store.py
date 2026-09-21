@@ -8,8 +8,11 @@ hunting stores write under), lazily created at the first write:
       credentials.yaml   ({accounts: {<name>: <account record>}})
       overview.yaml      (the login-mechanism header, bare map; agent-writable, D220-12)
 
-Record identity is the account name; file names never encode it. Reads are
-field-arbitrary dotted projections over the full state
+Record identity is the account name; file names never encode it. The name is
+canonical: an email-keyed name carries the identity's local part, its email
+location suffix (`@<domain>`) stripped systematically by the symbolic layer
+(#247), so the full-email form and the canonical form address one record.
+Reads are field-arbitrary dotted projections over the full state
 (`{"overview": ..., "accounts": ...}`); a missing path or an unreadable file
 degrades to a valid empty (warned, fail-open), never a raise. Writes are
 single-field set-at-path with merge (siblings untouched), null removing an
@@ -29,6 +32,7 @@ from __future__ import annotations
 import copy
 import logging
 import os
+import re
 import threading
 import uuid
 from datetime import datetime, timezone
@@ -56,6 +60,34 @@ _CREDENTIALS_FILE = "credentials.yaml"
 _OVERVIEW_FILE = "overview.yaml"
 
 _ORIGINS = frozenset({"operator", "agent"})
+
+# The account-name symbolic layer (#247): an account NAME carries the
+# credential identity, and an email-keyed name carries the identity's LOCAL
+# PART - the email location suffix (`@<domain>`) is stripped systematically, so
+# `diegogobbetti69@gmail.com-first_authn_bootstrap` and
+# `diegogobbetti69-first_authn_bootstrap` are ONE key (a dotted email in a
+# dot-path is otherwise unaddressable: the split forks the name at its dots).
+# The location runs from `@` to the minting-context hyphen, or to the end of a
+# context-less name; the domain is assumed hyphen-free (the minting context
+# follows the first hyphen).
+_EMAIL_LOCATION_SUFFIX = re.compile(r"@[^-]*(?=-|$)")
+
+
+def _strip_email_location(name: str) -> str:
+    """The canonical account name: the email location suffix stripped from an
+    email-keyed name (`diegogobbetti69@gmail.com` -> `diegogobbetti69`); a name
+    without a location is returned untouched."""
+    return _EMAIL_LOCATION_SUFFIX.sub("", name, count=1) if "@" in name else name
+
+
+def _canonical_account_path(path: str) -> str:
+    """The symbolic-layer normalisation of a path: the account name's email
+    location suffix is stripped BEFORE any splitting, so the full-email form
+    and the canonical form address the same record. Only `accounts.` paths
+    carry account names; every other path is returned untouched."""
+    if not path.startswith("accounts."):
+        return path
+    return _EMAIL_LOCATION_SUFFIX.sub("", path, count=1)
 
 
 class DuplicateAuthError(ValueError):
@@ -222,11 +254,12 @@ class AuthStore:
     def _project(state: dict, path: str) -> Any:
         """The dotted-path projection of `state`: the addressed field value
         (a mapping, a scalar leaf, or the full state) - a missing path is a
-        valid empty ({}), never an error."""
+        valid empty ({}), never an error. The account name's email location
+        suffix is stripped first (#247), so both name forms resolve."""
         if not path:
             return copy.deepcopy(state)
         current = state
-        for segment in path.split("."):
+        for segment in _canonical_account_path(path).split("."):
             if not isinstance(current, dict) or segment not in current:
                 return {}
             current = current[segment]
@@ -274,7 +307,7 @@ class AuthStore:
             raise AuthInvalidError("path", "must name a single field to write")
         if origin not in _ORIGINS:
             raise AuthInvalidError("origin", 'must be "operator" or "agent"')
-        segments = path.split(".")
+        segments = _canonical_account_path(path).split(".")
         with _lock_for(project_id):
             self._ensure_bucket(project_id)
             if segments[0] == "overview":
@@ -373,10 +406,16 @@ class AuthStore:
                     if not isinstance(record, dict):
                         raise AuthInvalidError(
                             f"accounts.{name}", "must be an object to seed")
+                    canonical = _strip_email_location(name)
+                    if canonical in seeded:
+                        raise AuthInvalidError(
+                            f"accounts.{canonical}",
+                            "collides with another seeded account name after "
+                            "the email location suffix is stripped")
                     entry = copy.deepcopy(record)
                     entry["origin"] = "operator"
                     _stamp_recency(entry, seed_stamp)
-                    seeded[name] = validate_account(entry)
+                    seeded[canonical] = validate_account(entry)
                 kept = {n: r for n, r in current.items()
                         if isinstance(r, dict) and r.get("origin") == "agent"}
                 for name in list(seeded):
