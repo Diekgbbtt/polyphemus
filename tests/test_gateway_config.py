@@ -114,3 +114,19 @@ def test_no_secrets_in_config(config):
         "LITELLM_MASTER_KEY must be env-only - never in the repo config")
     assert "database_url" not in general, (
         "DATABASE_URL must be env-only - never in the repo config")
+
+
+# ---------------------------------------------------------------------------
+# D12: provider request primitives - scoped x-* client-header forwarding ----
+# ---------------------------------------------------------------------------
+
+def test_opencode_go_client_headers_are_forwarded(config):
+    """opencode-go enforces a client-supplied `x-opencode-session` (stable per
+    conversation) since 2026-09-05. Default litellm drops client headers; the
+    pinned 1.96.0 forwards `x-*` (minus `x-stainless*`) ONLY for the model
+    groups listed under this stanza. Scoped to `opencode-go/*` so no other
+    provider receives the client's x- headers (and `authorization` is never
+    forwarded - the deployment key stays the upstream auth surface)."""
+    groups = config.get("litellm_settings", {}).get("model_group_settings", {})
+    assert groups.get("forward_client_headers_to_llm_api") == ["opencode-go/*"], (
+        "the D12 scoped forwarding stanza must be present and exactly scoped")

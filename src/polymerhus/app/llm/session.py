@@ -38,6 +38,7 @@ from typing import Any, Callable, Sequence
 from langchain_core.messages import BaseMessage
 
 from polymerhus.app.llm.capability import resolve_capability
+from polymerhus.app.llm.conversation import conversation_scope
 
 logger = logging.getLogger(__name__)
 
@@ -328,21 +329,25 @@ def run_session_turn(
     `context` (default None) is the native invocation context (`runtime.context`
     in middleware) - e.g. `{"skills": [...]}` for the skill-index middleware;
     absent means no context-carried bindings for this turn."""
-    profile = _resolve_reasoning_profile(role_id)
-    agent = _build_agent(
-        role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
-        middleware=middleware, store=store, checkpointer=checkpointer,
-        model_factory=model_factory, read_timeout_s=read_timeout_s,
-    )
-    config = _turn_config(role_id, thread_id, observe)
-    if observe and checkpointer is not None:
-        _attach_readability_metadata(
-            config, _read_thread_state(checkpointer, thread_id))
-    if observe:
-        _attach_compaction_metadata(config, middleware, thread_id)
-    result = agent.invoke({"messages": list(new_messages)}, config, context=context)
-    _replay_reasoning(agent, config, result, role_id, thread_id, profile)
-    return _to_turn(result, response_format, thread_id)
+    # D12: the conversation scope - every client built inside the turn (the
+    # turn's own, and any a middleware builds, e.g. the summariser) binds the
+    # thread id as the provider's conversation request primitive.
+    with conversation_scope(thread_id):
+        profile = _resolve_reasoning_profile(role_id)
+        agent = _build_agent(
+            role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
+            middleware=middleware, store=store, checkpointer=checkpointer,
+            model_factory=model_factory, read_timeout_s=read_timeout_s,
+        )
+        config = _turn_config(role_id, thread_id, observe)
+        if observe and checkpointer is not None:
+            _attach_readability_metadata(
+                config, _read_thread_state(checkpointer, thread_id))
+        if observe:
+            _attach_compaction_metadata(config, middleware, thread_id)
+        result = agent.invoke({"messages": list(new_messages)}, config, context=context)
+        _replay_reasoning(agent, config, result, role_id, thread_id, profile)
+        return _to_turn(result, response_format, thread_id)
 
 
 async def arun_session_turn(
@@ -368,21 +373,24 @@ async def arun_session_turn(
     used by the analysis supervisor) in production. `read_timeout_s` (default None)
     bounds the turn's model calls per-attempt - the escalating-budget seam #186
     rides: the actor runtime re-invokes this with the next, larger budget."""
-    profile = _resolve_reasoning_profile(role_id)
-    agent = _build_agent(
-        role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
-        middleware=middleware, store=store, checkpointer=checkpointer,
-        model_factory=model_factory, read_timeout_s=read_timeout_s,
-    )
-    config = _turn_config(role_id, thread_id, observe)
-    if observe and checkpointer is not None:
-        _attach_readability_metadata(
-            config, await _aread_thread_state(checkpointer, thread_id))
-    if observe:
-        _attach_compaction_metadata(config, middleware, thread_id)
-    result = await agent.ainvoke({"messages": list(new_messages)}, config, context=context)
-    await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
-    return _to_turn(result, response_format, thread_id)
+    # D12: the conversation scope - the async turn binds the same thread id the
+    # sync turn does, so both entry points emit identical request primitives.
+    with conversation_scope(thread_id):
+        profile = _resolve_reasoning_profile(role_id)
+        agent = _build_agent(
+            role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
+            middleware=middleware, store=store, checkpointer=checkpointer,
+            model_factory=model_factory, read_timeout_s=read_timeout_s,
+        )
+        config = _turn_config(role_id, thread_id, observe)
+        if observe and checkpointer is not None:
+            _attach_readability_metadata(
+                config, await _aread_thread_state(checkpointer, thread_id))
+        if observe:
+            _attach_compaction_metadata(config, middleware, thread_id)
+        result = await agent.ainvoke({"messages": list(new_messages)}, config, context=context)
+        await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
+        return _to_turn(result, response_format, thread_id)
 
 
 # Test seam for probe validation - when set, the session runs the real

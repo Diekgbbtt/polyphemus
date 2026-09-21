@@ -83,3 +83,17 @@ litellm_settings:
   # (LITELLM_CACHE_TYPE), explicitly OUT per ADR D8. The KV cache lives only
   # at the provider; the gateway influences hit rate via auto-inject + the
   # passthrough above, nothing more.
+  #
+  # D12: PROVIDER REQUEST PRIMITIVES - scoped client-header forwarding.
+  # opencode-go enforces a client-supplied `x-opencode-session` (stable per
+  # conversation) since 2026-09-05; verified in the pinned litellm 1.96.0
+  # source that `_get_forwardable_headers` forwards `x-*` (minus
+  # `x-stainless*`) ONLY for the model groups listed here, and NEVER forwards
+  # `authorization` (the deployment key stays the upstream auth surface).
+  # The client binds the header natively at construction
+  # (`ChatOpenAI.default_headers`, providers.py request primitives). Scope is
+  # the opencode-go groups alone, so no other provider receives the client's
+  # x- headers.
+  model_group_settings:
+    forward_client_headers_to_llm_api:
+      - "opencode-go/*"

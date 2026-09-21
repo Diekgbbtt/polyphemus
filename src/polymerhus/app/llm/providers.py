@@ -1,12 +1,14 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
 import httpx
 from langchain_core.messages import AIMessage
 from langchain_core.outputs import ChatGeneration
 from langchain_openai import ChatOpenAI
+
+from polymerhus.app.llm.conversation import current_conversation_id
 
 logger = logging.getLogger(__name__)
 
@@ -242,6 +244,44 @@ def id_kind(provider: str) -> str:
 # Back-compat alias: the zen providers are exactly the ID_KIND_ZEN entries.
 _ZEN_FAMILY = frozenset(
     p for p, k in _ID_KIND_BY_PROVIDER.items() if k == ID_KIND_ZEN)
+
+# --- Provider request primitives (D12): client-bound request headers -----------
+#
+# Some upstreams require a header the CLIENT must supply on every request:
+# opencode-go enforces `x-opencode-session` (a stable per-conversation value,
+# since 2026-09-05) and the gateway forwards client `x-*` headers upstream only
+# for the scoped model groups (gateway/litellm_config.yaml, D12). The table is
+# the ONE place a provider's request primitives live; an unlisted provider binds
+# nothing, so its construction stays byte-identical. Values are evaluated at
+# CONSTRUCTION time (the fresh-client-per-turn discipline), so the session seam's
+# conversation scope lands the right id per conversation while one-shot callers
+# fall back to the process-stable id (`conversation.py`).
+
+CLIENT_ID = "polymerhus"
+"""The client identifier sent alongside the conversation primitive (provenance
+only; the upstream ignores it). No version suffix: the container image tag is the
+deployment identity, and a version string here would drift from it."""
+
+
+def _opencode_go_request_headers() -> dict[str, str]:
+    """opencode-go's client request primitives: the stable conversation id the
+    server now requires, plus a provenance-only client identifier."""
+    return {
+        "x-opencode-session": current_conversation_id(),
+        "x-opencode-client": CLIENT_ID,
+    }
+
+
+_REQUEST_HEADERS_BY_PROVIDER: dict[str, Callable[[], dict[str, str]]] = {
+    "opencode-go": _opencode_go_request_headers,
+}
+
+
+def request_headers(provider: str) -> dict[str, str]:
+    """The provider's client-bound request headers, evaluated per construction.
+    An unlisted provider (the safe default) binds nothing."""
+    factory = _REQUEST_HEADERS_BY_PROVIDER.get(provider)
+    return factory() if factory is not None else {}
 
 # --- #107 (D4 item 1): the LLM_GATEWAY_URL base_url resolution seam ------------
 #
@@ -612,10 +652,18 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     # field; verified to reach the wire payload. Merged after `extra` so nothing in
     # `_thinking_wire_form` (reasoning_effort / thinking budget) collides with it.
     model_kwargs = {"max_completion_tokens": max_completion_tokens()}
+    # D12: the provider's client-bound request primitives, resolved at
+    # construction via the native `ChatOpenAI.default_headers` field (the SDK
+    # threads it into the openai client's httpx headers). The conversation scope
+    # is ambient during a session turn; a one-shot caller gets the process-stable
+    # id. Empty headers keep the construction byte-identical for every provider
+    # with no declared primitives.
+    headers = request_headers(provider)
     return ReasoningPreservingChatOpenAI(model=model, api_key=api_key,
                                          base_url=base_url, temperature=temperature,
                                          timeout=timeout, max_retries=retries,
                                          model_kwargs=model_kwargs,
+                                         default_headers=headers or None,
                                          callbacks=get_langfuse_callbacks(), **extra)
 
 def validate_llm_config(roles: Sequence[Role] | None = None) -> None:

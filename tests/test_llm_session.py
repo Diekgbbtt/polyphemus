@@ -382,3 +382,34 @@ def test_arun_session_turn_carries_memory_across_turns():
     turn2 = asyncio.run(_two_turns())
     assert [m.content for m in turn2.messages] == ["hello", "a1", "again", "a2"]
     assert turn2.content == "a2"
+
+
+def test_session_turns_bind_the_thread_as_the_conversation(monkeypatch):
+    """D12: the session seam binds the thread id as the ambient conversation for
+    the turn, so every model constructed inside it (the turn's own, and any a
+    middleware builds, e.g. the compaction summariser) carries the provider's
+    conversation request primitives (opencode-go `x-opencode-session`). Both
+    turn entry points - sync and async - bind it."""
+    from polymerhus.app.llm import session as S
+
+    class _FakeAgent:
+        def invoke(self, *args, **kwargs):
+            return {"messages": []}
+
+        async def ainvoke(self, *args, **kwargs):
+            return {"messages": []}
+
+    seen: list[str] = []
+    real_scope = S.conversation_scope
+
+    def _spy(conversation_id):
+        seen.append(conversation_id)
+        return real_scope(conversation_id)
+
+    monkeypatch.setattr(S, "_build_agent", lambda *a, **k: _FakeAgent())
+    monkeypatch.setattr(S, "conversation_scope", _spy)
+
+    run_session_turn("triager", "run-3:triager", [], checkpointer=None, observe=False)
+    asyncio.run(arun_session_turn("triager", "run-3:triager", [],
+                                  checkpointer=None, observe=False))
+    assert seen == ["run-3:triager", "run-3:triager"]

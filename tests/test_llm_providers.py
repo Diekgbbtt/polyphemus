@@ -782,3 +782,65 @@ def test_resolve_role_unregistered_id_ignores_the_old_convention(monkeypatch):
     monkeypatch.setenv(_LEGACY_INFIX + "ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
     with pytest.raises(P.LLMConfigError):
         P.resolve_role("analyser")
+
+
+# --- D12: provider request primitives - opencode-go's x-opencode-session -------
+#
+# opencode-go enforces a client-supplied `x-opencode-session` (stable per
+# conversation) since 2026-09-05; the pattern is a per-provider request-primitive
+# table consumed at the single construction point (`build_chat_model`), bound via
+# the native ChatOpenAI `default_headers` field. The value comes from the ambient
+# conversation scope (the session seam's thread id), falling back to a
+# process-stable id for callers with no conversation.
+
+def test_request_headers_bind_the_conversation_for_opencode_go():
+    from polymerhus.app.llm.conversation import conversation_scope
+
+    with conversation_scope("run-7:job_orchestrator"):
+        headers = P.request_headers("opencode-go")
+    assert headers["x-opencode-session"] == "run-7:job_orchestrator"
+    assert headers["x-opencode-client"] == P.CLIENT_ID
+
+
+def test_request_headers_fall_back_to_the_process_stable_id():
+    first = P.request_headers("opencode-go")["x-opencode-session"]
+    second = P.request_headers("opencode-go")["x-opencode-session"]
+    assert first, "the fallback must never emit an empty session id"
+    assert first == second, "the fallback must be stable across constructions"
+
+
+def test_request_headers_are_empty_for_providers_without_primitives():
+    """The safe default: an unlisted provider binds nothing (construction stays
+    byte-identical), including the plain `opencode` zen provider which has no
+    session requirement."""
+    for provider in ("openai", "openrouter", "swissai", "opencode", "unlisted"):
+        assert P.request_headers(provider) == {}
+
+
+def test_build_chat_model_binds_the_session_header_direct_mode(monkeypatch):
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_OPENCODE_GO", "tok")
+    from polymerhus.app.llm.conversation import conversation_scope
+
+    with conversation_scope("run-7:job_orchestrator"):
+        m = P.build_chat_model("opencode-go", "deepseek-v4.1-flash")
+    assert m.default_headers["x-opencode-session"] == "run-7:job_orchestrator"
+    # The native transport layer received it: the openai SDK client's own headers.
+    assert m.root_client.default_headers["x-opencode-session"] == "run-7:job_orchestrator"
+
+
+def test_build_chat_model_binds_the_session_header_gateway_mode(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    monkeypatch.setenv("API_KEY_OPENCODE_GO", "tok")
+    from polymerhus.app.llm.conversation import conversation_scope
+
+    with conversation_scope("run-7:job_orchestrator"):
+        m = P.build_chat_model("opencode-go", "opencode-go/deepseek-v4.1-flash")
+    assert m.default_headers["x-opencode-session"] == "run-7:job_orchestrator"
+
+
+def test_build_chat_model_leaves_other_providers_untouched(monkeypatch):
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
+    assert getattr(m, "default_headers", None) in (None, {})
