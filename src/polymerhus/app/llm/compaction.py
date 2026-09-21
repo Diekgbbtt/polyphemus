@@ -456,6 +456,81 @@ def _is_synthetic_summary(message: BaseMessage) -> bool:
     return isinstance(content, str) and content.startswith(_SUMMARY_MESSAGE_PREFIX)
 
 
+def _tool_call_ids(ai_message: AIMessage) -> set[str]:
+    """The tool-call ids one assistant message carries (the D8 pairing key) -
+    empty when the message carries none or the call list is unreadable (fail-open)."""
+    ids: set[str] = set()
+    try:
+        for call in getattr(ai_message, "tool_calls", None) or []:
+            call_id = call.get("id") if isinstance(call, dict) else getattr(call, "id", None)
+            if isinstance(call_id, str) and call_id:
+                ids.add(call_id)
+    except Exception:  # noqa: BLE001 - an unreadable call list degrades to no ids
+        return set()
+    return ids
+
+
+def _tool_groups(messages: list[BaseMessage]) -> list[list[BaseMessage]]:
+    """Partition a trail into tool groups - the compact pass's pairing atom.
+
+    A group is an `AIMessage` carrying `tool_calls` plus the immediately following
+    `ToolMessage`s answering its ids (a run in trail order); every other message
+    is a singleton group. Malformed trails degrade defensively: a `ToolMessage`
+    matching no immediately preceding assistant message is its own singleton, and
+    an `AIMessage` with `tool_calls` and no following results is a singleton."""
+    groups: list[list[BaseMessage]] = []
+    i = 0
+    total = len(messages)
+    while i < total:
+        message = messages[i]
+        if isinstance(message, AIMessage) and getattr(message, "tool_calls", None):
+            ids = _tool_call_ids(message)
+            run: list[BaseMessage] = []
+            j = i + 1
+            while (j < total and isinstance(messages[j], ToolMessage)
+                   and messages[j].tool_call_id in ids):
+                run.append(messages[j])
+                j += 1
+            if run:
+                groups.append([message, *run])
+                i = j
+                continue
+        groups.append([message])
+        i += 1
+    return groups
+
+
+def _tool_pairs_adjacent(messages: list[BaseMessage]) -> bool:
+    """The wire invariant (OpenAI-compatible): no staged `ToolMessage` without its
+    `AIMessage(tool_calls)` immediately preceding, no staged `AIMessage(tool_calls)`
+    without its results - i.e. neither malformed singleton kind survives."""
+    for group in _tool_groups(messages):
+        if len(group) != 1:
+            continue
+        only = group[0]
+        if isinstance(only, ToolMessage):
+            return False
+        if isinstance(only, AIMessage) and getattr(only, "tool_calls", None):
+            return False
+    return True
+
+
+def _align_tail_to_group(messages: list[BaseMessage], tail_size: int) -> int:
+    """Extend an exempt tail to the start of the tool group containing its first
+    message - the token-walked tail never cuts a pair (the live-400 breaker). A
+    zero tail or a boundary already on a group start is unchanged."""
+    if tail_size <= 0:
+        return 0
+    boundary = len(messages) - tail_size
+    start = 0
+    for group in _tool_groups(messages):
+        end = start + len(group)
+        if start <= boundary < end:
+            return len(messages) - start
+        start = end
+    return tail_size  # unreachable - the groups tile the trail; fail-open
+
+
 def _dedup_system_messages(messages: list[BaseMessage]) -> list[BaseMessage]:
     """Collapse identical non-synthetic SystemMessage copies in a region (#187).
 
@@ -489,69 +564,96 @@ def _compact_pass(
     keep_last_tools: int | None = DEFAULT_KEEP_LAST_TOOLS,
     window: CompactionWindow | None = None,
 ) -> CompactResult:
-    """The compact pass's assembly, wrapped by `compact_pass` for fail-open."""
+    """The compact pass's assembly, wrapped by `compact_pass` for fail-open.
+
+    Tool pairs are atomic throughout: the exempt tail aligns to a group boundary,
+    retention folds or retains whole groups, and the staged trail keeps every
+    group contiguous with the running-summary message only ever on a boundary."""
     original = list(messages)
-    tail_size = _exempt_tail_size(original, profile, replay_keep_tokens)
+    tail_size = _align_tail_to_group(
+        original, _exempt_tail_size(original, profile, replay_keep_tokens))
     tail = original[len(original) - tail_size:] if tail_size else []
     region = original[:len(original) - tail_size] if tail_size else original
 
-    # Bounded tool retention (#187): the region's tool messages beyond the last
-    # `keep_last_tools` are FOLDED into the running summary (so the trail's
-    # message count shrinks across passes, not just over-cut body size); the
-    # retained tail-of-K are kept verbatim (over-cut ones offloaded to headers,
-    # D8). Tail tool messages are exempt by construction (they are outside the
-    # region).
-    region_tool_indices = [i for i, m in enumerate(region)
-                           if isinstance(m, ToolMessage)]
-    keep_from = 0
-    if region_tool_indices and keep_last_tools is not None and keep_last_tools >= 0:
-        keep_from = max(0, len(region_tool_indices) - keep_last_tools)
-    retained_tool = set(region_tool_indices[keep_from:])
+    # Bounded tool retention (#187), pair-atomic: retention is computed over tool
+    # GROUPS, not individual `ToolMessage`s - a group is retained iff ALL its tool
+    # messages fall within the last-`keep_last_tools` window, otherwise the WHOLE
+    # group (assistant plus results) folds into the running summary. A retained
+    # group stages whole - the assistant verbatim, the bodies offloaded as today
+    # (D8) - so a staged tool result always keeps its assistant prefix contiguous.
+    # Tool-less groups keep today's handling (assistants fold, humans fold-away
+    # under a summary, systems stage). Tail tool messages are exempt by
+    # construction (they sit outside the region, on a group boundary).
+    region_groups = _tool_groups(region)
+    flat_tools = [m for group in region_groups for m in group
+                  if isinstance(m, ToolMessage)]
+    if keep_last_tools is None or keep_last_tools < 0:
+        retained_tool_ids = {id(m) for m in flat_tools}
+    else:
+        retained_tool_ids = {id(m) for m in flat_tools[max(0, len(flat_tools) - keep_last_tools):]}
 
     staged: list[BaseMessage] = []
-    spans: list[AIMessage] = []
-    folded_tools: list[BaseMessage] = []
+    folded_groups: list[list[BaseMessage]] = []
     # Region human messages are folded into the running summary when one is
     # produced (the summary carries the user's directives - they never need to
     # stay byte-identical) but kept verbatim when no summary fires. Tracked as a
-    # set of object ids so the ELSE branch preserves the original interleaving.
+    # set of object ids so the assembly below preserves the original interleaving.
     region_humans: set[int] = set()
     offloaded_bodies = 0
     preceding_ai: AIMessage | None = None
-    for idx, message in enumerate(region):
-        if isinstance(message, AIMessage):
-            preceding_ai = message
-            spans.append(message)
+    for group in region_groups:
+        head = group[0]
+        if isinstance(head, AIMessage):
+            preceding_ai = head
+            if len(group) > 1 and all(id(m) in retained_tool_ids for m in group[1:]):
+                staged.append(head)
+                for tool_message in group[1:]:
+                    name, args = _tool_pairing(head, tool_message.tool_call_id)
+                    try:
+                        result = offload_tool_message(
+                            store, thread_id, tool_message, name=name, args=args)
+                    except Exception:  # noqa: BLE001 - a failing offload keeps the body full
+                        logger.debug("compact pass: tool offload failed; keeping the body full",
+                                     exc_info=True)
+                        result = tool_message
+                    if result is not tool_message:
+                        offloaded_bodies += 1
+                    staged.append(result)
+                continue
+            # A folded group: the WHOLE pair (or a result-less assistant) goes to
+            # the summariser input - never stage an assistant whose results folded.
+            folded_groups.append(group)
             continue
-        if isinstance(message, ToolMessage):
-            if idx in retained_tool:
-                name, args = _tool_pairing(preceding_ai, message.tool_call_id)
+        if isinstance(head, ToolMessage):
+            # An orphan result (no preceding assistant carries its id): retained
+            # ones stage as today (fail-open byte preservation, the documented
+            # fallback pairing), over-cut ones fold into the summary.
+            if id(head) in retained_tool_ids:
+                name, args = _tool_pairing(preceding_ai, head.tool_call_id)
                 try:
                     result = offload_tool_message(
-                        store, thread_id, message, name=name, args=args)
+                        store, thread_id, head, name=name, args=args)
                 except Exception:  # noqa: BLE001 - a failing offload keeps the body full
                     logger.debug("compact pass: tool offload failed; keeping the body full",
                                  exc_info=True)
-                    result = message
-                if result is not message:
+                    result = head
+                if result is not head:
                     offloaded_bodies += 1
                 staged.append(result)
             else:
-                # An older tool result beyond the retention window: fold its
-                # content into the running summary rather than keeping it in the
-                # trail (its DISCOVERED-CRUCIAL-ARTIFACT identifier is preserved
-                # by the summariser, D5).
-                folded_tools.append(message)
+                folded_groups.append(group)
             continue
-        if _is_synthetic_summary(message):
+        if _is_synthetic_summary(head):
             continue
-        if isinstance(message, HumanMessage):
-            region_humans.add(id(message))
-        staged.append(message)
+        if isinstance(head, HumanMessage):
+            region_humans.add(id(head))
+        staged.append(head)
 
     new_summary: RunningSummary | None = None
-    if spans or existing is not None or folded_tools:
-        outcome = summarise(summariser, existing=existing, spans=spans + folded_tools,
+    folded_input = [m for group in folded_groups for m in group]
+    folded_ai_spans = sum(1 for m in folded_input if isinstance(m, AIMessage))
+    if folded_input or existing is not None:
+        outcome = summarise(summariser, existing=existing, spans=folded_input,
                             chunk_budget=window.budget if window is not None else None)
         if outcome.status == "failed" or outcome.summary is None:
             # An "ok" without a summary is a degenerate pass - degrade the same
@@ -560,7 +662,7 @@ def _compact_pass(
                 messages=original,
                 report=CompactReport(
                     exempted_spans=tail_size,
-                    summarised_spans=len(spans),
+                    summarised_spans=folded_ai_spans,
                     offloaded_bodies=offloaded_bodies,
                     reclaimed_tokens=0,
                     readability=READABILITY_UNCHANGED,
@@ -575,20 +677,37 @@ def _compact_pass(
         # un-folded suffix: the summariser's `folded` count says which input
         # items it actually folded, and the rest stay verbatim - a later pass
         # retries them, and a partial summary is still applied (strictly better
-        # than the over-budget original). A complete fold leaves nothing to keep.
-        folded_input = spans + folded_tools
-        unfolded = folded_input[outcome.folded:]
+        # than the over-budget original). The count is span-granular, not
+        # pair-granular, so a cut landing mid-group rounds DOWN to the group
+        # start: the remainder stages as whole contiguous groups (duplication
+        # over loss), and the summary below only ever follows a complete group.
+        # A complete fold leaves nothing to keep.
+        cut = max(0, min(outcome.folded, len(folded_input)))
+        start = 0
+        for group in folded_groups:
+            end = start + len(group)
+            if cut < end:
+                cut = start
+                break
+            start = end
+        unfolded = folded_input[cut:]
         staged = (region_staged + unfolded
                   + [SystemMessage(content=new_summary.to_text())] + tail)
     else:
         staged = _dedup_system_messages(staged) + tail
 
+    if not _tool_pairs_adjacent(staged):
+        # A malformed input trail (an orphan result no assistant owns) can still
+        # stage pair-breaking - fail-open byte preservation wins, logged loudly
+        # at debug so the live 400 shape stays visible without raising.
+        logger.debug("compact pass: staged trail breaks tool-pair adjacency; "
+                     "the input trail carried an orphan no assistant owns")
     reclaimed = max(0, approx_tokens(original) - approx_tokens(staged))
     return CompactResult(
         messages=staged,
         report=CompactReport(
             exempted_spans=tail_size,
-            summarised_spans=len(spans),
+            summarised_spans=folded_ai_spans,
             offloaded_bodies=offloaded_bodies,
             reclaimed_tokens=reclaimed,
             readability=(

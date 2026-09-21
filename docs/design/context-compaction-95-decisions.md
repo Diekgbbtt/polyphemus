@@ -155,3 +155,41 @@ Compaction bounds only what the agent SEES: the module store keeps the full trai
 
 **Rationale.**
 The observability contract mirrors the reasoning pipeline's: same trace, same fail-open discipline, same never-gating rule for cache telemetry.
+
+## D12 - Tool pairs are atomic in the compacted trail
+
+A compacted trail that splits an assistant `tool_calls` message from its tool
+results is rejected upstream with `400 ... Messages with role 'tool' must be a
+response to a preceding message with 'tool_calls'` - observed live on run
+c9f982b9-3726-4e2b-a87d-b32cd8370c70, where the compaction pass fired and the
+very next model request failed. The operator-visible rule is therefore: **tool
+pairs are atomic in the compacted trail**.
+
+- A `ToolMessage` is never staged without its `AIMessage(tool_calls)`
+  immediately preceding it; an `AIMessage(tool_calls)` never survives its
+  folded results.
+- The exempt tail aligns to pair boundaries: the token-walked size extends to
+  the start of the tool group containing its first message, never cutting a pair.
+- Retention is pair-atomic: a tool group (an assistant message plus the results
+  answering its ids) is retained or folded whole - never a staged assistant
+  without its results, never a staged result without its assistant.
+- The running-summary message is never inserted inside a pair: it only follows
+  a complete group and precedes the next group or the tail.
+- A partial fold (`outcome.folded` cutting mid-group) rounds down to the group
+  start: the unfolded remainder stages as whole contiguous groups (duplication
+  over loss).
+
+The pass checks the adjacency invariant over the staged trail and logs a debug
+line when a malformed input trail (an orphan result no assistant owns) stages
+pair-breaking - fail-open byte preservation wins, never a raise.
+
+**Rationale.**
+The wire contract (OpenAI-compatible) requires every `role: tool` message to be
+immediately preceded by the assistant message whose `tool_calls` carries its
+`tool_call_id`, and an assistant message with `tool_calls` to be immediately
+followed by the tool messages answering every id. Three assembly shapes broke
+it: a mid-pair tail cut, non-atomic folding (assistant staged while its results
+folded, or vice versa), and a complete fold stranding an assistant with no
+results. Grouping the trail into pairing atoms before retention, folding, and
+staging closes all three while keeping the summariser's inputs and the
+partial-fold `outcome.folded` semantics.
