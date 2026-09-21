@@ -116,7 +116,7 @@ The gateway's branch selection consumes the operator-written overview facts `ant
 3. Defence recorded and `http-client-replayability: true`: request branch; the loop runs browser-first validation (mount the account profile, verify the session, compare and persist tokens) before releasing collection.
 4. Defence recorded and `http-client-replayability: null` (rare): the orchestrator runs the authn loop anyway, including the replayability check of the fingerprint extracted from the browser state; the loop's verdict then decides whether the request-based phases are released (replayable) or pruned to the browser-only branch (not replayable).
 
-The null-resolution outcome is run-scoped only: the overview is operator-owned and the runtime cannot persist it, so the resolution is recorded loudly (structured log and trace) for the operator to re-seed.
+The null-resolution outcome is recorded loudly (structured log and trace) and persisted to the overview by the loop: agent writes merge and keep the `origin: operator` stamp (D220-12). Re-seeding remains the operator's action.
 This supersedes the earlier proposed conservative default (turn-2 DP-15, "unknown -> treat as not replayable").
 Consequence: the gateway outcome is finalised after the loop's turns, not before them; pruning follows the loop's terminal verdict.
 
@@ -127,7 +127,7 @@ Removal footprint (verified in the walkthrough): the per-phase signal refresh (`
 Assessment from the walkthrough: the design is not broken by the orchestrator refactor, but the per-phase protocol is incompatible with it in three places - the empty-signal short-circuit and lazy actor start contradict "deterministic gateway before phase 0"; the actor's `response_format` is fixed to `RoutingDecision` for its lifetime, so a gateway/loop schema needs the routing turns retired; and the in-job throttle loses its only input once steering is removed.
 Rate limiting is the one runtime concern a start-time assessment does not cover: the post-authn rate-limit system mapping and bypass-testing loop is filed as #238, whose concrete design arrives from the operator next turn.
 Sequencing note: `extra["steering"]` is the only rate-limit adaptation that exists today; removing it before #238's profile-driven configuration lands leaves request phases unthrottled in the interim. The implementation plan must sequence this, not silently accept it.
-Stale facts resolve the same way: runtime divergence from the recorded overview can only be logged (structured log and trace), because the overview is operator-owned; re-seeding is the operator's action and no runtime write path is fabricated.
+Stale facts resolve the same way: runtime divergence from the recorded overview is logged (structured log and trace) and the corrected fact is persisted by the loop (D220-12); re-seeding remains the operator's action.
 
 ### D223-13 - Full arming of the job_orchestrator in one step (A1/A2)
 
@@ -239,11 +239,12 @@ overview-then-skill order.
 ### IR-2 - The validity boundary is the assertion act, not its persistence
 
 `invalidate` / `validate` are detected on the write CALL args (path plus
-carried `status`), regardless of the result envelope. Rationale: on an
-operator-stamped account the store refuses `operator_immutable` (the trust
-split), and the loop must still cross its success/failure boundary - the
-validity then rides the verdict instead. The prompt instructs exactly this
-(carry on after `operator_immutable`).
+carried `status`), regardless of the result envelope. Rationale: the
+boundary must ride the CALL, never a read-back - agent writes merge into
+operator-stamped accounts (D220-12), so the assertion lands and the
+persisted `status` follows the boundary, while a refused write (a shape
+error, a store outage) still crosses it deterministically. The prompt
+instructs the write and the verdict restates the validity.
 
 ### IR-3 - The no-auth-surface marker is `overview.notes`
 
@@ -402,8 +403,9 @@ the ReAct surface: `auth_store` + `load_skill` reads, `execute_command`
 replay probes, the terminal `write_skill` outer-loop call, then the verdict.
 No mid-run steering or operator prompt fired (both retired in T4; the trace
 carries no such call). The account carries no `status` fact: it is
-operator-seeded, so the store refuses the loop's write (`operator_immutable`)
-and validity rides the verdict instead (IR-2, observed as designed).
+operator-seeded, and at the time of this run the store still refused the
+loop's write (`operator_immutable`, retired by D220-12), so validity rode
+the verdict instead (IR-2, as then designed).
 
 ### V-2 - Degraded run: harness failure fails open, loudly, unauthenticated
 

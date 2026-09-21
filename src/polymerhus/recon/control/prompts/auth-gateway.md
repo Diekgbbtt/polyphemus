@@ -21,9 +21,13 @@ or the empty path) AND loading the project's `authn` procedure
   account fields carry. A thin description yields a blind sign-in attempt;
   that residual risk is accepted and documented in your rationale, not
   mitigated by guessing procedure.
-- The overview is OPERATOR-OWNED: you can never write it. When its
-  replayability fact is unknown, resolve it in-loop (section 4) and record
-  the resolution in your rationale and verdict ONLY. Never persist it.
+- The store is agent-writable (D220-12): your writes MERGE into the overview
+  and into operator-stamped accounts alike, and the stored `origin: operator`
+  stamp stays as provenance. When the overview's replayability fact is
+  unknown, resolve it in-loop (section 4) and persist the resolved
+  `http-client-replayability` (with `anti-bot` when the probe named it)
+  through an `auth_store` write of `overview`, then record the resolution in
+  your rationale and verdict.
 
 ### 2. Retrieve and select
 
@@ -49,11 +53,12 @@ branch directive in the turn brief:
   fingerprint replay from the browser state per the `authn` skill: replayable
   releases the request branch, not replayable prunes to browser-only.
 
-Assert the outcome in the store BEFORE entering sign-in: `status: valid` on
-a live session, `status: not_valid` on a dead one. The assertion is the
-loop's boundary act: on an operator-stamped account the store refuses
-(`operator_immutable`) - carry on regardless, the validity rides your
-verdict instead.
+Assert the outcome in the store BEFORE entering sign-in with an `auth_store`
+write of `accounts.<account>.status`: `valid` on a live session, `not_valid`
+on a dead one. The assertion is the loop's boundary act and the write LANDS:
+an operator-stamped account merges the write like any other, keeping its
+`origin: operator` stamp as provenance. The verdict restates the validity;
+it never replaces the write.
 
 ### 4. Sign-in and debug (no mechanical cap)
 
@@ -66,17 +71,20 @@ anonymous turn.
 
 There is NO attempt cap and no duplicate-command rejection: adjust one
 variable per attempt and keep debugging while progress is real. The span ends
-in exactly two ways: success (persist the profile key plus the extracted
-tokens back to the account, assert `status: valid`), or your declaration
-that the tweaking space is exhausted - the terminal failed verdict. A failed
-authentication is explicit and loud, never silent-anonymous.
+in exactly two ways: success (one `auth_store` write of `accounts.<account>`
+carrying `steel.profile`, the extracted `tokens`, and `status: valid`), or
+your declaration that the tweaking space is exhausted - the terminal failed
+verdict. A failed authentication is explicit and loud, never
+silent-anonymous.
 
 ### 5. Outer loop, then the verdict
 
 After the `valid` assertion, run the outer skill-judging loop in this same
 turn: re-read the `authn` skill, judge what this target taught you (a
 blocking condition, a replay fact, a selector fix), and write the reusable
-part back through `write_skill`. Then emit the gateway verdict:
+part back through `write_skill(skill="authn", target="procedure", ...)` - the
+store owns the frontmatter and bumps the version - or one new login-specific
+script through `target="references/<name>"`. Then emit the gateway verdict:
 
 - `outcome`: `authenticated` (session proven), `anonymous` is NOT yours to
   emit (the no-surface path skips this turn); `failed` (space exhausted -
@@ -87,7 +95,8 @@ part back through `write_skill`. Then emit the gateway verdict:
   browser-only. The pipeline prunes every request job on the latter; only
   the Steel crawl runs.
 - `replayability_resolved` / `replayability`: set ONLY when you resolved an
-  unknown fact in-loop (run-scoped, never persisted).
+  unknown fact in-loop; the resolved fact is persisted to the overview
+  (section 1) and the verdict restates it for the pipeline.
 - `rationale`: what you proved, what you pruned, and any loud fact the
-  operator must re-seed (a null resolution, a self-service fallback, an
-  operator_immutable validity).
+  operator should review at the next seed (a null resolution, a
+  self-service fallback, a validity that failed verification).

@@ -458,9 +458,9 @@ def push_transition(
             if state["phase"] == "FINISH":
                 return _move(state, "FINISH")
             # the success boundary is the loop's assertion act (the call
-            # args), not its persistence: on an operator-stamped account the
-            # store refuses operator_immutable and the validity rides the
-            # verdict instead - the boundary still moved.
+            # args), never a read-back: the write lands as a merge into any
+            # origin (D220-12), so the boundary rides the call and the
+            # persisted status follows it.
             return _move(state, "FINISH", TRANSITION_HINTS["validate"],
                          account=_account_from_write(obs.get("args", {})))
         return _move(state, state["phase"])
@@ -564,8 +564,8 @@ class GatewayVerdict(BaseModel):
     """The structured gateway verdict closing the authn loop (the actor's
     `response_format`, D223-15): the run's auth outcome, the selected account
     IDENTIFIER (never its material, D223-19), the release branch the pipeline
-    obeys, and the run-scoped null-replayability resolution (logged loudly,
-    never persisted - the overview is operator-owned, D223-11).
+    obeys, and the null-replayability resolution (logged loudly and persisted
+    to the overview by the loop, D223-11 as amended by D220-12).
 
     `outcome` stays the D223-3 pair plus the first-class anonymous path: a
     failed authentication (`failed`, the exhausted sign-in space included)

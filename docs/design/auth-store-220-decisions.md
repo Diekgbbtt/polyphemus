@@ -55,10 +55,10 @@ Anything else in `steel` / `snapshot` position is a loud `auth_invalid` rejectio
 Operator seeding is a new REST face over the store, not an extension of `PUT /settings`: extending the settings blob would re-collapse the trust boundary D220-3 exists to create.
 `PUT /projects/{project_id}/auth` accepts `{overview?, accounts?}`; present sections replace the operator-owned state (value-object replace semantics), absent sections are untouched, and agent-minted accounts are never modified or removed by a seed.
 `GET /projects/{project_id}/auth` reads the full state back for the operator.
-Every failure has an explicit delivery semantic, and each is tested: unknown project is 404; any shape violation is 400 `{ok: false, error: "auth_invalid", detail}` naming the offending field; the tool surface never raises into the turn - every failure is a coded JSON envelope (`operator_immutable`, `duplicate_auth`, `auth_invalid`, `store_unavailable`); reading an unseeded project is a valid empty state, never an error.
+Every failure has an explicit delivery semantic, and each is tested: unknown project is 404; any shape violation is 400 `{ok: false, error: "auth_invalid", detail}` naming the offending field; the tool surface never raises into the turn - every failure is a coded JSON envelope (`duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`; `operator_immutable` retired by D220-12); reading an unseeded project is a valid empty state, never an error.
 SUPERSEDED (operator ruling recorded in the #220 spec - "replace, never 409"): the 409 `{ok: false, error: "auth_conflict", detail}` seed-collision path from the earlier grill is deleted.
 The as-built `AuthStore.replace_operator_state` replaces operator-owned state wholesale while preserving agent-stamped accounts, and a seeded operator name colliding with a live agent record warn-drops the operator entry (the agent record wins) - the seed face (`seed_auth` / `seed_project_auth`) carries no conflict path.
-SUPERSEDED (as-built 2026-09-11): the `steel_unresolved` tool envelope is deleted with the injected-resolver half of D220-4 - the four live envelopes are `operator_immutable`, `duplicate_auth`, `auth_invalid`, `store_unavailable`.
+SUPERSEDED (as-built 2026-09-11): the `steel_unresolved` tool envelope is deleted with the injected-resolver half of D220-4. SUPERSEDED further by D220-12: `operator_immutable` is retired, so the four live envelopes are `duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`.
 
 ## D220-6 - Concurrency: per-project lock, atomic writes, novelty gates (unchanged)
 
@@ -137,10 +137,10 @@ The `OperatorImmutableError` class and the `operator_immutable` envelope are RET
 The live envelopes are `duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`; the coded-envelope discipline is unchanged.
 Unchanged by this decision: `records.validate_account` / `validate_overview`, the per-project lock and atomic writes, the duplicate-create gate (any origin), and the server-stamped `origin` / `updated_at`.
 
-### Coupled #223 interface change (reported, not applied here)
+### Coupled #223 interface change (APPLIED on this branch)
 
-The #223 gateway consumer text flips from "never persist" to "persist": `recon/control/prompts/auth-gateway.md:24-26,52-56,89-93`, `recon/control/orchestrator_agent.py:167-173,452-458`, `recon/control/authn_loop.py:460-463,563-568`, and `docs/design/recon-job-auth-223-decisions.md` IR-2 plus `docs/design/recon-auth-gateway-223-spec.md` (requirement 6 and the account-resolution line).
-Those files are owned by the #223 branch; #223 applies the flip when it rebases on this branch's new status.
+The #223 gateway consumer text flips from "never persist" to "persist", and the flip is applied on this branch: `recon/control/prompts/auth-gateway.md` (sections 1, 3, 4, 5 - the store is agent-writable, the validity assertion lands, the resolved replayability fact is persisted, and the prompt names the concrete `auth_store` and `write_skill` calls), `recon/control/orchestrator_agent.py` (the resolve_in_loop hint and its loud warning), `recon/control/authn_loop.py` (the boundary comment and the `GatewayVerdict` docstring), `docs/design/recon-job-auth-223-decisions.md` (D223-11, D223-12, IR-2, V-1), and `docs/design/recon-auth-gateway-223-spec.md` (requirement 6 and the account-resolution line).
+The gateway harness itself never writes: persistence is the loop model's in-turn `auth_store` / `write_skill` calls, and the test pins exactly that split.
 
 ## Follow-up: AUTH-SKILL-1 RESOLVED
 

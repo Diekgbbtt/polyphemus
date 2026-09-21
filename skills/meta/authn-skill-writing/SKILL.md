@@ -2,7 +2,7 @@
 name: authn-skill-writing
 description: Use when executing authentication against a target project by hand and authoring that target's per-project authentication skill from verified state.
 metadata:
-  version: '2.5'
+  version: '2.6'
 ---
 # Authn skill writing
 
@@ -32,7 +32,7 @@ Keep the planes non-overlapping: facts live in the store, steps live in the skil
 The following mirrors the seed-face contract only, which is the single write path for STORE facts available to you; the project skill bundle is your other write path (P5).
 Write facts with `PUT /projects/{project_id}/auth` and body `{overview?, accounts?}`.
 Read state with `GET /projects/{project_id}/auth`, which returns the full `{"overview": ..., "accounts": ...}` state.
-Each present section REPLACES the operator-owned state wholesale.
+Each present section REPLACES the operator's section wholesale (an in-system agent write merges instead, D220-12).
 Each absent section is left untouched.
 Seeded accounts are stamped `origin: operator` server-side, so never put `origin` in the payload.
 Agent-stamped accounts survive every seed untouched.
@@ -72,7 +72,7 @@ Whatever the target, establish and record these two facts before you record its 
 5. Record the verdict honestly. When a plain-client replay reaches the authenticated state, record `http-client-replayability: true` and record which shape elements are static (replayable as-is) and which are dynamic (must be re-minted or are browser-bound): the continuation facts a follower needs. When replay cannot reach the authenticated state, record `http-client-replayability: false`; browser-only is a complete, honest result, never a failure.
 6. Script-driven logins. When the sign-in is programmed by client-side script, fetch and read the script; replay the exact request shape it builds (endpoints, headers, nonces, parameter order); where the script derives values dynamically (nonces, signatures, fingerprints), say so and treat those parts as browser-bound.
 7. Re-verify stale state. Treat an expired or missing session or profile as a loud failure. Re-run the verification predicate before recording or replaying; never fall back silently to anonymous state.
-8. Persist through the operator seed face. Write both facts into the operator-owned overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. Never write with the in-process agent tool; never put `origin` in the payload.
+8. Persist through the operator seed face. Write both facts into the overview with `PUT /projects/{project_id}/auth`. A present `overview` section replaces wholesale, so read `GET /projects/{project_id}/auth` first and send the merged overview. A shape violation returns 400 `{ok: false, error: "auth_invalid", detail}` and lands nothing. This seed face is your write path: the in-process agent store tool is the in-system agents' path (their writes merge into the same overview, D220-12), so never use it here and never put `origin` in the payload.
 
 Two rules bind every target: facts live in the store, steps live in the skill; secret values stay in the store, the skill cites names only.
 ```
