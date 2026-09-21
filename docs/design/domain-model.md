@@ -217,7 +217,7 @@ The model's answer is a single principle applied everywhere: **identity is a sta
 
 A Service is keyed on `(project_id, business_function_slug)` (`L1D-12`); a System on `(project_id, kind, discriminator)` with a non-null `__singleton__` sentinel so a null discriminator cannot silently duplicate a singleton (`L1D-9`, `src/polymerhus/analysis/l1_types.py:32-36`); an L0 Observation on a deterministic SHA1 of its content so the same finding converges rather than duplicating (`src/polymerhus/recon/domain/curator.py:176-177` per recon design §4.1).
 
-The auth store applies the same principle to accounts: an account's identity is the credential it authenticates and its name carries it (`<email>-<minting_context>`), so a second name for one credential is a fork the store refuses with `duplicate_identity` (`docs/design/authn-antiblock-replayability-237-decisions.md` D237-12, `docs/design/auth-store-220-decisions.md` D220-11).
+The auth store applies the same principle to accounts: an account's identity is the credential it authenticates and its name carries it (`<username>-<minting_context>`, the username's email location suffix stripped), so a second name for one credential is a fork the store refuses with `duplicate_identity` (`docs/design/authn-antiblock-replayability-237-decisions.md` D237-12 as amended by #247, `docs/design/auth-store-220-decisions.md` D220-11).
 
 This primitive is realised only at the project boundary, and closing the gap beyond it is a stated goal, not a curiosity.
 

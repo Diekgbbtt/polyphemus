@@ -1,7 +1,7 @@
 # Browser Capability via Steel CLI (#221) - Specification
 
 Parent ticket: #221 (auth-context: pluggable browser capability via steel CLI).
-Companion decisions: `docs/design/browser-cli-221-decisions.md` (D1-D10 as amended 2026-09-11, plus binding D11-D19: D2/D13 amended, D18 the auth-store binding amendment, D19 the variadic boundary).
+Companion decisions: `docs/design/browser-cli-221-decisions.md` (D1-D10 as amended 2026-09-11, plus binding D11-D19: D2/D6/D7/D8/D10/D13/D14 inline-amended, D18 the auth-store binding amendment, D19 the variadic boundary).
 Glossary: `src/polymerhus/recon/CONTEXT.md` (exec gateway, named session; profiles split per D16/D17).
 Prior spec version (seam/tool-factory design) superseded in full by the operator-ruled just-exec design below.
 
@@ -21,7 +21,7 @@ Agents browse by calling the tool; multi-op flows chain steel commands in script
 2. As a session agent, I want a clear `<name> is already used` error when my chosen name is taken, so that I never silently share a stranger's session.
 3. As a session agent, I want to navigate and read back title and URL, so that I confirm where the flow stands.
 4. As a session agent, I want snapshot refs for inputs and buttons, so that I target elements without brittle selectors.
-5. As a session agent, I want to fill credentials and click submit through one batch, so that a discovered ref and the value it receives share one spawn and one state.
+5. As a session agent, I want to fill credentials and click submit through one batch, so that the acts share one session and the variadic flag-order fold never silently corrupts an entered value.
 6. As a session agent, I want to wait on success text with the steel timeout governing and my tool budget above it, so that synchronisation is explicit and never cut short by an outer clock.
 7. As a session agent, I want to run JS inline with the skill's verbatim escaping patterns, so that probing is immediate and correct.
 8. As a session agent, I want eval results bounded by construction (project, slice, chunk), so that vulnerability-test reads never explode my context.
