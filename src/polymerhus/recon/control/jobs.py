@@ -78,7 +78,7 @@ JOBS: dict[str, JobSpec] = {
     "httpx": JobSpec(
         tool="httpx",
         skill="http_probe",
-        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_header}",
+        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_flags}",
         produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
         consumes="Subdomain",
         use_auth=True,
@@ -91,7 +91,7 @@ JOBS: dict[str, JobSpec] = {
         # nodes (D-HS S5/S5a). Reuses parse_httpx (registered under this tool
         # name in PARSERS), so the BaseURL is minted and profiled via the
         # identical noise_filter.classify_profile path - no duplicated logic.
-        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_header}",
+        command_template="httpx -u {target} -sc -title -server -td -fr -silent -json -irh {auth_flags}",
         produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
         # Consumes naabu's Service nodes; the pipeline's Service->probe-target
         # transform drops the default web ports (80/443, already covered by the
@@ -117,7 +117,7 @@ JOBS: dict[str, JobSpec] = {
         # responds - the arjun `printf '{}'` lesson). Reuses parse_httpx
         # (registered under this tool name in PARSERS), so each Endpoint's profile
         # is assigned via the identical noise_filter.classify_profile path - no
-        # duplicated classify logic. `{auth_header}` threads the pod's
+        # duplicated classify logic. `{auth_flags}` threads the pod's
         # `extra["auth_context"]` exactly as the per-endpoint probe did - one auth
         # shape for the whole surface for now; per-endpoint auth shaping is the
         # authN-first-class forward work (operator, #208 grilling).
@@ -125,7 +125,7 @@ JOBS: dict[str, JobSpec] = {
             "printf '' > /work/{session}/reprofile.json && "
             "printf '%s\\n' {endpoints} > /work/{session}/endpoints.txt && "
             "httpx -l /work/{session}/endpoints.txt -sc -title -server -td -fr "
-            "-silent -json -irh {auth_header} -o /work/{session}/reprofile.json "
+            "-silent -json -irh {auth_flags} -o /work/{session}/reprofile.json "
             ">/dev/null && cat /work/{session}/reprofile.json"
         ),
         produces=["BaseURL", "Endpoint", "Technology", "Certificate", "Header"],
@@ -262,7 +262,7 @@ JOBS: dict[str, JobSpec] = {
             "-ef css,scss,less,woff,woff2,ttf,eot,otf,map,"
             "png,jpg,jpeg,gif,svg,webp,ico,bmp,mp3,wav,mp4,webm,mov,pdf,zip "
             "-cos 'node_modules/|bower_components/|\\.(bak|old|swp|orig|tmp)($|\\?)' "
-            "-silent -jsonl {auth_header}"
+            "-silent -jsonl {auth_flags}"
         ),
         produces=["BaseURL", "Endpoint", "Parameter", "Header", "Technology"],
         consumes="BaseURL",
@@ -285,8 +285,13 @@ JOBS: dict[str, JobSpec] = {
             # baseline junk requests so a SPA soft-404 catch-all (every path -> 200,
             # uniform body) is filtered while genuinely-distinct paths like /api
             # still surface.
+            # #243: the steering-fed `{rate_flags}` throttle slot retired with
+            # the mid-run steering machinery (D223-12) - request phases run
+            # unthrottled in the interim (the #238 rate-limit work lands the
+            # profile-driven replacement); arjun's static `--rate-limit 5`
+            # below is the only request cap until then.
             "ffuf -u {target}/FUZZ -w /usr/share/seclists/Discovery/Web-Content/common.txt "
-            "-mc 200,403 -ac -o /work/{session}/ffuf.json -of json {rate_flags} {auth_header} "
+            "-mc 200,403 -ac -o /work/{session}/ffuf.json -of json {auth_flags} "
             ">/dev/null && cat /work/{session}/ffuf.json"
         ),
         produces=["Endpoint"],
@@ -296,7 +301,7 @@ JOBS: dict[str, JobSpec] = {
     "kiterunner": JobSpec(
         tool="kiterunner",
         skill="content_discovery",
-        command_template="kr scan {target} -w /opt/localbin/routes-small.kite {auth_header}",
+        command_template="kr scan {target} -w /opt/localbin/routes-small.kite {auth_flags}",
         produces=["Endpoint"],
         # kiterunner scans for API routes under an evidence-derived API-root
         # prefix (D16 per-endpoint split). It consumes the `restapi` ENDPOINTS a
@@ -310,8 +315,8 @@ JOBS: dict[str, JobSpec] = {
         # scan-target prefixes via the unified derivation (`pack="scan_targets"`).
         consumption=ConsumptionOptions(pack="scan_targets"),
         # kr scans routes that may sit behind auth, so it receives the
-        # project's cookies/headers like the other request-based tools (`kr`
-        # takes repeated -H "k: v" flags, the shared default format).
+        # feed-projected cookies/headers like the other request-based tools
+        # (`kr` takes repeated -H "k: v" flags, the shared default format).
         use_auth=True,
     ),
     "jsluice": JobSpec(
@@ -337,7 +342,7 @@ JOBS: dict[str, JobSpec] = {
     "graphql-cop": JobSpec(
         tool="graphql-cop",
         skill="graphql_audit",
-        command_template="graphql-cop -t {target} -o json {auth_header}",
+        command_template="graphql-cop -t {target} -o json {auth_flags}",
         produces=["Endpoint"],
         # graphql-cop audits ONE GraphQL endpoint, so it consumes the EXACT
         # `graphql_api` Endpoint (D16 per-endpoint split), targeting that
@@ -347,8 +352,8 @@ JOBS: dict[str, JobSpec] = {
         consumes="Endpoint",
         consumes_where=AssetSelector(field="profile", op="equals", values=["graphql_api"]),
         # graphql-cop probes a GraphQL surface that may sit behind auth, so it
-        # receives the project's cookies/headers (its own --headers format:
-        # comma-joined `Key:Value` pairs, see pod._COMMA_HEADERS_FLAG_TOOLS).
+        # receives the feed-projected cookies/headers (its own --headers
+        # format: comma-joined `Key:Value` pairs, see the auth feed).
         use_auth=True,
     ),
     "steel_crawl": JobSpec(
@@ -397,7 +402,7 @@ JOBS: dict[str, JobSpec] = {
             # A fixed cap is still a guess at the target's real budget; the adaptive
             # ladder (degrade on an observed 429/403, with a pause) is AMV-17.
             "printf '{}' > /work/{session}/arjun.json "
-            "&& arjun -u {target} --rate-limit 5 -oJ /work/{session}/arjun.json {auth_header} "
+            "&& arjun -u {target} --rate-limit 5 -oJ /work/{session}/arjun.json {auth_flags} "
             ">/dev/null && cat /work/{session}/arjun.json"
         ),
         produces=["Parameter"],

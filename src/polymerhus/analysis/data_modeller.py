@@ -631,29 +631,25 @@ _BASELINE_FEW_SHOTS = (
     '"kind": "derived_from", "rationale": "a basket line is derived from a listed product"}]'
 )
 
-_DATA_PLANE_SKILL_FALLBACK = (
-    "Begin every judgment from NO RECORD and make the evidence overturn it. For each "
-    "admitted name hold more than one candidate business record before committing, "
-    "and always state the null hypothesis - 'this witnesses no business record' - "
-    "explicitly. A name that merely sounds like a record with no path or field "
-    "corroboration is topical proximity, not evidence. Reuse an existing item_key "
-    "before coining a new one. `fields` name ONLY what you observed; never a "
-    "plausible-but-unseen attribute. A `surfaces_at` reference is REQUIRED for every "
-    "new item - a data_flow alone never grounds a lift, because a path is an address, "
-    "never a place data appears. Fold adversarial insight into `notes` as a "
-    "characterisation only - no named payload, technique, or vector."
-)
+# The data_modeller role prompt (`prompts/data-plane.md`), memoized on first call
+# (no import-time I/O, CODING STANDARD section 6). A missing prompt file is a
+# defect: FAIL-CLOSED (raise).
+_DATA_PLANE_SKILL: str | None = None
 
 
 def _load_skill() -> str:
-    """The data_modeller's HOW, single-sourced from
-    `skills/analysis/data-plane/SKILL.md` (DPL-DEC-16), degraded to the terse
-    fallback above when the mount is unavailable (`loop-constraints.md`: a skill
-    error degrades, never crashes). Every HARD invariant survives a missing mount
-    regardless, because narrow/resolve/validate/bind/ground are code."""
-    from polymerhus.recon.domain.skills import skill_for
+    """The data_modeller's HOW, read directly from this module's
+    `prompts/data-plane.md` (DPL-DEC-16): memoized in-process, FAIL-CLOSED on a
+    missing file (raise). Every HARD invariant survives regardless, because
+    narrow/resolve/validate/bind/ground are code."""
+    global _DATA_PLANE_SKILL
+    if _DATA_PLANE_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
 
-    return skill_for("analysis/data-plane", fallback=_DATA_PLANE_SKILL_FALLBACK)
+        _DATA_PLANE_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "data-plane.md"
+        ).read_text(encoding="utf-8")
+    return _DATA_PLANE_SKILL
 
 
 _DATA_MODELLER_PROMPT_CONFIGS = ("baseline", "skill")
@@ -707,6 +703,7 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     address = AnalysisSession(run_id, "data_modeller")
 
     from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+
     middleware = [C.build_role_compaction_middleware("data_modeller")]
 
     def invoke(messages, *, schema=None):

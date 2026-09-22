@@ -19,10 +19,10 @@ This document is the HOW, ratified by the operator through three grilling passes
 
 ### 2.1 Q1 - the LLM role
 
-The hunting agent gets a NEW `hunting` role in the LLM `ROLES` registry (`src/polymerhus/app/llm/providers.py`), keyed by the `LLM_MODEL_HUNTING` environment variable, following the single-shot `invoke_role(role, messages, schema=...)` convention (`src/polymerhus/app/llm/roles.py`).
+The hunting agent gets a NEW `hunting` role in the LLM `ROLES` registry (`src/polymerhus/app/llm/providers.py`), keyed by the `LLM_HUNTING` environment variable, following the single-shot `invoke_role(role, messages, schema=...)` convention (`src/polymerhus/app/llm/roles.py`).
 It does NOT reuse the `analyser` role.
 
-A design hole surfaced by this decision is tracked in #93: one `LLM_MODEL_ANALYSER` key gates several distinct agents (mechanism-typist, assigner, data-modeller), and the one-shot vs resumable property is not part of the role vocabulary.
+A design hole surfaced by this decision is tracked in #93: one `LLM_ANALYSER` key gates several distinct agents (mechanism-typist, assigner, data-modeller), and the one-shot vs resumable property is not part of the role vocabulary.
 The #93 deliverable prompt lands at `docs/design/llm-role-architecture-agent-prompt.md` with the #83 PR.
 
 ### 2.2 Q2 - KB engineering
@@ -561,7 +561,7 @@ The per-invocation user prompts (sections 4.7-4.9) are composed by the agent cod
 - The KB query interface (IA-8) is a typed seam mirrored from the #66 `symptom_kb.py` shape (`SymptomTechniqueQuery` / `SymptomTechniqueResult`), backed by an in-memory fixture KB for the tests; fail-open.
 - The store records land through the #68 hunt-store stub (`hunt_store.py`), extending `KINDS` with `spec` and `evidence` as specified in section 2.6.
 - The technological axis for the join key is derived deterministically from the unit's index card (seam, swappable).
-- The `hunting` role joins `ROLES` in `src/polymerhus/app/llm/providers.py` keyed by `LLM_MODEL_HUNTING`, using the `invoke_role` single-shot convention.
+- The `hunting` role joins `ROLES` in `src/polymerhus/app/llm/providers.py` keyed by `LLM_HUNTING`, using the `invoke_role` single-shot convention.
 - Never raise out of `dispatch_fn`; every collaborator failure degrades (fail-open); the agent never calls `request_targeted_recon` itself - back-edge needs surface via `back_edge_needs` on the `DispatchResult`.
 
 ### 5.2 Verdict derivation
@@ -579,7 +579,7 @@ The per-invocation user prompts (sections 4.7-4.9) are composed by the agent cod
 
 - The shared recipe (merged spec section 8): one Langfuse trace per hunt dispatch, spans per step (KB retrieval and the spec-composition turn, both authoring and re-authoring), session = run id, Langfuse optional and fail-open.
 - Verdicts are measured via the hunt-store records and the eval harness, never Langfuse score identifiers.
-- The `hunting` role joins the app boot (`validate_llm_config` requires `LLM_MODEL_HUNTING`), so a fresh environment must ship it (see `.env.example`).
+- The `hunting` role joins the app boot (`validate_llm_config` requires `LLM_HUNTING`), so a fresh environment must ship it (see `.env.example`).
 
 ## 6. Testing decisions
 

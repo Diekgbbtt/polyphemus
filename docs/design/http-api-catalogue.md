@@ -12,7 +12,7 @@ Single source of truth for the agent's HTTP surface. Everything a client can cal
 | `GET` | `/projects` | none | - | 200 `{projects: [...]}` | - | `list_projects` |
 | `GET` | `/projects/{project_id}/graph` | none | - | 200 graph payload | 404 unknown project | `project_graph` |
 | `GET` | `/runs` | none | - | 200 `{runs}` (status=running only) | 400 `status != running` | `list_runs` |
-| `PUT` | `/projects/{project_id}/settings` | none | `{recon: {target_seed, auth_context, feature toggles...}}` | 200 settings | 404 unknown project | `update_settings` |
+| `PUT` | `/projects/{project_id}/settings` | none | `{recon: {target_seed, feature toggles...}}` | 200 settings | 404 unknown project | `update_settings` |
 | `POST` | `/projects/{project_id}/recon` | none | `ReconLaunch {jobs?, settings?, with_analysis=true}` | 200 `{run_id}` | 404 unknown project; 400 invalid jobs / targetless | `launch_recon` |
 | `POST` | `/projects/{project_id}/recon/{run_id}/stop` | none | - | 200 `{run_id, stopping}` | 503 runtime inactive; 404 unknown run | `stop_recon` |
 | `GET` | `/projects/{project_id}/recon/{run_id}` | none | - | 200 run status | 404 unknown run | `get_recon_status` |

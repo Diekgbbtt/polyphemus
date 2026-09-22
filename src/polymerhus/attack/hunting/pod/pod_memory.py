@@ -55,12 +55,13 @@ from pathlib import Path
 
 import yaml
 
-# The hunting module's data seam (D84-33): the `test-executor-pod/` sibling
-# bucket under the SAME `data/<project_id>/` tree as the #164 hunter's
-# `data/<project_id>/hunter/` memory and the hunt store's
-# `data/<project_id>/orchestration/`. No env var; the explicit-root
-# constructor is kept for the tests' temp stores.
-HUNTING_DATA = Path(__file__).resolve().parent.parent / "data"
+from polymerhus.app.data_root import project_dir
+
+# The hunting module's data seam (D84-33): the `test-executor-pod/` bucket
+# under `DATA_ROOT/<project_id>/hunting/`, resolved through the ONE
+# `data_root.project_dir` layout owner - the sibling of the hunt store's
+# `hunting/orchestration/` and the #164 hunter's `hunting/hunter/`. No env var;
+# the explicit-root constructor is kept for the tests' temp stores.
 
 # The closed enum of pod note kinds (D84-28): `experiment_summary` is the ONE
 # consolidated P3 note per stretch (the Triager's primary artifact), `kb_insight`
@@ -188,13 +189,14 @@ class PodMemoryStore:
     def __init__(self, root_dir: str | Path | None = None, *,
                  project_id: str | None = None):
         """The store rooted under `root_dir` (tests' temp stores) OR, in
-        production, the per-project root `data/<project_id>/test-executor-pod/`
-        under the hunting module's data seam (D84-33). One of the two is
+        production, the per-project bucket
+        `DATA_ROOT/<project_id>/hunting/test-executor-pod/`, resolved through
+        the ONE `data_root.project_dir` layout owner. One of the two is
         required - there is no fixed default root."""
         if root_dir is not None:
             self._root = Path(root_dir)
         elif project_id is not None:
-            self._root = HUNTING_DATA / str(project_id) / "test-executor-pod"
+            self._root = project_dir(project_id, "hunting/test-executor-pod")
         else:
             raise ValueError(
                 "PodMemoryStore needs a root_dir (tests) or a project_id (production)"

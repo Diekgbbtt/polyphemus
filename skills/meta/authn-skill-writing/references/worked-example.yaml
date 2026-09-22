@@ -1,0 +1,128 @@
+# Worked example for the authn-skill-writing procedure (#237).
+# Two scenarios: a request-replayable target and a browser-only target.
+# Each probe is a plain-client request (no browser) against the target; each
+# seed_overview is a valid `PUT /projects/{project_id}/auth` overview payload.
+# Values are illustrative placeholders, never real secrets.
+
+scenarios:
+  - id: request-replayable
+    summary: >-
+      An anonymous probe is WAF-challenged, but the trusted browser context
+      replays with a plain HTTP client once the challenge and session cookies
+      are carried, so the flow is request-based.
+    probes:
+      - label: anonymous probe (no session)
+        request:
+          method: GET
+          url: https://shop.example/account
+          headers:
+            User-Agent: Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/128.0
+        response:
+          status: 403
+          headers:
+            Server: cloudflare
+            CF-Mitigated: challenge
+          body_markers:
+            - "Just a moment..."
+            - "/cdn-cgi/challenge-platform/"
+      - label: replay with the browser-trusted context
+        request:
+          method: GET
+          url: https://shop.example/account
+          headers:
+            User-Agent: Mozilla/5.0 (X11; Linux x86_64) Gecko/20100101 Firefox/128.0
+            Cookie: cf_clearance=<redacted>; sessionid=<redacted>
+        response:
+          status: 200
+          headers:
+            Content-Type: text/html; charset=utf-8
+          body_markers:
+            - "Signed in as ops-admin"
+    classification:
+      signal: waf_protected
+      evidence: >-
+        The anonymous 403 carries a Cloudflare challenge marker and a
+        cf_clearance bot-management cookie, not an application denial.
+    anti_bot: cf_clearance
+    http_client_replayability: true
+    continuation:
+      static:
+        - the cf_clearance cookie value
+        - the sessionid cookie value
+        - the User-Agent string
+      dynamic:
+        - the challenge solve that mints cf_clearance on a fresh origin
+    seed_overview:
+      login_endpoint: https://shop.example/login
+      mechanism: password
+      required_headers:
+        - X-Requested-With
+      anti-bot: cf_clearance
+      http-client-replayability: true
+      notes: >-
+        Anonymous probes are Cloudflare-challenged; the trusted context
+        replays with a plain client once cf_clearance and the session cookie
+        are sent, reaching /account 200.
+
+  - id: browser-only
+    summary: >-
+      A script-driven sign-in is gated by Akamai Bot Manager: a plain client
+      is blocked and cannot mint the sensor data the sign-in requires, so the
+      flow is honestly browser-only.
+    probes:
+      - label: anonymous probe (no session)
+        request:
+          method: POST
+          url: https://bank.example/api/signin
+          headers:
+            User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/128.0
+            Content-Type: application/json
+        response:
+          status: 403
+          headers:
+            Server: AkamaiGHost
+            X-Akamai-Transformed: "9 - 0 pmb=m1"
+          body_markers:
+            - "Access Denied"
+            - "_abck"
+            - "/akam/13/"
+      - label: replay with the browser-trusted context
+        request:
+          method: POST
+          url: https://bank.example/api/signin
+          headers:
+            User-Agent: Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/128.0
+            Content-Type: application/json
+            Cookie: _abck=<redacted>; bm_sz=<redacted>
+          body: '{"username":"<redacted>","password":"<redacted>"}'
+        response:
+          status: 403
+          headers:
+            Server: AkamaiGHost
+          body_markers:
+            - "Access Denied"
+    classification:
+      signal: waf_detection
+      evidence: >-
+        The 403 is an Akamai block page carrying the _abck bot-management
+        cookie and the /akam/ sensor path; the sign-in script mints sensor
+        data in-browser, which a plain client cannot reproduce.
+    anti_bot: akamai_v3
+    http_client_replayability: false
+    continuation:
+      static:
+        - the User-Agent string
+      dynamic:
+        - the _abck and bm_sz sensor values
+        - the per-request sensor payload the sign-in script builds
+    seed_overview:
+      login_endpoint: https://bank.example/signin
+      mechanism: password+script
+      anti-bot: akamai_v3
+      http-client-replayability: false
+      technical_conditions:
+        - name: sensor-fresh
+          check: re-run the browser sign-in when the session URL bounces back to /signin
+      notes: >-
+        Akamai Bot Manager gates the script-driven sign-in; the trust is
+        browser-bound, so a plain client cannot reach the authenticated state.

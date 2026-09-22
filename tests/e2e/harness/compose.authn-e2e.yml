@@ -1,0 +1,82 @@
+# Authn-bootstrap e2e overlay (#237, worktree-local).
+#
+# Loaded AFTER docker-compose.yml + docker-compose.dev.yml, from the #237
+# worktree, so `./src`, `./skills`, `./db`, `./gateway` and `./data` bind-mount
+# THIS worktree's edited tree - the auth store, the meta skill, and the data
+# root the external bootstrapper writes into. It adds a SIBLING agent service
+# (never the fleet `agent`), so it never collides with the operator's running
+# container, and it joins the shared polymerhus network so postgres/neo4j/kali
+# resolve by service DNS exactly as production.
+#
+# Unlike the pod-e2e overlay, this one does NOT override the entrypoint: the
+# container boots the real agent main entrypoint (`polymerhus.app.gateway_entrypoint`
+# -> litellm proxy + agent uvicorn), so the seed face and read face are live.
+#
+# Bring it up (from the worktree):
+#   docker compose -f docker-compose.yml -f docker-compose.dev.yml \
+#                  -f tests/e2e/harness/compose.authn-e2e.yml \
+#                  up -d --no-deps authn-e2e-agent
+#
+# `LITELLM_SKIP_MIGRATIONS=1`: the shared gateway database already carries the
+# prisma schema, so the 110-165 s cold `prisma migrate deploy` is skipped.
+services:
+  authn-e2e-agent:
+    image: polymerhus-agent:latest
+    working_dir: /srv
+    volumes:
+      - ./src:/srv/src
+      - ./db:/srv/db
+      - ./skills:/srv/skills
+      - ./gateway:/srv/gateway
+      # The app-owned data root: the auth bucket (data/<project>/auth/) and the
+      # project skill bundle (data/<project>/skills/authn/) land here, visible
+      # to both the container and the host-side assertions.
+      - ./data:/srv/data
+    environment:
+      NEO4J_URI: bolt://neo4j:7687
+      NEO4J_USER: neo4j
+      NEO4J_PASSWORD: polymerhus
+      POSTGRES_DSN: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus
+      KALI_MCP_URL: http://kali:8000/mcp
+      LIGHTRAG_API_URL: http://lightrag:9621
+      LIGHTRAG_BASE_API_URL: http://lightrag:9621
+      PROJECT_ID: authn-e2e
+      PYTHONPATH: /srv/src:/srv
+      # The co-located litellm gateway (ADR D1/D10), same as the base agent.
+      DATABASE_URL: postgresql://polymerhus:polymerhus@postgres:5432/polymerhus_gateway
+      LITELLM_MASTER_KEY: sk-polymerhus-dev-gateway
+      LITELLM_LOCAL_MODEL_COST_MAP: "True"
+      LITELLM_SKIP_MIGRATIONS: "1"
+      # Live source edits (the dev overlay convention).
+      AGENT_UVICORN_ARGS: "--reload --reload-dir /srv/src"
+      # This branch reads the infix-free role keys (#240 rename) while the
+      # operator's .env still carries the legacy LLM_MODEL_<ROLE> spellings.
+      # Derive every new key from its legacy counterpart; the default is the
+      # operator's current model, so the sibling resolves even if the legacy
+      # key is absent. The values are interpolated from this worktree's .env.
+      LLM_TRIAGER: ${LLM_MODEL_TRIAGER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_CONFIGURATOR: ${LLM_MODEL_CONFIGURATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_JOB_ORCHESTRATOR: ${LLM_MODEL_JOB_ORCHESTRATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_CRAWLER: ${LLM_MODEL_CRAWLER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_ANALYSER: ${LLM_MODEL_ANALYSER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_HUNTING_HUNTER: ${LLM_MODEL_HUNTING_HUNTER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_HUNTING_ORCHESTRATOR: ${LLM_MODEL_HUNTING_ORCHESTRATOR:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_POD_RUNNER: ${LLM_MODEL_POD_RUNNER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      LLM_POD_TRIAGER: ${LLM_MODEL_POD_TRIAGER:-opencode-go:opencode-go/deepseek-v4.1-flash}
+      # A6: models.dev cannot express this relay's true surface - live probes
+      # (2026-09-21) show deepseek-v4.1-flash refuses BOTH response_format
+      # json_schema ("This response_format type is unavailable now") and a forced
+      # tool_choice ("Thinking mode does not support this tool_choice"), while
+      # auto tool choice and json_object work. The operator declares the truth
+      # here; the method negotiation then picks the voluntary rung (A6) and the
+      # model relaxes any forced tool_choice to "auto" at bind time.
+      LLM_CAPABILITY_OVERRIDES: '{"opencode-go/deepseek-v4.1-flash": {"supports_structured_output": false, "supports_forced_tool_choice": false}}'
+    env_file:
+      - path: "/Users/diekgbbtt/polymerhus/.env"
+        required: false
+    ports: ["8083:8080"]
+    depends_on:
+      postgres: { condition: service_healthy }
+      neo4j: { condition: service_healthy }
+      kali: { condition: service_started }
+    networks: [polymerhus-net]

@@ -129,6 +129,28 @@ if [ -f "$MOTD" ] && ! grep -q POLYPHEMUS_NONINTERACTIVE_GUARD "$MOTD" 2>/dev/nu
   sed -i '1i [ -z "$PS1" ] && return 0  # POLYPHEMUS_NONINTERACTIVE_GUARD' "$MOTD" 2>/dev/null || true
 fi
 
+# steel CLI (browser capability, #221): pinned release into the persisted
+# binary dir, checksum-verified, arch-selected. Idempotent: skip when the
+# pinned version is already present. Best-effort: never aborts boot.
+if ! /opt/localbin/steel --version 2>/dev/null | grep -q "0.4.4"; then
+  (
+    _SVER="0.4.4"
+    _ARCH=$(uname -m)
+    case "$_ARCH" in
+      aarch64|arm64) _SARCH="aarch64"; _SSHA="0cec104b3c0da0c232a5f4fe5feaa8098dfc9581fb76029f621d55cc023feb7a" ;;
+      *) _SARCH="x86_64"; _SSHA="358ccca0f5250dcb64b8870e2148e83d4d75c1e0c4eaef2c2d4a0a427aaa32ef" ;;
+    esac
+    _STGZ="/tmp/steel-cli-${_SARCH}-unknown-linux-gnu.tar.gz"
+    rm -rf /tmp/steel-cli-extract && mkdir -p /tmp/steel-cli-extract
+    curl -sL "https://github.com/steel-dev/cli/releases/download/v${_SVER}/steel-cli-${_SARCH}-unknown-linux-gnu.tar.gz" -o "$_STGZ" && \
+      echo "${_SSHA}  ${_STGZ}" | sha256sum -c - && \
+      tar xz -C /tmp/steel-cli-extract -f "$_STGZ" && \
+      _SBIN=$(find /tmp/steel-cli-extract -name steel -type f | head -1) && \
+      [ -n "$_SBIN" ] && cp "$_SBIN" /opt/localbin/steel && chmod +x /opt/localbin/steel
+    rm -rf /tmp/steel-cli-extract "$_STGZ"
+  ) || true
+fi
+
 echo "[postrun] gap-fill complete"
 echo "[postrun] http-history bootstrap complete (idempotent)"
 exit 0

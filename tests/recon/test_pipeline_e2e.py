@@ -35,22 +35,13 @@ FIXTURES = Path(__file__).parent / "fixtures"
 
 
 @pytest.fixture(autouse=True)
-def _no_live_steering(monkeypatch):
-    """Stub the ONE remaining live-database reach in this unit-tier e2e.
+def _no_live_database_reach(monkeypatch):
+    """Stub the heartbeat write so this unit-tier e2e never touches Postgres.
 
-    `run_pipeline` calls `read_steering_signals` at each phase boundary, and that
-    helper grabs `neo4j_client._driver` directly rather than going through an
-    injectable seam. Unstubbed it hit a real database, and because the helper is
-    deliberately fail-open the error was SWALLOWED - the run continued with no
-    steering, arjun never executed, and the test failed on
-    `no arjun command was executed`, an assertion that points nowhere near the
-    real cause. It cost a full forensic session to trace that to a wrong dummy
-    password in tests/conftest.py.
-
-    Returning [] is also the semantically correct value here: these fixtures
-    carry no WAF observations, so "no steering signals" is what a real read of
-    this graph would yield."""
-    monkeypatch.setattr(pipeline, "read_steering_signals", lambda project_id, **kw: [])
+    (The mid-run steering-signal read this fixture historically stubbed is
+    retired with the steering machinery, #243 - `run_pipeline` performs no
+    live-database reach per phase anymore.)"""
+    monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
 
 SUBFINDER_STDOUT = (FIXTURES / "subfinder.jsonl").read_text()
 DNSX_STDOUT = (FIXTURES / "dnsx.jsonl").read_text()

@@ -14,12 +14,11 @@ accumulate into `pod_exports` through an `operator.add` reducer so the parallel
 `pod_invoke` and `preprocess_fn` are injected - production wires
 `default_pod_invoke` (wraps Foundation `polymerhus.recon.domain.pod.pod_graph`) and
 `default_preprocess_fn` (deterministic 1:1 asset->pod_input mapping up to the
-MAX_JOB_ASSETS budget, except for batched/reprofile jobs which pack; `extra` -
-including the orchestration-level `extra["steering"]` signals - is threaded
-through verbatim). The per-asset
-throttling decision that once lived here (`decide_pod_selection`, #81) moved into
-the pod graph's configurator node (#94): each pod consults a stateful per-pod
-`configurator` role turn and sets its own `rate_profile`. `notify_fn` (optional)
+MAX_JOB_ASSETS budget, except for batched/reprofile jobs which pack; `extra`
+is threaded through verbatim). The per-pod throttle input retired with the
+mid-run steering machinery (#243, D223-12) - request phases run unthrottled
+until the #238 rate-limit work lands its profile-driven configuration.
+`notify_fn` (optional)
 is the #94 delivery seam: fired after each pod completes so a parent actor can be
 told a pod finished and go READ that pod's session memory; `pod_completion_notify`
 builds it from a parent `inbox`. Importing this module performs no I/O: building
@@ -155,12 +154,10 @@ def default_preprocess_fn(
     ]
 
 
-# Per-asset throttling (#94) is now the POD CONFIGURATOR's decision, exactly
-# like the triager: the pod graph's configurator node consults a stateful,
-# per-pod `configurator` role turn over the job's STEERING signals and sets the
-# pod's `rate_profile`. The recon-job agent is purely deterministic again -
-# `default_preprocess_fn` simply threads `extra["steering"]` through to every
-# pod_input, and the pod itself decides how to run.
+# Per-pod throttling retired with the mid-run steering machinery (#243,
+# D223-12): `default_preprocess_fn` threads `extra` through to every pod_input
+# verbatim, and the pod fills its command deterministically. The #238
+# rate-limit work owns the profile-driven replacement.
 
 
 def default_pod_invoke(pod_input: dict, job: JobSpec, run_id: str, phase: int) -> PodExport:

@@ -59,13 +59,9 @@ from pathlib import Path
 
 import yaml
 
-logger = logging.getLogger(__name__)
+from polymerhus.app.data_root import DATA_ROOT, project_dir
 
-# The FIXED store root (seam contract 3.4, #110): the per-project memory store
-# lives under `src/polymerhus/attack/hunting/data/` - no env var. The
-# explicit-root constructor is kept for the tests/the module tests' temp
-# stores.
-HUNT_STORE_ROOT = Path(__file__).resolve().parent / "data"
+logger = logging.getLogger(__name__)
 
 # The semantic-key separator (single-sourced, M1): the revival key
 # (`<unit_id>::<fault_class>`, hunt_orchestrator.revival_key) is the 2-part
@@ -194,14 +190,16 @@ class HuntStore:
     """The per-project hunt-config + notes memory store (memory-system spec)."""
 
     def __init__(self, root_dir: str | Path | None = None):
-        """Rooted under `root_dir` (default: the FIXED seam root
-        `src/polymerhus/attack/hunting/data/`)."""
-        self._root = Path(root_dir) if root_dir is not None else HUNT_STORE_ROOT
+        """Rooted under `root_dir` (default: the app-owned `DATA_ROOT`); the
+        per-project bucket is `<root>/<project_id>/hunting/orchestration/`,
+        resolved through the ONE `data_root.project_dir` layout owner. The
+        explicit-root constructor is kept for the tests' temp stores."""
+        self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
 
     # --- path helpers ----------------------------------------------------------
 
     def _project_dir(self, project_id: str) -> Path:
-        return self._root / project_id / "orchestration"
+        return project_dir(project_id, "hunting/orchestration", root=self._root)
 
     def _produced_dir(self, project_id: str) -> Path:
         return self._project_dir(project_id) / "hunt_configs" / "produced"
@@ -263,12 +261,9 @@ class HuntStore:
                     "deduplication signal, not a second file"
                 )
             target = produced if directory == "produced" else consumed
-            # The topology is created lazily at the first write: both config
-            # directories (and the orchestration/ parent for memory.yaml) land
-            # together, so the produced/consumed substrate exists for the inbox
-            # surfer to operate on.
-            produced.parent.mkdir(parents=True, exist_ok=True)
-            consumed.parent.mkdir(parents=True, exist_ok=True)
+            # The topology is owned by the app-layer scaffold (#234): the
+            # orchestration/ bucket and both hunt_configs/ sides are created
+            # eagerly at project creation, so the store writes its files only.
             self._dump_yaml_atomic(target, data)
             return semantic_key(unit_id, fault_class, vulnerability_class)
 
@@ -305,8 +300,6 @@ class HuntStore:
             name = config_file_name(unit_id, fault_class, vulnerability_class)
             produced = self._produced_dir(project_id)
             consumed = self._consumed_dir(project_id)
-            produced.parent.mkdir(parents=True, exist_ok=True)
-            consumed.parent.mkdir(parents=True, exist_ok=True)
             if directory == "produced" and (consumed / name).exists():
                 logger.warning(
                     "hunt store: ratify write for %s skipped - the identity "
@@ -461,6 +454,9 @@ class HuntStore:
                     name,
                 )
                 return False
+            # Destination safety net only: the app scaffold owns the topology
+            # (ensure_project); the move needs its destination directory to
+            # exist even when a caller roots a store outside the scaffold.
             consumed.parent.mkdir(parents=True, exist_ok=True)
             os.replace(produced, consumed)
             return True
@@ -512,7 +508,9 @@ class HuntStore:
         file, or a non-matching folder contributes nothing; never a raise into
         the caller."""
         out: list[dict] = []
-        specs_dir = self._root / str(project_id) / "hunter" / "test-specs"
+        specs_dir = (
+            project_dir(project_id, "hunting/hunter", root=self._root) / "test-specs"
+        )
         if not specs_dir.exists():
             return out
         for fault_dir in sorted(specs_dir.iterdir()):
@@ -541,7 +539,9 @@ class HuntStore:
         sibling, an unreadable file, or a non-matching record contributes
         nothing; never a raise into the caller."""
         out: list[dict] = []
-        notes_file = self._root / str(project_id) / "hunter" / "notes.yaml"
+        notes_file = (
+            project_dir(project_id, "hunting/hunter", root=self._root) / "notes.yaml"
+        )
         if not notes_file.exists():
             return out
         try:

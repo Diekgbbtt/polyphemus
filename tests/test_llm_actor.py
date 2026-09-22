@@ -164,6 +164,18 @@ def test_pure_listener_with_no_initial_turn_stops_on_stop_message():
     assert result.turns == []
 
 
+def test_inbox_try_get_nowait_is_the_drain_seam():
+    """`try_get_nowait` takes without raising: messages in arrival order,
+    None when empty - the seam bounded awaits drain stale replies through."""
+    inbox = AgentInbox()
+    assert inbox.try_get_nowait() is None
+    inbox.post_nowait(AgentMessage(kind="a"))
+    inbox.post_nowait(AgentMessage(kind="b"))
+    assert inbox.try_get_nowait().kind == "a"
+    assert inbox.try_get_nowait().kind == "b"
+    assert inbox.try_get_nowait() is None
+
+
 def test_inbox_post_hook_delivers_from_a_worker_thread():
     """The post-call-hook scaffold: a sub-agent running OFF the loop (`to_thread`) posts
     an update through `inbox_post_hook`, and the active parent consumes it and takes a

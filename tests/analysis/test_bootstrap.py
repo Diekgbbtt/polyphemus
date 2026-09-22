@@ -165,12 +165,30 @@ def test_the_skill_carries_the_no_invented_paths_rule():
     assert "never invent a path" in skill or "never write a path" in skill
 
 
-def test_a_missing_skill_mount_degrades_to_a_fallback_that_keeps_the_constraints():
-    fallback = bootstrap._BOOTSTRAPPER_SKILL_FALLBACK
-    assert "service_contract" in fallback
-    assert "NEVER write a path" in fallback
-    for stage in ("DECOMPOSE", "EXPAND", "GROUND", "WITHHOLD", "DECIDE"):
-        assert stage in fallback
+def test_a_missing_prompt_file_raises_fail_closed(monkeypatch):
+    import pathlib
+
+    import pytest
+
+    def boom(self, *a, **k):
+        raise OSError("no mount")
+
+    monkeypatch.setattr(pathlib.Path, "read_text", boom)
+    monkeypatch.setattr(bootstrap, "_BOOTSTRAPPER_SKILL", None)
+    try:
+        with pytest.raises(OSError):
+            bootstrap._load_bootstrapper_skill()  # a role without its prompt is a defect
+    finally:
+        monkeypatch.setattr(bootstrap, "_BOOTSTRAPPER_SKILL", None)
+
+
+def test_the_prompt_is_single_sourced_from_the_module_prompts_dir():
+    from pathlib import Path
+
+    skill = bootstrap._load_bootstrapper_skill()
+    expected = (Path(bootstrap.__file__).resolve().parent / "prompts" / "bootstrapper.md").read_text(encoding="utf-8")
+    assert skill == expected
+    assert bootstrap._load_bootstrapper_skill() is skill  # memoized on first call
 
 
 def test_both_layers_actually_reach_the_model(monkeypatch):

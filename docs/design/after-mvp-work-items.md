@@ -303,7 +303,7 @@ That is the thesis in live form: the prevention that was added at creation is wh
 
 2. **Assignment quality is highly non-deterministic and, under repeated partial passes, monotonically degrades.**
 Streaming over-assigns (19.7% strict noise vs batch 0%, §7 precision table) because the surface is analysed once per producing job against a PARTIAL surface and MERGE accumulates monotonically with no retraction, so every speculative early assignment is permanent (`streaming.py` header; §7 "plausible mechanism").
-`deepseek-v4-flash` produced 0 assignments on the identical 182-endpoint surface where `v4-pro` produced 90 (STATE.md, "LLM_MODEL_ANALYSER ... CANNOT assign").
+`deepseek-v4-flash` produced 0 assignments on the identical 182-endpoint surface where `v4-pro` produced 90 (STATE.md, "LLM_ANALYSER ... CANNOT assign").
 Cross-run identity is unstable (Jaccard 0.407, AMV-12) and journey slugs are coined at inconsistent altitude (AMV-15).
 None of these is fixed by a downstream repair pass; each is a property of HOW the write is made.
 

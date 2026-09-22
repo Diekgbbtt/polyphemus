@@ -5,12 +5,13 @@ Kept in a separate file so tests can import it without pulling in the full
 FastAPI application (websockets, uvicorn, etc. not required here).
 
 Notable design points (kept minimal + marked in-line with `D23`/`SP4`):
-1. `_load_steel_crawl_skill`'s path resolves to `steel_crawl_skill.md` next to
-   this module.
-2. `AgenticCrawlRequest.credentials` (optional) + a credentialed-login prompt
-   branch in `_run_agentic_crawl` (D23): when credentials are supplied and no
-   human-interactive session is precreated, the agent is instructed to log in
-   autonomously before crawling.
+1. `_load_steel_crawl_skill` reads the steel-crawl role prompt directly from
+   this module's `prompts/` dir, memoized on first call, fail-closed.
+2. The crawl runs profile-mount only (#223 T4 #243): the loop starts its own
+   session and crawls what the seeded browser context reaches - the
+   persisted session cookies the provider seeds before the crawl. The
+   retired interactive `steel_await_auth` human-in-the-viewer path and the
+   autonomous credentialed-login branch are gone with their prompts.
 3. The T5 (#108) capability gate `_refuse_crawl_without_tool_calling` runs
    BEFORE `llm.bind_tools`: a model whose `supports_tool_calling` resolves
    `false`/`unknown` (T3 reader, ADR D5 Rule 1) refuses the tool-loop with a
@@ -20,9 +21,6 @@ The lazy `from api import _build_llm_with_model_for_user` fallback in
 always injects `build_llm_fn`, so that import never fires on our host.
 """
 from __future__ import annotations
-
-from pathlib import Path
-from typing import Optional
 
 from pydantic import BaseModel
 
@@ -36,7 +34,6 @@ CRAWL_TOOL_NAMES = {
     "steel_crawl_finish",
     "steel_eval",
     "steel_click",
-    "steel_await_auth",
 }
 
 
@@ -52,65 +49,27 @@ class AgenticCrawlRequest(BaseModel):
     navigate_wait_ms: int = 800
     job_timeout_s: int = 480
     proxy_escalation: bool = False
-    auth_required: bool = False
-    # D23 local adaptation: optional autonomous-login credentials. When set (and
-    # no pre_created_crawl_id), _run_agentic_crawl emits a credentialed-login
-    # prompt branch instructing the agent to log in before crawling.
-    credentials: Optional[dict] = None
 
 
-async def precreate_auth_session(mcp_manager, body) -> "tuple[str | None, dict | None]":
-    """Pre-create a Steel crawl session when auth is required.
-
-    Calls the ``steel_crawl_start`` MCP tool directly so the viewer URL and
-    crawl_id are available *before* the ReAct loop runs.  The caller is
-    responsible for storing the returned awaiting-status dict while the job
-    is in flight, and for passing ``crawl_id`` to ``_run_agentic_crawl`` as
-    ``pre_created_crawl_id``.
-
-    Returns:
-        (crawl_id, awaiting_status_dict)  — when auth_required and tool found
-        (None, None)                      — when auth not required or tool missing
-    """
-    if not getattr(body, "auth_required", False):
-        return None, None
-    if mcp_manager is None:
-        return None, None
-
-    tools = await mcp_manager.get_tools()
-    start = next(
-        (t for t in tools if getattr(t, "name", "") == "steel_crawl_start"), None
-    )
-    if start is None:
-        return None, None
-
-    res = await start.ainvoke(
-        {
-            "target": body.target,
-            "scope": body.scope,
-            "user_id": body.user_id,
-            "max_depth": body.max_depth,
-            "max_pages": body.max_pages,
-        }
-    )
-    # MCP tools return a content-block list, not a bare dict — normalize first.
-    res = _payload_from_tool_result(res)
-    crawl_id = res.get("crawl_id")
-    awaiting_status: dict = {
-        "status": "awaiting_auth",
-        "viewer_url": res.get("viewer_url", ""),
-        "crawl_id": crawl_id,
-    }
-    return crawl_id, awaiting_status
+# The steel-crawl role prompt, memoized on first call (no import-time I/O,
+# CODING STANDARD section 6). A missing prompt file is a defect: fail-closed.
+_STEEL_CRAWL_SKILL: str | None = None
 
 
 def _load_steel_crawl_skill() -> str:
-    """Load the steel_crawl skill system prompt from disk.
-
-    Adapted (SP4-T3): points at `steel_crawl_skill.md` next to this module.
+    """Load the steel_crawl skill system prompt directly from this module's
+    `prompts/` dir. Memoized on first call; FAIL-CLOSED - a missing prompt
+    file raises instead of degrading to an empty manifest, so the crawl never
+    runs without its budget/frontier discipline.
     """
-    skill_path = Path(__file__).parent / "steel_crawl_skill.md"
-    return skill_path.read_text(encoding="utf-8")
+    global _STEEL_CRAWL_SKILL
+    if _STEEL_CRAWL_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415 - lazy, mirrors the reader convention
+
+        _STEEL_CRAWL_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "steel-crawl.md"
+        ).read_text(encoding="utf-8")
+    return _STEEL_CRAWL_SKILL
 
 
 def _payload_from_tool_result(out) -> dict:
@@ -227,7 +186,6 @@ async def _run_agentic_crawl(
     mcp_manager,
     # Injected by api.py so this module stays import-light (no circular deps)
     build_llm_fn=None,
-    pre_created_crawl_id=None,
 ) -> dict:
     """Run a bounded ReAct loop driving the Steel crawl MCP tools.
 
@@ -242,18 +200,7 @@ async def _run_agentic_crawl(
 
     llm = build_llm_fn(body.model, body.user_id)
     all_tools = await mcp_manager.get_tools()
-    # `steel_await_auth` is the INTERACTIVE (human-in-the-viewer) login tool. It
-    # is bound ONLY on the pre-created interactive path (which explicitly drives
-    # it). Autonomous credentialed / anonymous crawls must NOT see it: with no
-    # human at the viewer it just blocks the whole session until timeout, and
-    # the D23 autonomous flow detects login success itself (an in-scope session
-    # cookie on an in-scope non-login page - see the credentialed user message).
-    # The tool + its predicates stay in steel_provider.py (parked, not deleted)
-    # so the interactive path can be picked up again later.
-    bound_names = set(CRAWL_TOOL_NAMES)
-    if not pre_created_crawl_id:
-        bound_names.discard("steel_await_auth")
-    tools = [t for t in all_tools if getattr(t, "name", "") in bound_names]
+    tools = [t for t in all_tools if getattr(t, "name", "") in CRAWL_TOOL_NAMES]
     by_name = {t.name: t for t in tools}
     # T5 (#108): the capability gate - a model that cannot call tools (false
     # or unknown, provenance-gated per ADR D5 Rule 1) REFUSES the tool-loop:
@@ -264,49 +211,12 @@ async def _run_agentic_crawl(
     llm_t = llm.bind_tools(tools)
 
     sys_prompt = _load_steel_crawl_skill()
-    creds = getattr(body, "credentials", None) or {}
-    if pre_created_crawl_id:
-        user = (
-            f"target={body.target}\nscope={body.scope}\n"
-            f"A Steel session is ALREADY STARTED for this crawl: crawl_id={pre_created_crawl_id}\n"
-            f"A human operator is logging in manually right now. Do NOT call steel_crawl_start.\n"
-            f"FIRST call steel_await_auth(crawl_id={pre_created_crawl_id!r}). When it returns "
-            f"authenticated=true, crawl the now-authenticated routes; if it returns timed_out=true, "
-            f"crawl whatever is reachable. Then steel_crawl_finish.\n"
-            f"max_depth={body.max_depth} max_pages={body.max_pages} wait_ms={body.navigate_wait_ms}"
-        )
-    elif creds:
-        # D23 local adaptation: autonomous credentialed login before crawling.
-        sel = (
-            f"username selector={creds.get('username_selector') or 'auto-detect the email/text login input'}; "
-            f"password selector={creds.get('password_selector') or 'auto-detect input[type=password]'}; "
-            f"submit={creds.get('submit_selector') or 'the login form submit control'}"
-        )
-        user = (
-            f"target={body.target}\nscope={body.scope}\n"
-            f"Begin by calling steel_crawl_start. You must AUTHENTICATE with these credentials BEFORE "
-            f"crawling:\n"
-            f"1. steel_navigate to login_url={creds.get('login_url')!r}.\n"
-            f"2. Fill the login form with username={creds.get('username')!r} and password={creds.get('password')!r} "
-            f"using steel_eval; {sel}.\n"
-            f"3. steel_click the submit control EXACTLY ONCE. Do NOT resubmit on failure (account lockout).\n"
-            f"4. Verify success: an in-scope session cookie appeared AND you are on an in-scope non-login "
-            f"page. Genuine AUTH blocks - redirected off {body.scope} (SSO/OAuth), a second factor / "
-            f"one-time code AFTER submit, or no login form - mean you are BLOCKED: do NOT loop, call "
-            f"steel_crawl_finish with whatever is reachable and stop. A page-load / pre-submit CAPTCHA "
-            f"or bot-detection interstitial or a 403 bot wall (IP/session-bound) is NOT a reason to "
-            f"finish: follow the skill's rotation rule - abandon the session and call steel_crawl_start "
-            f"for a FRESH one (new region, new IP), up to 3 fresh sessions, then re-attempt the login.\n"
-            f"5. Once authenticated, crawl the now-authenticated routes, then steel_crawl_finish.\n"
-            f"max_depth={body.max_depth} max_pages={body.max_pages} wait_ms={body.navigate_wait_ms}"
-        )
-    else:
-        user = (
-            f"target={body.target}\nscope={body.scope}\n"
-            f"max_depth={body.max_depth} max_pages={body.max_pages} "
-            f"wait_ms={body.navigate_wait_ms} proxy_escalation={body.proxy_escalation}\n"
-            f"Begin by calling steel_crawl_start."
-        )
+    user = (
+        f"target={body.target}\nscope={body.scope}\n"
+        f"max_depth={body.max_depth} max_pages={body.max_pages} "
+        f"wait_ms={body.navigate_wait_ms} proxy_escalation={body.proxy_escalation}\n"
+        f"Begin by calling steel_crawl_start."
+    )
     messages = [SystemMessage(content=sys_prompt), HumanMessage(content=user)]
     last_manifest: dict = {"endpoints": [], "js_urls": []}
 

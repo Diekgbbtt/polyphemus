@@ -349,7 +349,11 @@ def test_over_cut_tool_bodies_offload_and_pairing_falls_back():
     fake = _good_summariser()
     res = C.compact_pass(trail, thread_id="thr", profile=None, store=store, summariser=fake)
     assert res.report.offloaded_bodies == 2
-    assert res.report.summarised_spans == 1
+    # Pair-atomic retention (live 400): the paired assistant stages WITH its
+    # retained tool result instead of folding, so no AI span is summarised here -
+    # and with nothing folded and no prior summary, no summary fires at all.
+    assert res.report.summarised_spans == 0
+    assert res.report.readability == "unchanged"
     t1 = _tool_message(res.messages, "t1")
     assert "terminal" in t1.content and "ls -la" in t1.content
     ref = T.header_ref_from_text(t1.content)
@@ -1101,3 +1105,116 @@ def test_oversized_tail_bounding_converges_for_any_threshold():
         occupancy, _approx = C.compute_occupancy(res.messages)
         assert occupancy < window.budget, (
             f"threshold={threshold} occupancy={occupancy} budget={window.budget}")
+
+
+# --- tool pairs are atomic in the compacted trail (live 400, run c9f982b9) ----
+
+def _tool_pair(call_id, tool_body, ai_content="thinking"):
+    """One well-formed tool group: an assistant message carrying `tool_calls`
+    plus its immediately following result."""
+    ai = AIMessage(content=ai_content, tool_calls=[
+        {"id": call_id, "name": "terminal", "args": {"command": "run-" + call_id}}])
+    return ai, ToolMessage(content=tool_body, tool_call_id=call_id)
+
+
+def _identity_index(messages, target):
+    """The position of the exact object (identity, never `==` - staged headers
+    are copies whose equality is meaningless here)."""
+    for i, message in enumerate(messages):
+        if message is target:
+            return i
+    raise AssertionError("message object not found in the staged trail")
+
+
+def test_exempt_tail_never_cuts_a_tool_pair():
+    """Live 400 (run c9f982b9-3726-4e2b-a87d-b32cd8370c70): the token-walked
+    exempt tail cut between an `AIMessage(tool_calls)` and its `ToolMessage`,
+    staging the tool without its assistant prefix while the running-summary
+    message sat between them. The tail now extends to the pair boundary and the
+    staged trail passes the adjacency invariant."""
+    profile = CapabilityProfile(reasoning_in_response=True)
+    store = T.InMemoryToolOutputStore()
+    ai, tool = _tool_pair("t1", "tool-body-one")
+    trail = [HumanMessage(content="go"), AIMessage(content="older reasoning"), ai, tool]
+    # A budget covering exactly the last tool message cuts the tail mid-pair.
+    budget = C.approx_tokens([tool])
+    assert C._exempt_tail_size(trail, profile, budget) == 1  # the breaker, as measured
+    res = C.compact_pass(trail, thread_id="thr", profile=profile, store=store,
+                         summariser=_good_summariser(), replay_keep_tokens=budget)
+    assert res.report.exempted_spans == 2
+    assert res.messages[-2] is ai and res.messages[-1] is tool
+    assert tool.content == "tool-body-one"  # exempt, never offloaded
+    assert C._tool_pairs_adjacent(res.messages)
+
+
+def test_tool_group_beyond_keep_window_folds_whole():
+    """Bounded retention is pair-atomic: a tool group past `keep_last_tools`
+    folds WHOLE (assistant plus results) into the summary - no dangling
+    `AIMessage(tool_calls)` stays staged, no orphan `ToolMessage` survives, and
+    the retained pair stays contiguous."""
+    store = T.InMemoryToolOutputStore()
+    fake = _good_summariser()
+    a1, t1 = _tool_pair("a", "FIRST-GROUP-BODY", "reason-one")
+    a2, t2 = _tool_pair("b", "SECOND-GROUP-BODY", "reason-two")
+    a3, t3 = _tool_pair("c", "THIRD-GROUP-BODY", "reason-three")
+    trail = [HumanMessage(content="go"), a1, t1, a2, t2, a3, t3]
+    res = C.compact_pass(trail, thread_id="thr", profile=None, store=store,
+                         summariser=fake, keep_last_tools=1)
+    staged_tools = [m for m in res.messages if isinstance(m, ToolMessage)]
+    assert [m.tool_call_id for m in staged_tools] == ["c"]
+    staged_callers = [m for m in res.messages
+                      if isinstance(m, AIMessage) and getattr(m, "tool_calls", None)]
+    assert len(staged_callers) == 1 and staged_callers[0] is a3
+    assert _identity_index(res.messages, a3) + 1 == _identity_index(res.messages, t3)
+    user = fake.seen["user"]
+    assert "FIRST-GROUP-BODY" in user and "SECOND-GROUP-BODY" in user
+    assert "THIRD-GROUP-BODY" not in user
+    assert C._tool_pairs_adjacent(res.messages)
+
+
+def test_partial_fold_unfolds_whole_groups(monkeypatch):
+    """#210 partial fold under the pairing discipline: when `outcome.folded`
+    cuts the flat folded input mid-group, the unfolded remainder is staged as
+    whole contiguous groups (the cut rounds down to the group start - harmless
+    duplication, never a dropped span and never a split pair)."""
+    a1, t1 = _tool_pair("a", "FIRST-GROUP-BODY", "reason-one")
+    a2, t2 = _tool_pair("b", "SECOND-GROUP-BODY", "reason-two")
+    trail = [HumanMessage(content="go"), a1, t1, a2, t2]
+    partial = S.RunningSummary(objective="PARTIAL-OK", resume_point="r")
+    seen = {}
+
+    def fake_summarise(summariser, *, existing, spans, chunk_budget):
+        seen["spans"] = list(spans)
+        return S.SummaryOutcome(summary=partial, status="ok", folded=1)  # mid-group
+
+    monkeypatch.setattr(C, "summarise", fake_summarise)
+    res = C.compact_pass(trail, thread_id="thr", profile=None,
+                         store=T.InMemoryToolOutputStore(),
+                         summariser=object(), keep_last_tools=0)
+    # The summariser input stays a flat ordered list of whole groups' messages.
+    assert seen["spans"] == [a1, t1, a2, t2]
+    positions = [_identity_index(res.messages, m) for m in (a1, t1, a2, t2)]
+    assert positions == list(range(positions[0], positions[0] + 4))
+    summary_at = next(i for i, m in enumerate(res.messages)
+                      if isinstance(m, SystemMessage)
+                      and str(m.content or "").startswith("[running summary]"))
+    assert summary_at == positions[0] + 4  # the summary follows a complete group
+    assert C._tool_pairs_adjacent(res.messages)
+
+
+def test_complete_fold_leaves_no_dangling_tool_calls():
+    """A complete fold stages no `AIMessage(tool_calls)` without results and no
+    `ToolMessage` without its assistant - the folded pairs live in the summary."""
+    store = T.InMemoryToolOutputStore()
+    fake = _good_summariser()
+    a1, t1 = _tool_pair("a", "FIRST-GROUP-BODY", "reason-one")
+    a2, t2 = _tool_pair("b", "SECOND-GROUP-BODY", "reason-two")
+    trail = [HumanMessage(content="go"), a1, t1, a2, t2]
+    res = C.compact_pass(trail, thread_id="thr", profile=None, store=store,
+                         summariser=fake, keep_last_tools=0)
+    assert not any(isinstance(m, ToolMessage) for m in res.messages)
+    assert not any(isinstance(m, AIMessage) and getattr(m, "tool_calls", None)
+                   for m in res.messages)
+    assert "FIRST-GROUP-BODY" in fake.seen["user"]
+    assert "SECOND-GROUP-BODY" in fake.seen["user"]
+    assert C._tool_pairs_adjacent(res.messages)

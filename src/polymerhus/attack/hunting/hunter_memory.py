@@ -9,16 +9,16 @@ lazily at the first write), one YAML file per spec, produced/consumed
 directories, the file carrying the status lifecycle, and a duplicate-write
 novelty gate.
 
-Topology under the FIXED module root `HUNTER_MEMORY_ROOT`
-(`src/polymerhus/attack/hunting/data/`, no env var; the explicit-root
+Topology under the app-owned `DATA_ROOT` (no env var; the explicit-root
 constructor is kept for tests). The store shares the ONE per-project sibling
-scheme with the hunt store (`data/<project_id>/orchestration/`) and the pod
-memory (`data/<project_id>/test-executor-pod/`): the hunter memory is the
-`hunter/` sibling bucket under the SAME `data/<project_id>/` tree:
+scheme, resolved through the single `data_root.project_dir` layout owner, with
+the hunt store (`<project_id>/hunting/orchestration/`) and the pod memory
+(`<project_id>/hunting/test-executor-pod/`): the hunter memory is the
+`hunting/hunter/` bucket under the SAME `<project_id>/` tree:
 
-    <project_id>/hunter/test-specs/<fault_key>/produced/<fault>_<strategy>.yaml
-    <project_id>/hunter/test-specs/<fault_key>/consumed/<fault>_<strategy>.yaml
-    <project_id>/hunter/notes.yaml
+    <project_id>/hunting/hunter/test-specs/<fault_key>/produced/<fault>_<strategy>.yaml
+    <project_id>/hunting/hunter/test-specs/<fault_key>/consumed/<fault>_<strategy>.yaml
+    <project_id>/hunting/hunter/notes.yaml
 
 - `<fault_key>` is the 3-part config key (memory-system G4, ADR #169 Q13's
   `config_id`): the `_`-joined `<unit_id>_<CWE_ID>_<vulnerability_class>`
@@ -77,19 +77,16 @@ from typing import Literal
 
 import yaml
 
+from polymerhus.app.data_root import DATA_ROOT, project_dir
+
 from .hunt_store import ProjectMemoryStore, parse_config_file_name, semantic_key
 from .hunter_state import FAULT_STATUSES
 
 logger = logging.getLogger(__name__)
 
-# The FIXED store root (seam convention, #110): the hunter memory store lives
-# under `src/polymerhus/attack/hunting/data/` - no env var. The store shares the
-# ONE per-project sibling scheme with the hunt store (`data/<project_id>/orchestration/`)
-# and the pod memory (`data/<project_id>/test-executor-pod/`): the hunter memory
-# is the `hunter/` sibling bucket under the SAME `data/<project_id>/` tree
-# (`data/<project_id>/hunter/`). The explicit-root constructor is kept for the
-# tests/the module tests' temp stores.
-HUNTER_MEMORY_ROOT = Path(__file__).resolve().parent / "data"
+# The per-project bucket is resolved through the ONE `data_root.project_dir`
+# layout owner (the `hunting/hunter/` bucket under `DATA_ROOT`); no env var.
+# The explicit-root constructor is kept for the tests' temp stores.
 
 # The produced/consumed sides and the write/note operation enums (G7, G6).
 _SPEC_SIDES = ("produced", "consumed")
@@ -212,16 +209,15 @@ class HunterMemoryStore:
     """
 
     def __init__(self, root_dir: str | Path | None = None):
-        """The hunter memory store rooted under `root_dir` (default: the FIXED
-        seam root `src/polymerhus/attack/hunting/data/`, with per-project
-        `hunter/` buckets - the ONE per-project sibling scheme)."""
-        self._root = Path(root_dir) if root_dir is not None else HUNTER_MEMORY_ROOT
+        """The hunter memory store rooted under `root_dir` (default: the
+        app-owned `DATA_ROOT`), with the per-project `hunting/hunter/` bucket
+        resolved through the ONE `data_root.project_dir` layout owner."""
+        self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
 
     # -- paths -------------------------------------------------------------
 
     def _project_dir(self, project_id: str) -> Path:
-        self._validate_component(project_id, "project_id")
-        return self._root / str(project_id) / "hunter"
+        return project_dir(project_id, "hunting/hunter", root=self._root)
 
     def _spec_dir(self, project_id: str, fault_key: str) -> Path:
         self._validate_fault_key(fault_key)
@@ -352,6 +348,9 @@ class HunterMemoryStore:
 
     @classmethod
     def _write_records(cls, path: Path, records: list[dict]) -> None:
+        # Destination safety net only: the app scaffold owns the fixed topology
+        # (ensure_project); a store rooted outside it still needs its own file's
+        # parent to exist.
         path.parent.mkdir(parents=True, exist_ok=True)
         with path.open("w", encoding="utf-8") as fh:
             yaml.safe_dump(records, fh, sort_keys=False)
@@ -699,7 +698,6 @@ class HunterMemoryStore:
 
 
 __all__ = [
-    "HUNTER_MEMORY_ROOT",
     "DuplicateSpecError",
     "HunterMemoryStore",
     "NOTE_KINDS",

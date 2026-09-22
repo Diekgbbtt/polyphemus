@@ -49,7 +49,7 @@ _PINNED = (1, 3, 2)
 
 
 def _env(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
     # ONE escalating attempt per logical call, so exactly one wire payload is
     # recorded per invoke - the seek is the wire proof, not the retry schedule.
     monkeypatch.setenv("LLM_ATTEMPT_TIMEOUTS_S", "5")

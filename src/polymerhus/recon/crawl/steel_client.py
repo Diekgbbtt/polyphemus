@@ -1,7 +1,7 @@
 """Steel agentic-crawl tool provider.
 
-Correct architecture (operator correction, SP4). The seven `steel_*` MCP tools
-(`steel_crawl_start`/`navigate`/`frontier`/`eval`/`click`/`crawl_finish`/`await_auth`)
+Correct architecture (operator correction, SP4). The six `steel_*` MCP tools
+(`steel_crawl_start`/`navigate`/`frontier`/`eval`/`click`/`crawl_finish`)
 are provided by a Steel MCP tool provider instantiated **in-process** - they are
 NOT reached over a remote MCP HTTP host. steel.dev is the authenticated CLOUD
 BROWSER; the provider opens a steel.dev session and drives it with Playwright
@@ -36,7 +36,6 @@ CRAWL_TOOL_NAMES = frozenset({
     "steel_eval",
     "steel_click",
     "steel_crawl_finish",
-    "steel_await_auth",
 })
 
 
@@ -65,7 +64,7 @@ def steel_configured() -> bool:
     return bool(config.STEEL_API_KEY)
 
 
-def _default_client_factory(auth_cookies=None):
+def _default_client_factory(auth_cookies=None, steel_profile=None):
     """Build the in-process Steel crawl-tool provider.
 
     Returns a `steel_provider.SteelCrawlProvider`, which opens a steel.dev
@@ -74,9 +73,11 @@ def _default_client_factory(auth_cookies=None):
     only when `steel_crawl_start` is invoked - so constructing the provider
     performs no network I/O.
 
-    `auth_cookies` (a list of `{name, value, [domain], [path]}` dicts, from the
-    project's `auth_context.cookies`) is forwarded to the provider, which seeds
-    the browser context with them before the crawl (non-interactive auth).
+    `auth_cookies` (a list of `{name, value, [domain], [path]}` dicts, the
+    feed-projected persisted session cookies) is forwarded to the provider,
+    which seeds the browser context with them before the crawl
+    (profile-mount-only auth). `steel_profile` (the feed-bound persisted
+    profile key) is mounted read-only at session creation (`profile_id`).
 
     Raises `SteelProviderUnavailable` when the provider's runtime dependencies
     (`playwright` and `steel-sdk`) are not importable in this build, so the
@@ -99,16 +100,17 @@ def _default_client_factory(auth_cookies=None):
 
     from polymerhus.recon.crawl.steel_provider import SteelCrawlProvider  # noqa: PLC0415
 
-    return SteelCrawlProvider(auth_cookies=auth_cookies)
+    return SteelCrawlProvider(auth_cookies=auth_cookies, steel_profile=steel_profile)
 
 
-async def get_crawl_tools(*, client_factory=None, auth_cookies=None) -> list:
+async def get_crawl_tools(*, client_factory=None, auth_cookies=None, steel_profile=None) -> list:
     """Return the `steel_*` crawl tools from the in-process provider.
 
     The default provider (`_default_client_factory`) exposes
     `async get_tools() -> list`; the result is filtered to `CRAWL_TOOL_NAMES`.
-    `auth_cookies` (from the project's `auth_context.cookies`) is threaded to the
-    default provider so the browser context is seeded for non-interactive auth.
+    `auth_cookies` (the feed-projected persisted session cookies) and
+    `steel_profile` (the feed-bound persisted profile key, mounted read-only)
+    are threaded to the default provider for profile-mount-only auth.
     An injected `client_factory` stays a zero-arg callable (tests build the
     provider themselves) and receives nothing. Raises `SteelNotConfigured` when
     the steel.dev credential is absent.
@@ -120,6 +122,6 @@ async def get_crawl_tools(*, client_factory=None, auth_cookies=None) -> list:
     if client_factory is not None:
         client = client_factory()
     else:
-        client = _default_client_factory(auth_cookies=auth_cookies)
+        client = _default_client_factory(auth_cookies=auth_cookies, steel_profile=steel_profile)
     tools = await client.get_tools()
     return [t for t in tools if getattr(t, "name", "") in CRAWL_TOOL_NAMES]

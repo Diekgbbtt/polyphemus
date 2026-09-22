@@ -30,13 +30,13 @@ DECISION OF RECORD (2026-08-10): the async actor lane is the production default;
 the sync factories above/existing `build_gate_reason_fn`-style seams are the
 test/rollback lane only - no production wiring uses them.
 
-The composed turns are single-sourced from hunting skills when mounted
-(`skills/hunting/hunt-orchestrator/SKILL.md`, authored by #82) and degrade to
-the terse fallbacks below otherwise - the same skill-as-system-prompt pattern
-the hunting agent uses; the actors reuse the SAME composers (`_gate_skill`,
-`_rematch_skill`, `_compose_gate_prompt`, `_compose_rematch_prompt`) and the
-SAME free-text-then-parse (`_parse_json_object`) as these factories, so the two
-lanes can never drift.
+The composed turns are read directly from this module's `prompts/` dir
+(`hunt-orchestrator.md` for the gate REASON body, `hunt-orchestrator-rematch.md`
+for the D2 judge), memoized on first call, FAIL-CLOSED on a missing file - the
+same role-prompt pattern the hunting agent uses; the actors reuse the SAME
+composers (`_gate_skill`, `_rematch_skill`, `_compose_gate_prompt`,
+`_compose_rematch_prompt`) and the SAME free-text-then-parse (`_parse_json_object`)
+as these factories, so the two lanes can never drift.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
 section 6): `invoke_role`, the message classes, and the skill read all resolve
@@ -119,10 +119,13 @@ def _hunter_turn(text: str) -> dict | None:
     ctx = _hunt_ctx().get()
     if ctx is not None:
         from polymerhus.app.llm.session import stateful_turn
+        from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
 
+        binding = auth_capable_binding(HUNTER_ROLE)
         return _parse_json_object(stateful_turn(
             HUNTER_ROLE, ctx.address, [HumanMessage(content=text)],
-            checkpointer=ctx.checkpointer))
+            checkpointer=ctx.checkpointer, tools=binding.tools,
+            middleware=binding.middleware, context=binding.context))
     from polymerhus.app.llm.roles import invoke_role
     return _parse_json_object(invoke_role(HUNTER_ROLE, [HumanMessage(content=text)]))
 
@@ -172,74 +175,37 @@ L1_ONTOLOGY_PRIMER = (
     "evidence, never evidence of absence."
 )
 
-_GATE_SKILL_FALLBACK = (
-    "You are the hunt-orchestrator: the node-per-phase REASON body "
-    "(candidates-rewrite spec 3.2/3.3, amended by the memory + workflow-graph "
-    "rework) that takes ONE (unit, fault) pair through the hypothesise -> "
-    "ratify -> note phases. The phase-transition verbatims are injected in the "
-    "tool-call responses (never here); this skill carries the reasoning "
-    "discipline. "
-    "Hypothesise phase: read the unit's applies-witnesses and three-valued "
-    "match verdict, the fault's materialisation and fold family, the read-only "
-    "graph surface, and the rich typed projection (including cooperating "
-    "systems adjacency). Elicit one or more vulnerability classes - at the "
-    "grain of a web-vulnerability CLASS with a research-direction rationale "
-    "(e.g. CSRF, IDOR) - never narrowed to a surface locale, payload profile, "
-    "vector, or symptom; the narrowing belongs to the hunting agent at "
-    "spec-writing. Prune only on positive grounds; NEVER prune on degraded "
-    "grounds: when the KB is unavailable (kb_degraded), reason from the "
-    "candidate and surface alone and carry rather than prune. "
-    "Prior-hunt reflection (Q11): prior minted-config keys are listed in the "
-    "prompt; you NEVER write a config that duplicates a prior one; you MAY "
-    "call hunts_store(read) to inspect a prior key before writing. "
-    "Knowledge-sufficiency decision point (Q9): given this fault class and "
-    "unit type, do I have sufficient knowledge of the previous dispatched "
-    "hunts and all potentially useful insights collected? If not, loop "
-    "hunts_store(read) / notes(read). Target-knowledge loop (Q9): do I have "
-    "enough technical knowledge of this unit to concretise the abstract fault "
-    "at this locus? If not, query via graph_view iterating until sufficient. "
-    "Same-class merge (Q16): if multiple elicited vulnerability classes at one "
-    "locus are the same web-vulnerability class, merge them into one; only "
-    "fundamentally discriminable classes survive as distinct configs. Pure LLM "
-    "reflection - no module-side parsing. The hypothesise write: "
-    "hunts_store(write, config, status='hypothesised'), one draft per "
-    "surviving class with only rationale + research_direction filled - the "
-    "preconditions / observed-defences analysis is the RATIFICATION phase's "
-    "work (preconditions are the test's preconditions - the attacker's "
-    "pre-existing capabilities AND the environment conditions the test needs, "
-    "an authorization level, a session context, a workflow step, data access, "
-    "an interaction capability, a target state - never post-exploitation "
-    "capabilities; observed_defences are the observed target characteristics "
-    "that hinder the tests and support a falsification; the hunting agent "
-    "prunes the direction or gains the preconditions beforehand). Consider "
-    "cooperating systems when creating a "
-    "HuntConfig targeting a system. Tools are exactly three: hunts_store, "
-    "notes, graph_view (no back-edge-to-recon tool, no budget tool). Return "
-    "the directions, each marked carried or pruned; the deterministic mint "
-    "fans out N hypothesised drafts per distinct class at this phase."
-)
-
-_REMATCH_SKILL_FALLBACK = (
-    "You are the hunt-orchestrator's re-match judge. A yellow "
-    "(insufficient-evidence) candidate raised a park/resume back-edge; you now "
-    "re-evaluate whether the fault class applies to the unit GIVEN the recon "
-    "evidence the back-edge returned. Return the three-valued verdict: 'applies' "
-    "when the returned evidence establishes the fault is present-shaped, "
-    "'does-not-apply' when it refutes it, 'insufficient-evidence' when the evidence "
-    "still cannot decide (the hard depth-1 cap then lands the direction unresolved)."
-)
+# The gate + rematch role prompts, each memoized on first call (no import-time
+# I/O, CODING STANDARD section 6). A missing prompt file is a defect:
+# FAIL-CLOSED (raise), so the orchestrator never reasons without its prompt.
+_GATE_SKILL: str | None = None
+_REMATCH_SKILL: str | None = None
 
 
 def _gate_skill() -> str:
-    from polymerhus.recon.domain.skills import skill_for
+    """The hunt-orchestrator's REASON system prompt, read directly from this
+    module's `prompts/` dir. Memoized on first call; FAIL-CLOSED."""
+    global _GATE_SKILL
+    if _GATE_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
 
-    return skill_for("hunting/hunt-orchestrator", fallback=_GATE_SKILL_FALLBACK)
+        _GATE_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "hunt-orchestrator.md"
+        ).read_text(encoding="utf-8")
+    return _GATE_SKILL
 
 
 def _rematch_skill() -> str:
-    from polymerhus.recon.domain.skills import skill_for
+    """The hunt-orchestrator's D2 re-match judge system prompt, read directly
+    from this module's `prompts/` dir. Memoized on first call; FAIL-CLOSED."""
+    global _REMATCH_SKILL
+    if _REMATCH_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
 
-    return skill_for("hunting/hunt-orchestrator-rematch", fallback=_REMATCH_SKILL_FALLBACK)
+        _REMATCH_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "hunt-orchestrator-rematch.md"
+        ).read_text(encoding="utf-8")
+    return _REMATCH_SKILL
 
 
 def _system_render(info) -> str:

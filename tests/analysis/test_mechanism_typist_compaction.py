@@ -24,7 +24,9 @@ from polymerhus.app.llm import compaction as C
 def test_typist_turns_run_compacted(monkeypatch):
     """#95 D9: the mechanism-typist's stateful turns run COMPACTED - the run's
     `stateful_invoke_fn` builds the analysis-side compaction middleware (fail-open
-    to the default window without env) and passes it through `stateful_turn`."""
+    to the default window without env) and passes it through `stateful_turn`.
+    Compaction is the whole middleware chain: the analysis proposers are skill-EXEMPT
+    (ADR A9 exemption amendment, 2026-09-17), so no L1 skill index rides their turns."""
     seen = {}
 
     def fake_stateful_turn(role_id, thread, messages, *, checkpointer, schema=None,
@@ -39,11 +41,12 @@ def test_typist_turns_run_compacted(monkeypatch):
     invoke = stateful_invoke_fn("runX", object())
     invoke([HumanMessage(content="reflect")], schema=None)
     assert seen["role_id"] == "mechanism_typist"
-    assert len(seen["middleware"]) == 1
+    assert [type(mw).__name__ for mw in seen["middleware"]] == ["_CompactionMiddleware"]
     mw = seen["middleware"][0]
     assert isinstance(mw.manager, C.CompactionManager)
     assert mw.manager.summariser is not None
     assert mw.manager.window.context_limit == C.DEFAULT_CONTEXT_LIMIT  # fail-open, no env
+    assert "_skill_index" not in {type(m).__name__ for m in seen["middleware"]}
 
 
 def test_typist_compaction_middleware_is_shared_across_the_chain(monkeypatch):

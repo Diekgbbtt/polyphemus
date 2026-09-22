@@ -21,6 +21,8 @@ def _capture(monkeypatch):
     def fake_stateful_turn(role_id, thread, messages, *, checkpointer, schema=None, **kw):
         seen.update(role_id=role_id, thread_id=getattr(thread, "thread_id", thread),
                     schema=schema, cp=checkpointer, extra_tags=kw.get("extra_tags"))
+        seen.update(tools=kw.get("tools"), middleware=kw.get("middleware"),
+                    context=kw.get("context"))
         return None
 
     monkeypatch.setattr(S, "stateful_turn", fake_stateful_turn)
@@ -94,3 +96,30 @@ def test_all_three_proposers_tag_turns_with_the_run_id(monkeypatch):
         seen = _capture(monkeypatch)
         call(build("runX", object()))
         assert seen["extra_tags"] == ["runX"]
+
+
+def test_the_proposers_carry_no_skill_surface(monkeypatch):
+    """Operator ruling (2026-09-17): the analysis proposers interact with LOCAL
+    context only (the published L0/L1 substrate), never with an external
+    environment, so they bind neither the `load_skill` tool nor the L1 index
+    middleware nor a skill context - their turns carry structure, not skills."""
+    from polymerhus.analysis.assigner import stateful_invoke_fn as a
+    from polymerhus.analysis.data_modeller import stateful_invoke_fn as d
+    from polymerhus.analysis.mechanism_typist import stateful_invoke_fn as t
+
+    for role, build, call in (
+        ("assigner", a, lambda f: f([HumanMessage(content="m")])),
+        ("mechanism_typist", t, lambda f: f([HumanMessage(content="m")], schema=None)),
+        ("data_modeller", d, lambda f: f([HumanMessage(content="m")], schema=None)),
+    ):
+        seen = _capture(monkeypatch)
+        call(build("runX", object()))
+
+        assert seen["role_id"] == role
+        # Complete by construction: no skill tool to call, no context for an index
+        # to render from, and no index middleware on the chain at all.
+        assert seen["tools"] is None, f"{role} must bind no skill tool"
+        assert seen["context"] is None, f"{role} must carry no skill context"
+        assert "_skill_index" not in {
+            type(mw).__name__ for mw in seen["middleware"] or ()
+        }, f"{role} must carry no L1 skill index middleware"

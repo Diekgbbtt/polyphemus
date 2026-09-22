@@ -16,10 +16,11 @@ from __future__ import annotations
 
 import uuid
 from datetime import datetime, timezone
+from pathlib import Path
 
+from polymerhus.app import data_root
 from polymerhus.app.clients import pg
 from polymerhus.app.config import config
-from polymerhus.project_management.auth_context import validate_auth_context
 from polymerhus.recon.control.jobs import JOBS, validate_job_subset
 from polymerhus.recon.control.scope import resolve_seed, seed_kind
 from polymerhus.recon.domain.graph_read import fetch_project_graph
@@ -33,9 +34,16 @@ class RunNotFound(Exception):
     """No run with the given id exists."""
 
 
-def create_project(name: str) -> str:
-    """Create a project and return its freshly-minted id."""
+def create_project(name: str, root: str | Path | None = None) -> str:
+    """Create a project and return its freshly-minted id.
+
+    The app-layer data root owns the per-project scaffold: ``ensure_project``
+    creates the module buckets (``skills/``, ``hunting/...``) before the row
+    lands, so a project always has its directories. Idempotent and fail-safe.
+    ``root`` overrides the data root (the tests' explicit temp root).
+    """
     project_id = str(uuid.uuid4())
+    data_root.ensure_project(project_id, root=root)
     pg.create_project(project_id, name)
     return project_id
 
@@ -66,14 +74,49 @@ def running_runs(now: datetime | None = None) -> dict:
 
 
 def save_project_settings(project_id: str, recon: dict) -> None:
-    """Validate (the AuthContext contract) and persist a partial settings PUT.
-    Raises ProjectNotFound if unknown, ValueError on a malformed auth_context."""
+    """Persist a partial settings PUT (#223 T4 #243: the settings blob carries
+    no auth - the AuthContext value object and its validation are retired
+    with the blob footprint, D223-4; auth lives in the shared store, seeded
+    through `seed_project_auth`). Raises ProjectNotFound if unknown."""
     if not pg.project_exists(project_id):
         raise ProjectNotFound(project_id)
-    auth_context = recon.get("auth_context")
-    if auth_context is not None:
-        validate_auth_context(auth_context)  # ValueError on any shape violation
     pg.save_settings(project_id, recon)
+
+
+def _default_auth_store():
+    """The production auth bucket store, resolved lazily per call
+    (CODING_STANDARD §6: collaborators resolve lazily, never at import).
+    The module-level seam for tests: monkeypatch this name or pass `store=`
+    directly to the use-cases below."""
+    from polymerhus.app.auth.store import AuthStore
+
+    return AuthStore()
+
+
+def seed_project_auth(project_id: str, *, overview=None, accounts=None,
+                      store=None) -> None:
+    """Replace the operator-owned auth state wholesale (#220, T4 operator seed).
+
+    Each PRESENT section replaces via `AuthStore.replace_operator_state`
+    (absent sections untouched, seeded accounts stamped operator server-side,
+    agent-minted accounts never modified or removed); both sections validate
+    through the T1 seam BEFORE anything lands. Raises ProjectNotFound if
+    unknown, ValueError (`AuthInvalidError`) naming the field on a shape
+    violation. There is no conflict path: replace, never 409."""
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    seam = store if store is not None else _default_auth_store()
+    seam.replace_operator_state(project_id, overview=overview, accounts=accounts)
+
+
+def read_project_auth(project_id: str, *, store=None) -> dict:
+    """Read the full auth state (`{"overview": ..., "accounts": ...}`).
+    Raises ProjectNotFound if unknown; an unseeded project reads back a valid
+    empty state, never an error."""
+    if not pg.project_exists(project_id):
+        raise ProjectNotFound(project_id)
+    seam = store if store is not None else _default_auth_store()
+    return seam.read(project_id)
 
 
 class BootstrapBlocked(Exception):

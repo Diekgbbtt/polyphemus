@@ -14,7 +14,7 @@ No seam is mocked:
   filled from the deterministic stage's pass evidence - the minimal adapter
   the contract requires, never a substitute for a built seam;
 - the orchestrator phase turns run the REAL actor (real LLM through the
-  co-located gateway, ``LLM_MODEL_HUNTING_ORCHESTRATOR``);
+  co-located gateway, ``LLM_HUNTING_ORCHESTRATOR``);
 - the KB grounding is the real ``fault_kb.load_materialisation``;
 - the memory store is a scratch ``HuntStore`` so the eval never pollutes the
   branch's ``data/hunts``.
@@ -277,9 +277,9 @@ def _dump_evidence(result: EvalResult) -> None:
     the LLM-turn verbatims after the in-process observability probe is gone.
     Best-effort: a failing dump must never fail the eval."""
     try:
-        from polymerhus.attack.hunting.hunt_store import HUNT_STORE_ROOT
+        from polymerhus.app.data_root import DATA_ROOT
 
-        root = Path(HUNT_STORE_ROOT)
+        root = Path(DATA_ROOT)
         root.mkdir(parents=True, exist_ok=True)
         target = root / f"{result.run_id}.eval.json"
         target.write_text(json.dumps({

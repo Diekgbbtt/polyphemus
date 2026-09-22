@@ -16,25 +16,33 @@ rather than (jobs in phase) x MAX_PODS. The next phase does not start (its
 jobs' `input_assets` are not even resolved) until every job in the current
 phase has returned.
 
-`run_job`, `load_settings`, `registry`, `read_assets`, and `decide_routing` are
-all injected so tests can fully mock Neo4j/Postgres/pod-graph collaborators;
-production defaults to the real `polymerhus.recon.control.job_agent.run_job`,
-`polymerhus.app.clients.pg.load_settings`, the `pg` module itself as the
-registry, the `read_assets` helper below, and - since feat/async-actor-agents -
-a mailbox-actor recon-orchestrator (`ReconOrchestratorActor`, see
-`orchestrator_agent.py`) as the steering seam between phases.
+`run_job`, `load_settings`, `registry`, and `read_assets` are all injected
+so tests can fully mock Neo4j/Postgres/pod-graph collaborators; production
+defaults to the real `polymerhus.recon.control.job_agent.run_job`,
+`polymerhus.app.clients.pg.load_settings`, and the `pg` module itself as the
+registry. The auth gateway is the production default
+(feat/stateful-recon-job-auth): the recon-orchestrator runs its ONE gateway
+turn before phase 0 and the typed verdict configures the run (pruned phases,
+the bound account identifier). `orchestrator_factory` builds the actor (tests
+inject the production actor over scripted models and temp stores) - there is
+NO gateway injection seam; tests exercise this real boundary.
 """
 from __future__ import annotations
 
 import asyncio
-import inspect
 import logging
 import time
 from datetime import datetime, timezone
 
 from polymerhus.app.config import config
 from polymerhus.app.clients.pg import touch_run_heartbeat as _touch_heartbeat
-from polymerhus.recon.control.auth import select_auth_context
+from polymerhus.recon.control.auth_feed import (
+    project_auth_cookies,
+    project_request_auth,
+    project_steel_profile,
+    resolve_account,
+    resolve_overview,
+)
 from polymerhus.recon.domain.curator import ALLOWED_LABELS, curate
 from polymerhus.recon.control.jobs import JOBS, build_phase_plan, validate_job_subset
 from polymerhus.recon.control.scope import (
@@ -55,23 +63,6 @@ _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
 
 def _utc_now_iso() -> str:
     return datetime.now(timezone.utc).isoformat()
-
-
-async def _phase_exclusions(decide, signals: list[dict], phase_jobs: list[str]) -> dict[str, list[str]]:
-    """Resolve one phase's routing decision through the `run_pipeline` steering seam.
-
-    Empty signals short-circuit to {} (the orchestrator is only invoked with a
-    non-empty signal list). The seam is polymorphic: an injected SYNC callable
-    (the historical one-shot `decide_routing` lambda) is offloaded via
-    `to_thread`; an async callable (the actor client method,
-    feat/async-actor-agents) is awaited. Either way the decision is
-    {job_name: [urls to exclude]} and a steering blip degrades adaptivity, never
-    the run (fail-open is the collaborator's own contract)."""
-    if not signals or not phase_jobs:
-        return {}
-    if inspect.iscoroutinefunction(decide):
-        return await decide(signals, phase_jobs)
-    return await asyncio.to_thread(decide, signals, phase_jobs)
 
 
 def _exec_window(t0: float, started_at: str) -> dict:
@@ -300,37 +291,6 @@ def read_assets(
     return apply_selector(assets, where)
 
 
-def read_steering_signals(project_id: str, *, driver=None) -> list[dict]:
-    """Return the live WAF steering signals (fail-open to []).
-
-    Each signal is {"url", "macro_kind", "evidence"} for a BaseURL carrying a
-    WAF observation. A DELIBERATELY separate read from read_assets, which is
-    label-allowlist-clean and must never read Observation nodes. Any error ->
-    [], so a steering-read blip degrades adaptivity, never the run (mirrors the
-    heartbeat/upsert_job best-effort ethos). WAF observations anchor to BaseURL
-    with identity {"url": ...} (curator ANCHOR_ALLOWLIST)."""
-    from polymerhus.recon.control.steering import WAF_MACRO_KINDS
-    try:
-        if driver is None:
-            from polymerhus.app.clients import neo4j_client
-            driver = neo4j_client._driver
-        query = (
-            "MATCH (a:BaseURL {project_id: $project_id})-[:HAS_OBSERVATION]->"
-            "(o:Observation {project_id: $project_id}) "
-            "WHERE o.macro_kind IN $kinds "
-            "RETURN DISTINCT a.url AS url, o.macro_kind AS macro_kind, o.evidence AS evidence"
-        )
-        with driver.session() as session:
-            result = session.run(query, project_id=project_id, kinds=sorted(WAF_MACRO_KINDS))
-            return [
-                {"url": r["url"], "macro_kind": r["macro_kind"], "evidence": r["evidence"]}
-                for r in result if r["url"]
-            ]
-    except Exception:
-        logger.warning("read_steering_signals failed for %s; no adaptation", project_id, exc_info=True)
-        return []
-
-
 async def _heartbeat_loop(run_id: str) -> None:
     """Refresh the run heartbeat every HEARTBEAT_TICK_SECONDS until cancelled."""
     try:
@@ -347,6 +307,15 @@ async def _heartbeat_loop(run_id: str) -> None:
         return
 
 
+def _default_orchestrator_factory(run_id: str):
+    """Build the production gateway actor for a run: ONE actor per run (the
+    module-level home of the default, so tests can observe the production
+    default through the `orchestrator_factory` seam)."""
+    from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor  # noqa: PLC0414
+
+    return ReconOrchestratorActor(run_id=run_id)
+
+
 async def run_pipeline(
     project_id: str,
     *,
@@ -356,9 +325,8 @@ async def run_pipeline(
     load_settings=None,
     registry=None,
     read_assets=None,
-    read_steering_signals=None,
-    decide_routing=None,
     orchestrator_factory=None,
+    auth_store=None,
     feed_mode: str | None = None,
     pass_fn=None,
     with_analysis: bool = True,
@@ -370,16 +338,21 @@ async def run_pipeline(
     dispatch) recon only pushes chunks to the run's FIFO and a later analysis-only
     dispatch drains them. Either way recon NEVER waits on analysis.
 
-    `decide_routing` is the steering seam between phases. It is INJECTABLE for
-    tests and rollback: a sync callable (the historical one-shot `decide_routing`
-    lambda) runs via `to_thread`, an async callable is awaited. When None (the
-    production default, feat/async-actor-agents), the recon-orchestrator runs as a
-    persistent MAILBOX ACTOR for the run (`ReconOrchestratorActor`, one
-    `job_orchestrator` session thread) - each phase's steering is fed to its inbox
-    and the parsed `RoutingDecision` awaited, with the actor's checkpointed memory
-    carrying the reasoning across phases; the actor is stopped in the `finally`
-    so no task leaks. `orchestrator_factory(run_id)` builds the actor (tests
-    inject a fake or a real actor with a fake model).
+    The auth gateway (#223, T3 #242) is the production default
+    (feat/stateful-recon-job-auth): the recon-orchestrator starts
+    DETERMINISTICALLY on run start (never lazily, never behind a signal gate)
+    and its ONE gateway turn resolves before phase 0, under heartbeat. The
+    typed verdict configures the run: browser-only prunes the plan to the
+    Steel crawl, and the selected account's identifier (never its material)
+    rides the pipeline state for `use_auth` jobs. A degraded gateway fails
+    open (every phase, unauthenticated, loudly); missing credentials stop the
+    run loudly (`GatewayStop` -> `failed`, nothing runs). `orchestrator_factory`
+    builds the actor (tests inject the production actor over scripted models
+    and temp stores); the actor is stopped in the `finally` so no task leaks.
+
+    `auth_store` feeds the per-phase auth projection (the #223 T4 #243 lazy
+    feed): tests inject a temp store, production resolves the shared bucket
+    lazily inside the feed itself.
 
     Best-effort: a job whose pods all fail, or whose `run_job` call raises,
     is marked "degraded" and the pipeline continues - it always reaches a
@@ -393,22 +366,13 @@ async def run_pipeline(
         from polymerhus.app.clients import pg as registry
     if read_assets is None:
         read_assets = globals()["read_assets"]
-    if read_steering_signals is None:
-        read_steering_signals = globals()["read_steering_signals"]
 
     orchestrator = None
-    if decide_routing is None:
-        if orchestrator_factory is None:
-            from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor
-
-            def _default_factory(_run_id: str):
-                return ReconOrchestratorActor(run_id=_run_id)
-
-            orchestrator_factory = _default_factory
-        orchestrator = orchestrator_factory(run_id)
-        _decide = orchestrator.decide_routing  # async client method
-    else:
-        _decide = decide_routing  # injected sync or async seam
+    # The gateway starts deterministically (D223-8): the actor is ALWAYS
+    # constructed on run start, with no signal gate in front of it.
+    if orchestrator_factory is None:
+        orchestrator_factory = _default_orchestrator_factory
+    orchestrator = orchestrator_factory(run_id)
 
     # All DB helpers below (pg + neo4j) are synchronous/blocking. run_pipeline
     # runs on the API event loop, so every one is offloaded via asyncio.to_thread
@@ -484,11 +448,58 @@ async def run_pipeline(
         await asyncio.to_thread(curate, [root], [], project_id)
 
     hb = asyncio.create_task(_heartbeat_loop(run_id))
-    signals: list[dict] = []
+    # The gateway turn (D223-8): deterministic, before phase 0, under
+    # heartbeat (the reaper window, D223-10) - and with no signal gate (the
+    # empty-signal short-circuit must never skip it). The verdict configures
+    # the run below; the loop over phases takes NO routing turns.
+    from polymerhus.recon.control.authn_loop import prune_plan  # noqa: PLC0414
+    from polymerhus.recon.control.orchestrator_agent import GatewayStop  # noqa: PLC0414
+    gateway_verdict = None
+    auth_account: str | None = None
     try:
+        try:
+            gateway_verdict = await orchestrator.run_gateway(project_id=project_id)
+        except GatewayStop:
+            # D223-17 fail-close: a declared surface with no credentials is a
+            # missing bootstrap prerequisite, not a gateway failure - stop the
+            # run loudly, run nothing, mark failed (never complete).
+            logger.error("run %s stopped by the auth gateway (fail-close: no credentials)", run_id)
+            await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+            return
+        if gateway_verdict is None:
+            logger.warning("run %s gateway degraded (no verdict); fail-open: every phase runs unauthenticated", run_id)
+        elif gateway_verdict.outcome == "anonymous":
+            logger.warning("run %s no authenticated surface; running the full plan anonymously", run_id)
+        elif gateway_verdict.outcome == "failed":
+            logger.warning("run %s authentication failed (%s); fail-open: collection runs unauthenticated",
+                           run_id, gateway_verdict.rationale)
+        elif gateway_verdict.branch == "browser_only":
+            plan = prune_plan(plan, "browser_only")
+            if not any(plan):
+                # The verdict released browser-only collection but the plan
+                # holds no browser path (e.g. a subset without the Steel
+                # crawl): nothing could run, so "complete" would be a lie.
+                # Fail loudly (the run-level terminals are complete|failed;
+                # a contradicted release is a failure, never silent).
+                # Request phases are NOT kept: the verdict said browser-only.
+                logger.error("run %s browser-only release pruned every phase "
+                             "(no steel_crawl in plan); marking failed, nothing ran",
+                             run_id)
+                await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+                return
+            logger.warning("run %s browser-only release: pruned to the Steel crawl alone", run_id)
+            if gateway_verdict.account:
+                auth_account = gateway_verdict.account
+        elif gateway_verdict.account:
+            auth_account = gateway_verdict.account
+            logger.info("run %s authenticated as account %s", run_id, auth_account)
+        else:
+            logger.warning("run %s authenticated verdict names no account; running unauthenticated", run_id)
+        if gateway_verdict is not None and gateway_verdict.replayability_resolved:
+            logger.warning("run %s in-loop replayability resolved to %s (persisted to the overview by the loop)",
+                           run_id, gateway_verdict.replayability)
         for phase_idx, phase_jobs in enumerate(plan):
             job_configs: dict[str, tuple] = {}
-            exclusions = await _phase_exclusions(_decide, signals, phase_jobs)
             for name in phase_jobs:
                 job = JOBS[name]
                 try:
@@ -526,18 +537,40 @@ async def run_pipeline(
                         elif job.consumes == "Service":
                             input_assets = _services_to_probe_targets(input_assets)
 
-                    excluded = set(exclusions.get(name, []))
-                    if excluded:
-                        input_assets = [a for a in input_assets if a.get("url") not in excluded]
-
                     extra = {"project_id": project_id}
-                    if job.use_auth and settings.get("auth_context"):
-                        # FR-AUTH: select the DEFAULT role's credential set (honours
-                        # default_role, else the flat unroled creds) so a role/realm-
-                        # tagged auth_context never leaks its `roles` map to the tool.
-                        selected = select_auth_context(settings["auth_context"])
-                        if selected:
-                            extra["auth_context"] = selected
+                    if auth_account is not None and job.use_auth:
+                        # D223-19, the lazy feed (#243): the gateway-selected
+                        # account's IDENTIFIER rides the pipeline state (never
+                        # its material), and each phase's tool configuration
+                        # resolves it from the store HERE - at assembly, right
+                        # before the phase runs - projecting only the subset
+                        # this job's tools need. Request jobs get the flat
+                        # request projection through the existing
+                        # `extra["auth_context"]` transport (the pod
+                        # serialises it per tool at fill time); the
+                        # agent-driven crawl additionally gets the persisted
+                        # Steel profile key. `use_auth` stays the single
+                        # eligibility gate; a dead account fails open
+                        # (unauthenticated, loudly - resolve_account warns).
+                        extra["auth_account"] = auth_account
+                        account = resolve_account(
+                            project_id, auth_account, store=auth_store)
+                        if account:
+                            # The header fact single-sources on the overview's
+                            # required_headers; the snapshot supplies cookies.
+                            overview = resolve_overview(
+                                project_id, store=auth_store)
+                            if job.configurator_mode == "agent":
+                                profile = project_steel_profile(account)
+                                if profile:
+                                    extra["steel_profile"] = profile
+                                cookies = project_auth_cookies(account)
+                                if cookies:
+                                    extra["auth_context"] = {"cookies": cookies}
+                            else:
+                                material = project_request_auth(account, overview)
+                                if material:
+                                    extra["auth_context"] = material
                     # Scope gate for URL-hosted assets (out-of-scope BaseURL
                     # drop in curate): the seed host/apex/IP, only when a target
                     # is actually configured (never the parse_scope placeholder).
@@ -569,8 +602,6 @@ async def run_pipeline(
                                 scope["seed_host"] if scope["mode"] == "host"
                                 else registrable_domain(seed)
                             )
-                    if signals:
-                        extra["steering"] = signals
 
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "in_progress"
@@ -659,29 +690,6 @@ async def run_pipeline(
                 )
                 if endpoints_total is not None:
                     job_stats["endpoints_total"] = endpoints_total
-                # Surface a crawl job's Steel viewer URL (interactive
-                # steel_await_auth MVP path, see crawl_pod.py) so
-                # GET /recon/{run_id} lets the operator complete manual login -
-                # pass through the first pod export that carries one.
-                # C2 (operator-accepted 2026-07-13): the viewer_url is the POD's
-                # to own; the pod already surfaced it mid-flight (crawl_pod.
-                # default_status_sink) because this pipeline is blocked on
-                # `await run_job` above and cannot surface it in time itself.
-                # This terminal pass-through only RE-ASSERTS it so the final
-                # full-stats write does not clobber the pod's mid-flight write.
-                # Left as-is (not critical). ENHANCEMENT (D24): per-component
-                # logs (orchestrator / job / pod) let the viewer_url surface from
-                # the pod's own log, retiring this two-writer coordination.
-                viewer_url = next(
-                    (
-                        e.stats.get("viewer_url")
-                        for e in pod_exports
-                        if e.stats and e.stats.get("viewer_url")
-                    ),
-                    None,
-                )
-                if viewer_url:
-                    job_stats["viewer_url"] = viewer_url
 
                 await asyncio.to_thread(
                     registry.upsert_job,
@@ -739,7 +747,6 @@ async def run_pipeline(
             # katana/ffuf/kiterunner/graphql-cop/paramspider/steel_crawl).
             for name in job_configs:
                 await _run_one(name)
-            signals = await asyncio.to_thread(read_steering_signals, project_id)
 
         # #75: recon and analysis are DECOUPLED. For the INLINE rollback path only,
         # analysis ran on this task, so record its stats onto the recon run as

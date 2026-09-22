@@ -9,12 +9,17 @@ pure: no I/O, no retry axis, no timeout, no live model/gateway).
 
 Ratified rung table (ADR A1, authoritative):
 
-1. **Tools bound** (a session/crawl tool loop): `function_calling` is the ONLY
+1. **Tools bound** (a session/crawl tool loop): `function_calling` is the
    tool-loop option - there is no silent method-swap inside a tool loop (the
-   T5 gate, `crawl_agentic.py`, refuses crawl on unsupported/unknown and stays).
+   T5 gate, `crawl_agentic.py`, refuses crawl on unsupported/unknown and stays)
+   - UNLESS the profile declares the A6 forced-choice constraint
+   (`supports_forced_tool_choice is False`), which picks the voluntary rung
+   `voluntary_function_calling` (the schema tool bound, the choice not forced).
 2. **No tools bound** (a pure one-shot extraction): `json_schema` with the
    profile correcting within the fixed degrade chain
-   `json_schema` -> `function_calling` -> `json_mode`:
+   `json_schema` -> `function_calling` -> `voluntary_function_calling` ->
+   `json_mode` (the voluntary rung is probed only under the A6 constraint -
+   `effective_chain`):
    - structured output asserted -> `json_schema` (response_format, strict=False,
      the SOTA fixed-shape rung; open-dict tolerant, thinking models accept it);
    - structured output absent/unknown but tool calling asserted -> degrade to
@@ -58,8 +63,8 @@ The negotiation contract includes the parse-validation step as a companion
 pure predicate, `result_validates`: each degrade rung's outcome is the PARSED
 result validated against the target schema - not an exception-caught miss, so
 `json_mode`'s silent wrong-shape failure (HTTP 200, wrong JSON) is caught and
-renegotiated per A2. The probe-on-miss orchestration walks the fixed
-`DEGRADE_CHAIN` directly, validating the parsed result at each rung - it does
+renegotiated per A2. The probe-on-miss orchestration walks the profile's
+`effective_chain` directly, validating the parsed result at each rung - it does
 not call `next_rung` (that predicate is the one-shot construction/degrade
 helper for a single held rung). No vendor error string is ever parsed (A2).
 
@@ -69,7 +74,8 @@ section 6).
 from __future__ import annotations
 
 import logging
-from typing import Any, Callable, Literal, get_args, get_origin
+from types import UnionType
+from typing import Any, Callable, Literal, Union, get_args, get_origin
 
 from pydantic import BaseModel
 
@@ -77,10 +83,14 @@ from polymerhus.app.llm.capability import CapabilityProfile
 
 logger = logging.getLogger(__name__)
 
-# The negotiated method vocabulary - EXACTLY the `with_structured_output`
-# `method=` values (langchain-openai ~1.3), so a chosen rung passes straight
-# into the construction seam with no translation layer.
-Method = Literal["json_schema", "function_calling", "json_mode"]
+# The negotiated method vocabulary - the `with_structured_output` `method=`
+# values (langchain-openai ~1.3) PLUS the A6 voluntary rung, which has no
+# native `method=` value: it is a VOLUNTARY structured tool call - the schema
+# tool is bound, the choice is NOT forced, the provider decides. Expressible
+# on the session seam (`ToolStrategy` on a relaxed model, whose `bind_tools`
+# rewrites a forced `tool_choice` to `"auto"`) and the one-shot seam
+# (`with_structured_output(method="function_calling")` on a relaxed model).
+Method = Literal["json_schema", "function_calling", "voluntary_function_calling", "json_mode"]
 
 # The structural class of the target schema (ADR A1's third input): whether the
 # schema carries free-form `dict` fields (`open`, e.g. `Observation.anchor`) or
@@ -90,11 +100,17 @@ SchemaShape = Literal["closed", "open"]
 
 _SCHEMA_SHAPES = set(SchemaShape.__args__)
 
-# The fixed profile-corrected degrade chain (A1), in descent order. The
-# probe-on-miss orchestration walks this tuple directly (validating each rung
-# via `result_validates`); `next_rung` is the one-shot construction/degrade
-# helper for a single held rung, not the probe's iterator.
-DEGRADE_CHAIN: tuple[Method, ...] = ("json_schema", "function_calling", "json_mode")
+# The fixed profile-corrected degrade chain (A1, corrected by A6), in descent
+# order. The `voluntary_function_calling` rung sits between `function_calling`
+# and `json_mode`: it is probed only when the profile explicitly declares the
+# forced-choice constraint (`supports_forced_tool_choice is False`) - see
+# `effective_chain`. The probe-on-miss orchestration walks the EFFECTIVE chain
+# directly (validating each rung via `result_validates`); `next_rung` is the
+# one-shot construction/degrade helper for a single held rung, not the probe's
+# iterator.
+DEGRADE_CHAIN: tuple[Method, ...] = (
+    "json_schema", "function_calling", "voluntary_function_calling", "json_mode"
+)
 
 # A profile is "unknown" for negotiation when it is absent OR carries no
 # authored capability field (D5 Rule 1: an absent field is the encoding of
@@ -107,6 +123,20 @@ def _unknown_profile(profile: CapabilityProfile | None) -> bool:
         profile.supports_structured_output is None
         and profile.supports_tool_calling is None
     )
+
+
+def is_union_schema(schema: Any) -> bool:
+    """Whether a schema TARGET is a union (`A | B` or `typing.Union[A, B]`).
+
+    A union is carried by `ToolStrategy` ONLY on the pinned SDK: its
+    `_iter_variants` flattens the variants into one structured-output tool per
+    variant, while `ProviderStrategy` rejects a union leaf in `_SchemaSpec`
+    (`Unsupported schema type: types.UnionType`) and the one-shot
+    `with_structured_output` refuses it in both methods (`Unsupported
+    function`). The construction seams therefore never route a union to the
+    json_schema rung; `roles.structured_output_for` refuses it loudly (the
+    one-shot seam has no union carrier). Pure; no I/O."""
+    return get_origin(schema) in (UnionType, Union)
 
 
 def schema_shape_of(schema: Any) -> SchemaShape:
@@ -162,27 +192,47 @@ def _annotation_is_open(annotation: Any, _seen: frozenset[type] | None = None) -
     return any(_annotation_is_open(a, _seen) for a in args)
 
 
+def _forced_choice_constrained(profile: CapabilityProfile | None) -> bool:
+    """Whether the profile explicitly declares the A6 forced-`tool_choice`
+    constraint: `supports_forced_tool_choice is False` (operator-declared via
+    `LLM_CAPABILITY_OVERRIDES` - models.dev cannot express it). `None`
+    (unknown) never gates: only an explicit False picks the voluntary rung.
+    `getattr`-read so duck-typed test fakes carrying only the A1 surface still
+    negotiate (absent field = unknown = unconstrained)."""
+    return profile is not None and getattr(
+        profile, "supports_forced_tool_choice", None) is False
+
+
 def negotiate_method(
     profile: CapabilityProfile | None,
     no_tools_bound: bool,
     schema_shape: SchemaShape,
 ) -> Method:
-    """The A1 selector: the structured-output / tool-calling method for one
-    call at construction time.
+    """The A1 selector (corrected by A6): the structured-output / tool-calling
+    method for one call at construction time.
 
     `no_tools_bound` is the SEMANTIC axis: True for a pure one-shot extraction
     (no tools bound), False for a tool-bound session/crawl loop. `profile` is
     the resolved capability profile (or None when unknown - fail-open D7);
     `schema_shape` is the closed/open class of the target schema. Pure: same
     inputs, same method, always (unit-testable with LLM and gateway mocked).
+
+    A6: a tools-bound call on a forced-choice-constrained profile returns
+    `voluntary_function_calling` (the schema tool bound, the choice not
+    forced); unconstrained (or unknown) tools-bound calls stay on
+    `function_calling`. A no-tools call keeps the existing order, routing the
+    tool-calling branch to the voluntary rung under the same constraint.
     """
     if schema_shape not in _SCHEMA_SHAPES:
         raise ValueError(
             f"schema_shape must be one of {sorted(_SCHEMA_SHAPES)} (got {schema_shape!r})"
         )
     if not no_tools_bound:
-        # A1 rung 2: tools bound -> the ONLY tool-loop option. No profile can
-        # change this (the T5 gate refuses crawl on unsupported/unknown).
+        # A1 rung 2, corrected by A6: tools bound -> the tool-loop rung, which
+        # is `function_calling` UNLESS the profile declares the forced-choice
+        # constraint (thinking-mode relays refuse a forced `tool_choice`).
+        if _forced_choice_constrained(profile):
+            return "voluntary_function_calling"
         return "function_calling"
     if _unknown_profile(profile):
         # A1 semantic default for the no-tool rung; the session must always start.
@@ -190,21 +240,43 @@ def negotiate_method(
     if profile.supports_structured_output:
         return "json_schema"
     if profile.supports_tool_calling:
-        # Profile lacks structured output but can call tools: degrade to the
-        # proven open-dict rung (forced tool returns a dict to validate).
+        # Profile lacks structured output but can call tools: the tool rung -
+        # voluntary when the upstream refuses a forced choice, else the proven
+        # open-dict rung (forced tool returns a dict to validate).
+        if _forced_choice_constrained(profile):
+            return "voluntary_function_calling"
         return "function_calling"
     # Neither capability asserted -> the #44-absorbed last rung. The parse
     # validation is the required guard on this rung (`result_validates`).
     return "json_mode"
 
 
-def next_rung(method: Method) -> Method | None:
+def effective_chain(profile: CapabilityProfile | None) -> tuple[Method, ...]:
+    """The probe-worthy degrade chain for a profile (A6): `DEGRADE_CHAIN` with
+    `voluntary_function_calling` dropped UNLESS the profile explicitly declares
+    `supports_forced_tool_choice is False`. Never probe a rung the deployed
+    wire cannot benefit from."""
+    if _forced_choice_constrained(profile):
+        return DEGRADE_CHAIN
+    return tuple(m for m in DEGRADE_CHAIN if m != "voluntary_function_calling")
+
+
+def next_rung(method: Method, profile: CapabilityProfile | None = None) -> Method | None:
     """The next degrade rung after `method`, or None at the chain's end.
 
     The probe-on-miss orchestration (increment-2, A2) descends this on a
-    `result_validates` failure - never by parsing vendor error strings."""
+    `result_validates` failure - never by parsing vendor error strings. The
+    A6 rung is skipped when the profile does not declare the constraint
+    False, so positional callers (`next_rung("function_calling")`) keep the
+    ratified descent."""
     if method not in DEGRADE_CHAIN:
         raise ValueError(f"unknown negotiation method {method!r}; known: {DEGRADE_CHAIN}")
+    chain = effective_chain(profile)
+    if method in chain:
+        index = chain.index(method)
+        return chain[index + 1] if index + 1 < len(chain) else None
+    # The held rung is not probe-worthy under this profile (the voluntary rung
+    # on an unconstrained profile): descend positionally past it.
     index = DEGRADE_CHAIN.index(method)
     return DEGRADE_CHAIN[index + 1] if index + 1 < len(DEGRADE_CHAIN) else None
 
@@ -518,14 +590,16 @@ def probe_with_invoker(
 
     Off the #73 axis by construction - single-shot, no escalating wrapper, no retry
     budget spent. The caller must invoke this ONCE at construction, before the
-    escalating loop, and cache the winner for the session."""
+    escalating loop, and cache the winner for the session. The walked chain is
+    the profile's `effective_chain` - never a rung the deployed wire cannot
+    benefit from."""
     key = _probe_cache_key(provider, model, schema)
     if key in _PROBE_CACHE:
         return _PROBE_CACHE[key]
     attempted: list[Method] = []
     winner: Method | None = None
     provenance = getattr(profile, "source", None) if profile is not None else None
-    for method in DEGRADE_CHAIN:
+    for method in effective_chain(profile):
         attempted.append(method)
         try:
             parsed = invoker(method)
@@ -585,10 +659,18 @@ def resolve_method(
     an all-miss probe or an unknown no-invoker profile degrades to the semantic
     default and the session still starts."""
     if not no_tools_bound:
-        # A1 rung 1: tools bound -> the ONLY tool-loop option; no profile can
-        # change this. No cache read, no probe, no unknown-check.
-        method: Method = "function_calling"
-        provenance: str | None = None
+        # A1 rung 2, corrected by A6: the tools-bound rung consults the
+        # profile - a forced-choice-constrained profile picks the voluntary
+        # rung, everything else holds `function_calling`. No cache read, no
+        # probe here; the decision is emitted and returned.
+        method: Method = negotiate(
+            profile, no_tools_bound=False, schema_shape=schema_shape_of(schema)
+        )
+        provenance: str | None = (
+            getattr(profile, "source", None)
+            if profile is not None and not _unknown_profile(profile)
+            else None
+        )
         _emit_resolution(provider, model, schema, method, provenance, [method])
         return method, provenance
     if not _unknown_profile(profile):

@@ -1,6 +1,7 @@
 from fastapi.testclient import TestClient
 
 from polymerhus.project_management import api as routes
+from polymerhus.project_management import repository
 from polymerhus.app.clients import pg
 from polymerhus.app.main import app
 
@@ -9,7 +10,11 @@ client = TestClient(app)
 
 def test_create_project_returns_project_id(monkeypatch):
     calls = []
+    scaffolds = []
     monkeypatch.setattr(pg, "create_project", lambda pid, name: calls.append((pid, name)))
+    monkeypatch.setattr(
+        repository.data_root, "ensure_project", lambda pid, root=None: scaffolds.append(pid)
+    )
 
     resp = client.post("/projects", json={"name": "acme"})
 
@@ -17,6 +22,20 @@ def test_create_project_returns_project_id(monkeypatch):
     body = resp.json()
     assert "project_id" in body and body["project_id"]
     assert calls == [(body["project_id"], "acme")]
+    assert scaffolds == [body["project_id"]]
+
+
+def test_create_project_scaffolds_into_the_given_root(tmp_path, monkeypatch):
+    from polymerhus.project_management import repository
+
+    created = []
+    monkeypatch.setattr(pg, "create_project", lambda pid, name: created.append(pid))
+
+    project_id = repository.create_project("acme", root=tmp_path / "data")
+
+    assert created == [project_id]
+    assert (tmp_path / "data" / project_id / "skills").is_dir()
+    assert (tmp_path / "data" / project_id / "hunting" / "orchestration").is_dir()
 
 
 def test_put_settings_unknown_project_404(monkeypatch):
@@ -27,59 +46,10 @@ def test_put_settings_unknown_project_404(monkeypatch):
     assert resp.status_code == 404
 
 
-def test_put_settings_malformed_auth_context_400(monkeypatch):
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    saved = []
-    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: saved.append((pid, recon)))
-
-    # cookies must be a list of {name, value}; here it's a bare string
-    resp = client.put(
-        "/projects/p1/settings",
-        json={"recon": {"auth_context": {"cookies": "not-a-list"}}},
-    )
-
-    assert resp.status_code == 400
-    assert saved == []
-
-
-def test_put_settings_auth_context_without_cookies_200(monkeypatch):
-    """cookies is optional: it drives request-based crawling and is independent
-    of credentials (agentic login, D23-2). An auth_context that omits cookies
-    entirely (e.g. only scope, or only credentials) must be accepted so a
-    partial PUT can set one item without supplying the other."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    saved = []
-    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: saved.append((pid, recon)))
-
-    resp = client.put(
-        "/projects/p1/settings",
-        json={"recon": {"auth_context": {"scope": "/app"}}},
-    )
-
-    assert resp.status_code == 200
-    assert saved == [("p1", {"auth_context": {"scope": "/app"}})]
-
-
-def test_put_settings_credentials_without_cookies_200(monkeypatch):
-    """Regression: a PUT carrying only credentials (no cookies key at all) must
-    succeed - cookies must not be a required sibling of credentials."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    saved = []
-    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: saved.append(recon))
-
-    resp = client.put(
-        "/projects/p1/settings",
-        json={"recon": {"auth_context": {"credentials": {
-            "username": "u@e.com", "password": "pw",
-            "login_url": "https://login.example.com/"}}}},
-    )
-
-    assert resp.status_code == 200
-    assert saved and "cookies" not in saved[0]["auth_context"]
-    assert saved[0]["auth_context"]["credentials"]["username"] == "u@e.com"
-
-
-def test_put_settings_valid_auth_context_200(monkeypatch):
+def test_put_settings_partial_dict_persisted_verbatim_200(monkeypatch):
+    """#243: the settings blob carries no auth - a partial PUT persists its
+    recon dict verbatim (no value-object validation); auth lives in the
+    shared store, seeded through PUT /projects/{id}/auth."""
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
     saved = []
     monkeypatch.setattr(pg, "save_settings", lambda pid, recon: saved.append((pid, recon)))
@@ -87,10 +57,7 @@ def test_put_settings_valid_auth_context_200(monkeypatch):
     recon = {
         "max_pods": 3,
         "target_domain": "example.com",
-        "auth_context": {
-            "cookies": [{"name": "session", "value": "abc123"}],
-            "scope": "/app",
-        },
+        "scope": {"mode": "wildcard"},
     }
     resp = client.put("/projects/p1/settings", json={"recon": recon})
 
@@ -99,100 +66,19 @@ def test_put_settings_valid_auth_context_200(monkeypatch):
     assert saved == [("p1", recon)]
 
 
-def test_put_settings_valid_credentials_200(monkeypatch):
+def test_put_settings_nested_partial_dict_persisted_verbatim_200(monkeypatch):
+    """Nested settings (arbitrary operator keys, header-like or otherwise)
+    persist verbatim - the settings face validates nothing beyond the
+    project guard."""
     monkeypatch.setattr(pg, "project_exists", lambda pid: True)
     saved = []
     monkeypatch.setattr(pg, "save_settings", lambda pid, recon: saved.append(recon))
-    recon = {"target_domain": "example.com", "auth_context": {
-        "cookies": [],
-        "credentials": {"username": "u@e.com", "password": "pw",
-                        "login_url": "https://login.example.com/", "domain": "example.com"}}}
+
+    recon = {"target_domain": "example.com", "scope": {"mode": "exact"},
+             "notes": "operator free text: X-Api-Key k-123"}
     resp = client.put("/projects/p1/settings", json={"recon": recon})
     assert resp.status_code == 200
-    assert saved and saved[0]["auth_context"]["credentials"]["username"] == "u@e.com"
-
-
-def test_put_settings_malformed_credentials_400(monkeypatch):
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: None)
-    # missing password
-    resp = client.put("/projects/p1/settings", json={"recon": {"auth_context": {
-        "cookies": [], "credentials": {"username": "u", "login_url": "https://x"}}}})
-    assert resp.status_code == 400
-
-
-def test_put_settings_arbitrary_headers_200(monkeypatch):
-    """auth_context is header-agnostic: any non-reserved key is an HTTP header
-    (Authorization, X-Api-Key, ...) that must be accepted and stored verbatim,
-    alongside the structured cookies list."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    saved = []
-    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: saved.append(recon))
-
-    resp = client.put(
-        "/projects/p1/settings",
-        json={"recon": {"auth_context": {
-            "cookies": [{"name": "session", "value": "abc"}],
-            "Authorization": "Bearer eyJx.y.z",
-            "X-Api-Key": "k-123",
-        }}},
-    )
-
-    assert resp.status_code == 200
-    ac = saved[0]["auth_context"]
-    assert ac["Authorization"] == "Bearer eyJx.y.z"
-    assert ac["X-Api-Key"] == "k-123"
-
-
-def test_put_settings_literal_cookie_header_400(monkeypatch):
-    """A literal `Cookie` header is refused: the cookies list is the one source
-    of the Cookie header (no two sources of truth)."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: None)
-
-    resp = client.put(
-        "/projects/p1/settings",
-        json={"recon": {"auth_context": {"Cookie": "session=abc"}}},
-    )
-
-    assert resp.status_code == 400
-
-
-def test_put_settings_invalid_header_name_400(monkeypatch):
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: None)
-
-    resp = client.put(
-        "/projects/p1/settings",
-        json={"recon": {"auth_context": {"X Api Key": "k-123"}}},  # space is not a token char
-    )
-
-    assert resp.status_code == 400
-
-
-def test_put_settings_header_non_string_value_400(monkeypatch):
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: None)
-
-    resp = client.put(
-        "/projects/p1/settings",
-        json={"recon": {"auth_context": {"X-Api-Key": 123}}},
-    )
-
-    assert resp.status_code == 400
-
-
-def test_put_settings_header_crlf_injection_400(monkeypatch):
-    """A CR/LF in a header value is header-injection and must be rejected."""
-    monkeypatch.setattr(pg, "project_exists", lambda pid: True)
-    monkeypatch.setattr(pg, "save_settings", lambda pid, recon: None)
-
-    resp = client.put(
-        "/projects/p1/settings",
-        json={"recon": {"auth_context": {"Authorization": "Bearer x\r\nX-Evil: 1"}}},
-    )
-
-    assert resp.status_code == 400
+    assert saved and saved[0]["scope"] == {"mode": "exact"}
 
 
 def test_post_recon_unknown_project_404(monkeypatch):

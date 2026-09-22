@@ -846,8 +846,12 @@ async def arun_orchestration(
         return orchestrator
 
     async def _await_seam(fn, *args):
-        """Await an async seam, else offload a sync one to a worker thread
-        (mirrors the recon pipeline's `_phase_exclusions` seam dispatch)."""
+        """Await an async seam, else offload a sync one to a worker thread.
+
+        Async callables are awaited inline; sync ones run on a worker
+        thread via `asyncio.to_thread`, and a sync seam that returns a
+        coroutine has that coroutine awaited rather than handed back
+        un-awaited."""
         if inspect.iscoroutinefunction(fn):
             return await fn(*args)
         out = await asyncio.to_thread(fn, *args)

@@ -20,8 +20,8 @@ Design decisions taken here (see the handoff prompt, section 8):
   the pipeline itself is driven in this process so the exec seam can be teed and
   the tool log is the SAME single execution the graph was built from (no drift
   between "what we logged" and "what ran"). The orchestrator is the production
-  `ReconOrchestratorActor` (`decide_routing=None`), built by a factory that
-  wraps the real actor to count its turns.
+  `ReconOrchestratorActor`, built by a factory that records the built actors
+  (the mid-run steering turn it used to take is retired, #243 / D223-12).
 * D3 - `["httpx","katana"]` is the minimal subset the static validator accepts
   (`katana` alone consumes `BaseURL`), so the crawl phase is preceded by the
   httpx probe that mints its input. Nothing later in the plan is selected.
@@ -1185,35 +1185,18 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
         # the exec call is intercepted (the tee forwards to the real one).
         curate_fn=pod_module.curate,
         triage_fn=pod_module.default_triage_fn,
-        configure_fn=pod_module.default_configure_fn,
     )
     monkeypatch.setattr(pod_module, "pod_graph", tee_graph)
 
-    # The orchestrator is the PRODUCTION actor (`decide_routing=None`); the
-    # factory only wraps the real instance to count its turns. With Langfuse
-    # unconfigured (this environment) the reasoning is not traced, so a turn
-    # count is the only external evidence available - this is what it measures.
+    # The orchestrator is the PRODUCTION actor; the factory records the built
+    # instances. The mid-run steering machinery (and its routing turn) is
+    # retired (#243 / D223-12), so there is no turn to wrap or count.
     actors: list = []
-    turns: list[dict] = []
 
     def orchestrator_factory(run_id_for_actor: str):
         actor = ReconOrchestratorActor(run_id=run_id_for_actor)
         actors.append(actor)
-        original = actor.decide_routing
-
-        async def counted(signals, phase_jobs):
-            turns.append({"signals": len(signals), "phase_jobs": list(phase_jobs)})
-            return await original(signals, phase_jobs)
-
-        monkeypatch.setattr(actor, "decide_routing", counted, raising=False)
         return actor
-
-    signal_reads: list[int] = []
-
-    def read_signals(project_id_for_read: str):
-        signals = pipeline.read_steering_signals(project_id_for_read)
-        signal_reads.append(len(signals))
-        return signals
 
     async def _drive() -> bool:
         task = asyncio.create_task(
@@ -1223,7 +1206,6 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
                 job_subset=CRAWL_SUBSET,
                 with_analysis=False,          # recon-only dispatch
                 orchestrator_factory=orchestrator_factory,
-                read_steering_signals=read_signals,
             )
         )
         done, _pending = await asyncio.wait({task}, timeout=RUN_TIMEOUT_S)
@@ -1277,8 +1259,6 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
         "tool_calls": [{k: v for k, v in c.items() if k != "stdout"} for c in tool_log.calls],
         "orchestrator": {
             "actors_built": len(actors),
-            "turns": turns,
-            "steering_signal_reads": signal_reads,
             "session_thread_resolved": [a._address is not None for a in actors],
         },
     }
@@ -1410,17 +1390,13 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
     assert stats_check["pods"] == len(katana_calls), stats_check
     assert (stats_check["exec_seconds"] or 0) > 0, stats_check
 
-    # --- Orchestrator: constructed, and how many steering turns it took ------
+    # --- Orchestrator: constructed, no steering turn to take ------------------
     assert len(actors) == 1, f"{len(actors)} orchestrator actors were built for one run"
     assert actors[0]._run_id == run_id
-    # On this target there are NO WAF steering signals, so the gate upstream of
-    # the actor (`if not signals: return {}`) short-circuits: the actor is built
-    # but never receives a turn. The reasoning is NOT traced (Langfuse is
-    # unconfigured here), so this is stated as exactly what it is.
-    assert all(count == 0 for count in signal_reads), (
-        f"steering signals were observed on a target with no WAF observations: {signal_reads}"
-    )
-    assert turns == [], f"the orchestrator took {len(turns)} steering turns: {turns}"
+    # The mid-run steering machinery (and its routing turn) is retired
+    # (#243 / D223-12): there is no turn to receive, structurally. The
+    # reasoning is NOT traced (Langfuse is unconfigured here), so the only
+    # external evidence is structural - the actor never resolved its session.
     assert actors[0]._address is None, (
         "the actor resolved its session thread, so it did more than get constructed"
     )
@@ -1447,6 +1423,6 @@ def test_recon_crawl_only_with_katana_depth(tmp_path, monkeypatch):
         + f" | replay {capture['replay']['artifact_id']} -> {capture['replay']['status']}",
         flush=True,
     )
-    print(f"orchestrator: actor built={len(actors)} turns={len(turns)} "
-          f"steering_signal_reads={signal_reads}", flush=True)
+    print(f"orchestrator: actor built={len(actors)} "
+          "(routing turn retired, #243/D223-12)", flush=True)
     print(f"artifacts: {run_dir}", flush=True)

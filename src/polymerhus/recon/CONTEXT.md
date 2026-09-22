@@ -37,7 +37,7 @@ The evidence-derived API-root prefix a fuzzer is scoped to, computed by `api_sco
 **Parameter / Header**:
 Parameter nodes are the input-carrying atoms that hang off an Endpoint; they, not the Endpoint, express that a user-controllable input reaches a sink.
 Header nodes as minted today are RESPONSE headers (httpx `-irh` / katana `response.headers`), hung off their BaseURL via `HAS_HEADER` with `direction="response"` - observed surface, never replayed into requests.
-Request headers come only from the operator's `auth_context` (pod `_auth_header`, injected solely for `use_auth` jobs); no code path reads `:Header` nodes to build a request, so a `Set-Cookie` value can never become a request `Cookie`.
+Request headers come only from the auth feed (the store-resolved account projection, serialised per tool into the `{auth_flags}` command slot solely for `use_auth` jobs); since #223 the material resolves lazily from the auth store via the account identifier bound into the pipeline state by the orchestrator (never the retired settings blob, D223-4 / D223-19); no code path reads `:Header` nodes to build a request, so a `Set-Cookie` value can never become a request `Cookie`.
 
 **Service (L0)**:
 A network service discovered on a Port (the descriptive node label).
@@ -117,27 +117,27 @@ STATEFUL as of #94: it runs on a per-concurrent-pod session (`PodSession`, `reco
 _Avoid_: analyst, classifier.
 
 **Configurator**:
-The role that resolves a Job's command for a target; a `deterministic` template by default, or an `agent` mode.
-STATEFUL as of feat/async-actor-agents: the pod graph's configurator node consults a per-concurrent-pod `configurator` session (`PodSession`, keyed like the triager) over the orchestration steering signals (`extra["steering"]`), decides the pod's `rate_profile` (throttling moved HERE from the job-level `decide_pod_selection`), and merges it before the command template is filled; fail-open (never a pod failure) and consulted once per pod even across gate retries.
-_Status_: registered `session` (`LLM_MODEL_CONFIGURATOR`).
-_Avoid_: planner.
+The role that resolves a Job's command for a target; a `deterministic` template fill by default, or an `agent` mode (the Steel crawl).
+The per-pod steering-fed throttle turn retired with the mid-run steering machinery (#243, D223-12): the configurator node fills the command deterministically and no `rate_profile` input exists - request phases run unthrottled in the interim until the #238 rate-limit work lands its profile-driven configuration, which the still-registered `configurator` session role (`LLM_CONFIGURATOR`) is reserved for.
+_Status_: registered `session` (`LLM_CONFIGURATOR`).
+_Avoid_: planner; mid-run routing.
 
 **Job orchestrator**:
 A resumable `session`-mode role (`role_id=job_orchestrator`) validated at app boot.
-Since feat/async-actor-agents it runs as a per-run MAILBOX actor
+Since #223 (T3 #242) it runs as the per-run AUTH GATEWAY
 (`orchestrator_agent.py::ReconOrchestratorActor`): one `run_session_agent` on the
-run's `OrchestratorSession` thread, fed each phase's steering signals and replying a
-structured `RoutingDecision` per phase, so its checkpointed memory carries the
-steering reasoning across the run's phases. `run_pipeline` also accepts an
-injected `decide_routing` seam for tests, but the production routing path is the
-actor.
-As of #186 its turns run PER-TURN ISOLATED on the shared actor runtime: a raising
-phase turn (transport/timeout/5xx/429 retried under the bounded escalating budget,
-then degraded) posts a NO-DECISION reply - the parent's fail-open fires per-turn
-(`{}` = no routing adaptation for THAT phase) and the actor task SURVIVES, so the
-run's later phases still get real routing (the pre-#186 dead-task race made every
-later phase silently routeless).
-_Avoid_: planner.
+run's `OrchestratorSession` thread taking exactly ONE gateway turn before phase 0 -
+the authn loop over the armed surface - closing with the structured
+`GatewayVerdict`. `run_pipeline` constructs the actor deterministically on run start
+(never lazily, never behind a signal gate), awaits the verdict under heartbeat and a
+wall-clock bound, then configures from it: browser-only prunes the plan to the Steel
+crawl, and the selected account's identifier rides the pipeline state (`extra`
+`auth_account` on `use_auth` jobs, never the material) for the feed to resolve.
+Mid-run steering is removed entirely (#243, D223-12); a degraded
+gateway fails open (every phase, unauthenticated, loudly); missing credentials stop the
+run loudly (`GatewayStop`, fail-close).
+_Status_: registered `session` (`LLM_JOB_ORCHESTRATOR`).
+_Avoid_: planner; mid-run routing.
 
 **Run-terminal flush** (#211):
 At the pipeline's terminal (clean complete AND stop paths) `run_pipeline` archives ONLY this run's pod-session threads through the SHARED run-scoped chokepoint `flush_run_scoped("recon", run_id)` (`app/llm/checkpoints.py`) - never an inline flush block. The chokepoint returns the typed `FlushResult` (`committed/archived/dropped/dropped_thread_ids/cause`, closed cause vocabulary on the type), logs a drop loudly with the thread ids, and never raises.
@@ -146,6 +146,158 @@ At the pipeline's terminal (clean complete AND stop paths) `run_pipeline` archiv
 The only human, and the source of intent the system is blind to by design: supplies the target, scope, `operator_kb` framing, and settings.
 Deliberately kept blind to the target's true identity (it analyses `soupmarket.shop` without being told it is Juice Shop).
 
+## Auth store (#220)
+
+**Auth store**:
+The per-project shared auth bucket served by `AuthStore` (`app/auth/store.py`) over `data/<project_id>/auth/` under the app-owned data root (`app.data_root.DATA_ROOT`, `<repo>/data/`, resolved through the one layout owner `project_dir`): `credentials.yaml` (the `{accounts: ...}` map) plus the operator-owned `overview.yaml` header, lazily created at the first write.
+Reads are `read(project_id, path)` dotted projections (empty path returns the full `{"overview": ..., "accounts": ...}` state; a missing path is a valid empty); writes are `write(project_id, path, value, origin=...)` single-field merges, every file write atomic (temp file + `os.replace`) under a per-project `threading.Lock`.
+_Avoid_: the retired settings blob (`AuthContext`; #223 D223-4 removes its footprint, the store is the agents' shared runtime state).
+
+**Account record**:
+One named bundle validated by `validate_account` (`app/auth/records.py`, mirrored never imported upward): `origin` (stamped server-side, `operator` or `agent`), optional `procedure` label, `credentials`, `tokens` (each `{value, location: cookie | header | storage, target?, expiry?}`), `steel`, `snapshot`, `notes`, plus FR-AUTH `roles` / `default_role`, the #223 validity fact (settled key `status`: `valid` | `not_valid`, absent until asserted, anything else a loud `auth_invalid` refusal, D223-14) and the server-stamped recency fact (settled key `updated_at`: stamped on every write and seed, a client-supplied value overwritten never trusted; selection via `select_recent_usable_account` is most-recent first, ties to list position newest-last, `not_valid` records skipped as unusable, D223-18).
+Record identity is the account name, which carries the credential identity: name an account `<username>-<minting_context>` (the credential username with its email location suffix stripped, plus the run or flow that minted it, never the procedure), so two procedures serving one credential identity share one name and the second write fails with `DuplicateAuthError` (`duplicate_auth`) instead of forking.
+The store also gates the credential identity itself (D220-11): a create or seed whose username (default `credentials.username` or any `roles.*.username`) already belongs to another account fails with `DuplicateIdentityError` (`duplicate_identity`), because access for a known identity is a new ROLE on the existing account, never a second account.
+_Avoid_: forking a record (first writer wins; reflect, merge, or refresh), and naming by role or procedure (`primary`, `sign-up`) instead of by the credential identity.
+
+**Operator section vs agent section**:
+The provenance split inside the bucket (D220-12 retires the trust-boundary refusal): the operator section (the `overview.yaml` header plus `operator`-stamped accounts) is the operator's ground truth and is WRITABLE by agents, who merge into it (tokens, status, snapshot, steel, notes) while the stored `origin: operator` stamp is preserved as provenance; the agent section (`agent`-stamped accounts) is what the `auth_store` tool mints.
+_Avoid_: treating `origin` as a permission (it is a provenance label; the only refusals are `duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`).
+
+**Technical condition** (`overview.technical_conditions`):
+An optional overview-level list of `{name, check}` entries (absent by default), validated by `validate_overview`: the assertable procedure conditions to verify when a login fails unexpectedly while following the procedure in the overview.
+_Avoid_: replay-manner (the deleted enum; conditions are data, not a manner).
+
+**Anti-bot defence type** (`overview.anti-bot`), #237:
+The optional typed fact naming the target's WAF or anti-bot defence - a vendor, product, challenge, or `waf:<name>` string, or null when none - validated by `validate_overview`; the external authn bootstrapper establishes it by probing and response-shape inspection.
+It is a different axis from the blocking-signal classification (`waf_protected` / `waf_detection` / `rate_limited`): the signal says a block fired, the type names the defence behind it.
+_Avoid_: a closed vendor enum (the vendor space is open; research the block pattern before naming it).
+
+**HTTP-client replayability** (`overview.http-client-replayability`), #237:
+The optional typed fact stating whether the browser-trusted authenticated context replays through a plain HTTP client: `true` (replayable, its static/dynamic continuation facts carried in the authn skill) or `false` (browser-only), validated by `validate_overview`; unset means UNKNOWN and is deliberately distinct from `false`.
+_Avoid_: reading absence as false (unknown is a third state).
+
+**Continuation facts** (static vs dynamic shape elements), #237:
+The replay procedure content - which headers, cookies, parameters, and token locations are replayable as-is versus must be re-minted or are browser-bound - authored into the per-project `authn` skill rather than stored; the store keeps the concrete values (`snapshot`, `tokens`) and the two typed facts.
+_Avoid_: procedural prose in the store (steps live in the skill, facts live in the store).
+
+**Browser-profile reference** (`steel: {profile}`):
+The minimal durable Steel profile key on an account record: the next agent rebinds the same profile through its browser tool, secrets never touching the store.
+Since #223 the key is project-scoped (`<project_id>-<account>`, D223-14); the browser path mints through `steel start --profile <key> --update-profile` and persists the key plus extracted tokens back to the record; a missing or unauthenticated mount fail-opens into sign-in with the account asserted `not_valid`, never a silent anonymous turn.
+_Avoid_: storing browser state itself (only the key lives here).
+
+**Concrete snapshot** (`snapshot: {headers, cookies, params, captured_at}`):
+Point-in-time captured request state on an account record, validated by `_check_snapshot`: the point-in-time cookies (plus `captured_at`) request-based followers replay, never a stored graph query.
+The header fact is NOT duplicated here - it single-sources on `overview.required_headers` (D220-2 amendment); the projection ignores a stale `snapshot.headers`.
+_Avoid_: graph queries (no `cypher` lives in the store; static queries against a changing surface fail silently open).
+
+**Operator seed** (`PUT /projects/{project_id}/auth` -> `seed_project_auth` -> `AuthStore.replace_operator_state`):
+The operator's wholesale replace of the operator section: each present section (`overview`, `accounts`) replaces wholesale (absent sections untouched), seeded accounts stamped `operator` server-side, `agent`-stamped accounts never modified or removed, both sections validated before anything lands; an agent's edits inside a seeded account are replaced by the seed (D220-12).
+A seeded operator name colliding with a live agent record warn-drops the operator entry, preserving the agent record; there is no conflict path (replace, never 409).
+_Avoid_: extending the settings blob (the seed is a separate face over a separate bucket).
+
+**Procedure label** (`procedure`):
+The store-to-skill coupling name on an account record (optional non-empty string): it names the skill procedure that minted or serves the account; all procedural knowledge itself lives in the one future auth skill, not in the store.
+_Avoid_: procedural knowledge in the store (the store carries only the label).
+
+**Auth-store tool** (`auth_store`, built by `build_auth_store_tool`):
+The one shared read/write agent tool over the store, bound to its project id at build time; the id defaults to the control-plane project (`config.PROJECT_ID`) resolved lazily inside the factory, so no agent harness threads identity; its usage contract (`AUTH_STORE_CONTRACT`) rides the tool description verbatim.
+Origin through this tool is always agent; every failure arrives as an in-band coded envelope (`duplicate_auth`, `duplicate_identity`, `auth_invalid`, `store_unavailable`) - nothing raises into the turn.
+_Avoid_: a second tool face (one implementation, bound per project).
+
+**Auth-capable binding** (`auth_capable_binding`, `app/auth/seams.py`):
+The auth-capable extension of `skill_agent_binding`: the same L1 index middleware, skill tools, and invocation context, plus the `auth_store` tool and the per-project `authn` procedure in the bounded skill set.
+The analysis-domain agents never bind it; since #223 it arms the recon orchestrator write-capable in one step (the roster still declares it exempt - no catalogue skill bears - so the arming rides `with_write_skill`, never the roster: `auth_store`, `authn`, `load_skill`, `write_skill`, kali `exec`, `steel_exec`, D223-13) - and the recon job-specialised agents deliberately never take it (D223-5).
+_Avoid_: a per-site auth binding (one seam, attached through `tools=` / `middleware=` / `context=` like every other capability).
+
+**`authn` (per-project authentication procedure)**:
+The project-authored skill (no canonical catalogue copy) that the meta skill `meta/authn-skill-writing` produces; it is collected into an auth-capable agent's L1 index only when its bundle exists at `<data_root>/<project_id>/skills/authn/SKILL.md`.
+_Avoid_: a canonical `authn` skill (a project's copy is its original).
+
+**Auth feed** (#223 T4 #243, D223-19):
+How authenticated jobs receive their material: the gateway verdict binds only the selected account's IDENTIFIER into the pipeline state (`extra["auth_account"]` on `use_auth` jobs, never the material); each phase's tool configuration resolves that account from the auth store at assembly and projects only the subset its tools need - the flat request material (`overview.required_headers` plus header-located tokens, snapshot cookies plus cookie-located tokens) through the existing `extra["auth_context"]` transport, serialised per tool into the `{auth_flags}` command slot at fill time; the persisted Steel profile key (`extra["steel_profile"]`, mounted read-only at Steel session creation via the SDK `profile_id`) plus the cookie subset seeding the browser context for the agent-driven crawl; nothing for non-auth jobs. Role/default-role selection resolves over the account record. The settings-blob auth path, the interactive crawl auth, and mid-run steering are removed with their footprints (D223-4 / D223-12).
+_Avoid_: threading material through the pipeline state (the identifier rides; the projection resolves per phase).
+
+**Authn loop** (the auth gateway, #223):
+The recon orchestrator's pre-pipeline stateful turn - used by that role only - that establishes or validates the run's auth state against the auth store BEFORE the pipeline is configured: one ReAct turn with a hunting-style passive state machine over its own tool calls (`recon/control/authn_loop.py`: GROUNDED -> RETRIEVED -> VALIDATION -> GENERATION -> DEBUG -> FINISH; detection pure of the observed call, pushes never gating, hints riding the triggering tool result only inside `<authn-loop-hint>`), closing with the structured gateway verdict.
+The verdict (`GatewayVerdict`: `outcome` authenticated | anonymous | failed, `account` identifier-only, `branch` request | browser_only, run-scoped `replayability_resolved` / `replayability`, `rationale`) carries the selected account identifier, the no-auth-surface finding, or the failure mode; the orchestrator alone prunes phases and configures the pipeline from it (mid-run steering is retired, D223-12), and the account identifier - never its material - rides the pipeline state for lazy per-phase resolution by each phase's tool configuration (D223-19).
+The pre-loop branch directive follows the four-way overview contract (`request` | `browser_only` | `request_browser_first` | `resolve_in_loop`, D223-11); the null case resolves in-loop, is logged loudly, and is persisted to the overview by the loop (D220-12).
+An empty store with no authenticated surface is the expected shape with its own path - loop skipped, pipeline run anonymously, verdict records it; the structural marker is `overview.notes` carrying "no authenticated surface" (D223-17, settled #242); a declared surface with no accounts fail-closes by stopping.
+_Avoid_: a per-job auth loop (the job-specialised agents never authenticate, D223-5); a "coverage exhausted" verdict state (exhaustion is a failed authentication, D223-3); re-adding mid-run auth steering.
+
+## Prompts, skills, and the loader
+
+**Role prompt**:
+A role's system prompt, living with its owning module in a `prompts/` directory as plain Markdown (no frontmatter) and read directly by its module - fail-closed (a missing file raises), memoized, no cross-module imports.
+_Avoid_: skill (on-demand knowledge, never role identity).
+
+**Skill**:
+A Markdown reasoning discipline (`skills/<name>/SKILL.md`, `name` == directory) loaded on demand through the shared loader - never as a role prompt.
+_Avoid_: tool (a tool is called; a skill is read).
+
+**Skill loader (single loader)**:
+The one module (`src/polymerhus/app/llm/skills.py::skill_for`, FR-SKILLIF) authorised to read skills: it strips the YAML frontmatter, caches the body, and degrades to a fallback on a missing mount.
+Only on-demand skill readers call it; no role prompt loads through here.
+_Avoid_: a second skill system.
+
+**Data section**:
+The spec frontmatter contract every skill carries (`name` == directory, `description` = what + when, `metadata` string map carrying `version`), so a runtime consumer can index, validate, and report what was loaded.
+_Avoid_: prose header (human-only, unvalidatable).
+
+**Runtime loading**:
+Two tiers. L1 discovery: an agent's bounded skill set rendered as name + description lines into its system message by the shared skill-index middleware (bound per agent through the native invocation context). L2 activation: loading a skill mid-run through the agent-callable `load_skill(name)` tool, which returns the loader-identical body. It decouples skill evolution from prompt bake-time; bake-time reads and runtime loads can never diverge because both call the single loader.
+_Avoid_: convention-only gating (the index is composed by middleware, no model cooperation needed).
+
+**Skill binding (bounded skill set)**:
+The per-role roster of which catalogue skills a tool-calling agent may load (`ROLE_SKILLS`, keyed by `role_id`) and the one call every bound agent site makes to bind it (`skill_agent_binding(role_id)`: index middleware + skill tools + the invocation context carrying the set).
+The skill-domain analogue of the tool-bounding pattern - a declared, minimal set the owner attaches through one native seam, never the whole catalogue.
+A role with no bearing skill is declared EXEMPT (an empty tuple) and binds nothing at all (no `load_skill` tool, no index middleware, no context), and an UNDECLARED role id is refused at construction; the frontmatter `description` of every bound skill is rendered verbatim.
+_Avoid_: per-site skill lists (drift), a `skills` field on the `Role` record (skill policy in the model-transport module), an empty index on a role that cannot use one.
+
+**Per-project skill bundle**:
+The project-owned skill directory (`<data_root>/<project_id>/skills/<skill>/`: `SKILL.md`, `references/`, `scripts/`, `assets/`) where an executing agent records what it learned using a procedure - a blocking condition, a new role, a privilege-escalation path - so sibling and later agents start from accumulated ground truth.
+There is no canonical shared original; a project's copy is its original, created lazily on first write.
+_Avoid_: editing the shared catalogue (a live run never mutates `skills/`).
+
+**Skill store**:
+The one authority that reads and writes bundle artifacts (`src/polymerhus/app/llm/skills.py::SkillStore`, #234), sharing the loader's seam: reads resolve the per-project bundle first, then the shared catalogue, so a project skill shadows a shared one without copying.
+_Avoid_: a second skill system.
+
+**Skill writer (`write_skill`)**:
+The agent-callable write tool (`write_skill(skill, target, content)`): `procedure` carries the `SKILL.md` body alone, `references/<name>` writes one bulky reference file.
+The store owns the frontmatter - `name`, `description`, and `metadata.version` bumped one minor per write, carried from the project's own metadata or copied over from the shared catalogue on the first update (bootstrap is operator-authorised; nothing synthesises metadata).
+The factory binds the project, so an agent writes through its own project's bundle; any skill in it is writable (no per-skill writable set - the future `SkillEvolver` writes any skill).
+Every write lands atomically under a per-project lock.
+Failures arrive as coded in-band envelopes (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
+_Avoid_: section edits, operation verbs (no revise/add/correct - whole files only), authoring frontmatter.
+
+**Reading protocol (`meta/meta-usage-skill`)**:
+The compact usage-protocol skill appended to every `load_skill` result by the read path itself, except meta-family skills (any loader path under `skills/meta/`, matched by `is_meta_skill`): assess the procedure against its stated observables during and after execution, separate a skill defect from an execution miss, and record reusable improvements through `write_skill`.
+_Avoid_: prompt injection (the protocol rides the tool result, never the system prompt or compaction state).
+
+**Authoring rules (`meta/meta-write-skill`)**:
+The content-stable authoring instructions for writing a well-structured procedure rather than a note-dump: ordered steps closed by expected observables, valid frontmatter shape, bulky material behind `references/` pointers.
+The future `SkillEvolver` reuses it unchanged.
+_Avoid_: the note-dump (prose without steps, observables, or pointers).
+
+## Browser capability
+
+**Exec gateway**:
+The single loosely-coupled `steel_exec` tool beside `execute_command`, accepting either a `steel`-token-routed command or a `.sh`/`.py` automation script, carrying no operation knowledge (that lives in the skill).
+Its only knowledge is grammar-shape guards: the steel token, the pinned-version re-check, timeout ordering, session-name uniqueness, and the variadic boundary.
+_Avoid_: per-subcommand allowlist, in-process driver, operation knowledge in the tool.
+
+**Named session**:
+A cloud-browser session under an agent-chosen semantic `polymerhus-<flow>-<id>` name whose uniqueness is checked at creation against the live session catalogue (`steel browser sessions --json`: one read lists every live session with its name), stopped by script-trap on every path with platform inactivity as the backstop.
+_Avoid_: the default session, an unchecked name, an orphaned session.
+
+**Variadic boundary**:
+The mandatory `--` end-of-options marker separating a variadic CLI verb's `[OPTIONS]` and required `<selector>` from its value(s); `steel_exec` refuses a variadic command (text entry, `select`, `upload`, `batch`) without a top-level one (`refused:variadic-boundary`) because clap otherwise folds a trailing flag into the entered value behind `success:true`, and a folded `--session` onto an auto-provisioned `default` session.
+The verb set is read from the pinned CLI's `--help`, so a pin bump re-derives it.
+_Avoid_: the leading-options habit, a hand-maintained flag denylist, reordering a command to guess the boundary.
+
+**Browser profiles**:
+Durable browser identity lives in Steel profiles owned by the #220 stream; this stream mounts them by NAME, read-only first, and logs in only when the mount does not yield the authenticated landing, so the warm identity is written back on the account's own profile (D237-15).
+_Avoid_: duplicating #220's profile vocabulary.
 ## Invariants owned here
 
 **Fail-open**:

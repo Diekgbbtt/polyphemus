@@ -138,6 +138,16 @@ class AgentInbox:
     def qsize(self) -> int:
         return self._q.qsize()
 
+    def try_get_nowait(self) -> AgentMessage | None:
+        """Non-blocking take: the next message, or None when the inbox is
+        empty (never raises). The drain seam for bounded awaits - a timed-out
+        waiter discards stale replies through here instead of reaching into
+        the queue."""
+        try:
+            return self._q.get_nowait()
+        except asyncio.QueueEmpty:
+            return None
+
 
 # `on_message(message, last_turn)` -> the next turn's messages (take a turn), `None`
 # (consumed; keep listening), or `STOP` (end the agent). May be sync or async.
@@ -217,6 +227,7 @@ async def run_session_agent(
     observe: bool = True,
     extra_tags: Sequence[str] | None = None,
     on_turn_degraded: Callable[[str, Exception], Awaitable[None] | None] | None = None,
+    context: dict | None = None,
 ) -> AgentRunResult:
     """Run an async-native agent that stays ACTIVE after its turn, listening on `inbox`.
 
@@ -243,7 +254,7 @@ async def run_session_agent(
     turn_kwargs = dict(
         checkpointer=checkpointer, tools=tools, response_format=response_format,
         system_prompt=system_prompt, middleware=middleware, store=store,
-        model_factory=model_factory, observe=observe, extra_tags=extra_tags,
+        model_factory=model_factory, observe=observe, extra_tags=extra_tags, context=context,
     )
 
     async def _run_turn_attempt(messages: Sequence[BaseMessage], *,

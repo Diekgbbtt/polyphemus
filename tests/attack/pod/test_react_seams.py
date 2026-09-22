@@ -210,7 +210,7 @@ def test_triager_seam_reads_the_note_and_returns_a_decision(tmp_path, monkeypatc
     # role's env model key and capability profile. Point it at a tool-calling-
     # only profile so the fake's TriagerDecision tool_calls become the
     # structured output (ToolStrategy) instead of an unmet json_schema probe.
-    monkeypatch.setenv("LLM_MODEL_POD_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
     import polymerhus.app.llm.session as S
 
     monkeypatch.setattr(
@@ -249,6 +249,55 @@ def test_triager_seam_degrades_to_a_safe_terminal_on_failure(tmp_path):
     assert "degraded" in decision["note"]
 
 
+def _tool_recording_factory(replies, seen):
+    """A model factory whose model records the tool names bound onto it (the
+    `create_agent` -> `bind_tools` seam), so a turn's real tool surface is
+    assertable without running a tool."""
+
+    class _Recorder(_FakeModel):
+        def bind_tools(self, tools, **kwargs):
+            seen.extend(t.name for t in tools if t is not None)
+            return self
+
+    def make(role_id):
+        return _Recorder(replies=list(replies), idx={})
+
+    return make
+
+
+def test_triager_turn_binds_its_react_tools_and_never_exec(tmp_path, monkeypatch):
+    """Regression (found while wiring the #221 skill binding): the triager's own
+    react tools were computed and then dropped, so the critic's turn bound
+    `load_skill` alone while its prompt instructs `note` and the KB read."""
+    log = ExperimentLog()
+    store = PodMemoryStore(tmp_path)
+    store.write_experiment_log(SPEC_ID, 0, {"order": 0, "variant_ref": "v0",
+                                            "raw_observations": [], "interpretations": [],
+                                            "executed": []})
+    store.write_variant_summary(SPEC_ID, 0, "the verbatim consolidation")
+    seen: list = []
+    monkeypatch.setenv("LLM_POD_TRIAGER", "openrouter:some/model")
+    import polymerhus.app.llm.session as S
+
+    monkeypatch.setattr(
+        S, "resolve_capability",
+        lambda provider, model: type("_P", (), {
+            "supports_structured_output": False, "supports_tool_calling": True})())
+    replies = [AIMessage(content="", tool_calls=[
+        {"name": "TriagerDecision", "id": "c1", "args": {
+            "classification": "noise", "action": "terminate",
+            "verdict": "unsuccessful", "terminal_reason": "no-symptom-evidence",
+            "clean": False, "note": "n"}}])]
+    hc = PodHarnessContext(exec_fn=_exec(_OK), memory_store=store, spec_id=SPEC_ID,
+                           log=log, variant_ref="v0",
+                           model_factory=_tool_recording_factory(replies, seen))
+
+    _run(_drive_triager(SPEC, hc, log))
+
+    assert {"note", "query_lightrag", "load_skill"} <= set(seen)
+    assert "exec" not in seen  # the critic never touches the target
+
+
 # --- the graph's production lane (D84-29) --------------------------------------
 
 def test_production_graph_has_no_tool_exec_node(monkeypatch):
@@ -285,7 +334,7 @@ def test_production_pod_degrades_to_a_safe_terminal_without_model_env(tmp_path,
     """D84-14: a direct pod run with NO model env configured hard-fails at the
     stateful seam and `arun_pod` degrades the run - never a silent symbolic
     fallback, never a raise into the caller."""
-    monkeypatch.delenv("LLM_MODEL_POD_RUNNER", raising=False)
+    monkeypatch.delenv("LLM_POD_RUNNER", raising=False)
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
     env = _run(arun_pod(SPEC, exec_fn=_exec(_OK), trace_fn=_no_trace,
                         memory_store=PodMemoryStore(tmp_path), spec_id=SPEC_ID))

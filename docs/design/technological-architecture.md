@@ -396,7 +396,7 @@ attack-surface graph; `GET /runs?status=running` reports run liveness.
 three OpenAI-compatible providers — `openai` (`api.openai.com/v1`), `openrouter`
 (`openrouter.ai/api/v1`), `swissai` (`api.swissai.svc.cscs.ch/v1`). Four roles
 are defined — `configurator`, `triager`, `job_orchestrator`, `crawler` — each
-resolved from `LLM_MODEL_<ROLE>="<provider>:<model>"` and keyed by
+resolved from `LLM_<ROLE>="<provider>:<model>"` and keyed by
 `API_KEY_<PROVIDER>`. `chat_model_for(role)` (`roles.py`) builds the model at
 `temperature=0` with Langfuse callbacks attached at construction. Structured
 output uses `with_structured_output(…, method="function_calling")` throughout —

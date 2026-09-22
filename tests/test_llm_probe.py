@@ -258,7 +258,7 @@ def test_probe_winner_held_per_provider_model_schema_and_shared_by_session(monke
     from polymerhus.app.llm import session as S
     from polymerhus.app.llm.capability import CapabilityProfile
 
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:probe-shared")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:probe-shared")
 
     def fake_cap(provider, model):
         return CapabilityProfile()  # unknown
@@ -330,7 +330,7 @@ def test_session_cold_start_miss_never_writes_cache_and_marks_default_unvalidate
     fake_langfuse.get_client = lambda: mock_client
     monkeypatch.setitem(sys.modules, "langfuse", fake_langfuse)
 
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:cold-start-unknown")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:cold-start-unknown")
     monkeypatch.setattr(S, "resolve_capability", lambda provider, model: _unknown_profile())
     caplog.set_level(logging.INFO)
     assert S._session_probe_invoker is None  # production path, no override
@@ -357,7 +357,7 @@ def test_session_cold_start_miss_all_miss_cache_none_still_starts():
     from polymerhus.app.llm import session as S
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:cold-start-unknown-2")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:cold-start-unknown-2")
     monkeypatch.setattr(S, "resolve_capability", lambda provider, model: _unknown_profile())
     try:
         rf = S._structured_response_format("triager", _Good)
@@ -380,7 +380,7 @@ def test_session_primed_cache_hit_reuses_winner_without_reinvoking(caplog):
 
     caplog.set_level(logging.INFO)
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:primed-hit")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:primed-hit")
     monkeypatch.setattr(S, "resolve_capability", lambda provider, model: _unknown_profile())
     # Prime the cache exactly as a prior one-shot probe_with_invoker would.
     key = N._probe_cache_key("openrouter", "primed-hit", _Good)
@@ -409,7 +409,7 @@ def test_session_primed_cache_all_miss_none_fails_open_to_json_schema():
     from polymerhus.app.llm import session as S
 
     monkeypatch = pytest.MonkeyPatch()
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:primed-miss")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:primed-miss")
     monkeypatch.setattr(S, "resolve_capability", lambda provider, model: _unknown_profile())
     key = N._probe_cache_key("openrouter", "primed-miss", _Good)
     N._PROBE_CACHE[key] = None  # all-miss sentinel from a prior probe

@@ -35,7 +35,6 @@ from __future__ import annotations
 
 import asyncio
 import random
-import re
 import threading
 import time
 import uuid
@@ -44,11 +43,8 @@ from urllib.parse import parse_qsl, urlparse
 from polymerhus.recon import config
 
 # ---------------------------------------------------------------------------
-# Auth-detection predicates (used by steel_await_auth) - ported verbatim
+# Scope predicate (the crawl-frontier / recorded-asset scope filter)
 # ---------------------------------------------------------------------------
-
-_SESSION_COOKIE_RE = re.compile(r"(session|sess|sid|auth|token|jwt|__secure|csrf)", re.I)
-_LOGIN_PATH_RE = re.compile(r"/(login|signin|sign-in|sso|oauth|account/login|session)", re.I)
 
 
 def _registrable_in_scope(host: str, scope: list) -> bool:
@@ -94,47 +90,6 @@ def _is_html_content_type(ct: str | None) -> bool:
     return "text/html" in ct or "application/xhtml" in ct
 
 
-def _is_session_like_cookie(c: dict) -> bool:
-    """A cookie that plausibly represents an authenticated session."""
-    return bool(_SESSION_COOKIE_RE.search(c.get("name", "") or "")) or bool(c.get("httpOnly"))
-
-
-def _cookie_domain_in_scope(c: dict, scope: list) -> bool:
-    dom = (c.get("domain") or "").lstrip(".").lower()
-    if not scope:
-        return True
-    return any(dom == s.lower() or dom.endswith("." + s.lower()) for s in scope)
-
-
-def _has_new_session_cookie(baseline_names: set, current: list, scope: list) -> bool:
-    """True if an in-scope session-like cookie appeared that wasn't in the baseline set."""
-    for c in current or []:
-        if c.get("name") in baseline_names:
-            continue
-        if _cookie_domain_in_scope(c, scope) and _is_session_like_cookie(c):
-            return True
-    return False
-
-
-def _url_is_authenticated_app(url: str, scope: list) -> bool:
-    """In-scope app page that is NOT a login/SSO route (so we wait for the SSO return)."""
-    p = urlparse(url or "")
-    if not _registrable_in_scope(p.netloc, scope):
-        return False
-    return not _LOGIN_PATH_RE.search(p.path or "/")
-
-
-def login_succeeded(baseline_names: set, current_cookies: list, url: str, scope: list) -> bool:
-    """D23 hardened success test: an autonomous login counts as authenticated
-    ONLY when BOTH hold - a NEW in-scope session-like cookie appeared vs the
-    pre-login baseline AND the browser navigated to an in-scope non-login page.
-    Either alone is a false positive (a CSRF/visitor cookie on the login page,
-    or an off-login bounce with no session), which unattended login cannot
-    afford. Pure; composes the existing steel_await_auth predicates."""
-    return _has_new_session_cookie(baseline_names, current_cookies, scope) and \
-        _url_is_authenticated_app(url, scope)
-
-
 # ---------------------------------------------------------------------------
 # Per-session fingerprint randomisation - ported verbatim
 # ---------------------------------------------------------------------------
@@ -156,10 +111,17 @@ _UAS = [
 _VIEWPORTS = [(1920, 1080), (1536, 864), (1440, 900), (1366, 768), (1600, 900)]
 
 
-def _random_session_opts(use_proxy: bool) -> dict:
-    """Return a randomised set of Steel sessions.create kwargs for fingerprint diversity."""
+def _random_session_opts(use_proxy: bool, profile_id: str | None = None) -> dict:
+    """Return a randomised set of Steel sessions.create kwargs for fingerprint diversity.
+
+    `profile_id` (the feed-bound persisted profile key, #243) mounts the
+    account's profile READ-ONLY - no `persist_profile`, matching the skill
+    discipline (a mount writes back only past the verify gate, and concurrent
+    crawl pods must never race on one profile's last-writer state). Omitted
+    entirely when no profile rides, so anonymous sessions are byte-identical
+    to before."""
     w, h = random.choice(_VIEWPORTS)
-    return {
+    opts = {
         "use_proxy": use_proxy,
         "region": random.choice(_REGIONS),
         "user_agent": random.choice(_UAS),
@@ -167,6 +129,9 @@ def _random_session_opts(use_proxy: bool) -> dict:
         "headless": False,
         "stealth_config": {"humanize_interactions": True},
     }
+    if profile_id:
+        opts["profile_id"] = profile_id
+    return opts
 
 
 def _extract_links_expr() -> str:
@@ -224,7 +189,6 @@ class _Crawl:
         self.requests: list = []
         self.responses: dict = {}
         self._req_lock = threading.Lock()
-        self.baseline_cookies: list = []
         self._attach_listeners()
 
     def _attach_listeners(self):
@@ -310,15 +274,16 @@ def _build_manifest(crawl: _Crawl) -> dict:
     return {"endpoints": endpoints, "js_urls": sorted(js_urls)}
 
 
-def _create_steel_session(api_key: str, use_proxy: bool):
+def _create_steel_session(api_key: str, use_proxy: bool, profile_id: str | None = None):
     """Create a Steel session (SYNC SDK), with the reference's opts fallback ladder.
 
     Runs off the event loop via `asyncio.to_thread`. Returns the session object.
-    """
+    A profile mount that the platform rejects falls back to the unprofiled
+    ladder below - an auth-establishment concern, never a crawl crash."""
     from steel import Steel  # noqa: PLC0415
 
     client = Steel(steel_api_key=api_key)
-    opts = _random_session_opts(use_proxy)
+    opts = _random_session_opts(use_proxy, profile_id)
     try:
         return client, client.sessions.create(**opts)
     except Exception:
@@ -333,23 +298,28 @@ def _create_steel_session(api_key: str, use_proxy: bool):
 
 
 class SteelCrawlProvider:
-    """In-process provider exposing the seven `steel_*` crawl tools.
+    """In-process provider exposing the six `steel_*` crawl tools.
 
     One instance drives one crawl job. `get_tools()` returns LangChain
     `StructuredTool`s bound to this instance's crawl registry.
     """
 
-    def __init__(self, api_key: str | None = None, *, session_lifetime_s: int | None = None, auth_cookies=None):
+    def __init__(self, api_key: str | None = None, *, session_lifetime_s: int | None = None, auth_cookies=None, steel_profile: str | None = None):
         self._api_key = api_key if api_key is not None else config.STEEL_API_KEY
         self._session_lifetime_s = (
             session_lifetime_s
             if session_lifetime_s is not None
             else int(getattr(config, "CRAWL_JOB_TIMEOUT_S", 480))
         )
-        # Non-interactive auth: session cookies to seed the browser context with
-        # (via context.add_cookies) BEFORE the crawl, so it runs authenticated
-        # without the human steel_await_auth step. Empty for an anonymous crawl.
+        # Profile-mount-only auth (#243): persisted session cookies to seed
+        # the browser context with (via context.add_cookies) BEFORE the
+        # crawl, so it runs authenticated with no human step. Empty for an
+        # anonymous crawl.
         self._auth_cookies = list(auth_cookies or [])
+        # Profile-mount-only auth (#243): the feed-bound persisted Steel
+        # profile key, mounted read-only at session creation (`profile_id`).
+        # None for an anonymous crawl or an account with no profile.
+        self._steel_profile = steel_profile or None
         self._crawls: dict[str, _Crawl] = {}
         self._lock = threading.Lock()
 
@@ -416,7 +386,7 @@ class SteelCrawlProvider:
 
         await self._reap_expired()
         client, session = await asyncio.to_thread(
-            _create_steel_session, self._api_key, use_proxy
+            _create_steel_session, self._api_key, use_proxy, self._steel_profile
         )
         p = await async_playwright().start()
         cdp_url = f"wss://connect.steel.dev?apiKey={self._api_key}&sessionId={session.id}"
@@ -424,10 +394,10 @@ class SteelCrawlProvider:
             browser = await p.chromium.connect_over_cdp(cdp_url)
             ctx = browser.contexts[0]
             if self._auth_cookies:
-                # NON-INTERACTIVE AUTH: seed the browser context with the
-                # project's session cookies BEFORE any navigation, so the crawl
-                # runs authenticated without the human steel_await_auth step.
-                # Best-effort: a malformed cookie must degrade to an
+                # PROFILE-MOUNT-ONLY AUTH: seed the browser context with the
+                # feed-projected persisted session cookies BEFORE any
+                # navigation, so the crawl runs authenticated with no human
+                # step. Best-effort: a malformed cookie must degrade to an
                 # unauthenticated crawl, never crash the session.
                 try:
                     await ctx.add_cookies(_to_playwright_cookies(self._auth_cookies, target))
@@ -449,10 +419,6 @@ class SteelCrawlProvider:
         crawl.enqueue([target], depth=0)
         with self._lock:
             self._crawls[crawl_id] = crawl
-        try:
-            crawl.baseline_cookies = await crawl.page.context.cookies()
-        except Exception:
-            crawl.baseline_cookies = []
         return {
             "crawl_id": crawl_id,
             "frontier": list(crawl.frontier),
@@ -590,34 +556,6 @@ class SteelCrawlProvider:
         except Exception as e:
             return {"error": str(e)}
 
-    async def _steel_await_auth(self, crawl_id: str, timeout_s: int = 600, poll_ms: int = 2000) -> dict:
-        with self._lock:
-            crawl = self._crawls.get(crawl_id)
-        if not crawl:
-            return {"authenticated": False, "timed_out": False, "reason": "unknown crawl_id"}
-        baseline = {c.get("name") for c in (getattr(crawl, "baseline_cookies", []) or [])}
-        deadline = time.time() + timeout_s
-        stable_since = None
-        while time.time() < deadline:
-            crawl.last_active = time.time()  # keepalive - prevents the reaper killing the idle session
-            try:
-                cookies = await crawl.page.context.cookies()
-                url = crawl.page.url or ""
-            except Exception:
-                cookies, url = [], ""
-            if _has_new_session_cookie(baseline, cookies, crawl.scope) and _url_is_authenticated_app(url, crawl.scope):
-                if stable_since is None:
-                    stable_since = time.time()
-                elif time.time() - stable_since >= 2.0:
-                    return {"authenticated": True, "timed_out": False, "reason": "cookie+url"}
-            else:
-                stable_since = None
-            try:
-                await crawl.page.wait_for_timeout(poll_ms)
-            except Exception:
-                await asyncio.sleep(poll_ms / 1000.0)
-        return {"authenticated": False, "timed_out": True, "reason": "timeout"}
-
     @staticmethod
     async def _extract_links(page) -> list:
         hrefs = await page.eval_on_selector_all("a[href]", _extract_links_expr())
@@ -626,7 +564,7 @@ class SteelCrawlProvider:
     # -- provider contract --------------------------------------------------
 
     async def get_tools(self) -> list:
-        """Return the seven `steel_*` tools as LangChain StructuredTools."""
+        """Return the six `steel_*` tools as LangChain StructuredTools."""
         from langchain_core.tools import StructuredTool  # noqa: PLC0415
 
         specs = [
@@ -672,14 +610,6 @@ class SteelCrawlProvider:
                 "Escape hatch: evaluate arbitrary JavaScript in the current page "
                 "context (sync expression that returns a value). Returns {result} or "
                 "{error}.",
-            ),
-            (
-                "steel_await_auth",
-                self._steel_await_auth,
-                "Block until the operator has authenticated in the live Steel session "
-                "(a new in-scope session cookie on an in-scope non-login URL, debounced "
-                "~2s) or until timeout. Polling keeps the session alive. Returns "
-                "{authenticated, timed_out, reason}.",
             ),
         ]
         return [

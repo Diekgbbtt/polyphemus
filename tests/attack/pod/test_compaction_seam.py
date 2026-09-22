@@ -49,8 +49,8 @@ def clean_llm_env(monkeypatch):
     """Drop the LLM env vars so the fail-open window/profile resolution stays
     deterministic and never touches a gateway (hermetic unit tier)."""
     monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
-    monkeypatch.delenv("LLM_MODEL_POD_RUNNER", raising=False)
-    monkeypatch.delenv("LLM_MODEL_POD_TRIAGER", raising=False)
+    monkeypatch.delenv("LLM_POD_RUNNER", raising=False)
+    monkeypatch.delenv("LLM_POD_TRIAGER", raising=False)
     monkeypatch.delenv("LLM_ROLE_MODEL_CONTEXT_LIMIT", raising=False)
     monkeypatch.delenv("LLM_ATTEMPT_TIMEOUTS_S", raising=False)
 

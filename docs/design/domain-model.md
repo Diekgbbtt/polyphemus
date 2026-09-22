@@ -92,7 +92,7 @@ Storing "rendering model" on a Service is a category error: a rendering fault is
 
 ### 2.4 Where trust enters, and between which parties
 
-Trust in this domain is not a single relation; it enters at two distinct pairs of parties.
+Trust in this domain is not a single relation; it enters at three distinct pairs of parties.
 
 The primary pair is **inter-service**: service A consumes data produced by service B and assumes some property P of it (`L1D-14`, the Tier-1 trust substrate).
 
@@ -103,6 +103,10 @@ That is the ontological guarantee that the model's trust boundaries are the real
 The second pair is **tester-and-target**, and it is the pair a human holds silently: every self-report of the black box (a status code, a header, a rendered page) is the target speaking about itself, and the tester trusts it only provisionally.
 
 This second trust relation is the reason the automation-forced primitives of Section 3 exist at all: a machine that cannot represent "how much do I trust this claim, and who told it to me" cannot hold the tester-target boundary the way a human does reflexively.
+
+The third pair is **operator-and-agents**, held in the shared auth store: the operator seeds ground truth and the agents verify, correct, and merge what they learn.
+
+That boundary is provenance, not permission - an agent write merges into the operator's section and the server-stamped `origin` records who made the claim (`docs/design/auth-store-220-decisions.md` D220-12) - so trust is attributed, never enforced by refusing the write.
 
 ### 2.5 Coverage - and coverage of what
 
@@ -212,6 +216,8 @@ A human re-testing a target next week silently knows it is the same target; a ma
 The model's answer is a single principle applied everywhere: **identity is a stable intrinsic key, and every write is an idempotent MERGE on it** (`L1D-22`, `src/polymerhus/analysis/l1_curator.py:15-19`).
 
 A Service is keyed on `(project_id, business_function_slug)` (`L1D-12`); a System on `(project_id, kind, discriminator)` with a non-null `__singleton__` sentinel so a null discriminator cannot silently duplicate a singleton (`L1D-9`, `src/polymerhus/analysis/l1_types.py:32-36`); an L0 Observation on a deterministic SHA1 of its content so the same finding converges rather than duplicating (`src/polymerhus/recon/domain/curator.py:176-177` per recon design §4.1).
+
+The auth store applies the same principle to accounts: an account's identity is the credential it authenticates and its name carries it (`<username>-<minting_context>`, the username's email location suffix stripped), so a second name for one credential is a fork the store refuses with `duplicate_identity` (`docs/design/authn-antiblock-replayability-237-decisions.md` D237-12 as amended by #247, `docs/design/auth-store-220-decisions.md` D220-11).
 
 This primitive is realised only at the project boundary, and closing the gap beyond it is a stated goal, not a curiosity.
 
@@ -353,12 +359,15 @@ Crucially the system is deliberately kept blind to the target's true identity - 
 **The proposer roles** are LLM agents that hold judgment but not write authority.
 
 The `triager` reads L0 tool output into adversarial `Observation` insights (`src/polymerhus/recon/domain/pod.py`, recon design §4.5); the `analyser` reconstructs the L1 service/system model - historically in two passes, an assignment pass and a dedicated data-modelling pass, split because one combined call systematically starved data modelling (`_two_pass_analyse`; STATE.md DataItems=0 defect), and since `#34` dissolved into **responsibility-scoped proposers** behind a supervisor, each consuming a `Chunk` narrowed by its own admission set (the `Assigner` owns `AGGREGATES` and emits nothing else, `src/polymerhus/analysis/assigner.py`; the `mechanism-typist` (`#9`) owns System typing, emitting `Service->System` edges over the same chunk-fed schedule, `src/polymerhus/analysis/supervisor.py`); the anatomy skills (`webpage-profile`, `authorization-pyramid`) classify spine slots that cannot be read off the surface and emit the triple *typed classification -> spine slot, evidence -> Observation, deeper probe -> backward-recon request* (`L1D-31`, `src/polymerhus/analysis/anatomy.py:60-86`).
+A proposer's reasoning discipline arrives as a role **prompt** - plain Markdown living with the owning module in a `prompts/` directory, read directly (fail-closed) - while on-demand knowledge arrives as **skills** (`skills/<name>/SKILL.md`, `name` == directory) through the **single skill loader** (`src/polymerhus/app/llm/skills.py::skill_for`, FR-SKILLIF), which strips the spec **data section** (`name`, `description`, `metadata.version`) every skill carries.
+The loader is also agent-reachable as the `load_skill` tool, and each agent's bounded skill set is rendered into its system message by the shared skill-index middleware; both paths return the identical body, and **phase-gating** bounds the runtime path by convention (load at phase entry, once per thread, never speculatively mid-reasoning - `docs/design/skill-runtime-loading-222-decisions.md`).
+The write side mirrors the read side through the same seam: a **per-project skill bundle** (`<data_root>/<project_id>/skills/<skill>/`) holds the procedure a project accumulates, written through the **`write_skill`** tool over a typed surface (`procedure` for the whole `SKILL.md`, `references/<name>` for bulky target material) - whole files, frontmatter re-validated, atomic under a per-project lock, every failure a coded in-band envelope. The loader resolves the bundle first and the shared catalogue second, and appends the **`meta-usage-skill`** reading protocol to every load except meta-family skills (`skills/meta/`, filtered by loader path), so the agent that reads a procedure is also the agent asked to assess it; the **`meta-write-skill`** authoring rules keep what it writes a procedure rather than a note-dump (`docs/design/skill-writing-primitives-234-decisions.md`).
 
 Two role attributes the model now carries explicitly (Section 3.7, `#94`): **agent_mode** (`one_shot` | `session`, whether a role is a stateless structured call or a checkpointer-backed resumable agent whose context grows) and a declared **thinking** baseline (`Role.thinking` in `src/polymerhus/app/llm/providers.py`, translated to `reasoning_effort`, to be made capability-adaptive by `#99`, `docs/design/capability-adaptive-client-99-decisions.md` A1).
 The structured-output method is chosen **semantic-first** by whether the call binds a tool (the session/crawl `ToolStrategy`/`bind_tools` seams -> `function_calling`) or is a pure one-shot extraction (`invoke_role` -> `structured_output` json_schema, `strict=False`), then corrected by the capability profile in the fixed degrade chain `json_schema` -> `function_calling` -> `json_mode`; `reasoning_effort` is orthogonal to method choice (a thinking model's tool calling is a provider quirk, not a rule).
 The stateful proposers are the analysis trio (`assigner`/`mechanism_typist`/`data_modeller`, each on its own per-run `AnalysisSession` thread), the recon triager (per concurrent pod `PodSession`), and the hunting hunter (per-hunt `HuntSession`); the bootstrapper, anatomy, curation and sweep stay `one_shot` (their reasoning is externalised to the graph, no working set to resume).
 
-Two roles are registered but dormant (`configurator`, `job_orchestrator`, `src/polymerhus/app/llm/providers.py:14`), reserved seams for the designed-not-built context-memory scaffold (recon design §9).
+Two roles are registered but dormant (`configurator`, `job_orchestrator`, `src/polymerhus/app/llm/providers.py:14`), reserved seams for the designed-not-built context-memory scaffold (recon design §9); `job_orchestrator` additionally IS the recon **auth gateway** since #223 T3 (#242) - the sole pre-pipeline authentication authority, a stateful tool-calling agent over the shared auth store closing with the `GatewayVerdict`, not part of the context-memory scaffold.
 
 Every proposer emits proposals that omit provenance and identity, which the write boundary injects and guards - the proposer can never spoof who it is or what a node's identity is (`src/polymerhus/analysis/analyser_types.py:1-14`, `src/polymerhus/analysis/l1_curator.py:139-142`).
 

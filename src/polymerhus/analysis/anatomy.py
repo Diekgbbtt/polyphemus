@@ -152,20 +152,11 @@ def _webpage_probe(service_id: str | None, base_url: str | None, requester_id: s
     )
 
 
-_WEBPAGE_FALLBACK_PROMPT = (
-    "You are the webpage-profile system-anatomy skill. Classify the TWO INDEPENDENT "
-    "dimensions navigation_model (SPA|MPA|Hybrid) and rendering_model "
-    "(CSR|SSR|SSG|StreamingSSR|HydratedSSR) from the given signals. The dimensions "
-    "are independent - never infer one from the other (an SPA may be SSR-rendered). "
-    "A framework fingerprint alone (e.g. __NEXT_DATA__, id=root) is NEVER sufficient: "
-    "set the corresponding *_fingerprint_only=true and confidence=Low when only a "
-    "fingerprint supports the call. Give verbatim evidence for each."
-)
-
-
 def _load_webpage_skill() -> str:
-    from polymerhus.recon.domain.skills import skill_for
-    return skill_for("analysis/anatomy/webpage-profile", fallback=_WEBPAGE_FALLBACK_PROMPT)
+    """The webpage-profile on-demand skill, loaded via the shared `skill_for`
+    loader (fail-open to '' - the runner's structural backstops still hold)."""
+    from polymerhus.app.llm.skills import skill_for
+    return skill_for("webpage-profile")
 
 
 def default_webpage_profile_fn(signals: dict) -> WebpageProfileProposal:
@@ -360,15 +351,10 @@ _AUTHZ_PROBE_JOB = "httpx"
 
 
 def _load_authz_skill() -> str:
-    from polymerhus.recon.domain.skills import skill_for
-    return skill_for("analysis/anatomy/authorization-pyramid", fallback=(
-        "You are the authorization-pyramid anatomy skill. Reverse-engineer the "
-        "role->permission structure by probing the SAME service action under "
-        "DIFFERENT roles (the inverse-pyramid probe), carrying each role's own "
-        "auth_context. Record which roles are authorised as typed AUTHORIZED_BY "
-        "{role} edges and each realm as AUTHENTICATED_BY {realm} - structurally, "
-        "never as prose. You record who CAN act, not who SHOULD (that is downstream)."
-    ))
+    """The authorization-pyramid on-demand skill, loaded via the shared
+    `skill_for` loader (fail-open to '' - the probe planning is code)."""
+    from polymerhus.app.llm.skills import skill_for
+    return skill_for("authorization-pyramid")
 
 
 def plan_authz_probes(
@@ -381,14 +367,15 @@ def plan_authz_probes(
 ):
     """The inverse-pyramid probe (leg 3): for EACH role, emit an interface-B
     request that re-issues the same `action` (a target URL/handle) carrying THAT
-    role's SELECTED credentials (select_auth_context). origin=anatomy_skill so each
+    role's SELECTED credentials (the feed's record-shape role selector).
+    origin=anatomy_skill so each
     result routes back to this skill. Returns a list[AnalyserReconRequest]."""
-    from polymerhus.recon.control.auth import select_auth_context
+    from polymerhus.recon.control.auth_feed import select_account_role
     from polymerhus.recon.control.targeted import AnalyserReconRequest, ReconScope
 
     probes = []
     for role in roles:
-        creds = select_auth_context(auth_context, role)
+        creds = select_account_role(auth_context, role)
         probes.append(AnalyserReconRequest(
             job=_AUTHZ_PROBE_JOB,
             scope=ReconScope(

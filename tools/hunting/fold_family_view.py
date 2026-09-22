@@ -7,7 +7,7 @@ orphans, and the second-order selection structure. Read-only over the committed
 catalogue artifact (never touches runtime code):
 
     python tools/hunting/fold_family_view.py \
-        --catalogue src/polymerhus/attack/hunting/data/fault-kb.yaml \
+        --catalogue data/hunting/fault-kb.yaml \
         --out docs/design/hunting-66-fold-family-view.md
 """
 from __future__ import annotations
@@ -22,9 +22,9 @@ _HEADER = """\
 # Hunting #66 - fault-KB aggregation view (post-fold, post-critic, post-squeeze)
 
 Machine-generated from the catalogue (`tools/hunting/fold_family_view.py` over
-`src/polymerhus/attack/hunting/data/fault-kb.yaml`), not hand-maintained.
+`data/hunting/fault-kb.yaml`), not hand-maintained.
 Regenerate with `python tools/hunting/fold_family_view.py --catalogue
-src/polymerhus/attack/hunting/data/fault-kb.yaml --out
+data/hunting/fault-kb.yaml --out
 docs/design/hunting-66-fold-family-view.md`.
 
 - Catalogue: {total} entries; selection tier (matching loop): {selection}; folded recipes: {recipes}.

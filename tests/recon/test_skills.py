@@ -5,7 +5,7 @@ Each test names the assertion it encodes (docs/design/L1-MVP-plan.md FR-SKILLIF 
 """
 import pytest
 
-from polymerhus.recon.domain import skills
+from polymerhus.app.llm import skills
 
 
 @pytest.fixture(autouse=True)
@@ -77,27 +77,35 @@ def test_skill_for_never_raises_on_unreadable(monkeypatch):
     assert skills.skill_for("anything", fallback="fb") == "fb"
 
 
-# --- AST-SKILLIF-04: triager loader retro-pointed at skill_for ---
+# --- AST-SKILLIF-04: triager loader reads its module-local role prompt ---
 
-def test_triager_loader_retropointed():
+def test_triager_loader_reads_module_prompt():
+    from polymerhus.recon.domain import pod
     from polymerhus.recon.domain.pod import _load_triager_skill
     skill = _load_triager_skill()
-    # the real writing-observations skill (frontmatter stripped); non-empty here
-    # because the skills/ mount is present in the repo
+    # the real writing-observations role prompt (plain .md, no frontmatter);
+    # non-empty here because the prompts/ file ships with the module
     assert isinstance(skill, str)
-    assert skill  # the real writing-observations skill is present (mount is in the repo)
+    assert skill
     assert not skill.startswith("---")
-    # it resolves to the same object skill_for returns for that name (single source)
-    assert skill is skills.skill_for("recon/triager/writing-observations")
+    # single source: byte-identical to the module-relative prompt file
+    from pathlib import Path
+    expected = (Path(pod.__file__).resolve().parent / "prompts" / "writing-observations.md").read_text(encoding="utf-8")
+    assert skill == expected
+    assert skill is _load_triager_skill()  # memoized on first call
 
 
-def test_triager_loader_degrades_to_empty(monkeypatch):
+def test_triager_loader_fail_closed_on_missing_prompt(monkeypatch):
     import pathlib
 
     def boom(self, *a, **k):
         raise OSError("no mount")
 
     monkeypatch.setattr(pathlib.Path, "read_text", boom)
-    skills.clear_cache()
+    from polymerhus.recon.domain import pod
+    monkeypatch.setattr(pod, "_TRIAGER_SKILL", None)
     from polymerhus.recon.domain.pod import _load_triager_skill
-    assert _load_triager_skill() == ""  # triager fallback is '' (no system prompt)
+    import pytest
+    with pytest.raises(OSError):
+        _load_triager_skill()  # a role without its prompt file is a defect: raise
+    monkeypatch.setattr(pod, "_TRIAGER_SKILL", None)

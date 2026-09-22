@@ -6,8 +6,8 @@ owns, with every out-of-tree collaborator injected: the reason stretch's
 symbolic render (projection / materialisation / fold family -> `GateInput` ->
 `_compose_gate_prompt`), the tool surface bound onto the orchestrator turn
 (`build_orchestrator_tool_surface` -> the six D67-04 tools, fail-open per
-seam), the skill mounts (`_gate_skill` / `_rematch_skill` -> the mounted
-SKILL.md files), the observability (`orchestrator_tracing`, fake langfuse), and
+seam), the role prompts (`_gate_skill` / `_rematch_skill` -> the module-local
+prompts/ files), the observability (`orchestrator_tracing`, fake langfuse), and
 the ORDER/topology invariants (no new graph nodes, no schema change). The
 reason stretch's materialisation / fold-family maps resolve from the REAL
 fault-KB catalogue (`data/fault-kb.yaml`, 170 entries) where the predicate is
@@ -55,8 +55,6 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
 )
 from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.llm import (
-    _GATE_SKILL_FALLBACK,
-    _REMATCH_SKILL_FALLBACK,
     _compose_gate_prompt,
     _gate_skill,
     _rematch_skill,
@@ -190,13 +188,13 @@ def _gate_input() -> GateInput:
 # --- C13: the gate skill mount resolves (success) -----------------------------
 
 def test_gate_skill_mount_serves_the_cognitive_architecture():
-    """`_gate_skill()` serves the mounted SKILL.md (frontmatter stripped), not
-    the fallback, and the body carries the node-per-phase cognitive-architecture
+    """`_gate_skill()` serves the module-local role prompt (plain .md, no
+    frontmatter), and the body carries the node-per-phase cognitive-architecture
     markers: backward-from-end, the three phases, hypothesise-and-verify,
     prune-only-on-positive, the per-phase structured output."""
     body = _gate_skill()
-    assert not body.startswith("---")                      # frontmatter stripped
-    assert len(body) > len(_GATE_SKILL_FALLBACK)           # the mount, not the fallback
+    assert not body.startswith("---")                      # plain .md, no frontmatter
+    assert len(body) > 1000                                # the full prompt, not a stub
     assert "work backward" in body                         # orient from the end
     assert "The three phases" in body                      # hypothesise -> ratify -> note
     assert "Hypothesise, then verify" in body              # hypothesise-and-verify
@@ -215,7 +213,7 @@ def test_rematch_skill_mount_serves_the_d2_discipline():
     body, pinning the D2 three-valued verdict and the hard depth-1 cap."""
     body = _rematch_skill()
     assert not body.startswith("---")
-    assert len(body) > len(_REMATCH_SKILL_FALLBACK)
+    assert len(body) > 500                                 # the full prompt, not a stub
     assert body != _gate_skill()                           # a distinct mount
     assert "three-valued" in body                          # the D2 verdict
     assert "depth-1 cap" in body                           # the hard cap
@@ -474,9 +472,12 @@ def test_all_slots_degraded_still_runs(tmp_path):
 # --- C17: exactly three tools bound; no HuntConfig writer ----------------------
 
 def test_actor_binds_exactly_the_three_tools(tmp_path, monkeypatch):
-    """The agent the actor builds binds EXACTLY the three tool names of
-    `TOOL_SURFACE` - `hunts_store`, `notes`, `graph_view` (G3) - never a sixth
-    HuntConfig-writing or budget tool."""
+    """The agent the actor builds binds exactly the three tool names of
+    `TOOL_SURFACE` - `hunts_store`, `notes`, `graph_view` (G3) - and no skill
+    tool: `hunting_orchestrator` is roster-exempt (no catalogue skill bears),
+    so the auth-capable binding stays inert here. Never a HuntConfig-writing
+    or budget tool. (#223 arms the recon orchestrator instead, through the
+    write-capable binding - this actor is untouched by that.)"""
     store = HuntStore(tmp_path)
     seen = {}
 
@@ -498,7 +499,7 @@ def test_actor_binds_exactly_the_three_tools(tmp_path, monkeypatch):
 
     asyncio.run(_drive())
     names = {t.name for t in seen["tools"]}
-    assert names == set(TOOL_SURFACE)                      # exactly the three
+    assert names == set(TOOL_SURFACE)  # exactly the three, no skill surface
     assert len(seen["tools"]) == 3
     assert all(hasattr(t, "invoke") for t in seen["tools"])  # real tool callables
 

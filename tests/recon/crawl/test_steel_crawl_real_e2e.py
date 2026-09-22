@@ -16,9 +16,10 @@ crawl is driven deterministically so the assertion surface is stable.
 `test_steel_crawl_agentic_loop_flows_to_neo4j` additionally exercises the LLM
 ReAct loop (`crawl_agent.run_crawl`) and is gated on an OpenRouter key too.
 
-`test_steel_crawl_authenticated_manual` documents + exercises the interactive
-`steel_await_auth` login flow; it needs a human at the Steel viewer, so it is
-MANUAL (skips unless `STEEL_MANUAL_AUTH_E2E=1`).
+The retired interactive `steel_await_auth` login flow is gone with the
+profile-mount-only crawl (#243): authenticated live coverage now runs under
+a persisted account (the feed binds its profile key and cookies), never a
+human at the viewer.
 
 Run (from the repo root, live stack up):
 
@@ -160,7 +161,7 @@ def test_steel_crawl_agentic_loop_flows_to_neo4j():
 
     key = os.environ.get("API_KEY_OPENROUTER") or os.environ.get("OPENAI_API_KEY")
     os.environ["API_KEY_OPENROUTER"] = key
-    os.environ.setdefault("LLM_MODEL_CRAWLER", "openrouter:openai/gpt-4.1-mini")
+    os.environ.setdefault("LLM_CRAWLER", "openrouter:openai/gpt-4.1-mini")
     neo4j_client = _bridge_neo4j_to_localhost()
     neo4j_client.ensure_schema()
 
@@ -177,52 +178,3 @@ def test_steel_crawl_agentic_loop_flows_to_neo4j():
               f"neo4j_labels={labels}")
     finally:
         _cleanup(neo4j_client, project_id)
-
-
-@pytest.mark.skipif(
-    os.environ.get("STEEL_MANUAL_AUTH_E2E") != "1",
-    reason="interactive login required; set STEEL_MANUAL_AUTH_E2E=1 to run manually",
-)
-def test_steel_crawl_authenticated_manual():
-    """MANUAL: exercise the interactive steel_await_auth flow end to end.
-
-    How to run:
-      1. Bring the live stack up and export STEEL_API_KEY + an OpenRouter key.
-      2. Run: STEEL_MANUAL_AUTH_E2E=1 STEEL_AUTH_TARGET=https://<login-app> \\
-              STEEL_API_KEY=<k> .venv/bin/python -m pytest -q -s \\
-              tests/recon/crawl/test_steel_crawl_real_e2e.py -k authenticated_manual
-      3. The test prints the Steel viewer URL. Open it in a browser and complete
-         the login WITHIN the session window; the crawl resumes once
-         steel_await_auth detects the in-scope session cookie.
-    """
-    target = os.environ.get("STEEL_AUTH_TARGET")
-    if not target:
-        pytest.skip("set STEEL_AUTH_TARGET=https://<login-protected-app> to run")
-    host = target.split("://", 1)[-1].split("/", 1)[0]
-
-    async def _run():
-        from polymerhus.recon.crawl import steel_client
-        from polymerhus.recon.crawl.crawl_agentic import AgenticCrawlRequest, precreate_auth_session
-
-        tools = await steel_client.get_crawl_tools()
-
-        class _MM:
-            async def get_tools(self):
-                return tools
-
-        body = AgenticCrawlRequest(target=target, scope=[host], model="crawler", auth_required=True)
-        crawl_id, awaiting = await precreate_auth_session(_MM(), body)
-        assert awaiting and awaiting.get("viewer_url")
-        print("\n>>> OPEN THIS STEEL VIEWER AND LOG IN NOW:", awaiting["viewer_url"], "\n")
-        by_name = {t.name: t for t in tools}
-        auth = await by_name["steel_await_auth"].ainvoke({"crawl_id": crawl_id, "timeout_s": 240})
-        print("steel_await_auth ->", auth)
-        manifest = await by_name["steel_crawl_finish"].ainvoke({"crawl_id": crawl_id})
-        return awaiting, manifest
-
-    awaiting, manifest = asyncio.run(_run())
-    assert awaiting["viewer_url"].startswith("http")
-    # manifest may be sparse depending on how far the operator navigated; the
-    # point of this manual test is that the viewer URL was surfaced BEFORE the
-    # blocking await, and the authenticated session produced a drainable manifest.
-    assert isinstance(manifest, dict) and "endpoints" in manifest

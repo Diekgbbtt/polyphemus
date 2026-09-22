@@ -132,38 +132,6 @@ def test_run_crawl_bounded_by_max_iters_when_never_finishing():
     assert llm.calls == 3
 
 
-def test_run_crawl_with_pre_created_crawl_id_drives_await_auth_first():
-    calls_log: list[str] = []
-    # Deliberately omit steel_crawl_start from the toolset: if the loop tried
-    # to call it, `by_name.get("steel_crawl_start")` -> None -> "unknown tool"
-    # ToolMessage, not a crash - but we assert on calls_log to be explicit.
-    tools = [
-        _FakeTool("steel_await_auth", {"authenticated": True}, record=calls_log),
-        _FakeTool("steel_crawl_finish", CANNED_MANIFEST, record=calls_log),
-    ]
-    llm = _ScriptedLLM(
-        [
-            [{"name": "steel_await_auth", "args": {"crawl_id": "pre1"}, "id": "1"}],
-            [{"name": "steel_crawl_finish", "args": {}, "id": "2"}],
-        ]
-    )
-
-    result = asyncio.run(
-        crawl_agent.run_crawl(
-            "https://x.com",
-            scope=["x.com"],
-            tools=tools,
-            llm=llm,
-            max_iters=10,
-            pre_created_crawl_id="pre1",
-        )
-    )
-
-    assert result == CANNED_MANIFEST
-    assert calls_log[0] == "steel_await_auth"
-    assert "steel_crawl_start" not in calls_log
-
-
 def test_load_skill_reads_file_next_to_module():
     text = crawl_agent._load_skill()
     assert "Steel Agentic Crawl" in text
@@ -184,19 +152,21 @@ def test_skill_has_fresh_session_rotation_hard_rule():
     assert "3" in hard_rules
 
 
-def test_run_crawl_forwards_auth_cookies_to_get_crawl_tools(monkeypatch):
+def test_run_crawl_forwards_auth_cookies_and_profile_to_get_crawl_tools(monkeypatch):
     # When tools are NOT injected, run_crawl builds them via
-    # steel_client.get_crawl_tools and must forward auth_cookies so the default
-    # provider seeds the browser context for non-interactive auth.
+    # steel_client.get_crawl_tools and must forward auth_cookies AND the
+    # persisted profile key so the default provider opens the session mounted
+    # and seeds the browser context for profile-mount-only auth.
     from polymerhus.recon.crawl import steel_client
 
     seen = {}
 
-    async def fake_get_crawl_tools(*, client_factory=None, auth_cookies=None):
+    async def fake_get_crawl_tools(*, client_factory=None, auth_cookies=None, steel_profile=None):
         seen["auth_cookies"] = auth_cookies
+        seen["steel_profile"] = steel_profile
         return []
 
-    async def fake_run_agentic(body, mcp_manager, build_llm_fn=None, pre_created_crawl_id=None):
+    async def fake_run_agentic(body, mcp_manager, build_llm_fn=None):
         return {"endpoints": [], "js_urls": []}
 
     monkeypatch.setattr(steel_client, "get_crawl_tools", fake_get_crawl_tools)
@@ -204,136 +174,7 @@ def test_run_crawl_forwards_auth_cookies_to_get_crawl_tools(monkeypatch):
 
     asyncio.run(crawl_agent.run_crawl(
         "https://t.example", scope=["https://t.example"], llm=object(),
-        auth_cookies=[{"name": "a", "value": "b"}],
+        auth_cookies=[{"name": "a", "value": "b"}], steel_profile="p1-alice",
     ))
     assert seen["auth_cookies"] == [{"name": "a", "value": "b"}]
-
-
-def test_credentialed_login_prompt_names_login_url_and_submit_once():
-    import asyncio
-    from polymerhus.recon.crawl import crawl_agentic
-
-    captured = {}
-
-    class FakeLLM:
-        def bind_tools(self, tools): return self
-        async def ainvoke(self, messages):
-            captured["messages"] = messages
-            from langchain_core.messages import AIMessage
-            return AIMessage(content="", tool_calls=[])  # no tools -> loop ends fast
-
-    class FakeMgr:
-        async def get_tools(self): return []
-
-    body = crawl_agentic.AgenticCrawlRequest(
-        target="https://app.example.com", scope=["example.com"], model="crawler",
-        max_iterations=1,
-        credentials={"username": "u", "password": "pw", "login_url": "https://login.example.com/"},
-    )
-    asyncio.run(crawl_agentic._run_agentic_crawl(body, FakeMgr(), build_llm_fn=lambda m, u: FakeLLM()))
-
-    text = captured["messages"][1].content  # the HumanMessage
-    assert "https://login.example.com/" in text
-    assert "credentials" in text.lower()
-    assert "u" in text
-    assert "once" in text.lower()
-
-
-def test_credentialed_login_prompt_routes_captcha_to_fresh_session_rotation():
-    import asyncio
-    from polymerhus.recon.crawl import crawl_agentic
-
-    captured = {}
-
-    class FakeLLM:
-        def bind_tools(self, tools): return self
-        async def ainvoke(self, messages):
-            captured["messages"] = messages
-            from langchain_core.messages import AIMessage
-            return AIMessage(content="", tool_calls=[])  # no tools -> loop ends fast
-
-    class FakeMgr:
-        async def get_tools(self): return []
-
-    body = crawl_agentic.AgenticCrawlRequest(
-        target="https://app.example.com", scope=["example.com"], model="crawler",
-        max_iterations=1,
-        credentials={"username": "u", "password": "pw", "login_url": "https://login.example.com/"},
-    )
-    asyncio.run(crawl_agentic._run_agentic_crawl(body, FakeMgr(), build_llm_fn=lambda m, u: FakeLLM()))
-
-    text = captured["messages"][1].content  # the HumanMessage
-    lower = text.lower()
-    # (a) A page-load / bot-wall captcha or 403 must route to a FRESH-session
-    #     rotation, not an immediate finish.
-    assert "fresh session" in lower or "steel_crawl_start" in text
-    assert "rotat" in lower
-    assert "new ip" in lower
-    # (b) The BLOCKED-and-finish path is still reserved for genuine auth blocks.
-    assert "blocked" in lower
-    assert "sso" in lower or "oauth" in lower
-    assert "second factor" in lower or "one-time" in lower
-    # captcha is no longer in the immediate-finish list; the finish path is for
-    # SSO/OAuth / 2FA / no login form only.
-
-
-def test_credentialed_login_prompt_interpolates_password_value():
-    import asyncio
-    from polymerhus.recon.crawl import crawl_agentic
-
-    captured = {}
-
-    class FakeLLM:
-        def bind_tools(self, tools): return self
-        async def ainvoke(self, messages):
-            captured["messages"] = messages
-            from langchain_core.messages import AIMessage
-            return AIMessage(content="", tool_calls=[])  # no tools -> loop ends fast
-
-    class FakeMgr:
-        async def get_tools(self): return []
-
-    body = crawl_agentic.AgenticCrawlRequest(
-        target="https://app.example.com", scope=["example.com"], model="crawler",
-        max_iterations=1,
-        credentials={"username": "u", "password": "S3ntinelPw!", "login_url": "https://login.example.com/"},
-    )
-    asyncio.run(crawl_agentic._run_agentic_crawl(body, FakeMgr(), build_llm_fn=lambda m, u: FakeLLM()))
-
-    text = captured["messages"][1].content  # the HumanMessage
-    assert "S3ntinelPw!" in text
-
-
-def test_run_crawl_credentialed_threads_credentials_into_request(monkeypatch):
-    import asyncio
-    from polymerhus.recon.crawl import crawl_agent
-
-    seen = {}
-
-    async def fake_run_agentic(body, mcp_manager, *, build_llm_fn=None, pre_created_crawl_id=None):
-        seen["credentials"] = body.credentials
-        seen["target"] = body.target
-        return {"endpoints": [{"url": "https://app.example.com/account"}], "js_urls": []}
-
-    monkeypatch.setattr(crawl_agent, "_run_agentic_crawl", fake_run_agentic)
-
-    manifest = asyncio.run(crawl_agent.run_crawl_credentialed(
-        "https://app.example.com", scope=["example.com"],
-        credentials={"username": "u", "password": "pw", "login_url": "https://login.example.com/"},
-        tools=[], llm=object(),
-    ))
-    assert seen["credentials"]["username"] == "u"
-    assert manifest["endpoints"][0]["url"].endswith("/account")
-
-
-def test_run_crawl_credentialed_best_effort_on_error(monkeypatch):
-    import asyncio
-    from polymerhus.recon.crawl import crawl_agent
-
-    async def boom(*a, **k): raise RuntimeError("steel down")
-    monkeypatch.setattr(crawl_agent, "_run_agentic_crawl", boom)
-
-    manifest = asyncio.run(crawl_agent.run_crawl_credentialed(
-        "https://app.example.com", scope=["example.com"],
-        credentials={"username": "u", "password": "pw", "login_url": "https://l"}, tools=[], llm=object()))
-    assert manifest == {"endpoints": [], "js_urls": []}
+    assert seen["steel_profile"] == "p1-alice"

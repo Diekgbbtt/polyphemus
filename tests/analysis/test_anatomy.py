@@ -176,9 +176,9 @@ def test_commit_anatomy_fail_open_on_write_error():
 # --- AST-SPINE-06: the SKILL.md encodes the L1D-31a discipline + both vocabularies ---
 
 def test_webpage_profile_skill_encodes_discipline():
-    from polymerhus.recon.domain import skills
+    from polymerhus.app.llm import skills
     skills.clear_cache()
-    text = skills.skill_for("analysis/anatomy/webpage-profile")
+    text = skills.skill_for("webpage-profile")
     assert not text.startswith("---")  # frontmatter stripped
     # independent dimensions + fingerprint-insufficiency (L1D-31a)
     assert "independent" in text.lower()

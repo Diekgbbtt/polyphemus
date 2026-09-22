@@ -40,6 +40,7 @@ from typing import Any, Callable, Sequence
 from langchain_core.messages import AIMessage, BaseMessage, HumanMessage
 
 from polymerhus.app.llm.capability import resolve_capability
+from polymerhus.app.llm.conversation import conversation_scope
 
 logger = logging.getLogger(__name__)
 
@@ -436,6 +437,7 @@ def run_session_turn(
     read_timeout_s: float | None = None,
     reasoning_budget_chars: int | None = None,
     extra_tags: Sequence[str] | None = None,
+    context: dict | None = None,
 ) -> SessionTurn:
     """Run one resumable, tool-calling turn of a session-mode role (sync).
 
@@ -445,6 +447,9 @@ def run_session_turn(
     persisted back so the next turn resumes from here. `response_format` returns a
     parsed structured object as `content`. `read_timeout_s` (default None) bounds
     the turn's model calls per-attempt - the escalating-budget seam #186 rides.
+    `context` (default None) is the native invocation context (`runtime.context`
+    in middleware) - e.g. `{"skills": [...]}` for the skill-index middleware;
+    absent means no context-carried bindings for this turn.
 
     T1 (#213): the model call is STREAMED (the operator's 2026-09-07 ruling - streamed
     generation is the DEFAULT session mode), so `reasoning_content` AND `content` are
@@ -455,47 +460,52 @@ def run_session_turn(
 
     `extra_tags` appends caller-owned join keys (the bare run id) to the recorded
     `langfuse_tags` (default None = today's tags, unchanged)."""
-    profile = _resolve_reasoning_profile(role_id)
-    agent = _build_agent(
-        role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
-        middleware=middleware, store=store, checkpointer=checkpointer,
-        model_factory=model_factory, read_timeout_s=read_timeout_s,
-    )
-    config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
-    if observe and checkpointer is not None:
-        _attach_readability_metadata(
-            config, _read_thread_state(checkpointer, thread_id))
-    if observe:
-        _attach_compaction_metadata(config, middleware, thread_id)
-        _attach_blackloop_metadata(config, thread_id)
-    budget = _reasoning_budget_chars(reasoning_budget_chars)
-    capture = _StreamCapture()
-    result: dict | None = None
-    blackloop = False
-    stream = agent.stream(
-        {"messages": list(new_messages)}, config, stream_mode=["messages", "values"])
-    try:
-        for mode, payload in stream:
-            if mode == "messages":
-                capture.consume(payload[0])
-                if _should_cut(capture, budget):
-                    blackloop = True
-                    break
-            elif isinstance(payload, dict) and "messages" in payload:
-                result = payload
-    finally:
+    # D12: the conversation scope - every client built inside the turn (the
+    # turn's own, and any a middleware builds, e.g. the summariser) binds the
+    # thread id as the provider's conversation request primitive.
+    with conversation_scope(thread_id):
+        profile = _resolve_reasoning_profile(role_id)
+        agent = _build_agent(
+            role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
+            middleware=middleware, store=store, checkpointer=checkpointer,
+            model_factory=model_factory, read_timeout_s=read_timeout_s,
+        )
+        config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
+        if observe and checkpointer is not None:
+            _attach_readability_metadata(
+                config, _read_thread_state(checkpointer, thread_id))
+        if observe:
+            _attach_compaction_metadata(config, middleware, thread_id)
+            _attach_blackloop_metadata(config, thread_id)
+        budget = _reasoning_budget_chars(reasoning_budget_chars)
+        capture = _StreamCapture()
+        result: dict | None = None
+        blackloop = False
+        stream = agent.stream(
+            {"messages": list(new_messages)}, config, stream_mode=["messages", "values"],
+            context=context)
+        try:
+            for mode, payload in stream:
+                if mode == "messages":
+                    capture.consume(payload[0])
+                    if _should_cut(capture, budget):
+                        blackloop = True
+                        break
+                elif isinstance(payload, dict) and "messages" in payload:
+                    result = payload
+        finally:
+            if blackloop:
+                stream.close()
         if blackloop:
-            stream.close()
-    if blackloop:
-        turn = _blackloop_turn(thread_id, capture)
-    elif result is not None:
-        _replay_reasoning(agent, config, result, role_id, thread_id, profile)
-        turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
-    else:
-        turn = _blackloop_turn(thread_id, capture)
-    if observe:
-        _flush_turn_observations(config)
-    return turn
+            turn = _blackloop_turn(thread_id, capture)
+        elif result is not None:
+            _replay_reasoning(agent, config, result, role_id, thread_id, profile)
+            turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+        else:
+            turn = _blackloop_turn(thread_id, capture)
+        if observe:
+            _flush_turn_observations(config)
+        return turn
 
 
 async def arun_session_turn(
@@ -514,6 +524,7 @@ async def arun_session_turn(
     read_timeout_s: float | None = None,
     reasoning_budget_chars: int | None = None,
     extra_tags: Sequence[str] | None = None,
+    context: dict | None = None,
 ) -> SessionTurn:
     """Async-native turn (`astream`) - the entry point an async-native PARENT
     coordinator uses (ratified #94: the hunt-orchestrator first), so it can spawn
@@ -523,51 +534,57 @@ async def arun_session_turn(
     `read_timeout_s` (default None) bounds the turn's model calls per-attempt -
     the escalating-budget seam #186 rides: the actor runtime re-invokes this with
     the next, larger budget.
+    `context` (default None) is the native invocation context (`runtime.context`
+    in middleware) - e.g. `{"skills": [...]}` for the skill-index middleware;
+    absent means no context-carried bindings for this turn.
 
     T1 (#213): streamed generation is the DEFAULT mode here too - same blackloop
     cut + reasoning capture as the sync turn, driven on the event loop."""
-    profile = _resolve_reasoning_profile(role_id)
-    agent = _build_agent(
-        role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
-        middleware=middleware, store=store, checkpointer=checkpointer,
-        model_factory=model_factory, read_timeout_s=read_timeout_s,
-    )
-    config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
-    if observe and checkpointer is not None:
-        _attach_readability_metadata(
-            config, await _aread_thread_state(checkpointer, thread_id))
-    if observe:
-        _attach_compaction_metadata(config, middleware, thread_id)
-        _attach_blackloop_metadata(config, thread_id)
-    budget = _reasoning_budget_chars(reasoning_budget_chars)
-    capture = _StreamCapture()
-    result: dict | None = None
-    blackloop = False
-    stream = agent.astream(
-        {"messages": list(new_messages)}, config, stream_mode=["messages", "values"])
-    try:
-        async for mode, payload in stream:
-            if mode == "messages":
-                capture.consume(payload[0])
-                if _should_cut(capture, budget):
-                    blackloop = True
-                    break
-            elif isinstance(payload, dict) and "messages" in payload:
-                result = payload
-    finally:
+    # D12: the conversation scope - the async turn binds the same thread id the
+    # sync turn does, so both entry points emit identical request primitives.
+    with conversation_scope(thread_id):
+        profile = _resolve_reasoning_profile(role_id)
+        agent = _build_agent(
+            role_id, tools=tools, response_format=response_format, system_prompt=system_prompt,
+            middleware=middleware, store=store, checkpointer=checkpointer,
+            model_factory=model_factory, read_timeout_s=read_timeout_s,
+        )
+        config = _turn_config(role_id, thread_id, observe, extra_tags=extra_tags)
+        if observe and checkpointer is not None:
+            _attach_readability_metadata(
+                config, await _aread_thread_state(checkpointer, thread_id))
+        if observe:
+            _attach_compaction_metadata(config, middleware, thread_id)
+            _attach_blackloop_metadata(config, thread_id)
+        budget = _reasoning_budget_chars(reasoning_budget_chars)
+        capture = _StreamCapture()
+        result: dict | None = None
+        blackloop = False
+        stream = agent.astream(
+            {"messages": list(new_messages)}, config, stream_mode=["messages", "values"],
+            context=context)
+        try:
+            async for mode, payload in stream:
+                if mode == "messages":
+                    capture.consume(payload[0])
+                    if _should_cut(capture, budget):
+                        blackloop = True
+                        break
+                elif isinstance(payload, dict) and "messages" in payload:
+                    result = payload
+        finally:
+            if blackloop:
+                await stream.aclose()
         if blackloop:
-            await stream.aclose()
-    if blackloop:
-        turn = _blackloop_turn(thread_id, capture)
-    elif result is not None:
-        await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
-        turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
-    else:
-        turn = _blackloop_turn(thread_id, capture)
-
-    if observe:
-        await _aflush_turn_observations(config)
-    return turn
+            turn = _blackloop_turn(thread_id, capture)
+        elif result is not None:
+            await _areplay_reasoning(agent, config, result, role_id, thread_id, profile)
+            turn = _to_turn(result, response_format, thread_id, reasoning=capture.reasoning)
+        else:
+            turn = _blackloop_turn(thread_id, capture)
+        if observe:
+            await _aflush_turn_observations(config)
+        return turn
 
 
 def _should_cut(capture: _StreamCapture, budget: int) -> bool:
@@ -590,25 +607,24 @@ def _should_cut(capture: _StreamCapture, budget: int) -> bool:
 _session_probe_invoker = None
 
 
-def _structured_response_format(
-    role_id: str, schema, *, session_probe_invoker=None
+def structured_response_format(
+    role_id: str, schema, *, tools_bound: bool, session_probe_invoker=None,
 ):
     """The session seam's structured-output `response_format`, chosen by the A1
-    negotiation (#99) instead of pinning `ToolStrategy` unconditionally.
+    negotiation (#99, corrected by A6) instead of pinning `ToolStrategy`
+    unconditionally.
 
-    A no-tools structured session turn (`stateful_turn(schema=...)`) negotiates
-    like the one-shot seam: a structured-output-capable (or unknown) profile ->
-    `ProviderStrategy(schema, strict=False)` (the provider-native json_schema
-    rung - an open `dict` field survives under strict=False without the dict-form
-    workaround, unlike the one-shot `with_structured_output` path), a
-    tool-calling-only profile -> `ToolStrategy` (the proven force-tool rung).
-    TOOL-BOUND sessions and the session seam's json_mode rung stay on
-    `ToolStrategy`: a tool loop has no method-swap (A1 rung 2), and json_mode is
-    NOT expressible through `create_agent` (operator-confirmed 2026-08-21 - its
-    response_format vocabulary is ToolStrategy|ProviderStrategy|AutoStrategy
-    only; a pre-bound json_mode model raises NotImplementedError in the graph),
-    so a neither-capability no-tools turn falls back to ToolStrategy - the
-    current safe default that keeps a structured session turn working.
+    `tools_bound` is the REAL axis: True for a tool-bound session/crawl loop,
+    False for a pure structured turn. It is passed as `no_tools_bound=not
+    tools_bound` to the shared `resolve_method`, so the tools-bound rung
+    consults the profile: a forced-choice-constrained profile
+    (`supports_forced_tool_choice is False`) negotiates
+    `voluntary_function_calling`, which lands on `ToolStrategy` here - the
+    RELAXED model makes it voluntary at bind time. `function_calling` and
+    `voluntary_function_calling` both land on `ToolStrategy`; `json_mode`
+    collapses to `ToolStrategy` unchanged (inexpressible through
+    `create_agent`, operator-confirmed 2026-08-21); `json_schema` lands on
+    `ProviderStrategy(schema, strict=False)`.
 
     Capability resolution is resolve-and-hold at turn construction (D6), off the
     #73 retry axis; D7 fail-open (unknown profile / resolution failure) degrades
@@ -640,6 +656,7 @@ def _structured_response_format(
     if schema is None:
         return None
     from polymerhus.app.llm.negotiation import (
+        is_union_schema,
         negotiate_method,
         probe_with_invoker,
         resolve_method,
@@ -669,7 +686,7 @@ def _structured_response_format(
         _method, _provenance = resolve_method(
             profile,
             schema,
-            True,
+            not tools_bound,
             invoker=_invoker,
             role=role_id,
             provider=provider,
@@ -679,10 +696,29 @@ def _structured_response_format(
         )
         method = _method
     except Exception:  # noqa: BLE001 - fail-open: the session must always start
-        method = "json_schema"
-    if method == "json_schema":
+        # D7 fail-open degrades to the AXIS semantic default (A1): json_schema
+        # for a pure structured turn, function_calling (ToolStrategy) for a
+        # tool-bound loop - never the wrong rung for the axis.
+        method = "json_schema" if not tools_bound else "function_calling"
+    if method == "json_schema" and not is_union_schema(schema):
         return ProviderStrategy(schema, strict=False)
+    # A union schema is ToolStrategy-carried ONLY: `ProviderStrategy` rejects a
+    # union leaf on the pinned SDK, while `ToolStrategy` flattens the variants
+    # into one structured-output tool per variant (the hunt orchestrator's
+    # four-way verdict union is the production case).
     return ToolStrategy(schema)
+
+
+def _structured_response_format(
+    role_id: str, schema, *, session_probe_invoker=None, tools_bound: bool = False,
+):
+    """Back-compat alias for `structured_response_format` (the probe-tier tests
+    call the private name positionally without the tools axis); prefer the
+    public name. Defaults to the no-tools branch, preserving the pre-A6 call."""
+    return structured_response_format(
+        role_id, schema, tools_bound=tools_bound,
+        session_probe_invoker=session_probe_invoker,
+    )
 
 
 def stateful_turn(
@@ -698,6 +734,8 @@ def stateful_turn(
     observe: bool = True,
     reasoning_budget_chars: int | None = None,
     extra_tags: Sequence[str] | None = None,
+    context: dict | None = None,
+    tools: Sequence = (),
 ):
     """The UBIQUITOUS stateful-agent invocation (#94): one turn of a sequentially
     dispatched agent that RESUMES from its OWN per-instance checkpoint and appends this
@@ -721,7 +759,8 @@ def stateful_turn(
     (a re-blackloop is cut), and its output + the failed reasoning fold into the native
     turn-end compaction. Fail-open preserved: recovery failure degrades to None exactly
     as before."""
-    response_format = _structured_response_format(role_id, schema) if schema is not None else None
+    response_format = (structured_response_format(role_id, schema, tools_bound=bool(tools))
+                       if schema is not None else None)
     thread_id = _as_thread_id(thread)
     try:
         turn = run_session_turn(
@@ -729,7 +768,7 @@ def stateful_turn(
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
             middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
-            extra_tags=extra_tags,
+            extra_tags=extra_tags, context=context, tools=tools,
         )
         # T2 (#214): the blackloop signature - the streamed cut, or a turn that
         # completed EMPTY-CONTENT while still emitting reasoning (the silent-empty
@@ -741,6 +780,7 @@ def stateful_turn(
                 checkpointer=checkpointer, response_format=response_format,
                 system_prompt=system_prompt, model_factory=model_factory, observe=observe,
                 middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+                context=context, tools=tools,
                 shape="streamed_cut" if turn.blackloop else "empty_content",
                 cut_point_chars=len(turn.reasoning),
             )
@@ -757,6 +797,7 @@ def stateful_turn(
                 checkpointer=checkpointer, response_format=response_format,
                 system_prompt=system_prompt, model_factory=model_factory, observe=observe,
                 middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+                context=context, tools=tools,
                 shape="length_finish", cut_point_chars=len(failed_reasoning),
             )
             if recovered is not None:
@@ -895,6 +936,8 @@ def _recover_blackloop(
     observe: bool,
     middleware: Sequence,
     reasoning_budget_chars: int | None,
+    context: dict | None = None,
+    tools: Sequence = (),
     shape: str,
     cut_point_chars: int,
 ):
@@ -928,6 +971,7 @@ def _recover_blackloop(
             checkpointer=checkpointer, response_format=response_format,
             system_prompt=system_prompt, model_factory=model_factory, observe=observe,
             middleware=middleware, reasoning_budget_chars=reasoning_budget_chars,
+            context=context, tools=tools,
         )
     except Exception as exc:  # noqa: BLE001 - fail-open: recovery failure degrades
         logger.warning(

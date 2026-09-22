@@ -1,12 +1,15 @@
 import logging
 import os
 from dataclasses import dataclass
-from typing import Literal, Sequence
+from typing import Callable, Literal, Sequence
 
 import httpx
 from langchain_core.messages import AIMessage, AIMessageChunk
 from langchain_core.outputs import ChatGeneration, ChatGenerationChunk
 from langchain_openai import ChatOpenAI
+from pydantic import PrivateAttr
+
+from polymerhus.app.llm.conversation import current_conversation_id
 
 logger = logging.getLogger(__name__)
 
@@ -243,6 +246,44 @@ def id_kind(provider: str) -> str:
 _ZEN_FAMILY = frozenset(
     p for p, k in _ID_KIND_BY_PROVIDER.items() if k == ID_KIND_ZEN)
 
+# --- Provider request primitives (D12): client-bound request headers -----------
+#
+# Some upstreams require a header the CLIENT must supply on every request:
+# opencode-go enforces `x-opencode-session` (a stable per-conversation value,
+# since 2026-09-05) and the gateway forwards client `x-*` headers upstream only
+# for the scoped model groups (gateway/litellm_config.yaml, D12). The table is
+# the ONE place a provider's request primitives live; an unlisted provider binds
+# nothing, so its construction stays byte-identical. Values are evaluated at
+# CONSTRUCTION time (the fresh-client-per-turn discipline), so the session seam's
+# conversation scope lands the right id per conversation while one-shot callers
+# fall back to the process-stable id (`conversation.py`).
+
+CLIENT_ID = "polymerhus"
+"""The client identifier sent alongside the conversation primitive (provenance
+only; the upstream ignores it). No version suffix: the container image tag is the
+deployment identity, and a version string here would drift from it."""
+
+
+def _opencode_go_request_headers() -> dict[str, str]:
+    """opencode-go's client request primitives: the stable conversation id the
+    server now requires, plus a provenance-only client identifier."""
+    return {
+        "x-opencode-session": current_conversation_id(),
+        "x-opencode-client": CLIENT_ID,
+    }
+
+
+_REQUEST_HEADERS_BY_PROVIDER: dict[str, Callable[[], dict[str, str]]] = {
+    "opencode-go": _opencode_go_request_headers,
+}
+
+
+def request_headers(provider: str) -> dict[str, str]:
+    """The provider's client-bound request headers, evaluated per construction.
+    An unlisted provider (the safe default) binds nothing."""
+    factory = _REQUEST_HEADERS_BY_PROVIDER.get(provider)
+    return factory() if factory is not None else {}
+
 # --- #107 (D4 item 1): the LLM_GATEWAY_URL base_url resolution seam ------------
 #
 # Two LLM-facing paths live, selected by a single env var (ADR D3 + D5):
@@ -308,7 +349,7 @@ class Role:
 
 # Roles validated at APP BOOT (`validate_llm_config`, from `app/main.py`). The
 # former single `analyser` key is split per cognitive job (#93): each analysis
-# agent is its own role_id but they SHARE `LLM_MODEL_ANALYSER` for now (many-to-one),
+# agent is its own role_id but they SHARE `LLM_ANALYSER` for now (many-to-one),
 # so no new env var is required and per-agent tuning is a one-line `model_key` edit.
 # The hunting module is deliberately ABSENT - it is validated at the HUNTING module
 # bootstrap, never at app boot (operator ruling 2026-08-06).
@@ -324,18 +365,18 @@ class Role:
 # per-pod triager and configurator (their own pod session thread each), the
 # per-run orchestrator actor, and the analysis proposers (per-pass stateful turns).
 ROLES: tuple[Role, ...] = (
-    Role("configurator",     "LLM_MODEL_CONFIGURATOR",     "session"),
-    Role("triager",          "LLM_MODEL_TRIAGER",          "session",  "low"),
-    Role("job_orchestrator", "LLM_MODEL_JOB_ORCHESTRATOR", "session",  "medium"),
-    Role("crawler",          "LLM_MODEL_CRAWLER",          "session"),
-    Role("bootstrapper",     "LLM_MODEL_ANALYSER",         "one_shot"),
-    Role("assigner",         "LLM_MODEL_ANALYSER",         "session",  "medium"),
-    Role("mechanism_typist", "LLM_MODEL_ANALYSER",         "session",  "medium"),
-    Role("data_modeller",    "LLM_MODEL_ANALYSER",         "session",  "medium"),
-    Role("anatomy",          "LLM_MODEL_ANALYSER",         "one_shot"),
-    Role("curation",         "LLM_MODEL_ANALYSER",         "one_shot"),
-    Role("sweep",            "LLM_MODEL_ANALYSER",         "one_shot"),
-    Role("anti_cluttering",  "LLM_MODEL_ANALYSER",         "one_shot"),
+    Role("configurator",     "LLM_CONFIGURATOR",     "session"),
+    Role("triager",          "LLM_TRIAGER",          "session",  "low"),
+    Role("job_orchestrator", "LLM_JOB_ORCHESTRATOR", "session",  "medium"),
+    Role("crawler",          "LLM_CRAWLER",          "session"),
+    Role("bootstrapper",     "LLM_ANALYSER",         "one_shot"),
+    Role("assigner",         "LLM_ANALYSER",         "session",  "medium"),
+    Role("mechanism_typist", "LLM_ANALYSER",         "session",  "medium"),
+    Role("data_modeller",    "LLM_ANALYSER",         "session",  "medium"),
+    Role("anatomy",          "LLM_ANALYSER",         "one_shot"),
+    Role("curation",         "LLM_ANALYSER",         "one_shot"),
+    Role("sweep",            "LLM_ANALYSER",         "one_shot"),
+    Role("anti_cluttering",  "LLM_ANALYSER",         "one_shot"),
 )
 
 # The hunting module's OWN roles (one model per agent), validated by the hunting
@@ -347,10 +388,10 @@ ROLES: tuple[Role, ...] = (
 # the operator directs high-cost reasoning for the looped, feedback-driven
 # probe/interpret work.
 HUNTING_ROLES: tuple[Role, ...] = (
-    Role("hunting_orchestrator", "LLM_MODEL_HUNTING_ORCHESTRATOR", "session", "medium"),
-    Role("hunting_hunter",       "LLM_MODEL_HUNTING_HUNTER",       "session", "high"),
-    Role("pod_runner",           "LLM_MODEL_POD_RUNNER",           "session", "high"),
-    Role("pod_triager",          "LLM_MODEL_POD_TRIAGER",          "session", "high"),
+    Role("hunting_orchestrator", "LLM_HUNTING_ORCHESTRATOR", "session", "medium"),
+    Role("hunting_hunter",       "LLM_HUNTING_HUNTER",       "session", "high"),
+    Role("pod_runner",           "LLM_POD_RUNNER",           "session", "high"),
+    Role("pod_triager",          "LLM_POD_TRIAGER",          "session", "high"),
 )
 
 _ROLE_BY_ID: dict[str, Role] = {r.role_id: r for r in ROLES + HUNTING_ROLES}
@@ -358,8 +399,7 @@ _ROLE_BY_ID: dict[str, Role] = {r.role_id: r for r in ROLES + HUNTING_ROLES}
 
 def role_record(role_id: str) -> Role | None:
     """The registered `Role` for a role_id, or None for an unregistered one (which
-    `resolve_role` still resolves via the `LLM_MODEL_{ROLE_ID}` convention for
-    back-compat)."""
+    `resolve_role` still resolves via the live `LLM_{ROLE_ID}` convention)."""
     return _ROLE_BY_ID.get(role_id)
 
 
@@ -387,15 +427,15 @@ def _key_env(provider: str) -> str:
     `provider_api_key` all agree on the same convention."""
     return f"API_KEY_{provider.upper().replace('-', '_')}"
 
+
 def resolve_role(role: str) -> tuple[str, str]:
     """Resolve a role_id to (provider, model) via its record's `model_key`.
 
     A registered role_id reads its declared `model_key` (several ids may share one,
-    e.g. every analysis role -> `LLM_MODEL_ANALYSER`). An UNregistered id falls back
-    to the `LLM_MODEL_{ID}` convention, so a legacy caller still on `"analyser"`
-    keeps resolving `LLM_MODEL_ANALYSER` unchanged during the migration."""
+    e.g. every analysis role -> `LLM_ANALYSER`). An UNregistered id resolves via
+    the live `LLM_{ID}` convention (e.g. `"analyser"` reads `LLM_ANALYSER`)."""
     r = _ROLE_BY_ID.get(role)
-    model_key = r.model_key if r is not None else f"LLM_MODEL_{role.upper()}"
+    model_key = r.model_key if r is not None else f"LLM_{role.upper()}"
     raw = os.environ.get(model_key)
     if not raw or ":" not in raw:
         raise LLMConfigError(
@@ -403,6 +443,22 @@ def resolve_role(role: str) -> tuple[str, str]:
         )
     provider, model = raw.split(":", 1)
     return provider.strip(), model.strip()
+
+def _is_forced_tool_choice(tool_choice) -> bool:
+    """Whether a `bind_tools` `tool_choice` FORCES a tool call (A6): `"any"`,
+    `"required"`, `True`, a `{"type": "function", ...}` dict, or any other
+    value but the untouched `None` / `"auto"` / `"none"` (a named tool string
+    forces that tool). The relaxed model rewrites exactly these to `"auto"`."""
+    if tool_choice is None or tool_choice is False:
+        return False
+    if tool_choice is True:
+        return True
+    if isinstance(tool_choice, str):
+        return tool_choice not in ("auto", "none")
+    if isinstance(tool_choice, dict):
+        return tool_choice.get("type") == "function"
+    return False
+
 
 class ReasoningPreservingChatOpenAI(ChatOpenAI):
     """The T6 reasoning-replay seam (D11 items 3-5): a ChatOpenAI subclass
@@ -424,12 +480,40 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
     (`reasoning_content` / `reasoning_details`) - exactly the shape T1
     verified the gateway forwards verbatim on the request transport.
 
+    The A6 voluntary rung (operator ruling 2026-09-21): `relax_forced_tool_choice`
+    (construction-time, default False) rewrites a FORCED `tool_choice`
+    (`"any"`, `"required"`, `True`, or a `{"type": "function", ...}` dict -
+    anything but `None`/`"auto"`/`"none"`) to `"auto"` in `bind_tools`, so a
+    thinking-mode relay that refuses a forced choice still serves the tool
+    loop. It is a PRIVATE attr (not a pydantic field - the pinned SDK's model
+    config drops extra fields) popped in `__init__`, so unrelaxed
+    construction stays byte-identical.
+
     The subclass is the ticket-sanctioned role-construction path fix (D4
     additive: the seam lives in `app/llm`, no agent module touched). It is
     pinned to langchain-openai 1.3.x's internals (`_create_chat_result`,
     `_get_request_payload`); the unit tier pins the behavioral contract
     (wire capture + message-level re-emit) so a future SDK bump that moves
     these seams turns the tests red on purpose."""
+
+    _relax_forced_tool_choice: bool = PrivateAttr(default=False)
+    _relax_logged: bool = PrivateAttr(default=False)
+
+    def __init__(self, *args, relax_forced_tool_choice: bool = False, **kwargs):
+        super().__init__(*args, **kwargs)
+        self._relax_forced_tool_choice = bool(relax_forced_tool_choice)
+
+    def bind_tools(self, tools, *, tool_choice=None, **kwargs):
+        if self._relax_forced_tool_choice and _is_forced_tool_choice(tool_choice):
+            if not self._relax_logged:
+                logger.info("relaxed forced tool_choice %r -> 'auto' (A6 voluntary rung)",
+                            tool_choice)
+                self._relax_logged = True
+            else:
+                logger.debug("relaxed forced tool_choice %r -> 'auto' (A6 voluntary rung)",
+                             tool_choice)
+            tool_choice = "auto"
+        return super().bind_tools(tools, tool_choice=tool_choice, **kwargs)
 
     def _create_chat_result(self, response, generation_info=None):
         result = super()._create_chat_result(response, generation_info)
@@ -490,6 +574,15 @@ class ReasoningPreservingChatOpenAI(ChatOpenAI):
 
     def _get_request_payload(self, input_, *, stop=None, **kwargs):
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
+        # Provider-shape hardening (live, 2026-09-08, swissai): a no-tools
+        # session role (the recon triager) binds an EMPTY tool set via
+        # `create_agent` -> `tools: []` lands on the wire. Some OpenAI-
+        # compatible upstreams (swissai's hosted vLLM) REJECT an empty tools
+        # array ("must not be an empty array... omit the field entirely"), so
+        # omit the key when it carries nothing - a no-tools turn never needs
+        # it. Never strips a non-empty binding (real crawl/hunting tools).
+        if payload.get("tools") == []:
+            payload.pop("tools")
         messages = payload.get("messages")
         if not isinstance(messages, list):
             return payload
@@ -572,6 +665,21 @@ def _thinking_wire_form(provider: str, model: str, thinking: "ThinkingLevel") ->
     return {}
 
 
+def _relaxes_forced_tool_choice(provider: str, model: str) -> bool:
+    """A6: whether this (provider, model) gets the relaxed wire (the forced
+    `tool_choice` -> `"auto"` rewrite at bind time). True iff the held
+    capability profile explicitly declares `supports_forced_tool_choice is
+    False`. Fail-open (D7): any failure - unresolved role, degraded reader -
+    means no relax, so construction without the constraint is byte-identical."""
+    try:
+        from polymerhus.app.llm.capability import resolve_capability
+
+        profile = resolve_capability(provider, model)
+        return getattr(profile, "supports_forced_tool_choice", None) is False
+    except Exception:  # noqa: BLE001 - fail-open: never into construction
+        return False
+
+
 def build_chat_model(provider: str, model: str, *, temperature: float = 0,
                      read_timeout: float | None = None,
                      max_retries: int | None = None,
@@ -639,11 +747,26 @@ def build_chat_model(provider: str, model: str, *, temperature: float = 0,
     # field; verified to reach the wire payload. Merged after `extra` so nothing in
     # `_thinking_wire_form` (reasoning_effort / thinking budget) collides with it.
     model_kwargs = {"max_completion_tokens": max_completion_tokens()}
+    # D12: the provider's client-bound request primitives, resolved at
+    # construction via the native `ChatOpenAI.default_headers` field (the SDK
+    # threads it into the openai client's httpx headers). The conversation scope
+    # is ambient during a session turn; a one-shot caller gets the process-stable
+    # id. Empty headers keep the construction byte-identical for every provider
+    # with no declared primitives.
+    headers = request_headers(provider)
+    # A6: the voluntary rung's wire relax - the profile declares
+    # `supports_forced_tool_choice is False` (operator override) iff the
+    # upstream refuses a forced `tool_choice`. Fail-open: any resolution
+    # failure means no relax, and unrelaxed construction stays byte-identical.
+    relax_forced_tool_choice = _relaxes_forced_tool_choice(provider, model)
     return ReasoningPreservingChatOpenAI(model=model, api_key=api_key,
                                          base_url=base_url, temperature=temperature,
                                          timeout=timeout, max_retries=retries,
                                          model_kwargs=model_kwargs,
-                                         callbacks=get_langfuse_callbacks(), **extra)
+                                         default_headers=headers or None,
+                                         callbacks=get_langfuse_callbacks(),
+                                         relax_forced_tool_choice=relax_forced_tool_choice,
+                                         **extra)
 
 def validate_llm_config(roles: Sequence[Role] | None = None) -> None:
     """Fail fast: every configured role must name a known provider with a present key.

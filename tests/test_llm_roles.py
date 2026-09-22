@@ -63,7 +63,7 @@ class _FakeLLM:
 
 
 def _env(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
 
 
 def _wire(monkeypatch, profile, results):
@@ -380,3 +380,25 @@ def test_structured_output_for_passes_an_unclassifiable_schema_verbatim():
         "schema": raw,
         "kwargs": {"method": "json_schema", "strict": False},
     }]
+
+def test_a6_structured_output_for_voluntary_uses_function_calling_construction():
+    """A6: `voluntary_function_calling` rides `with_structured_output(method=
+    "function_calling")` on the pydantic class - the relaxed model drops the
+    force at bind time."""
+    llm = _FakeLLM(_Closed(label="x"))
+    roles.structured_output_for(llm, _Closed, "voluntary_function_calling")
+    assert llm.wso_calls[0]["kwargs"].get("method") == "function_calling"
+    assert llm.wso_calls[0]["schema"] is _Closed
+
+
+def test_union_schema_is_refused_loudly_on_the_one_shot_seam():
+    """A union schema is session-seam only (ToolStrategy carries it); the
+    one-shot `with_structured_output` cannot express a union on the pinned SDK
+    (both methods raise 'Unsupported function'), so the seam refuses it with a
+    named limitation instead of leaking the SDK error."""
+    import pytest as _pytest
+
+    llm = _FakeLLM(_Closed(label="x"))
+    with _pytest.raises(ValueError, match="union"):
+        roles.structured_output_for(llm, _Closed | _OpenDict, "json_schema")
+    assert llm.wso_calls == []

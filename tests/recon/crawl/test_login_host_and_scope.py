@@ -118,8 +118,8 @@ def test_off_frontier_url_is_now_allowed():
     assert "https://app.example.com/dashboard" in crawl.visited
 
 
-def test_credentialed_login_url_navigable_without_frontier_exception():
-    # The credentialed agent navigates straight to an off-target login host; no
+def test_login_url_navigable_without_frontier_exception():
+    # The crawl agent navigates straight to an off-target login host; no
     # login-host frontier exception is needed anymore.
     crawl = _make_crawl()
     p = _provider_with(crawl)
@@ -186,7 +186,7 @@ def _pod_state(url, extra=None):
 def test_scheme_prefixed_target_folds_to_registrable_domain_scope():
     seen = {}
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         seen["scope"] = scope
         return {"endpoints": [{"url": "x"}], "js_urls": []}
 
@@ -200,7 +200,7 @@ def test_scheme_prefixed_target_folds_to_registrable_domain_scope():
 def test_scheme_prefixed_extra_scope_entries_fold_and_dedup():
     seen = {}
 
-    def run_crawl_fn(target, *, scope, auth_cookies=None):
+    def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None):
         seen["scope"] = scope
         return {"endpoints": [{"url": "x"}], "js_urls": []}
 

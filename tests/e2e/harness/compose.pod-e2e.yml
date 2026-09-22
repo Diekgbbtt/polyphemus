@@ -42,8 +42,8 @@ services:
       KALI_MCP_URL: http://kali:8000/mcp
       PROJECT_ID: pod-e2e
       PYTHONPATH: /srv/src
-      LLM_MODEL_POD_RUNNER: "opencode:muse-spark-1.2-contributor-free"
-      LLM_MODEL_POD_TRIAGER: "opencode:muse-spark-1.2-contributor-free"
+      LLM_POD_RUNNER: "opencode:muse-spark-1.2-contributor-free"
+      LLM_POD_TRIAGER: "opencode:muse-spark-1.2-contributor-free"
       POD_E2E_MOCK_KB: "1"
       POD_E2E_MOCK_KB_FILE: "/srv/tests/e2e/fixtures/mock-kb.yaml"
       # The model API keys the muse-spark (opencode provider) needs to

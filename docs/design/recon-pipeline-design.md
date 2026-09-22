@@ -68,7 +68,7 @@ Three real nesting levels: **pipeline orchestrator -> per-job orchestrator agent
 - Loads project settings once (`load_settings`, default `agent.app.clients.pg.load_settings`) - `pipeline.py:93`.
 - Builds the phase plan from the static job registry (`agent/recon/jobs.py::JOBS`, `PHASES`) via `build_phase_plan` (`pipeline.py:98`, `jobs.py:215-227`), optionally restricted to a validated `job_subset` (`jobs.py:197-213`).
 - For each phase (index order), for each job in that phase: resolves `input_assets` - phase 0 seeds from `settings.target_domain` via `seed_assets` (`pipeline.py:34-37`), phase>0 re-queries Neo4j via `read_assets(job.consumes, project_id)` (`pipeline.py:40-65`), which validates `node_type` against `curator.ALLOWED_LABELS` before interpolating it into the Cypher label position (the only place a label appears unparameterised - `pipeline.py:49-50,57`).
-- Builds `extra = {"project_id": project_id}`, adding `auth_context` **only** when `job.use_auth` is true and `settings.get("auth_context")` is present (`pipeline.py:112-114`) - this is the one place the auth channel crosses from settings into a job's `extra`.
+- Builds `extra = {"project_id": project_id}`, plus the auth feed for `use_auth` jobs: the gateway-bound account identifier rides `extra["auth_account"]` (never the material) and each phase's assembly resolves it from the shared store, projecting the flat request material as `extra["auth_context"]` (the pod serialises it per tool at fill time) and the persisted profile key as `extra["steel_profile"]` for the agent-driven crawl (#223 T4 #243 - supersedes the retired settings-blob injection).
 - Runs every job in a phase concurrently via `asyncio.gather` (`pipeline.py:169`) - this is the **phase barrier**: phase `i+1`'s `input_assets` are not even resolved until every phase-`i` job has returned (`_run_one` wraps `run_job` and is awaited as a batch).
 - After every phase, calls `registry.set_run_status(run_id, "complete")` unconditionally (`pipeline.py:171`) - the run always reaches a terminal state (§6).
 
@@ -76,7 +76,7 @@ Three real nesting levels: **pipeline orchestrator -> per-job orchestrator agent
 
 A two-node compiled `StateGraph(JobState)`:
 
-- `preprocess_node` calls the injected `preprocess_fn` (production default: `default_preprocess_fn`, `job_agent.py:41-64`) which deterministically maps `input_assets` 1:1 to `pod_inputs`, capped at `MAX_PODS` (`config.py:5`, default 20), and pops `auth_context` from the per-pod `extra` copy for any non-`use_auth` job (`job_agent.py:54-55`) - a real isolation boundary: a passive pod can never see cookies even if a caller over-supplied them.
+- `preprocess_node` calls the injected `preprocess_fn` (production default: `default_preprocess_fn`) which deterministically maps `input_assets` 1:1 to `pod_inputs`, capped at the `MAX_JOB_ASSETS` total-work budget, threading `extra` through verbatim - auth-eligibility is decided once, upstream in the pipeline's per-phase assembly, so a passive pod never carries feed material it was not bound.
   The `job_orchestrator` LLM role is registered in `agent/app/llm/providers.py:14` but is **not exercised** by `default_preprocess_fn` - this is the stubbed seam the context-memory L1 design (§9) targets.
 - `fan_out` returns one `Send("pod_runner", ...)` per `pod_input` (`job_agent.py:123-135`) - LangGraph's native fan-out primitive.
 - `pod_runner_node` calls the injected `pod_invoke` (production default: `default_pod_invoke`, `job_agent.py:67-106`), which routes `configurator_mode="agent"` jobs (only `steel_crawl`) to `crawl_pod_invoke` and everything else to `pod_graph.invoke`.
@@ -88,7 +88,7 @@ A two-node compiled `StateGraph(JobState)`:
 ```mermaid
 flowchart TD
     IN(["PodState: job, input_asset, asset_context(''), extra, session_id"]) --> CFG
-    CFG["configurator (deterministic)<br/>fill_template: {target}/{domain}/{baseurl}/{session}/{auth_header}"] --> EXE
+    CFG["configurator (deterministic)<br/>fill_template: {target}/{domain}/{baseurl}/{session}/{auth_flags}"] --> EXE
     EXE[["execute (fastmcp execute_command)<br/>-&gt; ExecResult{stdout,stderr,returncode,duration_ms}"]] --> GATE{"gate: returncode == 0 ?"}
     GATE -->|"yes (incl. empty stdout)"| PAR
     GATE -->|"no, iteration < MAX_POD_ITERS"| CFG
@@ -219,9 +219,9 @@ Phase 5: arjun                                          (consumes Endpoint)
 
 `validate_job_subset` (`jobs.py:197-213`) statically checks that every selected job's `consumes` type is either the seeded `Domain` root or produced by an earlier-phase selected job, walking `_available_types_by_phase` (`jobs.py:181-194`) - this is the check behind the REST API's 400 on a `jobs` subset that breaks a dependency (`agent/app/routes.py:110-117`).
 
-Command templates fill placeholders `{target}`, `{domain}`, `{baseurl}`, `{session}`, `{auth_header}` via `fill_template` (`pod.py:63-96`).
+Command templates fill placeholders `{target}`, `{domain}`, `{baseurl}`, `{session}`, `{auth_flags}` via `fill_template`.
 Format-affecting flags (`-json`, `-jsonl`, `-oJ`) are baked into the template - the configurator never chooses them, because the deterministic parser depends on the exact shape.
-`{auth_header}` expands only when `extra["auth_context"]` is present **and** `extra["_use_auth"]` is truthy (set by the `configurator` node from `job.use_auth` just before calling `fill_template`, `pod.py:134`); it serializes cookies via `_auth_header` (`pod.py:104-121`), using the `--headers` flag for `arjun` and `-H` for every other tool (`pod.py:101`).
+`{auth_flags}` expands from the auth feed's per-phase projection: the pipeline resolves the gateway-bound account identifier from the shared store at assembly and threads the flat request material as `extra["auth_context"]` (only for `use_auth` jobs - auth-eligibility is decided once, upstream); `fill_template` serialises it per tool at fill time (`control/auth_feed.py::serialize_auth_flags`), using the `--headers` flag for `arjun`, the comma-joined form for `graphql-cop`, and `-H` for every other tool. (Supersedes the retired settings-blob `{auth_header}` path, #223 T4 #243.)
 
 Correction against `recon-mvp-design.md` §7/§9: rev-5 explicitly excluded `nuclei`, `kiterunner`, `paramspider`, `graphql-cop`, `subdomain_takeover`, and `steel` from the MVP job set.
 The live `JOBS` registry includes `kiterunner`, `paramspider`, `graphql-cop`, `subdomain_takeover`, and `steel_crawl` (5 of those 6) - this is `recon-pipeline-forward-decisions.md` D1's operator-confirmed expansion (2026-07-03), not an inconsistency; `nuclei` alone stays out of the default DAG per D2 (on-demand only, never built as a job because the on-demand entry point itself is unbuilt - see forward-decisions).
@@ -247,7 +247,7 @@ PROVIDERS = {"openai": "...", "openrouter": "...", "swissai": "..."}
 ROLES = ("configurator", "triager", "job_orchestrator", "crawler")
 ```
 
-`resolve_role(role)` reads `LLM_MODEL_{ROLE}` as `"<provider>:<model>"`, raising `LLMConfigError` if unset or malformed (`providers.py:19-26`).
+`resolve_role(role)` reads `LLM_{ROLE}` as `"<provider>:<model>"`, raising `LLMConfigError` if unset or malformed (`providers.py:19-26`).
 `build_chat_model` raises `LLMConfigError` on an unknown provider or a missing `API_KEY_{PROVIDER}` (`providers.py:28-33`) - **fail-fast at bootstrap**, not per-call: `validate_llm_config()` (`providers.py:44-57`) is meant to be called at startup so a misconfigured role is caught before any pod runs, not mid-run.
 Every `ChatOpenAI` instance is constructed with `callbacks=get_langfuse_callbacks()` at build time (`providers.py:38-42`) so tracing survives being invoked inside a worker thread where LangGraph's callback contextvar does not propagate (`async_bridge.run_coro_blocking`).
 `chat_model_for(role)` (`roles.py:3-6`) is the one-line façade every LLM-role call site uses (`pod.py:331`, `crawl_agent.py:90-91`).
@@ -299,11 +299,10 @@ This is required because `Observation.anchor` is an open `dict` field with no `a
 | Crawl pod: any exception from `crawl()`'s body | `crawl_pod.crawl` node (`crawl_pod.py:155-156`) | caught explicitly (`except Exception as exc`), returns `{"manifest": None, "crawl_error": str(exc)}` | routes through `gate` to `fail` |
 | Crawl pod: empty manifest (both keys empty) | `_manifest_is_empty` (`crawl_pod.py:55-58`), checked in `crawl()` (`crawl_pod.py:158-159`) | `crawl_error="empty crawl manifest"` | routes to `fail` |
 | Crawl pod `fail` node | `crawl_pod.fail` (`crawl_pod.py:194-208`) | curates **one** `reduced_crawl_coverage` `Observation` anchored on the input `BaseURL` (`crawl_pod.py:61-75`), sets `verdict="failed"` | the only pod type that writes something to the graph even on failure |
-| Missing/invalid `auth_context` on a `use_auth` job | `pipeline.run_pipeline` (`pipeline.py:113-114`) | `extra["auth_context"]` simply omitted when absent; `fill_template` collapses `{auth_header}` to `""` (`pod.py:86-88`) | proceeds unauthenticated silently - **no Observation is emitted noting reduced coverage** (correction: `recon-mvp-design.md` §10.6 claimed this Observation exists; it does not in the live code) |
+| Unresolvable gateway account on a `use_auth` job | the feed's `resolve_account` fails open | `extra["auth_context"]` simply omitted; `fill_template` collapses `{auth_flags}` to `""` | proceeds unauthenticated loudly (fail-open) - **no Observation is emitted noting reduced coverage** (correction: `recon-mvp-design.md` §10.6 claimed this Observation exists; it does not in the live code) |
 | REST: unknown `project_id` | `routes.py:73-74,106-107` | `HTTPException(404)` | client error, no run created |
 | REST: unknown job in `jobs` subset | `routes.py:110-113` | `HTTPException(400)` | client error |
 | REST: `jobs` subset breaks a `consumes` dependency | `validate_job_subset` raises `ValueError`, caught at `routes.py:114-117` | `HTTPException(400, detail=str(exc))` | client error |
-| REST: malformed `auth_context` | `_validate_auth_context` raises `ValueError`, caught at `routes.py:78-81` | `HTTPException(400)` | client error |
 | REST: launch-task setup exception (before `run_pipeline`'s own try) | `_launch_pipeline._run` (`routes.py:95-99`) | caught, `logger.exception(...)`, task ends | swallowed at the asyncio-task boundary - the run row exists (created synchronously at `routes.py:123`) but may never leave `"in_progress"`/get updated; **this is a genuine gap**, not best-effort by design - an operator polling `GET .../recon/{run_id}` sees a stuck run with no further signal beyond the server log |
 
 No `GraphRecursionError`/recursion-cap handling exists in the live code for the pod's retry loop beyond `MAX_POD_ITERS` gating the `gate` function's own routing (`pod.py:162`) - LangGraph's `recursion_limit` is not explicitly configured anywhere in `pod.py`/`job_agent.py`/`pipeline.py`, so it runs on LangGraph's library default.
@@ -416,23 +415,20 @@ sequenceDiagram
 ```mermaid
 sequenceDiagram
     participant CP as crawl_pod.crawl node
-    participant CA as crawl_agent.run_crawl_authenticated
-    participant PRE as precreate_auth_session
+    participant CA as crawl_agent.run_crawl
+    participant PROV as SteelCrawlProvider
     participant LOOP as _run_agentic_crawl (blocking)
 
-    CP->>CP: use_auth_signal = job.use_auth AND extra.auth_context present -> True
-    CP->>CA: run_crawl_authenticated_fn(target, scope)
-    CA->>PRE: precreate_auth_session(mcp_manager, body)
-    PRE-->>CA: (crawl_id, awaiting_status{viewer_url:"https://steel.dev/viewer/..."})
-    CA->>LOOP: crawl_fn(target, ..., pre_created_crawl_id=crawl_id)  [BLOCKS]
-    Note over CA,LOOP: KNOWN LIMITATION (crawl_pod.py:142-149, crawl_agent.py:169-176):<br/>awaiting_status (carrying viewer_url) is only returned to the<br/>caller AFTER the blocking loop finishes - too late for a human<br/>to complete login mid-run via GET /recon/{run_id}.
+    CP->>CP: feed state = extra.auth_context cookies + extra.steel_profile
+    CP->>CA: run_crawl_fn(target, scope, auth_cookies, steel_profile)
+    CA->>PROV: get_crawl_tools(auth_cookies, steel_profile)
+    PROV->>PROV: sessions.create(profile_id=steel_profile) read-only + context.add_cookies
+    CA->>LOOP: _run_agentic_crawl(body, mcp_manager) [BLOCKS]
     LOOP-->>CA: manifest
-    CA-->>CP: (manifest, awaiting_status)
-    CP->>CP: viewer_url extracted, attached to export.stats AFTER the fact
-    Note over CP: pipeline.py:145-158 surfaces stats.viewer_url via<br/>GET /recon/{run_id} - but only once the (already-finished) run returns
+    CA-->>CP: manifest
 ```
 
-This is a design-known, explicitly-commented limitation in the live code (not a bug this document is discovering) - flagged here because it is exactly the kind of non-happy path an operator needs to understand before relying on the interactive auth flow.
+Profile-mount only (#223 T4 #243): the crawl runs under the gateway-established persisted state - no interactive path, no operator prompt. The retired `steel_await_auth` human-in-the-viewer flow and its viewer-URL surfacing are gone with their machinery.
 
 ---
 
@@ -441,11 +437,11 @@ This is a design-known, explicitly-commented limitation in the live code (not a 
 | Method + path | Body | Success | Errors |
 |---|---|---|---|
 | `POST /projects` | `{name}` | `{project_id}` (uuid4) | - |
-| `PUT /projects/{id}/settings` | `{recon: {...}}` | `{ok: true}` | 404 unknown project; 400 malformed `auth_context` (`_validate_auth_context`, `routes.py:43-61`) |
+| `PUT /projects/{id}/settings` | `{recon: {...}}` | `{ok: true}` | 404 unknown project (settings carry no auth since #223 T4 #243 - auth lives in the shared store) |
 | `POST /projects/{id}/recon` | `{jobs?, settings?}` | `{run_id}` (uuid4), returns immediately - `run_pipeline` is scheduled via `asyncio.create_task`, never awaited inline (`routes.py:87-101,124`) | 404 unknown project; 400 unknown job; 400 subset breaks a dependency |
 | `GET /projects/{id}/recon/{run_id}` | - | `{status, current_phase, per_job: [...]}` | 404 unknown run |
 
-Correction against `recon-mvp-design.md` §10.5: the live `SettingsUpdate.recon` body carries a bare `dict` (`routes.py:34-35`), not the typed `{max_pods?, auth_context?}` sketch - the settings schema is not validated beyond the `auth_context` sub-object; `max_pods` is read nowhere in `pipeline.py` (`MAX_PODS` is an env-var-only global, `config.py:5`, not a per-project setting).
+Correction against `recon-mvp-design.md` §10.5: the live `SettingsUpdate.recon` body carries a bare `dict`, not the typed `{max_pods?, auth_context?}` sketch - the settings face validates nothing beyond the project guard (#223 T4 #243 retired the `auth_context` sub-object validation); `max_pods` is read nowhere in `pipeline.py` (`MAX_PODS` is an env-var-only global, not a per-project setting).
 There is no `POST /projects/{id}/ingest` endpoint - documentation ingestion (`recon-mvp-design.md` §6) is unbuilt; not present anywhere in `agent/app/routes.py`.
 
 `POST /projects/{id}/recon` also calls `pg.create_run(run_id, project_id)` synchronously before scheduling the background task specifically so an immediate `GET` poll never race-404s (`routes.py:120-123`) - `run_pipeline`'s own `registry.create_run` call is a no-op on conflict.
@@ -517,7 +513,7 @@ Seven operator-validation items (V1-V7: LLM-preprocess cost/latency gating, the 
 | `MAX_PODS` | 20 | fan-out cap in `default_preprocess_fn` |
 | `STEEL_API_KEY` | "" | steel.dev cloud-browser credential (in-process Playwright-over-CDP; **no** URL setting - correction vs `recon-mvp-design.md`'s "Steel MCP endpoint" phrasing, see forward-decisions D3) |
 | `CRAWL_MAX_PAGES` / `_MAX_DEPTH` / `_MAX_ITERS` / `_JOB_TIMEOUT_S` | 50 / 3 / 30 / 480 | agentic-crawl loop bounds |
-| `LLM_MODEL_{TRIAGER,CROSS,...}` | required, `"<provider>:<model>"` | per-role model id (`providers.resolve_role`) |
+| `LLM_{TRIAGER,CROSS,...}` | required, `"<provider>:<model>"` | per-role model id (`providers.resolve_role`) |
 | `API_KEY_{OPENAI,OPENROUTER,SWISSAI}` | required per configured provider | provider credential |
 | `KALI_MCP_URL` | (in `agent.app.config`, not `recon/config.py`) | fastmcp `execute_command` endpoint |
 
@@ -540,19 +536,18 @@ agent/recon/
     crawl_agent.py     - thin adapter over the ReAct loop
     crawl_agentic.py   - the ReAct loop
     steel_client.py    - steel.dev provider seam (§6, SteelProviderUnavailable)
-    steel_crawl_skill.md - the crawler's live system prompt
+    (the crawler's live system prompt moved to skills/recon/crawler/steel-crawl/SKILL.md, #222)
 agent/app/
   routes.py      - REST API (§8)
   llm/providers.py, roles.py - LLM provider/role contract (§4.5)
   clients/pg.py, neo4j_client.py - Postgres/Neo4j clients
 skills/
   recon/triager/writing-observations/SKILL.md - authored, NOT wired (§4.1, §9.1)
-  recon/crawler/  (implied by steel_crawl_skill.md's role, not this directory layout in practice -
-                    the live crawler prompt is a sibling file in agent/recon/crawl/, not under skills/)
+  recon/crawler/steel-crawl/SKILL.md  (realised by #222 - the live crawler prompt moved under skills/ and loads via the shared `skill_for` loader)
 ```
 
 Correction against `jobs-tools-skills-taxonomy.md` §3: the proposed `skills/` layout (`skills/recon/{role}/{skill-name}/SKILL.md`, with a `skill_for(role, job)` resolver in `agent/recon/skills.py`) is only partially realized.
-`skills/recon/triager/writing-observations/SKILL.md` exists on disk exactly as proposed, but no `agent/recon/skills.py` or `skill_for` function exists to load it, and the live crawler prompt (`agent/recon/crawl/steel_crawl_skill.md`) lives beside `crawl_agent.py`, not under `skills/recon/crawler/steel-crawl/SKILL.md` as the taxonomy doc proposed.
+`skills/recon/triager/writing-observations/SKILL.md` exists on disk exactly as proposed, but no `agent/recon/skills.py` or `skill_for` function exists to load it (historical note: `skill_for` now lives at `src/polymerhus/recon/domain/skills.py` and the crawler prompt moved to `skills/recon/crawler/steel-crawl/SKILL.md`, #222; the resolver-signature part of this correction still stands).
 The taxonomy's conceptual model (job/tool/skill as three axes, `JobSpec.skill` as a job-family label) is accurate to `jobs.py`'s live `skill=` field; only the file-loading mechanism is unbuilt.
 
 ---

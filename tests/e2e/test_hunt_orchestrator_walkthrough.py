@@ -113,7 +113,7 @@ def test_yellow_park_resume(session, project, tmp_path):
 #
 # These walkthroughs' live edge is a REAL hunting-orchestrator LLM role (the
 # hypothesise phase turn) + real Neo4j + the mounted skills. They are NOT
-# skeletons: when the live role is configured (LLM_MODEL_HUNTING_ORCHESTRATOR
+# skeletons: when the live role is configured (LLM_HUNTING_ORCHESTRATOR
 # set and the gateway/direct provider reachable) they run the REAL production
 # build - the mounted skill as the system prompt, the per-pair symbolic render
 # as the user prompt, the three-tool surface (hunts_store / notes /
@@ -132,9 +132,9 @@ FAULT_LIVE = "CWE-79"  # materialisation + a real fold family in the catalogue
 def _hunting_role_live_reason() -> str | None:
     """The skip reason when the live hunting-orchestrator LLM role is not
     usable, or None to run the walkthroughs."""
-    if not os.environ.get("LLM_MODEL_HUNTING_ORCHESTRATOR"):
+    if not os.environ.get("LLM_HUNTING_ORCHESTRATOR"):
         return ("live hunting-orchestrator LLM role not configured "
-                "(set LLM_MODEL_HUNTING_ORCHESTRATOR=<provider>:<model>)")
+                "(set LLM_HUNTING_ORCHESTRATOR=<provider>:<model>)")
     from polymerhus.app.llm.providers import resolve_role
     try:
         provider, _model = resolve_role("hunting_orchestrator")

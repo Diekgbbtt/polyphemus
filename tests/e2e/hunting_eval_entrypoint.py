@@ -3,13 +3,13 @@
 The eval container co-locates its OWN litellm gateway and then runs the eval
 driver (pytest) once the proxy is healthy. ``LLM_GATEWAY_URL`` points at the
 co-located proxy, so the real orchestrator actor resolves
-``LLM_MODEL_HUNTING_ORCHESTRATOR`` through the same gateway path the
+``LLM_HUNTING_ORCHESTRATOR`` through the same gateway path the
 production agent uses.
 
 The proxy is launched DIRECTLY (``litellm --config``), not through the image's
 ``gateway_entrypoint``: the eval reuses the SHARED ``polymerhus_gateway`` DB,
 whose schema is already migrated and whose ``LiteLLM_ProxyModelTable`` already
-holds the registered ``LLM_MODEL_*`` routing set - so the entrypoint's
+holds the registered ``LLM_*`` routing set - so the entrypoint's
 migration step (``prisma migrate deploy``, a flaky 420s+ cold run) and the T2
 sync are both redundant here. ``store_model_in_db: true`` loads the model set
 from the DB at boot. This is a test-harness shortcut on the PROXY BOOT only;

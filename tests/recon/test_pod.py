@@ -88,9 +88,9 @@ def test_fill_template_substitutes_session():
     assert "{session}" not in cmd
 
 
-def test_fill_template_auth_header_httpx_serializes_cookie_string_not_dict_repr():
+def test_fill_template_auth_flags_httpx_serializes_cookie_string_not_dict_repr():
     cmd = pod.fill_template(
-        "httpx -u {target} -json {auth_header}",
+        "httpx -u {target} -json {auth_flags}",
         {"name": "app.example.com"},
         {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}, "_use_auth": True},
         tool="httpx",
@@ -100,9 +100,9 @@ def test_fill_template_auth_header_httpx_serializes_cookie_string_not_dict_repr(
     assert "{" not in cmd  # no residual placeholder, no dict repr
 
 
-def test_fill_template_auth_header_arjun_uses_headers_flag():
+def test_fill_template_auth_flags_arjun_uses_headers_flag():
     cmd = pod.fill_template(
-        "arjun -u {target} {auth_header}",
+        "arjun -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}, "_use_auth": True},
         tool="arjun",
@@ -110,9 +110,9 @@ def test_fill_template_auth_header_arjun_uses_headers_flag():
     assert "--headers 'Cookie: session=abc'" in cmd
 
 
-def test_fill_template_auth_header_multi_cookie():
+def test_fill_template_auth_flags_multi_cookie():
     cmd = pod.fill_template(
-        "httpx -u {target} {auth_header}",
+        "httpx -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -128,11 +128,11 @@ def test_fill_template_auth_header_multi_cookie():
     assert "-H 'Cookie: session=abc; csrf=xyz'" in cmd
 
 
-def test_fill_template_auth_header_arbitrary_headers_httpx():
+def test_fill_template_auth_flags_arbitrary_headers_httpx():
     # Header-agnostic: Authorization + X-Api-Key emit as their own repeatable
     # -H flags alongside the Cookie header; reserved keys are not emitted.
     cmd = pod.fill_template(
-        "httpx -u {target} {auth_header}",
+        "httpx -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -151,10 +151,10 @@ def test_fill_template_auth_header_arbitrary_headers_httpx():
     assert "scope" not in cmd
 
 
-def test_fill_template_auth_header_arbitrary_headers_no_cookies():
+def test_fill_template_auth_flags_arbitrary_headers_no_cookies():
     # Authorization alone (no cookies key at all) still emits.
     cmd = pod.fill_template(
-        "httpx -u {target} {auth_header}",
+        "httpx -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {"auth_context": {"Authorization": "Bearer t0ken"}},
         tool="httpx",
@@ -163,10 +163,10 @@ def test_fill_template_auth_header_arbitrary_headers_no_cookies():
     assert "Cookie" not in cmd
 
 
-def test_fill_template_auth_header_arjun_joins_headers_with_newline():
+def test_fill_template_auth_flags_arjun_joins_headers_with_newline():
     # arjun's --headers takes all headers in one newline-separated argument.
     cmd = pod.fill_template(
-        "arjun -u {target} {auth_header}",
+        "arjun -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -179,11 +179,11 @@ def test_fill_template_auth_header_arjun_joins_headers_with_newline():
     assert "--headers 'Cookie: session=abc\nAuthorization: Bearer t0ken'" in cmd
 
 
-def test_fill_template_applies_auth_header_whenever_auth_context_present():
+def test_fill_template_applies_auth_flags_whenever_auth_context_present():
     # C1 single-owner: fill_template trusts the pipeline's decision. auth_context
     # in extra (which the pipeline only ever sets for a use_auth job) => header.
     cmd = pod.fill_template(
-        "httpx -u {target} {auth_header}",
+        "httpx -u {target} {auth_flags}",
         {"name": "app.example.com"},
         {"auth_context": {"cookies": [{"name": "session", "value": "abc"}]}},
         tool="httpx",
@@ -192,10 +192,10 @@ def test_fill_template_applies_auth_header_whenever_auth_context_present():
     assert "{" not in cmd
 
 
-def test_fill_template_auth_header_kiterunner_uses_default_h_flag():
+def test_fill_template_auth_flags_kiterunner_uses_default_h_flag():
     # kiterunner (`kr`) takes repeated -H "k: v" flags, same as httpx/katana/ffuf.
     cmd = pod.fill_template(
-        "kr scan {target} -w /opt/localbin/routes-small.kite {auth_header}",
+        "kr scan {target} -w /opt/localbin/routes-small.kite {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -209,12 +209,12 @@ def test_fill_template_auth_header_kiterunner_uses_default_h_flag():
     assert "-H 'Authorization: Bearer t0ken'" in cmd
 
 
-def test_fill_template_auth_header_graphql_cop_uses_comma_joined_headers_flag():
+def test_fill_template_auth_flags_graphql_cop_uses_comma_joined_headers_flag():
     # graphql-cop's --headers flag takes ALL headers as one comma-joined
     # "Key:Value,Key2:Value2" argument (its own CLI format, distinct from both
     # the default repeated -H flag and arjun's newline-joined --headers blob).
     cmd = pod.fill_template(
-        "graphql-cop -t {target} -o json {auth_header}",
+        "graphql-cop -t {target} -o json {auth_flags}",
         {"name": "app.example.com"},
         {
             "auth_context": {
@@ -227,7 +227,7 @@ def test_fill_template_auth_header_graphql_cop_uses_comma_joined_headers_flag():
     assert "--headers 'Cookie:session=abc,Authorization:Bearer t0ken'" in cmd
 
 
-def test_fill_template_auth_header_empty_when_no_auth_context():
+def test_fill_template_auth_flags_empty_when_no_auth_context():
     # non-auth job: extra carries no auth_context at all (pipeline never threads
     # it for jobs where job.use_auth is False), so the header is empty.
     cmd = pod.fill_template(
@@ -273,7 +273,7 @@ def test_no_job_command_template_leaves_a_residual_placeholder():
 
     Matches named `{identifier}` placeholders only, so a legitimate literal
     like arjun's `printf '{}'` empty-JSON seed is not mistaken for an unfilled
-    slot - every real placeholder ({target}, {session}, {auth_header}, ...) is
+    slot - every real placeholder ({target}, {session}, {auth_flags}, ...) is
     a lowercase/underscore identifier in braces."""
     placeholder = re.compile(r"\{[a-z_]+\}")
     for name, job in JOBS.items():
@@ -575,7 +575,7 @@ _REPROFILE_STDOUT = (
 def test_fill_template_fills_endpoints_as_shell_quoted_list():
     cmd = pod.fill_template(
         "printf '%s\\n' {endpoints} > /work/{session}/e.txt && "
-        "httpx -l /work/{session}/e.txt {auth_header}",
+        "httpx -l /work/{session}/e.txt {auth_flags}",
         {}, {"auth_context": {"cookies": [{"name": "s", "value": "v"}]}},
         session_id="sess-1", tool="httpx_reprofile",
         endpoints=["https://h/a", "https://h/b c"],
@@ -729,154 +729,22 @@ def test_pod_export_records_executed_command():
     assert export.stats["command"] == "whois example.com"
 
 
-def test_fill_template_rate_flags_gated_on_rate_profile():
+def test_no_per_pod_throttle_input_rate_profile_is_ignored():
+    """#243: the steering-fed throttle turn retired with the mid-run steering
+    machinery (D223-12) - a `rate_profile` extra no longer shapes the filled
+    command, and the pod graph takes no per-pod configuration turn."""
+    from polymerhus.recon.domain import pod as pod_module
     from polymerhus.recon.domain.pod import fill_template
-    tmpl = "ffuf -u {target}/FUZZ -of json {rate_flags}"
-    on = fill_template(tmpl, {"url": "https://x"}, {"rate_profile": "throttle"}, tool="ffuf")
-    off = fill_template(tmpl, {"url": "https://x"}, {}, tool="ffuf")
-    assert "-rate" in on and "{rate_flags}" not in on
-    assert off.strip() == "ffuf -u https://x/FUZZ -of json"  # no profile -> today's string
 
+    assert not hasattr(pod_module, "PodConfig")
+    assert not hasattr(pod_module, "default_configure_fn")
 
-# --- per-pod CONFIGURATOR (#94): the throttle decision moved here from the
-# job agent (decide_pod_selection, #81); the pod consults a stateful per-pod
-# `configurator` role turn exactly like its triager ---
-
-FFUF_RATE_JOB = JobSpec(
-    tool="ffuf", skill="fuzz",
-    command_template="ffuf -u {target}/FUZZ -of json {rate_flags}",
-    produces=["Endpoint"], consumes="BaseURL")
-
-WAF_SIGNAL = {"url": "https://flagged.example", "macro_kind": "waf_protected", "evidence": "e"}
-
-
-def test_pod_configurator_runs_stateful_per_pod_session_context():
-    seen = {}
-    captured = {"commands": []}
-
-    def configure_fn(job, input_asset, signals):
-        from polymerhus.recon.domain.pod import _pod_ctx
-        seen["ctx"] = _pod_ctx().get()
-        seen["signals"] = signals
-        return pod.PodConfig(rate_profile="throttle", rationale="preventive")
-
-    def exec_fn(cmd, sid, t):
-        captured["commands"].append(cmd)
-        return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
-
-    def curate_fn(a, o, p): return (len(a), len(o), a, o)
-
-    def triage_fn(er, a, j): return []
-
-    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
-                            configure_fn=configure_fn)
-    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://flagged.example"},
-                    "asset_context": "", "extra": {"steering": [WAF_SIGNAL]},
-                    "session_id": "s1", "iteration": 0, "project_id": "p1",
-                    "run_id": "run9", "phase": 2})
-    assert out["export"].verdict == "success"
-    # #94: the configurator ran under the per-(run, phase, tool, asset) pod session
-    ctx = seen["ctx"]
-    assert ctx is not None, "configurator must run under the per-pod session context"
-    assert ctx.address.run_id == "run9"
-    assert ctx.address.role_id == "configurator"
-    assert ctx.address.phase == 2
-    assert "run9" in ctx.address.thread_id and "configurator" in ctx.address.thread_id
-    assert seen["signals"] == [WAF_SIGNAL]
-    # the throttle decision reached the filled command ({rate_flags} slot)
-    assert captured["commands"], "the pod must have executed"
-    assert "-rate 5 -p 0.2" in captured["commands"][0]
-
-
-def test_pod_configurator_falls_back_stateless_without_run_id():
-    seen = {"ctx": "unset"}
-
-    def configure_fn(job, input_asset, signals):
-        from polymerhus.recon.domain.pod import _pod_ctx
-        seen["ctx"] = _pod_ctx().get()  # no run_id -> None (mirrors the triager)
-        return pod.PodConfig(rate_profile="throttle")
-
-    def exec_fn(cmd, sid, t): return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
-    def curate_fn(a, o, p): return (len(a), len(o), a, o)
-    def triage_fn(er, a, j): return []
-
-    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
-                            configure_fn=configure_fn)
-    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://flagged.example"},
-                    "asset_context": "", "extra": {"steering": [WAF_SIGNAL]},
-                    "session_id": "s1", "iteration": 0, "project_id": "p1"})
-    assert out["export"].verdict == "success"
-    assert seen["ctx"] is None
-
-
-def test_pod_configurator_fail_open_keeps_default_rate():
-    calls = {"n": 0}
-
-    def configure_fn(job, input_asset, signals):
-        calls["n"] += 1
-        raise RuntimeError("configurator llm down")
-
-    def exec_fn(cmd, sid, t): return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
-    def curate_fn(a, o, p): return (len(a), len(o), a, o)
-    def triage_fn(er, a, j): return []
-
-    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
-                            configure_fn=configure_fn)
-    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://flagged.example"},
-                    "asset_context": "", "extra": {"steering": [WAF_SIGNAL]},
-                    "session_id": "s1", "iteration": 0, "project_id": "p1",
-                    "run_id": "run9", "phase": 2})
-    # throttling is an adaptivity nicety - it must NEVER fail the pod
-    assert out["export"].verdict == "success"
-    assert calls["n"] == 1
-
-
-def test_pod_configurator_skipped_without_signals():
-    called = {"n": 0}
-
-    def configure_fn(job, input_asset, signals):
-        called["n"] += 1
-        raise AssertionError("must not be consulted without steering signals")
-
-    def exec_fn(cmd, sid, t): return ExecResult(stdout="", stderr="", returncode=0, duration_ms=1)
-    def curate_fn(a, o, p): return (len(a), len(o), a, o)
-    def triage_fn(er, a, j): return []
-
-    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
-                            configure_fn=configure_fn)
-    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://clean.example"},
-                    "asset_context": "", "extra": {"project_id": "p1"},
-                    "session_id": "s1", "iteration": 0, "project_id": "p1",
-                    "run_id": "run9", "phase": 2})
-    assert out["export"].verdict == "success"
-    assert called["n"] == 0
-
-
-def test_pod_configurator_consulted_once_across_gate_retries():
-    # gate -> configurator re-entry must NOT re-consult the LLM: the merged
-    # rate_profile persists in the pod state extra, so a retried command still
-    # throttles at the FIRST decision.
-    executions = {"n": 0}
-    calls = {"n": 0}
-
-    def configure_fn(job, input_asset, signals):
-        calls["n"] += 1
-        return pod.PodConfig(rate_profile="throttle")
-
-    def exec_fn(cmd, sid, t):
-        executions["n"] += 1
-        return ExecResult(stdout="", stderr="boom", returncode=0 if executions["n"] > 1 else 1,
-                          duration_ms=1)
-
-    def curate_fn(a, o, p): return (len(a), len(o), a, o)
-    def triage_fn(er, a, j): return []
-
-    g = pod.build_pod_graph(exec_fn=exec_fn, curate_fn=curate_fn, triage_fn=triage_fn,
-                            configure_fn=configure_fn)
-    out = g.invoke({"job": FFUF_RATE_JOB, "input_asset": {"url": "https://flagged.example"},
-                    "asset_context": "", "extra": {"steering": [WAF_SIGNAL]},
-                    "session_id": "s1", "iteration": 0, "project_id": "p1",
-                    "run_id": "run9", "phase": 2})
-    assert out["export"].verdict == "success"
-    assert executions["n"] == 2  # one retry
-    assert calls["n"] == 1  # configurator consulted exactly once for the pod
+    cmd = fill_template(
+        "ffuf -u {target}/FUZZ -of json {auth_flags}",
+        {"url": "https://x"},
+        {"rate_profile": "throttle",
+         "auth_context": {"cookies": [{"name": "s", "value": "v"}]}},
+        tool="ffuf",
+    )
+    assert "-rate" not in cmd  # unthrottled interim posture until #238
+    assert "-H 'Cookie: s=v'" in cmd  # the feed projection still applies

@@ -416,6 +416,7 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     address = AnalysisSession(run_id, "mechanism_typist")
 
     from polymerhus.app.llm import compaction as C  # noqa: PLC0415
+
     middleware = [C.build_role_compaction_middleware("mechanism_typist")]
 
     def invoke(messages, *, schema=None):
@@ -426,19 +427,25 @@ def stateful_invoke_fn(run_id: str, checkpointer):
     return invoke
 
 
-def _load_skill() -> str:
-    """The mechanism-typist's OWN skill (grilled #9): hypothesis-driven mechanism-typing
-    discipline + the >=6 breadth exemplars. NOT the assignment-oriented analyser skill."""
-    from polymerhus.recon.domain.skills import skill_for
+# The mechanism-typist role prompt (`prompts/technical-system.md`), memoized on
+# first call (no import-time I/O, CODING STANDARD section 6). A missing prompt
+# file is a defect: FAIL-CLOSED (raise).
+_TECHNICAL_SYSTEM_SKILL: str | None = None
 
-    return skill_for("analysis/technical-system", fallback=(
-        "You are the TechnicalSystem mechanism-typist. Define/extend the cross-cutting "
-        "technical Systems the streamed surface evidences and link them to Services as "
-        "typed Service->System edges - never Service props. Reason by hypothesis: for each "
-        "asset+observation, hypothesise which System it impacts (new or extending an "
-        "existing one) and verify against the evidence (a framework fingerprint alone is "
-        "never sufficient). Enrich each System's description with the adversarial insight."
-    ))
+
+def _load_skill() -> str:
+    """The mechanism-typist's OWN prompt (grilled #9): hypothesis-driven
+    mechanism-typing discipline + the >=6 breadth exemplars, read directly from
+    this module's `prompts/` dir. Memoized in-process; FAIL-CLOSED on a missing
+    file (raise). NOT the assignment-oriented analyser skill."""
+    global _TECHNICAL_SYSTEM_SKILL
+    if _TECHNICAL_SYSTEM_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415
+
+        _TECHNICAL_SYSTEM_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "technical-system.md"
+        ).read_text(encoding="utf-8")
+    return _TECHNICAL_SYSTEM_SKILL
 
 
 # --- the 3-call proposer body -------------------------------------------------

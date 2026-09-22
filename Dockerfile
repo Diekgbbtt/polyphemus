@@ -20,6 +20,10 @@ COPY lightrag/*.py /srv/lightrag/
 COPY db/ /srv/db/
 COPY skills/ /srv/skills/
 COPY gateway/ /srv/gateway/
+# The app-owned data root (#234): only the fault-KB catalogue is tracked, and
+# the loader fails closed without it. Everything else under /srv/data is runtime
+# memory the app creates (the dev compose mounts the host's ./data over this).
+COPY data/ /srv/data/
 COPY requirements-app.txt requirements-observability.txt requirements-crawl.txt requirements-gateway.txt /srv/
 # The FULL app runtime (previously baked into the removed `redamon-agent` base):
 # the langchain family, langgraph + its postgres checkpointer, the data-store

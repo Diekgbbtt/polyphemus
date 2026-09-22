@@ -8,7 +8,7 @@ at load time.
 
 Internal layering:
 - `recon.control`  - the impure orchestration layer (pipeline, jobs, job_agent,
-  orchestrator_agent, auth, batching, async_bridge, scope, steering, targeted):
+  orchestrator_agent, auth_feed, authn_loop, batching, async_bridge, scope, targeted):
   it decides *when and whether* to run.
 - `recon.domain`   - the model and the L0 sole-writer (curator, types, findings,
   pod, graph_read, selectors, noise_filter, skills, parsers): pure where possible.

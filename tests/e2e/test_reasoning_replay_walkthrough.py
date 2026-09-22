@@ -27,7 +27,7 @@ The path under assertion:
 Cost note: two real reasoning turns through the live gateway (sanctioned by
 the operator - the E7 full-path walkthrough).
 
-Model caveat: the walkthrough overrides `LLM_MODEL_TRIAGER` to
+Model caveat: the walkthrough overrides `LLM_TRIAGER` to
 `opencode-go:deepseek/deepseek-v4-pro` because the production flash model
 returns EMPTY `reasoning_content` on the go endpoint (verified live
 2026-08-18), so there is nothing to capture/replay. The reasoning-replay path
@@ -55,7 +55,7 @@ GATEWAY_ENV = {"LLM_GATEWAY_URL": gs.GATEWAY_URL}
 # opencode-go:deepseek/deepseek-v4-pro returns full reasoning_content on the
 # same endpoint. Per operator direction (option 1), override ONLY this
 # walkthrough's model to pro - production role config is left on flash.
-REPLAY_MODEL_ENV = {"LLM_MODEL_TRIAGER": "opencode-go:deepseek/deepseek-v4-pro"}
+REPLAY_MODEL_ENV = {"LLM_TRIAGER": "opencode-go:deepseek/deepseek-v4-pro"}
 REPLAY_ENV = {**GATEWAY_ENV, **REPLAY_MODEL_ENV}
 
 # The whole walkthrough runs in ONE in-container process: the checkpointer

@@ -169,7 +169,33 @@ def test_job_with_all_pods_failed_is_degraded_and_run_completes():
     assert registry.set_run_status_calls[-1] == ("run1", "complete", None)
 
 
-def test_auth_context_only_passed_to_use_auth_jobs():
+def test_feed_projects_store_material_only_to_use_auth_jobs(tmp_path):
+    """#243: the lazy feed - the gateway verdict binds the account IDENTIFIER
+    and each phase's tool configuration resolves the store material at
+    assembly. Request jobs get the flat request projection (snapshot +
+    located tokens); non-auth jobs are unchanged."""
+    from polymerhus.app.auth.store import AuthStore
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
+
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "proj1", overview={"login_endpoint": "https://x/login"},
+        accounts={"alice": {
+            "credentials": {"username": "u", "password": "p",
+                            "login_url": "https://x/login"},
+            "tokens": {"Authorization": {"value": "Bearer T",
+                                         "location": "header"}},
+            "steel": {"profile": "proj1-alice"},
+            "snapshot": {"cookies": [{"name": "sid", "value": "S"}]},
+        }})
+
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            return GatewayVerdict(outcome="authenticated", account="alice",
+                                  branch="request", rationale="t")
+
+        async def stop(self): pass
+
     seen_extra = {}
 
     async def run_job(job, input_assets, *, run_id, phase, extra):
@@ -177,7 +203,7 @@ def test_auth_context_only_passed_to_use_auth_jobs():
         return [PodExport(input_asset={}, verdict="success")]
 
     registry = FakeRegistry()
-    settings = {"target_domain": "*.t.com", "auth_context": {"cookies": []}}
+    settings = {"target_domain": "*.t.com"}
 
     asyncio.run(
         pipeline.run_pipeline(
@@ -187,21 +213,38 @@ def test_auth_context_only_passed_to_use_auth_jobs():
             load_settings=make_load_settings(settings),
             registry=registry,
             read_assets=make_read_assets(),
+            orchestrator_factory=lambda run_id: _Gateway(),
+            auth_store=store,
         )
     )
 
     # scope_domain rides in extra alongside project_id (D14/curator scope gate);
     # "*.t.com" -> seed_host "t.com".
     assert seen_extra["subfinder"] == {"project_id": "proj1", "scope_domain": "t.com"}
-    assert seen_extra["httpx"] == {
-        "project_id": "proj1", "scope_domain": "t.com", "auth_context": {"cookies": []}}
-    assert seen_extra["katana"] == {
-        "project_id": "proj1", "scope_domain": "t.com", "auth_context": {"cookies": []}}
-    assert seen_extra["kiterunner"] == {
-        "project_id": "proj1", "scope_domain": "t.com", "auth_context": {"cookies": []}}
+    assert seen_extra["httpx"]["auth_account"] == "alice"  # identifier rides
+    assert seen_extra["httpx"]["auth_context"] == {  # store-resolved projection
+        "cookies": [{"name": "sid", "value": "S"}],
+        "Authorization": "Bearer T"}
+    assert seen_extra["katana"]["auth_context"] == seen_extra["httpx"]["auth_context"]
+    # the agent-driven crawl gets the persisted profile key plus cookies only
+    assert seen_extra["steel_crawl"]["auth_account"] == "alice"
+    assert seen_extra["steel_crawl"]["steel_profile"] == "proj1-alice"
+    assert seen_extra["steel_crawl"]["auth_context"] == {
+        "cookies": [{"name": "sid", "value": "S"}]}
 
 
-def test_auth_context_absent_when_settings_have_none():
+def test_feed_absent_without_a_verdict_account():
+    """#243: no gateway account (anonymous verdict) - use_auth jobs run with
+    no auth keys at all, exactly like non-auth jobs."""
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
+
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            return GatewayVerdict(outcome="anonymous",
+                                  rationale="no authenticated surface")
+
+        async def stop(self): pass
+
     seen_extra = {}
 
     async def run_job(job, input_assets, *, run_id, phase, extra):
@@ -220,6 +263,7 @@ def test_auth_context_absent_when_settings_have_none():
             load_settings=make_load_settings(settings),
             registry=registry,
             read_assets=make_read_assets(),
+            orchestrator_factory=lambda run_id: _Gateway(),
         )
     )
 
@@ -729,14 +773,16 @@ def test_job_stats_surface_pod_capture_coverage(monkeypatch):
         load_settings=lambda pid: {"target_domain": "*.example.com"},
         registry=CaptureRegistry(),
         read_assets=lambda *a, **k: [{"name": "example.com"}],
-        read_steering_signals=lambda pid: [],
     ))
 
     assert captured["subfinder"]["capture"] == {"sent": True, "refs": 2, "warning": None}
     assert captured["dnsx"]["capture"] == {"sent": False, "refs": 0, "warning": None}
 
 
-def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch):
+def test_no_mid_run_steering_inputs_pass_unfiltered_and_no_steering_key(monkeypatch):
+    """#243 (T4): the mid-run steering machinery is removed entirely - no
+    per-phase routing turn, no signal refresh, no per-job steering input.
+    Inputs pass unfiltered and no `steering` key rides any job's extra."""
     import asyncio
     from polymerhus.recon.control import pipeline
 
@@ -751,11 +797,11 @@ def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch)
         return []
 
     captured_inputs = {}
-    captured_steering = {}
+    captured_extras = {}
 
     async def fake_run_job(job, input_assets, *, run_id, phase, extra):
         captured_inputs[job.tool] = [a.get("url") or a.get("name") for a in input_assets]
-        captured_steering[job.tool] = extra.get("steering")
+        captured_extras[job.tool] = dict(extra)
         return []
 
     class FakeRegistry:
@@ -763,7 +809,13 @@ def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch)
         def set_run_status(self, *a, **k): pass
         def upsert_job(self, *a, **k): pass
 
-    signals = [{"url": X, "macro_kind": "waf_protected", "evidence": "Incapsula"}]
+    class _Gateway:
+        async def run_gateway(self, **kw):
+            from polymerhus.recon.control.authn_loop import GatewayVerdict
+            return GatewayVerdict(outcome="authenticated", account="alice",
+                                  branch="request", rationale="t")
+
+        async def stop(self): pass
 
     monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
 
@@ -774,40 +826,36 @@ def test_orchestrator_agent_routes_flagged_host_and_threads_signals(monkeypatch)
         load_settings=lambda pid: {"target_domain": "*.example.com"},
         registry=FakeRegistry(),
         read_assets=fake_read_assets,
-        read_steering_signals=lambda project_id, driver=None: signals,
-        decide_routing=lambda sigs, phase_jobs, llm=None: {"katana": [X]},
+        orchestrator_factory=lambda run_id: _Gateway(),
     ))
 
-    assert captured_inputs["katana"] == [Y]                 # routed away by the orchestrator agent
-    assert set(captured_inputs["steel_crawl"]) == {X, Y}    # steel keeps the flagged host
-    assert captured_steering["katana"] == signals           # signals threaded to the job agent
+    assert set(captured_inputs["katana"]) == {X, Y}  # inputs pass unfiltered
+    for tool, extra in captured_extras.items():
+        assert "steering" not in extra, f"{tool} carries a steering key"  # T4 removed
+    assert "read_steering_signals" not in dir(pipeline)  # the reader is gone too
 
 
-def test_pipeline_default_seam_is_the_mailbox_actor_and_reaps_it(monkeypatch):
-    """feat/async-actor-agents: with NO `decide_routing` injected, the pipeline's
-    steering seam is the recon-orchestrator MAILBOX ACTOR - one actor constructed
-    for the run, fed each signal-carrying phase, STOPPED on the run's exit path -
-    and its per-phase exclusions drive the same input filtering."""
+def test_pipeline_default_seam_is_the_gateway_actor_and_reaps_it(monkeypatch, tmp_path):
+    """#223 T3 (#242): with no `orchestrator_factory` injected, the pipeline's
+    production default is the recon-orchestrator GATEWAY actor - constructed
+    once for the run through the module default factory, its single turn
+    resolving before any phase, STOPPED on the run's exit path - and the
+    verdict's account identifier rides the `use_auth` jobs' state."""
     import asyncio
     from langgraph.checkpoint.memory import InMemorySaver
 
     from polymerhus.recon.control import pipeline
     from polymerhus.recon.control.orchestrator_agent import ReconOrchestratorActor
 
-    X = "https://ib.example.com"
-    Y = "https://app.example.com"
-
     def fake_read_assets(node_type, project_id, where=None, *, driver=None):
         if node_type == "Subdomain":
             return [{"name": "app.example.com"}]
-        if node_type == "BaseURL":
-            return [{"url": X}, {"url": Y}]
         return []
 
-    captured_inputs = {}
+    captured_extras = {}
 
     async def fake_run_job(job, input_assets, *, run_id, phase, extra):
-        captured_inputs[job.tool] = [a.get("url") or a.get("name") for a in input_assets]
+        captured_extras[job.tool] = dict(extra)
         return []
 
     class FakeRegistry:
@@ -819,13 +867,16 @@ def test_pipeline_default_seam_is_the_mailbox_actor_and_reaps_it(monkeypatch):
     from langchain_core.messages import AIMessage
     from langchain_core.outputs import ChatGeneration, ChatResult
 
+    from polymerhus.app.auth.store import AuthStore
+    from polymerhus.app.llm.skills import SkillStore
+
     class _ToolFake(BaseChatModel):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             return ChatResult(generations=[ChatGeneration(message=AIMessage(
                 content="",
-                tool_calls=[{"name": "RoutingDecision",
-                             "args": {"exclusions": [{"job": "katana", "exclude_urls": [X]}],
-                                      "rationale": "waf"},
+                tool_calls=[{"name": "GatewayVerdict",
+                             "args": {"outcome": "authenticated", "account": "alice",
+                                      "branch": "request", "rationale": "live"},
                              "id": "c1", "type": "tool_call"}],
             ))])
 
@@ -836,45 +887,47 @@ def test_pipeline_default_seam_is_the_mailbox_actor_and_reaps_it(monkeypatch):
         def bind_tools(self, tools, **kwargs):
             return self
 
+    store = AuthStore(tmp_path)
+    store.replace_operator_state(
+        "p1", overview={"login_endpoint": "https://x/login"},
+        accounts={"alice": {"credentials": {"username": "u", "password": "p",
+                                            "login_url": "https://x/login"}}})
+
     spawned = []
     stopped = []
+    real_default = pipeline._default_orchestrator_factory
 
     class _SpyActor(ReconOrchestratorActor):
-        def __init__(self, run_id, **kw):
-            super().__init__(run_id, **kw)
-            spawned.append(run_id)
-
         async def stop(self):
             stopped.append(self.thread_id)
             await super().stop()
 
-    def _factory(run_id):
+    def _recording_default(run_id):
+        spawned.append(run_id)
         return _SpyActor(
-            run_id,
-            checkpointer=InMemorySaver(),
-            model_factory=lambda role_id: _ToolFake(),
-            observe=False,
+            run_id, project_id="p1", checkpointer=InMemorySaver(),
+            model_factory=lambda role_id: _ToolFake(), observe=False,
+            compaction=False, auth_store=store,
+            skill_store=SkillStore(tmp_path), kali_tools=[],
         )
 
-    signals = [{"url": X, "macro_kind": "waf_protected", "evidence": "Incapsula"}]
-
+    monkeypatch.setattr(pipeline, "_default_orchestrator_factory", _recording_default)
     monkeypatch.setattr(pipeline, "_touch_heartbeat", lambda run_id: None)
+    assert real_default("probe") is not None  # the production default builds
 
     asyncio.run(pipeline.run_pipeline(
         "p1", run_id="r1",
-        job_subset=["subfinder", "httpx", "katana", "steel_crawl"],
+        job_subset=["subfinder", "httpx"],
         run_job=fake_run_job,
         load_settings=lambda pid: {"target_domain": "*.example.com"},
         registry=FakeRegistry(),
         read_assets=fake_read_assets,
-        read_steering_signals=lambda project_id, driver=None: signals,
-        orchestrator_factory=_factory,
     ))
 
     assert spawned == ["r1"]                    # ONE actor per run (production default)
     assert stopped == ["r1:job_orchestrator"]   # actor reaped on the run's exit path
-    assert captured_inputs["katana"] == [Y]     # the actor's RoutingDecision excluded X
-
+    assert captured_extras["httpx"].get("auth_account") == "alice"  # verdict bound
+    assert "auth_account" not in captured_extras["subfinder"]
 
 def test_pipeline_terminal_runs_the_shared_run_scoped_flush(monkeypatch):
     """#211 C8/P7c: the pipeline terminal archives THIS run's threads through the

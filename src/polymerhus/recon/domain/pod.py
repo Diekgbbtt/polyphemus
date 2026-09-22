@@ -1,12 +1,12 @@
 """Recon pod subgraph: configurator -> execute -> gate -> parser -> triager -> curator.
 
 `build_pod_graph` takes the side-effecting collaborators (exec_fn, curate_fn,
-triage_fn, and optionally configure_fn) as parameters so callers can inject
+triage_fn) as parameters so callers can inject
 fakes in tests - no live Kali/LLM/Neo4j is touched by the unit tests in
 tests/recon/test_pod.py.
 
-`default_exec_fn`, `default_configure_fn` and `default_triage_fn` wire the real
-kali MCP client and the configurator/triager LLMs respectively, but they
+`default_exec_fn` and `default_triage_fn` wire the real
+kali MCP client and the triager LLM respectively, but they
 resolve their clients lazily on first call (inside the function body).
 Importing this module must never perform network I/O or require env vars to be
 set - `pod_graph` is built from the defaults at import time, but building it
@@ -23,12 +23,13 @@ import os
 
 from langgraph.graph import StateGraph, START, END
 from pydantic import BaseModel, Field, model_validator
-from typing import Any, Literal
+from typing import Any
 
 from polymerhus.recon.domain.types import (
     PodState, ToolInvocation, PodExport, ExecResult, AssetDelta, Observation, JobSpec,
     CaptureContext,
 )
+from polymerhus.recon.control.auth_feed import serialize_auth_flags
 from polymerhus.recon.domain.parsers import get_parser
 from polymerhus.recon.domain.parsers import graphql_parser, takeover_parser
 from polymerhus.recon.domain.findings import finding_to_observation
@@ -247,10 +248,12 @@ def fill_template(
     - {endpoints} (#208): the reprofile pod's full endpoint list, shell-quoted
       and space-joined, so ONE httpx exec can be fed the whole probe set via a
       `printf ... > file && httpx -l file` command. Empty when not provided.
-    - {auth_header}: empty unless extra["auth_context"] is present, in which
-      case it is serialized to the tool-appropriate cookie flag via
-      `_auth_header`. Auth-eligibility is decided ONCE, upstream: the pipeline
-      (`run_pipeline`) injects `auth_context` into `extra` only for `use_auth`
+    - {auth_flags}: empty unless extra["auth_context"] carries the feed's
+      flat request projection, in which case it is serialized to the
+      tool-appropriate header flags via the auth feed (`control.auth_feed`,
+      resolved lazily from the store through the bound account identifier).
+      Auth-eligibility is decided ONCE, upstream: the pipeline
+      (`run_pipeline`) injects the projection into `extra` only for `use_auth`
       jobs, so a non-auth job never carries it and this gate needs no second
       `use_auth` check (C1 single-owner consolidation).
     """
@@ -258,107 +261,20 @@ def fill_template(
     target = input_asset.get("name") or input_asset.get("url") or input_asset.get("address") or ""
     domain = input_asset.get("name") or input_asset.get("domain") or target
     baseurl = input_asset.get("url") or input_asset.get("baseurl") or target
-    auth_header = ""
+    auth_flags = ""
     if extra.get("auth_context"):
-        auth_header = _auth_header(extra["auth_context"], tool)
-    rate_flags = _RATE_FLAGS.get(tool, "") if (extra.get("rate_profile") == "throttle") else ""
+        auth_flags = serialize_auth_flags(extra["auth_context"], tool)
 
     result = command_template
     result = result.replace("{target}", str(target))
     result = result.replace("{domain}", str(domain))
     result = result.replace("{baseurl}", str(baseurl))
     result = result.replace("{session}", str(session_id))
-    result = result.replace("{auth_header}", auth_header)
-    result = result.replace("{rate_flags}", rate_flags)
+    result = result.replace("{auth_flags}", auth_flags)
     if "{endpoints}" in result:
         quoted = " ".join(shlex.quote(u) for u in endpoints or [])
         result = result.replace("{endpoints}", quoted)
     return result
-
-
-# Tools whose auth-cookie flag is `--headers "Cookie: ..."` rather than the
-# `-H "Cookie: ..."` form shared by httpx/katana/ffuf/kiterunner (design §4 table).
-_HEADERS_FLAG_TOOLS = {"arjun"}
-
-# graphql-cop's own --headers format: ALL headers in one comma-joined
-# "Key:Value,Key2:Value2" argument (no space after the colon) - distinct from
-# both the default repeated -H flag and arjun's newline-joined --headers blob.
-_COMMA_HEADERS_FLAG_TOOLS = {"graphql-cop"}
-
-# Conservative preventive rate profile, applied ONLY when the pod CONFIGURATOR
-# marked this pod's extra["rate_profile"] == "throttle" (the per-pod agent turn
-# that replaced the job-level `decide_pod_selection`, #81 -> #94). Only ffuf
-# currently carries the {rate_flags} slot: it consumes BaseURL, so a
-# WAF-flagged host actually reaches the configurator and can be throttled.
-# httpx consumes Subdomain and runs in the detection phase BEFORE any WAF
-# signal exists, so it can never be reactively throttled - its {rate_flags}
-# slot was a dead no-op and was removed. katana already carries -rl/-c and is
-# handled by routing, so it is absent too.
-_RATE_FLAGS = {"ffuf": "-rate 5 -p 0.2"}
-
-
-# auth_context is header-agnostic: `cookies` is the structured source of the
-# `Cookie` header, and every OTHER key (except these reserved structural ones,
-# which are not HTTP headers) is emitted verbatim as its own request header.
-# The role/realm structural keys (`roles`, `default_role`, `realm`; FR-AUTH) are
-# reserved too, so even if a caller hands a set that still carries them they can
-# never leak out as HTTP headers (defence in depth - the selector already strips
-# roles/default_role; `realm` is a role's own metadata tag).
-_RESERVED_AUTH_KEYS = {"cookies", "scope", "credentials", "roles", "default_role", "realm"}
-
-
-def _iter_auth_headers(auth_context: dict):
-    """Yield `(name, value)` HTTP header pairs from `auth_context`.
-
-    - `cookies` (`[{name, value}, ...]`) is joined into the peculiar pair-form
-      `Cookie` header value (`k=v; k2=v2`) - the Cookie header wants key=value
-      pairs, not one opaque token.
-    - every other key except the reserved structural keys (`scope`,
-      `credentials`) is an arbitrary header (Authorization, X-Api-Key, ...),
-      yielded verbatim. A literal `Cookie` key is skipped (the API layer
-      rejects it; the `cookies` list is the one source of the Cookie header).
-    """
-    cookies = auth_context.get("cookies") or []
-    cookie_str = "; ".join(
-        f"{c['name']}={c['value']}" for c in cookies if c.get("name") and c.get("value")
-    )
-    if cookie_str:
-        yield ("Cookie", cookie_str)
-    for name, value in auth_context.items():
-        if name in _RESERVED_AUTH_KEYS or name.lower() == "cookie":
-            continue
-        if isinstance(value, str) and value:
-            yield (name, value)
-
-
-def _auth_header(auth_context: dict, tool: str) -> str:
-    """Serialize `auth_context` into tool-appropriate header CLI flags.
-
-    Header-agnostic: the `cookies` list becomes the `Cookie` header and any
-    other key (except the reserved `scope`/`credentials`) becomes its own
-    header. Every `name: value` is shell-quoted (`shlex`) so an operator-
-    supplied token can never break the command string.
-
-    `-H`-flag tools take one repeatable flag per header; arjun's `--headers`
-    takes all headers in a single newline-separated argument; graphql-cop's
-    `--headers` takes all headers in a single comma-joined `Key:Value` argument
-    (no space after the colon). Returns "" when nothing applies, so a
-    template's `{auth_header}` placeholder collapses to nothing rather than
-    leaving a dangling flag behind. Request-tool only - the Steel crawl injects
-    cookies via CDP separately.
-    """
-    if not auth_context:
-        return ""
-    pairs = list(_iter_auth_headers(auth_context))
-    if not pairs:
-        return ""
-    if tool in _HEADERS_FLAG_TOOLS:
-        blob = "\n".join(f"{name}: {value}" for name, value in pairs)
-        return f"--headers {shlex.quote(blob)}"
-    if tool in _COMMA_HEADERS_FLAG_TOOLS:
-        blob = ",".join(f"{name}:{value}" for name, value in pairs)
-        return f"--headers {shlex.quote(blob)}"
-    return " ".join(f"-H {shlex.quote(f'{name}: {value}')}" for name, value in pairs)
 
 
 def _best_effort_triage(triage_fn, exec_result, assets, job) -> list:
@@ -377,15 +293,16 @@ def _best_effort_triage(triage_fn, exec_result, assets, job) -> list:
         return []
 
 
-def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
+def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
     """Build the compiled recon-pod subgraph, injecting the side-effecting
     collaborators: exec_fn(command, session_id, timeout_s) -> ExecResult,
     curate_fn(assets, observations, project_id) -> (int, int),
-    triage_fn(exec_result, assets, job) -> list[Observation], and
-    configure_fn(job, input_asset, signals) -> PodConfig | None (the per-pod
-    configuration turn: decides how this pod should run, e.g. its
-    rate_profile). configure_fn is optional - without it the configurator
-    node is the deterministic command-fill only.
+    triage_fn(exec_result, assets, job) -> list[Observation].
+
+    The configurator node is the deterministic command-fill only (#243:
+    the per-pod steering-fed throttle turn retired with the mid-run
+    steering machinery, D223-12 - request phases run unthrottled until the
+    #238 rate-limit work lands its profile-driven configuration).
     """
     # #196: resolved ONCE per graph - the seam either can carry a capture context
     # or it cannot, and that does not change between this pod's executions.
@@ -410,42 +327,6 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn, configure_fn=None):
         job = state["job"]
         extra = dict(state.get("extra") or {})
         input_asset = state["input_asset"]
-        # #94: per-pod configuration is the pod's OWN agent turn (exactly like
-        # the triager). When configure_fn is injected and the pod carries the
-        # orchestration steering signals (`extra["steering"]`), the pod consults
-        # it ONCE (first iteration only - gate retries reuse the decision
-        # already merged into `extra`) and a "throttle" decision is merged into
-        # the pod extra BEFORE the command template is filled. Same per-pod
-        # context discipline as the triager node: run_id present -> STATEFUL
-        # `configurator` role turn on the pod's own session thread (stable
-        # run/phase/tool/asset discriminator); no run_id (a directly-invoked
-        # test graph) -> configure_fn's own stateless fallback. Fail-open: no
-        # signals, an error, or a None decision leaves the pod at its default.
-        if configure_fn is not None and "rate_profile" not in extra:
-            signals = extra.get("steering") or []
-            if signals:
-                config = None
-                try:
-                    run_id = state.get("run_id")
-                    if run_id is not None:
-                        from polymerhus.app.llm.checkpoints import get_session_checkpointer
-                        from polymerhus.app.llm.session_address import SessionContext
-
-                        address = pod_session(run_id, state.get("phase"), job,
-                                              input_asset, role_id="configurator")
-                        token = _pod_ctx().set(
-                            SessionContext(address, get_session_checkpointer()))
-                        try:
-                            config = configure_fn(job, input_asset, signals)
-                        finally:
-                            _pod_ctx().reset(token)
-                    else:
-                        config = configure_fn(job, input_asset, signals)
-                except Exception:  # noqa: BLE001 - throttling never fails a pod
-                    logger.warning("pod configurator failed for %s; pod runs at default rate",
-                                   _input_asset_url(input_asset), exc_info=True)
-                if config is not None and getattr(config, "rate_profile", None) == "throttle":
-                    extra["rate_profile"] = "throttle"
         if job.batch and "batch" in input_asset:
             # Batched job (jsluice, D17/Q6): the pod runs one command over a
             # list of bundle URLs, not a single-asset template fill.
@@ -801,79 +682,26 @@ class _ObservationBatch(BaseModel):
 # Max parsed assets serialized into the triager prompt (see default_triage_fn).
 _MAX_TRIAGE_ASSETS = int(os.environ.get("MAX_TRIAGE_ASSETS", "200"))
 
+# The triager role prompt, memoized on first call (no import-time I/O, CODING
+# STANDARD section 6). A missing prompt file is a defect: reads FAIL CLOSED.
+_TRIAGER_SKILL: str | None = None
+
+
 def _load_triager_skill() -> str:
-    """The triager system prompt = the writing-observations skill, loaded via the
-    shared `skill_for` (FR-SKILLIF): single-sourced from
-    skills/recon/triager/writing-observations/SKILL.md, frontmatter stripped,
-    cached, and degraded to '' (no system prompt) if the mount is unavailable."""
-    from polymerhus.recon.domain.skills import skill_for
-    return skill_for("recon/triager/writing-observations")
+    """The triager system prompt = the writing-observations role prompt, read
+    directly from this module's `prompts/` dir. Memoized on first call (no
+    import-time I/O); FAIL-CLOSED - a missing prompt file raises instead of
+    degrading, so a role never reasons without its prompt."""
+    global _TRIAGER_SKILL
+    if _TRIAGER_SKILL is None:
+        from pathlib import Path  # noqa: PLC0415 - lazy, mirrors the reader convention
+        _TRIAGER_SKILL = (
+            Path(__file__).resolve().parent / "prompts" / "writing-observations.md"
+        ).read_text(encoding="utf-8")
+    return _TRIAGER_SKILL
 
 
 logger = logging.getLogger(__name__)
-
-
-class PodConfig(BaseModel):
-    """The configurator role's per-pod decision: how this pod should run.
-    `rate_profile` "throttle" applies the conservative preventive rate (the
-    `{rate_flags}` command slot) - a deliberate choice against a
-    not-yet-flagged host; "default" leaves the pod at its normal rate."""
-
-    rate_profile: Literal["default", "throttle"] = "default"
-    rationale: str = ""
-
-
-def default_configure_fn(job: JobSpec, input_asset: dict, signals: list[dict]) -> PodConfig | None:
-    """Real collaborator: ask the configurator LLM how this pod should run.
-
-    The per-asset throttle decision that once lived on the job agent
-    (`decide_pod_selection`, #81) moved HERE (#94): a pod now composes its own
-    configurator exactly like its triager - per pod, per asset, statefully.
-    Builds its chat model lazily on each call.
-
-    #94: when the configurator node set a per-pod session context, run
-    STATEFUL - the `configurator` role resumes its per-pod thread via
-    `ToolStrategy`, KEEPING the function_calling path (`PodConfig` is a fully
-    closed schema, so the native json_schema path would also work, but the
-    stateful turn is tool-calling by construction). With no context (a
-    directly-invoked pod graph in tests, or a pod carrying no run_id), fall
-    back to the stateless #73-retry `invoke_role`. Fail-open: None (exhausted
-    generation or an error) -> the pod stays at its default rate. Throttling
-    is an adaptivity nicety - it must NEVER fail a pod."""
-    url = _input_asset_url(input_asset)
-    prompt = (
-        f"Pod for job {job.tool} targeting {url}.\n"
-        f"Job command template: {job.command_template}\n"
-        f"Input asset: {input_asset}\n"
-    )
-    if signals:
-        prompt += (
-            "\nLive pipeline steering signals relevant to this target:\n"
-            + "\n".join(f"- {s}" for s in signals)
-        )
-    prompt += (
-        "\nDecide the pod's rate_profile: 'throttle' only as a deliberate "
-        "preventive choice against a not-yet-flagged host; 'default' for "
-        "everything else."
-    )
-    from langchain_core.messages import HumanMessage
-
-    try:
-        ctx = _pod_ctx().get()
-        if ctx is not None:
-            from polymerhus.app.llm.session import stateful_turn
-            from polymerhus.app.llm import compaction as C
-
-            return stateful_turn("configurator", ctx.address, [HumanMessage(content=prompt)],
-                                 checkpointer=ctx.checkpointer, schema=PodConfig,
-                                 middleware=[C.cached_role_compaction_middleware("configurator")])
-        from polymerhus.app.llm.roles import invoke_role
-
-        return invoke_role("configurator", [HumanMessage(content=prompt)], schema=PodConfig)
-    except Exception:
-        logger.warning("configurator failed for %s; pod runs at default rate",
-                       url, exc_info=True)
-        return None
 
 
 def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: JobSpec) -> list[Observation]:
@@ -925,9 +753,15 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
     if ctx is not None:
         from polymerhus.app.llm.session import stateful_turn
         from polymerhus.app.llm import compaction as C
+        from polymerhus.app.auth.seams import auth_capable_binding  # noqa: PLC0415
+
+        binding = auth_capable_binding("triager")
         result = stateful_turn("triager", ctx.address, messages,
                                checkpointer=ctx.checkpointer, schema=_ObservationBatch,
-                               middleware=[C.cached_role_compaction_middleware("triager")])
+                               tools=binding.tools,
+                               middleware=[C.cached_role_compaction_middleware("triager")]
+                               + binding.middleware,
+                               context=binding.context)
     else:
         result = invoke_role("triager", messages, schema=_ObservationBatch)
     return result.observations if result else []  # None = exhausted generation -> no observations
@@ -935,5 +769,4 @@ def default_triage_fn(exec_result: ExecResult, assets: list[AssetDelta], job: Jo
 
 pod_graph = build_pod_graph(
     exec_fn=default_exec_fn, curate_fn=curate, triage_fn=default_triage_fn,
-    configure_fn=default_configure_fn,
 )

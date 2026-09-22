@@ -64,13 +64,16 @@ def test_all_three_proposers_pass_compaction_middleware(monkeypatch):
 
     assert set(seen) == {"assigner", "data_modeller", "mechanism_typist"}
     for role in seen:
+        # Compaction is the WHOLE chain for an analysis proposer: it is
+        # skill-exempt (ADR A9 exemption amendment), so no L1 index rides it.
         assert len(seen[role]) == 1
         _assert_compaction_middleware(seen[role][0])
+        assert "_skill_index" not in {type(m).__name__ for m in seen[role]}
 
 
-# --- the recon-pod roles pass a shared per-role middleware ---------------------
+# --- the recon-pod triager passes its shared per-role middleware -----------------
 
-def test_recon_pod_configurator_and_triager_pass_compaction_middleware(monkeypatch):
+def test_recon_pod_triager_passes_compaction_middleware(monkeypatch):
     from polymerhus.app.llm.session_address import PodSession, SessionContext
     from polymerhus.recon.domain import pod
     from polymerhus.recon.domain.types import ExecResult, JobSpec
@@ -90,14 +93,17 @@ def test_recon_pod_configurator_and_triager_pass_compaction_middleware(monkeypat
     token = pod._pod_ctx().set(ctx)
     try:
         pod.default_triage_fn(exec_result, [], job)
-        pod.default_configure_fn(job, {"url": "https://a.example"}, [])
     finally:
         pod._pod_ctx().reset(token)
 
-    assert set(seen) == {"triager", "configurator"}
-    for role in seen:
-        assert len(seen[role]) == 1
-        _assert_compaction_middleware(seen[role][0])
+    # The per-pod throttle turn retired with the steering machinery (#243),
+    # so only the triager's stateful turn remains - still carrying the
+    # compaction middleware plus the L1 skill index (ADR A9: the triager is
+    # BOUND - it reads delivered web artefacts).
+    assert set(seen) == {"triager"}
+    assert len(seen["triager"]) == 2
+    _assert_compaction_middleware(seen["triager"][0])
+    assert type(seen["triager"][1]).__name__ == "_skill_index"
 
 
 def test_cached_role_middleware_is_shared_per_role():

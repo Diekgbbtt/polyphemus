@@ -120,8 +120,8 @@ and are **not** part of this work:
 | `LIGHTRAG_BASE_API_URL` | `http://lightrag:9621` (compose) / `http://127.0.0.1:9621` (host) | falls back to `LIGHTRAG_API_URL` |
 | `LIGHTRAG_API_KEY` | optional | sent as `X-API-Key` when set |
 | `LIGHTRAG_TIMEOUT_SECONDS` | `30` | LightRAG client request timeout |
-| `LLM_MODEL_HUNTING_HUNTER` | `swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731` | **required** to run a real hunt (hunting module bootstrap validates it) |
-| `LLM_MODEL_HUNTING_ORCHESTRATOR` | `swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731` | **required** to run a real hunt |
+| `LLM_HUNTING_HUNTER` | `swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731` | **required** to run a real hunt (hunting module bootstrap validates it) |
+| `LLM_HUNTING_ORCHESTRATOR` | `swissai:RCP-AIaaS/deepseek-ai/DeepSeek-V4-Flash-0731` | **required** to run a real hunt |
 | `API_KEY_SWISSAI` | secret | required by `build_chat_model` for the `swissai` provider (`API_KEY_<PROVIDER>` convention) |
 | standard platform vars | `NEO4J_URI`, `NEO4J_USER`, `NEO4J_PASSWORD`, `POSTGRES_DSN`, `KALI_MCP_URL` | required by `config.py` at import |
 
@@ -325,7 +325,7 @@ SwissAI DeepSeek Flash:
    guaranteed URL into the candidate; wire that when running against real
    assets.
 5. **Environment variables required for a real hunt**: the hunting roles
-   (`LLM_MODEL_HUNTING_HUNTER`/`ORCHESTRATOR`) and `API_KEY_SWISSAI` are not in
+   (`LLM_HUNTING_HUNTER`/`ORCHESTRATOR`) and `API_KEY_SWISSAI` are not in
    `.env` by default; a real run needs them set (see §4.1). The live tests
    exported them at runtime without writing files.
 6. **SwissAI endpoint flakiness**: a transient `502` was observed once; the

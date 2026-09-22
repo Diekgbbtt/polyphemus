@@ -7,7 +7,7 @@ overlay integration, and the 2026-08-04 structured output runtime refactor.
 ## Decision
 
 Use LightRAG's OpenAI-compatible binding, but keep the LightRAG indexing backend
-separate from the repository's `LLM_MODEL_<ROLE>` agent roles.
+separate from the repository's `LLM_<ROLE>` agent roles.
 
 Run methodology retrieval as two isolated LightRAG workspaces:
 
@@ -57,13 +57,13 @@ The existing `triager` and `job_orchestrator` roles are configured with DeepSeek
 OpenRouter:
 
 ```env
-LLM_MODEL_TRIAGER=openrouter:deepseek/deepseek-v4-flash
-LLM_MODEL_JOB_ORCHESTRATOR=openrouter:deepseek/deepseek-v4-flash
+LLM_TRIAGER=openrouter:deepseek/deepseek-v4-flash
+LLM_JOB_ORCHESTRATOR=openrouter:deepseek/deepseek-v4-flash
 ```
 
 The first stable WSTG KB was produced with SwissAI as the LLM provider and
 `apertus-ai/Apertus-v1.5-70B` as the concrete model. LightRAG does not consume
-the repository's `LLM_MODEL_<ROLE>` convention directly; configure the API
+the repository's `LLM_<ROLE>` convention directly; configure the API
 server variables explicitly:
 
 ```env

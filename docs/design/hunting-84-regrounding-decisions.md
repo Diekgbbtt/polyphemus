@@ -18,7 +18,7 @@ pre-merge state.
 
 **Decision:** Register `pod_runner` and `pod_triager` in `HUNTING_ROLES` (`app/llm/providers.py`) as `session` with `thinking="high"` for both.
 
-**Model keys:** `LLM_MODEL_POD_RUNNER` and `LLM_MODEL_POD_TRIAGER` (one env var per agent).
+**Model keys:** `LLM_POD_RUNNER` and `LLM_POD_TRIAGER` (one env var per agent).
 Precedent is `HUNTING_ROLES` one-key-per-agent (`hunting_orchestrator` / `hunting_hunter`), not the `ROLES` many-to-one analyser sharing.
 `validate_hunting_llm_config` is the sole validator (hunting bootstrap), never app boot.
 
@@ -183,7 +183,7 @@ The pod binding reads the parent's `hunt_session` ContextVar to derive `run_id` 
 
 **Decision:** Drop the stateless `invoke_role` lane for both `pod_runner` and `pod_triager`. The default seams are pure `stateful_turn` (ToolStrategy, high thinking, compaction middleware on the `create_agent` agent). If the LLM does not support structured output or statefulness primitives the agents fail silently; the parallel capability-adaptive layer owns that rare case.
 
-**Risks accepted:** Contract tier injects fakes so unaffected; direct `arun_pod` without injection and without `LLM_MODEL_POD_*` will hard-fail at `stateful_turn` (resolve_role) instead of degrading to symbolic - acceptable as rare. E1 isolated scaffold uses `symbolic_runner_step_fn` so safe; a future real-LLM E1 needs a manually seeded `HuntSession` + checkpointer. No degraded-by-fallback marker - observability relies on `stateful_turn` failure logging + the adaptive layer.
+**Risks accepted:** Contract tier injects fakes so unaffected; direct `arun_pod` without injection and without `LLM_POD_*` will hard-fail at `stateful_turn` (resolve_role) instead of degrading to symbolic - acceptable as rare. E1 isolated scaffold uses `symbolic_runner_step_fn` so safe; a future real-LLM E1 needs a manually seeded `HuntSession` + checkpointer. No degraded-by-fallback marker - observability relies on `stateful_turn` failure logging + the adaptive layer.
 
 **Files:** `src/polymerhus/attack/hunting/pod/agents.py` (remove fallback branches).
 

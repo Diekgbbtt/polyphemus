@@ -75,9 +75,9 @@ def test_project_exists_false(monkeypatch):
 
 
 def test_load_settings_returns_recon_jsonb(monkeypatch):
-    cur = patch_connect(monkeypatch, FakeCursor(fetch_result=({"auth_context": {"cookies": []}},)))
+    cur = patch_connect(monkeypatch, FakeCursor(fetch_result=({"target_seed": "example.com"},)))
     result = pg.load_settings("proj1")
-    assert result == {"auth_context": {"cookies": []}}
+    assert result == {"target_seed": "example.com"}
     query, params = cur.executed[0]
     assert "SELECT recon FROM settings" in query
     assert params == ("proj1",)
@@ -223,18 +223,18 @@ def test_upsert_job_with_error(monkeypatch):
 
 
 def test_save_settings_merges_rather_than_replaces(monkeypatch):
-    """A partial settings PUT (e.g. adding auth_context) must MERGE into the
+    """A partial settings PUT (e.g. adding a scope block) must MERGE into the
     stored recon, not replace it - otherwise it silently wipes target_domain
     and the run falls back to the example.com placeholder. The merge must be
-    RECURSIVE so nested items are independent: setting auth_context.credentials
-    must not wipe a previously-stored auth_context.cookies (and vice versa)."""
+    RECURSIVE so nested items are independent: setting scope.mode must not
+    wipe a previously-stored scope.exclusions (and vice versa)."""
     cur = patch_connect(monkeypatch, FakeCursor())
-    pg.save_settings("proj1", {"auth_context": {"cookies": []}})
+    pg.save_settings("proj1", {"scope": {"mode": "wildcard"}})
 
     query, params = cur.executed[0]
     assert "INSERT INTO settings" in query
     # deep JSONB merge: nested objects merge key-by-key rather than the incoming
-    # auth_context replacing the stored one wholesale.
+    # scope block replacing the stored one wholesale.
     assert "jsonb_deep_merge(settings.recon, EXCLUDED.recon)" in query
     assert "settings.recon || EXCLUDED.recon" not in query
     assert params[0] == "proj1"

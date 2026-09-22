@@ -19,9 +19,9 @@ def test_app_schema_and_pgvector_cosine_roundtrip():
         cur.execute("INSERT INTO projects(project_id, name) VALUES('e2e','E2E') "
                     "ON CONFLICT (project_id) DO NOTHING")
         cur.execute("INSERT INTO settings(project_id, recon) "
-                    "VALUES('e2e', '{\"auth_context\": {\"cookies\": []}}'::jsonb) "
+                    "VALUES('e2e', '{\"target_seed\": \"example.com\"}'::jsonb) "
                     "ON CONFLICT (project_id) DO UPDATE SET recon = EXCLUDED.recon")
-        cur.execute("SELECT recon->'auth_context' FROM settings WHERE project_id='e2e'")
+        cur.execute("SELECT recon->'target_seed' FROM settings WHERE project_id='e2e'")
         assert cur.fetchone()[0] is not None
         # doc_chunks vector insert + cosine (<=>) nearest-neighbour
         cur.execute("DELETE FROM doc_chunks WHERE project_id='e2e'")

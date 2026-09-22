@@ -18,6 +18,7 @@ services:
   agent:
     volumes:
       - ./src:/srv/src
+      - ./data:/srv/data   # the app-owned data root (#234): per-project skill + hunting memory, and the fault-KB catalogue
       - ./lightrag:/srv/lightrag   # live-edit the lightrag module (data rides along)
       - ./db:/srv/db
       - ./skills:/srv/skills   # triager loads writing-observations SKILL.md at runtime

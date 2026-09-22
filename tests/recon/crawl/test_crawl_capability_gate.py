@@ -21,7 +21,7 @@ Model identity at the seam is role-based: the adapter passes `body.model`
 derives the (provider, model) pair via `resolve_role(body.model)` (the
 registered-name + zen-strip lookup convention lives INSIDE the reader,
 `capability.py:_registered_name`). When the role has no bound model
-(`LLM_MODEL_CRAWLER` absent - the injected pre-built-client seam), the
+(`LLM_CRAWLER` absent - the injected pre-built-client seam), the
 identity is unresolvable and the gate warns and proceeds as today (reachable
 only when `build_llm_fn` is injected - the env-less identity would have
 crashed the production `chat_model_for` builder before the gate).
@@ -121,7 +121,7 @@ def test_true_capability_runs_the_tool_loop_exactly_as_today(monkeypatch, caplog
     """`supports_tool_calling = true`: the loop behaves identically to the
     pre-gate crawl - bind_tools once, the scripted steel flow drives the
     tools, and the finish manifest is returned. No refusal warning."""
-    monkeypatch.setenv("LLM_MODEL_CRAWLER", CRAWLER_ENV)
+    monkeypatch.setenv("LLM_CRAWLER", CRAWLER_ENV)
     monkeypatch.setattr(
         crawl_agentic, "resolve_capability",
         lambda provider, model: CapabilityProfile(supports_tool_calling=True),
@@ -152,7 +152,7 @@ def test_non_tool_callable_capability_refuses_and_degrades(monkeypatch, caplog, 
     """false / unknown both trip the warn-refuse-degrade: the empty manifest
     is returned, `bind_tools` is never attempted, the LLM is never invoked
     (no silent emulation, no silent retry of the loop)."""
-    monkeypatch.setenv("LLM_MODEL_CRAWLER", CRAWLER_ENV)
+    monkeypatch.setenv("LLM_CRAWLER", CRAWLER_ENV)
     monkeypatch.setattr(
         crawl_agentic, "resolve_capability",
         lambda provider, model: CapabilityProfile(supports_tool_calling=state),
@@ -173,7 +173,7 @@ def test_non_tool_callable_capability_refuses_and_degrades(monkeypatch, caplog, 
 def test_refusal_gap_names_the_registry_and_manual_override(monkeypatch, caplog):
     """The gap must be actionable: the operator can close it by adding the
     model to the gateway registry or setting a manual override (spec §5)."""
-    monkeypatch.setenv("LLM_MODEL_CRAWLER", CRAWLER_ENV)
+    monkeypatch.setenv("LLM_CRAWLER", CRAWLER_ENV)
     monkeypatch.setattr(
         crawl_agentic, "resolve_capability",
         lambda provider, model: CapabilityProfile(supports_tool_calling=None,
@@ -191,7 +191,7 @@ def test_refusal_never_crashes_the_caller_when_reader_raises(monkeypatch, caplog
     """Fail-open invariant: even if the T3 reader raises (a config-lie
     context env), the seam treats it as unknown, warns, refuses, and returns
     the empty manifest - it never propagates an exception."""
-    monkeypatch.setenv("LLM_MODEL_CRAWLER", CRAWLER_ENV)
+    monkeypatch.setenv("LLM_CRAWLER", CRAWLER_ENV)
 
     def boom(provider, model):
         raise LLMConfigError("LLM_ROLE_MODEL_CONTEXT_LIMIT must be a positive integer")
@@ -217,7 +217,7 @@ def test_refusal_goes_through_the_adapter_as_best_effort(monkeypatch, caplog):
     marks the job degraded instead of crashing the pipeline."""
     from polymerhus.recon.crawl import crawl_agent
 
-    monkeypatch.setenv("LLM_MODEL_CRAWLER", CRAWLER_ENV)
+    monkeypatch.setenv("LLM_CRAWLER", CRAWLER_ENV)
     monkeypatch.setattr(
         crawl_agentic, "resolve_capability",
         lambda provider, model: CapabilityProfile(supports_tool_calling=False),
@@ -236,13 +236,13 @@ def test_refusal_goes_through_the_adapter_as_best_effort(monkeypatch, caplog):
 # ---------------------------------------------------------------------------
 
 def test_unresolvable_role_identity_proceeds_as_today_with_warning(monkeypatch, caplog):
-    """When the role has NO bound model (no LLM_MODEL_CRAWLER - the injected
+    """When the role has NO bound model (no LLM_CRAWLER - the injected
     pre-built-client seam, where the caller already vetted the client), the
     gate cannot classify and the seam warns and proceeds EXACTLY as today.
     This branch is reachable only on the injected seam: on the production
     path (`chat_model_for`), the env-less identity would have crashed
     `build_llm_fn` before the gate ever ran."""
-    monkeypatch.delenv("LLM_MODEL_CRAWLER", raising=False)
+    monkeypatch.delenv("LLM_CRAWLER", raising=False)
     calls_log: list[str] = []
     llm = _RecordingLLM([
         [{"name": "steel_crawl_start", "args": {}, "id": "1"}],

@@ -435,7 +435,13 @@ def test_author_tools_reach_run_session_agent(monkeypatch):
 
     actor = asyncio.run(_drive())
     assert actor._tools == ["fake-tool"]
-    assert captured["tools"] == ["fake-tool"]
+    # The auth capability (#220) rides the same bounding seam as the skill
+    # surface: a bound role additionally carries `auth_store`.
+    assert [getattr(t, "name", t) for t in captured["tools"]] == [
+        "fake-tool",
+        "load_skill",
+        "auth_store",
+    ]
 
 
 def test_hunting_hunter_actor_runs_query_lightrag_tool_loop_hermetically():
@@ -532,3 +538,64 @@ def test_run_scoped_actors_tag_turns_with_the_run_id():
 
     assert HuntOrchestratorActor("run1")._extra_tags == ["run1"]
     assert HuntingHunterActor("run1", "hunt-a")._extra_tags == ["run1"]
+
+
+# --- A6: the hunt verdict strategy is negotiated, not pinned --------------------
+
+import pytest as _pytest
+
+
+@_pytest.fixture(autouse=True)
+def _a6_negotiated_tool_strategy(monkeypatch):
+    """A6: the actor's `structured_response_format` negotiation resolves to
+    `ToolStrategy` in this scripted-model suite (the fakes emit the
+    ToolStrategy tool-call shape), while production negotiates per profile."""
+    from langchain.agents.structured_output import ToolStrategy
+    import polymerhus.app.llm.session as _S
+
+    def _fake(role_id, schema, *, tools_bound):
+        return ToolStrategy(schema)
+
+    monkeypatch.setattr(_S, "structured_response_format", _fake)
+
+
+def test_a6_hunt_verdict_uses_the_negotiated_strategy(monkeypatch):
+    """A6: the hunt orchestrator computes `response_format` from the REAL
+    binding fact via `structured_response_format("hunting_orchestrator",
+    <gate union>, tools_bound=...)` and passes its result through to the
+    session agent (no raw pin)."""
+    from typing import get_args
+    from langchain.agents.structured_output import ToolStrategy
+    import polymerhus.app.llm.actor as _A
+    import polymerhus.app.llm.session as _S
+    from polymerhus.attack.hunting.hunt_orchestrator import NoteDecision, RatifyDecision
+
+    calls = {}
+    sentinel = ToolStrategy(GateDecision)
+
+    def _fake_format(role_id, schema, *, tools_bound):
+        calls.update(role_id=role_id, schema=schema, tools_bound=tools_bound)
+        return sentinel
+
+    monkeypatch.setattr(_S, "structured_response_format", _fake_format)
+    seen = {}
+
+    async def _fake_run(*args, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr(_A, "run_session_agent", _fake_run)
+
+    async def _drive():
+        actor = HuntOrchestratorActor("run1", checkpointer=InMemorySaver(),
+                                      model_factory=_factory([("GateDecision", {})]),
+                                      observe=False)
+        await actor._ensure_started()
+        await actor.stop()
+
+    asyncio.run(_drive())
+    assert calls["role_id"] == "hunting_orchestrator"
+    assert set(get_args(calls["schema"])) == {
+        GateDecision, RatifyDecision, NoteDecision, MatchVerdict}
+    assert calls["tools_bound"] is False  # no tool surface in this drive
+    assert seen["response_format"] is sentinel

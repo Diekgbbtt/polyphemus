@@ -4,6 +4,7 @@ from polymerhus.app.llm.providers import (  # noqa: F401
 )
 from polymerhus.app.llm.session import (  # noqa: F401
     SessionTurn, run_session_turn, arun_session_turn, stateful_turn,
+    structured_response_format,
 )
 from polymerhus.app.llm.session_address import (  # noqa: F401
     SessionAddress, AnalysisSession, PodSession, HuntSession, SessionContext,
@@ -15,7 +16,7 @@ from polymerhus.app.llm.capability import (  # noqa: F401
     CapabilityProfile, resolve_capability, DEFAULT_CONTEXT_LIMIT,
 )
 from polymerhus.app.llm.negotiation import (  # noqa: F401
-    Method, SchemaShape, DEGRADE_CHAIN, clear_probe_cache, negotiate_method,
-    next_rung, probe_with_invoker, resolve_method, result_validates,
-    schema_shape_of,
+    Method, SchemaShape, DEGRADE_CHAIN, clear_probe_cache, effective_chain,
+    negotiate_method, next_rung, probe_with_invoker, resolve_method,
+    result_validates, schema_shape_of,
 )

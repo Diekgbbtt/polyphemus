@@ -11,14 +11,14 @@ def test_known_providers_have_base_urls():
     assert "swissai" in P.PROVIDERS
 
 def test_resolve_role_parses_provider_and_model(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
     assert P.resolve_role("triager") == ("openrouter", "anthropic/claude-3.5-sonnet")
 
 def test_validate_raises_when_key_missing(monkeypatch):
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "openrouter:some/model")
-    monkeypatch.setenv("LLM_MODEL_CONFIGURATOR", "openai:gpt-4o")
-    monkeypatch.setenv("LLM_MODEL_JOB_ORCHESTRATOR", "openai:gpt-4o")
-    monkeypatch.setenv("LLM_MODEL_CRAWLER", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_TRIAGER", "openrouter:some/model")
+    monkeypatch.setenv("LLM_CONFIGURATOR", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_JOB_ORCHESTRATOR", "openai:gpt-4o")
+    monkeypatch.setenv("LLM_CRAWLER", "openai:gpt-4o")
     monkeypatch.delenv("API_KEY_OPENROUTER", raising=False)
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
     with pytest.raises(P.LLMConfigError) as e:
@@ -27,10 +27,10 @@ def test_validate_raises_when_key_missing(monkeypatch):
 
 def test_validate_raises_on_unknown_provider(monkeypatch):
     # Derive from P.ROLES so adding a role never breaks this test; each role now
-    # carries its own model_key (records, #93/#94), not `LLM_MODEL_{role.upper()}`.
+    # carries its own model_key (records, #93/#94), not `LLM_{role.upper()}`.
     for r in P.ROLES:
         monkeypatch.setenv(r.model_key, "openai:gpt-4o")
-    monkeypatch.setenv("LLM_MODEL_TRIAGER", "bogus:model")
+    monkeypatch.setenv("LLM_TRIAGER", "bogus:model")
     monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
     with pytest.raises(P.LLMConfigError):
         P.validate_llm_config()
@@ -44,16 +44,16 @@ def test_validate_passes_when_all_present(monkeypatch):
 
 def test_analysis_roles_share_the_analyser_key_and_it_is_required(monkeypatch):
     """#93: `analyser` is split into per-cognitive-job role_ids (assigner,
-    mechanism_typist, data_modeller, ...) that SHARE `LLM_MODEL_ANALYSER`
+    mechanism_typist, data_modeller, ...) that SHARE `LLM_ANALYSER`
     (many-to-one), so validate_llm_config still requires that key at boot."""
     ids = {r.role_id for r in P.ROLES}
     assert {"assigner", "mechanism_typist", "data_modeller"} <= ids
     assert "analyser" not in ids  # the conflated single role is gone
-    assert P.role_record("assigner").model_key == "LLM_MODEL_ANALYSER"
-    assert P.role_record("mechanism_typist").model_key == "LLM_MODEL_ANALYSER"
+    assert P.role_record("assigner").model_key == "LLM_ANALYSER"
+    assert P.role_record("mechanism_typist").model_key == "LLM_ANALYSER"
     for r in P.ROLES:
         monkeypatch.setenv(r.model_key, "swissai:x")
-    monkeypatch.delenv("LLM_MODEL_ANALYSER", raising=False)  # the shared analysis key unset
+    monkeypatch.delenv("LLM_ANALYSER", raising=False)  # the shared analysis key unset
     monkeypatch.setenv("API_KEY_SWISSAI", "tok")
     with pytest.raises(P.LLMConfigError) as e:
         P.validate_llm_config()
@@ -75,10 +75,10 @@ def test_role_record_carries_agent_mode():
 
 
 def test_resolve_role_uses_the_shared_key_for_split_analysis_roles(monkeypatch):
-    """Distinct analysis role_ids resolve the SAME model via LLM_MODEL_ANALYSER, and
-    a legacy caller still on the bare `"analyser"` id resolves it via the fallback
-    convention - so callers can migrate incrementally."""
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
+    """Distinct analysis role_ids resolve the SAME model via LLM_ANALYSER, and
+    the bare `"analyser"` id resolves it via the live unregistered-id
+    convention."""
+    monkeypatch.setenv("LLM_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("assigner") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("mechanism_typist") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("analyser") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")  # fallback
@@ -151,7 +151,7 @@ def test_resolve_role_parses_the_qwen_swissai_swap(monkeypatch):
     is also the provider/model separator `resolve_role` splits on. Pin that the
     split is on the FIRST colon only, so a slash inside the model id never
     truncates it."""
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
+    monkeypatch.setenv("LLM_ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
     assert P.resolve_role("analyser") == ("swissai", "Qwen/Qwen3.5-397B-A17B-ETar")
 
 
@@ -345,14 +345,14 @@ def test_escalating_invoke_returns_none_when_every_attempt_is_unmet(monkeypatch)
 def test_thinking_baselines_are_set_on_the_reasoning_agents():
     """The operator-directed baseline: the hunter reasons `high` and the
     hunt-orchestrator (its Q8 gate + D2 re-match turns) `medium`; the analysis
-    proposers, the recon triager, and the recon-orchestrator (the
-    `job_orchestrator` role) reason `medium`; every other role stays `off`."""
+    proposers and the recon-orchestrator (the `job_orchestrator` role)
+    reason `medium`, the recon triager `low`; every other role stays `off`."""
     assert P.thinking_for("hunting_hunter") == "high"
     assert P.thinking_for("hunting_orchestrator") == "medium"   # Q8 gate + D2 re-match
     assert P.thinking_for("assigner") == "medium"
     assert P.thinking_for("mechanism_typist") == "medium"
     assert P.thinking_for("data_modeller") == "medium"
-    assert P.thinking_for("triager") == "medium"
+    assert P.thinking_for("triager") == "low"  # downscaled f7ad043 (dev)
     assert P.thinking_for("job_orchestrator") == "medium"      # = the recon-orchestrator
     # untouched agents + unregistered ids default off
     for r in ("bootstrapper", "curation", "sweep", "crawler", "configurator",
@@ -372,8 +372,8 @@ def test_chat_model_for_carries_the_roles_thinking_baseline(monkeypatch):
     """The wiring: a model built for a thinking role reasons at its baseline, so a
     session/stateful agent off `chat_model_for` inherits it without extra plumbing."""
     from polymerhus.app.llm.roles import chat_model_for
-    monkeypatch.setenv("LLM_MODEL_HUNTING_HUNTER", "openrouter:openai/gpt-5-mini")
-    monkeypatch.setenv("LLM_MODEL_ANALYSER", "openrouter:openai/gpt-4.1-mini")
+    monkeypatch.setenv("LLM_HUNTING_HUNTER", "openrouter:openai/gpt-5-mini")
+    monkeypatch.setenv("LLM_ANALYSER", "openrouter:openai/gpt-4.1-mini")
     monkeypatch.setenv("API_KEY_OPENROUTER", "tok")
     assert chat_model_for("hunting_hunter").reasoning_effort == "high"
     assert chat_model_for("assigner").reasoning_effort == "medium"
@@ -704,3 +704,205 @@ def test_gateway_base_url_is_none_when_unset_or_blank(monkeypatch):
     assert P.gateway_base_url() is None
     monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
     assert P.gateway_base_url() == "http://gateway:4000"
+
+
+def test_request_payload_omits_empty_tools_array(monkeypatch):
+    """Provider-shape hardening (live 2026-09-08, swissai): a no-tools session
+    role binds an EMPTY tool set via `create_agent` -> `tools: []` lands on the
+    wire, which swissai's hosted vLLM rejects (`tools must not be an empty
+    array... omit the field entirely`). The payload seam omits the key when it
+    carries nothing."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
+
+    def _empty_tools(self, input_, *, stop=None, **kwargs):
+        return {"messages": "not-a-list", "tools": []}
+
+    monkeypatch.setattr(P.ChatOpenAI, "_get_request_payload", _empty_tools)
+    assert "tools" not in m._get_request_payload(
+        [{"role": "user", "content": "hi"}], stop=None)
+
+
+def test_request_payload_preserves_nonempty_tools_binding(monkeypatch):
+    """The strip is empty-only: a real crawl/hunting tool binding must reach
+    the wire verbatim."""
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
+    bound = [{"type": "function", "function": {"name": "probe"}}]
+
+    def _bound_tools(self, input_, *, stop=None, **kwargs):
+        return {"messages": "not-a-list", "tools": list(bound)}
+
+    monkeypatch.setattr(P.ChatOpenAI, "_get_request_payload", _bound_tools)
+    payload = m._get_request_payload([{"role": "user", "content": "hi"}], stop=None)
+    assert payload["tools"] == bound
+
+
+# --- #240 (D223-1): the MODEL-infix drop - landed -------------------------------
+#
+# The `LLM_<NAME>` spelling is the whole contract: the legacy MODEL infix is
+# gone from every role record and no fallback remains. The legacy spelling is
+# built dynamically below (never as a literal) so the repo-wide search for it
+# stays clean while the contract - the old spelling is dead - stays pinned.
+
+_LEGACY_INFIX = "LLM_" + "MODEL_"
+
+def test_model_key_spellings_use_the_new_infix_free_names():
+    """#240: every role record names the new `LLM_<NAME>` spelling - the
+    redundant MODEL infix is gone from the contract."""
+    for r in P.ROLES + P.HUNTING_ROLES:
+        assert not r.model_key.startswith(_LEGACY_INFIX), r.model_key
+        assert r.model_key.startswith("LLM_"), r.model_key
+
+
+def test_resolve_role_ignores_the_old_name_when_both_are_set(monkeypatch):
+    """#240 contract: the legacy spelling is ignored - the new name selects
+    the model even when both are set."""
+    monkeypatch.setenv("LLM_TRIAGER", "openai:gpt-new")
+    monkeypatch.setenv(_LEGACY_INFIX + "TRIAGER", "openrouter:anthropic/claude-old")
+    assert P.resolve_role("triager") == ("openai", "gpt-new")
+
+
+def test_resolve_role_ignores_the_removed_old_name(monkeypatch):
+    """#240 contract: the legacy MODEL-infixed spelling no longer
+    resolves - only the new `LLM_<NAME>` spelling selects the model."""
+    monkeypatch.delenv("LLM_TRIAGER", raising=False)
+    monkeypatch.setenv(_LEGACY_INFIX + "TRIAGER", "openrouter:anthropic/claude-3.5-sonnet")
+    with pytest.raises(P.LLMConfigError) as e:
+        P.resolve_role("triager")
+    assert "LLM_TRIAGER" in str(e.value)
+
+
+def test_resolve_role_unregistered_id_ignores_the_old_convention(monkeypatch):
+    """#240 contract: an unregistered id resolves `LLM_<ID>` only - the legacy
+    MODEL-infixed convention is dead."""
+    monkeypatch.delenv("LLM_ANALYSER", raising=False)
+    monkeypatch.setenv(_LEGACY_INFIX + "ANALYSER", "swissai:Qwen/Qwen3.5-397B-A17B-ETar")
+    with pytest.raises(P.LLMConfigError):
+        P.resolve_role("analyser")
+
+
+# --- D12: provider request primitives - opencode-go's x-opencode-session -------
+#
+# opencode-go enforces a client-supplied `x-opencode-session` (stable per
+# conversation) since 2026-09-05; the pattern is a per-provider request-primitive
+# table consumed at the single construction point (`build_chat_model`), bound via
+# the native ChatOpenAI `default_headers` field. The value comes from the ambient
+# conversation scope (the session seam's thread id), falling back to a
+# process-stable id for callers with no conversation.
+
+def test_request_headers_bind_the_conversation_for_opencode_go():
+    from polymerhus.app.llm.conversation import conversation_scope
+
+    with conversation_scope("run-7:job_orchestrator"):
+        headers = P.request_headers("opencode-go")
+    assert headers["x-opencode-session"] == "run-7:job_orchestrator"
+    assert headers["x-opencode-client"] == P.CLIENT_ID
+
+
+def test_request_headers_fall_back_to_the_process_stable_id():
+    first = P.request_headers("opencode-go")["x-opencode-session"]
+    second = P.request_headers("opencode-go")["x-opencode-session"]
+    assert first, "the fallback must never emit an empty session id"
+    assert first == second, "the fallback must be stable across constructions"
+
+
+def test_request_headers_are_empty_for_providers_without_primitives():
+    """The safe default: an unlisted provider binds nothing (construction stays
+    byte-identical), including the plain `opencode` zen provider which has no
+    session requirement."""
+    for provider in ("openai", "openrouter", "swissai", "opencode", "unlisted"):
+        assert P.request_headers(provider) == {}
+
+
+def test_build_chat_model_binds_the_session_header_direct_mode(monkeypatch):
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_OPENCODE_GO", "tok")
+    from polymerhus.app.llm.conversation import conversation_scope
+
+    with conversation_scope("run-7:job_orchestrator"):
+        m = P.build_chat_model("opencode-go", "deepseek-v4.1-flash")
+    assert m.default_headers["x-opencode-session"] == "run-7:job_orchestrator"
+    # The native transport layer received it: the openai SDK client's own headers.
+    assert m.root_client.default_headers["x-opencode-session"] == "run-7:job_orchestrator"
+
+
+def test_build_chat_model_binds_the_session_header_gateway_mode(monkeypatch):
+    monkeypatch.setenv("LLM_GATEWAY_URL", "http://gateway:4000")
+    monkeypatch.setenv("API_KEY_OPENCODE_GO", "tok")
+    from polymerhus.app.llm.conversation import conversation_scope
+
+    with conversation_scope("run-7:job_orchestrator"):
+        m = P.build_chat_model("opencode-go", "opencode-go/deepseek-v4.1-flash")
+    assert m.default_headers["x-opencode-session"] == "run-7:job_orchestrator"
+
+
+def test_build_chat_model_leaves_other_providers_untouched(monkeypatch):
+    monkeypatch.delenv("LLM_GATEWAY_URL", raising=False)
+    monkeypatch.setenv("API_KEY_SWISSAI", "tok")
+    m = P.build_chat_model("swissai", "meta-llama/Llama-3.3-70B-Instruct")
+    assert getattr(m, "default_headers", None) in (None, {})
+
+
+# ---------------------------------------------------------------------------
+# A6 - relaxed forced tool_choice (operator ruling 2026-09-21) ---------------
+# ---------------------------------------------------------------------------
+
+def test_a6_relaxed_model_rewrites_forced_tool_choice_to_auto():
+    import asyncio
+    from langchain_core.messages import AIMessage
+    from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
+    seen = {}
+    class _Probe(ReasoningPreservingChatOpenAI):
+        def _generate(self, messages, stop=None, run_manager=None, **kwargs):
+            seen.update(kwargs)
+            from langchain_core.outputs import ChatGeneration, ChatResult
+            return ChatResult(generations=[ChatGeneration(message=AIMessage(content="x"))])
+    kwargs = dict(model="m", api_key="k", base_url="https://x.test/v1",
+                  relax_forced_tool_choice=True)
+    for forced in ("any", "required", True, {"type": "function", "function": {"name": "f"}}):
+        seen.clear()
+        m = _Probe(**kwargs)
+        bound = m.bind_tools([], tool_choice=forced)
+        assert bound.kwargs.get("tool_choice") == "auto", forced
+
+
+def test_a6_relaxed_model_leaves_none_auto_none_untouched():
+    from langchain_core.messages import AIMessage
+    from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
+    m = ReasoningPreservingChatOpenAI(model="m", api_key="k",
+                                      base_url="https://x.test/v1",
+                                      relax_forced_tool_choice=True)
+    for untouched in (None, "auto", "none"):
+        bound = m.bind_tools([], tool_choice=untouched)
+        assert bound.kwargs.get("tool_choice") == untouched
+
+
+def test_a6_unrelaxed_model_passes_forced_choice_through():
+    from polymerhus.app.llm.providers import ReasoningPreservingChatOpenAI
+    m = ReasoningPreservingChatOpenAI(model="m", api_key="k",
+                                      base_url="https://x.test/v1")
+    bound = m.bind_tools([], tool_choice="required")
+    assert bound.kwargs.get("tool_choice") == "required"
+
+
+def test_a6_build_chat_model_passes_relax_flag_from_profile(monkeypatch):
+    from polymerhus.app.llm import providers as P
+    monkeypatch.setenv("LLM_TRIAGER", "openai:gpt-4o")
+    monkeypatch.setenv("API_KEY_OPENAI", "sk-x")
+    from polymerhus.app.llm.capability import CapabilityProfile
+    import polymerhus.app.llm.capability as C
+    monkeypatch.setattr(C, "resolve_capability",
+                        lambda pv, m: CapabilityProfile(supports_forced_tool_choice=False))
+    import langchain_openai
+    seen = {}
+    real = P.ReasoningPreservingChatOpenAI
+    def spy(**kw):
+        seen.update(kw)
+        return real(model=kw.get("model", "m"), api_key="k",
+                    base_url="https://x.test/v1")
+    monkeypatch.setattr(P, "ReasoningPreservingChatOpenAI", spy)
+    P.build_chat_model("openai", "gpt-4o")
+    assert seen.get("relax_forced_tool_choice") is True
