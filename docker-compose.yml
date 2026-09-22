@@ -108,21 +108,7 @@ services:
       # Empty default keeps a clean clone working; the operator's .env
       # provides the real value. NEVER a real key in the repo.
       STEEL_API_KEY: ${STEEL_API_KEY:-}
-    # VPN-in-container (D-HS e2e): OpenVPN needs to create a tun interface so
-    # recon pods can reach a target that lives only on a VPN route. Least
-    # privilege - NET_ADMIN + SYS_ADMIN (the latter is required by `ip netns
-    # add`, which mounts /run/netns), deliberately NOT --privileged. This
-    # replaces routing pod traffic through the host's tun, which does not
-    # scale. The host /dev/net/tun device is deliberately NOT mounted here:
-    # the HTTP capture plane does not need tun, and postrun.sh creates a device
-    # node in the container only when a later VPN step needs it.
-    cap_add:
-      - NET_ADMIN
-      - SYS_ADMIN
-    security_opt:
-      - seccomp:unconfined
-      - apparmor:unconfined
-    environment:
+      # The #196 capture-plane environment (dev line).
       PYTHONPATH: /opt
       KALI_HTTP_HISTORY_ROOT: /data
       KALI_HTTP_CAPTURE_ENABLED: ${KALI_HTTP_CAPTURE_ENABLED:-true}
@@ -150,6 +136,20 @@ services:
       # The cap is enforced from the exec path at most once per project per
       # interval (never per command: that would scan the store on every pod).
       KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S: ${KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S:-60}
+    # VPN-in-container (D-HS e2e): OpenVPN needs to create a tun interface so
+    # recon pods can reach a target that lives only on a VPN route. Least
+    # privilege - NET_ADMIN + SYS_ADMIN (the latter is required by `ip netns
+    # add`, which mounts /run/netns), deliberately NOT --privileged. This
+    # replaces routing pod traffic through the host's tun, which does not
+    # scale. The host /dev/net/tun device is deliberately NOT mounted here:
+    # the HTTP capture plane does not need tun, and postrun.sh creates a device
+    # node in the container only when a later VPN step needs it.
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
     volumes:
       - ./kali:/opt/kali:ro
       - http-history:/data
