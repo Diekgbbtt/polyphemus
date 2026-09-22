@@ -28310,5 +28310,2277 @@
     "create_time": 1787992687,
     "update_time": 1787992687,
     "_id": "doc-b9ddc793324d868b5ed0d90f4c192307"
+  },
+  "doc-2bd6a3a960d95a25f29b8bab2f627b57": {
+    "relation_pairs": [
+      [
+        "Reachable Admin Panel",
+        "Source Code Review"
+      ],
+      [
+        "Offline Password Cracking",
+        "SQL Error Message"
+      ],
+      [
+        "Path Traversal",
+        "Read Sensitive Data"
+      ],
+      [
+        "Credentials",
+        "JWT Token Forgery"
+      ],
+      [
+        "Privilege Escalation Path",
+        "SQL Injection File Read"
+      ],
+      [
+        "JWT Secret Weakness",
+        "JWT Token Forgery"
+      ],
+      [
+        "Escalate Privileges",
+        "Privilege Escalation Path"
+      ],
+      [
+        "JWT Token Forgery",
+        "Path Traversal"
+      ],
+      [
+        "Credentialed Login Access",
+        "Executable Upload Webshell"
+      ],
+      [
+        "JWT Token Forgery",
+        "Linux Host"
+      ],
+      [
+        "Accessible API Endpoint",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Linux Host",
+        "SQL Injection File Read"
+      ],
+      [
+        "Escalate Privileges",
+        "Token Signing Ability"
+      ],
+      [
+        "Credential Exposure",
+        "Offline Password Cracking"
+      ],
+      [
+        "Command Injection",
+        "Move Laterally"
+      ],
+      [
+        "Arbitrary File Read",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Move Laterally",
+        "Path Traversal"
+      ],
+      [
+        "HTTP Redirect Or Cookie",
+        "JWT Token Forgery"
+      ],
+      [
+        "JWT Token Forgery",
+        "Shell Access"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Protocol Allowlist"
+      ],
+      [
+        "SQL Error Message",
+        "SQL Injection File Read"
+      ],
+      [
+        "Read Sensitive Data",
+        "Source Code Review"
+      ],
+      [
+        "JWT Token Forgery",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Boolean Response Delta",
+        "JWT Token Forgery"
+      ],
+      [
+        "JWT Authentication Flow",
+        "SQL Injection File Read"
+      ],
+      [
+        "Credential Exposure",
+        "Source Code Review"
+      ],
+      [
+        "Config File",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Boolean Response Delta",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Privilege Escalation Path",
+        "Source Review Access"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Offline Password Cracking"
+      ],
+      [
+        "Boolean Response Difference",
+        "JWT Token Forgery"
+      ],
+      [
+        "JWT Token Forgery",
+        "WAF Or Request Filter"
+      ],
+      [
+        "Boolean Response Difference",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Boolean Response Delta",
+        "Boolean Response Difference"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Wildcard Command Filter Bypass"
+      ],
+      [
+        "Credential Exposure",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "JWT Authentication Flow",
+        "JWT Token Forgery"
+      ],
+      [
+        "Privilege Escalation Path",
+        "Source Code Review"
+      ],
+      [
+        "Escalate Privileges",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Authenticated Session",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Offline Password Cracking",
+        "WAF Or Request Filter"
+      ],
+      [
+        "Database Dump",
+        "Source Review Access"
+      ],
+      [
+        "Offline Password Cracking",
+        "SQL Comment Auth Bypass Payload"
+      ],
+      [
+        "Move Laterally",
+        "SQL Injection File Read"
+      ],
+      [
+        "Credentialed Login Access",
+        "Escalate Privileges"
+      ],
+      [
+        "JWT Token Forgery",
+        "Python Web Stack"
+      ],
+      [
+        "Command Execution",
+        "Escalate Privileges"
+      ],
+      [
+        "Source Code Review",
+        "Source Review Access"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Read Sensitive Data"
+      ],
+      [
+        "Internal Service Reachability",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Escalate Privileges",
+        "Internal Service Reachability"
+      ],
+      [
+        "Credentials",
+        "Offline Password Cracking"
+      ],
+      [
+        "Credentials",
+        "Source Review Access"
+      ],
+      [
+        "Command Execution",
+        "Execute Code"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Credentials",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Extension Blacklist",
+        "Wildcard Command Filter Bypass"
+      ],
+      [
+        "Privilege Escalation Path",
+        "Source Code"
+      ],
+      [
+        "URL Userinfo Confusion Payload",
+        "WAF Or Request Filter"
+      ],
+      [
+        "Command Execution",
+        "Command Output"
+      ],
+      [
+        "SQL Comment Auth Bypass Payload",
+        "WAF Or Request Filter"
+      ],
+      [
+        "Command Injection",
+        "Source Code Review"
+      ],
+      [
+        "Credentials",
+        "Source Code Review"
+      ],
+      [
+        "Escalate Privileges",
+        "SQL Injection File Read"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Path Traversal",
+        "SQL Injection File Read"
+      ],
+      [
+        "Password Hash",
+        "Source Review Access"
+      ],
+      [
+        "Credential Exposure",
+        "Read Sensitive Data"
+      ],
+      [
+        "Password Hash",
+        "Shell Access"
+      ],
+      [
+        "Offline Password Cracking",
+        "Shell Access"
+      ],
+      [
+        "Localhost-Only Service Exists",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Offline Password Cracking",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "JWT Token Forgery",
+        "Read Sensitive Data"
+      ],
+      [
+        "Boolean Response Delta",
+        "Offline Password Cracking"
+      ],
+      [
+        "Source Code",
+        "Source Review Access"
+      ],
+      [
+        "Password Hash",
+        "Source Code Review"
+      ],
+      [
+        "Boolean Response Difference",
+        "Offline Password Cracking"
+      ],
+      [
+        "Config File",
+        "JWT Token Forgery"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Config File"
+      ],
+      [
+        "Move Laterally",
+        "Source Code Review"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "User-Controlled Input Reaches Query"
+      ],
+      [
+        "Protocol Allowlist",
+        "SQL Comment Auth Bypass Payload"
+      ],
+      [
+        "Protocol Allowlist",
+        "SQL Injection File Read"
+      ],
+      [
+        "JWT Token Forgery",
+        "Protocol Allowlist"
+      ],
+      [
+        "Uploaded Path Disclosure",
+        "Uploaded Webshell"
+      ],
+      [
+        "Reachable Login Workflow",
+        "SQL Injection File Read"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Accessible Upload Handler",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Path Traversal"
+      ],
+      [
+        "Escalate Privileges",
+        "Source Review Access"
+      ],
+      [
+        "Command Injection",
+        "Offline Password Cracking"
+      ],
+      [
+        "Python Web Stack",
+        "SQL Injection File Read"
+      ],
+      [
+        "Arbitrary File Read",
+        "JWT Token Forgery"
+      ],
+      [
+        "Command Output",
+        "JWT Token Forgery"
+      ],
+      [
+        "Database Dump",
+        "Source Code Review"
+      ],
+      [
+        "Arbitrary File Read",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Privilege Escalation Path",
+        "Token Signing Ability"
+      ],
+      [
+        "Read Sensitive Data",
+        "SQL Injection File Read"
+      ],
+      [
+        "Arbitrary File Read",
+        "Escalate Privileges"
+      ],
+      [
+        "Boolean Response Difference",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Escalate Privileges",
+        "Source Code Review"
+      ],
+      [
+        "Path Traversal",
+        "Source Code Review"
+      ],
+      [
+        "JWT Secret",
+        "JWT Token Forgery"
+      ],
+      [
+        "Authenticated Session",
+        "SQL Injection File Read"
+      ],
+      [
+        "Database Dump",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Callback Received",
+        "Command Execution"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Shell Access"
+      ],
+      [
+        "SQL Injection File Read",
+        "WAF Or Request Filter"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Executable Upload Webshell",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Config File",
+        "SQL Injection File Read"
+      ],
+      [
+        "Offline Password Cracking",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Credential Exposure",
+        "JWT Token Forgery"
+      ],
+      [
+        "Move Laterally",
+        "Offline Password Cracking"
+      ],
+      [
+        "Escalate Privileges",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Command Injection",
+        "Read Sensitive Data"
+      ],
+      [
+        "Accessible API Endpoint",
+        "SQL Injection File Read"
+      ],
+      [
+        "Reachable Admin Panel",
+        "SQL Injection File Read"
+      ],
+      [
+        "Executable Upload Webshell",
+        "WAF Or Request Filter"
+      ],
+      [
+        "Credentials",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Accessible Upload Handler",
+        "SQL Injection File Read"
+      ],
+      [
+        "Offline Password Cracking",
+        "User-Controlled Input Reaches Query"
+      ],
+      [
+        "Authenticated Session",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Credentialed Login Access",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Executable Upload Webshell",
+        "SQL Comment Auth Bypass Payload"
+      ],
+      [
+        "Command Execution",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Reachable Login Workflow",
+        "Source Code Review"
+      ],
+      [
+        "Authenticated Session",
+        "Escalate Privileges"
+      ],
+      [
+        "Arbitrary File Read",
+        "SQL Injection File Read"
+      ],
+      [
+        "Config File",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Command Output",
+        "SQL Injection File Read"
+      ],
+      [
+        "Offline Password Cracking",
+        "Password Hash"
+      ],
+      [
+        "JWT Token Forgery",
+        "Token Signing Ability"
+      ],
+      [
+        "Source Code",
+        "Source Code Review"
+      ],
+      [
+        "Offline Password Cracking",
+        "Read Sensitive Data"
+      ],
+      [
+        "Python Web Stack",
+        "Source Code Review"
+      ],
+      [
+        "JWT Token Forgery",
+        "Move Laterally"
+      ],
+      [
+        "Reachable Login Workflow",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Password Hash",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Extension Blacklist",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Command Output",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Offline Password Cracking",
+        "Protocol Allowlist"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Python Web Stack"
+      ],
+      [
+        "WAF Or Request Filter",
+        "Wildcard Command Filter Bypass"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "Verbose Error Disclosure"
+      ],
+      [
+        "SQL Injection File Read",
+        "Shell Access"
+      ],
+      [
+        "Accessible Upload Handler",
+        "Offline Password Cracking"
+      ],
+      [
+        "SQL Injection File Read",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Offline Password Cracking",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Offline Password Cracking",
+        "Wildcard Command Filter Bypass"
+      ]
+    ],
+    "count": 151,
+    "create_time": 1788383335,
+    "update_time": 1788383335,
+    "_id": "doc-2bd6a3a960d95a25f29b8bab2f627b57"
+  },
+  "doc-5d6318bff278e68b4f0506b89288f7b8": {
+    "relation_pairs": [
+      [
+        "Command Output",
+        "Offline Password Cracking"
+      ],
+      [
+        "Localhost-Only Service Exists",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Offline Password Cracking",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Boolean Response Delta",
+        "Offline Password Cracking"
+      ],
+      [
+        "Escalate Privileges",
+        "Executable Upload Webshell"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Boolean Response Difference",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "SQL Comment Auth Bypass Payload"
+      ],
+      [
+        "ASP.NET",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Command Execution",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Internal Service Reachability",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Cracked Hash",
+        "Offline Password Cracking"
+      ],
+      [
+        "Accessible Upload Handler",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Executable Extension Interpreted",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Executable Upload Webshell",
+        "IIS"
+      ],
+      [
+        "ASP.NET",
+        "Offline Password Cracking"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Python Web Stack"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Uploaded Webshell"
+      ],
+      [
+        "Offline Password Cracking",
+        "Uploaded Webshell"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Offline Password Cracking",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Executable Extension Interpreted",
+        "Offline Password Cracking"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Shell Access"
+      ],
+      [
+        "Offline Password Cracking",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Offline Password Cracking",
+        "Wildcard Command Filter Bypass"
+      ],
+      [
+        "Offline Password Cracking",
+        "Shell Access"
+      ]
+    ],
+    "count": 28,
+    "create_time": 1788383418,
+    "update_time": 1788383418,
+    "_id": "doc-5d6318bff278e68b4f0506b89288f7b8"
+  },
+  "doc-3f3f1790a735b0c5cdce9f5671c3fcb9": {
+    "relation_pairs": [
+      [
+        "SQL Injection",
+        "Source Code Review"
+      ],
+      [
+        "Artifact Config File",
+        "can support"
+      ],
+      [
+        "Reachable Admin Panel",
+        "Source Code Review"
+      ],
+      [
+        "Privilege Escalation Path",
+        "SQL Injection File Read"
+      ],
+      [
+        "Shell Access",
+        "Source Code Review"
+      ],
+      [
+        "Exposed Git Repository",
+        "Offline Password Cracking"
+      ],
+      [
+        "Source Code Review",
+        "Writable Publish Path"
+      ],
+      [
+        "Container",
+        "Source Code Review"
+      ],
+      [
+        "SQL Injection",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Command Output",
+        "Source Code Review"
+      ],
+      [
+        "Linux Host",
+        "SQL Injection File Read"
+      ],
+      [
+        "Source Code Review",
+        "Uploaded Webshell"
+      ],
+      [
+        "Internal Service Reachability",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Offline Password Cracking",
+        "Weak Or Reused Password Exists"
+      ],
+      [
+        "JWT Token Forgery",
+        "Source Review Access"
+      ],
+      [
+        "Read Sensitive Data",
+        "Source Code Review"
+      ],
+      [
+        "Credential Exposure",
+        "Source Code Review"
+      ],
+      [
+        "Artifact Source Code",
+        "can support"
+      ],
+      [
+        "Authenticated Session",
+        "Source Code Review"
+      ],
+      [
+        "Extension Blacklist",
+        "Source Code Review"
+      ],
+      [
+        "Artifact Uploaded Webshell",
+        "can reveal"
+      ],
+      [
+        "JWT Authentication Flow",
+        "JWT Token Forgery"
+      ],
+      [
+        "Privilege Escalation Path",
+        "Source Code Review"
+      ],
+      [
+        "Server-Side URL Fetch Feature",
+        "Source Code Review"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "Shell Access"
+      ],
+      [
+        "Executable Extension Interpreted",
+        "Source Code Review"
+      ],
+      [
+        "Execute Code",
+        "Source Code Review"
+      ],
+      [
+        "Source Code Review",
+        "Uploaded Files Are Web Served"
+      ],
+      [
+        "Linux Host",
+        "Source Code Review"
+      ],
+      [
+        "Insecure Deserialization",
+        "Source Code Review"
+      ],
+      [
+        "Privilege Escalation Path",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Source Code Review",
+        "Source Review Access"
+      ],
+      [
+        "MySQL",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Credentials",
+        "Offline Password Cracking"
+      ],
+      [
+        "Cracked Hash",
+        "Source Code Review"
+      ],
+      [
+        "Artifact Config File",
+        "can reveal"
+      ],
+      [
+        "Command Injection",
+        "Source Code Review"
+      ],
+      [
+        "Credentials",
+        "Source Code Review"
+      ],
+      [
+        "Source Code Review",
+        "Writable WebDAV Path"
+      ],
+      [
+        "Escalate Privileges",
+        "SQL Injection File Read"
+      ],
+      [
+        "Command Execution",
+        "Source Code Review"
+      ],
+      [
+        "Command Output",
+        "can indicate"
+      ],
+      [
+        "Offline Password Cracking",
+        "Shell Access"
+      ],
+      [
+        "Client-Side Authorization",
+        "Source Code Review"
+      ],
+      [
+        "Localhost-Only Service Exists",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Apache",
+        "Source Code Review"
+      ],
+      [
+        "Artifact Uploaded Webshell",
+        "can support"
+      ],
+      [
+        "Password Hash",
+        "Source Code Review"
+      ],
+      [
+        "Move Laterally",
+        "Source Code Review"
+      ],
+      [
+        "PHP",
+        "Source Code Review"
+      ],
+      [
+        "Accessible API Endpoint",
+        "JWT Token Forgery"
+      ],
+      [
+        "Boolean Response Delta",
+        "Source Code Review"
+      ],
+      [
+        "Cracked Hash",
+        "Offline Password Cracking"
+      ],
+      [
+        "JWT Token Forgery",
+        "Source Code"
+      ],
+      [
+        "Artifact Source Code",
+        "can reveal"
+      ],
+      [
+        "Boolean Response Difference",
+        "Source Code Review"
+      ],
+      [
+        "PHP",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Database Dump",
+        "Source Code Review"
+      ],
+      [
+        "JWT Authentication Flow",
+        "Source Code Review"
+      ],
+      [
+        "Source Code Review",
+        "User-Controlled Input Reaches Query"
+      ],
+      [
+        "Artifact Credentials",
+        "can reveal"
+      ],
+      [
+        "Escalate Privileges",
+        "Source Code Review"
+      ],
+      [
+        "Artifact Database Dump",
+        "can reveal"
+      ],
+      [
+        "Path Traversal",
+        "Source Code Review"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Offline Password Cracking",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Escalate Privileges"
+      ],
+      [
+        "Escalate Privileges",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Offline Password Cracking",
+        "User-Controlled Input Reaches Query"
+      ],
+      [
+        "GitLab",
+        "Source Code Review"
+      ],
+      [
+        "Reachable Login Workflow",
+        "Source Code Review"
+      ],
+      [
+        "Cracked Hash",
+        "can indicate"
+      ],
+      [
+        "Arbitrary File Read",
+        "SQL Injection File Read"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "PHP"
+      ],
+      [
+        "Offline Password Cracking",
+        "Password Hash"
+      ],
+      [
+        "Exposed Git Repository",
+        "Source Code Review"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Insecure Deserialization"
+      ],
+      [
+        "Source Code",
+        "Source Code Review"
+      ],
+      [
+        "Source Code Review",
+        "Uploaded Path Disclosure"
+      ],
+      [
+        "WAF Or Request Filter",
+        "Wildcard Command Filter Bypass"
+      ],
+      [
+        "SQL Injection File Read",
+        "Shell Access"
+      ],
+      [
+        "Config File",
+        "Source Code Review"
+      ],
+      [
+        "Source Code Review",
+        "Weak Or Reused Password Exists"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Source Code Review"
+      ]
+    ],
+    "count": 84,
+    "create_time": 1788383569,
+    "update_time": 1788383569,
+    "_id": "doc-3f3f1790a735b0c5cdce9f5671c3fcb9"
+  },
+  "doc-8eaf94ee00a486d6b95caa6dab5c176d": {
+    "relation_pairs": [
+      [
+        "Escalate Privileges",
+        "Privilege Escalation Path"
+      ],
+      [
+        "JWT Token Forgery",
+        "MSSQL"
+      ],
+      [
+        "Callback Received",
+        "Offline Password Cracking"
+      ],
+      [
+        "Coerced Authentication",
+        "Coerced SMB Authentication"
+      ],
+      [
+        "Arbitrary File Read",
+        "Obtain Account Access"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Cracked Hash"
+      ],
+      [
+        "Offline Password Cracking",
+        "Weak Or Reused Password Exists"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Windows Active Directory"
+      ],
+      [
+        "Arbitrary File Read",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Command Execution",
+        "Move Laterally"
+      ],
+      [
+        "JWT Token Forgery",
+        "Shell Access"
+      ],
+      [
+        "JWT Token Forgery",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "ASP.NET",
+        "Coerced SMB Authentication"
+      ],
+      [
+        "Boolean Response Delta",
+        "JWT Token Forgery"
+      ],
+      [
+        "ASP.NET",
+        "Offline Password Cracking"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "MSSQL"
+      ],
+      [
+        "Boolean Response Difference",
+        "JWT Token Forgery"
+      ],
+      [
+        "JWT Authentication Flow",
+        "JWT Token Forgery"
+      ],
+      [
+        "Obtain Account Access",
+        "Shell Access"
+      ],
+      [
+        "Escalate Privileges",
+        "JWT Token Forgery"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Callback Received",
+        "Coerced SMB Authentication"
+      ],
+      [
+        "Offline Password Cracking",
+        "SQL Comment Auth Bypass Payload"
+      ],
+      [
+        "JWT Token Forgery",
+        "SCF Icon Path Payload"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Password Hash"
+      ],
+      [
+        "Command Execution",
+        "Escalate Privileges"
+      ],
+      [
+        "Arbitrary File Read",
+        "Read Sensitive Data"
+      ],
+      [
+        "Command Execution",
+        "Execute Code"
+      ],
+      [
+        "MSSQL",
+        "WinRM Credential Login"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Windows Active Directory"
+      ],
+      [
+        "Command Execution",
+        "Shell Access"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Move Laterally"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "SCF Icon Path Payload"
+      ],
+      [
+        "Credentials",
+        "Password Hash"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Python Web Stack"
+      ],
+      [
+        "IIS",
+        "Offline Password Cracking"
+      ],
+      [
+        "Obtain Account Access",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Move Laterally",
+        "Shell Access"
+      ],
+      [
+        "Boolean Response Delta",
+        "Offline Password Cracking"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Reachable Login Workflow"
+      ],
+      [
+        "JWT Token Forgery",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Boolean Response Difference",
+        "Offline Password Cracking"
+      ],
+      [
+        "Accessible SMB Share",
+        "Coerced SMB Authentication"
+      ],
+      [
+        "Accessible SMB Share",
+        "Offline Password Cracking"
+      ],
+      [
+        "Privilege Escalation Path",
+        "Read Sensitive Data"
+      ],
+      [
+        "Credentials",
+        "Database Dump"
+      ],
+      [
+        "Cracked Hash",
+        "Offline Password Cracking"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Obtain Account Access"
+      ],
+      [
+        "Accessible Upload Handler",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Offline Password Cracking",
+        "Windows Active Directory"
+      ],
+      [
+        "Executable Upload Webshell",
+        "MSSQL"
+      ],
+      [
+        "Command Output",
+        "JWT Token Forgery"
+      ],
+      [
+        "Escalate Privileges",
+        "Shell Access"
+      ],
+      [
+        "Container",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Database Dump",
+        "Password Hash"
+      ],
+      [
+        "Offline Password Cracking",
+        "Python Web Stack"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "IIS"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Shell Access"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Move Laterally"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Command Execution",
+        "Obtain Account Access"
+      ],
+      [
+        "Move Laterally",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "User-Controlled Input Reaches Query"
+      ],
+      [
+        "Command Execution",
+        "Read Sensitive Data"
+      ],
+      [
+        "Coerced Authentication",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "Time Delay"
+      ],
+      [
+        "Command Execution",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Offline Password Cracking",
+        "Password Hash"
+      ],
+      [
+        "Read Sensitive Data",
+        "Shell Access"
+      ],
+      [
+        "Move Laterally",
+        "WinRM Credential Login"
+      ],
+      [
+        "Escalate Privileges",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Move Laterally",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Boolean Response Delta",
+        "WinRM Credential Login"
+      ],
+      [
+        "Obtain Account Access",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Escalate Privileges"
+      ],
+      [
+        "Boolean Response Difference",
+        "WinRM Credential Login"
+      ],
+      [
+        "Privilege Escalation Path",
+        "Shell Access"
+      ],
+      [
+        "Arbitrary File Read",
+        "Execute Code"
+      ],
+      [
+        "Offline Password Cracking",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Execute Code",
+        "Shell Access"
+      ],
+      [
+        "URL Userinfo Confusion Payload",
+        "WinRM Credential Login"
+      ],
+      [
+        "MSSQL",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "Wildcard Command Filter Bypass"
+      ]
+    ],
+    "count": 86,
+    "create_time": 1788383727,
+    "update_time": 1788383727,
+    "_id": "doc-8eaf94ee00a486d6b95caa6dab5c176d"
+  },
+  "doc-093eeac7ad68797562d4239b484f5c06": {
+    "relation_pairs": [
+      [
+        "Credentials",
+        "JWT Token Forgery"
+      ],
+      [
+        "JWT Secret Weakness",
+        "JWT Token Forgery"
+      ],
+      [
+        "Privilege Escalation Path",
+        "SQL Injection File Read"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Python Web Stack"
+      ],
+      [
+        "Escalate Privileges",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Config File",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Execute Code"
+      ],
+      [
+        "Accessible API Endpoint",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Linux Host",
+        "SQL Injection File Read"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Internal Service Reachability",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Executable Extension Interpreted"
+      ],
+      [
+        "PostgreSQL",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Credential Exposure",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "Weak Or Reused Password Exists"
+      ],
+      [
+        "Command Output",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "MySQL"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Artifact Config File"
+      ],
+      [
+        "JWT Token Forgery",
+        "Shell Access"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Password Hash"
+      ],
+      [
+        "Config File",
+        "Offline Password Cracking"
+      ],
+      [
+        "Artifact Password Hash",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Offline Password Cracking"
+      ],
+      [
+        "Execute Code",
+        "Offline Password Cracking"
+      ],
+      [
+        "Internal Service Reachability",
+        "Offline Password Cracking"
+      ],
+      [
+        "Artifact Credentials",
+        "Localhost-Only Service Exists"
+      ],
+      [
+        "Read Sensitive Data",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Artifact Config File",
+        "Localhost-Only Service Exists"
+      ],
+      [
+        "Credential Exposure",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Command Output",
+        "Offline Password Cracking"
+      ],
+      [
+        "Command Execution",
+        "Credentials"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "Shell Access"
+      ],
+      [
+        "Credential Exposure",
+        "Deserialization Gadget Execution"
+      ],
+      [
+        "Config File",
+        "Read Sensitive Data"
+      ],
+      [
+        "Privilege Escalation Path",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Wildcard Command Filter Bypass"
+      ],
+      [
+        "Execute Code",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Config File",
+        "Deserialization Gadget Execution"
+      ],
+      [
+        "MySQL",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Extension Blacklist",
+        "SCF Icon Path Payload"
+      ],
+      [
+        "Internal Service Reachability",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Deserialization Gadget Execution"
+      ],
+      [
+        "Linux Host",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Insecure Deserialization",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Localhost-Only Service Exists",
+        "Offline Password Cracking"
+      ],
+      [
+        "Command Execution",
+        "Execute Code"
+      ],
+      [
+        "Credentials",
+        "Offline Password Cracking"
+      ],
+      [
+        "Arbitrary File Read",
+        "Read Sensitive Data"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Artifact Password Hash"
+      ],
+      [
+        "SQL Comment Auth Bypass Payload",
+        "WAF Or Request Filter"
+      ],
+      [
+        "Command Execution",
+        "Shell Access"
+      ],
+      [
+        "Artifact Config File",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Artifact Credentials",
+        "Shell Access"
+      ],
+      [
+        "Escalate Privileges",
+        "SQL Injection File Read"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Read Sensitive Data"
+      ],
+      [
+        "Artifact Database Dump",
+        "Shell Access"
+      ],
+      [
+        "MySQL",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "Shell Access"
+      ],
+      [
+        "Linux Host",
+        "Offline Password Cracking"
+      ],
+      [
+        "Insecure Deserialization",
+        "Offline Password Cracking"
+      ],
+      [
+        "Protocol Allowlist",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Localhost-Only Service Exists",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Credentials",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Artifact Database Dump",
+        "Localhost-Only Service Exists"
+      ],
+      [
+        "JWT Secret",
+        "Token Signing Ability"
+      ],
+      [
+        "Command Execution",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Credentials",
+        "Deserialization Gadget Execution"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Move Laterally"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "User-Controlled Input Reaches Query"
+      ],
+      [
+        "Database Dump",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "Writable WebDAV Path"
+      ],
+      [
+        "Reachable Login Workflow",
+        "SQL Injection File Read"
+      ],
+      [
+        "Cracked Hash",
+        "Offline Password Cracking"
+      ],
+      [
+        "Password Hash",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Move Laterally",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Boolean Response Delta",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Command Execution",
+        "Offline Password Cracking"
+      ],
+      [
+        "Boolean Response Difference",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Cracked Hash",
+        "Password Hash"
+      ],
+      [
+        "Artifact Credentials",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Offline Password Cracking",
+        "Python Web Stack"
+      ],
+      [
+        "Artifact Password Hash",
+        "Localhost-Only Service Exists"
+      ],
+      [
+        "JWT Secret",
+        "JWT Token Forgery"
+      ],
+      [
+        "Database Dump",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Artifact Database Dump",
+        "Reachable Login Workflow"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Linux Host"
+      ],
+      [
+        "Offline Password Cracking",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Credential Exposure",
+        "JWT Token Forgery"
+      ],
+      [
+        "Move Laterally",
+        "Offline Password Cracking"
+      ],
+      [
+        "Escalate Privileges",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Escalate Privileges"
+      ],
+      [
+        "Database Dump",
+        "Deserialization Gadget Execution"
+      ],
+      [
+        "Cracked Hash",
+        "Deserialization Gadget Execution"
+      ],
+      [
+        "Offline Password Cracking",
+        "User-Controlled Input Reaches Query"
+      ],
+      [
+        "Extension Blacklist",
+        "JWT Token Forgery"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Internal Service Reachability"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Artifact Database Dump"
+      ],
+      [
+        "Arbitrary File Read",
+        "SQL Injection File Read"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Artifact Credentials"
+      ],
+      [
+        "Offline Password Cracking",
+        "Password Hash"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Shell Access"
+      ],
+      [
+        "Command Execution",
+        "Deserialization Gadget Execution"
+      ],
+      [
+        "JWT Token Forgery",
+        "Token Signing Ability"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Localhost-Only Service Exists"
+      ],
+      [
+        "Offline Password Cracking",
+        "Read Sensitive Data"
+      ],
+      [
+        "Protocol Allowlist",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "Insecure Deserialization"
+      ],
+      [
+        "Reachable Login Workflow",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Apache",
+        "Deserialization Gadget Execution"
+      ],
+      [
+        "Escalate Privileges",
+        "Offline Password Cracking"
+      ],
+      [
+        "Offline Password Cracking",
+        "Privilege Escalation Path"
+      ],
+      [
+        "Deserialization Gadget Execution",
+        "WAF Or Request Filter"
+      ],
+      [
+        "Python Web Stack",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "WAF Or Request Filter",
+        "Wildcard Command Filter Bypass"
+      ],
+      [
+        "Artifact Password Hash",
+        "Shell Access"
+      ],
+      [
+        "SQL Injection File Read",
+        "Shell Access"
+      ],
+      [
+        "Database Dump",
+        "Read Sensitive Data"
+      ],
+      [
+        "Move Laterally",
+        "Token Signing Ability"
+      ]
+    ],
+    "count": 120,
+    "create_time": 1788384103,
+    "update_time": 1788384103,
+    "_id": "doc-093eeac7ad68797562d4239b484f5c06"
+  },
+  "doc-fe9761b15bc1070c564f301718c9ae86": {
+    "relation_pairs": [
+      [
+        "Coerced SMB Authentication",
+        "Credential Exposure"
+      ],
+      [
+        "Escalate Privileges",
+        "WinRM Credential Login"
+      ],
+      [
+        "Command Injection",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Config File",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Localhost-Only Service Exists"
+      ],
+      [
+        "Accessible API Endpoint",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Coerced Authentication",
+        "Coerced SMB Authentication"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Writable WebDAV Path"
+      ],
+      [
+        "Client-Side Authorization",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Protocol Allowlist",
+        "WinRM Credential Login"
+      ],
+      [
+        "Command Output",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Reachable Login Workflow",
+        "WinRM Credential Login"
+      ],
+      [
+        "Executable Upload Webshell",
+        "IIS"
+      ],
+      [
+        "Artifact Config File",
+        "Name-Based Virtual Host Routing"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "MSSQL"
+      ],
+      [
+        "Artifact Password Hash",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Callback Received",
+        "WinRM Credential Login"
+      ],
+      [
+        "Callback Received",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Coerced SMB Authentication"
+      ],
+      [
+        "Read Sensitive Data",
+        "WinRM Credential Login"
+      ],
+      [
+        "Read Sensitive Data",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Extension Blacklist"
+      ],
+      [
+        "Credential Exposure",
+        "WinRM Credential Login"
+      ],
+      [
+        "Artifact Config File",
+        "Localhost-Only Service Exists"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Execute Code"
+      ],
+      [
+        "Credential Exposure",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Database Dump",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Escalate Privileges",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Read Sensitive Data",
+        "SQL Injection Enumeration"
+      ],
+      [
+        "Executable Upload Webshell",
+        "User-Controlled Input Reaches Query"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "URL Userinfo Confusion Payload"
+      ],
+      [
+        "Config File",
+        "WinRM Credential Login"
+      ],
+      [
+        "Callback Received",
+        "Coerced SMB Authentication"
+      ],
+      [
+        "Accessible API Endpoint",
+        "WinRM Credential Login"
+      ],
+      [
+        "Execute Code",
+        "WinRM Credential Login"
+      ],
+      [
+        "Execute Code",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Password Hash"
+      ],
+      [
+        "Shell Access",
+        "WinRM Credential Login"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Read Sensitive Data"
+      ],
+      [
+        "MSSQL",
+        "WinRM Credential Login"
+      ],
+      [
+        "Command Output",
+        "WinRM Credential Login"
+      ],
+      [
+        "SCF Icon Path Payload",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Egress Firewall",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Command Injection",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Credentials",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Localhost-Only Service Exists",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Command Injection"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Uploaded Path Disclosure"
+      ],
+      [
+        "Name-Based Virtual Host Routing",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "ASP.NET",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Server-Side URL Fetch Feature",
+        "WinRM Credential Login"
+      ],
+      [
+        "Privilege Escalation Path",
+        "WinRM Credential Login"
+      ],
+      [
+        "Accessible API Endpoint",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Accessible Upload Handler",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Move Laterally",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Boolean Response Delta",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Coerced Authentication",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Boolean Response Difference",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Move Laterally",
+        "SQL Injection Enumeration"
+      ],
+      [
+        "Artifact Credentials",
+        "Reachable Login Workflow"
+      ],
+      [
+        "Database Dump",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Boolean Response Delta",
+        "SQL Injection Enumeration"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Move Laterally"
+      ],
+      [
+        "SQL Comment Auth Bypass Payload",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Boolean Response Difference",
+        "SQL Injection Enumeration"
+      ],
+      [
+        "Escalate Privileges",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Command Injection",
+        "WinRM Credential Login"
+      ],
+      [
+        "Path Traversal",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Localhost-Only Service Exists",
+        "WinRM Credential Login"
+      ],
+      [
+        "Credentials",
+        "WinRM Credential Login"
+      ],
+      [
+        "SSRF Localhost Probing",
+        "Wildcard Command Filter Bypass"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Credentials"
+      ],
+      [
+        "Protocol Allowlist",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Move Laterally",
+        "WinRM Credential Login"
+      ],
+      [
+        "Reachable Login Workflow",
+        "SSRF Localhost Probing"
+      ],
+      [
+        "Executable Upload Webshell",
+        "Linux Host"
+      ],
+      [
+        "Boolean Response Delta",
+        "WinRM Credential Login"
+      ],
+      [
+        "Command Output",
+        "Executable Upload Webshell"
+      ],
+      [
+        "Coerced Authentication",
+        "WinRM Credential Login"
+      ],
+      [
+        "Artifact Config File",
+        "Server-Side URL Fetch Feature"
+      ],
+      [
+        "Coerced SMB Authentication",
+        "Escalate Privileges"
+      ],
+      [
+        "Boolean Response Difference",
+        "WinRM Credential Login"
+      ],
+      [
+        "URL Userinfo Confusion Payload",
+        "WinRM Credential Login"
+      ],
+      [
+        "SQL Comment Auth Bypass Payload",
+        "WinRM Credential Login"
+      ]
+    ],
+    "count": 87,
+    "create_time": 1788384400,
+    "update_time": 1788384400,
+    "_id": "doc-fe9761b15bc1070c564f301718c9ae86"
   }
 }
