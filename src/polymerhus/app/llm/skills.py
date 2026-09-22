@@ -49,7 +49,7 @@ import uuid
 from dataclasses import dataclass
 from pathlib import Path
 
-from polymerhus.app.data_root import DATA_ROOT, validate_path_component
+from polymerhus.app.data_root import DATA_ROOT, project_dir, validate_path_component
 
 logger = logging.getLogger(__name__)
 
@@ -282,6 +282,7 @@ def skill_agent_binding(
     project_id: str | None = None,
     with_write_skill: bool = False,
     store: "SkillStore | None" = None,
+    lesson_store: "LessonStore | None" = None,
 ) -> SkillAgentBinding:
     """Build the ONE per-agent skill binding (the `skill_agent_seams` successor,
     Q3 -> #221): every tool-calling agent binds its whole skill surface through
@@ -291,9 +292,10 @@ def skill_agent_binding(
 
     `role_id` is the role the turn actually runs as (the site's own address or
     role constant), so the declaration in `ROLE_SKILLS` is the only thing that
-    decides what the index lists. `project_id`/`with_write_skill`/`store` reach
-    `build_skill_tools`, so a read-only agent (the default) can never acquire the
-    write tool by accident.
+    decides what the index lists - and it is also the identity the
+    `record_skill_lesson` tool stamps on a lesson (D232-2). `project_id`/
+    `with_write_skill`/`store`/`lesson_store` reach `build_skill_tools`, so a
+    read-only agent (the default) can never acquire the write tool by accident.
 
     An UNDECLARED role id raises: the roster is the considered decision for every
     tool-calling role, so an unlisted one (usually a typo) is a wiring defect
@@ -322,7 +324,11 @@ def skill_agent_binding(
         role_id=role_id,
         middleware=[skill_index_middleware(store=store)],
         tools=build_skill_tools(
-            project_id, with_write_skill=with_write_skill, store=store
+            project_id,
+            with_write_skill=with_write_skill,
+            store=store,
+            lesson_store=lesson_store,
+            role_id=role_id,
         ),
         context={"skills": list(names), "project_id": project_id},
     )
@@ -972,21 +978,155 @@ def build_write_skill_tool(project_id: str, store: "SkillStore | None" = None):
     return tool_obj
 
 
+# The single lesson-recording contract, rendered verbatim into the tool
+# description at every binding (the `SKILL_LOAD_CONTRACT` /
+# `WRITE_SKILL_CONTRACT` precedent). Mirrors `skills/README.md` - update both
+# together. The type semantics are cited here compactly AND in
+# `meta-usage-skill` (D232-3: the three prose sites - this contract, the usage
+# protocol, the evolver prompt - state the same semantics).
+RECORD_LESSON_CONTRACT = (
+    "Record ONE skill-usage lesson: a reusable observation about a skill you "
+    "used, grounded in this run's evidence, persisted in the project's lesson "
+    "shard for that skill.\n\n"
+    "FIELDS - `skill`: the skill the lesson is about (one flat name). `type`: "
+    "`specification` (knowledge specific to the target's attack surface), "
+    "`extension` (an extension of the procedure: new steps, an optimised "
+    "grouping, an anti-pattern - steps that must not be done - or an extension "
+    "of the technique's scope), or `defect` (a genuine error in the illustrated "
+    "procedure). `lesson`: the reusable lesson in prose. `expected`: what the "
+    "skill states or implies, extracted as close to its wording as possible. "
+    "`evidence`: concrete identifiers from this run (http-history artifact "
+    "ids, request/response entries, run ids).\n\n"
+    "THE STORE STAMPS the key, the skill's base version, the writing agent's "
+    "identity, and the timestamp - never supply them. A skill whose version "
+    "does not resolve is refused.\n\n"
+    "OUTCOMES - one in-band envelope: `{ok: true, key, base_version}` or "
+    "`{ok: false, error, detail}` with error one of `lesson_invalid`, "
+    "`skill_unknown`, `store_unavailable`. Nothing raises into the turn.\n\n"
+    "Record once per material observation; the SkillEvolver consumes the "
+    "accumulated lessons, so not every step needs one."
+)
+
+
+def build_record_lesson_tool(
+    project_id: str | None = None,
+    store: "LessonStore | None" = None,
+    role_id: str | None = None,
+):
+    """Build the shared `record_skill_lesson` agent-callable tool (#232
+    D232-4/5), bound to `project_id` and carrying the caller's `role_id`.
+
+    The agent supplies the observation; the symbolic layer supplies identity:
+    the store generates the key and stamps `base_version`/`written_at`, and
+    this factory stamps `agent.role_id` (the binding's role) plus the ambient
+    session id read from the conversation scope (`run_session_turn` binds the
+    thread id for the turn's duration - `bound_conversation_id`). Every
+    refusal is a coded in-band envelope; nothing raises into the turn. Import
+    performs no I/O: `store` defaults to a lazily-constructed `LessonStore`
+    inside the factory call."""
+    from langchain_core.tools import tool  # noqa: PLC0415
+    from pydantic import BaseModel, Field  # noqa: PLC0415
+
+    project_id = _resolve_project_id(project_id)
+    seam = store if store is not None else LessonStore()
+
+    class RecordLessonArgs(BaseModel):
+        """The `record_skill_lesson` args (the bound project needs no identity
+        parameter)."""
+
+        skill: str = Field(
+            description="The skill the lesson is about (one flat name)."
+        )
+        type: str = Field(
+            description="The lesson type: `specification`, `extension`, or "
+            "`defect` - the contract states each one's semantics."
+        )
+        lesson: str = Field(description="The reusable lesson, in prose.")
+        expected: str = Field(
+            default="",
+            description="What the skill states or implies, extracted as close "
+            "to its wording as possible.",
+        )
+        evidence: list[str] = Field(
+            default_factory=list,
+            description="Concrete identifiers from this run (http-history "
+            "artifact ids, request/response entries, run ids).",
+        )
+
+    @tool(args_schema=RecordLessonArgs)
+    def record_skill_lesson(
+        skill: str,
+        type: str,
+        lesson: str,
+        expected: str = "",
+        evidence: list | None = None,
+    ) -> dict:
+        """Placeholder - the real contract is assigned below (the `@tool`
+        decorator reads the docstring at decoration time, so the interpolated
+        `RECORD_LESSON_CONTRACT` is set on the returned tool explicitly)."""
+        from polymerhus.app.llm.conversation import bound_conversation_id  # noqa: PLC0415
+
+        try:
+            base_version = seam.base_version(project_id, skill)
+            key = seam.append(
+                project_id,
+                skill=skill,
+                type=type,
+                lesson=lesson,
+                expected=expected,
+                evidence=evidence or [],
+                agent={
+                    "role_id": role_id or "",
+                    "session_id": bound_conversation_id() or "",
+                },
+            )
+        except SkillUnknownError as exc:
+            return {"ok": False, "error": "skill_unknown", "detail": str(exc)}
+        except LessonInvalidError as exc:
+            return {"ok": False, "error": "lesson_invalid", "detail": str(exc)}
+        except StoreUnavailableError as exc:
+            return {"ok": False, "error": "store_unavailable", "detail": str(exc)}
+        except ValueError as exc:  # noqa: BLE001 - unsafe component, fail-open
+            return {"ok": False, "error": "lesson_invalid",
+                    "detail": f"lesson_invalid: {exc}"}
+        except Exception as exc:  # noqa: BLE001 - fail-open, never a raise
+            return {"ok": False, "error": "store_unavailable",
+                    "detail": f"store_unavailable: {exc}"}
+        return {"ok": True, "key": key, "base_version": base_version}
+
+    # The `@tool` decorator snapshots the docstring at decoration; assign the
+    # interpolated contract as the description so every binding carries it.
+    tool_obj = record_skill_lesson
+    if hasattr(tool_obj, "description"):
+        tool_obj.description = RECORD_LESSON_CONTRACT
+    return tool_obj
+
+
 def build_skill_tools(
     project_id: str | None = None,
     with_write_skill: bool = False,
     store: "SkillStore | None" = None,
+    lesson_store: "LessonStore | None" = None,
+    role_id: str | None = None,
 ) -> list:
-    """The shared agent skill seam (#234): the one place agent owners collect
-    the skill tools. Every agent gets the read-only `load_skill`; an agent
-    whose procedure evolves a skill additionally gets `write_skill` bound to
-    its project, so agents that execute no evolving procedure keep the
-    read-only surface and the write blast radius stays explicit. (The L1
-    skill-index middleware rides alongside at the agent owner's binding site -
-    the #222 seam - composed with this helper, never reimplemented per
-    agent.)"""
+    """The shared agent skill seam (#234, #232): the one place agent owners
+    collect the skill tools. Every agent gets the read-only pair
+    `load_skill` + `record_skill_lesson` (#232 D232-4: the universally safe,
+    append-only lesson observation); an agent whose procedure evolves a skill
+    additionally gets `write_skill` bound to its project, so agents that
+    execute no evolving procedure keep the read-only surface and the write
+    blast radius stays explicit. (The L1 skill-index middleware rides
+    alongside at the agent owner's binding site - the #222 seam - composed
+    with this helper, never reimplemented per agent.)
+
+    `role_id` reaches the lesson tool so the record's agent identity is
+    stamped by the symbolic layer (the binding), never supplied by the model;
+    `lesson_store` is the injectable lesson seam (tests)."""
     project_id = _resolve_project_id(project_id)
-    tools = [build_load_skill_tool(project_id, store=store)]
+    tools = [
+        build_load_skill_tool(project_id, store=store),
+        build_record_lesson_tool(project_id, store=lesson_store, role_id=role_id),
+    ]
     if with_write_skill:
         if not project_id:
             raise ValueError(
@@ -997,21 +1137,379 @@ def build_skill_tools(
     return tools
 
 
+# --- The skill-usage lesson store (#232 D232-1/2) -----------------------------
+#
+# A lesson is an executing agent's reusable observation about a skill it used.
+# The store is skill-scoped (never hunt-scoped) and lives in the same
+# skills-access domain as `SkillStore`, one append-friendly YAML shard per
+# skill under the already-scaffolded skills bucket:
+#
+#     <data_root>/<project_id>/skills/lessons/<skill>.yaml
+#
+# resolved through the ONE `app.data_root.project_dir` resolver (the fixed
+# `skills/lessons` dir is scaffold-owned; the per-SKILL shard is the only
+# runtime-keyed leaf this store creates lazily, B10's safety-net allowance).
+#
+# The record is deliberately small (operator ruling, D232-2): a three-value
+# `type`, free-text `lesson`/`expected`, a list of concrete evidence ids, and
+# STORE/tool-stamped facts the agent never supplies - the generated key
+# (`skill:<skill>:<ordinal>`), the skill's `base_version`, the writing agent's
+# identity, and `written_at`. Consumption is key-encoded: `mark_consumed`
+# rewrites the key with the reserved `:consumed` suffix, so the shard needs no
+# cursor and no consumed flag field.
+#
+# Reads are fail-open (a corrupt shard reads as empty, loudly); writes are
+# fail-loud and atomic under the SAME per-project lock `SkillStore` uses.
+
+LESSON_TYPES: tuple[str, ...] = ("specification", "extension", "defect")
+
+# The reserved key suffix marking a lesson consumed (D232-2).
+CONSUMED_CODE = ":consumed"
+
+# The shard directory name reserved by PROJECT_SCAFFOLD: a skill literally
+# named `lessons` would collide with it and is refused.
+_LESSONS_DIRNAME = "lessons"
+
+
+class LessonInvalidError(ValueError):
+    """The denoted malformed-lesson signal: bad type, empty lesson, non-list
+    evidence, or an unsafe skill shard name."""
+
+
+class SkillUnknownError(ValueError):
+    """The denoted unresolvable-skill signal: the named skill has no bootstrapped
+    version (neither the project bundle nor the shared catalogue carries one),
+    so a lesson about it cannot be stamped."""
+
+
+class LessonStore:
+    """The per-skill lesson shard store (#232): explicit-root like every store
+    on the app-owned data root (tests inject a temp root); production defaults
+    to `DATA_ROOT`. Import performs no I/O."""
+
+    def __init__(
+        self,
+        root_dir: str | Path | None = None,
+        *,
+        skill_store: "SkillStore | None" = None,
+    ):
+        self._root = Path(root_dir) if root_dir is not None else DATA_ROOT
+        # The version seam is the SAME store the loader reads (bundle-first,
+        # catalogue second) so a lesson's base_version can never drift from the
+        # procedure text the agent saw.
+        self._skills = (
+            skill_store if skill_store is not None else SkillStore(root_dir=self._root)
+        )
+
+    # -- paths -------------------------------------------------------------
+
+    def _shard_file(self, project_id: str, skill: str) -> Path:
+        """The shard for one skill, resolved through the one project resolver.
+        `skill` must be ONE safe path component (no separators, no traversal)
+        and may not be the reserved `lessons` shard-directory name."""
+        try:
+            validate_path_component(skill, "skill")
+        except ValueError as exc:
+            raise LessonInvalidError(f"lesson_invalid: {exc}") from exc
+        if skill == _LESSONS_DIRNAME:
+            raise LessonInvalidError(
+                f"lesson_invalid: {skill!r} is the reserved lessons directory name"
+            )
+        base = project_dir(project_id, "skills", root=self._root)
+        return base / _LESSONS_DIRNAME / f"{skill}.yaml"
+
+    # -- reads: fail-open ----------------------------------------------------
+
+    def _read_records(self, project_id: str, skill: str) -> list[dict]:
+        """The shard's records in file (append) order. A missing shard is the
+        valid empty; a CORRUPT shard raises `StoreUnavailableError` (the write
+        path must never silently overwrite history with an empty list) - the
+        public `read` degrades that to `[]` with a warning."""
+        path = self._shard_file(project_id, skill)
+        try:
+            text = path.read_text(encoding="utf-8")
+        except FileNotFoundError:
+            return []
+        except OSError as exc:
+            raise StoreUnavailableError(
+                f"store_unavailable: cannot read lesson shard {path} ({exc})"
+            ) from exc
+        import yaml  # noqa: PLC0415 - already a production dependency
+
+        try:
+            loaded = yaml.safe_load(text)
+        except yaml.YAMLError as exc:
+            raise StoreUnavailableError(
+                f"store_unavailable: unreadable lesson shard {path} ({exc})"
+            ) from exc
+        if loaded is None:
+            return []
+        if not isinstance(loaded, list) or not all(
+            isinstance(r, dict) for r in loaded
+        ):
+            raise StoreUnavailableError(
+                f"store_unavailable: lesson shard {path} is not a record list"
+            )
+        return list(loaded)
+
+    def skills_with_lessons(self, project_id: str) -> list[str]:
+        """The skills that have a lesson shard on disk (sorted). A missing
+        lessons directory is the valid empty, never an error."""
+        shards = project_dir(project_id, "skills", root=self._root) / _LESSONS_DIRNAME
+        try:
+            return sorted(
+                child.stem for child in shards.iterdir() if child.suffix == ".yaml"
+            )
+        except FileNotFoundError:
+            return []
+        except OSError:
+            return []
+
+    def read(
+        self,
+        project_id: str,
+        *,
+        skill: str | None = None,
+        type: str | None = None,
+        unconsumed_only: bool = False,
+        key_keyword: str | None = None,
+        body_keyword: str | None = None,
+    ) -> list[dict]:
+        """The matching lesson records in FILE (append) order. `skill` selects
+        one shard; absent, every shard is walked. `unconsumed_only` drops keys
+        already carrying the `:consumed` code. Keyword filters are
+        case-insensitive substrings of the key / of the lesson body (the
+        lesson + expected + evidence prose). A corrupt or unreadable shard is
+        skipped fail-open with a warning - a lesson read never raises."""
+        chosen = [skill] if skill is not None else self.skills_with_lessons(project_id)
+        out: list[dict] = []
+        for name in chosen:
+            try:
+                records = self._read_records(project_id, name)
+            except (StoreUnavailableError, LessonInvalidError, ValueError) as exc:
+                logger.warning(
+                    "lesson store: skipping unreadable shard %s: %s", name, exc
+                )
+                continue
+            for rec in records:
+                key = str(rec.get("key") or "")
+                if unconsumed_only and _is_consumed_key(key):
+                    continue
+                if type is not None and rec.get("type") != type:
+                    continue
+                if key_keyword is not None and key_keyword.lower() not in key.lower():
+                    continue
+                if body_keyword is not None and body_keyword.lower() not in _lesson_text(
+                    rec
+                ).lower():
+                    continue
+                out.append(rec)
+        return out
+
+    # -- writes: strict, atomic, under the per-project lock ------------------
+
+    def base_version(self, project_id: str, skill: str) -> str:
+        """The version the lesson is made against: resolved through the same
+        store seam the loader uses (project bundle first, catalogue second).
+        Raises `SkillUnknownError` when the skill resolves no bootstrapped
+        version - the agent may not invent one, and a lesson without a base is
+        not actionable for the evolver."""
+        meta = self._skills.meta(skill, project_id=project_id)
+        metadata = meta.get("metadata") if isinstance(meta, dict) else None
+        version = metadata.get("version") if isinstance(metadata, dict) else None
+        if not isinstance(version, str) or not version:
+            raise SkillUnknownError(
+                f"skill_unknown: {skill!r} has no bootstrapped version "
+                "(neither the project bundle nor the catalogue carries one)"
+            )
+        return version
+
+    def append(
+        self,
+        project_id: str,
+        *,
+        skill: str,
+        type: str,
+        lesson: str,
+        expected: str = "",
+        evidence: tuple[str, ...] | list[str] = (),
+        agent: dict | None = None,
+    ) -> str:
+        """Append ONE lesson to the skill's shard; return its generated key
+        `skill:<skill>:<ordinal>` (monotonic per shard; a repeated lesson
+        appends as a new record). The store stamps `base_version` and
+        `written_at`; the CALLER stamps the agent identity (the tool reads it
+        from its binding - the symbolic layer owns it). Refusals raise the
+        coded `LessonInvalidError` / `SkillUnknownError` / `StoreUnavailableError`
+        the tool maps to an in-band envelope; a refused append persists
+        nothing."""
+        if type not in LESSON_TYPES:
+            raise LessonInvalidError(
+                f"lesson_invalid: type {type!r} must be one of {LESSON_TYPES}"
+            )
+        if not isinstance(lesson, str) or not lesson.strip():
+            raise LessonInvalidError(
+                "lesson_invalid: lesson must be a non-empty string"
+            )
+        if not isinstance(expected, str):
+            raise LessonInvalidError("lesson_invalid: expected must be text")
+        if isinstance(evidence, str) or not isinstance(evidence, (list, tuple)):
+            raise LessonInvalidError(
+                "lesson_invalid: evidence must be a list of string identifiers"
+            )
+        evidence = list(evidence)
+        if not all(isinstance(item, str) for item in evidence):
+            raise LessonInvalidError(
+                "lesson_invalid: evidence must be a list of string identifiers"
+            )
+        if agent is not None and not isinstance(agent, dict):
+            raise LessonInvalidError("lesson_invalid: agent must be a mapping")
+        # The version refusal happens BEFORE the lock: it is a pure read of the
+        # same seam the loader uses, and a refused append must persist nothing.
+        base_version = self.base_version(project_id, skill)
+        path = self._shard_file(project_id, skill)
+        import datetime  # noqa: PLC0415 - stdlib, kept local like the yaml import
+
+        import yaml  # noqa: PLC0415
+        with _lock_for(f"{self._root}::{project_id}"):
+            records = self._read_records(project_id, skill)
+            record = {
+                "key": _next_lesson_key(records, skill),
+                "type": type,
+                "lesson": lesson,
+                "expected": expected,
+                "evidence": evidence,
+                "base_version": base_version,
+                "agent": {
+                    "role_id": str((agent or {}).get("role_id") or ""),
+                    "session_id": str((agent or {}).get("session_id") or ""),
+                },
+                "written_at": datetime.datetime.now(
+                    datetime.timezone.utc
+                ).isoformat(),
+            }
+            records.append(record)
+            SkillStore._dump_text_atomic(
+                path, yaml.safe_dump(records, sort_keys=False, allow_unicode=True)
+            )
+        return record["key"]
+
+    def mark_consumed(
+        self,
+        project_id: str,
+        keys: tuple[str, ...] | list[str],
+        *,
+        consumed: bool = True,
+    ) -> int:
+        """Rewrite the given lesson keys with (or without) the reserved
+        `:consumed` code; return how many keys changed. Idempotent: an
+        already-marked key counts zero. Keys the store does not hold are
+        ignored. Each affected shard is rewritten atomically under the same
+        per-project lock; a write failure raises `StoreUnavailableError`."""
+        wanted = {str(key) for key in keys}
+        by_skill: dict[str, set[str]] = {}
+        for key in wanted:
+            skill = _skill_of_lesson_key(key)
+            if skill:
+                by_skill.setdefault(skill, set()).add(key)
+        changed = 0
+        import yaml  # noqa: PLC0415
+
+        for skill, skill_keys in by_skill.items():
+            path = self._shard_file(project_id, skill)
+            with _lock_for(f"{self._root}::{project_id}"):
+                records = self._read_records(project_id, skill)
+                touched = 0
+                for rec in records:
+                    key = str(rec.get("key") or "")
+                    if key not in skill_keys:
+                        continue
+                    new_key = (
+                        key + CONSUMED_CODE
+                        if consumed and not _is_consumed_key(key)
+                        else (
+                            key[: -len(CONSUMED_CODE)]
+                            if not consumed and _is_consumed_key(key)
+                            else key
+                        )
+                    )
+                    if new_key != key:
+                        rec["key"] = new_key
+                        touched += 1
+                if touched:
+                    SkillStore._dump_text_atomic(
+                        path,
+                        yaml.safe_dump(records, sort_keys=False, allow_unicode=True),
+                    )
+                    changed += touched
+        return changed
+
+
+def _is_consumed_key(key: str) -> bool:
+    """Whether a lesson key carries the reserved consumed code (D232-2)."""
+    return key.endswith(CONSUMED_CODE)
+
+
+def _lesson_text(record: dict) -> str:
+    """The searchable prose of a lesson record: the lesson, its expected
+    statement, and the evidence identifiers joined."""
+    parts = [
+        str(record.get("lesson") or ""),
+        str(record.get("expected") or ""),
+        " ".join(str(e) for e in record.get("evidence") or []),
+    ]
+    return " ".join(parts)
+
+
+def _next_lesson_key(records: list[dict], skill: str) -> str:
+    """The next monotonic key for a shard: `skill:<skill>:<max ordinal + 1>`,
+    tolerating a consumed suffix on existing keys."""
+    highest = 0
+    prefix = f"skill:{skill}:"
+    for rec in records:
+        key = str(rec.get("key") or "")
+        if _is_consumed_key(key):
+            key = key[: -len(CONSUMED_CODE)]
+        if not key.startswith(prefix):
+            continue
+        try:
+            highest = max(highest, int(key[len(prefix):]))
+        except ValueError:
+            continue
+    return f"skill:{skill}:{highest + 1}"
+
+
+def _skill_of_lesson_key(key: str) -> str:
+    """The skill segment of a lesson key (`skill:<skill>:<ordinal>[:consumed]`),
+    or `''` when the key is not a lesson key."""
+    parts = key.split(":")
+    if len(parts) >= 3 and parts[0] == "skill":
+        return parts[1]
+    return ""
+
+
 __all__ = [
+    "CONSUMED_CODE",
+    "LESSON_TYPES",
     "META_SKILLS_PREFIX",
     "META_USAGE_SKILL",
     "META_WRITE_SKILL",
     "PROTOCOL_SEPARATOR",
+    "RECORD_LESSON_CONTRACT",
     "ROLE_SKILLS",
     "SKILL_INDEX_HEADER",
     "SKILL_LOAD_CONTRACT",
     "WRITE_SKILL_CONTRACT",
+    "LessonInvalidError",
+    "LessonStore",
     "SkillAgentBinding",
     "SkillInvalidError",
     "SkillStore",
     "SkillTargetError",
+    "SkillUnknownError",
     "StoreUnavailableError",
     "build_load_skill_tool",
+    "build_record_lesson_tool",
     "build_skill_tools",
     "build_write_skill_tool",
     "clear_cache",

@@ -136,9 +136,11 @@ def test_gateway_arming_binds_the_full_auth_surface(tmp_path):
     assert verdict.account == "alice"
     assert seen["bound"], "the model never saw a bound surface"
     # the response-format tool rides the binding too (standard ToolStrategy
-    # shape); the turn's own surface is the five armed names
+    # shape); the turn's own surface is the six armed names (#232 added the
+    # universally bound record_skill_lesson)
     assert [n for n in seen["bound"][0] if n != "GatewayVerdict"] == [
-        "auth_store", "execute_command", "load_skill", "steel_exec", "write_skill"]
+        "auth_store", "execute_command", "load_skill", "record_skill_lesson",
+        "steel_exec", "write_skill"]
 
 
 # --- the gateway turn ------------------------------------------------------------

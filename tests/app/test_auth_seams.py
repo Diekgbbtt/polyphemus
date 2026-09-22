@@ -41,14 +41,20 @@ def test_exempt_role_gains_no_auth_capability() -> None:
 def test_orchestrator_arms_the_write_capable_auth_surface() -> None:
     """#223 D223-13: the recon orchestrator's roster exemption is lifted
     through the write-capable binding - `auth_store`, `load_skill`,
-    `write_skill`, and the per-project `authn` procedure in the bounded set.
-    The catalogue roster still declares it exempt (no catalogue skill bears),
-    so the arming rides `with_write_skill`, never the roster."""
+    `record_skill_lesson`, `write_skill`, and the per-project `authn`
+    procedure in the bounded set. The catalogue roster still declares it
+    exempt (no catalogue skill bears), so the arming rides
+    `with_write_skill`, never the roster."""
     binding = auth_capable_binding(
         "job_orchestrator", project_id="p1", with_write_skill=True)
 
     tool_names = [t.name for t in binding.tools]
-    assert tool_names == ["load_skill", "write_skill", "auth_store"]
+    assert tool_names == [
+        "load_skill",
+        "record_skill_lesson",
+        "write_skill",
+        "auth_store",
+    ]
     assert binding.context["skills"] == [AUTHN_SKILL]
     assert binding.context["project_id"] == "p1"
     assert len(binding.middleware) == 1  # the L1 index middleware
@@ -56,8 +62,13 @@ def test_orchestrator_arms_the_write_capable_auth_surface() -> None:
 
 def test_write_capability_never_leaks_onto_other_roles() -> None:
     """The default binding stays read-only everywhere: a bound role without
-    the flag carries exactly `load_skill` + `auth_store` (the hunting
-    skill-judging loop is the orchestrator's, D223-11)."""
+    the flag carries exactly the read-only pair `load_skill` +
+    `record_skill_lesson` plus `auth_store` (the hunting skill-judging loop
+    is the orchestrator's, D223-11)."""
     binding = auth_capable_binding("pod_runner")
 
-    assert [t.name for t in binding.tools] == ["load_skill", "auth_store"]
+    assert [t.name for t in binding.tools] == [
+        "load_skill",
+        "record_skill_lesson",
+        "auth_store",
+    ]

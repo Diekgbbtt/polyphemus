@@ -36,3 +36,8 @@ It is explicitly not a bounded-context glossary: the meaning of what these modul
 
 - **voluntary function calling** - the A6 negotiated rung for a model whose upstream refuses a forced `tool_choice`: the schema tool is bound, the choice is not forced, the provider decides (a relaxed model rewrites the force to `"auto"` at bind time).
 - **capability override** - the operator-declared correction of a registry claim, via `LLM_CAPABILITY_OVERRIDES` (e.g. a thinking-mode relay refusing a forced tool choice that models.dev cannot express).
+- **skill lesson** - a reusable observation an executing agent records about a skill it used: a type, the lesson in prose, the skill's stated expectation, and concrete evidence identifiers; stamped with the skill's base version and the writing agent's session identity.
+- **lesson type** - the closed vocabulary of a skill lesson: `specification` (knowledge specific to the target's attack surface), `extension` (a procedure extension: new steps, an optimised grouping, an anti-pattern, or an extension of the technique's scope), `defect` (a genuine error in the illustrated procedure).
+- **consumed lesson** - a lesson whose key carries the reserved `:consumed` code, set when the evolution controller loads it for a pass; `unconsumed` lessons are a pass's selection.
+- **skill-evolution pass** - one bounded run of the SkillEvolver over one `(project, skill)`: inspect, decide, produce, publish - or zero-skip when no unconsumed lesson grounds a change; at most one revision per pass.
+- **revision** - one published update of a project skill bundle, versioned monotonically by the skill store and audited by the lesson keys it consumed.

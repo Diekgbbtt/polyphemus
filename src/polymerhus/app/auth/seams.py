@@ -75,7 +75,8 @@ def auth_capable_binding(
             role_id=role_id,
             middleware=[skill_index_middleware(store=skill_store)],
             tools=[*build_skill_tools(
-                project_id, with_write_skill=True, store=skill_store),
+                project_id, with_write_skill=True, store=skill_store,
+                role_id=role_id),
                 build_auth_store_tool(project_id=project_id, store=store)],
             context={"skills": [AUTHN_SKILL], "project_id": project_id},
         )
