@@ -200,6 +200,16 @@ The operator's "quality evaluation with fabricated synthetic data" becomes the `
 5. **G** - scaffold entry + corpus move + header enrichment.
 6. `/to-assertions` - integration/e2e assertion catalogue, including the fabricated-lesson evolver walkthrough (the operator's deferred evaluation step).
 
+## Implementation notes (2026-09-23, `feat/232-skill-evolution`)
+
+Recorded while implementing E/F/G; none of these changes a ruling, they pin how a ruling landed.
+
+1. **The REST trigger awaits the scheduled pass.** D232-10's "the response carries the `EvolutionOutcome`" is honoured by scheduling the pass through the hunting launcher seam (`launch_evolution_pass`, module `hunting`, name `skills:evolve:<pid>:<skill>`) and awaiting the schedule handle on the request; the LLM work runs on the worker loop, never on the request loop. The launcher wraps the pass in `hunting_module_context()`, so the REST path and the controller share the same per-`(project, skill)` thread (the run-terminal flush filters it out; the module drain/shutdown flush archives it).
+2. **The `meta-write-skill` roster entry supersedes the #222 hygiene pin.** D232-7's `ROLE_SKILLS["skill_evolver"] = ("meta/meta-write-skill",)` means the authoring meta-skill IS advertised - for the evolver only. `test_the_meta_skills_are_never_advertised_outside_the_evolver` now pins exactly that narrower invariant; `meta-usage-skill` stays unadvertised everywhere.
+3. **Corpus verification, corrected.** Of the 48 group-tree `.md` duplicates, 46 are byte-identical to their flat skill; `vulnerabilities/idor.md` is a strict subset of `idor/SKILL.md` (the flat body carries the extra "derive verb and body from evidence" section); `vulnerabilities/ssti.md` differs beyond a bullet - its condensed "Blind Probes" section is the one unique artifact ("Length / ETag diff"), preserved verbatim as `skills/ssti/references/blind-probe-signals.md`. The group tree is otherwise dropped.
+4. **The controller knobs live in `app/config.py`** (`SKILL_EVOLVER_LESSON_CAP=5`, `SKILL_EVOLVER_PERIOD_S=300`, `SKILL_EVOLVER_TICK_S=60`), following the `HUNTING_DISPATCH_GATE_WIDTH` precedent; `evolver.py` reads them lazily.
+5. **`skills/README.md` now mirrors `RECORD_LESSON_CONTRACT`** (D232-5) and documents the lesson shard in the per-project bundle layout; the `skill_agent_binding` paragraph states the universal `load_skill` + `record_skill_lesson` pair.
+
 ## Open items carried forward (not decision gaps)
 
 - **`LLM_SKILL_EVOLVER` must be set on every deployment** (D232-7): recorded in `STATE.md` High Priority.

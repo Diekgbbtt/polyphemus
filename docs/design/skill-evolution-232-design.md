@@ -3,6 +3,7 @@
 *Status: RATIFIED + AMENDED 2026-09-23 by the operator grilling (two rounds: the open questions below and the lesson-taxonomy adversarial review). The binding decisions are the numbered ledger in `skill-evolution-232-decisions.md` (D232-1..D232-14); where this narrative and the ledger disagree, the ledger wins.*
 *Base: `dev` HEAD `3af0f14` (the #222/#234/#220/#221/#223 workstreams merged). Companions: `progressive-skill-lifecycle-adr.md` (the session ADRs, parts A/B - its B6/B7/B9 clauses are superseded as recorded in the #232 ledger), `progressive-skill-lifecycle-system.md` (the earlier high-level draft), `skill-writing-primitives-spec.md` + `skill-writing-primitives-234-decisions.md` (the transitory system that landed), `skills-typed-surface-spec.md` and `skill-runtime-loading-222-decisions.md` (the #222 loader rules), issue #232 (the source spec).*
 *Where this document contradicts an earlier draft, this document wins; the earlier draft's decisions were taken before the current code existed and several are now evidenced-wrong (see section 1).*
+*Implementation status 2026-09-23 on `feat/232-skill-evolution`: increments A/B/C (lesson store, `record_skill_lesson`, universal binding), D (key-coded consumption + read filters), E (SkillEvolver pass, controller, role, prompt, REST trigger, hunting wiring), F (usage-protocol migration) and G (lesson scaffold dir, corpus move + A3 enrichment) have landed; the assertions phase (`/to-assertions`) and the adversarial review remain.*
 
 ---
 
