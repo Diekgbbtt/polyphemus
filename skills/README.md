@@ -32,6 +32,16 @@ The protocol is delivered by the read path itself, never by the prompt or compac
 `refresh` clears the cache first (the development hot-reload path only - never set it mid-run).
 The usage contract rides the tool's description verbatim from `SKILL_LOAD_CONTRACT` in the loader module - this README and that constant are the same wording, kept in sync by hand; update both together.
 
+## Skill-usage lessons (`build_record_lesson_tool()::record_skill_lesson`)
+
+Every bound role also carries `record_skill_lesson`, the one append-only observation surface that is safe to bind universally (#232 D232-4).
+It records ONE reusable observation an executing agent made about a skill it used, grounded in the run's evidence, into the project's per-skill lesson shard.
+The agent supplies `skill`, `type`, `lesson`, `expected`, and `evidence`; the store stamps the key, the skill's base version, the writing agent's identity, and the timestamp - the agent never supplies them, and a skill whose version does not resolve is refused.
+The three lesson types: `specification` (knowledge specific to the target's attack surface), `extension` (an extension of the procedure: new steps, an optimised grouping, an anti-pattern - steps that must not be done - or an extension of the technique's scope), and `defect` (a genuine error in the illustrated procedure).
+Outcomes arrive as coded in-band envelopes (`lesson_invalid`, `skill_unknown`, `store_unavailable`); nothing raises into the turn.
+Consumption is key-encoded: the SkillEvolver marks a lesson consumed by rewriting its key with the reserved `:consumed` suffix, so selection needs no cursor.
+The record contract rides the tool's description verbatim from `RECORD_LESSON_CONTRACT` in the loader module - this README and that constant are the same wording, kept in sync by hand; update both together.
+
 ## Per-project skill bundles (`SkillStore` + `build_write_skill_tool()::write_skill`)
 
 An executing agent records what it learned using a procedure - a blocking condition, a new role, a privilege-escalation path - into its own project's bundle, so sibling and later agents start from accumulated ground truth:
@@ -42,6 +52,7 @@ An executing agent records what it learned using a procedure - a blocking condit
 ├── references/
 ├── scripts/
 └── assets/
+<data_root>/<project_id>/skills/lessons/<skill>.yaml   # the skill-usage lesson shard
 ```
 
 There is no canonical shared original; a project's copy is its original, created lazily on first write.
@@ -53,7 +64,7 @@ Every write lands atomically under a per-project lock.
 Outcomes arrive as coded in-band envelopes (`skill_invalid`, `skill_target`, `store_unavailable`); nothing raises into the turn.
 The write contract rides the tool's description verbatim from `WRITE_SKILL_CONTRACT` in the skills module - this README and that constant are the same wording, kept in sync by hand; update both together.
 Reads resolve the per-project bundle first, then the shared catalogue, through the same store seam - loader, writer, and protocol injection share one store and can never diverge.
-Agent owners collect the surface through `skill_agent_binding(role_id)`: it returns the L1 index middleware, the skill tools (`load_skill` for every agent, plus project-bound `write_skill` only for agents whose procedure evolves a skill - the `with_write_skill` flag), and the invocation context carrying the role's bounded skill set. One call binds the whole surface, so it can never be half-wired.
+Agent owners collect the surface through `skill_agent_binding(role_id)`: it returns the L1 index middleware, the skill tools (`load_skill` + `record_skill_lesson` for every agent, plus project-bound `write_skill` only for agents whose procedure evolves a skill - the `with_write_skill` flag), and the invocation context carrying the role's bounded skill set. One call binds the whole surface, so it can never be half-wired.
 
 ## L1 skill index (`skill_index_middleware`) and the phase-gating convention
 
@@ -81,5 +92,7 @@ Keep frontmatter valid YAML: an unquoted `: ` inside a plain-scalar description 
 | `meta/meta-usage-skill` | **authored (#234)** | assess the procedure against its observables; record improvements through `write_skill` |
 | `meta/meta-write-skill` | **authored (#234, content-stable)** | procedure shape, frontmatter shape, references pointers |
 | `meta/authn-skill-writing` | **authored** | authoring a project's per-project `authn` skill: posture probe, sign-in/sign-up execution, and the store/skill two-plane split |
+
+The catalogue additionally carries the 63-skill external corpus moved in-repo flat (#232 D232-12), all governed by the same data-section conformance sweep.
 
 Roadmap detail + priorities: `docs/design/jobs-tools-skills-taxonomy.md` section 6.
