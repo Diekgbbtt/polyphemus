@@ -118,3 +118,12 @@ def test_kali_image_bakes_the_pinned_vegeta():
     loop_end = dockerfile.index("; do", loop_start)
     assert "vegeta" in dockerfile[loop_start:loop_end].split()
     assert 'vegeta -version 2>&1 | grep -q "12.13.0"' in dockerfile
+
+
+def test_kali_environment_exposes_the_rate_limit_artifact_knobs():
+    """#238 Task 3: the raw Vegeta streams are bounded by the SAME deployment
+    discipline as HTTP history - age retention OFF by default, a 256 MiB
+    per-project byte cap that evicts oldest-complete experiment directories."""
+    env = _compose()["services"]["kali"]["environment"]
+    assert env["RATE_LIMIT_ARTIFACT_RETENTION_S"] == "0"
+    assert env["RATE_LIMIT_ARTIFACT_MAX_BYTES"] == "268435456"

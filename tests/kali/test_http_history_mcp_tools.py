@@ -1,6 +1,8 @@
 """The MCP tool bodies: backward compatibility, fail-open capture, not_found."""
 from __future__ import annotations
 
+import json
+
 import kali.mcp_server as mcp_server
 from kali.http_history.config import HttpHistoryConfig
 from kali.http_history.models import (
@@ -139,3 +141,32 @@ def test_search_get_and_status_tools(tmp_path, monkeypatch):
     status = mcp_server.proxy_status()
     assert status["ok"] is True
     assert status["namespaces"]["pool_size"] == 4
+
+
+def test_execute_command_forwards_private_stdin_without_echoing_it(tmp_path, monkeypatch):
+    """#238: the rate-limit runner receives its experiment spec on private
+    stdin. The payload carries the authenticated context, so it must reach the
+    child and must NOT come back in the tool envelope."""
+    seen: dict[str, str] = {}
+
+    def runner(command, session_id, timeout_s, namespace=None, stdin_text=""):
+        seen["stdin_text"] = stdin_text
+        return ExecOutcome(stdout="ok", stderr="", returncode=0, duration_ms=2)
+
+    service = _service(tmp_path, FakeLeaseManager(), runner)
+    monkeypatch.setattr(mcp_server, "_SERVICE", service)
+
+    out = mcp_server.execute_command(
+        "python -m kali.rate_limit.runner",
+        "rate-run1",
+        project_id="proj-1",
+        run_id="run1",
+        spec_id="exp-1",
+        stdin_text='{"headers":{"Authorization":"Bearer supersecret"}}',
+    )
+
+    assert out["returncode"] == 0
+    assert seen["stdin_text"] == '{"headers":{"Authorization":"Bearer supersecret"}}'
+    assert "supersecret" not in json.dumps(out)
+    # The null form (the plan's Interfaces signature) is accepted too.
+    assert mcp_server.execute_command("true", "s2", stdin_text=None)["returncode"] == 0

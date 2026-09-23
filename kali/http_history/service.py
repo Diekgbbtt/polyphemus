@@ -7,6 +7,7 @@ live network namespace.
 """
 from __future__ import annotations
 
+import inspect
 import os
 import socket
 import subprocess
@@ -40,6 +41,20 @@ class BodyUnavailableError(ValueError):
     """The recorded request declares a body whose bytes are not in the store."""
 
 
+def _runner_accepts_stdin(runner) -> bool:
+    """True only when a runner seam explicitly declares `stdin_text`.
+
+    The seam is polymorphic (`default_runner` takes the kwarg; every pre-#238
+    test fake takes four positional parameters), so the payload is forwarded by
+    signature inspection rather than by convention - the same guard
+    `pod._accepts_capture_context` uses. A legacy fake keeps working untouched.
+    """
+    try:
+        return "stdin_text" in inspect.signature(runner).parameters
+    except (TypeError, ValueError):
+        return False
+
+
 @dataclass
 class ExecOutcome:
     stdout: str
@@ -49,8 +64,19 @@ class ExecOutcome:
 
 
 def default_runner(
-    command: str, session_id: str, timeout_s: int, namespace: str | None = None
+    command: str,
+    session_id: str,
+    timeout_s: int,
+    namespace: str | None = None,
+    stdin_text: str = "",
 ) -> ExecOutcome:
+    """Run `command` in a non-login shell.
+
+    `stdin_text` is the PRIVATE channel a caller uses to hand a child a payload
+    that must not appear in argv (the #238 rate-limit experiment spec carries
+    the authenticated context). An empty/absent value keeps the pre-#238
+    behaviour exactly: `subprocess.run(input=None)`.
+    """
     workdir = f"/work/{session_id}"
     os.makedirs(workdir, exist_ok=True)
     # NON-login shell, deliberately. `bash -lc` makes the login profile
@@ -70,7 +96,12 @@ def default_runner(
     start = time.time()
     try:
         proc = subprocess.run(
-            argv, cwd=workdir, capture_output=True, text=True, timeout=timeout_s
+            argv,
+            cwd=workdir,
+            capture_output=True,
+            text=True,
+            timeout=timeout_s,
+            input=stdin_text or None,
         )
         return ExecOutcome(
             stdout=proc.stdout,
@@ -234,7 +265,15 @@ class HttpHistoryService:
         variant_ref: str = "",
         derived_from: str = "",
         replay_kind: str = "",
+        stdin_text: str = "",
     ) -> dict:
+        """Run a command, optionally feeding `stdin_text` to the child.
+
+        `stdin_text` is NEVER echoed back in the returned envelope: it is the
+        private channel for secret-bearing payloads (the #238 experiment spec).
+        It is forwarded only to a runner that declares the parameter, so every
+        pre-#238 runner keeps working unchanged.
+        """
         exec_id = new_ulid()
         lease = None
         capture_warning: str | None = None
@@ -260,7 +299,12 @@ class HttpHistoryService:
 
         namespace = lease.namespace if lease is not None else None
         try:
-            outcome = self._runner(command, session_id, timeout_s, namespace)
+            if stdin_text and _runner_accepts_stdin(self._runner):
+                outcome = self._runner(
+                    command, session_id, timeout_s, namespace, stdin_text=stdin_text
+                )
+            else:
+                outcome = self._runner(command, session_id, timeout_s, namespace)
         finally:
             refs: list[str] = []
             if lease is not None and project_id:

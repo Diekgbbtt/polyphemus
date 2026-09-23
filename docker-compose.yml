@@ -136,6 +136,12 @@ services:
       # The cap is enforced from the exec path at most once per project per
       # interval (never per command: that would scan the store on every pod).
       KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S: ${KALI_HTTP_LIMIT_ENFORCE_INTERVAL_S:-60}
+      # #238 rate-limit artifacts (the raw Vegeta per-hit streams). Age
+      # retention stays 0 on purpose (same reasoning as HTTP history), and the
+      # 256 MiB per-project cap evicts the OLDEST complete experiment directory
+      # once a new one has been published.
+      RATE_LIMIT_ARTIFACT_RETENTION_S: ${RATE_LIMIT_ARTIFACT_RETENTION_S:-0}
+      RATE_LIMIT_ARTIFACT_MAX_BYTES: ${RATE_LIMIT_ARTIFACT_MAX_BYTES:-268435456}
     # VPN-in-container (D-HS e2e): OpenVPN needs to create a tun interface so
     # recon pods can reach a target that lives only on a VPN route. Least
     # privilege - NET_ADMIN + SYS_ADMIN (the latter is required by `ip netns

@@ -1,6 +1,8 @@
 """MCP-facing service: project isolation, sanitized views, replay lineage."""
 from __future__ import annotations
 
+import json
+
 import pytest
 
 from kali.http_history.config import HttpHistoryConfig
@@ -364,3 +366,43 @@ def test_store_cache_is_bounded(tmp_path, monkeypatch):
         service.store(f"proj-{index}")
     assert len(service._stores) <= 2
     assert "proj-0" not in service._stores
+
+
+def test_execute_forwards_private_stdin_to_a_stdin_aware_runner(tmp_path):
+    """#238: the experiment spec (which carries the authenticated context)
+    travels to the child on private stdin - never argv - and is not echoed
+    back in the service envelope."""
+    seen: dict[str, str] = {}
+
+    def runner(command, session_id, timeout_s, namespace=None, stdin_text=""):
+        seen["stdin_text"] = stdin_text
+        return ExecOutcome(stdout="ok", stderr="", returncode=0, duration_ms=1)
+
+    service = HttpHistoryService(
+        config=HttpHistoryConfig(store_root=str(tmp_path)), runner=runner
+    )
+    result = service.execute(
+        "vegeta attack", "s1", 5, stdin_text='{"Authorization":"Bearer supersecret"}'
+    )
+
+    assert seen["stdin_text"] == '{"Authorization":"Bearer supersecret"}'
+    assert "supersecret" not in json.dumps(result)
+
+
+def test_execute_keeps_a_legacy_runner_working(tmp_path):
+    """Every pre-#238 runner takes four parameters; the new keyword must be
+    forwarded only to a seam that declares it (signature-aware, the same guard
+    `pod._accepts_capture_context` uses)."""
+    seen: list[str] = []
+
+    def legacy_runner(command, session_id, timeout_s, namespace=None):
+        seen.append(command)
+        return ExecOutcome(stdout="ok", stderr="", returncode=0, duration_ms=1)
+
+    service = HttpHistoryService(
+        config=HttpHistoryConfig(store_root=str(tmp_path)), runner=legacy_runner
+    )
+    result = service.execute("true", "s1", 5, stdin_text="ignored by a legacy seam")
+
+    assert seen == ["true"]
+    assert result["returncode"] == 0

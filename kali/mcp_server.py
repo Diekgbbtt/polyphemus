@@ -108,12 +108,17 @@ def execute_command(
     variant_ref: str = "",
     derived_from: str = "",
     replay_kind: str = "",
+    stdin_text: str | None = None,
 ) -> dict:
     """Run a shell command in /work/{session_id}.
 
     Returns the legacy {stdout, stderr, returncode, duration_ms} plus exec_id,
     http_artifact_refs and capture_warning. Older callers that pass only
     (command, session_id) keep working unchanged.
+
+    `stdin_text` (#238) is the private channel for a secret-bearing payload -
+    the rate-limit experiment spec. It reaches the child's stdin and is never
+    echoed back in this envelope.
     """
     try:
         result = _get_service().execute(
@@ -126,6 +131,7 @@ def execute_command(
             variant_ref=variant_ref,
             derived_from=derived_from,
             replay_kind=replay_kind,
+            stdin_text=stdin_text or "",
         )
     except Exception as exc:  # noqa: BLE001 - never take the exec server down
         return {
