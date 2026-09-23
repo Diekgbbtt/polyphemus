@@ -210,6 +210,28 @@ Recorded while implementing E/F/G; none of these changes a ruling, they pin how 
 4. **The controller knobs live in `app/config.py`** (`SKILL_EVOLVER_LESSON_CAP=5`, `SKILL_EVOLVER_PERIOD_S=300`, `SKILL_EVOLVER_TICK_S=60`), following the `HUNTING_DISPATCH_GATE_WIDTH` precedent; `evolver.py` reads them lazily.
 5. **`skills/README.md` now mirrors `RECORD_LESSON_CONTRACT`** (D232-5) and documents the lesson shard in the per-project bundle layout; the `skill_agent_binding` paragraph states the universal `load_skill` + `record_skill_lesson` pair.
 
+## Workflow mining (2026-09-23) - the SkillEvolver FSM and the hunter-shape prompt
+
+The SkillEvolver workflow was mined into an explicit two-level FSM and the role prompt `src/polymerhus/app/llm/prompts/skill_evolver.md` was rewritten to the hunting-agent shape (identity, fixed vocabulary, character, ASCII tree, verb-tagged passes with solves/done-when, loop discipline, semi-stateful working set with a passive-tracking contract, worked examples).
+The outer level is harness-owned (per project, per tick): ARMED, SCAN, FIRST-SIGHT initialisation, DUE selection (cap fast-path OR period elapsed, sorted loop order), per-skill SELECT, MARK, TURN, SETTLE, COOLDOWN with last-pass update, re-arm, plus the run-terminal CANCELLED path and the fail-open TICK-fail and PASS-fail edges.
+The inner level is model-navigated inside one turn for one `(project, skill)`: AGGREGATE, INSPECT, ADJUDICATE, PRODUCE, VALIDATE, PUBLISH, CLOSE, with labelled decision points D1 (any actionable lesson), D2 (distinct capability vs change), D3 (draft valid), D4 (refusal repairable), every yes/no edge, the PRODUCE/VALIDATE and PUBLISH/PRODUCE re-entries, and the CLOSE-SKIP and DEGRADED terminals.
+The composition seam is the single HumanMessage in and the `write_skill` calls plus the turn end out: the harness pre-empts empty selections as `zero_skip` with no model call, marks consumed-at-load before the turn, and settles `published | no_write` from the version delta after it.
+The passive-tracking mapping the future `skill_evolver_state.py` implements verbatim is:
+
+| State | Observable signal | Transition | Pushed move | Injected constant |
+|---|---|---|---|---|
+| AGGREGATE | HumanMessage pasted with N full records | aggregate | upsert into aggregated_lessons | none (harness-side, rides the next header if ever needed) |
+| MARK | keys rewritten with `:consumed` | consume | move keys into consumed_lessons | none (same) |
+| PUBLISH ok | `write_skill` envelope `{ok: true}` | publish | append RevisionItem to published_revisions | NEXT_SKILL_HINT |
+| PUBLISH refused | `write_skill` envelope `{ok: false, error}` | refuse | append to refused_writes | REPAIR_HINT |
+| CLOSE without write | turn ends, version unchanged | skip | append close record to skipped_closes | none (no response to ride) |
+| Seam failure | raise, `store_unavailable`, or wiring failure | degrade | append to degraded_passes | none (same) |
+
+Reused verbatim from the built code: the lesson `unconsumed | consumed` statuses, the outcome words `published | zero_skip | skill_unknown | no_write | degraded` (skip folds the three no-revision closes with the cause carried on the close record; publish folds create and update with the target carried on the revision), and the envelope codes.
+NEW terms the future symbolic layer needs and the built code does not yet emit: the `TransitionName` vocabulary `aggregate | consume | publish | skip | refuse | degrade | none`, the six semantic lists, the `ConsumedLessonItem` and `RevisionItem` shapes, and the `NEXT_SKILL_HINT` / `REPAIR_HINT` constants (only `write_skill` responses can carry a hint in the single-turn mechanism).
+The mining verified one load-bearing nuance now stated in the prompt: CREATE-NEW lands only for catalogue-known names (first write copies catalogue frontmatter), while a genuinely new name refuses `skill_invalid` and the pass closes naming the proposed skill.
+Dependencies on the open rulings, undecided here: the prompt says exactly one `write_skill` call per pass but the harness still observes only the version delta (open ruling 1); `source_note_ids` are cited log-only with no presence check (open ruling 2); the prompt stays neutral on `EvolutionOutcome.version` `None`-vs-base semantics (open ruling 3); the prompt describes the REST forced pass without pinning 200 vs 202 (open ruling 4).
+
 ## Adversarial review (2026-09-23) - findings and open rulings
 
 The adversarial review of `feat/232-skill-evolution` returned Standards PASS and Spec FAIL.
