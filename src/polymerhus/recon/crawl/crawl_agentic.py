@@ -37,6 +37,64 @@ CRAWL_TOOL_NAMES = {
 }
 
 
+def derive_crawl_pacing(
+    policy: dict | None, *, max_pages: int, max_iterations: int, navigate_wait_ms: int
+) -> dict:
+    """Conservatively adapt a browser crawl to a measured `TrafficPolicy` (#238).
+
+    The Steel crawl cannot expose its sub-requests to the egress governor: one
+    browser session fans out into connections the run never sees. So the policy
+    is expressed the only way a browser CAN honour it - as an inter-action
+    cadence plus HARDER page/iteration caps - and never as a claim that the
+    sub-requests are individually governed.
+
+    The derivation is monotone and conservative:
+
+    * `min_delay_ms` is the policy's own cadence (or `1000 / rate_per_s` when
+      the policy names only a rate), never faster than the operator's existing
+      `navigate_wait_ms` - a policy that would allow a faster crawl leaves the
+      crawl exactly as it was;
+    * the page and iteration caps are reduced by the SAME factor the pacing
+      slowed (`existing_delay / effective_delay`), so an equal-length session
+      covers what the slower cadence can actually reach. They are NEVER
+      increased: a permissive policy cannot enlarge the operator's budget;
+    * `max_concurrent_crawls` is always 1 - one crawl session per target.
+
+    A missing or malformed policy leaves the operator defaults untouched.
+    Pure: no clock, no I/O.
+    """
+    existing_pages = max(1, int(max_pages))
+    existing_iters = max(1, int(max_iterations))
+    pacing = {
+        "max_pages": existing_pages,
+        "max_iterations": existing_iters,
+        "min_delay_ms": 0,
+        "max_concurrent_crawls": 1,
+    }
+    if not isinstance(policy, dict):
+        return pacing
+    delay_ms = policy.get("min_delay_ms")
+    try:
+        delay_ms = float(delay_ms) if delay_ms is not None else 0.0
+    except (TypeError, ValueError):
+        delay_ms = 0.0
+    if delay_ms <= 0:
+        rate = policy.get("rate_per_s")
+        if isinstance(rate, (int, float)) and not isinstance(rate, bool) and rate > 0:
+            delay_ms = 1000.0 / float(rate)
+    try:
+        nominal_ms = max(0.0, float(navigate_wait_ms or 0))
+    except (TypeError, ValueError):
+        nominal_ms = 0.0
+    effective_ms = max(nominal_ms, delay_ms)
+    pacing["min_delay_ms"] = int(round(effective_ms))
+    if nominal_ms > 0 and effective_ms > nominal_ms:
+        scale = nominal_ms / effective_ms
+        pacing["max_pages"] = max(1, int(existing_pages * scale))
+        pacing["max_iterations"] = max(1, int(existing_iters * scale))
+    return pacing
+
+
 class AgenticCrawlRequest(BaseModel):
     target: str
     scope: list[str]
@@ -186,11 +244,21 @@ async def _run_agentic_crawl(
     mcp_manager,
     # Injected by api.py so this module stays import-light (no circular deps)
     build_llm_fn=None,
+    pacing: dict | None = None,
+    sleeper=None,
+    clock=None,
 ) -> dict:
     """Run a bounded ReAct loop driving the Steel crawl MCP tools.
 
     Returns the manifest produced by steel_crawl_finish:
         {"endpoints": [...], "js_urls": [...]}
+
+    `pacing` (#238) is the conservative adaptation the caller derived from the
+    run's `TrafficPolicy` (`derive_crawl_pacing`): it lowers the page/iteration
+    caps and inserts `min_delay_ms` between MODEL-ISSUED browser actions, using
+    the injected `sleeper` / `clock` seams. It never claims the browser's
+    sub-requests are individually governed - only the agent's own actions are
+    paced, and only the caps the operator already set can be reduced.
     """
     # Lazy import the real builder only when not overridden (e.g. in tests)
     if build_llm_fn is None:
@@ -202,6 +270,12 @@ async def _run_agentic_crawl(
     all_tools = await mcp_manager.get_tools()
     tools = [t for t in all_tools if getattr(t, "name", "") in CRAWL_TOOL_NAMES]
     by_name = {t.name: t for t in tools}
+    # #238 pacing is resolved BEFORE the prompt is rendered, so the model is
+    # told the caps it will actually be held to (a policy only ever reduces).
+    pacing = pacing if isinstance(pacing, dict) else {}
+    action_delay_s = max(0.0, float(pacing.get("min_delay_ms") or 0)) / 1000.0
+    max_iterations = int(pacing.get("max_iterations") or body.max_iterations)
+    paced_max_pages = int(pacing.get("max_pages") or body.max_pages)
     # T5 (#108): the capability gate - a model that cannot call tools (false
     # or unknown, provenance-gated per ADR D5 Rule 1) REFUSES the tool-loop:
     # bind_tools is never attempted and the crawl degrades fail-open to the
@@ -213,7 +287,7 @@ async def _run_agentic_crawl(
     sys_prompt = _load_steel_crawl_skill()
     user = (
         f"target={body.target}\nscope={body.scope}\n"
-        f"max_depth={body.max_depth} max_pages={body.max_pages} "
+        f"max_depth={body.max_depth} max_pages={paced_max_pages} "
         f"wait_ms={body.navigate_wait_ms} proxy_escalation={body.proxy_escalation}\n"
         f"Begin by calling steel_crawl_start."
     )
@@ -224,6 +298,11 @@ async def _run_agentic_crawl(
     import time as _time  # noqa: PLC0415
     logger = logging.getLogger("crawl_agentic")
 
+    if sleeper is None:
+        sleeper = _time.sleep
+    if clock is None:
+        clock = _time.monotonic
+
     # Soft deadline: stop reasoning early enough to still drain the captured
     # network surface before the hard job_timeout cancels the task. Each Steel
     # navigation can take ~20s, so reserve a margin for one navigate + finish.
@@ -232,7 +311,8 @@ async def _run_agentic_crawl(
     finish_margin_s = 35
     soft_deadline = _time.time() + max(body.job_timeout_s - finish_margin_s, 1)
 
-    for _ in range(body.max_iterations):
+    last_action_at = None
+    for _ in range(max_iterations):
         if _time.time() >= soft_deadline:
             logger.warning("crawl soft time budget reached; draining partial manifest")
             break
@@ -248,6 +328,14 @@ async def _run_agentic_crawl(
                     ToolMessage(content="unknown tool", tool_call_id=tc["id"])
                 )
                 continue
+            # #238: min_delay_ms between MODEL-ISSUED browser actions. Only the
+            # agent's own actions are paced - the browser's sub-requests are
+            # NOT individually governed (spec, traffic enforcement).
+            if last_action_at is not None and action_delay_s > 0:
+                remaining = action_delay_s - (clock() - last_action_at)
+                if remaining > 0:
+                    sleeper(remaining)
+            last_action_at = clock()
             args = dict(tc["args"] or {})
             if tc["name"] == "steel_crawl_start":
                 args["user_id"] = body.user_id

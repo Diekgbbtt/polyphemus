@@ -34,6 +34,7 @@ though `job_agent` itself runs inside the pipeline's event loop.
 """
 from __future__ import annotations
 
+import inspect
 import json
 
 from typing import Optional
@@ -85,7 +86,8 @@ def _coverage_observation(input_asset: dict, reason: str) -> Observation:
     )
 
 
-def default_run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None, steel_profile=None):
+def default_run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None,
+                         steel_profile=None, traffic_policy=None):
     """Real collaborator: run the agentic Steel crawl loop synchronously.
 
     Wraps `crawl_agent.run_crawl` (async) behind `run_coro_blocking`,
@@ -94,13 +96,29 @@ def default_run_crawl_fn(target: str, *, scope: list[str], auth_cookies=None, st
     cookies) and `steel_profile` (the feed-bound persisted profile key,
     mounted read-only) are forwarded so the Steel session opens under the
     persisted profile with its browser context seeded for profile-mount-only
-    auth; both are empty for an anonymous crawl.
+    auth; both are empty for an anonymous crawl. `traffic_policy` (#238) is
+    forwarded so the adapter can derive the conservative browser pacing.
     """
     from polymerhus.recon.crawl import crawl_agent
     from polymerhus.recon.control.async_bridge import run_coro_blocking
 
     return run_coro_blocking(crawl_agent.run_crawl(
-        target, scope=scope, auth_cookies=auth_cookies, steel_profile=steel_profile))
+        target, scope=scope, auth_cookies=auth_cookies, steel_profile=steel_profile,
+        traffic_policy=traffic_policy))
+
+
+def _accepts_traffic_policy(fn) -> bool:
+    """Whether an injected crawl seam declares `traffic_policy`.
+
+    Mirrors `pod._accepts_capture_context`: the seam is polymorphic (the
+    production `default_run_crawl_fn` takes it; the unit fakes take four
+    keyword args), so the policy is forwarded by signature inspection and a
+    legacy fake keeps working with no edit.
+    """
+    try:
+        return "traffic_policy" in inspect.signature(fn).parameters
+    except (TypeError, ValueError):
+        return False
 
 
 def _host_of(url: str) -> str:
@@ -171,9 +189,18 @@ def build_crawl_pod(*, run_crawl_fn, parse_fn, triage_fn, curate_fn):
         auth_context = extra.get("auth_context") or {}
         auth_cookies = auth_context.get("cookies") or []
         steel_profile = extra.get("steel_profile") or None
+        # #238: the measured TrafficPolicy rides `extra` (never a template
+        # slot) and is forwarded to the crawl seam, which turns it into
+        # conservative browser pacing - one crawl per target, an inter-action
+        # delay, and reduced page/iteration caps. Forwarded only when the seam
+        # declares it, so a legacy 4-kwarg fake keeps working.
+        traffic_policy = extra.get("traffic_policy") or None
+        crawl_kwargs = {}
+        if traffic_policy is not None and _accepts_traffic_policy(run_crawl_fn):
+            crawl_kwargs["traffic_policy"] = traffic_policy
         try:
             manifest = run_crawl_fn(target, scope=scope, auth_cookies=auth_cookies,
-                                    steel_profile=steel_profile)
+                                    steel_profile=steel_profile, **crawl_kwargs)
         except Exception as exc:  # noqa: BLE001 - best-effort, never raise
             return {"manifest": None, "crawl_error": str(exc)}
 

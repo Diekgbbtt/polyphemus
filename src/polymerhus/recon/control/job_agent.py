@@ -95,6 +95,10 @@ def default_preprocess_fn(
     non-auth pods must never see it, even if the caller passed it in.
     `extra["apex_registrable"]` (the orchestration datum for the batched
     first-party filter) is popped so it never reaches a pod.
+    `extra["traffic_policy"]` (#238) rides through VERBATIM with the rest of
+    `extra`: it is the per-target `TrafficPolicy` the pipeline attached to this
+    job, and the pod (or the Steel pacing adapter) is the seam that consumes
+    it - the preprocess never invents, rewrites or drops it.
 
     Fail-open (P6): a derivation failure degrades to the raw assets wrapped
     in the job's pack shape (so the pod dispatch stays runnable) with a loud

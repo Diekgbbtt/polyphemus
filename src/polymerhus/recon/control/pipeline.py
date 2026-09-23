@@ -23,9 +23,13 @@ defaults to the real `polymerhus.recon.control.job_agent.run_job`,
 registry. The auth gateway is the production default
 (feat/stateful-recon-job-auth): the recon-orchestrator runs its ONE gateway
 turn before phase 0 and the typed verdict configures the run (pruned phases,
-the bound account identifier). `orchestrator_factory` builds the actor (tests
-inject the production actor over scripted models and temp stores) - there is
-NO gateway injection seam; tests exercise this real boundary.
+the bound account identifier). Since #238 the SAME actor then takes a SECOND
+turn - the rate mapping - and the measured `TrafficPolicy` rides
+`extra["traffic_policy"]` into every HTTP job (and the Steel crawl's pacing
+adapter) while the profile is persisted under `recon_runs.stats["rate_limit"]`.
+`orchestrator_factory` builds the actor (tests inject the production actor over
+scripted models and temp stores) - there is NO gateway injection seam; tests
+exercise this real boundary.
 """
 from __future__ import annotations
 
@@ -59,6 +63,133 @@ logger = logging.getLogger(__name__)
 # Node properties that are bookkeeping, not part of an asset's identity -
 # excluded when re-hydrating produced assets from Neo4j for the next phase.
 _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
+
+# --- #238 rate-limit turn wiring --------------------------------------------------
+
+# The jobs whose pods egress HTTP(S) traffic TO THE TARGET: exactly the ones a
+# measured `TrafficPolicy` configures. The agent-driven Steel crawl receives it
+# too, through its own conservative pacing adapter (it cannot expose its
+# sub-requests to the governor). Declared here, beside the ONE place that
+# assembles a job's `extra`, because `JobSpec` carries no egress axis and this
+# tranche does not change that contract.
+_HTTP_TRAFFIC_JOBS = frozenset({
+    "httpx", "httpx_services", "httpx_reprofile", "katana", "ffuf",
+    "kiterunner", "jsluice", "graphql-cop", "arjun",
+})
+
+
+def _rate_target(settings: dict | None) -> tuple[str, str] | None:
+    """The canonical `(target_key, url)` the rate-mapping turn measures.
+
+    `resolve_seed` names the target; `parse_scope` folds it to the exact host to
+    replay (`seed_host` - never the literal `*.`), and the scheme follows the
+    seed KIND: a bare IP is probed over `http`, a domain over `https`. A wrong
+    scheme shows up as a MEASURED failure, never as a silent skip.
+    """
+    seed = resolve_seed(settings)
+    if not seed:
+        return None
+    scope = parse_scope(seed)
+    host = scope["seed_host"]
+    scheme = "http" if scope["mode"] == "host" else "https"
+    return host, f"{scheme}://{host}/"
+
+
+def _rate_request_headers(project_id: str, account_name: str | None, auth_store) -> dict:
+    """The flat request headers the mapping replays (#238, D223-19).
+
+    The gateway's account IDENTIFIER is resolved LAZILY here through the auth
+    feed (never the retired settings blob) and projected by the ONE header
+    projection, so the Vegeta replay carries the same session the request jobs
+    will - and never the login credentials. An unresolvable account leaves the
+    mapping anonymous (the feed warns loudly).
+    """
+    if not account_name:
+        return {}
+    account = resolve_account(project_id, account_name, store=auth_store)
+    if not account:
+        return {}
+    overview = resolve_overview(project_id, store=auth_store)
+    from polymerhus.recon.control.auth_feed import (  # noqa: PLC0415
+        _iter_auth_headers,
+    )
+    return dict(_iter_auth_headers(project_request_auth(account, overview)))
+
+
+async def _rate_profile_for_run(
+    orchestrator, *, project_id: str, run_id: str, settings: dict | None,
+    auth_account: str | None, auth_store, browser_only: bool,
+):
+    """Take the #238 rate-limit turn on the run's orchestrator actor.
+
+    The actor owns the turn; this wrapper supplies the canonical target and the
+    lazily resolved request material and guarantees the pipeline ALWAYS gets a
+    `RateProfile` back: a missing seam, a raising turn or an absent target
+    degrade to the loud conservative policy, never to unthrottled traffic.
+    """
+    from polymerhus.recon.config import rate_limit_safety_budget  # noqa: PLC0415
+    from polymerhus.recon.domain.rate_limit import RateProfile  # noqa: PLC0415
+
+    target = _rate_target(settings)
+    if target is None:
+        logger.warning(
+            "run %s has no target seed; the rate-mapping turn is skipped and the "
+            "conservative policy applies", run_id)
+        return RateProfile.conservative(
+            "", [], rate_limit_safety_budget(),
+            "no target seed configured: the traffic surface was not measured; "
+            "conservative fallback", outcome="inconclusive")
+    target_key, url = target
+    turn = getattr(orchestrator, "run_rate_limit", None)
+    if turn is None:
+        logger.warning(
+            "run %s orchestrator exposes no rate-limit turn; the conservative "
+            "policy applies (never unthrottled traffic)", run_id)
+        return RateProfile.conservative(
+            target_key, [target_key], rate_limit_safety_budget(),
+            "orchestrator exposes no rate-limit turn: conservative fallback",
+            outcome="failed")
+    try:
+        headers = await asyncio.to_thread(
+            _rate_request_headers, project_id, auth_account, auth_store)
+    except Exception:  # noqa: BLE001 - the store is not worth a failed run
+        logger.warning(
+            "run %s could not resolve the rate mapping's auth material; the "
+            "mapping proceeds anonymously", run_id, exc_info=True)
+        headers = {}
+    try:
+        return await turn(
+            target_key=target_key, url=url, headers=headers,
+            host_patterns=[target_key], browser_only=browser_only)
+    except Exception:  # noqa: BLE001 - fail-LOUD, conservative
+        logger.warning(
+            "run %s rate-limit turn raised; the conservative policy applies "
+            "(never unthrottled traffic)", run_id, exc_info=True)
+        return RateProfile.conservative(
+            target_key, [target_key], rate_limit_safety_budget(),
+            "rate-limit turn raised: conservative fallback", outcome="failed")
+
+
+async def _persist_rate_profile(registry, run_id: str, profile) -> None:
+    """Persist the public profile through the EXISTING `recon_runs.stats` seam.
+
+    Additive by construction: the payload carries exactly the `rate_limit` key,
+    so a JSONB merge cannot clobber the analysis stats another writer put in the
+    same row. A registry without the seam (or a failing write) warns loudly and
+    lets the run continue - the profile still governs the traffic in-process.
+    """
+    write_stats = getattr(registry, "set_run_stats", None)
+    if write_stats is None:
+        logger.warning(
+            "run %s registry exposes no set_run_stats; the rate profile was not "
+            "persisted", run_id)
+        return
+    try:
+        await asyncio.to_thread(
+            write_stats, run_id, {"rate_limit": profile.model_dump(mode="json")})
+    except Exception:  # noqa: BLE001 - persistence never fails a healthy run
+        logger.warning("run %s could not persist the rate profile (recon "
+                       "continues)", run_id, exc_info=True)
 
 
 def _utc_now_iso() -> str:
@@ -498,6 +629,19 @@ async def run_pipeline(
         if gateway_verdict is not None and gateway_verdict.replayability_resolved:
             logger.warning("run %s in-loop replayability resolved to %s (persisted to the overview by the loop)",
                            run_id, gateway_verdict.replayability)
+        # #238: the SECOND turn on the same actor - measure this target's
+        # rate-limit behaviour under the authenticated context the gateway just
+        # selected, and persist the public profile, BEFORE phase 0. The
+        # heartbeat already runs, so both turns ride inside its window
+        # (D223-10); a failure degrades to the loud conservative policy.
+        rate_profile = await _rate_profile_for_run(
+            orchestrator, project_id=project_id, run_id=run_id, settings=settings,
+            auth_account=auth_account, auth_store=auth_store,
+            browser_only=bool(gateway_verdict is not None
+                              and gateway_verdict.branch == "browser_only"),
+        )
+        await _persist_rate_profile(registry, run_id, rate_profile)
+        traffic_policy = rate_profile.traffic_policy.model_dump(mode="json")
         for phase_idx, phase_jobs in enumerate(plan):
             job_configs: dict[str, tuple] = {}
             for name in phase_jobs:
@@ -538,6 +682,14 @@ async def run_pipeline(
                             input_assets = _services_to_probe_targets(input_assets)
 
                     extra = {"project_id": project_id}
+                    # #238: the measured policy configures the target's request
+                    # traffic - carried ONLY in `extra["traffic_policy"]`, never
+                    # as a flag string or a template slot (the fixed templates
+                    # stay fixed), and never for jobs that do not egress to the
+                    # target (DNS/passive tooling). The agent-driven crawl gets
+                    # it too, for its conservative browser pacing.
+                    if name in _HTTP_TRAFFIC_JOBS or job.configurator_mode == "agent":
+                        extra["traffic_policy"] = traffic_policy
                     if auth_account is not None and job.use_auth:
                         # D223-19, the lazy feed (#243): the gateway-selected
                         # account's IDENTIFIER rides the pipeline state (never

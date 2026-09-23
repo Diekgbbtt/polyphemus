@@ -18,6 +18,7 @@ This module does NOT reimplement the crawl loop - it wraps `crawl_agentic.py`
 """
 from __future__ import annotations
 
+import threading
 from typing import Optional
 
 from polymerhus.recon import config
@@ -25,6 +26,7 @@ from polymerhus.recon.crawl import steel_client
 from polymerhus.recon.crawl.crawl_agentic import (
     AgenticCrawlRequest,
     CRAWL_TOOL_NAMES,
+    derive_crawl_pacing,
     _run_agentic_crawl,
 )
 
@@ -35,6 +37,23 @@ __all__ = [
 ]
 
 _EMPTY_MANIFEST = {"endpoints": [], "js_urls": []}
+
+# #238: ONE active crawl per target. The crawl pods of a single job run in
+# parallel (MAX_PODS), and a browser session fans out into connections the run
+# cannot throttle - so two crawls of the same target would multiply the load
+# the policy exists to bound. A per-target lock serializes them in-process (the
+# pods run in worker threads, so a threading lock is the right seam).
+_TARGET_CRAWL_GUARDS: dict[str, threading.Lock] = {}
+_TARGET_CRAWL_GUARDS_LOCK = threading.Lock()
+
+
+def _target_guard(target: str) -> threading.Lock:
+    """The lock that owns one target's crawl slot (`host[:port]` keyed, so a
+    URL path never splits one host into two slots)."""
+    host = (target or "").split("://", 1)[-1].split("/", 1)[0].lower()
+    key = host or (target or "")
+    with _TARGET_CRAWL_GUARDS_LOCK:
+        return _TARGET_CRAWL_GUARDS.setdefault(key, threading.Lock())
 
 
 # The steel-crawl role prompt, memoized on first call (no import-time I/O,
@@ -77,6 +96,9 @@ async def run_crawl(
     max_iters: Optional[int] = None,
     auth_cookies: Optional[list] = None,
     steel_profile: Optional[str] = None,
+    traffic_policy: Optional[dict] = None,
+    sleeper=None,
+    clock=None,
 ) -> dict:
     """Run the bounded agentic-crawl ReAct loop and return its manifest.
 
@@ -89,40 +111,59 @@ async def run_crawl(
     (profile-mount-only auth). Ignored when `tools` are injected
     (tests build the provider themselves).
 
+    `traffic_policy` (#238) is the run's measured `TrafficPolicy` (already
+    serialized). It is turned into conservative BROWSER pacing by
+    `derive_crawl_pacing`: the inter-action delay and reduced page/iteration
+    caps, plus the one-active-crawl-per-target rule. The browser's sub-requests
+    are NOT individually governed - this is an action-cadence adapter, never a
+    claim that Steel traffic obeys the egress governor. `sleeper` / `clock` are
+    the injectable time seams.
+
     Best-effort: any exception (Steel unconfigured, tool/LLM failure, ...)
     yields the empty manifest rather than propagating, so callers (the crawl
     pod) can treat a failed crawl as reduced coverage instead of a crash.
     """
-    try:
-        resolved_tools = tools
-        if resolved_tools is None:
-            resolved_tools = await steel_client.get_crawl_tools(
-                auth_cookies=auth_cookies, steel_profile=steel_profile)
-        mcp_manager = _ToolsManager(resolved_tools)
+    # One active crawl per target (#238): the lock is held for the WHOLE crawl,
+    # so the pods serialize instead of multiplying browser load on one host.
+    guard = _target_guard(target)
+    with guard:
+        try:
+            resolved_tools = tools
+            if resolved_tools is None:
+                resolved_tools = await steel_client.get_crawl_tools(
+                    auth_cookies=auth_cookies, steel_profile=steel_profile)
+            mcp_manager = _ToolsManager(resolved_tools)
 
-        if llm is not None:
-            def build_llm_fn(model, user_id, _llm=llm):
-                return _llm
-        else:
-            from polymerhus.app.llm.roles import chat_model_for
+            if llm is not None:
+                def build_llm_fn(model, user_id, _llm=llm):
+                    return _llm
+            else:
+                from polymerhus.app.llm.roles import chat_model_for
 
-            def build_llm_fn(model, user_id, _role=model_role):
-                return chat_model_for(_role)
+                def build_llm_fn(model, user_id, _role=model_role):
+                    return chat_model_for(_role)
 
-        body = AgenticCrawlRequest(
-            target=target,
-            scope=list(scope),
-            model=model_role,
-            max_depth=max_depth if max_depth is not None else config.CRAWL_MAX_DEPTH,
-            max_pages=max_pages if max_pages is not None else config.CRAWL_MAX_PAGES,
-            max_iterations=max_iters if max_iters is not None else config.CRAWL_MAX_ITERS,
-            job_timeout_s=config.CRAWL_JOB_TIMEOUT_S,
-        )
+            body = AgenticCrawlRequest(
+                target=target,
+                scope=list(scope),
+                model=model_role,
+                max_depth=max_depth if max_depth is not None else config.CRAWL_MAX_DEPTH,
+                max_pages=max_pages if max_pages is not None else config.CRAWL_MAX_PAGES,
+                max_iterations=max_iters if max_iters is not None else config.CRAWL_MAX_ITERS,
+                job_timeout_s=config.CRAWL_JOB_TIMEOUT_S,
+            )
+            pacing = derive_crawl_pacing(
+                traffic_policy, max_pages=body.max_pages,
+                max_iterations=body.max_iterations,
+                navigate_wait_ms=body.navigate_wait_ms)
 
-        return await _run_agentic_crawl(
-            body,
-            mcp_manager,
-            build_llm_fn=build_llm_fn,
-        )
-    except Exception:  # noqa: BLE001 - best-effort, see module docstring
-        return dict(_EMPTY_MANIFEST)
+            return await _run_agentic_crawl(
+                body,
+                mcp_manager,
+                build_llm_fn=build_llm_fn,
+                pacing=pacing,
+                sleeper=sleeper,
+                clock=clock,
+            )
+        except Exception:  # noqa: BLE001 - best-effort, see module docstring
+            return dict(_EMPTY_MANIFEST)
