@@ -206,6 +206,9 @@ def test_a_grounded_pass_publishes_and_marks_the_lessons_consumed(
     assert outcome.skill == SKILL
     assert outcome.consumed_keys == ("skill:ssrf:1",)
     assert outcome.version == "1.1"
+    # The boundary-safe composition escapes the separator inside the synthetic
+    # run segment, so the id is stable and collision-free.
+    assert outcome.thread_id == "hunting:skill-evolution_proj-1:ssrf:skill_evolver"
     assert outcome.thread_id == ModuleScopedSession(
         module="hunting",
         run_id=f"skill-evolution:{PROJECT}",

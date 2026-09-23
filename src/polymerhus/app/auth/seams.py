@@ -32,8 +32,8 @@ AUTHN_SKILL = "authn"
 
 
 def auth_capable_binding(
-    role_id: str, *, store=None, skill_store=None, project_id: str | None = None,
-    with_write_skill: bool = False,
+    role_id: str, *, store=None, skill_store=None, lesson_store=None,
+    project_id: str | None = None, with_write_skill: bool = False,
 ):
     """Wrap `skill_agent_binding(role_id)` with the auth capability.
 
@@ -59,7 +59,9 @@ def auth_capable_binding(
         skill_index_middleware,
     )
 
-    binding = skill_agent_binding(role_id, store=skill_store)
+    binding = skill_agent_binding(
+        role_id, store=skill_store, lesson_store=lesson_store
+    )
     if not binding.tools:
         if not with_write_skill:
             # An exempt role binds no skill surface: no auth capability either.
@@ -76,7 +78,7 @@ def auth_capable_binding(
             middleware=[skill_index_middleware(store=skill_store)],
             tools=[*build_skill_tools(
                 project_id, with_write_skill=True, store=skill_store,
-                role_id=role_id),
+                lesson_store=lesson_store, role_id=role_id),
                 build_auth_store_tool(project_id=project_id, store=store)],
             context={"skills": [AUTHN_SKILL], "project_id": project_id},
         )

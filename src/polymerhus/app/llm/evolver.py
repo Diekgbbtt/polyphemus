@@ -42,8 +42,10 @@ import functools
 import logging
 import time
 from pathlib import Path
+from typing import TYPE_CHECKING
 
-from langchain_core.messages import HumanMessage
+if TYPE_CHECKING:  # pragma: no cover - typing only; the runtime import is lazy
+    from langchain_core.messages import HumanMessage
 
 from polymerhus.app.llm.session_address import ModuleScopedSession
 from polymerhus.app.llm.skills import (
@@ -157,11 +159,13 @@ def _load_evolver_prompt() -> str:
     return text
 
 
-def _build_lessons_prompt(skill: str, version: str, records: list[dict]) -> HumanMessage:
+def _build_lessons_prompt(skill: str, version: str, records: list[dict]) -> "HumanMessage":
     """One HumanMessage carrying EVERY selected record in its FULL stored shape
     (D232-9: never the lesson prose alone, never a digest), rendered as YAML -
     the same shape the shard holds - plus a header naming the skill, its
     current version, and the instruction."""
+    from langchain_core.messages import HumanMessage  # noqa: PLC0415 - lazy, no import side effects
+
     import yaml  # noqa: PLC0415 - already a production dependency
 
     header = (

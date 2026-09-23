@@ -36,11 +36,20 @@ The usage contract rides the tool's description verbatim from `SKILL_LOAD_CONTRA
 
 Every bound role also carries `record_skill_lesson`, the one append-only observation surface that is safe to bind universally (#232 D232-4).
 It records ONE reusable observation an executing agent made about a skill it used, grounded in the run's evidence, into the project's per-skill lesson shard.
-The agent supplies `skill`, `type`, `lesson`, `expected`, and `evidence`; the store stamps the key, the skill's base version, the writing agent's identity, and the timestamp - the agent never supplies them, and a skill whose version does not resolve is refused.
-The three lesson types: `specification` (knowledge specific to the target's attack surface), `extension` (an extension of the procedure: new steps, an optimised grouping, an anti-pattern - steps that must not be done - or an extension of the technique's scope), and `defect` (a genuine error in the illustrated procedure).
-Outcomes arrive as coded in-band envelopes (`lesson_invalid`, `skill_unknown`, `store_unavailable`); nothing raises into the turn.
+The record contract rides the tool's description verbatim from `RECORD_LESSON_CONTRACT` in the loader module; the constant, verbatim:
+
+> Record ONE skill-usage lesson: a reusable observation about a skill you used, grounded in this run's evidence, persisted in the project's lesson shard for that skill.
+>
+> FIELDS - `skill`: the skill the lesson is about (one flat name). `type`: `specification` (knowledge specific to the target's attack surface), `extension` (an extension of the procedure: new steps, an optimised grouping, an anti-pattern - steps that must not be done - or an extension of the technique's scope), or `defect` (a genuine error in the illustrated procedure). `lesson`: the reusable lesson in prose. `expected`: what the skill states or implies, extracted as close to its wording as possible. `evidence`: concrete identifiers from this run (http-history artifact ids, request/response entries, run ids).
+>
+> THE STORE STAMPS the key, the skill's base version, the writing agent's identity, and the timestamp - never supply them. A skill whose version does not resolve is refused.
+>
+> OUTCOMES - one in-band envelope: `{ok: true, key, base_version}` or `{ok: false, error, detail}` with error one of `lesson_invalid`, `skill_unknown`, `store_unavailable`. Nothing raises into the turn.
+>
+> Record once per material observation; the SkillEvolver consumes the accumulated lessons, so not every step needs one.
+
 Consumption is key-encoded: the SkillEvolver marks a lesson consumed by rewriting its key with the reserved `:consumed` suffix, so selection needs no cursor.
-The record contract rides the tool's description verbatim from `RECORD_LESSON_CONTRACT` in the loader module - this README and that constant are the same wording, kept in sync by hand; update both together.
+This README and that constant are kept in sync by hand; update both together.
 
 ## Per-project skill bundles (`SkillStore` + `build_write_skill_tool()::write_skill`)
 

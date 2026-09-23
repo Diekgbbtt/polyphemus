@@ -210,6 +210,20 @@ Recorded while implementing E/F/G; none of these changes a ruling, they pin how 
 4. **The controller knobs live in `app/config.py`** (`SKILL_EVOLVER_LESSON_CAP=5`, `SKILL_EVOLVER_PERIOD_S=300`, `SKILL_EVOLVER_TICK_S=60`), following the `HUNTING_DISPATCH_GATE_WIDTH` precedent; `evolver.py` reads them lazily.
 5. **`skills/README.md` now mirrors `RECORD_LESSON_CONTRACT`** (D232-5) and documents the lesson shard in the per-project bundle layout; the `skill_agent_binding` paragraph states the universal `load_skill` + `record_skill_lesson` pair.
 
+## Adversarial review (2026-09-23) - findings and open rulings
+
+The adversarial review of `feat/232-skill-evolution` returned Standards PASS and Spec FAIL.
+Fixed immediately (no new decision needed): the lazy `HumanMessage` import in `evolver.py`; the missing `lesson_store` injectable seam in `auth_capable_binding`; a hard-coded thread-id assertion in the evolver tests; the `skills/README.md` lesson section now carries `RECORD_LESSON_CONTRACT` verbatim.
+
+Open, awaiting the operator's ruling - the implementation stops here rather than deciding them unilaterally:
+
+1. **One-revision enforcement.** Spec ID 7 says "one revision per skill per pass"; today only the version delta is observed, so a turn that calls `write_skill` twice still reports `published`. Options: (a) detect a multi-minor version delta and refuse/flag (`published` only on exactly one minor step); (b) add a write-count audit around the armed tool; (c) amend the spec to prompt-guaranteed single-write, audited only by the version delta.
+2. **`source_note_ids` audit.** Spec ID 7 says the store "records the consumed lesson keys as source note ids"; D232-9 says the store "logs" them (log-only provenance, #234 contract fenced). Options: (a) keep log-only and reword the spec; (b) verify their presence in the write (requires reading the store's log or extending the fenced #234 contract).
+3. **`EvolutionOutcome.version` semantics.** `zero_skip` and pre-inspect `skill_unknown` return `None`; `no_write`/`degraded` return the resolved base version. Pin the contract: always the resolved version where one exists, or `None` for every non-published decision.
+4. **Endpoint status.** The published spec's Testing Decisions say "202/404/503"; the ledger's D232-10 says the response carries the `EvolutionOutcome`, and the implementation awaits the scheduled pass and returns it with 200 (404/503 unchanged). Options: (a) amend the spec line to 200 with the await rationale; (b) return 202 and drop the outcome from the response.
+
+Recorded as implementation facts (faithful readings, not rulings): `bound_conversation_id()` distinguishes "no session bound" from the process fallback id so a fallback uuid is never stamped as an agent session (the ledger's "else `\"\"`"); the REST launcher schedule name is `skills:evolve:<pid>:<skill>`; `_resolve_lesson_store` derives a `LessonStore` from an injected `SkillStore` so the two stores share one root.
+
 ## Open items carried forward (not decision gaps)
 
 - **`LLM_SKILL_EVOLVER` must be set on every deployment** (D232-7): recorded in `STATE.md` High Priority.
