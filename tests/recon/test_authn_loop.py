@@ -350,3 +350,19 @@ def test_verdict_defaults_are_the_loud_fail_open_shape():
     assert verdict.branch == "request"
     assert verdict.replayability_resolved is False
     assert verdict.replayability is None
+
+
+# --- #238: the widened actor surface cannot move the gateway loop -------------
+
+
+def test_rate_limit_tools_are_neutral_to_the_authn_loop():
+    """The two #238 rate-limit tools ride the SAME actor surface as the
+    gateway (#238 Task 5). They are neither a loop transition nor a hint: a
+    gateway turn that somehow called one would leave the state machine exactly
+    where it was."""
+    for tool in ("map_rate_limit", "test_rate_limit_variant"):
+        assert L.detect_transition(_obs(tool, {"mutation": {}})) == "none"
+    state = L.initial_state()
+    moved = L.push_transition(
+        state, L.detect_transition(_obs("map_rate_limit", {})), _obs("map_rate_limit", {}))
+    assert moved["phase"] == state["phase"] == "GROUNDED"
