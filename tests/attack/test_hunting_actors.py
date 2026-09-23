@@ -436,10 +436,12 @@ def test_author_tools_reach_run_session_agent(monkeypatch):
     actor = asyncio.run(_drive())
     assert actor._tools == ["fake-tool"]
     # The auth capability (#220) rides the same bounding seam as the skill
-    # surface: a bound role additionally carries `auth_store`.
+    # surface: a bound role additionally carries the universal read-only pair
+    # (#232 D232-4: `load_skill` + `record_skill_lesson`) and `auth_store`.
     assert [getattr(t, "name", t) for t in captured["tools"]] == [
         "fake-tool",
         "load_skill",
+        "record_skill_lesson",
         "auth_store",
     ]
 
