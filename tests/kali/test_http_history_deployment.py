@@ -100,3 +100,21 @@ def test_kali_defaults_bound_the_store_without_age_based_deletion():
 def test_kali_healthcheck_distinguishes_components():
     healthcheck = _compose()["services"]["kali"]["healthcheck"]
     assert "healthcheck.py" in " ".join(healthcheck["test"])
+
+
+def test_kali_image_bakes_the_pinned_vegeta():
+    """#238: the rate-mapping controller drives Vegeta through Kali's existing
+    exec seam, so the binary must be PINNED (never `latest` - the katana
+    drift), present in the build-time smoke loop, and version-checked at build
+    time so a silent toolchain change fails the build, not a recon pod."""
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "Dockerfile.kali"
+    ).read_text(encoding="utf-8")
+
+    assert "github.com/tsenart/vegeta/v12@v12.13.0" in dockerfile
+    assert "vegeta/v12@latest" not in dockerfile
+
+    loop_start = dockerfile.index("for t in")
+    loop_end = dockerfile.index("; do", loop_start)
+    assert "vegeta" in dockerfile[loop_start:loop_end].split()
+    assert 'vegeta -version 2>&1 | grep -q "12.13.0"' in dockerfile

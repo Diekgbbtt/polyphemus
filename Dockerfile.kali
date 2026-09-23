@@ -74,11 +74,16 @@ ENV PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:${PATH}"
 #             trail in jobs.py). Falls back to main tip if the pin is pruned.
 #  jsluice  - JS bundle endpoint/secret extraction (CGO needs gcc, above)
 #  subzy    - subdomain-takeover fingerprints
+#  vegeta   - the #238 rate-limit mapping load generator. PINNED, never
+#             `latest`: every experiment's traffic shape must be reproducible
+#             from one image to the next, and the mapping controller invokes it
+#             through Kali's existing exec seam (no new tool surface).
 RUN go install -v github.com/projectdiscovery/httpx/cmd/httpx@latest \
     && (go install -v github.com/projectdiscovery/katana/cmd/katana@7eaa0c2 \
         || go install -v github.com/projectdiscovery/katana/cmd/katana@latest) \
     && CGO_ENABLED=1 go install -v github.com/BishopFox/jsluice/cmd/jsluice@latest \
-    && go install -v github.com/PentestPad/subzy@latest
+    && go install -v github.com/PentestPad/subzy@latest \
+    && go install -v github.com/tsenart/vegeta/v12@v12.13.0
 
 # Login shells (`docker exec ... bash -lc`, and any ssh-style debugging) reset
 # PATH via /etc/profile, dropping the image ENV above. Persist the priming
@@ -92,10 +97,11 @@ RUN echo 'export PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:$PATH"' > /etc/p
 # entrypoint depends on. (massdns/puredns/kr/graphql-cop are intentionally NOT
 # asserted - they live in the persisted volumes, owned by postrun.sh.)
 RUN for t in subfinder amass whois dnsx naabu httpx katana ffuf arjun paramspider \
-             subzy jsluice nmap masscan curl git go python3 openvpn ip; do \
+             subzy jsluice vegeta nmap masscan curl git go python3 openvpn ip; do \
       command -v $t >/dev/null 2>&1 || { echo "[smoke] MISSING: $t"; exit 1; }; \
     done \
     && katana -h 2>&1 | grep -q "\-pcs" || { echo "[smoke] katana lacks -pcs flags"; exit 1; } \
+    && { vegeta -version 2>&1 | grep -q "12.13.0" || { echo "[smoke] vegeta is not the pinned 12.13.0"; exit 1; }; } \
     && test -f /usr/share/seclists/Discovery/Web-Content/common.txt \
     && /opt/venv/bin/python -c "from fastmcp import FastMCP" \
     && echo "[smoke] kali exec-node OK" && katana -version 2>&1 | head -n 1

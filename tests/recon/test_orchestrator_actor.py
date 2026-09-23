@@ -141,6 +141,39 @@ def test_gateway_arming_binds_the_full_auth_surface(tmp_path):
         "auth_store", "execute_command", "load_skill", "steel_exec", "write_skill"]
 
 
+def test_gateway_binds_the_bypass_skill_beside_authn_without_double_binding(
+    tmp_path, monkeypatch
+):
+    """#238 Task 2: with the roster no longer empty, the orchestrator takes the
+    BOUND arm of the auth binding. Its surface must stay exactly one
+    `load_skill` + one `write_skill` (+ `auth_store`) - the generic bypass
+    procedure and the project `authn` procedure ride the bounded SET, never a
+    duplicated tool - and that set is what the model is told it may load."""
+    import polymerhus.app.llm.actor as _A
+
+    seen = {}
+
+    async def _fake_run(*args, **kwargs):
+        seen.update(kwargs)
+        return None
+
+    monkeypatch.setattr(_A, "run_session_agent", _fake_run)
+    make, _ = _script_model([_verdict_call()])
+    actor = _actor("r1", store=_seeded_store(tmp_path, accounts=_account()),
+                   model_factory=make, tmp_path=tmp_path, kali_tools=[])
+
+    asyncio.run(actor._ensure_started())
+    asyncio.run(actor.stop())
+
+    names = [getattr(t, "name", None) for t in seen["tools"]]
+    assert names.count("load_skill") == 1
+    assert names.count("write_skill") == 1
+    assert names.count("auth_store") == 1
+    assert seen["context"]["skills"] == [
+        "performing-api-rate-limiting-bypass", "authn"
+    ]
+
+
 # --- the gateway turn ------------------------------------------------------------
 
 

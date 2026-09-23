@@ -43,10 +43,10 @@ from polymerhus.app.llm.skills import (
 # context (the published L0/L1 substrate, their own prompts, steering signals)
 # and never with an external environment, so no catalogue skill bears on them.
 # Pinned exactly, so adding or removing an exemption is a deliberate edit here
-# and in `ROLE_SKILLS`.
+# and in `ROLE_SKILLS`. `job_orchestrator` left this set with #238: the
+# post-authentication rate-limit turn runs the generic bypass procedure.
 EXEMPT_ROLES = {
     "configurator",
-    "job_orchestrator",
     "assigner",
     "mechanism_typist",
     "data_modeller",
@@ -55,10 +55,14 @@ EXEMPT_ROLES = {
 
 BOUND_ROLES = {
     "triager": ("webpage-analysis", "webpage-profile"),
+    "job_orchestrator": ("performing-api-rate-limiting-bypass",),
     "hunting_hunter": ("lightrag-query", "steel-browser"),
     "pod_runner": ("lightrag-query", "steel-browser"),
     "pod_triager": ("lightrag-query",),
 }
+
+# The generic bypass procedure the orchestrator's rate-limit turn runs (#238).
+BYPASS_SKILL = "performing-api-rate-limiting-bypass"
 
 
 class _FakeRequest:
@@ -193,6 +197,64 @@ def test_the_roster_is_exactly_the_bound_plus_the_exempt_roles() -> None:
         role: names for role, names in ROLE_SKILLS.items() if names
     } == BOUND_ROLES
     assert {role for role, names in ROLE_SKILLS.items() if not names} == EXEMPT_ROLES
+
+
+def test_the_orchestrator_binds_the_generic_bypass_procedure() -> None:
+    """#238: the orchestrator's second (rate-limit) turn runs the ONE generic
+    bypass procedure from the shared catalogue - a bounded single-entry roster,
+    never a per-project copy of the taxonomy (target-specific evidence lives in
+    artifacts and the `RateProfile`). The project `authn` procedure rides
+    beside it through the auth binding, not through this roster."""
+    assert skills_for_role("job_orchestrator") == (BYPASS_SKILL,)
+
+
+def test_auth_capable_binding_scopes_the_armed_surface_to_its_explicit_project(
+    tmp_path, monkeypatch
+) -> None:
+    """The roster change (#238) moves `job_orchestrator` out of
+    `auth_capable_binding`'s exempt branch and into the BOUND branch, whose
+    project scope must be the EXPLICIT one: both the project-authored skill
+    surface and the `auth_store` tool must address `p2`, never fall back to the
+    deployment-wide `config.PROJECT_ID`."""
+    from polymerhus.app.auth.seams import auth_capable_binding
+    from polymerhus.app.auth.store import AuthStore
+    from polymerhus.app.config import config
+    from polymerhus.app.llm.skills import SkillStore
+
+    monkeypatch.setattr(config, "PROJECT_ID", "global-project")
+    auth_root = tmp_path / "authroot"
+    data_root = tmp_path / "dataroot"
+
+    binding = auth_capable_binding(
+        "job_orchestrator", project_id="p2", with_write_skill=True,
+        store=AuthStore(auth_root), skill_store=SkillStore(data_root),
+    )
+
+    assert binding.context["project_id"] == "p2"
+    assert binding.context["skills"] == [BYPASS_SKILL, "authn"]
+    assert [t.name for t in binding.tools] == [
+        "load_skill", "write_skill", "auth_store"
+    ]
+
+    tools = {t.name: t for t in binding.tools}
+    assert tools["auth_store"].invoke(
+        {"command": "write", "path": "overview.login_endpoint",
+         "value": "https://x/login"}
+    )["ok"] is True
+    assert (auth_root / "p2" / "auth" / "overview.yaml").is_file()
+    assert not (auth_root / "global-project").exists()
+
+    # The project-authored `authn` bundle resolves at p2, not at the deployment
+    # project: write both and prove the loaded body is p2's.
+    for project_id, body in (("p2", "p2 procedure"), ("global-project", "global procedure")):
+        bundle = data_root / project_id / "skills" / "authn" / "SKILL.md"
+        bundle.parent.mkdir(parents=True, exist_ok=True)
+        bundle.write_text(
+            "---\nname: authn\ndescription: authn procedure.\n"
+            f"metadata:\n  version: '1.0'\n---\n\n{body}\n",
+            encoding="utf-8",
+        )
+    assert tools["load_skill"].invoke({"name": "authn"}).startswith("p2 procedure")
 
 
 # --- the L1 index render ------------------------------------------------------
