@@ -377,6 +377,9 @@ ROLES: tuple[Role, ...] = (
     Role("curation",         "LLM_ANALYSER",         "one_shot"),
     Role("sweep",            "LLM_ANALYSER",         "one_shot"),
     Role("anti_cluttering",  "LLM_ANALYSER",         "one_shot"),
+    # The skill-evolution pass (#232 D232-7): app-owned, session-mode, and
+    # validated at app boot - the deployment must set `LLM_SKILL_EVOLVER`.
+    Role("skill_evolver",    "LLM_SKILL_EVOLVER",    "session",  "high"),
 )
 
 # The hunting module's OWN roles (one model per agent), validated by the hunting

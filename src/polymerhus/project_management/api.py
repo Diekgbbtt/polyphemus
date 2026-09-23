@@ -489,6 +489,55 @@ async def get_hunting_status(project_id: str, hunting_run_id: str) -> dict:
     return row
 
 
+# --- #232 D232-10: the skill-evolution trigger --------------------------------
+
+
+class SkillEvolveLaunch(BaseModel):
+    """Evolve body: optional lessons to append before the forced pass, so an
+    operator or an e2e run can drive evolution without a hunting phase."""
+
+    lessons: list[dict] | None = None
+
+
+@router.post("/projects/{project_id}/skills/{skill}/evolve")
+async def evolve_skill(
+    project_id: str, skill: str, body: SkillEvolveLaunch | None = None
+) -> dict:
+    """Force ONE skill-evolution pass (#232 D232-10): append any posted lessons
+    (store-stamped, agent = operator) and schedule the pass through the hunting
+    launcher seam, then await its `EvolutionOutcome` and return it.
+
+    Fail-closed on the control plane: with no active runtime this is a 503,
+    never an in-process pass on the request loop. A malformed posted lesson is
+    the store's coded refusal mapped to 400. The pass itself never raises: its
+    failures are coded outcome decisions."""
+    from polymerhus.app.clients import pg
+    from polymerhus.app.llm import evolver
+    from polymerhus.attack.hunting import runtime as hunting_runtime
+
+    if not await asyncio.to_thread(pg.project_exists, project_id):
+        raise HTTPException(status_code=404, detail="unknown project")
+    if not hunting_runtime.hunting_control_plane_available():
+        raise HTTPException(
+            status_code=503,
+            detail="hunting control-plane runtime has not landed",
+        )
+    lessons = (body.lessons if body is not None else None) or []
+    try:
+        if lessons:
+            await asyncio.to_thread(
+                evolver.append_posted_lessons, project_id, skill, lessons
+            )
+        future = hunting_runtime.launch_evolution_pass(project_id, skill)
+    except ValueError as exc:  # the store's coded lesson/skill refusals
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except Exception as exc:  # noqa: BLE001 - map admission refusal, re-raise the rest
+        _admission_refused_503(exc)
+        raise
+    outcome = await asyncio.wrap_future(future)
+    return outcome.to_dict()
+
+
 # --- T5: singular component launches (spec #169 "Singular component launches",
 # ADR #169 Q4/Q6) -----------------------------------------------------------
 #

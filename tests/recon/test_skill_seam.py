@@ -58,6 +58,9 @@ BOUND_ROLES = {
     "hunting_hunter": ("lightrag-query", "steel-browser"),
     "pod_runner": ("lightrag-query", "steel-browser"),
     "pod_triager": ("lightrag-query",),
+    # #232 D232-7: the SkillEvolver is a bound role - its authoring discipline
+    # is the meta-write-skill procedure; its pass arms its own write capability.
+    "skill_evolver": ("meta/meta-write-skill",),
 }
 
 
@@ -271,10 +274,19 @@ def test_every_tool_calling_role_declares_its_skill_set() -> None:
     assert "crawler" not in ROLE_SKILLS
 
 
-def test_the_two_meta_skills_are_never_advertised() -> None:
-    """The protocol skills load through the read path itself; advertising them
-    in an index would invite a pointless load."""
+def test_the_meta_skills_are_never_advertised_outside_the_evolver() -> None:
+    """The usage protocol loads through the read path itself; advertising it in
+    an index would invite a pointless load. The authoring discipline
+    (`meta-write-skill`) is advertised ONLY for the SkillEvolver role, whose
+    pass authors revisions (#232 D232-7, operator ruling)."""
     advertised = {name for names in ROLE_SKILLS.values() for name in names}
-
     assert skills.META_USAGE_SKILL not in advertised
-    assert skills.META_WRITE_SKILL not in advertised
+
+    assert ROLE_SKILLS["skill_evolver"] == (skills.META_WRITE_SKILL,)
+    outside = {
+        name
+        for role, names in ROLE_SKILLS.items()
+        if role != "skill_evolver"
+        for name in names
+    }
+    assert skills.META_WRITE_SKILL not in outside

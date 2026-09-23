@@ -235,6 +235,11 @@ ROLE_SKILLS: dict[str, tuple[str, ...]] = {
     # The gate/ratify/match decisions run over candidate material; no knowledge
     # skill bears.
     "hunting_orchestrator": (),
+    # -- app (the skill-evolution loop) -----------------------------------------
+    # The SkillEvolver authors revisions of project bundles; its discipline is
+    # the authoring meta-skill (#232 D232-7). It is a BOUND role whose pass arms
+    # its own binding with the write capability (`with_write_skill=True`).
+    "skill_evolver": ("meta/meta-write-skill",),
     # `crawler` is deliberately ABSENT, not forgotten: it is a tool-calling role
     # (`agent_mode == "session"`) whose loop is a manual `bind_tools` ReAct loop
     # (`recon/crawl/crawl_agentic.py`), not `create_agent`, so no

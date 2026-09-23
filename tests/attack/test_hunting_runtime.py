@@ -644,3 +644,66 @@ def test_hunting_run_terminal_invokes_exactly_one_run_scoped_flush(tmp_path, mon
 
     assert hid == "rt-hunt-0001"
     assert calls == [("hunting", "rt-hunt-0001")]
+
+
+def test_start_hunting_schedules_the_evolver_controller_and_cancels_it_at_terminal(
+    tmp_path, monkeypatch
+):
+    """#232 D232-8: the SkillEvolver controller is a per-run session - scheduled
+    alongside the orchestrator pass and the surfer and cancelled at the run's
+    terminal path, so it never blocks quiesce and never outlives the run."""
+    fake = _FakePg()
+    monkeypatch.setattr("polymerhus.app.clients.pg.create_hunting_run", fake.create_hunting_run)
+    monkeypatch.setattr("polymerhus.app.clients.pg.set_hunting_run_status", fake.set_hunting_run_status)
+    monkeypatch.setattr("polymerhus.app.clients.pg.list_hunting_runs", fake.list_hunting_runs)
+    control = _FakeControl()
+
+    h, r, n = _phase_seams()
+    hid = asyncio.run(hunting_runtime.start_hunting(
+        "rt-project", candidates=[_candidate()], tools=_tools(HuntStore(tmp_path)),
+        hypothesise_fn=h, ratify_fn=r, note_fn=n,
+        control=control,
+        hunter_builder=_noop_hunter_builder, pod_builder=_noop_pod_builder,
+        tick_interval=0.001,
+    ))
+
+    assert hid == "rt-hunt-0001"
+    assert f"hunting:{hid}:evolver" in control.started
+    # The terminal path cancelled it: no run session is left live.
+    assert f"hunting:{hid}:evolver" not in control.live_session_ids()
+    assert fake.statuses[-1] == ("rt-hunt-0001", "complete")
+
+
+def test_launch_evolution_pass_runs_under_the_hunting_module_context(monkeypatch):
+    """#232 D232-10: the REST-forced pass rides the hunting launcher seam - it
+    is scheduled on the hunting module under the hunting module context, so its
+    per-(project, skill) thread resolves the hunting checkpointer index exactly
+    like the controller's."""
+    import polymerhus.app.llm.checkpoints as checkpoints
+
+    seen: dict = {}
+    outside = checkpoints.get_session_checkpointer()
+
+    async def fake_pass(project_id, skill, **kwargs):
+        seen["project_id"] = project_id
+        seen["skill"] = skill
+        seen["checkpointer"] = checkpoints.get_session_checkpointer()
+        return "outcome"
+
+    class _Runtime:
+        def schedule(self, module, coro, *, name):
+            seen["module"] = module
+            seen["name"] = name
+            return asyncio.run(coro)
+
+    monkeypatch.setattr(hunting_runtime, "_require_runtime", lambda: _Runtime())
+
+    out = hunting_runtime.launch_evolution_pass("p1", "ssrf", pass_fn=fake_pass)
+
+    assert out == "outcome"
+    assert seen["module"] == "hunting"
+    assert seen["name"] == "skills:evolve:p1:ssrf"
+    assert seen["project_id"] == "p1" and seen["skill"] == "ssrf"
+    # Inside the pass the module context resolved the hunting index, not the
+    # shared fallback an un-contexted turn would get.
+    assert seen["checkpointer"] is not outside

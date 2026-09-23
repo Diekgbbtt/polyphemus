@@ -182,6 +182,33 @@ def resume_pod_session(runtime, session_id: str) -> None:
     runtime.resume_session("hunting", session_id)
 
 
+def launch_evolution_pass(project_id: str, skill: str, *, pass_fn=None, name=None) -> Any:
+    """The skill-evolution launcher seam (#232 D232-10): schedule ONE forced
+    SkillEvolver pass onto the hunting loop UNDER the hunting module context,
+    so the pass's per-`(project, skill)` thread resolves the hunting
+    checkpointer index exactly like the controller's - the REST trigger and the
+    controller can never fork the thread state.
+
+    Returns the runtime's schedule handle (a `concurrent.futures.Future` the
+    API tier awaits for the outcome); admission refusals raise
+    `ModuleAdmissionRefused` exactly like every other launch. `pass_fn` is the
+    injectable pass seam (tests); the default is `arun_evolution_pass`."""
+    from polymerhus.app.llm.evolver import arun_evolution_pass  # noqa: PLC0415
+
+    resolved_name = name or f"skills:evolve:{project_id}:{skill}"
+
+    async def _run():
+        async with hunting_module_context():
+            return await (pass_fn or arun_evolution_pass)(project_id, skill)
+
+    coro = _run()
+    try:
+        return _require_runtime().schedule("hunting", coro, name=resolved_name)
+    except Exception:  # noqa: BLE001 - close the unscheduled coroutine, re-raise
+        coro.close()
+        raise
+
+
 async def launch_orchestrator(
     project_id: str,
     *,
@@ -558,6 +585,7 @@ async def start_hunting(
             run_surfer_loop,
             surfer_session_id,
         )
+        from polymerhus.app.llm.evolver import evolver_session_id  # noqa: PLC0415
 
         hunting_run_id = run_id
 
@@ -710,6 +738,13 @@ async def start_hunting(
                 tick_interval=tick_interval,
             )
 
+        async def _evolver_loop():
+            from polymerhus.app.llm.evolver import (  # noqa: PLC0415
+                arun_evolver_controller,
+            )
+            return await arun_evolver_controller(project_id)
+
+        evolver_id = evolver_session_id(hunting_run_id)
         status = None
         try:
             orchestrator_id = orchestrator_session_id(hunting_run_id)
@@ -734,8 +769,22 @@ async def start_hunting(
                     control.cancel_session(orchestrator_id)
                     status = "failed"
                 else:
+                    # #232 D232-8: the SkillEvolver controller is a per-run
+                    # session, scheduled alongside the pass and the surfer.
+                    # Fail-open: an unadmitted controller degrades evolution
+                    # (warned), never the run.
+                    if control.start_session(evolver_id, _evolver_loop()) is None:
+                        logger.warning(
+                            "start_hunting: evolver session %s not admitted; "
+                            "skill evolution is off for this run (fail-open)",
+                            evolver_id,
+                        )
                     await _await_session_outcome(orchestrator_outcome)
                     await _await_session_outcome(surfer_outcome)
+                    # The controller never settles on its own: cancel it at the
+                    # run terminal BEFORE the quiesce drain (it is not part of
+                    # quiesce - a period tick must never delay `complete`).
+                    control.cancel_session(evolver_id)
                     # Quiesce is proven: the surfer settled only when the
                     # orchestrator was done, produced held no dispatchable
                     # item, no pod was live, and no hunter was mid-graph.
@@ -756,6 +805,13 @@ async def start_hunting(
             )
             status = "failed"
         finally:
+            try:
+                control.cancel_session(evolver_id)
+            except Exception:  # noqa: BLE001 - teardown must never raise
+                logger.warning(
+                    "start_hunting: evolver cancel failed for %s (fail-open)",
+                    hunting_run_id,
+                )
             try:
                 await _reap_orchestrator(hunting_run_id)
             except Exception:  # noqa: BLE001 - teardown must never raise
