@@ -59,6 +59,7 @@ from polymerhus.recon.control.rate_limit_runner import (
 from polymerhus.recon.domain.rate_limit import (
     ExperimentSpec,
     MutationSpec,
+    PathMutation,
     RateLimitSafetyBudget,
     RateLoopVerdict,
 )
@@ -406,7 +407,7 @@ def test_the_known_variant_confirms_only_after_independent_repetition(mapped):
         variant_id="route-normalization",
         family="endpoint-shape",
         description="trailing-slash normalization the limiter's key does not cover",
-        parameters={"path_suffix": "/"},
+        payload=PathMutation(mutation_id="route-normalization", suffix="/"),
     )
     finding = judge_bypass(canonical, variant, repeat, mutation=mutation)
     assert finding.outcome == "confirmed"
@@ -454,7 +455,7 @@ def test_the_production_variant_probe_never_fakes_a_confirmation(mapped):
         variant_id="route-normalization-untransported",
         family="endpoint-shape",
         description="no transport applies this mutation to the wire yet",
-        parameters={"path_suffix": "/"},
+        payload=PathMutation(mutation_id="route-normalization-untransported", suffix="/"),
     )
     finding = asyncio.run(harness.judge_variant(mutation))
     assert finding.outcome != "confirmed"

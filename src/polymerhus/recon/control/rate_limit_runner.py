@@ -54,6 +54,10 @@ from polymerhus.recon.control.rate_limit_mapper import (
     judge_bypass,
     next_experiment,
 )
+from polymerhus.recon.control.request_mutation import (
+    CanonicalRequest,
+    apply_mutation,
+)
 
 logger = logging.getLogger(__name__)
 
@@ -85,15 +89,26 @@ def kali_spec_payload(
     The project/run scope is what makes the published artifact reference
     `rate-artifact/v1:<project>/<run>/<experiment>` resolvable. No request body
     is expressible - the replay surface is method+url+headers.
+
+    #238 follow-up (Task 5): the controller materializes the EFFECTIVE request
+    here, once, and ships it as `effective_request`. Kali executes exactly that -
+    it never reinterprets `ExperimentSpec.variant`, which is what let a variant
+    probe silently replay the canonical request before this landed.
     """
+    canonical = CanonicalRequest(
+        method=spec.method,
+        url=spec.url,
+        headers=tuple(spec.headers.items()),
+    )
+    effective = apply_mutation(
+        canonical, spec.variant.payload if spec.variant is not None else None
+    )
     return {
         "experiment_id": spec.experiment_id,
         "phase": spec.phase,
         "project_id": project_id,
         "run_id": run_id,
-        "url": spec.url,
-        "method": spec.method,
-        "headers": dict(spec.headers),
+        "effective_request": effective.model_dump(mode="json"),
         "rate_per_s": spec.rate_per_s,
         "duration_s": spec.duration_s,
         "requests": spec.requests,

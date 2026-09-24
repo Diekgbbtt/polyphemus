@@ -35,7 +35,7 @@ from __future__ import annotations
 
 import re
 from datetime import datetime, timedelta, timezone
-from typing import Any, Literal, Mapping
+from typing import Annotated, Any, Literal, Mapping, Union
 
 from pydantic import (
     BaseModel,
@@ -223,6 +223,76 @@ class BudgetUsage(_ClosedContract):
 # --- one experiment, as the controller specifies and measures it -------------------
 
 
+class HeaderMutation(_ClosedContract):
+    """A bounded header-family mutation (request-carrier swap, pacing header).
+    It can only name one header and one value - never a count, a rate, or a
+    budget."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["header"] = "header"
+    mutation_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    value: str
+    replace: bool = True
+    """True: overwrite the canonical value. False: append (HTTP list semantics)."""
+
+
+class QueryMutation(_ClosedContract):
+    """A bounded query-string mutation: one parameter name, one value."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["query"] = "query"
+    mutation_id: str = Field(min_length=1)
+    name: str = Field(min_length=1)
+    value: str
+    replace: bool = True
+    """True: replace every occurrence of `name`. False: append a second one."""
+
+
+class PathMutation(_ClosedContract):
+    """A bounded path mutation: a suffix appended to the canonical path. It
+    cannot carry a scheme or an authority, so it can never change the request's
+    origin."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["path"] = "path"
+    mutation_id: str = Field(min_length=1)
+    suffix: str = Field(min_length=1)
+
+    @field_validator("suffix")
+    @classmethod
+    def _suffix_is_a_path_fragment(cls, value: str) -> str:
+        if not value.startswith("/") or "://" in value or ".." in value:
+            raise ValueError(
+                f"path suffix must be a path fragment starting with '/', got {value!r}"
+            )
+        return value
+
+
+class BodyMutation(_ClosedContract):
+    """A bounded body-family mutation carrying a REFERENCE to a body artifact -
+    never inline content, so a credential-bearing body cannot ride the
+    model-facing contract."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    kind: Literal["body"] = "body"
+    mutation_id: str = Field(min_length=1)
+    body_ref: str = Field(min_length=1)
+
+
+Mutation = Annotated[
+    Union[HeaderMutation, QueryMutation, PathMutation, BodyMutation],
+    Field(discriminator="kind"),
+]
+"""The CLOSED, discriminated union of mutations the controller can materialize.
+Its members carry no traffic number: a model-facing mutation can never name a
+rate, a duration, a concurrency, or a budget."""
+
+
 class MutationSpec(_ClosedContract):
     """One bounded bypass variant: an LLM-chosen mutation FROM the closed
     family list, carrying no traffic numbers of its own.
@@ -236,9 +306,12 @@ class MutationSpec(_ClosedContract):
     family: MutationFamily
     description: str = ""
     identity_mutation: bool = False
-    parameters: dict[str, str] = Field(default_factory=dict)
-    """Variant-specific values (a path suffix, an equivalent carrier, a header
-    key). Transport only: never persisted raw, never placed in model context."""
+    payload: Mutation | None = None
+    """The typed, closed mutation payload (#238 follow-up, Task 5). `None` means
+    the variant changes nothing on the wire, so the controller must never treat
+    such a probe as a transported mutation. Replaces the retired generic
+    `parameters: dict[str, str]`, which could not guarantee that any mutation
+    actually reached the target."""
 
 
 class ExperimentSpec(_ClosedContract):
@@ -578,6 +651,7 @@ def upgrade_rate_profile_v1(payload: Mapping[str, Any]) -> RateProfile:
 
 __all__ = [
     "BLOCKING_SIGNALS",
+    "BodyMutation",
     "BypassFinding",
     "BypassGates",
     "BypassOutcome",
@@ -591,8 +665,12 @@ __all__ = [
     "ExperimentSpec",
     "LimiterScope",
     "MappedControl",
+    "HeaderMutation",
+    "Mutation",
     "MutationFamily",
     "MutationSpec",
+    "PathMutation",
+    "QueryMutation",
     "MAX_EVIDENCE_REFERENCES",
     "PROFILE_TTL_DEFAULT_S",
     "RATE_PROFILE_VERSION",

@@ -33,21 +33,38 @@ class _Closed(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
+class EffectiveRequest(_Closed):
+    """The already-materialized request Kali executes VERBATIM (#238 follow-up,
+    Task 5).
+
+    The controller applies the mutation and hands over the concrete method, URL,
+    allowed headers, an optional body REFERENCE, and the mutation identity that
+    produced it. Kali never interprets mutation semantics, so it can never choose
+    a different mutation than the one the controller admitted. `headers` is
+    secret-bearing transport (a `0600` target file, redacted by the artifact
+    manifest writer) - never logged, never echoed.
+    """
+
+    mutation_id: str = Field(min_length=1)
+    method: str = Field(min_length=1)
+    url: str = Field(min_length=1)
+    headers: dict[str, str] = Field(default_factory=dict)
+    body_ref: str | None = None
+
+
 class KaliExperimentSpec(_Closed):
     """One admitted experiment, exactly as the controller admitted it.
 
-    `headers` is the authenticated context the run replays. It is
-    SECRET-BEARING transport: it reaches Vegeta through a `0600` target file
-    and is redacted by the artifact store's manifest writer.
+    `effective_request` is the request Kali must execute; the controller has
+    already applied any mutation to it. The spec carries only what the controller
+    admitted.
     """
 
     experiment_id: str = Field(min_length=1)
     phase: str = Field(min_length=1)
     project_id: str = Field(min_length=1)
     run_id: str = Field(min_length=1)
-    url: str = Field(min_length=1)
-    method: str = "GET"
-    headers: dict[str, str] = Field(default_factory=dict)
+    effective_request: EffectiveRequest
     rate_per_s: float = Field(gt=0)
     duration_s: float = Field(gt=0)
     requests: int = Field(gt=0)
@@ -59,17 +76,19 @@ class KaliExperimentSpec(_Closed):
         """The single Vegeta target object for this experiment.
 
         Vegeta's target file is a JSON object (or array of objects) with
-        `method`, `url`, `header` and `body`. No body is expressible here by
-        design.
+        `method`, `url`, `header` and `body`. The values come from the
+        controller-materialized `effective_request` - never from a
+        re-interpretation of the variant.
 
         Each header value is a LIST: Vegeta decodes the field into
         `http.Header` (`map[string][]string`) and rejects a bare string with
         `parse error: expected [ near offset ...`.
         """
-        target: dict = {"method": self.method, "url": self.url}
-        if self.headers:
+        request = self.effective_request
+        target: dict = {"method": request.method, "url": request.url}
+        if request.headers:
             target["header"] = {
-                name: [value] for name, value in self.headers.items()
+                name: [value] for name, value in request.headers.items()
             }
         return target
 

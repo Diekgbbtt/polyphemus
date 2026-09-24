@@ -32,12 +32,17 @@ def _spec(**overrides) -> dict:
         "phase": "steady",
         "project_id": "proj-1",
         "run_id": "run-1",
-        "url": "https://target.example/login",
-        "method": "POST",
-        "headers": {
-            "Authorization": "Bearer supersecret-token",
-            "Cookie": "session=supersecret-cookie",
-            "Accept": "application/json",
+        # #238 follow-up (Task 5): the controller materializes the effective
+        # request and Kali executes it verbatim.
+        "effective_request": {
+            "mutation_id": "canonical",
+            "method": "POST",
+            "url": "https://target.example/login",
+            "headers": {
+                "Authorization": "Bearer supersecret-token",
+                "Cookie": "session=supersecret-cookie",
+                "Accept": "application/json",
+            },
         },
         "rate_per_s": 5.0,
         "duration_s": 2.0,

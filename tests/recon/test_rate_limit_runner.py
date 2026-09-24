@@ -14,9 +14,11 @@ from datetime import timedelta
 import pytest
 
 from polymerhus.recon.domain.rate_limit import (
+    PathMutation,
     EvidenceReference,
     ExperimentEvidence,
     ExperimentSpec,
+    HeaderMutation,
     MAX_EVIDENCE_REFERENCES,
     MutationSpec,
     RateLimitSafetyBudget,
@@ -201,7 +203,9 @@ def test_identity_mutations_are_refused_when_the_operator_has_not_opted_in():
                 variant_id="id-1",
                 family="identity-header",
                 identity_mutation=True,
-                parameters={"header": "X-Forwarded-For"},
+                payload=HeaderMutation(
+                    mutation_id="id-1", name="X-Forwarded-For", value="203.0.113.7",
+                ),
             )
         )
         return before, evidence
@@ -462,8 +466,33 @@ def test_kali_spec_payload_carries_the_controller_owned_traffic_shape():
     assert payload["run_id"] == "run-1"
     assert payload["rate_per_s"] == 2.0 and payload["duration_s"] == 3.0
     assert payload["requests"] == 6 and payload["concurrency"] == 2
-    assert payload["headers"] == {"Authorization": "Bearer x"}
+    # #238 follow-up (Task 5): the controller materializes the effective request
+    # and ships it; the canonical url/method/headers no longer ride separately.
+    effective = payload["effective_request"]
+    assert effective["method"] == "POST" and effective["url"] == "https://t/login"
+    assert effective["headers"] == {"Authorization": "Bearer x"}
+    assert effective["mutation_id"] == "canonical"
     assert "body" not in payload  # the replay surface carries no request body
+
+
+def test_kali_spec_payload_materializes_an_admitted_variant():
+    """The regression Task 5 exists for: an admitted variant must change the
+    request that crosses the seam - before this, `variant` was silently dropped
+    and the probe replayed the canonical request."""
+    spec = ExperimentSpec(
+        experiment_id="variant-route-0", phase="steady",
+        url="https://t/search?q=base", method="GET",
+        rate_per_s=5.0, duration_s=3.0, requests=15,
+        variant=MutationSpec(
+            variant_id="route", family="endpoint-shape",
+            payload=PathMutation(mutation_id="route", suffix="/"),
+        ),
+    )
+
+    payload = kali_spec_payload(spec, project_id="p", run_id="r")
+
+    assert payload["effective_request"]["url"] == "https://t/search/?q=base"
+    assert payload["effective_request"]["mutation_id"] == "route"
 
 
 def test_the_kali_envelope_is_parsed_and_a_bare_failure_is_typed():
