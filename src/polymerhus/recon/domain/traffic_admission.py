@@ -23,10 +23,16 @@ from __future__ import annotations
 
 import math
 import os
+from datetime import datetime
 from enum import StrEnum
-from typing import Literal, Mapping
+from typing import TYPE_CHECKING, Literal, Mapping
 
 from pydantic import BaseModel, ConfigDict, PositiveInt, field_validator
+
+from polymerhus.recon.domain.rate_limit import RateOutcome
+
+if TYPE_CHECKING:  # avoid a cycle: types.py imports this module
+    from polymerhus.recon.domain.types import JobSpec
 
 
 class TrafficCostClass(StrEnum):
@@ -147,3 +153,202 @@ class TrafficAdmissionSettings(BaseModel):
                 source, MAX_PROJECTED_DURATION_ENV, DEFAULT_MAX_PROJECTED_DURATION_S
             ),
         )
+
+
+# --- the pure admission decision ---------------------------------------------
+
+
+class AdmissionReason(StrEnum):
+    """The CLOSED reason vocabulary for one job's admission decision (spec
+    section 12.2). Every inclusion and exclusion is attributable to exactly one
+    of these; a free-text reason is not expressible."""
+
+    ADMITTED = "admitted"
+    NO_INPUTS = "no_inputs"
+    PROFILE_INCONCLUSIVE = "profile_inconclusive"
+    PROFILE_FAILED = "profile_failed"
+    PROFILE_STALE = "profile_stale"
+    BELOW_MIN_SAFE_RATE = "below_min_safe_rate"
+    PROJECTED_DURATION_EXCEEDED = "projected_duration_exceeded"
+    COST_MODEL_INVALID = "cost_model_invalid"
+    POLICY_MISSING = "policy_missing"
+    GOVERNOR_REFUSED = "governor_refused"
+
+
+class AdmissionDisposition(StrEnum):
+    """Whether a candidate job is materialized (`included`) or pruned
+    (`excluded`) at the phase boundary."""
+
+    INCLUDED = "included"
+    EXCLUDED = "excluded"
+
+
+class AdmissionContext(BaseModel):
+    """The controller-derived facts the pure decision reads.
+
+    Every field is computed by the deterministic caller (the effective profile
+    and its freshness resolved with an injected UTC clock). There is deliberately
+    NO bypass field: a bypass is evidence only and cannot reach this type, so it
+    can never change an admission decision.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    profile_status: RateOutcome
+    safe_rate_per_s: float | None = None
+    profile_fresh: bool
+    policy_present: bool
+    evaluated_at: datetime
+
+
+class JobAdmissionDecision(BaseModel):
+    """One job's persisted inclusion/exclusion, secret-safe by construction."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    phase: int
+    job_name: str
+    cost_class: TrafficCostClass
+    input_count: int
+    estimated_requests: int
+    safe_rate_per_s: float | None
+    projected_duration_s: float
+    decision: AdmissionDisposition
+    reason_code: AdmissionReason
+
+
+def _resolve_estimate(
+    cost: JobTrafficCost, input_count: int, override: int | None
+) -> int:
+    """The controller-owned request estimate for one job at one phase. An
+    explicit `override` (a verified wordlist cardinality, Task 7) wins; else the
+    job's declared per-input estimate times its derived input count."""
+    if override is not None:
+        return override
+    return input_count * int(cost.estimated_requests_per_input)
+
+
+def decide_job_admission(
+    phase: int,
+    job: "JobSpec",
+    input_count: int,
+    context: AdmissionContext,
+    settings: TrafficAdmissionSettings,
+    estimated_requests: int | None = None,
+) -> JobAdmissionDecision:
+    """Decide one job's admission at the current phase boundary.
+
+    Pure and total over every supported profile outcome: it reads only the
+    job's mandatory `traffic_cost`, the caller-derived `AdmissionContext`, and
+    the parsed `TrafficAdmissionSettings`. No I/O, no clock, no model, no
+    bypass. Order is deterministic:
+
+    1. an empty consumption set is recorded as `no_inputs` (nothing to run);
+    2. `non_target` runs without a target traffic policy;
+    3. every other class requires a policy; an invalid estimate is
+       `cost_model_invalid`;
+    4. `bounded_http` then runs under whatever policy is present;
+    5. `request_intensive` must be fresh, `mapped`/`no_limiter`, and clear both
+       inclusive numeric gates (`safe_rate_per_s >= min` and
+       `projected_duration_s <= max`).
+    """
+    if input_count < 0:
+        raise ValueError(f"input_count must be >= 0, got {input_count!r}")
+
+    cost = job.traffic_cost
+
+    def record(
+        include: bool,
+        reason: AdmissionReason,
+        *,
+        estimated: int,
+        duration: float,
+        safe_rate: float | None = context.safe_rate_per_s,
+    ) -> JobAdmissionDecision:
+        return JobAdmissionDecision(
+            phase=phase,
+            job_name=job.tool,
+            cost_class=cost.cost_class,
+            input_count=input_count,
+            estimated_requests=estimated,
+            safe_rate_per_s=safe_rate,
+            projected_duration_s=duration,
+            decision=(
+                AdmissionDisposition.INCLUDED
+                if include
+                else AdmissionDisposition.EXCLUDED
+            ),
+            reason_code=reason,
+        )
+
+    if input_count == 0:
+        return record(
+            False, AdmissionReason.NO_INPUTS, estimated=0, duration=0.0
+        )
+
+    if cost.cost_class is TrafficCostClass.NON_TARGET:
+        # No HTTP to the measured target: admitted without a traffic policy.
+        return record(True, AdmissionReason.ADMITTED, estimated=0, duration=0.0)
+
+    estimate = _resolve_estimate(cost, input_count, estimated_requests)
+    if estimate <= 0:
+        return record(
+            False, AdmissionReason.COST_MODEL_INVALID, estimated=0, duration=0.0
+        )
+
+    if not context.policy_present:
+        return record(
+            False, AdmissionReason.POLICY_MISSING, estimated=estimate, duration=0.0
+        )
+
+    if cost.cost_class is TrafficCostClass.BOUNDED_HTTP:
+        # Tightly bounded work runs under the conservative policy.
+        return record(True, AdmissionReason.ADMITTED, estimated=estimate, duration=0.0)
+
+    # request_intensive: freshness and posture first, then the numeric gates.
+    if not context.profile_fresh:
+        return record(
+            False, AdmissionReason.PROFILE_STALE, estimated=estimate, duration=0.0
+        )
+    if context.profile_status == "failed":
+        return record(
+            False, AdmissionReason.PROFILE_FAILED, estimated=estimate, duration=0.0
+        )
+    if context.profile_status == "inconclusive":
+        return record(
+            False,
+            AdmissionReason.PROFILE_INCONCLUSIVE,
+            estimated=estimate,
+            duration=0.0,
+        )
+
+    safe_rate = context.safe_rate_per_s
+    if safe_rate is None or safe_rate <= 0:
+        return record(
+            False, AdmissionReason.POLICY_MISSING, estimated=estimate, duration=0.0
+        )
+
+    projected_duration_s = estimate / safe_rate
+    if safe_rate < settings.min_safe_rate_per_s:
+        return record(
+            False,
+            AdmissionReason.BELOW_MIN_SAFE_RATE,
+            estimated=estimate,
+            duration=projected_duration_s,
+            safe_rate=safe_rate,
+        )
+    if projected_duration_s > settings.max_projected_duration_s:
+        return record(
+            False,
+            AdmissionReason.PROJECTED_DURATION_EXCEEDED,
+            estimated=estimate,
+            duration=projected_duration_s,
+            safe_rate=safe_rate,
+        )
+    return record(
+        True,
+        AdmissionReason.ADMITTED,
+        estimated=estimate,
+        duration=projected_duration_s,
+        safe_rate=safe_rate,
+    )
