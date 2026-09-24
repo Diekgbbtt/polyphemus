@@ -25,6 +25,18 @@ When you introduce, rename, or sharpen a domain term while implementing, update 
 When a change alters the reasoned model (a new primitive, a corrected relationship, a resolved open question), update `docs/design/domain-model.md` too.
 Provisional terms not yet ratified by the operator (currently the phase-3 `fault-hypothesis` / `testing technique` / `probe` / `vulnerability` vocabulary and the "escalating epistemic ladder" framing) stay marked as such until ratified. The fault-hypothesis is a phase-3 testing primitive, not a graph node or edge.
 
+### Rate-limit admission runbook
+
+Recon runs admit jobs against the target's MEASURED rate posture, automatically
+and with no operator pause. The operator-facing runbook is
+`docs/design/rate-limit-job-admission-operations.md`: the automatic flow, the two
+threshold variables and their inclusive boundary semantics, the structured
+pruning reason codes, where `stats.rate_limit` / `stats.traffic_admission` are
+read, the fail-closed refusal behaviour, and the v2 migration/rollback rules.
+Two invariants hold there and are worth repeating: a bypass finding is EVIDENCE
+ONLY (it never raises a limit or re-enables a pruned job), and armed governance
+is FAIL-CLOSED (a governor fault refuses locally, with zero target egress).
+
 ### E2E eval targets
 
 The eval dataset is `tests/e2e/fixtures/eval-targets.yaml` - the registry of live targets for end-to-end runs.

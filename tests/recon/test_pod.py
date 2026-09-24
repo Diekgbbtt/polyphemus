@@ -752,5 +752,7 @@ def test_no_per_pod_throttle_input_rate_profile_is_ignored():
          "auth_context": {"cookies": [{"name": "s", "value": "v"}]}},
         tool="ffuf",
     )
-    assert "-rate" not in cmd  # unthrottled interim posture until #238
+    # The retired `_RATE_FLAGS` slot stays retired: pacing never rides the
+    # command anymore, it rides the measured policy into Kali's governor.
+    assert "-rate" not in cmd
     assert "-H 'Cookie: s=v'" in cmd  # the feed projection still applies

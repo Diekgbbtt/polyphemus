@@ -53,7 +53,7 @@ class LeaseRecord:
 class SourceRegistration:
     """Everything the proxy knows about one leased source address.
 
-    `traffic_policy` is the canonical `traffic-policy/v1` payload (already
+    `traffic_policy` is the canonical `traffic-policy/v2` payload (already
     validated at the exec boundary), or None for a capture-only lease.
     """
 

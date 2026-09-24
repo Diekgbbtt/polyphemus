@@ -187,7 +187,7 @@ def _limits_from(policy) -> _Limits | None:
 
 
 def validate_traffic_policy(policy) -> dict | None:
-    """The canonical enforced form of a `traffic-policy/v1` payload, or None.
+    """The canonical enforced form of a `traffic-policy/v2` payload, or None.
 
     The service stores this canonical dict in the registry (so a slightly
     differently-ordered or extra-keyed producer payload lands as one shape), and

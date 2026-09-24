@@ -16,8 +16,11 @@ accumulate into `pod_exports` through an `operator.add` reducer so the parallel
 `default_preprocess_fn` (deterministic 1:1 asset->pod_input mapping up to the
 MAX_JOB_ASSETS budget, except for batched/reprofile jobs which pack; `extra`
 is threaded through verbatim). The per-pod throttle input retired with the
-mid-run steering machinery (#243, D223-12) - request phases run unthrottled
-until the #238 rate-limit work lands its profile-driven configuration.
+mid-run steering machinery (#243, D223-12): the per-job `-rate` flag is gone
+for good. Traffic is paced by the ONE measured policy instead - the pipeline
+puts the serialized `traffic_policy` in `extra`, the pod forwards it to Kali's
+governor, and admission decides which intensive jobs run at all (#238
+follow-up; see docs/design/rate-limit-job-admission-operations.md).
 `notify_fn` (optional)
 is the #94 delivery seam: fired after each pod completes so a parent actor can be
 told a pod finished and go READ that pod's session memory; `pod_completion_notify`
