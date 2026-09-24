@@ -672,6 +672,36 @@ async def run_pipeline(
         admission_decisions: list = []
         admission_warnings: list[str] = []
         admission_refusals: list = []
+
+        async def _record_trajectory() -> None:
+            """Re-persist the envelope after a trajectory event was appended.
+
+            The pre-run persist is the LOAD-BEARING one (the executed
+            configuration must never be unobservable); this one is
+            observational, so a store hiccup is loud here and never fails the
+            run - the earlier record still stands.
+            """
+            try:
+                await asyncio.to_thread(
+                    persist_admission_envelope, registry, run_id,
+                    build_admission_envelope(
+                        profile=rate_profile,
+                        settings=TRAFFIC_ADMISSION_SETTINGS,
+                        candidate_phases=candidate_phases,
+                        materialized_phases=materialized_phases,
+                        decisions=admission_decisions,
+                        event_order=admission_events,
+                        warnings=admission_warnings,
+                        refusals=admission_refusals,
+                    ),
+                )
+            except Exception:  # best-effort: the pre-run record already stands
+                logger.warning(
+                    "run %s could not re-persist the traffic-admission "
+                    "trajectory (the pre-run record stands)", run_id,
+                    exc_info=True,
+                )
+
         for phase_idx, phase_jobs in enumerate(plan):
             candidates = list(phase_jobs)
             prepared_by_job: dict[str, list[dict]] = {}
@@ -875,6 +905,9 @@ async def run_pipeline(
 
             async def _run_one(name: str) -> None:
                 job, input_assets, prepared, extra = job_configs[name]
+                target_facing = (
+                    job.traffic_cost.cost_class is not TrafficCostClass.NON_TARGET
+                )
                 # The job's REAL execution window (#34 AST-DEC-09). `recon_jobs.
                 # started_at` cannot serve: `upsert_job` stamps it with now() on
                 # INSERT and leaves it untouched ON CONFLICT, and the phase-setup
@@ -902,6 +935,14 @@ async def run_pipeline(
                     return
 
                 total = len(pod_exports)
+                if (pod_exports and target_facing
+                        and "target_observed" not in admission_events):
+                    # The run's first TARGET-FACING pod returned: the trajectory
+                    # now has observed the target's own responses (a non-target
+                    # job like subfinder proves nothing about the target, so it
+                    # never emits this).
+                    admission_events.append("target_observed")
+                    await _record_trajectory()
                 succeeded = sum(1 for e in pod_exports if e.verdict == "success")
                 failed = sum(1 for e in pod_exports if e.verdict == "failed")
                 # #238 follow-up (Task 6): a runtime governor refusal is recorded
@@ -1019,32 +1060,20 @@ async def run_pipeline(
             # MAX_PODS pod fan-out, not (jobs in phase) x MAX_PODS - the latter
             # OOM-killed the agent container on heavy phases (e.g. phase 4's
             # katana/ffuf/kiterunner/graphql-cop/paramspider/steel_crawl).
+            if job_configs and "pod_started" not in admission_events:
+                # The first MATERIALIZED runner is about to start: `pod_started`
+                # is the trajectory's boundary between the admitted
+                # configuration and its execution. A fully pruned phase set
+                # starts no pod, so it never emits this.
+                admission_events.append("pod_started")
+                await _record_trajectory()
             for name in job_configs:
                 await _run_one(name)
 
             # Re-persist ONLY when a runtime refusal was recorded, so the
             # envelope reflects the refusals without touching the decisions.
             if admission_refusals:
-                refused_envelope = build_admission_envelope(
-                    profile=rate_profile,
-                    settings=TRAFFIC_ADMISSION_SETTINGS,
-                    candidate_phases=candidate_phases,
-                    materialized_phases=materialized_phases,
-                    decisions=admission_decisions,
-                    event_order=admission_events,
-                    warnings=admission_warnings,
-                    refusals=admission_refusals,
-                )
-                try:
-                    await asyncio.to_thread(
-                        persist_admission_envelope, registry, run_id, refused_envelope
-                    )
-                except Exception:  # best-effort: the pre-run record already stands
-                    logger.warning(
-                        "run %s could not re-persist the traffic-admission "
-                        "refusals (the pre-run record stands)", run_id,
-                        exc_info=True,
-                    )
+                await _record_trajectory()
 
         # #75: recon and analysis are DECOUPLED. For the INLINE rollback path only,
         # analysis ran on this task, so record its stats onto the recon run as
@@ -1092,4 +1121,6 @@ async def run_pipeline(
             pass
     # Recon reaches complete the instant its jobs finish - it does NOT wait on
     # analysis (#75 D3). Analysis settles independently on its own run row.
+    admission_events.append("run_finalized")
+    await _record_trajectory()
     await asyncio.to_thread(registry.set_run_status, run_id, "complete")

@@ -106,7 +106,7 @@ class _FakeOrchestrator:
 
 
 def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
-         settings=None, prepare_inputs=None):
+         settings=None, prepare_inputs=None, pod_exports_for=None):
     """Wire the real `run_pipeline` over a recording orchestrator + registry."""
     registry = registry or _RecordingRegistry(events)
     seen: dict = {}
@@ -118,7 +118,9 @@ def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
             "extra": dict(extra),
             "prepared": prepared_pod_inputs,
         }
-        return []
+        if pod_exports_for is None:
+            return []
+        return pod_exports_for(job, input_assets)
 
     def fake_read_assets(node_type, project_id, where=None, *, driver=None):
         if node_type == "Subdomain":
@@ -578,6 +580,55 @@ def test_admission_is_persisted_before_the_first_admitted_runner():
     assert events.index("set_run_stats:rate_limit") < events.index(
         "set_run_stats:traffic_admission"
     )
+
+
+def test_the_envelope_records_the_full_run_trajectory():
+    """`event_order` is the run's TRAJECTORY, not just the pre-phase-0 prefix.
+
+    The functional E2E asserts the whole sequence - the two turns, the profile,
+    the phase-boundary admission, the pod start, the first observed target
+    response, and the run's terminal act - so the envelope must carry all of
+    them in order (#238 follow-up, Task 10 step 4).
+    """
+    events: list = []
+    from polymerhus.recon.domain.traffic_admission import TrafficCostClass
+    from polymerhus.recon.domain.types import PodExport
+
+    def _exports_for(job, inputs):
+        # A real pod returns an export; a non-target job proves nothing about
+        # the target, so its export never satisfies `target_observed`.
+        if job.traffic_cost.cost_class is TrafficCostClass.NON_TARGET:
+            return []
+        return [PodExport(input_asset={"name": "app.t.com"}, verdict="success")]
+
+    registry, _ = _run(events, _orchestrator(events), pod_exports_for=_exports_for)
+
+    order = registry.run_stats["traffic_admission"]["event_order"]
+    assert order[:4] == ["auth", "rate_mapping", "rate_profile_persisted",
+                         "admission_persisted"], order
+    for label in ("pod_started", "target_observed", "run_finalized"):
+        assert label in order, order
+    assert order.index("admission_persisted") < order.index("pod_started")
+    assert order.index("pod_started") <= order.index("target_observed")
+    assert order[-1] == "run_finalized", order
+
+
+def test_a_fully_pruned_run_records_no_pod_start():
+    """No materialized job means no pod started: the trajectory must not claim
+    one, or `pod_started` would stop meaning anything."""
+    events: list = []
+    registry, _ = _run(
+        events,
+        _orchestrator(events, profile=_NoPolicyProfile()),
+        # Every candidate is target-facing, so the policy-less profile refuses
+        # the whole plan and no runner is ever scheduled.
+        job_subset=["httpx", "katana", "ffuf"],
+    )
+
+    order = registry.run_stats["traffic_admission"]["event_order"]
+    assert "pod_started" not in order, order
+    assert "target_observed" not in order, order
+    assert order[-1] == "run_finalized", order
 
 
 def test_bounded_and_intensive_runners_are_refused_without_a_policy():
