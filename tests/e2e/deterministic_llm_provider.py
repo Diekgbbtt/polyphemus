@@ -67,6 +67,13 @@ TRIAGER_TOOLS = frozenset((*AUTH_TOOLS, TRIAGER_SCHEMA_TOOL))
 RATE_PROCEDURE = "performing-api-rate-limiting-bypass"
 AUTH_SKILL = "authn"
 
+#: The target alias that makes the rate turn fail at the model boundary. It is a
+#: property of the CONVERSATION (the brief names the target), never a test-side
+#: switch and never a production fault flag: the E2E exercises the production
+#: actor's failure path by aiming a run at this alias, exactly as it would aim
+#: one at any other target.
+RATE_STAGE_ERROR_TARGET = "rate-stage-error"
+
 # --- the turn vocabulary --------------------------------------------------------
 
 TURN_GATEWAY = "gateway"
@@ -95,6 +102,20 @@ _RATE_INTERPRETATION = (
 class UnknownState(Exception):
     """A request the fixture does not implement. Carries a CONTENT-FREE
     diagnostic: message roles and tool names, never a message body."""
+
+    def __init__(self, message: str, diagnostic: dict[str, Any]):
+        super().__init__(message)
+        self.message = message
+        self.diagnostic = diagnostic
+
+
+class ServiceUnavailable(Exception):
+    """The deterministic upstream failure of the `rate-stage-error` target.
+
+    The production client classifies a 5xx as retryable, so this is what
+    exercises the actor's bounded escalation and its conservative fallback -
+    without a fault flag anywhere in production.
+    """
 
     def __init__(self, message: str, diagnostic: dict[str, Any]):
         super().__init__(message)
@@ -361,7 +382,14 @@ _VARIANT_MUTATION = {
 _SIGNAL_VOCABULARY = frozenset({"waf_protected", "waf_detection", "rate_limited"})
 
 
-def _rate_envelope(messages: list[dict]) -> tuple[str, dict]:
+def _rate_envelope(messages: list[dict], brief: str) -> tuple[str, dict]:
+    if RATE_STAGE_ERROR_TARGET in brief:
+        # The conversation aims the run at the failing alias: the model
+        # boundary is unavailable for this target, deterministically.
+        raise ServiceUnavailable(
+            "the deterministic provider is unavailable for this target",
+            {"reason": "rate_stage_error_target"},
+        )
     calls = _calls(messages)
     if not _has(calls, "load_skill", name=RATE_PROCEDURE):
         return "load_skill", {"name": RATE_PROCEDURE}
@@ -432,7 +460,7 @@ def _next_envelope(request: dict) -> tuple[str, str, dict]:
     if turn == TURN_GATEWAY:
         name, args = _gateway_envelope(messages, _last_user_brief(messages))
     elif turn == TURN_RATE:
-        name, args = _rate_envelope(messages)
+        name, args = _rate_envelope(messages, _last_user_brief(messages))
     else:
         name, args = _triager_envelope(messages)
     return turn, name, args
@@ -487,6 +515,19 @@ def completion(request: dict, *, sequence: int = 0) -> tuple[int, dict]:
                               [n for n, _ in _calls(request.get("messages") or [])])
         return 422, {"error": {
             "type": "unknown_state",
+            "message": exc.message,
+            "diagnostic": diagnostic,
+        }}
+    except ServiceUnavailable as exc:
+        diagnostic = dict(exc.diagnostic)
+        diagnostic.setdefault("model", model)
+        diagnostic.setdefault("roles",
+                              [_role(m) for m in (request.get("messages") or [])])
+        diagnostic.setdefault("tools", _tool_names(request))
+        diagnostic.setdefault("observed_tools",
+                              [n for n, _ in _calls(request.get("messages") or [])])
+        return 503, {"error": {
+            "type": "service_unavailable",
             "message": exc.message,
             "diagnostic": diagnostic,
         }}

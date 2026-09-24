@@ -429,6 +429,26 @@ def test_a_gateway_turn_without_a_candidate_account_is_refused_loudly():
     assert body["error"]["type"] == "unknown_state"
 
 
+def test_the_rate_stage_error_target_answers_a_retryable_503():
+    """The `rate-stage-error` alias is a property of the CONVERSATION: a run
+    aimed at it meets an unavailable model boundary, which is how the E2E
+    exercises the production actor's escalation without a production fault
+    flag."""
+    status, body = provider.completion(
+        _request([_system(), _rate_human(target_key=provider.RATE_STAGE_ERROR_TARGET,
+                                         url=f"http://{provider.RATE_STAGE_ERROR_TARGET}/canonical")]))
+    assert status == 503
+    assert body["error"]["type"] == "service_unavailable"
+    # the diagnostic names roles and tools ONLY - never the brief it just read
+    diagnostic = body["error"]["diagnostic"]
+    assert set(diagnostic) >= {"roles", "tools", "observed_tools"}
+    assert "Rate-limit mapping for" not in json.dumps(body)
+
+    ok_status, _ = provider.completion(
+        _request([_system(), _rate_human()]))
+    assert ok_status == 200, "every other target still maps normally"
+
+
 def test_streaming_requests_are_answered_with_an_sse_stream():
     request = _request([_system(), _gateway_human()], stream=True)
     frames = list(provider.stream_frames(provider.completion(request)[1]))

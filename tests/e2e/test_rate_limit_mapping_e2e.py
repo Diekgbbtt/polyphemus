@@ -1,5 +1,13 @@
 """#238 Task 8 - live end-to-end evidence: map -> persist -> govern.
 
+TIER (read this before citing the file): this is the LIVE **DIRECT-MCP**
+measurement tier, not the functional release gate. It drives the real Kali MCP
+surface directly and publishes the rate profile through a scripted orchestrator
+double, which is exactly what `tests/e2e/test_rate_limit_admission_e2e.py` is
+forbidden to do. It remains valuable - it is the fast, focused check of the
+mapping/artefact/governor arithmetic - but it certifies the mapping, never the
+production actor-to-target trajectory.
+
 This is a LIVE gate (the #196 precedent): it drives the real Kali MCP surface,
 the real proxy, the real governor and the real Vegeta runner against a
 DETERMINISTIC LOCAL limiter fixture (`tests/e2e/rate_limit_e2e_target.py`,
@@ -108,7 +116,11 @@ def _policy(*, rate_per_s: float, burst: int, project_key: str = TARGET_HOST) ->
         "max_concurrency": 1,
         "min_delay_ms": 1000.0 / rate_per_s,
         "source": "e2e-live",
-        "version": "traffic-policy/v1",
+        # Kali enforces `traffic-policy/v2` (#238 Task 6/7): `max_concurrency` is
+        # an enforced semantic, and the runtime refuses any other version with
+        # returncode 78 and zero target calls. This helper drives the REAL Kali
+        # surface, so it must speak the version Kali accepts.
+        "version": "traffic-policy/v2",
     }
 
 

@@ -351,6 +351,22 @@ def provider_counters() -> dict:
     return _in_container_get(PROVIDER_SERVICE, "http://127.0.0.1:8080/health")
 
 
+def agent_env(name: str) -> str | None:
+    """A variable from the RUNNING agent container's environment.
+
+    The scenario knobs that belong to the stack (`RATE_LIMIT_PROFILE_TTL_S`,
+    the threshold bounds) are container environment, not test knobs: a scenario
+    that needs one reads it here and SKIPS loudly when the stack was not brought
+    up with it, rather than quietly asserting a weaker property.
+    """
+    result = _compose(
+        ["exec", "-T", AGENT_CONTAINER_SERVICE, "printenv", name], timeout=60)
+    if result.returncode != 0:
+        return None
+    value = result.stdout.strip()
+    return value or None
+
+
 def _safe_provider_counters() -> dict:
     try:
         return provider_counters()
