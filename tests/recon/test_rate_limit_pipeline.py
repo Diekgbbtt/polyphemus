@@ -12,12 +12,15 @@ from __future__ import annotations
 import asyncio
 from datetime import datetime, timedelta, timezone
 
+import pytest
+
 from polymerhus.recon.control import pipeline
 from polymerhus.recon.control.authn_loop import GatewayVerdict
 from polymerhus.recon.control.orchestrator_agent import GatewayStop
 from polymerhus.recon.domain.rate_limit import (
     RateLimitSafetyBudget,
     RateProfile,
+    RateLoopVerdict,
     TrafficPolicy,
 )
 
@@ -47,7 +50,11 @@ class _RecordingRegistry:
         pass
 
     def set_run_stats(self, run_id, stats):
-        self.events.append("set_run_stats")
+        # One event per written key, so the tests can assert the ORDER of the
+        # two additive writes (rate_limit vs traffic_admission) against the
+        # first runner.
+        for key in stats:
+            self.events.append(f"set_run_stats:{key}")
         self.run_stats.update(stats)
 
 
@@ -99,14 +106,18 @@ class _FakeOrchestrator:
 
 
 def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
-         settings=None):
+         settings=None, prepare_inputs=None):
     """Wire the real `run_pipeline` over a recording orchestrator + registry."""
     registry = registry or _RecordingRegistry(events)
     seen: dict = {}
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         events.append(f"job:{job.tool}")
-        seen[job.tool] = {"assets": list(input_assets), "extra": dict(extra)}
+        seen[job.tool] = {
+            "assets": list(input_assets),
+            "extra": dict(extra),
+            "prepared": prepared_pod_inputs,
+        }
         return []
 
     def fake_read_assets(node_type, project_id, where=None, *, driver=None):
@@ -126,6 +137,7 @@ def _run(events, orchestrator, *, registry=None, store=None, job_subset=None,
             registry=registry, read_assets=fake_read_assets,
             orchestrator_factory=lambda run_id: orchestrator,
             auth_store=store, feed_mode="queued", with_analysis=False,
+            prepare_inputs=prepare_inputs,
         )
 
     asyncio.run(_drive())
@@ -162,10 +174,10 @@ def test_rate_turn_runs_after_auth_and_persists_before_phase_zero():
 
     assert registry.run_stats["rate_limit"]["outcome"] == "mapped"
     index = {name: events.index(name) for name in (
-        "create_run", "gateway", "rate", "set_run_stats")}
+        "create_run", "gateway", "rate", "set_run_stats:rate_limit")}
     assert index["create_run"] < index["gateway"] < index["rate"]
-    assert index["rate"] < index["set_run_stats"]
-    assert index["set_run_stats"] < min(
+    assert index["rate"] < index["set_run_stats:rate_limit"]
+    assert index["set_run_stats:rate_limit"] < min(
         i for i, event in enumerate(events) if event.startswith("job:"))
 
 
@@ -184,15 +196,17 @@ def test_rate_profile_is_persisted_as_json_with_refs_and_no_secrets():
 
 
 def test_rate_stats_are_additive_and_never_clobber_analysis_stats():
-    """The pipeline writes ONLY the `rate_limit` key: a JSONB merge keeps the
-    analysis stats another writer already put in the same run row."""
+    """The pipeline adds the `rate_limit` and `traffic_admission` keys via the
+    additive JSONB seam: a merge keeps the analysis stats another writer already
+    put in the same run row, and never folds admission into the profile."""
     events: list = []
     registry = _RecordingRegistry(events)
     registry.run_stats["analysis"] = {"passes": 3}
     _run(events, _orchestrator(events), registry=registry)
 
     assert registry.run_stats["analysis"] == {"passes": 3}
-    assert set(registry.run_stats) == {"analysis", "rate_limit"}
+    assert set(registry.run_stats) == {"analysis", "rate_limit", "traffic_admission"}
+    assert registry.run_stats["traffic_admission"]["version"] == "traffic-admission/v1"
 
 
 def test_heartbeat_ticks_during_a_slow_rate_turn(monkeypatch):
@@ -486,3 +500,175 @@ def test_one_active_crawl_per_target():
         thread.join()
 
     assert active["max"] == 1, "two crawls for one target ran concurrently"
+
+
+# --- #238 follow-up (Task 4): pre-materialization admission -----------------------
+
+
+class _NoPolicyProfile:
+    """A profile with NO enforceable policy - the shape `policy_missing` exists
+    for. A production `RateProfile` always carries a policy (the conservative
+    fallback is a policy), so this stub is the only way to exercise the branch
+    end to end through the pipeline."""
+
+    version = "rate-profile/v2"
+    outcome = "inconclusive"
+    traffic_policy = None
+    safe_rate_per_s = None
+
+    def __init__(self):
+        self.measured_at = datetime.now(timezone.utc)
+        self.expires_at = self.measured_at + timedelta(seconds=3600)
+
+    def is_fresh(self, at):
+        return at < self.expires_at
+
+    def model_dump(self, mode="python"):
+        return {
+            "version": self.version,
+            "outcome": self.outcome,
+            "traffic_policy": None,
+            "measured_at": self.measured_at.isoformat(),
+            "expires_at": self.expires_at.isoformat(),
+        }
+
+
+def _excluded_reasons(registry) -> dict[str, str]:
+    stored = registry.run_stats["traffic_admission"]
+    return {
+        d["job_name"]: d["reason_code"]
+        for d in stored["decisions"]
+        if d["decision"] == "excluded"
+    }
+
+
+def test_low_rate_prunes_intensive_runners_before_materialization():
+    """A conservative (low-rate) posture prunes `ffuf`/`arjun` at the phase
+    boundary: they are absent from the materialized phases, their runners are
+    never invoked, and their pruning reason is structured."""
+    events: list = []
+    registry, _ = _run(
+        events,
+        # A MAPPED posture whose safe rate is below the minimum: the pruning
+        # reason is the numeric gate (`below_min_safe_rate`), not the posture.
+        _orchestrator(events, profile=_profile(rate=1.0)),
+        job_subset=["subfinder", "httpx", "katana", "ffuf", "arjun"],
+    )
+
+    stored = registry.run_stats["traffic_admission"]
+    assert stored["version"] == "traffic-admission/v1"
+    assert stored["candidate_phases"] != stored["materialized_phases"]
+    # `ffuf` is below the rate gate; `arjun`'s Endpoint input set is empty here,
+    # so it is the execution reason `no_inputs` - neither is a rate failure
+    # leaking through.
+    reasons = _excluded_reasons(registry)
+    assert reasons["ffuf"] == "below_min_safe_rate"
+    assert reasons["arjun"] == "no_inputs"
+    assert "job:ffuf" not in events
+    assert "job:arjun" not in events
+    # The bounded jobs still ran, under the conservative policy.
+    assert "job:httpx" in events and "job:katana" in events
+
+
+def test_admission_is_persisted_before_the_first_admitted_runner():
+    events: list = []
+    registry, _ = _run(events, _orchestrator(events))
+
+    assert events.index("set_run_stats:traffic_admission") < events.index("job:httpx")
+    assert events.index("set_run_stats:rate_limit") < events.index(
+        "set_run_stats:traffic_admission"
+    )
+
+
+def test_bounded_and_intensive_runners_are_refused_without_a_policy():
+    """No enforceable policy: `bounded_http` AND `request_intensive` runners are
+    both refused while `non_target` work continues."""
+    events: list = []
+    registry, _ = _run(
+        events,
+        _orchestrator(events, profile=_NoPolicyProfile()),
+        job_subset=["subfinder", "httpx", "katana", "ffuf"],
+    )
+
+    reasons = _excluded_reasons(registry)
+    assert reasons["httpx"] == "policy_missing"
+    assert reasons["katana"] == "policy_missing"
+    assert reasons["ffuf"] == "policy_missing"
+    assert "job:subfinder" in events
+    assert "job:httpx" not in events
+    assert "job:ffuf" not in events
+
+
+def test_each_candidate_is_derived_exactly_once_and_prepared_inputs_reach_run_job():
+    events: list = []
+    derived: list[str] = []
+
+    def recording_prepare(inputs, job, extra, asset_context):
+        derived.append(job.tool)
+        return [{"input_asset": {"url": "https://a"}, "asset_context": "", "extra": dict(extra)}]
+
+    _, seen = _run(
+        events, _orchestrator(events),
+        job_subset=["subfinder", "httpx", "katana"],
+        prepare_inputs=recording_prepare,
+    )
+
+    assert derived.count("httpx") == 1
+    assert derived.count("katana") == 1
+    prepared = seen["httpx"]["prepared"]
+    assert prepared is not None and len(prepared) == 1
+    assert prepared[0]["input_asset"] == {"url": "https://a"}
+    assert isinstance(prepared[0]["extra"], dict) and prepared[0]["extra"]
+
+
+def test_a_profile_expired_before_materialization_prunes_intensive_jobs():
+    """Fresh during mapping, stale by materialization: admission re-evaluates
+    freshness and prunes the intensive job with `profile_stale`."""
+    events: list = []
+    now = datetime.now(timezone.utc)
+    stale = _profile(rate=10.0).model_copy(
+        update={
+            "measured_at": now - timedelta(hours=2),
+            "expires_at": now - timedelta(hours=1),
+        }
+    )
+    registry, _ = _run(
+        events,
+        _orchestrator(events, profile=stale),
+        job_subset=["subfinder", "httpx", "ffuf"],
+    )
+
+    assert _excluded_reasons(registry)["ffuf"] == "profile_stale"
+    assert "job:ffuf" not in events
+
+
+def test_model_facing_verdicts_cannot_carry_admission_fields():
+    """The LLM cannot raise or reintroduce anything: neither model-facing verdict
+    type accepts a rate, concurrency, budget, or phase-list field."""
+    from pydantic import ValidationError
+
+    for model in (GatewayVerdict, RateLoopVerdict):
+        for field in (
+            "rate_per_s", "max_concurrency", "budget",
+            "candidate_jobs", "materialized_phases",
+        ):
+            with pytest.raises(ValidationError):
+                model(**{field: 1})
+
+
+def test_the_materialized_phase_is_the_static_candidates_intersected_with_admission():
+    """No union with model output: the materialized list is always a subset of
+    the controller's static candidate list."""
+    from polymerhus.recon.control.traffic_admission import (
+        materialize_admitted_phase,
+    )
+    from polymerhus.recon.config import TRAFFIC_ADMISSION_SETTINGS
+
+    prepared = {"httpx": [{"a": 1}], "arjun": [{"b": 1}]}
+    materialized, decisions = materialize_admitted_phase(
+        3, ["httpx"], prepared, _conservative_profile(),
+        TRAFFIC_ADMISSION_SETTINGS, datetime.now(timezone.utc),
+    )
+    assert materialized == ["httpx"]
+    assert "arjun" not in materialized
+    assert [d.job_name for d in decisions] == ["httpx"]

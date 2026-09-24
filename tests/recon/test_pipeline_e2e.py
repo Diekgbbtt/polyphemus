@@ -34,6 +34,43 @@ from polymerhus.recon.domain.types import ExecResult
 FIXTURES = Path(__file__).parent / "fixtures"
 
 
+def _admitting_orchestrator_factory(safe_rate_per_s: float = 20.0):
+    """A stub orchestrator answering the two pre-phase-0 turns with a FRESH
+    `mapped` profile, so a request-intensive job clears the admission gates.
+
+    The default (degraded) actor yields the conservative fallback - which
+    correctly PRUNES `arjun`/`ffuf` (#238 follow-up, Task 4). The tests that must
+    prove an intensive job actually RUNS therefore inject an admitting posture.
+    """
+    from datetime import datetime, timedelta, timezone
+
+    from polymerhus.recon.control.authn_loop import GatewayVerdict
+    from polymerhus.recon.domain.rate_limit import RateProfile, TrafficPolicy
+
+    class _Stub:
+        async def run_gateway(self, **kw):
+            return GatewayVerdict(outcome="anonymous")
+
+        async def run_rate_limit(self, **kw):
+            now = datetime.now(timezone.utc)
+            policy = TrafficPolicy(
+                target_key="example.com", host_patterns=["example.com"],
+                rate_per_s=safe_rate_per_s, burst=2, max_concurrency=1,
+                min_delay_ms=1000.0 / safe_rate_per_s, source="measured",
+            )
+            return RateProfile(
+                target_key="example.com", host_patterns=["example.com"],
+                outcome="mapped", safe_rate_per_s=safe_rate_per_s,
+                measured_at=now, expires_at=now + timedelta(seconds=3600),
+                traffic_policy=policy,
+            )
+
+        async def stop(self):
+            pass
+
+    return lambda run_id: _Stub()
+
+
 @pytest.fixture(autouse=True)
 def _no_live_database_reach(monkeypatch):
     """Stub the heartbeat write so this unit-tier e2e never touches Postgres.
@@ -167,6 +204,12 @@ class FakeRegistry:
             }
         )
 
+    def set_run_stats(self, run_id, stats):
+        # #238 follow-up: the additive stats seam the pipeline uses to persist
+        # the traffic-admission envelope before any runner starts.
+        self.run_stats = getattr(self, "run_stats", {})
+        self.run_stats.update(stats)
+
 
 def _build_pod_invoke(pod_graph):
     """Same shape as `job_agent.default_pod_invoke`, but invoking OUR pod
@@ -206,7 +249,7 @@ def test_pipeline_e2e_subfinder_dnsx_httpx():
     call_order: list[str] = []
     seen_input_assets: dict[str, list[dict]] = {}
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         call_order.append(job.tool)
         seen_input_assets[job.tool] = input_assets
         return await real_run_job(
@@ -287,7 +330,7 @@ def test_pipeline_e2e_httpx_to_arjun_prop_dependent_target():
 
     seen_input_assets: dict[str, list[dict]] = {}
 
-    async def run_job(job, input_assets, *, run_id, phase, extra):
+    async def run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         seen_input_assets[job.tool] = input_assets
         return await real_run_job(
             job, input_assets, run_id=run_id, phase=phase, extra=extra, agent=job_agent
@@ -309,6 +352,7 @@ def test_pipeline_e2e_httpx_to_arjun_prop_dependent_target():
             load_settings=load_settings,
             registry=registry,
             read_assets=graph.read_assets,
+            orchestrator_factory=_admitting_orchestrator_factory(20.0),
         )
     )
 

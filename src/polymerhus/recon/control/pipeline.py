@@ -49,6 +49,13 @@ from polymerhus.recon.control.auth_feed import (
 )
 from polymerhus.recon.domain.curator import ALLOWED_LABELS, curate
 from polymerhus.recon.control.jobs import JOBS, build_phase_plan, validate_job_subset
+from polymerhus.recon.control.traffic_admission import (
+    build_admission_envelope,
+    materialize_admitted_phase,
+    persist_admission_envelope,
+)
+from polymerhus.recon.config import TRAFFIC_ADMISSION_SETTINGS
+from polymerhus.recon.domain.traffic_admission import TrafficCostClass
 from polymerhus.recon.control.scope import (
     DISCOVERY_JOBS,
     HOST_MODE_ONLY_JOBS,
@@ -66,16 +73,15 @@ _NON_IDENTITY_KEYS = {"project_id", "first_seen", "last_seen"}
 
 # --- #238 rate-limit turn wiring --------------------------------------------------
 
-# The jobs whose pods egress HTTP(S) traffic TO THE TARGET: exactly the ones a
-# measured `TrafficPolicy` configures. The agent-driven Steel crawl receives it
-# too, through its own conservative pacing adapter (it cannot expose its
-# sub-requests to the governor). Declared here, beside the ONE place that
-# assembles a job's `extra`, because `JobSpec` carries no egress axis and this
-# tranche does not change that contract.
-_HTTP_TRAFFIC_JOBS = frozenset({
-    "httpx", "httpx_services", "httpx_reprofile", "katana", "ffuf",
-    "kiterunner", "jsluice", "graphql-cop", "arjun",
-})
+# #238 follow-up (Task 4): the source of truth for "does this job need a traffic
+# policy" is now the job's OWN typed `JobSpec.traffic_cost.cost_class`, never a
+# sparse name list. A `bounded_http` or `request_intensive` job is refused
+# without a policy (the decision function records `policy_missing`); a
+# `non_target` job carries no policy. The agent-driven Steel crawl always gets
+# the policy too, through its own conservative pacing adapter.
+_POLICY_BEARING_CLASSES = frozenset(
+    {TrafficCostClass.BOUNDED_HTTP, TrafficCostClass.REQUEST_INTENSIVE}
+)
 
 
 def _rate_target(settings: dict | None) -> tuple[str, str] | None:
@@ -461,6 +467,7 @@ async def run_pipeline(
     feed_mode: str | None = None,
     pass_fn=None,
     with_analysis: bool = True,
+    prepare_inputs=None,
 ) -> None:
     """Drive the full (or subset) phase plan for `project_id` under `run_id`.
 
@@ -497,6 +504,12 @@ async def run_pipeline(
         from polymerhus.app.clients import pg as registry
     if read_assets is None:
         read_assets = globals()["read_assets"]
+    if prepare_inputs is None:
+        # #238 follow-up: ONE canonical consumption derivation, called ONCE per
+        # candidate job at the admission chokepoint (never inside the job graph).
+        from polymerhus.recon.control.job_agent import (  # noqa: PLC0415
+            prepare_job_inputs as prepare_inputs,
+        )
 
     orchestrator = None
     # The gateway starts deterministically (D223-8): the actor is ALWAYS
@@ -641,9 +654,28 @@ async def run_pipeline(
                               and gateway_verdict.branch == "browser_only"),
         )
         await _persist_rate_profile(registry, run_id, rate_profile)
-        traffic_policy = rate_profile.traffic_policy.model_dump(mode="json")
+        # A production profile always carries a policy (the conservative fallback
+        # IS a policy); this guard keeps the pipeline total for the policy-less
+        # shape admission already handles as `policy_missing`.
+        traffic_policy = (
+            rate_profile.traffic_policy.model_dump(mode="json")
+            if rate_profile.traffic_policy is not None
+            else None
+        )
+        # The ordered trajectory the admission envelope carries. `auth` and
+        # `rate_mapping` are the two pre-phase-0 turns; `rate_profile_persisted`
+        # follows them; `admission_persisted` is appended before each phase's
+        # runners (the envelope is the executed configuration's record).
+        admission_events: list[str] = ["auth", "rate_mapping", "rate_profile_persisted"]
+        candidate_phases: list[tuple[str, ...]] = []
+        materialized_phases: list[tuple[str, ...]] = []
+        admission_decisions: list = []
+        admission_warnings: list[str] = []
         for phase_idx, phase_jobs in enumerate(plan):
-            job_configs: dict[str, tuple] = {}
+            candidates = list(phase_jobs)
+            prepared_by_job: dict[str, list[dict]] = {}
+            extra_by_job: dict[str, dict] = {}
+            assets_by_job: dict[str, list[dict]] = {}
             for name in phase_jobs:
                 job = JOBS[name]
                 try:
@@ -682,13 +714,17 @@ async def run_pipeline(
                             input_assets = _services_to_probe_targets(input_assets)
 
                     extra = {"project_id": project_id}
-                    # #238: the measured policy configures the target's request
-                    # traffic - carried ONLY in `extra["traffic_policy"]`, never
-                    # as a flag string or a template slot (the fixed templates
-                    # stay fixed), and never for jobs that do not egress to the
-                    # target (DNS/passive tooling). The agent-driven crawl gets
-                    # it too, for its conservative browser pacing.
-                    if name in _HTTP_TRAFFIC_JOBS or job.configurator_mode == "agent":
+                    # #238 follow-up: the measured policy configures the target's
+                    # request traffic - carried ONLY in `extra["traffic_policy"]`,
+                    # never as a flag string or a template slot (the fixed
+                    # templates stay fixed), and never for jobs that do not egress
+                    # to the target (DNS/passive tooling). The gate is the job's
+                    # OWN typed cost class, not a sparse name list; the
+                    # agent-driven crawl gets it too, for its conservative pacing.
+                    if (
+                        job.traffic_cost.cost_class in _POLICY_BEARING_CLASSES
+                        or job.configurator_mode == "agent"
+                    ) and traffic_policy is not None:
                         extra["traffic_policy"] = traffic_policy
                     if auth_account is not None and job.use_auth:
                         # D223-19, the lazy feed (#243): the gateway-selected
@@ -755,19 +791,88 @@ async def run_pipeline(
                                 else registrable_domain(seed)
                             )
 
+                    # The ONE canonical consumption derivation, done here at the
+                    # admission chokepoint - before job_configs, pods, runners or
+                    # target traffic - so admission and execution see the SAME
+                    # input count. `run_job` receives these prepared inputs and
+                    # never re-derives (#238 follow-up, Task 4).
+                    prepared = await asyncio.to_thread(
+                        prepare_inputs, input_assets, job, extra, ""
+                    )
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "in_progress"
                     )
                 except Exception as exc:  # best-effort: a setup blip degrades
                     # only this job, it must never leave the run stuck non-terminal.
+                    logger.warning(
+                        "run %s phase %s job %s setup failed (%s: %s); the job "
+                        "is degraded and will not run",
+                        run_id, phase_idx, name, type(exc).__name__, exc,
+                        exc_info=True,
+                    )
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "degraded", error=str(exc)
                     )
                     continue
-                job_configs[name] = (job, input_assets, extra)
+                prepared_by_job[name] = prepared
+                extra_by_job[name] = extra
+                assets_by_job[name] = input_assets
+
+            # Deterministic admission at the phase boundary (#238 follow-up,
+            # Task 4): decide every successfully-prepared candidate, form the
+            # MATERIALIZED subset (the intersection of the static candidate list
+            # and the admitted decisions - never a union with any model output),
+            # and persist the envelope BEFORE any runner starts.
+            prepared_candidates = [n for n in candidates if n in prepared_by_job]
+            materialized, decisions = materialize_admitted_phase(
+                phase_idx,
+                prepared_candidates,
+                prepared_by_job,
+                rate_profile,
+                TRAFFIC_ADMISSION_SETTINGS,
+                datetime.now(timezone.utc),
+            )
+            candidate_phases.append(tuple(candidates))
+            materialized_phases.append(tuple(materialized))
+            admission_decisions.extend(decisions)
+            admission_events.append("admission_persisted")
+            envelope = build_admission_envelope(
+                profile=rate_profile,
+                settings=TRAFFIC_ADMISSION_SETTINGS,
+                candidate_phases=candidate_phases,
+                materialized_phases=materialized_phases,
+                decisions=admission_decisions,
+                event_order=admission_events,
+                warnings=admission_warnings,
+            )
+            try:
+                await asyncio.to_thread(
+                    persist_admission_envelope, registry, run_id, envelope
+                )
+            except Exception:  # the executed configuration must never be unobservable
+                logger.error(
+                    "run %s could not persist the traffic-admission envelope; "
+                    "failing the run before any runner starts", run_id,
+                    exc_info=True,
+                )
+                await asyncio.to_thread(registry.set_run_status, run_id, "failed")
+                return
+            excluded = [n for n in candidates if n not in materialized]
+            if excluded:
+                logger.info(
+                    "run %s phase %s pruned %s (materialized: %s)",
+                    run_id, phase_idx, excluded, materialized,
+                )
+            job_configs: dict[str, tuple] = {
+                name: (
+                    JOBS[name], assets_by_job[name], prepared_by_job[name],
+                    extra_by_job[name],
+                )
+                for name in materialized
+            }
 
             async def _run_one(name: str) -> None:
-                job, input_assets, extra = job_configs[name]
+                job, input_assets, prepared, extra = job_configs[name]
                 # The job's REAL execution window (#34 AST-DEC-09). `recon_jobs.
                 # started_at` cannot serve: `upsert_job` stamps it with now() on
                 # INSERT and leaves it untouched ON CONFLICT, and the phase-setup
@@ -778,9 +883,16 @@ async def run_pipeline(
                 exec_started_at = _utc_now_iso()
                 try:
                     pod_exports = await run_job(
-                        job, input_assets, run_id=run_id, phase=phase_idx, extra=extra
+                        job, input_assets, run_id=run_id, phase=phase_idx,
+                        extra=extra, prepared_pod_inputs=prepared,
                     )
                 except Exception as exc:  # best-effort: never abort the pipeline
+                    logger.warning(
+                        "run %s phase %s job %s run_job raised (%s: %s); the job "
+                        "is degraded and the pipeline continues",
+                        run_id, phase_idx, name, type(exc).__name__, exc,
+                        exc_info=True,
+                    )
                     await asyncio.to_thread(
                         registry.upsert_job, run_id, phase_idx, name, "degraded",
                         stats=_exec_window(exec_t0, exec_started_at), error=str(exc)

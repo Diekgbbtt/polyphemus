@@ -35,6 +35,7 @@ class _FakeRegistry:
     def set_run_status(self, *a, **k):
         self.statuses.append((a + tuple(k.values())) if k else a)
     def upsert_job(self, *a, **k): pass
+    def set_run_stats(self, *a, **k): pass
 
 
 def _script_model(*steps):
@@ -81,7 +82,7 @@ def _harness(tmp_path, *, model_steps, overview=None, accounts=None,
             skill_store=SkillStore(tmp_path / "skills"), kali_tools=[])
         return actor
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         calls["order"].append(("job", job.tool))
         calls[job.tool] = {"assets": list(input_assets), "extra": dict(extra)}
         return []

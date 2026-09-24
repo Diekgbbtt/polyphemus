@@ -513,7 +513,7 @@ def _drive_pipeline(monkeypatch, *, profile, verdict, job_subset=None):
         events=events, profile=profile, verdict=verdict
     )
 
-    async def fake_run_job(job, input_assets, *, run_id, phase, extra):
+    async def fake_run_job(job, input_assets, *, run_id, phase, extra, prepared_pod_inputs=None):
         events.append(f"job:{job.tool}")
         seen[job.tool] = {"extra": dict(extra)}
         return []
