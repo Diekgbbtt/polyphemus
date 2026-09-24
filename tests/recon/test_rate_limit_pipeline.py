@@ -405,11 +405,12 @@ def test_crawl_pod_forwards_the_traffic_policy_to_the_crawl_seam():
     seam (declared on the seam's signature), which is what applies the pacing."""
     from polymerhus.recon.crawl import crawl_pod
     from polymerhus.recon.domain.parsers.steel_parser import parse as steel_parse
+    from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
     from polymerhus.recon.domain.types import JobSpec
 
     job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
                   produces=["BaseURL"], consumes="BaseURL", use_auth=True,
-                  configurator_mode="agent")
+                  configurator_mode="agent", traffic_cost=BOUNDED_HTTP_COST)
     seen: dict = {}
 
     def run_crawl_fn(target, *, scope, auth_cookies=None, steel_profile=None,

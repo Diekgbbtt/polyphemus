@@ -3,6 +3,9 @@ import operator
 from typing import Annotated, Literal, TypedDict
 from pydantic import BaseModel, Field, model_validator
 
+from polymerhus.recon.domain.traffic_admission import JobTrafficCost
+
+
 class Edge(BaseModel):
     rel: str
     dir: Literal["in", "out"]
@@ -137,6 +140,13 @@ class JobSpec(BaseModel):
     use_auth: bool = False
     configurator_mode: Literal["deterministic", "agent"] = "deterministic"
     eval_criteria: str = "returncode_zero_nonempty"
+    # #238 follow-up: the job's MANDATORY, closed relationship to the measured
+    # target's traffic. No default: a job that does not declare its cost cannot
+    # be constructed, so a new or renamed request-intensive job can never escape
+    # admission by omission. This field - not a sparse name list - is the single
+    # source of truth for whether the job needs an enforced traffic policy and
+    # how its request volume is projected at the phase-materialization boundary.
+    traffic_cost: JobTrafficCost
 
     # --- legacy dispatch-shape views (#37 option B) ---------------------------
     # Read-only views over `consumption.pack` for the seams that switch on the

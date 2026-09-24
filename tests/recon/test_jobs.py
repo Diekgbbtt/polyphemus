@@ -469,3 +469,29 @@ def test_validate_job_subset_httpx_reprofile_needs_a_baseurl_producer():
     with pytest.raises(ValueError):
         validate_job_subset(["httpx_reprofile"])
     validate_job_subset(["subfinder", "httpx", "httpx_reprofile"])
+
+
+def test_every_job_carries_a_mandatory_traffic_cost():
+    # Task 1: no canonical job can be constructed without an explicit traffic
+    # cost. A future job added without one fails at import, not silently at run
+    # time behind a permissive default.
+    for name, spec in JOBS.items():
+        assert spec.traffic_cost is not None, name
+        assert spec.traffic_cost.cost_class.value in {
+            "non_target",
+            "bounded_http",
+            "request_intensive",
+        }, name
+
+
+def test_jobspec_refuses_a_typed_cost_that_is_missing():
+    from polymerhus.recon.domain.types import JobSpec
+
+    with pytest.raises(Exception):
+        JobSpec(
+            tool="x",
+            skill="x",
+            command_template="x",
+            produces=[],
+            consumes="Domain",
+        )

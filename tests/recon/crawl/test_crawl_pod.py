@@ -11,6 +11,7 @@ from polymerhus.recon.crawl import crawl_pod
 from polymerhus.recon.crawl.steel_client import SteelNotConfigured
 from polymerhus.recon.domain.parsers.steel_parser import parse as steel_parse
 from polymerhus.recon.domain.types import JobSpec
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
 
 STEEL_CRAWL_JOB = JobSpec(
     tool="steel_crawl",
@@ -19,6 +20,7 @@ STEEL_CRAWL_JOB = JobSpec(
     produces=["BaseURL", "Endpoint", "Parameter"],
     consumes="BaseURL",
     use_auth=True,
+    traffic_cost=BOUNDED_HTTP_COST,
     configurator_mode="agent",
 )
 
@@ -199,7 +201,7 @@ def test_crawl_scope_folds_to_registrable_domain_of_seed_host():
     )
     job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
                   produces=["BaseURL"], consumes="BaseURL", use_auth=False,
-                  configurator_mode="agent")
+                  configurator_mode="agent", traffic_cost=BOUNDED_HTTP_COST)
     # Anonymous path: no auth_context signal.
     state = {"job": job, "input_asset": {"url": "https://app.daytona.io"},
              "extra": {}, "project_id": "p1", "run_id": "r", "phase": 4}
@@ -257,7 +259,7 @@ def test_crawl_node_forwards_feed_cookies_and_profile():
     )
     job = JobSpec(tool="steel_crawl", skill="agentic_crawl", command_template="",
                   produces=["BaseURL"], consumes="BaseURL", use_auth=True,
-                  configurator_mode="agent")
+                  configurator_mode="agent", traffic_cost=BOUNDED_HTTP_COST)
     cookies = [{"name": "sid", "value": "S"}]
     state = {"job": job, "input_asset": {"url": "https://app.example.com"},
              "extra": {"auth_context": {"cookies": cookies},

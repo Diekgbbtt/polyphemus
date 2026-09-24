@@ -15,11 +15,13 @@ from types import SimpleNamespace
 
 from polymerhus.recon.domain import pod
 from polymerhus.recon.domain.types import JobSpec
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
 
 
 def _job(tool="whois"):
     return JobSpec(tool=tool, skill="s", command_template="t",
-                   produces=[], consumes="Subdomain")
+                   produces=[], consumes="Subdomain",
+                   traffic_cost=BOUNDED_HTTP_COST)
 
 
 def test_exec_trace_metadata_present_with_run_context():

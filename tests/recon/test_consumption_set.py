@@ -29,6 +29,7 @@ from polymerhus.recon.control import batching
 from polymerhus.recon.control import job_agent as ja
 from polymerhus.recon.control.jobs import JOBS
 from polymerhus.recon.domain.types import ConsumptionOptions, JobSpec
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
 
 
 def _ep(path, **kw):
@@ -57,7 +58,8 @@ def test_legacy_dispatch_flags_are_views_of_consumption():
     assert JOBS["httpx_reprofile"].batch is False
     assert JOBS["kiterunner"].api_scope is True
     plain = JobSpec(tool="katana", skill="crawl", command_template="k",
-                    produces=["Endpoint"], consumes="BaseURL")
+                    produces=["Endpoint"], consumes="BaseURL",
+                    traffic_cost=BOUNDED_HTTP_COST)
     assert plain.batch is False
     assert plain.endpoint_profiling is False
     assert plain.api_scope is False
@@ -317,7 +319,8 @@ def test_preprocess_fail_open_on_derivation_error(monkeypatch, caplog):
 def test_preprocess_plain_job_unchanged(monkeypatch):
     monkeypatch.setattr(ja, "MAX_JOB_ASSETS", 500)
     job = JobSpec(tool="katana", skill="crawl", command_template="k",
-                  produces=["Endpoint"], consumes="BaseURL")
+                  produces=["Endpoint"], consumes="BaseURL",
+                  traffic_cost=BOUNDED_HTTP_COST)
     pod_inputs = ja.default_preprocess_fn(
         [{"url": "https://a"}, {"url": "https://b"}], job, {"project_id": "p1"}, "")
     assert [pi["input_asset"]["url"] for pi in pod_inputs] == [

@@ -21,6 +21,7 @@ import asyncio
 from polymerhus.recon.control import pipeline
 from polymerhus.recon.crawl import crawl_agent, crawl_pod
 from polymerhus.recon.domain.types import JobSpec, PodExport
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
 
 AUTH_JOB = JobSpec(
     tool="steel_crawl",
@@ -29,6 +30,7 @@ AUTH_JOB = JobSpec(
     produces=["BaseURL", "Endpoint", "Parameter"],
     consumes="BaseURL",
     use_auth=True,
+    traffic_cost=BOUNDED_HTTP_COST,
     configurator_mode="agent",
 )
 
@@ -39,6 +41,7 @@ NON_AUTH_JOB = JobSpec(
     produces=["BaseURL", "Endpoint", "Parameter"],
     consumes="BaseURL",
     use_auth=False,
+    traffic_cost=BOUNDED_HTTP_COST,
     configurator_mode="agent",
 )
 

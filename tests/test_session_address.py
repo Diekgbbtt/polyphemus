@@ -90,9 +90,11 @@ def test_recon_pod_session_keys_by_the_concurrent_pod_instance():
     url (operator-chosen scheme); a url-less asset falls back to a stable hash rather than
     colliding on an empty discriminator."""
     from polymerhus.recon.domain.pod import pod_session
+    from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
     from polymerhus.recon.domain.types import JobSpec
 
-    job = JobSpec(tool="httpx", skill="recon", command_template="", produces=[], consumes="BaseURL")
+    job = JobSpec(tool="httpx", skill="recon", command_template="", produces=[], consumes="BaseURL",
+                  traffic_cost=BOUNDED_HTTP_COST)
     k1 = pod_session("run1", 2, job, {"url": "https://a.example"}, role_id="triager").thread_id
     k2 = pod_session("run1", 2, job, {"url": "https://b.example"}, role_id="triager").thread_id
     assert k1 != k2 and k1.endswith(":triager")

@@ -16,6 +16,7 @@ import inspect
 
 from polymerhus.recon.domain import pod
 from polymerhus.recon.domain.types import ExecResult, JobSpec
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
 
 HTTPX_JOB = JobSpec(
     tool="httpx",
@@ -23,6 +24,7 @@ HTTPX_JOB = JobSpec(
     command_template="httpx -u {target} -json -silent",
     produces=["BaseURL", "Endpoint"],
     consumes="Subdomain",
+    traffic_cost=BOUNDED_HTTP_COST,
 )
 
 FIX_LINE = (

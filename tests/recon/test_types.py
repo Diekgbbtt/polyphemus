@@ -5,6 +5,7 @@ from pydantic import ValidationError
 from polymerhus.recon.domain.types import (
     PROFILE_VALUES, AssetDelta, Edge, Observation, JobSpec, ExecResult,
 )
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
 
 def test_asset_delta_with_edge_roundtrips():
     d = AssetDelta(
@@ -40,7 +41,7 @@ def test_asset_delta_non_profile_props_are_untouched():
 def test_jobspec_defaults():
     j = JobSpec(tool="httpx", skill="http_probe",
                 command_template="httpx -u {target} -j", produces=["BaseURL","Endpoint"],
-                consumes="Subdomain")
+                consumes="Subdomain", traffic_cost=BOUNDED_HTTP_COST)
     assert j.use_auth is False
     assert j.configurator_mode == "deterministic"
 

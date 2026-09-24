@@ -1,13 +1,18 @@
 import re
 
 from polymerhus.recon.domain.types import JobSpec, ExecResult, Observation
+from polymerhus.recon.domain.traffic_admission import (
+    BOUNDED_HTTP_COST,
+    NON_TARGET_COST,
+)
 from polymerhus.recon.domain import pod
 from polymerhus.recon.domain.curator import curate
 from polymerhus.recon.control.jobs import JOBS
 
 HTTPX_JOB = JobSpec(tool="httpx", skill="http_probe",
                     command_template="httpx -u {target} -json -silent",
-                    produces=["BaseURL", "Endpoint"], consumes="Subdomain")
+                    produces=["BaseURL", "Endpoint"], consumes="Subdomain",
+                    traffic_cost=BOUNDED_HTTP_COST)
 
 FIX_LINE = '{"url":"https://app.example.com","input":"app.example.com","status_code":200,"scheme":"https","host":"1.2.3.4","tech":["nginx"]}'
 
@@ -721,7 +726,8 @@ def test_pod_export_records_executed_command():
         triage_fn=lambda exec_result, assets, job: [],
     )
     job = JobSpec(tool="whois", skill="whois_lookup",
-                  command_template="whois {domain}", produces=["Domain"], consumes="Domain")
+                  command_template="whois {domain}", produces=["Domain"], consumes="Domain",
+                  traffic_cost=NON_TARGET_COST)
     state = {"job": job, "input_asset": {"name": "example.com"}, "extra": {},
              "session_id": "s1", "project_id": "p1"}
     export = graph.invoke(state)["export"]

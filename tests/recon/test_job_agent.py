@@ -216,6 +216,7 @@ def test_run_job_offloads_blocking_invoke_so_gather_is_concurrent():
 
 def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(monkeypatch):
     from polymerhus.recon.crawl import crawl_pod as crawl_pod_module
+    from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
     from polymerhus.recon.domain.types import JobSpec, PodExport
 
     calls = []
@@ -229,6 +230,7 @@ def test_default_pod_invoke_routes_agent_configurator_mode_jobs_to_crawl_pod(mon
     agent_job = JobSpec(
         tool="steel_crawl", skill="agentic_crawl", command_template="",
         produces=["BaseURL"], consumes="BaseURL", configurator_mode="agent",
+        traffic_cost=BOUNDED_HTTP_COST,
     )
     pod_input = {"input_asset": {"url": "https://app.example.com"}, "extra": {}}
     export = ja.default_pod_invoke(pod_input, agent_job, "run-1", 4)
@@ -272,10 +274,12 @@ def test_preprocess_threads_extra_through_to_pod_inputs_verbatim():
     is threaded through to every pod_input verbatim, and the pod fills its
     command from it. No job-level throttling, no per-pod steering input."""
     from polymerhus.recon.control import job_agent
+    from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
     from polymerhus.recon.domain.types import JobSpec
 
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
-                  produces=["Endpoint"], consumes="BaseURL")
+                  produces=["Endpoint"], consumes="BaseURL",
+                  traffic_cost=BOUNDED_HTTP_COST)
     pod_inputs = job_agent.default_preprocess_fn(
         [{"url": "https://a"}, {"url": "https://b"}], job,
         {"project_id": "p1", "auth_account": "alice"}, "",
@@ -290,10 +294,12 @@ def test_preprocess_threads_extra_through_to_pod_inputs_verbatim():
 
 def test_preprocess_without_signals_stays_deterministic():
     from polymerhus.recon.control import job_agent
+    from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
     from polymerhus.recon.domain.types import JobSpec
 
     job = JobSpec(tool="katana", skill="crawl", command_template="katana -u {target}",
-                  produces=["Endpoint"], consumes="BaseURL")
+                  produces=["Endpoint"], consumes="BaseURL",
+                  traffic_cost=BOUNDED_HTTP_COST)
     pod_inputs = job_agent.default_preprocess_fn(
         [{"url": "https://a"}], job, {"project_id": "p1"}, "")
     assert [pi["input_asset"]["url"] for pi in pod_inputs] == ["https://a"]

@@ -4,6 +4,7 @@ from polymerhus.recon.domain.rate_limit import (
     PROFILE_TTL_DEFAULT_S,
     RateLimitSafetyBudget,
 )
+from polymerhus.recon.domain.traffic_admission import TrafficAdmissionSettings
 
 MAX_POD_ITERS = int(os.environ.get("MAX_POD_ITERS", "3"))
 EXEC_TIMEOUT_S = int(os.environ.get("EXEC_TIMEOUT_S", "300"))
@@ -158,6 +159,17 @@ RATE_LIMIT_AWAIT_TIMEOUT_S = _rate_limit_float(
 RATE_LIMIT_PROFILE_TTL_S = _rate_limit_int(
     "RATE_LIMIT_PROFILE_TTL_S", int(PROFILE_TTL_DEFAULT_S), minimum=1
 )
+
+# --- #238 follow-up: job-admission thresholds --------------------------------
+#
+# The controller's deterministic admission thresholds, parsed ONCE here at the
+# configuration boundary (the KATANA_DEPTH / rate-limit-budget contract): an
+# invalid or non-positive value fails the boot loudly rather than being
+# silently repaired, because a silently-loosened safety threshold is exactly
+# the failure this knob exists to prevent. The deterministic admission
+# controller reads THIS value object and records the effective values it used
+# with every run (spec section 6).
+TRAFFIC_ADMISSION_SETTINGS = TrafficAdmissionSettings.from_env()
 
 
 def rate_limit_safety_budget() -> RateLimitSafetyBudget:

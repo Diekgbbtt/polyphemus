@@ -13,9 +13,11 @@ from __future__ import annotations
 import polymerhus.app.llm.session as S
 from polymerhus.recon.domain import pod
 from polymerhus.recon.domain.types import ExecResult, JobSpec
+from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
 
 _JOB = JobSpec(tool="httpx", skill="http_probe", command_template="httpx -u {target}",
-               produces=["BaseURL"], consumes="BaseURL")
+               produces=["BaseURL"], consumes="BaseURL",
+               traffic_cost=BOUNDED_HTTP_COST)
 _EXEC = ExecResult(stdout="out", stderr="", returncode=0, duration_ms=1)
 
 
