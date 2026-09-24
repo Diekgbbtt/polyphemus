@@ -204,7 +204,9 @@ def replay_http_request(
 
 
 def proxy_status() -> dict:
-    """Per-component health: MCP, proxy, routing, namespace pool and store."""
+    """Per-component health: MCP, proxy, routing, namespace pool and store, PLUS
+    the #238 runtime-capability surface (`traffic_governor`, `build`,
+    `wordlists`) the controller negotiates against before any target traffic."""
     try:
         return _get_service().proxy_status()
     except Exception as exc:  # noqa: BLE001
@@ -216,6 +218,13 @@ def proxy_status() -> dict:
             "namespaces": {"ok": False, "detail": f"status error: {exc}"},
             "store": {"ok": False, "detail": f"status error: {exc}"},
             "capture": {"enabled": False},
+            "traffic_governor": {
+                "governor_enabled": False, "capture_enabled": False,
+                "supported_policy_versions": [],
+                "refusals": {"commands_refused": 0, "last_refusal": None},
+            },
+            "build": {"revision": "unknown", "vegeta_module": None, "vegeta_version": None},
+            "wordlists": {},
         }
 
 

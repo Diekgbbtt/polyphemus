@@ -118,7 +118,29 @@ def test_kali_image_bakes_the_pinned_vegeta():
     loop_start = dockerfile.index("for t in")
     loop_end = dockerfile.index("; do", loop_start)
     assert "vegeta" in dockerfile[loop_start:loop_end].split()
-    assert 'vegeta -version 2>&1 | grep -q "12.13.0"' in dockerfile
+    # #238 follow-up (Task 7): the identity check reads GO MODULE METADATA, not
+    # the human-readable banner (a `go install` build reports empty human fields).
+    assert 'go version -m "$(command -v vegeta)"' in dockerfile
+    assert "github.com/tsenart/vegeta/v12" in dockerfile
+    assert 'vegeta -version 2>&1 | grep -q "12.13.0"' not in dockerfile
+
+
+def test_kali_image_records_build_provenance_for_the_capability_endpoint():
+    """The revision + vegeta module version are written into the image so
+    `proxy_status()["build"]` can report them (spec 13)."""
+    dockerfile = (
+        Path(__file__).resolve().parents[2] / "Dockerfile.kali"
+    ).read_text(encoding="utf-8")
+    assert "ARG SOURCE_REVISION" in dockerfile
+    assert "/opt/polymerhus/build-provenance.json" in dockerfile
+
+
+def test_kali_compose_stamps_the_source_revision_build_arg():
+    kali = _compose()["services"]["kali"]
+    build = kali.get("build")
+    # A long-form build block (or None when compose can't be introspected).
+    if isinstance(build, dict):
+        assert "SOURCE_REVISION" in (build.get("args") or {})
 
 
 def test_kali_environment_exposes_the_rate_limit_artifact_knobs():

@@ -141,6 +141,10 @@ def test_search_get_and_status_tools(tmp_path, monkeypatch):
     status = mcp_server.proxy_status()
     assert status["ok"] is True
     assert status["namespaces"]["pool_size"] == 4
+    # #238 follow-up (Task 7): the capability blocks cross the MCP boundary too.
+    assert "traffic-policy/v2" in status["traffic_governor"]["supported_policy_versions"]
+    assert "revision" in status["build"]
+    assert status["wordlists"]
 
 
 def test_execute_command_forwards_private_stdin_without_echoing_it(tmp_path, monkeypatch):

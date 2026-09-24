@@ -146,6 +146,10 @@ class HttpHistoryService:
         self._stores: OrderedDict[str, HttpHistoryStore] = OrderedDict()
         self._lock = threading.RLock()
         self._limits_checked_at: dict[str, float] = {}
+        # #238 follow-up (Task 7): the exec-seam refusal counters `proxy_status()`
+        # reports under `traffic_governor.refusals`.
+        self._refusal_count = 0
+        self._last_refusal: str | None = None
         self._proxy_probe = proxy_probe or self._default_proxy_probe
         self._routing_probe = routing_probe or self._default_routing_probe
 
@@ -368,6 +372,11 @@ class HttpHistoryService:
                 refusal = f"governor unavailable: {probe.get('detail', 'proxy not ready')}"
 
         namespace = lease.namespace if lease is not None else None
+        if refusal is not None:
+            # #238 follow-up (Task 7): a refusal is structured and VISIBLE.
+            with self._lock:
+                self._refusal_count += 1
+                self._last_refusal = refusal
         try:
             if refusal is not None:
                 # NOTHING runs: no raw traffic for an ungoverned target.
@@ -485,6 +494,24 @@ class HttpHistoryService:
         store = self._store_status()
         mcp = {"ok": True, "detail": "mcp server responding"}
         capture = {"enabled": self.config.enabled, "store_root": self.config.store_root}
+        # #238 follow-up (Task 7): the runtime-capability negotiation surface -
+        # what this process can ENFORCE and PROVE, so the controller can refuse an
+        # incompatible companion before any target traffic. Capture and governance
+        # are reported as SEPARATE switches.
+        from kali.http_history.capabilities import (  # noqa: PLC0415
+            build_provenance,
+            governance_capabilities,
+            wordlist_capabilities,
+        )
+
+        traffic_governor = governance_capabilities(
+            capture_enabled=self.config.enabled,
+            governor_enabled=self.config.governor_enabled,
+        )
+        traffic_governor["refusals"] = {
+            "commands_refused": self._refusal_count,
+            "last_refusal": self._last_refusal,
+        }
         ok = bool(proxy.get("ok") and routing.get("ok") and store.get("ok"))
         return {
             "ok": ok,
@@ -494,6 +521,9 @@ class HttpHistoryService:
             "namespaces": namespaces,
             "store": store,
             "capture": capture,
+            "traffic_governor": traffic_governor,
+            "build": build_provenance(),
+            "wordlists": wordlist_capabilities(),
         }
 
     def _default_proxy_probe(self) -> dict:

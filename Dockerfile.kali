@@ -96,12 +96,24 @@ RUN echo 'export PATH="/opt/localbin:/root/go/bin:/opt/venv/bin:$PATH"' > /etc/p
 # katana source build, the seclists wordlist path, and the fastmcp import the
 # entrypoint depends on. (massdns/puredns/kr/graphql-cop are intentionally NOT
 # asserted - they live in the persisted volumes, owned by postrun.sh.)
+# The vegeta check reads GO BUILD METADATA, not the human-readable banner: a
+# `go install`-built binary reports empty human version fields while its module
+# record is exact (#238 follow-up, Task 7).
+ARG SOURCE_REVISION=unknown
 RUN for t in subfinder amass whois dnsx naabu httpx katana ffuf arjun paramspider \
              subzy jsluice vegeta nmap masscan curl git go python3 openvpn ip; do \
       command -v $t >/dev/null 2>&1 || { echo "[smoke] MISSING: $t"; exit 1; }; \
     done \
     && katana -h 2>&1 | grep -q "\-pcs" || { echo "[smoke] katana lacks -pcs flags"; exit 1; } \
-    && { vegeta -version 2>&1 | grep -q "12.13.0" || { echo "[smoke] vegeta is not the pinned 12.13.0"; exit 1; }; } \
+    && go version -m "$(command -v vegeta)" | grep 'github.com/tsenart/vegeta/v12' \
+       | grep -q 'v12.13.0' \
+       || { echo "[smoke] vegeta is not the pinned module v12.13.0"; exit 1; } \
+    && mkdir -p /opt/polymerhus \
+    && VEGETA_VERSION="$(go version -m "$(command -v vegeta)" \
+         | awk '$1 == "mod" && $2 == "github.com/tsenart/vegeta/v12" {print $3; exit}')" \
+    && printf '{"revision": "%s", "vegeta_module": "github.com/tsenart/vegeta/v12", "vegeta_version": "%s", "source": "dockerfile-build-smoke"}\n' \
+         "${SOURCE_REVISION}" "${VEGETA_VERSION}" > /opt/polymerhus/build-provenance.json \
+    && cat /opt/polymerhus/build-provenance.json \
     && test -f /usr/share/seclists/Discovery/Web-Content/common.txt \
     && /opt/venv/bin/python -c "from fastmcp import FastMCP" \
     && echo "[smoke] kali exec-node OK" && katana -version 2>&1 | head -n 1

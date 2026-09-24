@@ -80,6 +80,59 @@ def test_ffuf_binds_its_estimate_to_the_pinned_wordlist():
     )
 
 
+def test_the_ffuf_estimate_is_tied_to_the_wordlist_actually_shipped():
+    """#238 follow-up (Task 7): the declared cost is VERIFIED against the pinned
+    wordlist, so a missing or changed wordlist fails readiness (naming the file
+    and both counts) instead of silently underestimating the job's cost."""
+    from kali.http_history.capabilities import (
+        FFUF_WORDLIST_PATH,
+        CapabilityError,
+        wordlist_cardinality,
+    )
+
+    cost = JOBS["ffuf"].traffic_cost
+    assert cost.cardinality_source == FFUF_WORDLIST_PATH
+
+    actual = wordlist_cardinality(FFUF_WORDLIST_PATH)
+    if actual is None:
+        # Host-side runs (no Kali image): the readiness gate must REFUSE loudly
+        # rather than trust the stale constant.
+        from kali.http_history.capabilities import verify_wordlist
+
+        with pytest.raises(CapabilityError, match="missing or unreadable"):
+            verify_wordlist(FFUF_WORDLIST_PATH, cost.estimated_requests_per_input)
+    else:
+        assert actual == cost.estimated_requests_per_input
+
+
+def test_a_changed_wordlist_fails_readiness_naming_file_and_counts(tmp_path):
+    from kali.http_history.capabilities import CapabilityError, verify_wordlist
+
+    wordlist = tmp_path / "common.txt"
+    wordlist.write_text("a\nb\n\nc\n", encoding="utf-8")
+    assert verify_wordlist(wordlist, 3) == 3
+
+    with pytest.raises(CapabilityError) as excinfo:
+        verify_wordlist(wordlist, 4752)
+    message = str(excinfo.value)
+    assert str(wordlist) in message
+    assert "3" in message and "4752" in message
+
+
+def test_a_policy_version_mismatch_refuses_before_egress():
+    from kali.http_history.capabilities import (
+        CapabilityError,
+        require_policy_version,
+        supported_policy_versions,
+    )
+
+    advertised = supported_policy_versions()
+    assert "traffic-policy/v2" in advertised
+    require_policy_version(advertised, "traffic-policy/v2")
+    with pytest.raises(CapabilityError):
+        require_policy_version(("traffic-policy/v1",), "traffic-policy/v2")
+
+
 def test_job_traffic_cost_is_closed_and_frozen():
     cost = JobTrafficCost(
         cost_class=TrafficCostClass.BOUNDED_HTTP,

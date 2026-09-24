@@ -25,6 +25,51 @@ def _service(tmp_path, **config_overrides) -> HttpHistoryService:
     return HttpHistoryService(config=config)
 
 
+# --- #238 follow-up (Task 7): the runtime-capability surface ------------------
+
+
+def test_proxy_status_advertises_the_capabilities_the_controller_negotiates(
+    tmp_path, monkeypatch
+):
+    monkeypatch.setenv("POLYPHEMUS_BUILD_PROVENANCE", str(tmp_path / "missing.json"))
+    service = _service(tmp_path, enabled=True, governor_enabled=True)
+    status = service.proxy_status()
+
+    governor = status["traffic_governor"]
+    assert "traffic-policy/v2" in governor["supported_policy_versions"]
+    # Capture and governance are SEPARATE switches.
+    assert governor["capture_enabled"] is True
+    assert governor["governor_enabled"] is True
+    assert set(governor["refusals"]) == {"commands_refused", "last_refusal"}
+    # Build provenance is always reported (degraded when the image file is absent).
+    assert "revision" in status["build"]
+    assert status["build"]["vegeta_module"] == "github.com/tsenart/vegeta/v12"
+    # The pinned ffuf wordlist's cardinality is advertised for cost verification.
+    from kali.http_history.capabilities import FFUF_WORDLIST_PATH
+    assert FFUF_WORDLIST_PATH in status["wordlists"]
+
+
+def test_capture_off_still_advertises_the_governor(tmp_path):
+    service = _service(tmp_path, enabled=False, governor_enabled=True)
+    governor = service.proxy_status()["traffic_governor"]
+    assert governor["capture_enabled"] is False
+    assert governor["governor_enabled"] is True
+
+
+def test_an_exec_refusal_is_counted_and_visible(tmp_path):
+    calls: list = []
+    service = _governed_service(tmp_path, runner_calls=calls)
+    result = service.execute(
+        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+        traffic_policy={**_POLICY, "version": "traffic-policy/v9"},
+    )
+    assert result["returncode"] == 78
+    refusals = service.proxy_status()["traffic_governor"]["refusals"]
+    assert refusals["commands_refused"] == 1
+    assert "not enforceable" in refusals["last_refusal"]
+    assert calls == []
+
+
 def _quiet_service(tmp_path, **config_overrides) -> HttpHistoryService:
     """A service whose runner never shells out (the exec path stays deterministic)."""
     config = HttpHistoryConfig(store_root=str(tmp_path), **config_overrides)
@@ -436,6 +481,11 @@ class _PolicyLeases:
         self.acquired: list[dict] = []
         self.released: list[object] = []
         self.fail = fail
+
+    def status(self) -> dict:
+        # `proxy_status()` reports the pool's own readiness; the fake mirrors the
+        # production shape so the capability surface can be exercised here.
+        return {"ok": True, "pool_size": 1, "in_use": len(self.acquired) - len(self.released)}
 
     def acquire(self, *, session_id, project_id, context, traffic_policy=None):
         if self.fail:
