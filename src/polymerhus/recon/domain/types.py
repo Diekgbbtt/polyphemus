@@ -3,7 +3,7 @@ import operator
 from typing import Annotated, Literal, TypedDict
 from pydantic import BaseModel, Field, model_validator
 
-from polymerhus.recon.domain.traffic_admission import JobTrafficCost
+from polymerhus.recon.domain.traffic_admission import JobTrafficCost, TrafficRefusal
 
 
 class Edge(BaseModel):
@@ -181,6 +181,9 @@ class PodExport(BaseModel):
     iterations: int = 0
     error: str | None = None
     stats: dict | None = None
+    # #238 follow-up (Task 6): a runtime governor refusal this pod hit, so the
+    # pipeline can record it in the run's admission envelope. Secret-safe.
+    traffic_refusal: TrafficRefusal | None = None
 
 class PodState(TypedDict, total=False):
     job: JobSpec

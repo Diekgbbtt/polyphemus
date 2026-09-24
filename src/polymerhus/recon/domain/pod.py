@@ -29,6 +29,11 @@ from polymerhus.recon.domain.types import (
     PodState, ToolInvocation, PodExport, ExecResult, AssetDelta, Observation, JobSpec,
     CaptureContext,
 )
+from polymerhus.recon.domain.traffic_admission import (
+    TRAFFIC_REFUSAL_RETURNCODE,
+    AdmissionReason,
+    TrafficRefusal,
+)
 from polymerhus.recon.control.auth_feed import serialize_auth_flags
 from polymerhus.recon.domain.parsers import get_parser
 from polymerhus.recon.domain.parsers import graphql_parser, takeover_parser
@@ -231,6 +236,25 @@ def pod_capture_context(state: PodState) -> CaptureContext | None:
         run_id=state.get("run_id") or "",
         spec_id=_pod_asset_discriminator(state.get("input_asset") or {}),
         session_id=state.get("session_id") or "",
+    )
+
+
+def _traffic_refusal(state: PodState, exec_result) -> TrafficRefusal | None:
+    """A runtime governor refusal, when the exec seam refused an armed command.
+
+    Return code 78 is the exec seam's stable 'an armed TrafficPolicy could not be
+    enforced' signal (mirrored by value from the Kali service). The refusal is
+    secret-safe: the target key and policy version come from the job's own
+    `extra["traffic_policy"]`, never from a URL, header, or body.
+    """
+    returncode = getattr(exec_result, "returncode", None)
+    if returncode != TRAFFIC_REFUSAL_RETURNCODE:
+        return None
+    policy = (state.get("extra") or {}).get("traffic_policy") or {}
+    return TrafficRefusal(
+        reason_code=AdmissionReason.GOVERNOR_REFUSED,
+        target_key=str(policy.get("target_key", "")),
+        policy_version=str(policy.get("version", "")),
     )
 
 
@@ -590,6 +614,10 @@ def build_pod_graph(*, exec_fn, curate_fn, triage_fn):
             iterations=state.get("iteration", 0),
             error=error,
             stats=stats,
+            # #238 follow-up (Task 6): a governor refusal is not a tool failure -
+            # record it, secret-safely, so the run's admission envelope can show
+            # that an armed policy blocked egress.
+            traffic_refusal=_traffic_refusal(state, exec_result),
         )
         return {"export": export}
 

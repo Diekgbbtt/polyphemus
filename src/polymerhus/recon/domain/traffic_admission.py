@@ -352,3 +352,23 @@ def decide_job_admission(
         duration=projected_duration_s,
         safe_rate=safe_rate,
     )
+
+
+TRAFFIC_REFUSAL_RETURNCODE = 78
+"""The exec seam's stable return code for "an armed TrafficPolicy could not be
+enforced". Mirrors `kali.http_history.service.TRAFFIC_REFUSAL_RETURNCODE` BY
+VALUE: the recon domain cannot import the Kali service, and a drift here would
+make a refusal look like a tool failure."""
+
+
+class TrafficRefusal(BaseModel):
+    """One runtime refusal to egress, secret-safe by construction: a closed reason
+    code, the target key, and the policy version. It never carries a URL query, a
+    header value, a body, or a credential - the pipeline appends it to the
+    admission envelope's `refusals` without rewriting the original decision."""
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    reason_code: AdmissionReason
+    target_key: str = ""
+    policy_version: str = ""

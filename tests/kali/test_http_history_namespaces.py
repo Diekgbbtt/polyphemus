@@ -124,7 +124,7 @@ _POLICY = {
     "max_concurrency": 1,
     "min_delay_ms": 500.0,
     "source": "measured-transition",
-    "version": "traffic-policy/v1",
+    "version": "traffic-policy/v2",
 }
 
 

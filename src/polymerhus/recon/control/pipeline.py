@@ -671,6 +671,7 @@ async def run_pipeline(
         materialized_phases: list[tuple[str, ...]] = []
         admission_decisions: list = []
         admission_warnings: list[str] = []
+        admission_refusals: list = []
         for phase_idx, phase_jobs in enumerate(plan):
             candidates = list(phase_jobs)
             prepared_by_job: dict[str, list[dict]] = {}
@@ -844,6 +845,7 @@ async def run_pipeline(
                 decisions=admission_decisions,
                 event_order=admission_events,
                 warnings=admission_warnings,
+                refusals=admission_refusals,
             )
             try:
                 await asyncio.to_thread(
@@ -902,6 +904,14 @@ async def run_pipeline(
                 total = len(pod_exports)
                 succeeded = sum(1 for e in pod_exports if e.verdict == "success")
                 failed = sum(1 for e in pod_exports if e.verdict == "failed")
+                # #238 follow-up (Task 6): a runtime governor refusal is recorded
+                # in the run's admission envelope WITHOUT rewriting the original
+                # decision - the pre-run persist already stands.
+                for export in pod_exports:
+                    refusal = getattr(export, "traffic_refusal", None)
+                    if refusal is not None:
+                        admission_refusals.append(refusal)
+                        admission_events.append("traffic_refused")
 
                 if total == 0:
                     status = "skipped"
@@ -1011,6 +1021,30 @@ async def run_pipeline(
             # katana/ffuf/kiterunner/graphql-cop/paramspider/steel_crawl).
             for name in job_configs:
                 await _run_one(name)
+
+            # Re-persist ONLY when a runtime refusal was recorded, so the
+            # envelope reflects the refusals without touching the decisions.
+            if admission_refusals:
+                refused_envelope = build_admission_envelope(
+                    profile=rate_profile,
+                    settings=TRAFFIC_ADMISSION_SETTINGS,
+                    candidate_phases=candidate_phases,
+                    materialized_phases=materialized_phases,
+                    decisions=admission_decisions,
+                    event_order=admission_events,
+                    warnings=admission_warnings,
+                    refusals=admission_refusals,
+                )
+                try:
+                    await asyncio.to_thread(
+                        persist_admission_envelope, registry, run_id, refused_envelope
+                    )
+                except Exception:  # best-effort: the pre-run record already stands
+                    logger.warning(
+                        "run %s could not re-persist the traffic-admission "
+                        "refusals (the pre-run record stands)", run_id,
+                        exc_info=True,
+                    )
 
         # #75: recon and analysis are DECOUPLED. For the INLINE rollback path only,
         # analysis ran on this task, so record its stats onto the recon run as

@@ -418,7 +418,7 @@ _POLICY = {
     "max_concurrency": 1,
     "min_delay_ms": 500.0,
     "source": "measured-transition",
-    "version": "traffic-policy/v1",
+    "version": "traffic-policy/v2",
 }
 
 
@@ -585,9 +585,9 @@ def test_an_unenforceable_policy_refuses_instead_of_running_ungoverned(tmp_path)
     calls: list[str] = []
     service = _governed_service(tmp_path, runner_calls=calls)
     result = service.execute(
-        "httpx -u http://app.example.com", "s1", 5, project_id="p1",
-        traffic_policy={**_POLICY, "version": "traffic-policy/v2"},
-    )
+            "httpx -u http://app.example.com", "s1", 5, project_id="p1",
+            traffic_policy={**_POLICY, "version": "traffic-policy/v9"},
+        )
     assert result["returncode"] == 78
     assert calls == []
     assert "not enforceable" in result["traffic_warning"]

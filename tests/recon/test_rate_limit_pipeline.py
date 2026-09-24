@@ -672,3 +672,56 @@ def test_the_materialized_phase_is_the_static_candidates_intersected_with_admiss
     assert materialized == ["httpx"]
     assert "arjun" not in materialized
     assert [d.job_name for d in decisions] == ["httpx"]
+
+
+def test_a_runtime_refusal_is_appended_without_rewriting_the_decision():
+    """#238 follow-up (Task 6): a pod-level governor refusal lands in the
+    envelope's refusals and event list; the original decisions are untouched."""
+    from polymerhus.recon.domain.traffic_admission import (
+        AdmissionReason,
+        TrafficRefusal,
+    )
+    from polymerhus.recon.domain.types import PodExport
+
+    events: list = []
+    registry = _RecordingRegistry(events)
+
+    async def refusing_run_job(job, input_assets, *, run_id, phase, extra,
+                               prepared_pod_inputs=None):
+        events.append(f"job:{job.tool}")
+        if job.tool == "httpx":
+            return [PodExport(
+                input_asset={"url": "https://app.t.com"}, verdict="failed",
+                error="refused by the governor",
+                traffic_refusal=TrafficRefusal(
+                    reason_code=AdmissionReason.GOVERNOR_REFUSED,
+                    target_key=TARGET_KEY, policy_version="traffic-policy/v2",
+                ),
+            )]
+        return []
+
+    asyncio.run(pipeline.run_pipeline(
+        "proj1", run_id="run1",
+        job_subset=["subfinder", "httpx"],
+        run_job=refusing_run_job,
+        load_settings=lambda pid: {"target_domain": SEED},
+        registry=registry,
+        read_assets=lambda node_type, project_id, where=None, **kw: (
+            [{"name": "app.t.com"}] if node_type == "Subdomain" else [{"url": "https://app.t.com"}]
+        ),
+        orchestrator_factory=lambda run_id: _orchestrator(events),
+        feed_mode="queued", with_analysis=False,
+    ))
+
+    stored = registry.run_stats["traffic_admission"]
+    assert stored["refusals"] == [{
+        "reason_code": "governor_refused",
+        "target_key": TARGET_KEY,
+        "policy_version": "traffic-policy/v2",
+    }]
+    assert "traffic_refused" in stored["event_order"]
+    # The admitted decision for httpx is unchanged by the refusal.
+    httpx_decisions = [
+        d for d in stored["decisions"] if d["job_name"] == "httpx"
+    ]
+    assert httpx_decisions and httpx_decisions[0]["decision"] == "included"

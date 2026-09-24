@@ -17,6 +17,7 @@ import inspect
 from polymerhus.recon.domain import pod
 from polymerhus.recon.domain.types import ExecResult, JobSpec
 from polymerhus.recon.domain.traffic_admission import BOUNDED_HTTP_COST
+from polymerhus.recon.config import MAX_POD_ITERS
 
 HTTPX_JOB = JobSpec(
     tool="httpx",
@@ -167,8 +168,49 @@ _POLICY = {
     "max_concurrency": 1,
     "min_delay_ms": 500.0,
     "source": "measured-transition",
-    "version": "traffic-policy/v1",
+    "version": "traffic-policy/v2",
 }
+
+
+def test_a_governor_refusal_becomes_a_secret_safe_traffic_refusal():
+    """#238 follow-up (Task 6): return code 78 is the exec seam's 'armed policy
+    could not be enforced' signal. The pod records a structured, secret-safe
+    refusal instead of a bare tool failure."""
+    from polymerhus.recon.domain.traffic_admission import AdmissionReason
+
+    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
+        return ExecResult(
+            stdout="",
+            stderr="refused: governor unavailable: Authorization Bearer SECRET-TOKEN",
+            returncode=78,
+            duration_ms=1,
+        )
+
+    out = _graph(exec_fn).invoke(
+        _state(extra={"traffic_policy": _POLICY}, iteration=MAX_POD_ITERS)
+    )
+    export = out["export"]
+
+    assert export.verdict == "failed"
+    refusal = export.traffic_refusal
+    assert refusal is not None
+    assert refusal.reason_code is AdmissionReason.GOVERNOR_REFUSED
+    assert refusal.target_key == "app.example.com"
+    assert refusal.policy_version == "traffic-policy/v2"
+    # The refusal record itself is secret-safe.
+    blob = refusal.model_dump(mode="json")
+    assert "SECRET-TOKEN" not in str(blob)
+    assert set(blob) == {"reason_code", "target_key", "policy_version"}
+
+
+def test_a_tool_failure_is_not_a_governor_refusal():
+    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
+        return ExecResult(stdout="", stderr="boom", returncode=1, duration_ms=1)
+
+    out = _graph(exec_fn).invoke(
+        _state(extra={"traffic_policy": _POLICY}, iteration=MAX_POD_ITERS)
+    )
+    assert out["export"].traffic_refusal is None
 
 
 def test_the_pod_passes_the_traffic_policy_beside_the_capture_context():

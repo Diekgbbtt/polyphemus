@@ -25,6 +25,7 @@ from polymerhus.recon.domain.traffic_admission import (
     JobAdmissionDecision,
     TrafficAdmissionSettings,
     TrafficCostClass,
+    TrafficRefusal,
     decide_job_admission,
 )
 from polymerhus.recon.domain.types import JobSpec
@@ -53,7 +54,10 @@ class TrafficAdmissionEnvelope(BaseModel):
     effective_config: TrafficAdmissionSettings
     event_order: tuple[str, ...]
     warnings: tuple[str, ...]
-    refusals: tuple[str, ...]
+    refusals: tuple[TrafficRefusal, ...]
+    """Runtime refusals recorded AFTER the pre-run persist (a governed flow the
+    proxy refused locally). Appending one never rewrites the original admission
+    decisions."""
 
 
 def estimate_job_requests(
@@ -150,7 +154,7 @@ def build_admission_envelope(
     decisions: Sequence[JobAdmissionDecision],
     event_order: Sequence[str],
     warnings: Sequence[str] = (),
-    refusals: Sequence[str] = (),
+    refusals: Sequence[TrafficRefusal] = (),
 ) -> TrafficAdmissionEnvelope:
     """Assemble one run's immutable admission envelope from the accumulated
     per-phase records."""

@@ -15,7 +15,11 @@ import asyncio
 
 import pytest
 
-from kali.http_history.governor import TargetGovernor, validate_traffic_policy
+from kali.http_history.governor import (
+    TargetGovernor,
+    TrafficContext,
+    validate_traffic_policy,
+)
 
 
 class FakeClock:
@@ -67,7 +71,7 @@ def _policy(**overrides) -> dict:
         "max_concurrency": 1,
         "min_delay_ms": 500.0,
         "source": "measured-transition",
-        "version": "traffic-policy/v1",
+        "version": "traffic-policy/v2",
     }
     base.update(overrides)
     return base
@@ -77,8 +81,25 @@ def _governor(clock, sleeper) -> TargetGovernor:
     return TargetGovernor(clock=clock, sleeper=sleeper)
 
 
-def _acquire(governor, policy, *, project="p1", host="app.example.com"):
-    return asyncio.run(governor.acquire(project, policy, host))
+def _acquire(
+    governor, policy, *, project="p1", host="app.example.com",
+    source_ip="10.0.0.2", release=True,
+):
+    """Acquire (and by default immediately release) one permit, so these tests
+    pin the BUCKET arithmetic independently of the concurrency ceiling - a held
+    permit would otherwise block the next acquire by design."""
+
+    async def _run():
+        decision = await governor.acquire(
+            project,
+            traffic_policy=policy,
+            context=TrafficContext(source_ip=source_ip, request_host=host),
+        )
+        if release and decision.permit is not None:
+            await governor.release(decision.permit)
+        return decision
+
+    return asyncio.run(_run())
 
 
 def test_burst_tokens_are_consumed_before_any_wait():
@@ -113,12 +134,18 @@ def test_two_concurrent_pods_of_one_project_and_target_share_one_bucket():
     clock = FakeClock()
     sleeper = FakeSleeper(clock)
     governor = _governor(clock, sleeper)
-    policy = _policy(rate_per_s=1.0, burst=1)
+    policy = _policy(rate_per_s=1.0, burst=1, max_concurrency=2)
 
     async def scenario():
         return await asyncio.gather(
-            governor.acquire("p1", policy, "app.example.com"),
-            governor.acquire("p1", policy, "app.example.com"),
+            governor.acquire(
+                "p1", traffic_policy=policy,
+                context=TrafficContext(source_ip="10.0.0.2", request_host="app.example.com"),
+            ),
+            governor.acquire(
+                "p1", traffic_policy=policy,
+                context=TrafficContext(source_ip="10.0.0.3", request_host="app.example.com"),
+            ),
         )
 
     decisions = asyncio.run(scenario())
@@ -222,7 +249,7 @@ def test_an_unvalidated_policy_is_never_enforced():
     for broken in (
         None,
         {},
-        _policy(version="traffic-policy/v2"),
+        _policy(version="traffic-policy/v1"),
         _policy(target_key=""),
         _policy(rate_per_s=0),
         _policy(burst=0),
@@ -239,12 +266,18 @@ def test_a_cancelled_waiter_does_not_wedge_the_bucket():
     clock = FakeClock()
     sleeper = BlockingSleeper(clock)
     governor = _governor(clock, sleeper)
-    policy = _policy(rate_per_s=1.0, burst=1)
+    policy = _policy(rate_per_s=1.0, burst=1, max_concurrency=2)
 
     async def scenario():
-        await governor.acquire("p1", policy, "app.example.com")
+        await governor.acquire(
+            "p1", traffic_policy=policy,
+            context=TrafficContext(source_ip="10.0.0.2", request_host="app.example.com"),
+        )
         cancelled = asyncio.create_task(
-            governor.acquire("p1", policy, "app.example.com")
+            governor.acquire(
+                "p1", traffic_policy=policy,
+                context=TrafficContext(source_ip="10.0.0.3", request_host="app.example.com"),
+            )
         )
         for _ in range(1000):
             if sleeper.waits:
@@ -253,7 +286,10 @@ def test_a_cancelled_waiter_does_not_wedge_the_bucket():
         cancelled.cancel()
         with pytest.raises(asyncio.CancelledError):
             await cancelled
-        return await governor.acquire("p1", policy, "app.example.com")
+        return await governor.acquire(
+            "p1", traffic_policy=policy,
+            context=TrafficContext(source_ip="10.0.0.4", request_host="app.example.com"),
+        )
 
     followup = asyncio.run(scenario())
 
@@ -275,3 +311,105 @@ def test_status_reports_the_governed_buckets():
     status = governor.status()
     assert status["buckets"] == 2
     assert sorted(status["keys"]) == ["p1/app.example.com", "p1/other.example.com"]
+
+
+# --- #238 follow-up (Task 6): concurrency permits -----------------------------
+
+
+def _ctx(source_ip="10.0.0.2", host="app.example.com"):
+    return TrafficContext(source_ip=source_ip, request_host=host)
+
+
+def test_concurrency_ceiling_blocks_the_next_flow_until_release():
+    clock, sleeper = FakeClock(), None
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1000.0, burst=10, max_concurrency=1)
+
+    async def scenario():
+        first = await governor.acquire("p1", traffic_policy=policy, context=_ctx())
+        second = asyncio.create_task(
+            governor.acquire("p1", traffic_policy=policy, context=_ctx("10.0.0.3"))
+        )
+        await asyncio.sleep(0.05)
+        blocked = not second.done()
+        await governor.release(first.permit)
+        allowed = (await asyncio.wait_for(second, timeout=2.0)).governed
+        return blocked, allowed
+
+    blocked, allowed = asyncio.run(scenario())
+    assert blocked, "the second flow was admitted past the concurrency ceiling"
+    assert allowed
+    assert governor.status()["peak_inflight"] == 1
+
+
+def test_a_different_source_ip_cannot_partition_the_shared_capacity():
+    """The Review Focus adversarial pin: source IP is lookup transport only."""
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1000.0, burst=10, max_concurrency=1)
+
+    async def scenario():
+        first = await governor.acquire("p1", traffic_policy=policy, context=_ctx("10.0.0.2"))
+        second = asyncio.create_task(
+            governor.acquire("p1", traffic_policy=policy, context=_ctx("10.0.0.9"))
+        )
+        await asyncio.sleep(0.05)
+        blocked = not second.done()
+        await governor.release(first.permit)
+        await asyncio.wait_for(second, timeout=2.0)
+        return blocked
+
+    assert asyncio.run(scenario())
+    assert governor.status()["duplicate_releases"] == 0
+
+
+def test_different_projects_keep_independent_concurrency():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1000.0, burst=10, max_concurrency=1)
+
+    async def scenario():
+        await governor.acquire("p1", traffic_policy=policy, context=_ctx())
+        second = await asyncio.wait_for(
+            governor.acquire("p2", traffic_policy=policy, context=_ctx()),
+            timeout=1.0,
+        )
+        return second.governed
+
+    assert asyncio.run(scenario()) is True
+
+
+def test_a_duplicate_release_is_counted_and_never_over_admits():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1000.0, burst=10, max_concurrency=1)
+
+    async def scenario():
+        first = await governor.acquire("p1", traffic_policy=policy, context=_ctx())
+        await governor.release(first.permit)
+        await governor.release(first.permit)  # doubled response/error hook
+        return await governor.acquire("p1", traffic_policy=policy, context=_ctx())
+
+    decision = asyncio.run(scenario())
+    assert decision.governed
+    assert governor.status()["duplicate_releases"] == 1
+    assert governor.status()["inflight"] == 1
+
+
+def test_an_admitted_decision_carries_a_permit_and_an_unarmed_one_does_not():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    admitted = _acquire(governor, _policy())
+    ungoverned = _acquire(governor, _policy(), host="elsewhere.example.net")
+    assert admitted.governed is True
+    assert ungoverned.governed is False and ungoverned.permit is None
+
+
+def test_the_supported_policy_versions_are_advertised():
+    status = TargetGovernor(clock=FakeClock(), sleeper=FakeSleeper(FakeClock())).status()
+    assert "traffic-policy/v2" in status["supported_policy_versions"]
