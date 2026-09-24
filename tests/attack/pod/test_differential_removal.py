@@ -86,5 +86,5 @@ def test_context_slices_carry_no_differential():
 def test_prompt_verbatims_contain_no_differential_reference():
     source = inspect.getsource(prompts_mod)
     assert "differential" not in source
-    assert "differential" not in prompts_mod.POD_RUNNER_SYSTEM
-    assert "differential" not in prompts_mod.POD_TRIAGER_SYSTEM
+    assert "differential" not in prompts_mod.load_pod_runner_skill()
+    assert "differential" not in prompts_mod.load_pod_triager_skill()

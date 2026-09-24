@@ -369,8 +369,14 @@ def test_runner_channel_accumulates_appended_messages_in_order():
     wholesale."""
     from langchain_core.messages import BaseMessage
 
-    from polymerhus.attack.hunting.pod.agents import RUNNER_SYSTEM, TRIAGER_SYSTEM
     from polymerhus.attack.hunting.pod.graph import build_pod_graph
+    from polymerhus.attack.hunting.pod.prompts import (
+        load_pod_runner_skill,
+        load_pod_triager_skill,
+    )
+
+    RUNNER_SYSTEM = load_pod_runner_skill()
+    TRIAGER_SYSTEM = load_pod_triager_skill()
 
     steps = iter([
         RunnerStep(action="tool_call", tool="exec", command="curl -k -sS https://t/"),

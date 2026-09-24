@@ -12,10 +12,13 @@ from __future__ import annotations
 
 import polymerhus.attack.hunting.pod.prompts as prompts_mod
 from polymerhus.attack.hunting.pod.prompts import (
-    KB_TOOL,
-    POD_RUNNER_SYSTEM,
-    POD_TRIAGER_SYSTEM,
+    load_pod_runner_skill,
+    load_pod_triager_skill,
 )
+
+KB_TOOL = "query_lightrag"
+POD_RUNNER_SYSTEM = load_pod_runner_skill()
+POD_TRIAGER_SYSTEM = load_pod_triager_skill()
 
 
 # --- the Runner: the P0-P3 plan (D84-16) --------------------------------------
@@ -130,7 +133,7 @@ def test_triager_prompt_names_its_tools():
 # --- #207: the KB framing (positive methodology, never a "fault KB") -----------
 
 def test_kb_bullet_is_the_neutral_methodology_signature():
-    """#207 defect 2: both `{KB_TOOL}` bullets use the neutral pointer + trigger
+    """#207 defect 2: both KB-tool bullets use the neutral pointer + trigger
     signature - the KB is a methodology KB (retrieve missing ontology concepts),
     never a "fault knowledge base" used to verify or adjudicate a bug."""
     sig = (

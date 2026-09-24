@@ -1,9 +1,9 @@
 # Hunting-agent worked examples: the off-path shapes
 
-Read this file when the run leaves the straight path - on a coverage re-entry,
-an INIT rejection, or total blockage. Example 1 (the confirmed straight path)
-stays in the system prompt; these three cover the branches. Imitate the
-REASONING SHAPE, never the domain.
+Read this section when the run leaves the straight path - on a coverage
+re-entry, an INIT rejection, or total blockage. Example 1 (the confirmed
+straight path) is above in the main body; these three cover the branches.
+Imitate the REASONING SHAPE, never the domain.
 
 ### Example 2 - coverage re-entry, then an exec probe
 

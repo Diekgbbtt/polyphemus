@@ -327,6 +327,21 @@ def test_skill_body_rides_system_prompt_not_first_human_message(monkeypatch):
     assert skill not in first_human
 
 
+def test_skill_includes_the_off_path_examples_companion():
+    """The off-path worked examples (`prompts/examples.md`) are part of the SAME
+    system prompt as `hunting-agent.md` (whose body points at them), so the
+    reference resolves instead of dangling on a file the agent cannot read."""
+    from polymerhus.attack.hunting.hunting_agent import (  # noqa: PLC0415
+        _load_hunting_agent_skill,
+    )
+
+    skill = _load_hunting_agent_skill()
+    assert "Hunting-agent worked examples" in skill
+    assert "Example 2 - coverage re-entry" in skill
+    assert "Example 4 - worst case" in skill
+    assert "read `examples.md`" not in skill
+
+
 def test_first_human_message_carries_grounding_surface_state_protocol_in_order(
         monkeypatch):
     """(b) the first HumanMessage still carries grounding + surface + state +

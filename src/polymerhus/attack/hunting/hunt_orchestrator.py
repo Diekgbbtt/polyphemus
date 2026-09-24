@@ -339,14 +339,6 @@ class DispatchResult(BaseModel):
     feedback: str | None = None
 
 
-class MatchVerdict(BaseModel):
-    """The re-match outcome after a back-edge: still three-valued (D2)."""
-
-    unit_id: str
-    fault_class: str
-    verdict: Literal["applies", "does-not-apply", "insufficient-evidence"]
-
-
 class CandidateIntake(BaseModel):
     """The normalised candidate set: accepted survivors, dropped-and-counted
     duplicates (O7) and malformed candidates (O10), and the deterministic

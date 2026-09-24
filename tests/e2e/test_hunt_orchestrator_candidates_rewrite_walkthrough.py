@@ -72,7 +72,6 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     EnvisionedDirection,
     GateDecision,
     GateInput,
-    MatchVerdict,
     NoteDecision,
     NoteRecord,
     OrchestratorTools,

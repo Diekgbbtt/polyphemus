@@ -114,8 +114,11 @@ HypothesisVerdict = Literal[
 
 # --- the stable system prompt (single-sourced from the SKILL.md) ---------------
 
-# The stable system prompt is read directly from this module's `prompts/` dir,
-# memoized on first call (no import-time I/O). A missing prompt file is a
+# The stable system prompt is read directly from this module's `prompts/` dir:
+# `hunting-agent.md` (the decision tree, loop discipline, working set) plus its
+# companion `examples.md` (the off-path worked examples Example 2-4 the main
+# body points at), concatenated into ONE prompt. Memoized on first call (no
+# import-time I/O). A missing prompt file is a
 # defect: FAIL-CLOSED (raise), so the harness never starts a hunt without its
 # prompt. The harness serves it as `system_prompt=` on EVERY `arun_session_turn`
 # (the orchestrator's [SystemMessage(skill), HumanMessage(prompt)] composed-turn
@@ -131,14 +134,18 @@ _HUNTING_AGENT_SKILL: str | None = None
 
 def _load_hunting_agent_skill() -> str:
     """The stable system prompt, read directly from this module's `prompts/`
-    dir: memoized in-process, FAIL-CLOSED on a missing file (raise)."""
+    dir: `hunting-agent.md` plus its companion `examples.md`, concatenated into
+    ONE prompt (the off-path worked examples are part of the same system
+    message, so the reference in the body resolves). Memoized in-process,
+    FAIL-CLOSED on a missing file (raise)."""
     global _HUNTING_AGENT_SKILL
     if _HUNTING_AGENT_SKILL is None:
         from pathlib import Path  # noqa: PLC0415
 
-        _HUNTING_AGENT_SKILL = (
-            Path(__file__).resolve().parent / "prompts" / "hunting-agent.md"
-        ).read_text(encoding="utf-8")
+        prompts = Path(__file__).resolve().parent / "prompts"
+        main = (prompts / "hunting-agent.md").read_text(encoding="utf-8")
+        examples = (prompts / "examples.md").read_text(encoding="utf-8")
+        _HUNTING_AGENT_SKILL = main.rstrip("\n") + "\n\n" + examples
     return _HUNTING_AGENT_SKILL
 
 
