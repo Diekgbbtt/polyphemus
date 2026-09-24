@@ -33,10 +33,18 @@ a misspelled field is a wiring defect, not a silently-ignored one - a typo'd
 """
 from __future__ import annotations
 
+import re
 from datetime import datetime, timedelta, timezone
-from typing import Literal
+from typing import Any, Literal, Mapping
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import (
+    BaseModel,
+    ConfigDict,
+    Field,
+    NonNegativeInt,
+    field_validator,
+    model_validator,
+)
 
 from polymerhus.recon.domain.blocking import BLOCKING_SIGNALS, BlockingSignal
 
@@ -79,11 +87,23 @@ families the shared `performing-api-rate-limiting-bypass` procedure states.
 by default and requires an explicit operator opt-in (spec, resolved
 decision 9)."""
 
-TRAFFIC_POLICY_VERSION = "traffic-policy/v1"
-"""The wire version of the enforced policy shape."""
+TRAFFIC_POLICY_VERSION = "traffic-policy/v2"
+"""The wire version of the enforced policy shape. v2 is required because
+`max_concurrency` changes from inert data to enforced semantics (spec 13); the
+application refuses an incompatible governor rather than assuming the field is
+enforced."""
 
-RATE_PROFILE_VERSION = "rate-profile/v1"
-"""The stored version of the public profile shape."""
+RATE_PROFILE_VERSION = "rate-profile/v2"
+"""The stored version of the public profile shape. v2 carries typed, hashed
+`EvidenceReference` entries and an explicit `safe_rate_per_s`; historical v1
+rows stay audit data, readable only through `upgrade_rate_profile_v1` (spec 12.1,
+19)."""
+
+MAX_EVIDENCE_REFERENCES = 64
+"""Cap on the typed evidence references kept on a profile. A run's experiments
+are already bounded by the operator budget; 64 sits above any realistic mapping,
+and this bound keeps the JSONB profile row small. Surplus refs are dropped - the
+raw artifacts remain in the store, and the refs are informational."""
 
 PROFILE_TTL_DEFAULT_S = 3600.0
 """The default validity of a mapping estimate. Mirrored by the
@@ -100,6 +120,47 @@ class _ClosedContract(BaseModel):
     typo lands as a loud validation error instead of a dropped safety field."""
 
     model_config = ConfigDict(extra="forbid")
+
+
+class EvidenceReference(_ClosedContract):
+    """One typed, integrity-pinned reference to a raw experiment artifact.
+
+    The raw artifact (hit stream, response bodies, headers) lives in the
+    immutable artifact store; the profile stores ONLY this coordinate. `ref` is
+    a RELATIVE `rate-artifact/v1:...` coordinate (never an absolute path), and
+    `sha256` is the manifest/content integrity hash. Raw payloads, response
+    bodies, credentials, and sensitive headers are not expressible here - they
+    are unknown keys, and this contract is closed.
+    """
+
+    model_config = ConfigDict(extra="forbid", frozen=True)
+
+    ref: str
+    sha256: str
+    experiment_id: str
+    count: NonNegativeInt
+
+    @field_validator("ref")
+    @classmethod
+    def _ref_is_a_relative_coordinate(cls, value: str) -> str:
+        if (
+            not value
+            or value.startswith(("/", "~"))
+            or "://" in value
+            or ".." in value
+            or re.match(r"^[A-Za-z]:", value)
+        ):
+            raise ValueError(
+                f"evidence ref must be a relative coordinate, got {value!r}"
+            )
+        return value
+
+    @field_validator("sha256")
+    @classmethod
+    def _sha256_is_lowercase_hex(cls, value: str) -> str:
+        if not re.fullmatch(r"[0-9a-f]{64}", value or ""):
+            raise ValueError("sha256 must be 64 lowercase hex characters")
+        return value
 
 
 # --- the operator's hard safety budget --------------------------------------------
@@ -375,6 +436,13 @@ class RateProfile(_ClosedContract):
     target_key: str
     host_patterns: list[str] = Field(default_factory=list)
     outcome: RateOutcome = "inconclusive"
+    version: Literal["rate-profile/v2"] = RATE_PROFILE_VERSION
+    safe_rate_per_s: float = Field(gt=0)
+    """The controller-derived rate admission gates on. It equals the enforced
+    `traffic_policy.rate_per_s` (validated below): mapped posture uses the safe
+    tested control, `no_limiter` the maximum actually tested rate, and every
+    uncertain/error outcome the conservative fallback. It is NEVER derived from
+    LLM prose or bypass status."""
     tested_bounds: TestedBounds | None = None
     threshold_low_per_s: float | None = None
     threshold_high_per_s: float | None = None
@@ -389,16 +457,43 @@ class RateProfile(_ClosedContract):
     measured_at: datetime = Field(
         default_factory=lambda: datetime.now(timezone.utc)
     )
-    expires_at: datetime | None = None
+    expires_at: datetime
     budget: RateLimitSafetyBudget = Field(default_factory=RateLimitSafetyBudget)
     usage: BudgetUsage = Field(default_factory=BudgetUsage)
     artifact_refs: list[str] = Field(default_factory=list)
+    """Legacy untyped artifact coordinates, kept for v1 audit compatibility.
+    New runs populate the typed `evidence` tuple; nothing consumes v1 refs as
+    governing evidence."""
+    evidence: tuple[EvidenceReference, ...] = ()
+    """The typed, relative, hashed, capped evidence references (v2)."""
     bypass_outcome: BypassOutcome = "inconclusive"
     bypass_findings: list[BypassFinding] = Field(default_factory=list)
     signals: list[BlockingSignal] = Field(default_factory=list)
     traffic_policy: TrafficPolicy
     reason: str = ""
-    profile_version: str = RATE_PROFILE_VERSION
+
+    @field_validator("measured_at", "expires_at")
+    @classmethod
+    def _timestamps_are_timezone_aware(cls, value: datetime) -> datetime:
+        if value.tzinfo is None or value.utcoffset() is None:
+            raise ValueError("profile timestamps must be timezone-aware")
+        return value
+
+    @model_validator(mode="after")
+    def _safe_rate_matches_the_enforced_policy(self) -> "RateProfile":
+        if abs(self.safe_rate_per_s - self.traffic_policy.rate_per_s) > 1e-9:
+            raise ValueError(
+                "safe_rate_per_s must equal the enforced traffic_policy.rate_per_s "
+                f"({self.safe_rate_per_s} != {self.traffic_policy.rate_per_s})"
+            )
+        return self
+
+    def is_fresh(self, at: datetime) -> bool:
+        """Whether the mapping is still valid at `at` (exclusive upper bound:
+        `at == expires_at` is stale). Requires a timezone-aware instant."""
+        if at.tzinfo is None or at.utcoffset() is None:
+            raise ValueError("is_fresh requires a timezone-aware datetime")
+        return at < self.expires_at
 
     @classmethod
     def conservative(
@@ -433,6 +528,7 @@ class RateProfile(_ClosedContract):
             expires_at=measured_at + timedelta(
                 seconds=PROFILE_TTL_DEFAULT_S if ttl_s is None else ttl_s
             ),
+            safe_rate_per_s=rate,
             signals=list(signals or ()),
             reason=reason,
             traffic_policy=TrafficPolicy(
@@ -447,6 +543,39 @@ class RateProfile(_ClosedContract):
         )
 
 
+def upgrade_rate_profile_v1(payload: Mapping[str, Any]) -> RateProfile:
+    """The ONE compatibility boundary for a persisted `rate-profile/v1` row.
+
+    v1 carried an untyped `artifact_refs` list, no `safe_rate_per_s`, and a
+    nullable `expires_at`. This adapter is the only path that accepts such a
+    payload - `RateProfile.model_validate` refuses it (its `version` is a closed
+    literal). The adapter:
+
+    - bumps the profile version to v2;
+    - derives `safe_rate_per_s` from the stored enforced policy (the controller's
+      own value, never prose or bypass status);
+    - leaves `evidence` empty (v1 refs are unhashed audit data - they are never
+      fabricated into typed, hashed references);
+    - treats a missing/`None` expiry as immediately stale, so a historical row is
+      never reused as a fresh profile for a new run (spec 19).
+    """
+    data = dict(payload)
+    policy_raw = data.get("traffic_policy")
+    if not policy_raw:
+        raise ValueError("v1 rate profile has no traffic_policy to derive from")
+    policy = TrafficPolicy.model_validate(policy_raw)
+
+    measured_at = data.get("measured_at") or datetime.now(timezone.utc)
+    data["measured_at"] = measured_at
+    # A missing expiry means "not reusable": treat it as stale at measured_at.
+    data["expires_at"] = data.get("expires_at") or measured_at
+    data.pop("profile_version", None)
+    data["version"] = RATE_PROFILE_VERSION
+    data.setdefault("safe_rate_per_s", policy.rate_per_s)
+    data.setdefault("evidence", ())
+    return RateProfile.model_validate(data)
+
+
 __all__ = [
     "BLOCKING_SIGNALS",
     "BypassFinding",
@@ -456,6 +585,7 @@ __all__ = [
     "CONSERVATIVE_RATE_PER_S",
     "EnforcementHypothesis",
     "EvidenceOutcome",
+    "EvidenceReference",
     "ExperimentEvidence",
     "ExperimentPhase",
     "ExperimentSpec",
@@ -463,6 +593,7 @@ __all__ = [
     "MappedControl",
     "MutationFamily",
     "MutationSpec",
+    "MAX_EVIDENCE_REFERENCES",
     "PROFILE_TTL_DEFAULT_S",
     "RATE_PROFILE_VERSION",
     "RateLimitSafetyBudget",
@@ -472,4 +603,5 @@ __all__ = [
     "TRAFFIC_POLICY_VERSION",
     "TestedBounds",
     "TrafficPolicy",
+    "upgrade_rate_profile_v1",
 ]

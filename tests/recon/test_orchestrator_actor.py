@@ -146,7 +146,7 @@ def _rate_harness(*, url="https://app.example.com", budget=None):
     harness = RateLimitHarness(
         target_key="app.example.com", url=url,
         budget=budget or RateLimitSafetyBudget(), execute=execute,
-        project_id="p1", run_id="run1",
+        project_id="p1", run_id="run1", profile_ttl_s=3600.0,
     )
     return harness, executions
 

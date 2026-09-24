@@ -288,7 +288,7 @@ def test_mapped_transition_policy_is_eighty_percent_of_the_lower_safe_bound():
     assert 1.0 <= policy.rate_per_s <= budget.max_rate_per_s
     assert policy.target_key == "https://target.example"
     assert policy.host_patterns == ["target.example"]
-    assert policy.version == "traffic-policy/v1"
+    assert policy.version == "traffic-policy/v2"
     assert policy.source == "measured-transition"
 
 

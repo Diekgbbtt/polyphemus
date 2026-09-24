@@ -129,6 +129,15 @@ def _rate_turn_timeout_s() -> float:
     return float(RATE_LIMIT_AWAIT_TIMEOUT_S)
 
 
+def _rate_profile_ttl_s() -> float:
+    """The effective profile TTL: the operator knob `RATE_LIMIT_PROFILE_TTL_S`,
+    resolved lazily so construction reads no configuration. Passed to the
+    harness explicitly - the harness never silently falls back to the domain
+    default (#238 follow-up, Task 3)."""
+    from polymerhus.recon.config import RATE_LIMIT_PROFILE_TTL_S  # noqa: PLC0415
+    return float(RATE_LIMIT_PROFILE_TTL_S)
+
+
 class _RateHarnessSlot:
     """A stable handle for the actor's rate-limit tools (#238).
 
@@ -706,7 +715,7 @@ class ReconOrchestratorActor:
                 "browser-only target: no semantically equivalent HTTP request "
                 "could be replayed, so the traffic surface is not quantitatively "
                 "mapped; conservative Steel pacing applies",
-                outcome="inconclusive")
+                outcome="inconclusive", ttl_s=_rate_profile_ttl_s())
         try:
             if active is None:
                 project_id = self._resolve_project()
@@ -717,6 +726,7 @@ class ReconOrchestratorActor:
                         project_id=project_id, run_id=self._run_id),
                     project_id=project_id, run_id=self._run_id, method=method,
                     headers=headers or {}, host_patterns=host_patterns,
+                    profile_ttl_s=_rate_profile_ttl_s(),
                 )
             self._rate_slot.bind(active)
             await self._ensure_started()
@@ -746,7 +756,7 @@ class ReconOrchestratorActor:
                     "rate-limit turn produced no usable verdict (dead, degraded "
                     "or timed out): conservative fallback, never unthrottled "
                     "traffic",
-                    outcome="failed")
+                    outcome="failed", ttl_s=_rate_profile_ttl_s())
             return active.build_profile(verdict)
         except Exception as exc:  # noqa: BLE001 - fail-LOUD, conservative
             logger.warning(
@@ -758,7 +768,7 @@ class ReconOrchestratorActor:
                 target_key, patterns, budget,
                 f"rate-limit turn failed ({type(exc).__name__}): conservative "
                 "fallback, never unthrottled traffic",
-                outcome="failed")
+                outcome="failed", ttl_s=_rate_profile_ttl_s())
 
     async def _await_reply(self, expected_type, timeout_s: float, label: str):
         """Await ONE sequential turn's structured reply, bounded in wall-clock

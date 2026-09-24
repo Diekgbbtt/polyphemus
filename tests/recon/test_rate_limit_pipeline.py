@@ -10,6 +10,7 @@ database, no live Kali.
 from __future__ import annotations
 
 import asyncio
+from datetime import datetime, timedelta, timezone
 
 from polymerhus.recon.control import pipeline
 from polymerhus.recon.control.authn_loop import GatewayVerdict
@@ -51,9 +52,13 @@ class _RecordingRegistry:
 
 
 def _profile(*, rate=4.0, refs=(ARTIFACT_REF,), outcome="mapped"):
+    now = datetime.now(timezone.utc)
     return RateProfile(
         target_key=TARGET_KEY, host_patterns=[TARGET_KEY], outcome=outcome,
         artifact_refs=list(refs), bypass_outcome="no_bypass",
+        safe_rate_per_s=rate,
+        measured_at=now,
+        expires_at=now + timedelta(seconds=3600),
         traffic_policy=TrafficPolicy(
             target_key=TARGET_KEY, host_patterns=[TARGET_KEY], rate_per_s=rate,
             burst=2, max_concurrency=1, min_delay_ms=1000.0 / rate,
@@ -336,7 +341,7 @@ def test_http_jobs_carry_only_the_traffic_policy_and_no_flag_strings():
     _, seen = _run(events, _orchestrator(events))
 
     policy = seen["httpx"]["extra"]["traffic_policy"]
-    assert policy["version"] == "traffic-policy/v1"
+    assert policy["version"] == "traffic-policy/v2"
     assert policy == seen["katana"]["extra"]["traffic_policy"]
     assert "traffic_policy" not in seen["subfinder"]["extra"]
     for job, payload in seen.items():

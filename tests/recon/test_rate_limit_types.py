@@ -13,6 +13,7 @@ Pure contracts only: no production collaborator is constructed here
 from __future__ import annotations
 
 import importlib
+from datetime import datetime, timedelta, timezone
 
 import pytest
 from pydantic import ValidationError
@@ -20,12 +21,16 @@ from pydantic import ValidationError
 from polymerhus.recon import config as recon_config
 from polymerhus.recon.domain.blocking import BlockingSignal
 from polymerhus.recon.domain.rate_limit import (
+    RATE_PROFILE_VERSION,
+    TRAFFIC_POLICY_VERSION,
+    EvidenceReference,
     ExperimentEvidence,
     ExperimentSpec,
     MutationSpec,
     RateLimitSafetyBudget,
     RateProfile,
     TrafficPolicy,
+    upgrade_rate_profile_v1,
 )
 
 _KNOBS = (
@@ -191,7 +196,7 @@ def _policy(**overrides) -> TrafficPolicy:
 def test_traffic_policy_carries_the_closed_transport_contract():
     payload = _policy().model_dump(mode="json")
 
-    assert payload["version"] == "traffic-policy/v1"
+    assert payload["version"] == "traffic-policy/v2"
     assert payload["target_key"] == "target-1"
     assert payload["host_patterns"] == ["app.example.test"]
     assert payload["rate_per_s"] == 4.0
@@ -224,7 +229,7 @@ def test_conservative_profile_caps_rate_burst_and_concurrency():
     assert profile.traffic_policy.burst == 1
     assert profile.traffic_policy.max_concurrency == 1
     assert profile.traffic_policy.source == "conservative-fallback"
-    assert profile.traffic_policy.version == "traffic-policy/v1"
+    assert profile.traffic_policy.version == "traffic-policy/v2"
     assert profile.budget == budget
     assert profile.reason == "controller failure"
 
@@ -238,14 +243,29 @@ def test_conservative_profile_never_exceeds_the_operator_rate_cap():
     assert profile.traffic_policy.rate_per_s == 0.5
 
 
-def test_profile_signals_use_the_shared_vocabulary():
-    profile = RateProfile(
-        target_key="t",
+_NOW = datetime(2026, 9, 24, 12, 0, tzinfo=timezone.utc)
+
+
+def _v2_profile(**overrides) -> RateProfile:
+    policy = _policy()
+    fields = dict(
+        target_key="target-1",
         host_patterns=["app.example.test"],
         outcome="mapped",
         budget=RateLimitSafetyBudget(),
+        measured_at=_NOW,
+        expires_at=_NOW + timedelta(seconds=3600),
+        safe_rate_per_s=policy.rate_per_s,
+        traffic_policy=policy,
+    )
+    fields.update(overrides)
+    return RateProfile(**fields)
+
+
+def test_profile_signals_use_the_shared_vocabulary():
+    profile = _v2_profile(
+        target_key="t",
         signals=["rate_limited"],
-        traffic_policy=_policy(),
     )
 
     assert profile.signals == [BlockingSignal.RATE_LIMITED]
@@ -254,10 +274,7 @@ def test_profile_signals_use_the_shared_vocabulary():
 
 def test_profile_rejects_an_unknown_outcome():
     with pytest.raises(ValidationError):
-        RateProfile(
-            target_key="t", outcome="probably-fine",
-            budget=RateLimitSafetyBudget(), traffic_policy=_policy(),
-        )
+        _v2_profile(target_key="t", outcome="probably-fine")
 
 
 def test_profile_starts_empty_of_bypass_claims():
@@ -336,3 +353,131 @@ def test_experiment_evidence_is_a_typed_failed_or_measured_result():
         requests=0, outcome="failed", error="vegeta exit 1",
     )
     assert failed.error == "vegeta exit 1"
+
+
+# --- v2 wire contracts, typed evidence, and freshness (Task 3) --------------------
+
+
+def test_wire_versions_advanced_to_v2_together():
+    assert RATE_PROFILE_VERSION == "rate-profile/v2"
+    assert TRAFFIC_POLICY_VERSION == "traffic-policy/v2"
+    assert _v2_profile().version == "rate-profile/v2"
+
+
+def test_evidence_reference_accepts_a_relative_hashed_coordinate():
+    ref = EvidenceReference(
+        ref="rate-artifact/v1:proj-1/run-1/steady-1",
+        sha256="a" * 64,
+        experiment_id="steady-1",
+        count=40,
+    )
+    assert ref.model_dump(mode="json") == {
+        "ref": "rate-artifact/v1:proj-1/run-1/steady-1",
+        "sha256": "a" * 64,
+        "experiment_id": "steady-1",
+        "count": 40,
+    }
+
+
+@pytest.mark.parametrize(
+    "bad_ref",
+    ["/tmp/raw.json", "file:///tmp/x", "../escape", "~/.ssh/id_rsa", "C:/raw"],
+)
+def test_evidence_reference_rejects_a_non_relative_coordinate(bad_ref):
+    with pytest.raises(ValidationError):
+        EvidenceReference(ref=bad_ref, sha256="a" * 64, experiment_id="e1", count=1)
+
+
+@pytest.mark.parametrize("bad_sha", ["abc", "A" * 64, "z" * 64, "", "a" * 63])
+def test_evidence_reference_rejects_a_bad_sha256(bad_sha):
+    with pytest.raises(ValidationError):
+        EvidenceReference(
+            ref="rate-artifact/v1:p/r/e1", sha256=bad_sha, experiment_id="e1", count=1
+        )
+
+
+@pytest.mark.parametrize(
+    "extra",
+    [
+        {"body": "raw response body"},
+        {"authorization": "Bearer secret"},
+        {"cookie": "sid=secret"},
+        {"payload": {"raw": "hits"}},
+    ],
+)
+def test_evidence_reference_is_closed_against_raw_and_sensitive_keys(extra):
+    with pytest.raises(ValidationError):
+        EvidenceReference(
+            ref="rate-artifact/v1:p/r/e1", sha256="a" * 64, experiment_id="e1",
+            count=1, **extra,
+        )
+
+
+def test_profile_is_stale_at_expiry():
+    profile = _v2_profile()
+    assert profile.is_fresh(profile.expires_at - timedelta(microseconds=1))
+    assert not profile.is_fresh(profile.expires_at)
+
+
+def test_profile_requires_timezone_aware_timestamps():
+    with pytest.raises(ValidationError):
+        _v2_profile(measured_at=datetime(2026, 9, 24, 12, 0))
+    with pytest.raises(ValidationError):
+        _v2_profile(expires_at=datetime(2026, 9, 24, 13, 0))
+
+
+def test_profile_stores_typed_evidence_references():
+    ref = EvidenceReference(
+        ref="rate-artifact/v1:p/r/e1", sha256="a" * 64, experiment_id="e1", count=3
+    )
+    profile = _v2_profile(evidence=(ref,))
+    dumped = profile.model_dump(mode="json")
+    assert dumped["evidence"] == [
+        {"ref": "rate-artifact/v1:p/r/e1", "sha256": "a" * 64,
+         "experiment_id": "e1", "count": 3}
+    ]
+
+
+def test_the_wire_boundary_rejects_a_v1_profile_payload():
+    # v1 payloads carry `profile_version` and the untyped `artifact_refs`; they
+    # are readable ONLY through the explicit `upgrade_rate_profile_v1` adapter.
+    with pytest.raises(ValidationError):
+        RateProfile.model_validate(
+            {"profile_version": "rate-profile/v1", "version": "rate-profile/v1",
+             "target_key": "t"}
+        )
+
+
+def test_upgrade_rate_profile_v1_returns_a_v2_profile():
+    v1 = {
+        "target_key": "t",
+        "host_patterns": ["app.example.test"],
+        "outcome": "mapped",
+        "profile_version": "rate-profile/v1",
+        "traffic_policy": _policy().model_dump(mode="json"),
+        "artifact_refs": ["rate-artifact/v1:proj-1/run-1/steady-1"],
+        "measured_at": "2026-09-24T12:00:00+00:00",
+        "expires_at": "2026-09-24T13:00:00+00:00",
+        "safe_rate_per_s": 4.0,
+    }
+    profile = upgrade_rate_profile_v1(v1)
+
+    assert profile.version == "rate-profile/v2"
+    assert profile.safe_rate_per_s == 4.0
+    assert profile.safe_rate_per_s == profile.traffic_policy.rate_per_s
+    assert profile.artifact_refs == ["rate-artifact/v1:proj-1/run-1/steady-1"]
+    # v1 refs are unhashed audit data - never fabricated into typed evidence.
+    assert profile.evidence == ()
+
+
+def test_upgrade_rate_profile_v1_derives_safe_rate_from_the_policy_when_absent():
+    v1 = {
+        "target_key": "t",
+        "outcome": "no_limiter",
+        "profile_version": "rate-profile/v1",
+        "traffic_policy": _policy(rate_per_s=7.5).model_dump(mode="json"),
+        "measured_at": "2026-09-24T12:00:00+00:00",
+        "expires_at": "2026-09-24T13:00:00+00:00",
+    }
+    profile = upgrade_rate_profile_v1(v1)
+    assert profile.safe_rate_per_s == 7.5

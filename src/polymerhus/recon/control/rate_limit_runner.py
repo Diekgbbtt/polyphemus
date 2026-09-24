@@ -31,11 +31,12 @@ from typing import Awaitable, Callable, Mapping, Sequence
 from urllib.parse import urlsplit
 
 from polymerhus.recon.domain.rate_limit import (
+    MAX_EVIDENCE_REFERENCES,
+    EvidenceReference,
     ExperimentEvidence,
     ExperimentSpec,
     MappedControl,
     MutationSpec,
-    PROFILE_TTL_DEFAULT_S,
     RateLimitSafetyBudget,
     RateLoopVerdict,
     RateProfile,
@@ -286,7 +287,12 @@ class RateLimitHarness:
         scope_probes: Sequence[ScopeProbe] | None = None,
         ledger: BudgetLedger | None = None,
         experiment_timeout_s: float = DEFAULT_EXPERIMENT_TIMEOUT_S,
+        profile_ttl_s: float,
     ):
+        if not math.isfinite(profile_ttl_s) or profile_ttl_s <= 0:
+            raise ValueError(
+                f"profile_ttl_s must be finite and > 0, got {profile_ttl_s!r}"
+            )
         self.target_key = target_key
         self.url = url
         self.method = method
@@ -302,6 +308,10 @@ class RateLimitHarness:
         )
         self.ledger = ledger or BudgetLedger(budget)
         self.experiment_timeout_s = experiment_timeout_s
+        # The effective profile TTL, supplied by the caller from the operator
+        # knob (`RATE_LIMIT_PROFILE_TTL_S`). Required: the harness never
+        # silently falls back to the domain default.
+        self.profile_ttl_s = profile_ttl_s
         self._execute = execute
         self._state: MappingState | None = None
         self._control: MappedControl | None = None
@@ -565,6 +575,18 @@ class RateLimitHarness:
                 item.artifact_ref for item in evidence if item.artifact_ref
             )
         )
+        # The typed, relative, hashed, capped evidence references (v2). v1's
+        # untyped `artifact_refs` above is retained for audit compatibility.
+        evidence_references = tuple(
+            EvidenceReference(
+                ref=item.artifact_ref,
+                sha256=item.manifest_sha256,
+                experiment_id=item.experiment_id,
+                count=item.requests,
+            )
+            for item in evidence
+            if item.artifact_ref and item.manifest_sha256
+        )[:MAX_EVIDENCE_REFERENCES]
         measured_at = datetime.now(timezone.utc)
         return RateProfile(
             target_key=self.target_key,
@@ -589,10 +611,12 @@ class RateLimitHarness:
             enforcement=_describe(control),
             confidence=control.confidence,
             measured_at=measured_at,
-            expires_at=measured_at + timedelta(seconds=PROFILE_TTL_DEFAULT_S),
+            expires_at=measured_at + timedelta(seconds=self.profile_ttl_s),
+            safe_rate_per_s=policy.rate_per_s,
             budget=self.budget,
             usage=self.ledger.usage,
             artifact_refs=artifact_refs,
+            evidence=evidence_references,
             bypass_outcome=bypass_outcome,
             bypass_findings=confirmed,
             signals=list(control.signals),

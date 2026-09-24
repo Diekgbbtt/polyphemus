@@ -9,12 +9,15 @@ from __future__ import annotations
 
 import asyncio
 import json
+from datetime import timedelta
 
 import pytest
 
 from polymerhus.recon.domain.rate_limit import (
+    EvidenceReference,
     ExperimentEvidence,
     ExperimentSpec,
+    MAX_EVIDENCE_REFERENCES,
     MutationSpec,
     RateLimitSafetyBudget,
     RateLoopVerdict,
@@ -75,6 +78,7 @@ def _harness(executor, **overrides) -> RateLimitHarness:
         run_id="run-1",
         budget=RateLimitSafetyBudget(max_requests=400, max_duration_s=180, max_concurrency=4),
         execute=executor,
+        profile_ttl_s=3600.0,
     )
     kwargs.update(overrides)
     return RateLimitHarness(**kwargs)
@@ -112,7 +116,7 @@ def test_map_returns_a_classified_control_and_attaches_the_policy():
     assert control.threshold_high_per_s == pytest.approx(6.25)
     assert control.traffic_policy is not None
     assert control.traffic_policy.rate_per_s == pytest.approx(4.0)
-    assert control.traffic_policy.version == "traffic-policy/v1"
+    assert control.traffic_policy.version == "traffic-policy/v2"
     assert harness.control is control
 
 
@@ -510,3 +514,46 @@ def test_kali_exec_args_match_the_exec_seam_contract():
     assert payload["project_id"] == "proj-1" and payload["experiment_id"] == "steady-2"
     # The spec is on stdin, never in argv (argv is visible in the process table).
     assert "stdin_text" in args and "Authorization" not in json.dumps(args["command"])
+
+
+# --- Task 3: configured TTL, typed evidence, and secret safety ---------------------
+
+
+def test_profile_honours_the_configured_ttl():
+    harness = _harness(RecordingExecutor(), profile_ttl_s=60.0)
+    _run(harness.map())
+    profile = harness.build_profile(RateLoopVerdict())
+    assert profile.expires_at - profile.measured_at == timedelta(seconds=60)
+
+
+def test_harness_refuses_a_non_positive_ttl():
+    with pytest.raises(ValueError):
+        _harness(RecordingExecutor(), profile_ttl_s=0.0)
+    with pytest.raises(ValueError):
+        _harness(RecordingExecutor(), profile_ttl_s=float("nan"))
+
+
+def test_build_profile_stores_only_typed_capped_evidence_references():
+    harness = _mapped_harness()
+    profile = harness.build_profile(RateLoopVerdict())
+
+    assert profile.evidence
+    assert len(profile.evidence) <= MAX_EVIDENCE_REFERENCES
+    for ref in profile.evidence:
+        assert isinstance(ref, EvidenceReference)
+        assert ref.ref.startswith("rate-artifact/v1:")
+        assert len(ref.sha256) == 64
+    for dumped in profile.model_dump(mode="json")["evidence"]:
+        assert set(dumped) == {"ref", "sha256", "experiment_id", "count"}
+
+
+def test_profile_json_never_leaks_header_or_cookie_secrets():
+    harness = _harness(
+        RecordingExecutor(),
+        headers={"Authorization": "Bearer SECRET-TOKEN", "Cookie": "sid=SECRET-SID"},
+    )
+    _run(harness.map())
+    profile = harness.build_profile(RateLoopVerdict())
+    blob = json.dumps(profile.model_dump(mode="json"))
+    assert "SECRET-TOKEN" not in blob
+    assert "SECRET-SID" not in blob

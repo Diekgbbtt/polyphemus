@@ -198,6 +198,7 @@ def mapped(live_kali):
         run_id=run_id,
         headers={"Authorization": f"Bearer {AUTH_SECRET}"},
         host_patterns=[TARGET_HOST],
+        profile_ttl_s=3600.0,
     )
     control = asyncio.run(harness.map())
     return {
@@ -255,7 +256,7 @@ def test_the_mapping_brackets_the_limiter_within_the_operator_budget(mapped):
     # never above the operator ceiling.
     policy = control.traffic_policy
     assert policy is not None
-    assert policy.version == "traffic-policy/v1"
+    assert policy.version == "traffic-policy/v2"
     assert policy.target_key == TARGET_HOST
     assert 0 < policy.rate_per_s <= budget.max_rate_per_s
     assert policy.host_patterns == [TARGET_HOST]
@@ -582,7 +583,7 @@ def test_the_pipeline_runs_auth_then_mapping_then_phase_zero_with_the_live_profi
     # The measured policy is what the request job actually carries.
     assert seen["httpx"]["extra"]["traffic_policy"]["target_key"] == TARGET_HOST
     assert (
-        seen["httpx"]["extra"]["traffic_policy"]["version"] == "traffic-policy/v1"
+        seen["httpx"]["extra"]["traffic_policy"]["version"] == "traffic-policy/v2"
     )
     assert "naabu" in seen, "the non-HTTP job still runs"
     assert "traffic_policy" not in seen["naabu"]["extra"]
