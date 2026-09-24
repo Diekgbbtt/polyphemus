@@ -298,11 +298,17 @@ JOBS: dict[str, JobSpec] = {
         tool="ffuf",
         traffic_cost=JobTrafficCost(
             cost_class=TrafficCostClass.REQUEST_INTENSIVE,
-            # The pinned SecLists wordlist's non-empty-line cardinality. The
-            # image contract reruns this exact rule and refuses a mismatch
-            # (Task 7); changing the wordlist requires updating this constant in
-            # the same slice.
-            estimated_requests_per_input=4752,
+            # The wordlist's non-empty-line cardinality, measured IN the built
+            # Kali image (`wordlist_cardinality`). The image contract reruns
+            # this exact rule and refuses a mismatch (Task 7), so the number is
+            # only correct for the `seclists` package the image currently
+            # installs: the Dockerfile takes it from Kali rolling rather than
+            # pinning a SecLists commit, so a package bump moves this value and
+            # the readiness gate is what catches it. 4750 = the count in the
+            # image built from this commit (seclists 2025.3-0kali1); the
+            # earlier 4752 came from a different package revision. Changing the
+            # wordlist requires updating this constant in the same slice.
+            estimated_requests_per_input=4750,
             estimation_basis="wordlist_cardinality",
             cardinality_source="/usr/share/seclists/Discovery/Web-Content/common.txt",
         ),

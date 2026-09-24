@@ -113,10 +113,10 @@ def test_a_changed_wordlist_fails_readiness_naming_file_and_counts(tmp_path):
     assert verify_wordlist(wordlist, 3) == 3
 
     with pytest.raises(CapabilityError) as excinfo:
-        verify_wordlist(wordlist, 4752)
+        verify_wordlist(wordlist, 999999)
     message = str(excinfo.value)
     assert str(wordlist) in message
-    assert "3" in message and "4752" in message
+    assert "3" in message and "999999" in message
 
 
 def test_a_policy_version_mismatch_refuses_before_egress():
