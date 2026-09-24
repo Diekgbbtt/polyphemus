@@ -114,3 +114,83 @@ services:
       timeout: 3s
       retries: 20
       start_period: 3s
+  # --- #238 follow-up (Task 8): the deterministic posture matrix --------------
+  # ONE application, five isolated instances: identical route logic, a different
+  # `RATE_FIXTURE_POSTURE` each, and never shared counters. Each is reachable by
+  # its Compose DNS alias from the agent/Kali (no host ports needed), and each
+  # control endpoint bypasses limiter accounting.
+  rate-matrix-no-limiter:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "no_limiter"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  rate-matrix-high-limit:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "high_limit"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  rate-matrix-low-limit:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "low_limit"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  rate-matrix-false-bypass:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "false_bypass"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
+  rate-matrix-burst-inconclusive:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_matrix_target.py"]
+    environment:
+      PORT: "80"
+      RATE_FIXTURE_POSTURE: "burst_inconclusive"
+    volumes:
+      - ./tests/e2e/rate_limit_matrix_target.py:/srv/rate_limit_matrix_target.py:ro
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
