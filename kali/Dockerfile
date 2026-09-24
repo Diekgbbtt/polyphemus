@@ -31,6 +31,7 @@ RUN chmod +x /opt/kali/entrypoint.sh /opt/kali/postrun.sh
 
 ENV KALI_HTTP_HISTORY_ROOT=/data \
     KALI_HTTP_CAPTURE_ENABLED=true \
+    KALI_HTTP_GOVERNOR_ENABLED=true \
     KALI_HTTP_MAX_BODY_BYTES=5242880 \
     KALI_HTTP_NAMESPACE_POOL=8 \
     KALI_HTTP_LEASE_TTL_S=900 \

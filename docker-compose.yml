@@ -112,6 +112,10 @@ services:
       PYTHONPATH: /opt
       KALI_HTTP_HISTORY_ROOT: /data
       KALI_HTTP_CAPTURE_ENABLED: ${KALI_HTTP_CAPTURE_ENABLED:-true}
+      # #238: the per-target egress governor. SEPARATE from capture on purpose:
+      # disabling HTTP-history recording must not disarm an armed TrafficPolicy
+      # (the proxy process serves both planes and starts when either is on).
+      KALI_HTTP_GOVERNOR_ENABLED: ${KALI_HTTP_GOVERNOR_ENABLED:-true}
       KALI_HTTP_MAX_BODY_BYTES: ${KALI_HTTP_MAX_BODY_BYTES:-5242880}
       KALI_HTTP_NAMESPACE_POOL: ${KALI_HTTP_NAMESPACE_POOL:-8}
       KALI_HTTP_LEASE_TTL_S: ${KALI_HTTP_LEASE_TTL_S:-900}

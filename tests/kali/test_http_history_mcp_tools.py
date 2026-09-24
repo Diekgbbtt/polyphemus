@@ -170,3 +170,44 @@ def test_execute_command_forwards_private_stdin_without_echoing_it(tmp_path, mon
     assert "supersecret" not in json.dumps(out)
     # The null form (the plan's Interfaces signature) is accepted too.
     assert mcp_server.execute_command("true", "s2", stdin_text=None)["returncode"] == 0
+
+
+_POLICY = {
+    "target_key": "app.example.com",
+    "host_patterns": ["app.example.com"],
+    "rate_per_s": 2.0,
+    "burst": 1,
+    "max_concurrency": 1,
+    "min_delay_ms": 500.0,
+    "source": "measured-transition",
+    "version": "traffic-policy/v1",
+}
+
+
+def test_execute_command_forwards_the_traffic_policy_independently(tmp_path, monkeypatch):
+    """#238 Task 7: `traffic_policy` is its own optional argument - NOT a field
+    of the capture context - so an armed policy travels with a pod that carries
+    no capture context at all."""
+    seen: dict = {}
+
+    class PolicyLeaseManager(FakeLeaseManager):
+        def acquire(self, *, session_id, project_id, context, traffic_policy=None):
+            seen["policy"] = traffic_policy
+            return super().acquire(
+                session_id=session_id, project_id=project_id, context=context
+            )
+
+    def runner(command, session_id, timeout_s, namespace=None):
+        return ExecOutcome(stdout="ok", stderr="", returncode=0, duration_ms=1)
+
+    service = _service(tmp_path, PolicyLeaseManager(), runner)
+    monkeypatch.setattr(mcp_server, "_SERVICE", service)
+
+    out = mcp_server.execute_command(
+        "httpx -u http://app.example.com", "s1", project_id="proj-1",
+        traffic_policy=_POLICY,
+    )
+
+    assert out["returncode"] == 0
+    assert out["traffic_warning"] is None
+    assert seen["policy"] == _POLICY

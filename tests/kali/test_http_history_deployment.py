@@ -33,6 +33,7 @@ def test_kali_environment_exposes_the_capture_knobs():
     assert env["PYTHONPATH"] == "/opt"
     for key in (
         "KALI_HTTP_CAPTURE_ENABLED",
+        "KALI_HTTP_GOVERNOR_ENABLED",
         "KALI_HTTP_MAX_BODY_BYTES",
         "KALI_HTTP_NAMESPACE_POOL",
         "KALI_HTTP_LEASE_TTL_S",
@@ -127,3 +128,21 @@ def test_kali_environment_exposes_the_rate_limit_artifact_knobs():
     env = _compose()["services"]["kali"]["environment"]
     assert env["RATE_LIMIT_ARTIFACT_RETENTION_S"] == "0"
     assert env["RATE_LIMIT_ARTIFACT_MAX_BYTES"] == "268435456"
+
+
+def test_kali_environment_exposes_the_egress_governor_knob():
+    """#238 Task 7: capture and governance are SEPARATE switches. The governor
+    defaults ON (a deployment that cannot enforce a policy must not silently
+    release unthrottled traffic), and an operator can disable it explicitly."""
+    env = _compose()["services"]["kali"]["environment"]
+    assert env["KALI_HTTP_GOVERNOR_ENABLED"] == "true"
+
+
+def test_entrypoint_starts_the_proxy_for_capture_or_governance():
+    """The proxy process serves BOTH planes: it must come up when either is
+    enabled, or a capture-off deployment would have no governor at all."""
+    script = (Path(__file__).resolve().parents[2] / "kali" / "entrypoint.sh").read_text(
+        encoding="utf-8"
+    )
+    assert "KALI_HTTP_GOVERNOR_ENABLED" in script
+    assert 'for _flag in "$CAPTURE_ENABLED" "$GOVERNOR_ENABLED"' in script

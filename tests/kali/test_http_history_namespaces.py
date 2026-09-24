@@ -116,6 +116,40 @@ def test_status_reports_pool_state(tmp_path):
     assert status["available"] == 1
 
 
+_POLICY = {
+    "target_key": "app.example.com",
+    "host_patterns": ["app.example.com"],
+    "rate_per_s": 2.0,
+    "burst": 1,
+    "max_concurrency": 1,
+    "min_delay_ms": 500.0,
+    "source": "measured-transition",
+    "version": "traffic-policy/v1",
+}
+
+
+def test_a_lease_registers_the_traffic_policy_beside_its_capture_context(tmp_path):
+    """#238 Task 7: the policy rides the SAME source-address registration the
+    proxy already resolves, so the governor needs no second lookup channel."""
+    manager = _manager(tmp_path)
+    lease = manager.acquire(
+        session_id="s1", project_id="proj-1", context=CaptureContext(exec_id="e1"),
+        traffic_policy=_POLICY,
+    )
+    registration = manager.registry.lookup_registration(lease.source_ip)
+    assert registration.project_id == "proj-1"
+    assert registration.capture_context.exec_id == "e1"
+    assert registration.traffic_policy == _POLICY
+
+
+def test_a_lease_without_a_policy_keeps_the_legacy_registration(tmp_path):
+    manager = _manager(tmp_path)
+    lease = manager.acquire(
+        session_id="s1", project_id="proj-1", context=CaptureContext(exec_id="e1")
+    )
+    assert manager.registry.lookup_registration(lease.source_ip).traffic_policy is None
+
+
 class RecordingForwarder:
     """Stands in for the DNS forwarder: records which gateways were served."""
 

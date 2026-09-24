@@ -12,6 +12,8 @@ a run can never look fully captured when it was not.
 """
 from __future__ import annotations
 
+import inspect
+
 from polymerhus.recon.domain import pod
 from polymerhus.recon.domain.types import ExecResult, JobSpec
 
@@ -151,3 +153,123 @@ def test_export_declares_an_uncaptured_exec_without_pretending():
         "refs": 0,
         "warning": None,
     }
+
+
+# --- #238 Task 7: the governed exec seam ------------------------------------------
+
+_POLICY = {
+    "target_key": "app.example.com",
+    "host_patterns": ["app.example.com"],
+    "rate_per_s": 2.0,
+    "burst": 1,
+    "max_concurrency": 1,
+    "min_delay_ms": 500.0,
+    "source": "measured-transition",
+    "version": "traffic-policy/v1",
+}
+
+
+def test_the_pod_passes_the_traffic_policy_beside_the_capture_context():
+    seen = {}
+
+    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
+        seen["capture"] = capture_context
+        seen["policy"] = traffic_policy
+        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
+
+    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
+
+    assert out["export"].verdict == "success"
+    assert seen["policy"] == _POLICY
+    assert seen["capture"] is not None
+    # The policy is NOT a fifth capture field: it rides its own MCP argument.
+    assert "traffic_policy" not in seen["capture"].as_mcp_args()
+
+
+def test_the_policy_survives_capture_being_killed_by_config(monkeypatch):
+    """`POD_HTTP_CAPTURE=0` disables recording; it must never disarm a policy."""
+    seen = {}
+
+    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
+        seen["capture"] = capture_context
+        seen["policy"] = traffic_policy
+        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
+
+    monkeypatch.setattr(pod, "POD_HTTP_CAPTURE", False)
+    _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
+
+    assert seen["capture"] is None
+    assert seen["policy"] == _POLICY
+
+
+def test_a_pod_without_a_policy_sends_none():
+    seen = {}
+
+    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
+        seen["policy"] = traffic_policy
+        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
+
+    _graph(exec_fn).invoke(_state())
+    assert seen["policy"] is None
+
+
+def test_a_seam_without_the_policy_parameter_still_runs_and_declares_it():
+    """Legacy fakes keep working, but a dropped policy is DISCLOSED, never
+    silently assumed to have been enforced."""
+    calls = []
+
+    def exec_fn(command, session_id, timeout_s, capture_context=None):
+        calls.append(command)
+        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
+
+    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
+
+    assert out["export"].verdict == "success"
+    assert len(calls) == 1
+    assert out["export"].stats["traffic"] == {
+        "sent": False,
+        "returncode": 0,
+        "warning": None,
+    }
+
+
+def test_the_export_declares_the_governed_outcome():
+    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
+        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
+
+    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
+    assert out["export"].stats["traffic"] == {
+        "sent": True,
+        "returncode": 0,
+        "warning": None,
+    }
+
+
+def test_a_governor_refusal_is_exported_as_a_loud_warning():
+    def exec_fn(command, session_id, timeout_s, capture_context=None, traffic_policy=None):
+        return ExecResult(
+            stdout="", stderr="governor unavailable", returncode=78, duration_ms=0,
+            traffic_warning="governor unavailable: proxy not reachable",
+        )
+
+    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
+
+    assert out["export"].verdict == "failed"
+    assert out["export"].stats["traffic"]["warning"] == (
+        "governor unavailable: proxy not reachable"
+    )
+    assert out["export"].stats["traffic"]["returncode"] == 78
+
+
+def test_the_mcp_exec_result_carries_the_traffic_warning():
+    result = pod._exec_result_from_artifact(
+        {"returncode": 78, "stderr": "refused", "traffic_warning": "governor unavailable"}
+    )
+    assert result.returncode == 78
+    assert result.traffic_warning == "governor unavailable"
+
+
+def test_the_default_exec_seam_declares_both_optional_channels():
+    parameters = inspect.signature(pod.default_exec_fn).parameters
+    assert "capture_context" in parameters
+    assert "traffic_policy" in parameters

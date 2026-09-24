@@ -174,6 +174,7 @@ class NamespaceLeaseManager:
         session_id: str,
         project_id: str,
         context: CaptureContext,
+        traffic_policy: dict | None = None,
         ttl_s: int | None = None,
         now: float | None = None,
     ) -> NamespaceLease:
@@ -212,7 +213,9 @@ class NamespaceLeaseManager:
             )
         try:
             self.backend.create(namespace, source_ip)
-            self.registry.register(source_ip, project_id, context, ttl_s=ttl)
+            self.registry.register(
+                source_ip, project_id, context, traffic_policy=traffic_policy, ttl_s=ttl
+            )
         except Exception:
             with self._cond:
                 self._sessions.discard(session_id)

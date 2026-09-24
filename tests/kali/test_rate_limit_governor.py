@@ -1,0 +1,277 @@
+"""#238 Task 7 - the shared per-target egress governor.
+
+One asynchronous token bucket per `(project_id, target_key)`: every concurrent
+namespace lease for the same target consumes the SAME allowance, different
+targets and projects stay independent, and a material policy change replaces
+the limits without ever granting more traffic than the new policy allows.
+
+Determinism: the monotonic clock and the async waiter are injected, so "wait
+for the refill" is an arithmetic assertion, never a sleep. The waiter advances
+the fake clock by exactly the amount it was asked to wait.
+"""
+from __future__ import annotations
+
+import asyncio
+
+import pytest
+
+from kali.http_history.governor import TargetGovernor, validate_traffic_policy
+
+
+class FakeClock:
+    def __init__(self, start: float = 1000.0):
+        self.now = start
+
+    def __call__(self) -> float:
+        return self.now
+
+    def advance(self, seconds: float) -> None:
+        self.now += seconds
+
+
+class FakeSleeper:
+    """Records every wait and advances the fake clock by exactly that amount."""
+
+    def __init__(self, clock: FakeClock):
+        self.clock = clock
+        self.waits: list[float] = []
+
+    async def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+        self.clock.advance(seconds)
+
+
+class BlockingSleeper(FakeSleeper):
+    """Blocks on its FIRST wait (so the caller can cancel it), then behaves."""
+
+    def __init__(self, clock: FakeClock):
+        super().__init__(clock)
+        self.gate = asyncio.Event()
+        self.blocked = False
+
+    async def __call__(self, seconds: float) -> None:
+        self.waits.append(seconds)
+        if not self.blocked:
+            self.blocked = True
+            await self.gate.wait()
+        else:
+            self.clock.advance(seconds)
+
+
+def _policy(**overrides) -> dict:
+    base = {
+        "target_key": "app.example.com",
+        "host_patterns": ["app.example.com"],
+        "rate_per_s": 2.0,
+        "burst": 1,
+        "max_concurrency": 1,
+        "min_delay_ms": 500.0,
+        "source": "measured-transition",
+        "version": "traffic-policy/v1",
+    }
+    base.update(overrides)
+    return base
+
+
+def _governor(clock, sleeper) -> TargetGovernor:
+    return TargetGovernor(clock=clock, sleeper=sleeper)
+
+
+def _acquire(governor, policy, *, project="p1", host="app.example.com"):
+    return asyncio.run(governor.acquire(project, policy, host))
+
+
+def test_burst_tokens_are_consumed_before_any_wait():
+    clock, sleeper = FakeClock(), None
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+
+    decisions = [_acquire(governor, _policy(rate_per_s=1.0, burst=3)) for _ in range(3)]
+
+    assert [d.governed for d in decisions] == [True, True, True]
+    assert [d.waited_s for d in decisions] == [0.0, 0.0, 0.0]
+    assert sleeper.waits == []
+
+
+def test_the_next_request_waits_for_the_refill_the_bucket_owes():
+    clock, sleeper = FakeClock(), None
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+
+    first = _acquire(governor, _policy(rate_per_s=2.0, burst=1))
+    second = _acquire(governor, _policy(rate_per_s=2.0, burst=1))
+
+    assert first.waited_s == 0.0
+    assert second.governed is True
+    assert second.waited_s == pytest.approx(0.5)
+    assert sleeper.waits == pytest.approx([0.5])
+
+
+def test_two_concurrent_pods_of_one_project_and_target_share_one_bucket():
+    """The Review Focus pin: concurrent namespace leases for one target consume
+    ONE bucket, so the offered rate is aggregate, not per-pod."""
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1.0, burst=1)
+
+    async def scenario():
+        return await asyncio.gather(
+            governor.acquire("p1", policy, "app.example.com"),
+            governor.acquire("p1", policy, "app.example.com"),
+        )
+
+    decisions = asyncio.run(scenario())
+
+    assert [d.governed for d in decisions] == [True, True]
+    # Exactly one caller paid the refill: two pods cannot both spend the burst.
+    assert sleeper.waits == pytest.approx([1.0])
+
+
+def test_different_targets_and_projects_keep_independent_buckets():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1.0, burst=1)
+
+    # p1/app.example.com: the first call spends the burst, the second pays.
+    _acquire(governor, policy, project="p1", host="app.example.com")
+    assert _acquire(governor, policy, project="p1").waited_s == pytest.approx(1.0)
+
+    # Two DIFFERENT buckets start full, so neither waits for the other.
+    other_policy = _policy(target_key="other.example.com", host_patterns=["other.example.com"])
+    assert _acquire(governor, other_policy, host="other.example.com").waited_s == 0.0
+    assert _acquire(governor, policy, project="p2", host="app.example.com").waited_s == 0.0
+    assert sleeper.waits == pytest.approx([1.0])
+
+
+def test_a_material_policy_change_uses_the_new_rate_immediately():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+
+    _acquire(governor, _policy(rate_per_s=1.0, burst=1))
+    relaxed = _acquire(governor, _policy(rate_per_s=10.0, burst=1))
+
+    # The bucket now refills at the NEW rate: 1/10 s, not 1/1 s.
+    assert relaxed.waited_s == pytest.approx(0.1)
+    assert sleeper.waits == pytest.approx([0.1])
+
+    # ... and a stricter replacement slows the next wait down again.
+    _acquire(governor, _policy(rate_per_s=2.0, burst=1))
+    assert sleeper.waits[-1] == pytest.approx(0.5)
+
+
+def test_a_narrower_burst_replacement_never_gifts_the_old_allowance():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+
+    _acquire(governor, _policy(rate_per_s=1.0, burst=4))  # 3 tokens left over
+    narrow = _policy(rate_per_s=1.0, burst=1)
+
+    first = _acquire(governor, narrow)  # the new burst of 1, immediately
+    second = _acquire(governor, narrow)  # ... and nothing more
+
+    assert first.waited_s == 0.0
+    assert second.waited_s == pytest.approx(1.0)
+    assert sleeper.waits == pytest.approx([1.0])
+
+
+def test_a_foreign_host_is_not_governed_by_this_targets_policy():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1.0, burst=1)
+
+    _acquire(governor, policy, host="app.example.com")
+    foreign = _acquire(governor, policy, host="unrelated.example.net")
+
+    assert foreign.governed is False
+    assert sleeper.waits == []
+
+
+def test_host_patterns_match_exactly_and_by_wildcard():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(
+        target_key="example.com", host_patterns=["example.com", "*.example.com"],
+        rate_per_s=1.0, burst=1,
+    )
+
+    assert _acquire(governor, policy, host="example.com").governed is True
+    assert _acquire(governor, policy, host="api.example.com").governed is True
+    assert _acquire(governor, policy, host="example.com.evil.net").governed is False
+    assert _acquire(governor, policy, host="example.net").governed is False
+
+
+def test_an_empty_host_pattern_list_governs_whatever_this_project_sends():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    assert _acquire(governor, _policy(host_patterns=[]), host=None).governed is True
+
+
+def test_an_unvalidated_policy_is_never_enforced():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+
+    assert validate_traffic_policy(_policy()) is not None
+    for broken in (
+        None,
+        {},
+        _policy(version="traffic-policy/v2"),
+        _policy(target_key=""),
+        _policy(rate_per_s=0),
+        _policy(burst=0),
+        "not-a-policy",
+    ):
+        assert validate_traffic_policy(broken) is None
+        assert _acquire(governor, broken).governed is False
+    assert sleeper.waits == []
+
+
+def test_a_cancelled_waiter_does_not_wedge_the_bucket():
+    """The lock is released BEFORE the sleep: a cancelled waiter must not leave
+    the per-target bucket unusable for the pods that follow it."""
+    clock = FakeClock()
+    sleeper = BlockingSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1.0, burst=1)
+
+    async def scenario():
+        await governor.acquire("p1", policy, "app.example.com")
+        cancelled = asyncio.create_task(
+            governor.acquire("p1", policy, "app.example.com")
+        )
+        for _ in range(1000):
+            if sleeper.waits:
+                break
+            await asyncio.sleep(0)
+        cancelled.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await cancelled
+        return await governor.acquire("p1", policy, "app.example.com")
+
+    followup = asyncio.run(scenario())
+
+    assert followup.governed is True
+    # The cancelled waiter consumed no token and advanced no clock: the next
+    # caller owes exactly the same refill.
+    assert followup.waited_s == pytest.approx(1.0)
+    assert sleeper.waits == pytest.approx([1.0, 1.0])
+
+
+def test_status_reports_the_governed_buckets():
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    _acquire(governor, _policy())
+    _acquire(governor, _policy(target_key="other.example.com",
+                               host_patterns=["other.example.com"]),
+             host="other.example.com")
+    status = governor.status()
+    assert status["buckets"] == 2
+    assert sorted(status["keys"]) == ["p1/app.example.com", "p1/other.example.com"]

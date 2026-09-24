@@ -55,6 +55,11 @@ class ExecResult(BaseModel):
     exec_id: str = ""
     http_artifact_refs: list[str] = Field(default_factory=list)
     capture_warning: str | None = None
+    # #238 Task 7: additive governance metadata. `traffic_warning` is set when an
+    # armed TrafficPolicy could NOT be enforced - the command was refused
+    # (returncode 78) and nothing egressed. A default of None is what every
+    # pre-#238 caller and fake already means.
+    traffic_warning: str | None = None
 
 
 class CaptureContext(BaseModel):
