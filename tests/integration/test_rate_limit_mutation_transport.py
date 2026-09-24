@@ -182,3 +182,40 @@ def test_the_model_facing_mutation_cannot_carry_traffic_numbers():
     for field in ("rate_per_s", "max_concurrency", "budget", "requests"):
         with pytest.raises(ValidationError):
             QueryMutation(name="q", value="v", mutation_id="m", **{field: 1})
+
+
+# --- the adversarial regression gate (#238 Task 11) -------------------------------
+
+
+def test_variant_reaches_target_request():
+    """Kills: "serialize the canonical request instead of the `variant`".
+
+    The regression is subtle and was real: the payload still carried the
+    experiment, the manifest still named the variant, and the evidence still
+    claimed a bypass - while the request that reached the target was the
+    canonical one. The assertion is therefore on the TARGET-BOUND request
+    (`vegeta_target()`), not on the spec that described it.
+    """
+    variant = MutationSpec(
+        variant_id="e2e-endpoint-shape-1",
+        family="endpoint-shape",
+        payload=PathMutation(mutation_id="e2e-path-1", suffix="/alt"),
+    )
+    spec = ExperimentSpec(
+        experiment_id="exp-variant", phase="steady", url=CANONICAL_URL,
+        method="GET", headers={"Accept": "application/json"},
+        rate_per_s=5.0, duration_s=2.0, requests=10, variant=variant,
+    )
+
+    payload = kali_spec_payload(spec, project_id="p", run_id="r")
+    kali_spec = KaliExperimentSpec.model_validate(payload)
+    target = kali_spec.vegeta_target()
+
+    # The EFFECTIVE request names the transported mutation (the payload's own
+    # id), not merely the variant that motivated it.
+    assert kali_spec.effective_request.mutation_id == "e2e-path-1"
+    assert target["url"] != CANONICAL_URL, (
+        "the canonical request reached the target even though a variant was "
+        "admitted: the evidence would have certified a bypass that never happened"
+    )
+    assert target["url"] == kali_spec.effective_request.url

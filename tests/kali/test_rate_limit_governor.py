@@ -413,3 +413,67 @@ def test_an_admitted_decision_carries_a_permit_and_an_unarmed_one_does_not():
 def test_the_supported_policy_versions_are_advertised():
     status = TargetGovernor(clock=FakeClock(), sleeper=FakeSleeper(FakeClock())).status()
     assert "traffic-policy/v2" in status["supported_policy_versions"]
+
+
+# --- the adversarial regression gate (#238 Task 11) -------------------------------
+#
+# One test per deliberate one-line regression (plan Task 11 Step 4). Each is
+# named exactly as the gate table names it, so "does the suite kill this
+# mutation?" is answerable by `pytest -k <name>`; the LIVE twins of the timing
+# rows run in `tests/e2e/test_rate_limit_admission_e2e.py`.
+
+
+def test_same_project_different_source_ips_share_live_bucket():
+    """Kills: "add `source_ip` to the governor bucket key".
+
+    Two namespaces of ONE project asking for ONE target are paced by ONE token
+    bucket. A key that included the source address would let each namespace
+    spend the whole allowance, so the second call would return immediately.
+    """
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1.0, burst=1, max_concurrency=8)
+
+    first = _acquire(governor, policy, source_ip="10.0.0.2")
+    second = _acquire(governor, policy, source_ip="10.0.0.9")
+
+    assert first.governed is True and second.governed is True
+    assert sleeper.waits, (
+        "the second source address spent the SAME bucket and had to wait; a "
+        "key partitioned by source_ip would have admitted it for free")
+    assert sum(sleeper.waits) == pytest.approx(1.0, abs=1e-6)
+    assert governor.status()["keys"] == ["p1/app.example.com"]
+
+
+def test_live_target_never_exceeds_policy_concurrency():
+    """Kills: "ignore `max_concurrency`".
+
+    The target's peak in-flight is the observable the live twin reads; here the
+    held permits stand in for it. Three concurrent flows under
+    `max_concurrency=2` admit exactly two and hold the third.
+    """
+    clock = FakeClock()
+    sleeper = FakeSleeper(clock)
+    governor = _governor(clock, sleeper)
+    policy = _policy(rate_per_s=1000.0, burst=10, max_concurrency=2)
+
+    async def scenario():
+        held = [
+            await governor.acquire("p1", traffic_policy=policy, context=_ctx())
+            for _ in range(2)
+        ]
+        blocked = asyncio.create_task(
+            governor.acquire("p1", traffic_policy=policy, context=_ctx()))
+        await asyncio.sleep(0.05)
+        peak = governor.status()["inflight"]
+        still_blocked = not blocked.done()
+        await governor.release(held[0].permit)
+        third = await asyncio.wait_for(blocked, timeout=2.0)
+        return len(held), peak, still_blocked, third
+
+    held, peak, still_blocked, third = asyncio.run(scenario())
+    assert held == 2
+    assert peak == 2, "the peak in-flight exceeded the enforced concurrency"
+    assert still_blocked, "a third concurrent flow was over-admitted"
+    assert third.governed is True

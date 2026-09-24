@@ -317,3 +317,30 @@ def test_the_default_exec_seam_declares_both_optional_channels():
     parameters = inspect.signature(pod.default_exec_fn).parameters
     assert "capture_context" in parameters
     assert "traffic_policy" in parameters
+
+
+# --- the adversarial regression gate (#238 Task 11) -------------------------------
+
+
+def test_pod_forwards_mandatory_policy_v2():
+    """Kills: "remove `traffic_policy` from the pod's MCP args".
+
+    The pod is the LAST hand-off before Kali: if the policy stops riding it, an
+    armed run silently becomes unthrottled traffic - the exact failure the
+    feature exists to prevent. The forwarded payload must be the v2 contract
+    (the version Kali enforces), not a policy-less exec.
+    """
+    seen: dict = {}
+
+    def exec_fn(command, session_id, timeout_s, capture_context=None,
+                traffic_policy=None):
+        seen["policy"] = traffic_policy
+        return ExecResult(stdout=FIX_LINE, stderr="", returncode=0, duration_ms=1)
+
+    out = _graph(exec_fn).invoke(_state(extra={"traffic_policy": _POLICY}))
+
+    assert seen["policy"] == _POLICY, "the pod dropped the run's traffic policy"
+    assert seen["policy"]["version"] == "traffic-policy/v2"
+    assert seen["policy"]["rate_per_s"] > 0
+    assert seen["policy"]["max_concurrency"] >= 1
+    assert out["export"].verdict == "success"

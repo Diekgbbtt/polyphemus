@@ -295,3 +295,63 @@ def test_response_and_error_release_the_permit_exactly_once(tmp_path):
     asyncio.run(addon.error(flow))  # the doubled hook must not release twice
     assert len(governor.released) == 1
     assert governor.released[0].permit_id == "perm-1"
+
+
+# --- the adversarial regression gate (#238 Task 11) -------------------------------
+
+
+def test_governor_exception_has_zero_target_egress(tmp_path):
+    """Kills: "return from the addon after a governor exception" (fail-open).
+
+    With a policy ARMED, an enforcement that cannot run must refuse locally. A
+    fail-open return would let the flow continue to the target - traffic that
+    exceeds an allowance nobody could spend - which is the one outcome the
+    governor exists to prevent. Zero egress means the request hook answered
+    locally and recorded nothing.
+    """
+    # The PRODUCTION refusal adapter (the local 503), so the assertion is on the
+    # shipped behaviour, not on a test recorder.
+    addon = HttpHistoryAddon(
+        root=tmp_path,
+        resolver=RegistrationResolver(
+            SourceRegistration("proj-1", CaptureContext(exec_id="e1"), _POLICY)
+        ),
+        governor=RecordingGovernor(explode=True),
+    )
+    flow = FakeFlow(
+        request=FakeMessage(url="https://app.example.com/x?token=SECRET"),
+        response=FakeMessage(status=200, reason="OK"),
+    )
+    flow.response = None
+    asyncio.run(addon.request(flow))
+
+    assert flow.response is not None, (
+        "the exception escaped instead of being refused: the request would "
+        "have egressed ungoverned")
+    assert flow.response.status_code == 503
+    assert b"SECRET" not in flow.response.content
+    assert addon.status()["last_refusal"] == "governor_error"
+    assert addon.status()["recorded"] == 0, "a refused flow was recorded"
+    assert addon.status()["governor_failed"] == 1
+
+
+def test_capture_off_keeps_live_governance(tmp_path):
+    """Kills: "couple governor enablement to the capture flag".
+
+    `KALI_HTTP_CAPTURE_ENABLED=false` disables STORAGE only (spec, Traffic
+    enforcement). An armed policy must still be enforced - and the proxy process
+    must still be up, because the governor rides the same mitmdump.
+    """
+    governor = RecordingGovernor()
+    addon = _governed_addon(tmp_path, governor=governor, enabled=False)
+    flow = FakeFlow(
+        request=FakeMessage(url="https://app.example.com/x"),
+        response=FakeMessage(status=200, reason="OK"),
+    )
+    asyncio.run(addon.request(flow))
+
+    assert governor.calls, (
+        "capture-off disarmed the governor: an armed policy went unenforced")
+    assert addon.status()["governed"] == 1
+    assert addon.status()["recorded"] == 0
+    assert HttpHistoryStore(tmp_path, "proj-1").search([]).artifacts == []

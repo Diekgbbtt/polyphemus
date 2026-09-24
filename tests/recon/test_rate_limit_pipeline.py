@@ -631,6 +631,36 @@ def test_a_fully_pruned_run_records_no_pod_start():
     assert order[-1] == "run_finalized", order
 
 
+def test_low_rate_prunes_intensive_runners_and_traffic():
+    """Kills: "start `arjun` or `ffuf` below the admission threshold".
+
+    Two halves, one test: the pruned runners are never INVOKED (no pod, so no
+    traffic from them), and the traffic that does run carries the conservative
+    policy the mapping measured - never an unthrottled default. The live twin
+    (`tests/e2e/test_rate_limit_admission_e2e.py`) reads the same conclusion off
+    the target's own counters.
+    """
+    events: list = []
+    registry, seen = _run(
+        events,
+        _orchestrator(events, profile=_profile(rate=1.0)),
+        job_subset=["subfinder", "httpx", "katana", "ffuf", "arjun"],
+    )
+
+    materialized = {
+        job for phase in registry.run_stats["traffic_admission"]["materialized_phases"]
+        for job in phase
+    }
+    assert "ffuf" not in materialized and "arjun" not in materialized
+    assert "job:ffuf" not in events and "job:arjun" not in events
+
+    # The jobs that DID run carried the measured conservative policy, so their
+    # target traffic is paced at the safe rate (never an unthrottled default).
+    for tool in ("httpx", "katana"):
+        assert tool in seen, f"{tool} should still run under a bounded policy"
+        assert seen[tool]["extra"]["traffic_policy"]["rate_per_s"] == 1.0
+
+
 def test_bounded_and_intensive_runners_are_refused_without_a_policy():
     """No enforceable policy: `bounded_http` AND `request_intensive` runners are
     both refused while `non_target` work continues."""

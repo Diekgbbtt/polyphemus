@@ -70,7 +70,7 @@ if [ "$PROXY_ENABLED" = "true" ]; then
         --set "confdir=$MITM_CONFDIR" \
         --set block_global=false \
         "${MITM_TLS_ARGS[@]}" \
-        -s /opt/kali/http_history/addon_entry.py \
+        -s "${KALI_HTTP_ADDON_ENTRY:-/opt/kali/http_history/addon_entry.py}" \
         >"$MITM_LOG" 2>&1 &
       PROXY_PID="$!"
       # readiness: the proxy port must accept before we serve the MCP surface

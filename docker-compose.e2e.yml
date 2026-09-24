@@ -229,3 +229,56 @@ services:
       timeout: 3s
       retries: 20
       start_period: 3s
+  # --- #238 (Task 11): the E2E-only FAILING governor ------------------------
+  # The adversarial gate needs a Kali whose armed governor actually throws.
+  # Production has no fault switch for that (a switch would be a second way to
+  # arm the very failure the feature prevents), so the fault lives in the test
+  # tier: this service starts the SAME image and entrypoint with mitmdump
+  # loading `tests/e2e/failing_governor_addon_entry.py`, which imports the
+  # production addon and injects an exploding governor. Everything else -
+  # capture, namespaces, MCP surface - is the shipped code path.
+  kali-failing-governor:
+    image: polymerhus-kali:latest
+    entrypoint: ["/opt/kali/entrypoint.sh"]
+    environment:
+      PYTHONPATH: /opt
+      KALI_HTTP_HISTORY_ROOT: /data
+      KALI_HTTP_CAPTURE_ENABLED: "true"
+      KALI_HTTP_GOVERNOR_ENABLED: "true"
+      KALI_HTTP_ADDON_ENTRY: /opt/kali-e2e/failing_governor_addon_entry.py
+      KALI_HTTP_PROXY_HOST: 127.0.0.1
+      KALI_HTTP_PROXY_PORT: "8080"
+      KALI_HTTP_REGISTRY_PATH: /run/kali-http/registry.sqlite3
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    volumes:
+      - ./kali:/opt/kali:ro
+      - ./tests/e2e/failing_governor_addon_entry.py:/opt/kali-e2e/failing_governor_addon_entry.py:ro
+    networks: [polymerhus-net]
+  # Task 11 also proves capture-off does NOT disarm the governor: the shipped
+  # entrypoint starts mitmdump when EITHER plane is on, and this service turns
+  # capture off while governance stays armed.
+  kali-capture-off:
+    image: polymerhus-kali:latest
+    entrypoint: ["/opt/kali/entrypoint.sh"]
+    environment:
+      PYTHONPATH: /opt
+      KALI_HTTP_HISTORY_ROOT: /data
+      KALI_HTTP_CAPTURE_ENABLED: "false"
+      KALI_HTTP_GOVERNOR_ENABLED: "true"
+      KALI_HTTP_PROXY_HOST: 127.0.0.1
+      KALI_HTTP_PROXY_PORT: "8080"
+      KALI_HTTP_REGISTRY_PATH: /run/kali-http/registry.sqlite3
+    cap_add:
+      - NET_ADMIN
+      - SYS_ADMIN
+    security_opt:
+      - seccomp:unconfined
+      - apparmor:unconfined
+    volumes:
+      - ./kali:/opt/kali:ro
+    networks: [polymerhus-net]
