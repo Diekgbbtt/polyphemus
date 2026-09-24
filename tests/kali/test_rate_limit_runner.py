@@ -49,6 +49,38 @@ def _spec(**overrides) -> dict:
     return spec
 
 
+def test_vegeta_rate_never_emits_a_decimal_numerator():
+    """#238 Task 8 (found live): vegeta parses the rate numerator with
+    `strconv.Atoi`, so `-rate=1.0/s` is REJECTED ("invalid value \\"1.0/s\\" for
+    flag -rate") - and every integral rate the controller derives renders as
+    `1.0`, `2.0`, `5.0`, ... The rate has to be an integer FRACTION per second,
+    and the denominator must count SECONDS: `1500/1000ms` is 1500 rps, not
+    1.5 rps - a 1000x runaway of the operator's budget (measured live)."""
+    assert runner_module.vegeta_rate(1.0) == "1/1s"
+    assert runner_module.vegeta_rate(20.0) == "20/1s"
+    assert runner_module.vegeta_rate(1.5) == "3/2s"
+    assert runner_module.vegeta_rate(0.25) == "1/4s"
+    for rate in (0.5, 1.0, 1.5, 2.0, 5.0, 12.5):
+        numerator, denominator = runner_module.vegeta_rate(rate).rstrip("s").split("/")
+        assert int(numerator) / int(denominator) == rate
+
+
+def test_the_vegeta_attack_argv_carries_a_parseable_rate(monkeypatch, tmp_path):
+    run = _FakeRun()
+    store = RateLimitArtifactStore(tmp_path)
+    result = runner_module.run_experiment(
+        _spec(rate_per_s=1.0, duration_s=1.0, requests=1), run=run, store=store
+    )
+    assert result["outcome"] == "measured"
+    attack = next(argv for argv in run.calls if argv[1] == "attack")
+    rate = next(arg for arg in attack if arg.startswith("-rate="))
+    assert rate == "-rate=1/1s"
+    assert not rate.endswith(".0/s")
+    # The target file is JSONL: vegeta's `-format` defaults to the plain
+    # `METHOD URL` form, which rejects it with "bad target".
+    assert "-format=json" in attack
+
+
 def _hit_jsonl() -> str:
     hits = [
         {
@@ -192,7 +224,9 @@ def test_runner_uses_a_private_target_file_and_removes_every_scratch_file(tmp_pa
 
     assert run.target_existed and run.target_mode == 0o600
     # Credentials were handed to Vegeta through that private target file.
-    assert run.target_headers["Authorization"] == "Bearer supersecret-token"
+    # Vegeta decodes `header` into http.Header (map[string][]string): a bare
+    # string value is a parse error at the wire, so the list shape is pinned.
+    assert run.target_headers["Authorization"] == ["Bearer supersecret-token"]
     # No target/GOB file survives the experiment.
     leftovers = [p for p in workdir_root.rglob("*") if p.is_file()]
     assert leftovers == []

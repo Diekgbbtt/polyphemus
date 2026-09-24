@@ -61,10 +61,16 @@ class KaliExperimentSpec(_Closed):
         Vegeta's target file is a JSON object (or array of objects) with
         `method`, `url`, `header` and `body`. No body is expressible here by
         design.
+
+        Each header value is a LIST: Vegeta decodes the field into
+        `http.Header` (`map[string][]string`) and rejects a bare string with
+        `parse error: expected [ near offset ...`.
         """
         target: dict = {"method": self.method, "url": self.url}
         if self.headers:
-            target["header"] = dict(self.headers)
+            target["header"] = {
+                name: [value] for name, value in self.headers.items()
+            }
         return target
 
 

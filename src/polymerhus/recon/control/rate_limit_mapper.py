@@ -680,9 +680,16 @@ def judge_bypass(
     variant_accepted = (
         variant.outcome == "measured" and variant.rejection_ratio <= _EPSILON
     )
+    # The differential only means anything at a CONSTANT offered rate: a
+    # variant measured below the canonical rate is accepted because LESS
+    # traffic was offered, not because the mutation changed the limiter's
+    # state. Without this the gate confirms an unmutated replay as a bypass
+    # (found live by the #238 Task 8 E2E).
+    same_rate = abs(variant.offered_rate_per_s - canonical.offered_rate_per_s) <= _EPSILON
     material = (
         canonical_rejected
         and variant_accepted
+        and same_rate
         and variant.rejection_ratio < canonical.rejection_ratio
     )
     refusal_bodies = set(canonical.body_fingerprint)
@@ -701,6 +708,10 @@ def judge_bypass(
     )
     if gates.all_passed:
         outcome = "confirmed"
+    elif not same_rate:
+        # A confounded differential (a different offered rate) proves nothing
+        # either way: it is neither a bypass nor evidence of no bypass.
+        outcome = "inconclusive"
     elif canonical_rejected and variant.outcome == "measured" and not material:
         # The limiter behaved exactly as it did for the canonical request.
         outcome = "no_bypass"

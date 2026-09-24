@@ -31,6 +31,7 @@ import subprocess
 import sys
 import tempfile
 from dataclasses import dataclass
+from fractions import Fraction
 from pathlib import Path
 from typing import Any, Callable, Mapping, Sequence
 
@@ -257,6 +258,24 @@ def _failure(parsed: KaliExperimentSpec, error: str) -> dict:
     return result.model_dump(mode="json")
 
 
+def vegeta_rate(rate_per_s: float) -> str:
+    """Vegeta's `-rate` value for a requests-per-second rate.
+
+    Vegeta parses the numerator with `strconv.Atoi`, so a DECIMAL numerator is
+    rejected outright (`invalid value "1.0/s" for flag -rate`) - every integral
+    rate the controller derives (`1.0`, `2.0`, `5.0`, ...) would fail. The rate
+    is therefore re-expressed as an exact integer FRACTION per second:
+    `1.5/s` -> `3/2s`, `20/s` -> `20/1s`.
+
+    The denominator counts SECONDS (`3/2s` is three requests per two seconds).
+    Scaling the numerator into a sub-second unit instead would multiply the
+    offered rate by that unit's factor - the exact runaway the operator budget
+    exists to prevent.
+    """
+    fraction = Fraction(float(rate_per_s)).limit_denominator(1_000_000)
+    return f"{fraction.numerator}/{fraction.denominator}s"
+
+
 def run_experiment(
     spec: Mapping,
     *,
@@ -291,16 +310,23 @@ def run_experiment(
     try:
         # 0600 target file: credentials reach Vegeta through the filesystem, and
         # never through argv (which is visible in the process table).
+        # The trailing newline is LOAD-BEARING: vegeta's reader is line-based
+        # and drops a final line that is not newline-terminated ("no targets to
+        # attack" otherwise).
         write_private_file(
-            target_file, json.dumps(parsed.vegeta_target()).encode("utf-8")
+            target_file, (json.dumps(parsed.vegeta_target()) + "\n").encode("utf-8")
         )
         version = _vegeta_version(run)
         attack = _call(
             run,
             [
                 "vegeta", "attack",
+                # The target file is one JSON object per line; vegeta's
+                # `-format` defaults to "http" (plain `METHOD URL` lines), so
+                # the JSON form has to be requested explicitly.
+                "-format=json",
                 f"-targets={target_file}",
-                f"-rate={parsed.rate_per_s}/s",
+                f"-rate={vegeta_rate(parsed.rate_per_s)}",
                 f"-duration={parsed.duration_s}s",
                 f"-workers={parsed.concurrency}",
                 f"-timeout={parsed.timeout_s}s",
@@ -468,4 +494,5 @@ __all__ = [
     "main",
     "run_experiment",
     "sha256_hex",
+    "vegeta_rate",
 ]

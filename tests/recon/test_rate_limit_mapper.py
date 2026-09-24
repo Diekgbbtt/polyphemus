@@ -472,3 +472,22 @@ def test_an_unstable_repeat_is_inconclusive():
 
     assert finding.outcome == "inconclusive"
     assert finding.gates.reproduced is False
+
+
+def test_a_variant_offered_at_a_different_rate_is_never_a_confirmed_bypass():
+    """#238 Task 8 (found LIVE): the gate used to compare a refusal measured at
+    one offered rate with an acceptance measured at a LOWER rate, and called the
+    difference a bypass. With the mutation transport unwired, the harness's own
+    variant probe then "confirmed" an unmutated replay - the variant was
+    accepted because less traffic was offered, not because anything changed.
+    A confounded differential proves neither a bypass nor its absence."""
+    canonical = _ev("steady-1", "steady", 2.0, rejected=3, requests=6,
+                    codes={"200": 3, "429": 3}, headers=("retry-after",))
+    variant = _ev("variant-0", "steady", 1.0, requests=3)  # fewer requests/s
+    repeat = _ev("variant-1", "steady", 1.0, requests=3)
+
+    finding = judge_bypass(canonical, variant, repeat)
+
+    assert finding.outcome == "inconclusive"
+    assert finding.gates.material_state_change is False
+    assert finding.gates.all_passed is False

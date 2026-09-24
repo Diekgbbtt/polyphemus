@@ -450,9 +450,11 @@ If a controlled measurement of per-responsibility quality before/after splitting
 
 ## AMV-17 - adaptive rate-limit degradation: a throttled tool must back off, not fail silently
 
-**Status:** proposed.
+**Status:** largely superseded by #238 (2026-09-24); the residual retry ladder is still proposed.
 **Raised:** 2026-07-22, from the arjun non-determinism fix (`agent/recon/jobs.py`, the `arjun` JobSpec).
-**Relates to:** the pod retry gate (`agent/recon/pod.py`), the job-level LLM steering (`agent/recon/job_agent.py`), the triager (`skills/recon/triager/writing-observations/SKILL.md`), and the steering-signal channel (`agent/recon/pipeline.py` / `agent/recon/steering.py`). Compounds AMV-14 (a job that returns nothing is indistinguishable from one that worked) - a throttled tool is precisely that failure mode with a known cause.
+**Relates to:** the pod retry gate (`agent/recon/pod.py`), the per-job preprocess seam (`agent/recon/job_agent.py`), the triager (`skills/recon/triager/writing-observations/SKILL.md`). Compounds AMV-14 (a job that returns nothing is indistinguishable from one that worked) - a throttled tool is precisely that failure mode with a known cause.
+
+**#238 update (how the per-target half landed).** The request-path half of this item shipped as the #238 rate-limit mapping. A deterministic, budget-bounded controller measures the target's behaviour after auth and before phase 0, stores one `RateProfile` under `recon_runs.stats["rate_limit"]`, and derives a conservative `TrafficPolicy`; every HTTP job carries it in `extra["traffic_policy"]`, and a SHARED per-target egress governor in Kali's transparent proxy (`kali/http_history/governor.py`, one token bucket per `(project_id, target_key)`) makes the budget aggregate across the job's concurrent pods - which is this item's point 4, now enforced rather than assumed. The one-per-target crawl guard plus `min_delay_ms` action pacing covers the Steel path (browser sub-requests are not individually governed). What remains of AMV-17 is the *within-attempt* ladder: a pod still retries a failed tool identically (`pod.gate` → `configurator` up to `MAX_POD_ITERS`), because the measured policy is a per-RUN estimate with no mid-run remapping (#238 is explicitly not a steering mechanism). Its point 3 (a same-pod feedback path) and the rate-limit signal in the triager's vocabulary are now deliverable as an extension of the `rate_limited` `BlockingSignal` that #238 introduced, not as a new steering channel.
 
 ### Intent
 

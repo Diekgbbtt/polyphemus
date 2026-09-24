@@ -418,6 +418,14 @@ class RateLimitHarness:
     # --- variants --------------------------------------------------------------
 
     def _canonical_rate(self) -> float:
+        # The variant MUST be offered at the rate of the evidence the gate will
+        # compare it against: a differential measured at two different rates is
+        # confounded (the lower rate alone can explain an acceptance), which
+        # `judge_bypass` refuses. The comparison anchor is `_canonical_evidence`,
+        # so that is what sets the replay rate.
+        canonical = self._canonical_evidence()
+        if canonical is not None:
+            return float(canonical.offered_rate_per_s)
         control = self._control
         if control and (control.threshold_high_per_s or control.threshold_low_per_s):
             return float(control.threshold_high_per_s or control.threshold_low_per_s)

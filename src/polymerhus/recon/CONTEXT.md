@@ -118,7 +118,8 @@ _Avoid_: analyst, classifier.
 
 **Configurator**:
 The role that resolves a Job's command for a target; a `deterministic` template fill by default, or an `agent` mode (the Steel crawl).
-The per-pod steering-fed throttle turn retired with the mid-run steering machinery (#243, D223-12): the configurator node fills the command deterministically and no `rate_profile` input exists - request phases run unthrottled in the interim until the #238 rate-limit work lands its profile-driven configuration, which the still-registered `configurator` session role (`LLM_CONFIGURATOR`) is reserved for.
+The per-pod steering-fed throttle turn retired with the mid-run steering machinery (#243, D223-12): the configurator node fills the command deterministically and no `rate_profile` input exists.
+Traffic shaping is NOT the configurator's job any more - since #238 the run's measured `TrafficPolicy` rides `extra["traffic_policy"]` into the exec seam (and a conservative action-pacing adapter for the Steel crawl), and Kali's shared per-target egress governor enforces it; the still-registered `configurator` session role (`LLM_CONFIGURATOR`) stays reserved.
 _Status_: registered `session` (`LLM_CONFIGURATOR`).
 _Avoid_: planner; mid-run routing.
 

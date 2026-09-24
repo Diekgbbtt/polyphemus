@@ -86,3 +86,31 @@ services:
       timeout: 3s
       retries: 20
       start_period: 5s
+  # --- rate-limit fixture (#238 Task 8) ------------------------------------
+  # The DETERMINISTIC limiter the rate-mapping E2E measures: a known token
+  # bucket on /canonical (stable 429 fingerprint), a route-normalization
+  # variant on the unlimited /canonical/ that serves the SAME resource, and
+  # per-request counters for the aggregate-load assertions. Local by design -
+  # a mapping gate must never aim the load generator at the internet.
+  rate-limit-e2e-target:
+    image: python:3.12-alpine
+    command: ["python", "/srv/rate_limit_e2e_target.py"]
+    environment:
+      PORT: "80"
+      # Capacity 1 at 1 rps: a sustained 1 rps step fits (with the fixture's
+      # documented scheduling tolerance), and 2 rps refuses even in the
+      # mapper's one-second boundary probe. That is the transition the mapper
+      # has to bracket.
+      RATE_PER_S: "1.0"
+      RATE_JITTER_S: "0.15"
+    volumes:
+      - ./tests/e2e/rate_limit_e2e_target.py:/srv/rate_limit_e2e_target.py:ro
+    networks:
+      polymerhus-net:
+        ipv4_address: 172.28.0.23
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:80/counters', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
