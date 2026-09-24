@@ -6,8 +6,8 @@ owns, with every out-of-tree collaborator injected: the reason stretch's
 symbolic render (projection / materialisation / fold family -> `GateInput` ->
 `_compose_gate_prompt`), the tool surface bound onto the orchestrator turn
 (`build_orchestrator_tool_surface` -> the six D67-04 tools, fail-open per
-seam), the role prompts (`_gate_skill` / `_rematch_skill` -> the module-local
-prompts/ files), the observability (`orchestrator_tracing`, fake langfuse), and
+seam), the role prompt (`_gate_skill` -> the module-local
+prompts/ file), the observability (`orchestrator_tracing`, fake langfuse), and
 the ORDER/topology invariants (no new graph nodes, no schema change). The
 reason stretch's materialisation / fold-family maps resolve from the REAL
 fault-KB catalogue (`data/fault-kb.yaml`, 170 entries) where the predicate is
@@ -39,7 +39,6 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     GateInput,
     HuntConfig,
-    MatchVerdict,
     NoteDecision,
     NoteRecord,
     OrchestratorReport,
@@ -57,7 +56,6 @@ from polymerhus.attack.hunting.hunt_store import HuntStore
 from polymerhus.attack.hunting.llm import (
     _compose_gate_prompt,
     _gate_skill,
-    _rematch_skill,
     _render_fold_family,
 )
 from polymerhus.attack.hunting.orchestrator_graph import build_hunting_graph
@@ -69,7 +67,6 @@ from polymerhus.attack.hunting.unit_projection import EdgeInfo, SystemInfo, Unit
 from polymerhus.recon.control.targeted import (
     AnalyserReconRequest,
     ReconScope,
-    TargetedReconResult,
 )
 
 SERVICE_A = "Service:slug:a"
@@ -206,29 +203,17 @@ def test_gate_skill_mount_serves_the_cognitive_architecture():
     assert "start the next iteration" not in body.lower()
 
 
-# --- C14: the rematch skill mount resolves (success) ---------------------------
-
-def test_rematch_skill_mount_serves_the_d2_discipline():
-    """`_rematch_skill()` serves the rematch mount, distinct from the gate
-    body, pinning the D2 three-valued verdict and the hard depth-1 cap."""
-    body = _rematch_skill()
-    assert not body.startswith("---")
-    assert len(body) > 500                                 # the full prompt, not a stub
-    assert body != _gate_skill()                           # a distinct mount
-    assert "three-valued" in body                          # the D2 verdict
-    assert "depth-1 cap" in body                           # the hard cap
-
+# --- C14: the actor composes the phase turn against the static system prompt ---
 
 def test_actor_composes_system_message_plus_turn():
     """The composed-turn pattern (spec 5, #187): the gate skill is the thread's
     ONE static system prompt (set once at `_ensure_started`), so the gate/ratify/
     note phase turns return ONLY the phase's HumanMessage - never a per-turn
     SystemMessage copy (the #187 fix that stopped stacking byte-identical skill
-    copies). The rematch turn keeps the per-turn [SystemMessage, HumanMessage]
-    shape (the rematch judge is not a phase node of the static thread)."""
-    from langchain_core.messages import HumanMessage, SystemMessage
+    copies)."""
+    from langchain_core.messages import HumanMessage
 
-    from polymerhus.attack.hunting.actors import _GATE_KIND, _REMATCH_KIND
+    from polymerhus.attack.hunting.actors import _GATE_KIND
     from polymerhus.app.llm.actor import AgentMessage
 
     actor = HuntOrchestratorActor("c14-run-1", tools=_tools(HuntStore("/tmp/irrelevant")))
@@ -237,16 +222,6 @@ def test_actor_composes_system_message_plus_turn():
     assert len(gate_turn) == 1
     assert isinstance(gate_turn[0], HumanMessage)
     assert gate_turn[0].content == _compose_gate_prompt(inp)
-
-    rematch_turn = actor._on_message(AgentMessage(kind=_REMATCH_KIND, payload={
-        "unit_id": SERVICE_A, "fault_class": "CWE-352",
-        "result": TargetedReconResult(correlation_id="c", requester_id="r",
-                                      origin="hunting", status="success"),
-    }), None)
-    assert len(rematch_turn) == 2
-    assert isinstance(rematch_turn[0], SystemMessage)
-    assert rematch_turn[0].content == _rematch_skill()
-    assert isinstance(rematch_turn[1], HumanMessage)
 
 
 # --- C15: the per-pair render carries projection + materialisation + fold family
@@ -1080,12 +1055,10 @@ def test_structured_schemas_and_tool_surface_unchanged():
         rationale="r", vulnerability_classes=["CSRF"],
     )
     decision = GateDecision(directions=[direction])
-    verdict = MatchVerdict(unit_id=SERVICE_A, fault_class="CWE-352", verdict="applies")
     dumped = decision.model_dump()
     assert dumped["directions"][0]["carried"] is True
     assert "assumptions" not in dumped["directions"][0]  # #202: the carrier is stripped
     assert dumped["directions"][0]["vulnerability_classes"] == ["CSRF"]
-    assert verdict.model_dump()["verdict"] == "applies"
 
     config = mint_hunt_config(
         direction, _candidate(SERVICE_A, "CWE-352"), "hunt-1",
@@ -1102,8 +1075,9 @@ def test_structured_schemas_and_tool_surface_unchanged():
 
 class _ToolFake(BaseChatModel):
     """A one-reply scripted model emitting a NAMED tool call each turn - the
-    shape `ToolStrategy(GateDecision | MatchVerdict)` consumes, so the session
-    turn's `content` is the parsed pydantic object (test_hunting_actors)."""
+    shape `ToolStrategy(GateDecision | RatifyDecision | NoteDecision)` consumes,
+    so the session turn's `content` is the parsed pydantic object
+    (test_hunting_actors)."""
 
     call_name: str
     args: dict = {}

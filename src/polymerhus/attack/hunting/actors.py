@@ -8,8 +8,7 @@ recon-orchestrator uses (`recon/control/orchestrator_agent.ReconOrchestratorActo
   the `hunting_orchestrator` session role (`HuntingOrchestratorSession(run_id)`
   thread). Its client (`hunt_orchestrator.arun_orchestration`) posts one message
   per LLM turn of the pass - the hypothesise (Q8 elicitation), ratify, and note
-  phase turns (the node-per-phase REASON body, #167), plus the D2 re-match judge
-  retained for the runtime plane's dispatch ownership (G12) - and awaits the
+  phase turns (the node-per-phase REASON body, #167) - and awaits the
   structured reply, all on the SAME thread, so the checkpointer carries the
   pass's reasoning. This makes the hunting_orchestrator PURELY stateful,
   exactly like the recon-orchestrator. The bound tool surface is EXACTLY the
@@ -44,7 +43,6 @@ logger = logging.getLogger(__name__)
 _GATE_KIND = "gate"
 _RATIFY_KIND = "ratify"
 _NOTE_KIND = "note"
-_REMATCH_KIND = "rematch"
 _AUTHOR_KIND = "author"
 _JUDGE_KIND = "judge"
 
@@ -461,18 +459,17 @@ class HuntOrchestratorActor(_TurnActor):
     `orchestrator_factory`) constructs it, and it spawns a `run_session_agent`
     on the `hunting_orchestrator` session role under the run's
     `HuntingOrchestratorSession` thread the first time a turn is needed. `reason`
-    posts a Q8 gate-reasoning request and awaits the structured `GateDecision`;
-    `rematch` posts a D2 re-match request and awaits the structured `MatchVerdict`
-    - both on the SAME thread, so the checkpointed memory carries the pass's
-    reasoning (purely stateful, exactly like the recon-orchestrator).
+    posts a Q8 gate-reasoning request and awaits the structured `GateDecision` on
+    that thread, so the checkpointed memory carries the pass's reasoning (purely
+    stateful, exactly like the recon-orchestrator).
 
     The agent's structured-output surface is the UNION
-    `GateDecision | MatchVerdict` (a `ToolStrategy` accepts a union schema): the
-    model emits whichever schema the turn's prompt asks for, and the client
-    classifies the reply by the requested kind.
+    `GateDecision | RatifyDecision | NoteDecision` (a `ToolStrategy` accepts a
+    union schema): the model emits whichever schema the turn's prompt asks for,
+    and the client classifies the reply by the requested kind.
 
-    Fail-open: a dead/crashed actor maps to `None` for both calls - the caller's
-    fail-open canon degrades (carry every candidate / insufficient-evidence).
+    Fail-open: a dead/crashed actor maps to `None` for every call - the caller's
+    fail-open canon degrades (carry every candidate).
     `stop` posts the terminal message and reaps the task; safe when never spawned."""
 
     _role_id = "hunting_orchestrator"
@@ -506,7 +503,6 @@ class HuntOrchestratorActor(_TurnActor):
     async def _ensure_started(self) -> None:
         from polymerhus.attack.hunting.hunt_orchestrator import (  # noqa: PLC0415
             GateDecision,
-            MatchVerdict,
             NoteDecision,
             RatifyDecision,
         )
@@ -541,7 +537,7 @@ class HuntOrchestratorActor(_TurnActor):
         tools = list(surface) or None
         response_format = structured_response_format(
             "hunting_orchestrator",
-            GateDecision | RatifyDecision | NoteDecision | MatchVerdict,
+            GateDecision | RatifyDecision | NoteDecision,
             tools_bound=bool(tools),
         )
         await super()._ensure_started(
@@ -577,20 +573,6 @@ class HuntOrchestratorActor(_TurnActor):
             from langchain_core.messages import HumanMessage  # noqa: PLC0415
             return [
                 HumanMessage(content=_compose_note_prompt(payload.get("input"))),
-            ]
-        if message.kind == _REMATCH_KIND:
-            # The rematch skill is a RARE turn: a single per-turn SystemMessage
-            # on rematch is acceptable (it does not accumulate across the run's
-            # gate/ratify/note cadence), so it stays here rather than joining the
-            # gate skill's system message (#187).
-            payload = message.payload if isinstance(message.payload, dict) else {}
-            from polymerhus.attack.hunting.llm import _compose_rematch_prompt, _rematch_skill  # noqa: PLC0415
-            from langchain_core.messages import HumanMessage, SystemMessage  # noqa: PLC0415
-            return [
-                SystemMessage(content=_rematch_skill()),
-                HumanMessage(content=_compose_rematch_prompt(
-                    payload.get("unit_id"), payload.get("fault_class"),
-                    payload.get("result"))),
             ]
         if message.kind == "stop":
             from polymerhus.app.llm.actor import STOP  # noqa: PLC0415
@@ -669,27 +651,6 @@ class HuntOrchestratorActor(_TurnActor):
         Fail-open to None (the pass then carries every candidate). Retained as
         the legacy alias of the hypothesise turn (the sync rollback lane)."""
         return await self.hypothesise(gate_input)
-
-    async def rematch(
-        self, unit_id: str, fault_class: str, result
-    ) -> "MatchVerdict | None":
-        """Feed the D2 re-match request to the actor and await its `MatchVerdict`
-        on the SAME thread. Fail-open to None (the caller lands unresolved).
-        Retained for the runtime plane's dispatch ownership (G12) - the graph
-        no longer routes dispatch."""
-        try:
-            from polymerhus.app.llm.actor import AgentMessage  # noqa: PLC0415
-            content = await self._post_and_await(
-                AgentMessage(kind=_REMATCH_KIND, payload={
-                    "unit_id": unit_id, "fault_class": fault_class, "result": result,
-                })
-            )
-            from polymerhus.attack.hunting.hunt_orchestrator import MatchVerdict  # noqa: PLC0415
-            return content if isinstance(content, MatchVerdict) else None
-        except Exception:  # noqa: BLE001
-            logger.warning("hunt-orchestrator actor rematch turn failed",
-                           exc_info=True)
-            return None
 
     async def stop(self) -> None:
         await self._stop()

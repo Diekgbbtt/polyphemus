@@ -37,8 +37,8 @@ from polymerhus.attack.hunting.http_history_contract import (
 )
 from polymerhus.attack.hunting.pod.llm import POD_RUNNER_ROLE, POD_TRIAGER_ROLE
 from polymerhus.attack.hunting.pod.prompts import (
-    POD_RUNNER_SYSTEM,
-    POD_TRIAGER_SYSTEM,
+    load_pod_runner_skill,
+    load_pod_triager_skill,
 )
 from polymerhus.attack.hunting.pod.types import RawObservation, RunnerStep
 
@@ -133,7 +133,7 @@ async def default_runner_step_fn(spec: dict, messages: list, tool_calls: int) ->
         ctx.address.role_id, ctx.address, list(messages),
         checkpointer=ctx.checkpointer, tools=tools + binding.tools, middleware=mw,
         context=binding.context,
-        system_prompt=RUNNER_SYSTEM, model_factory=hc.model_factory)
+        system_prompt=load_pod_runner_skill(), model_factory=hc.model_factory)
     new_obs = len(hc.log.raw_observations) - before_obs
     content = str(getattr(turn, "content", None) or "")
     return RunnerStep(action="conclude", exhausted=new_obs == 0,
@@ -174,7 +174,7 @@ async def default_triager_fn(spec: dict, observation: RawObservation,
             ctx.address.role_id, ctx.address, delta,
             checkpointer=ctx.checkpointer, schema=TriagerDecision,
             tools=tools + binding.tools, context=binding.context,
-            system_prompt=TRIAGER_SYSTEM,
+            system_prompt=load_pod_triager_skill(),
             middleware=list(pod_middleware()) + binding.middleware,
             model_factory=hc.model_factory)
         if result is None:
@@ -210,11 +210,6 @@ def triager_compaction_middleware(*, window=None, threshold=None, store=None):
 
     return C.build_role_compaction_middleware(
         POD_TRIAGER_ROLE, window=window, threshold=threshold, store=store)
-
-
-# Re-exported so the graph and arun_pod can name the base prompts.
-RUNNER_SYSTEM = POD_RUNNER_SYSTEM
-TRIAGER_SYSTEM = POD_TRIAGER_SYSTEM
 
 
 def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,

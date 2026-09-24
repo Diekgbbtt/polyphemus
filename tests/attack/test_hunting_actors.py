@@ -5,7 +5,7 @@ inbox-request turns of ONE `HuntOrchestratorActor` per run on the
 `hunting_orchestrator` session thread (purely stateful, exactly like the
 recon-orchestrator), and each hunt's authoring/judging rides a per-hunt
 `HuntingHunterActor` on its `HuntSession` thread. These tests exercise the
-actors at the public client seams (`reason` / `rematch` / `author` / `judge` /
+actors at the public client seams (`reason` / `author` / `judge` /
 `stop` / the registry) with FAKE models and an `InMemorySaver`; the unit tier
 touches no live model and no live database (CODING_STANDARD sections 6, 10).
 """
@@ -29,18 +29,16 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     EnvisionedDirection,
     GateDecision,
     GateInput,
-    MatchVerdict,
     PhaseTurnInput,
     Witness,
 )
 from lightrag.tool import LightRagQueryTool
-from polymerhus.recon.control.targeted import TargetedReconResult
 
 
 class _ToolFake(BaseChatModel):
     """A one-reply scripted model emitting a NAMED tool call each turn - the
-    shape `ToolStrategy(GateDecision | MatchVerdict)` consumes, so the session
-    turn's `content` is the parsed pydantic object."""
+    shape `ToolStrategy(GateDecision | RatifyDecision | NoteDecision)` consumes,
+    so the session turn's `content` is the parsed pydantic object."""
 
     call_name: str
     args: dict = {}
@@ -170,42 +168,32 @@ def _gate_input() -> GateInput:
 
 # --- the hunt-orchestrator actor -------------------------------------------------
 
-def test_hunt_orchestrator_actor_gate_then_rematch_on_one_thread():
-    """ONE actor per run: a Q8 gate turn then a D2 re-match turn on the SAME
-    `hunting_orchestrator` thread, each replying its structured object, and
-    stop() ends it cleanly."""
+def test_hunt_orchestrator_actor_reason_on_one_thread():
+    """ONE actor per run: a Q8 gate turn on the `hunting_orchestrator` thread
+    replying its structured object, and stop() ends it cleanly."""
     gate_args = {"directions": [
         {"unit_id": "Service:slug:a", "fault_class": "fault-x", "carried": True,
          "rationale": "plausible"}
     ]}
-    verdict_args = {"unit_id": "Service:slug:a", "fault_class": "fault-x",
-                    "verdict": "applies"}
 
     async def _drive():
         actor = HuntOrchestratorActor(
             "run1", checkpointer=InMemorySaver(),
-            model_factory=_factory([("GateDecision", gate_args), ("MatchVerdict", verdict_args)]),
+            model_factory=_factory([("GateDecision", gate_args)]),
             observe=False,
         )
         decision = await actor.reason(_gate_input())
-        verdict = await actor.rematch(
-            "Service:slug:a", "fault-x",
-            TargetedReconResult(correlation_id="c1", requester_id="r", origin="hunting",
-                                status="success", pod_exports=[]),
-        )
         await actor.stop()
-        return decision, verdict
+        return decision
 
-    decision, verdict = asyncio.run(_drive())
+    decision = asyncio.run(_drive())
     assert isinstance(decision, GateDecision)
     assert decision.directions[0].carried is True
-    assert isinstance(verdict, MatchVerdict)
-    assert verdict.verdict == "applies"
 
 
 def test_hunt_orchestrator_actor_fail_open_on_raising_model():
-    """A dead/raising actor never aborts the pass: reason/rematch degrade to
-    None, which the pass's fail-open canon handles (carry / unresolved)."""
+    """A dead/raising actor never aborts the pass: reason degrades to None,
+    which the pass's fail-open canon handles (carry)."""
     class _Boom(BaseChatModel):
         def _generate(self, messages, stop=None, run_manager=None, **kwargs):
             raise RuntimeError("llm down")
@@ -223,13 +211,11 @@ def test_hunt_orchestrator_actor_fail_open_on_raising_model():
             observe=False,
         )
         decision = await actor.reason(_gate_input())
-        verdict = await actor.rematch("a", "f", None)
         await actor.stop()
-        return decision, verdict
+        return decision
 
-    decision, verdict = asyncio.run(_drive())
+    decision = asyncio.run(_drive())
     assert decision is None
-    assert verdict is None
 
 
 def test_hunt_orchestrator_actor_reason_without_candidates_is_noop():
@@ -596,6 +582,6 @@ def test_a6_hunt_verdict_uses_the_negotiated_strategy(monkeypatch):
     asyncio.run(_drive())
     assert calls["role_id"] == "hunting_orchestrator"
     assert set(get_args(calls["schema"])) == {
-        GateDecision, RatifyDecision, NoteDecision, MatchVerdict}
+        GateDecision, RatifyDecision, NoteDecision}
     assert calls["tools_bound"] is False  # no tool surface in this drive
     assert seen["response_format"] is sentinel

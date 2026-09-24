@@ -10,7 +10,7 @@ Two things live here, both keyed off the hunting role records in
    `HUNTING_ROLES` on the first hunt.
 
 2. The production seam factories that bind the orchestrator's injected LLM seams
-   (`hunt_orchestrator.run_orchestration`'s `reason_fn` / `rematch_fn`) to a
+   (`hunt_orchestrator.run_orchestration`'s `reason_fn`) to a
    real model through `roles.invoke_role`; the hunting-agent harness
    (`hunting_agent.build_hunting_agent`) drives `arun_session_turn` DIRECTLY on
    the per-hunt `HuntSession` thread as of #164 W5, so its author/judge seams
@@ -18,8 +18,8 @@ Two things live here, both keyed off the hunting role records in
    orchestrator's turns and the hunter's legacy sync rollback.
 
 Statefulness now lives in the MAILBOX ACTORS (`attack/hunting/actors.py`,
-feat/async-actor-agents): `arun_orchestration` drives the gate turn and the
-re-match judge as turns of ONE `HuntOrchestratorActor` per run on the
+feat/async-actor-agents): `arun_orchestration` drives the hypothesise / ratify /
+note phase turns as turns of ONE `HuntOrchestratorActor` per run on the
 `hunting_orchestrator` session thread - purely stateful, exactly like the
 recon-orchestrator - and the per-hunt `HuntingHunterActor` (registered per run
 by `HuntingActorRegistry`) owns the author/judge turns of each hunt on its
@@ -31,11 +31,10 @@ the sync factories above/existing `build_gate_reason_fn`-style seams are the
 test/rollback lane only - no production wiring uses them.
 
 The composed turns are read directly from this module's `prompts/` dir
-(`hunt-orchestrator.md` for the gate REASON body, `hunt-orchestrator-rematch.md`
-for the D2 judge), memoized on first call, FAIL-CLOSED on a missing file - the
-same role-prompt pattern the hunting agent uses; the actors reuse the SAME
-composers (`_gate_skill`, `_rematch_skill`, `_compose_gate_prompt`,
-`_compose_rematch_prompt`) and the SAME free-text-then-parse (`_parse_json_object`)
+(`hunt-orchestrator.md` for the gate REASON body), memoized on first call,
+FAIL-CLOSED on a missing file - the same role-prompt pattern the hunting agent
+uses; the actors reuse the SAME composers (`_gate_skill`,
+`_compose_gate_prompt`) and the SAME free-text-then-parse (`_parse_json_object`)
 as these factories, so the two lanes can never drift.
 
 This module imports no driver and performs no I/O at import (CODING_STANDARD
@@ -51,10 +50,8 @@ from typing import Callable
 from polymerhus.attack.hunting.hunt_orchestrator import (
     GateDecision,
     GateInput,
-    MatchVerdict,
     PhaseTurnInput,
 )
-from polymerhus.recon.control.targeted import TargetedReconResult
 
 logger = logging.getLogger(__name__)
 
@@ -175,11 +172,10 @@ L1_ONTOLOGY_PRIMER = (
     "evidence, never evidence of absence."
 )
 
-# The gate + rematch role prompts, each memoized on first call (no import-time
-# I/O, CODING STANDARD section 6). A missing prompt file is a defect:
-# FAIL-CLOSED (raise), so the orchestrator never reasons without its prompt.
+# The gate role prompt, memoized on first call (no import-time I/O, CODING
+# STANDARD section 6). A missing prompt file is a defect: FAIL-CLOSED (raise),
+# so the orchestrator never reasons without its prompt.
 _GATE_SKILL: str | None = None
-_REMATCH_SKILL: str | None = None
 
 
 def _gate_skill() -> str:
@@ -193,19 +189,6 @@ def _gate_skill() -> str:
             Path(__file__).resolve().parent / "prompts" / "hunt-orchestrator.md"
         ).read_text(encoding="utf-8")
     return _GATE_SKILL
-
-
-def _rematch_skill() -> str:
-    """The hunt-orchestrator's D2 re-match judge system prompt, read directly
-    from this module's `prompts/` dir. Memoized on first call; FAIL-CLOSED."""
-    global _REMATCH_SKILL
-    if _REMATCH_SKILL is None:
-        from pathlib import Path  # noqa: PLC0415
-
-        _REMATCH_SKILL = (
-            Path(__file__).resolve().parent / "prompts" / "hunt-orchestrator-rematch.md"
-        ).read_text(encoding="utf-8")
-    return _REMATCH_SKILL
 
 
 def _system_render(info) -> str:
@@ -613,17 +596,6 @@ def _compose_note_prompt(inp: PhaseTurnInput) -> str:
     return "\n".join(lines)
 
 
-def _compose_rematch_prompt(unit_id: str, fault_class: str, result: TargetedReconResult) -> str:
-    return (
-        f"Re-match the fault class {fault_class} against unit {unit_id} on the "
-        f"back-edge result.\n"
-        f"status: {result.status}\n"
-        f"error: {result.error}\n"
-        f"pod exports: {[e.model_dump() if hasattr(e, 'model_dump') else e for e in result.pod_exports]}\n\n"
-        "Return the three-valued verdict for this (unit_id, fault_class)."
-    )
-
-
 def _parse_json_object(text) -> dict | None:
     """Best-effort parse of a free-text LLM reply into a JSON object, tolerating a
     ```json fenced block anywhere in the reply (a live D4 reply may open with
@@ -679,31 +651,6 @@ def build_gate_reason_fn() -> Callable[[GateInput], GateDecision]:
         return result if isinstance(result, GateDecision) else GateDecision()
 
     return reason_fn
-
-
-def build_rematch_fn() -> Callable[[str, str, TargetedReconResult], MatchVerdict]:
-    """The orchestrator's `rematch_fn`: the D2 three-valued re-match after a
-    park/resume back-edge, on the `hunting_orchestrator` role with structured
-    `MatchVerdict` output. A None/unparseable result degrades to
-    `insufficient-evidence`, which the depth-1 cap lands as unresolved (never a
-    false 'applies')."""
-    def rematch_fn(unit_id: str, fault_class: str, result: TargetedReconResult) -> MatchVerdict:
-        from langchain_core.messages import HumanMessage, SystemMessage
-
-        from polymerhus.app.llm.roles import invoke_role
-
-        verdict = invoke_role(
-            GATE_ROLE,
-            [SystemMessage(content=_rematch_skill()),
-             HumanMessage(content=_compose_rematch_prompt(unit_id, fault_class, result))],
-            schema=MatchVerdict,
-        )
-        if isinstance(verdict, MatchVerdict):
-            return verdict
-        return MatchVerdict(unit_id=unit_id, fault_class=fault_class,
-                            verdict="insufficient-evidence")
-
-    return rematch_fn
 
 
 def build_author_fn() -> Callable[[str], dict | None]:

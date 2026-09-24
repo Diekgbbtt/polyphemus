@@ -2,7 +2,7 @@
 
 The hunting roles (`hunting_orchestrator`, `hunting_hunter`) are validated at the
 HUNTING bootstrap, never app boot (operator ruling 2026-08-06); and the
-orchestrator's `reason_fn`/`rematch_fn` and the hunting agent's `author`/`judge`
+orchestrator's `reason_fn` and the hunting agent's `author`/`judge`
 seams bind to a model through `invoke_role` on those roles. These tests exercise
 that at the public seam with a FAKE `invoke_role` - the unit tier touches no live
 model (CODING_STANDARD sections 6, 10).
@@ -17,10 +17,8 @@ from polymerhus.attack.hunting.hunt_orchestrator import (
     DeliveredCandidate,
     GateDecision,
     GateInput,
-    MatchVerdict,
     Witness,
 )
-from polymerhus.recon.control.targeted import TargetedReconResult
 
 
 # --- the off-app-boot bootstrap validation -----------------------------------
@@ -78,37 +76,6 @@ def test_gate_reason_fn_degrades_none_to_empty_decision(monkeypatch):
     out = HL.build_gate_reason_fn()(_gate_input())
     assert isinstance(out, GateDecision)
     assert out.directions == []
-
-
-# --- the re-match seam (hunting_orchestrator) ---------------------------------
-
-def _result() -> TargetedReconResult:
-    return TargetedReconResult(correlation_id="c", requester_id="r",
-                               origin="hunting", status="success")
-
-
-def test_rematch_fn_invokes_hunting_orchestrator_with_matchverdict_schema(monkeypatch):
-    seen = {}
-
-    def fake_invoke_role(role, messages, *, schema=None, **kw):
-        seen["role"] = role
-        seen["schema"] = schema
-        return MatchVerdict(unit_id="u1", fault_class="idor", verdict="applies")
-
-    monkeypatch.setattr("polymerhus.app.llm.roles.invoke_role", fake_invoke_role)
-    out = HL.build_rematch_fn()("u1", "idor", _result())
-    assert seen["role"] == "hunting_orchestrator"
-    assert seen["schema"] is MatchVerdict
-    assert out.verdict == "applies"
-
-
-def test_rematch_fn_degrades_none_to_insufficient_evidence(monkeypatch):
-    """A None result never fabricates an 'applies': it degrades to
-    insufficient-evidence, which the orchestrator's depth-1 cap lands as unresolved."""
-    monkeypatch.setattr("polymerhus.app.llm.roles.invoke_role", lambda *a, **k: None)
-    out = HL.build_rematch_fn()("u1", "idor", _result())
-    assert out.unit_id == "u1" and out.fault_class == "idor"
-    assert out.verdict == "insufficient-evidence"
 
 
 # --- the hunting agent's author / judge seams (hunting_hunter) ----------------

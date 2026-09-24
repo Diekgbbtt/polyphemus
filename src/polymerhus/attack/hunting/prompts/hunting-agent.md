@@ -238,9 +238,8 @@ A closed candidate reopens only with new evidence, never by re-dispatch.
 ## Worked examples
 
 Example 1 is the confirmed straight path - imitate its REASONING SHAPE, never
-the domain. When the run leaves the straight path, read `examples.md` in this
-folder first: Example 2 for a coverage re-entry, Example 3 for an INIT
-rejection, Example 4 for total blockage.
+the domain. The off-path examples follow it in this same prompt: Example 2 for a
+coverage re-entry, Example 3 for an INIT rejection, Example 4 for total blockage.
 
 ### Example 1 - confirmed, straight path
 
