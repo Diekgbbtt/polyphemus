@@ -22,6 +22,41 @@ services:
       # when neither the symlink nor the main-tree file exists.
       - path: ${POLYPHEMUS_MAIN_ENV:-../../.env}
         required: false
+    # --- #238 (Task 9): the deterministic LOCAL model provider --------------
+    # The functional E2E must traverse the real actor loop, so only model
+    # INFERENCE is replaced: both long-horizon recon roles are routed at the
+    # local fixture through the production provider-selection seam
+    # (`LLM_GATEWAY_URL` = gateway mode, `openai:<model>` = the role's model).
+    # The key is inert by construction - the fixture authenticates nothing.
+    #
+    # `depends_on` MERGES with the base service's postgres/neo4j dependency, so
+    # the agent cannot start a run before the fixture answers its healthcheck.
+    environment:
+      LLM_GATEWAY_URL: http://rate-limit-llm:8080/v1
+      LLM_JOB_ORCHESTRATOR: openai:rate-admission-fixture
+      LLM_TRIAGER: openai:rate-admission-fixture
+      API_KEY_OPENAI: e2e-inert-key
+    depends_on:
+      rate-limit-llm:
+        condition: service_healthy
+  # The deterministic OpenAI-compatible provider (Task 9). One process, no
+  # state beyond its request counters; it answers from the conversation state
+  # alone and refuses any state it does not implement with a content-free 422.
+  rate-limit-llm:
+    image: python:3.12-alpine
+    command: ["python", "/srv/deterministic_llm_provider.py"]
+    environment:
+      RATE_LLM_HOST: "0.0.0.0"
+      RATE_LLM_PORT: "8080"
+    volumes:
+      - ./tests/e2e/deterministic_llm_provider.py:/srv/deterministic_llm_provider.py:ro
+    networks: [polymerhus-net]
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/health', timeout=2).read()"]
+      interval: 5s
+      timeout: 3s
+      retries: 20
+      start_period: 3s
   # --- WAF fixtures (#196) -------------------------------------------------
   # Two shapes of "the target defends itself", both on port 80 so the lease's
   # REDIRECT (tcp/80 and tcp/443) captures them:
