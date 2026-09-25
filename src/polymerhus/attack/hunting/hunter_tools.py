@@ -876,8 +876,10 @@ def build_hunter_tools(
     the persisted config identities from (#199; absent -> the gate degrades to
     convention-only, fail-open); `graph_view_fn`
     / `kb_fn` / `exec_fn` are the injected seam bodies (each absent degrades
-    fail-open). Returns the five tools in the spec's surface order: `hunts_store`
-    / `notes` / `graph_view` / `kb_query` / `exec`. `graph_view` is the ONE
+    fail-open). Returns the tools in the spec's surface order: `hunts_store`
+    / `notes` / `graph_view` / `kb_query` / `exec`, plus the read-only advisory
+    `rate_limit_posture` tool (#238 follow-up) the Hunter resolves a host
+    against before sending it traffic. `graph_view` is the ONE
     shared read-only L0/L1 tool (#197, `graph_view_tool.build_graph_view_tool`)
     whose contract (schema + query-language primitives + guard + return shape +
     example) rides its description - the old local `GraphViewTool` is REMOVED."""
@@ -893,7 +895,17 @@ def build_hunter_tools(
         ExecTool(exec_fn=exec_fn),
         HttpHistorySearchTool(http_search_fn=http_search_fn, project_id=project_id),
         HttpHistoryGetTool(http_get_fn=http_get_fn, project_id=project_id),
+        _posture_tool(project_id),
     ]
+
+
+def _posture_tool(project_id: str):
+    """The read-only rate-limit posture tool (#238 follow-up), advisory only."""
+    from polymerhus.app.rate_limit.tool import (  # noqa: PLC0415
+        build_rate_limit_posture_tool,
+    )
+
+    return build_rate_limit_posture_tool(project_id or None)
 
 
 __all__ = [

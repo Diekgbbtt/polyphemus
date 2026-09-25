@@ -225,6 +225,8 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     lightrag branch (always-bound as of #197 - the `HUNTING_LIGHTRAG_TOOL` gate
     is REMOVED, fail-open to a degraded bundle), and the ONE shared `graph_view`
     read-only L0/L1 tool (#197) the runner uses to locate the target's surface.
+    The read-only `rate_limit_posture` tool (#238 follow-up) is bound here too:
+    an advisory read of the measured per-target limit, never enforcement.
     The T3 (#179) `KbObservation` recording is bound to the SAME log + variant
     the exec tool records into. The former `kb_retrieve` symptom-technique typed
     seam (surface B) is retired. Constructed PER STRETCH because `exec` carries
@@ -239,6 +241,7 @@ def runner_react_tools(exec_fn, memory_store, spec_id, log, variant_ref, *,
     ]
     tools += [KbQueryTool(log=log, variant_ref=variant_ref)]
     tools += _graph_view_tools(graph_view_fn)
+    tools.append(_posture_tool(project_id))
     if replay_fn is not None:
         # The description is the canonical contract (#196) imported from
         # `http_history_contract` - the pod and the hunter's read pair teach the
@@ -277,3 +280,14 @@ def _graph_view_tools(graph_view_fn=None) -> list:
     )
 
     return [build_graph_view_tool(graph_view_fn)]
+
+
+def _posture_tool(project_id: str):
+    """The read-only rate-limit posture tool (#238 follow-up). ADVISORY: the
+    hunter reads the known limit; nothing here throttles its traffic. Bound only
+    to the roles that execute on Kali (Runner, Hunter) - never the Triager."""
+    from polymerhus.app.rate_limit.tool import (  # noqa: PLC0415
+        build_rate_limit_posture_tool,
+    )
+
+    return build_rate_limit_posture_tool(project_id or None)

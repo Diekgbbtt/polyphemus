@@ -96,6 +96,47 @@ happen.
 `policy_version`); the pre-run decision is **never rewritten** by a refusal, so
 "what was decided" and "what the proxy refused" stay separately legible.
 
+### Second surface of persistence — the posture file
+
+`stats.rate_limit` is the **per-run** record (an event). The project's
+**current** posture is ALSO a file, one per measured target:
+
+```
+data/<project_id>/rate-limit/<target_key>.yaml
+```
+
+with a thin closed envelope around the very same profile:
+
+```yaml
+version: rate-limit-posture/v1
+source_run_id: <the run that produced the measurement>
+advisory: true
+profile: { ...rate-profile/v2... }
+```
+
+* **Advisory, never enforced.** The envelope declares `advisory: true`: the
+  limit is **known**, not **imposed**. No lease, proxy or governor reads this
+  file, and hunting traffic stays ungoverned by it (operator decision, D4).
+  A reader must never mistake it for enforcement.
+* **Precedence on divergence.** The file never replaces `recon_runs.stats`;
+  `stats.rate_limit` / `stats.traffic_admission` remain the per-run record and
+  win for anything scoped to a run. The file is only the project's current
+  posture, and it is written AFTER `stats.rate_limit` for the same profile — a
+  file naming a run whose stats never carried the profile would be an
+  unverifiable claim.
+* **Recency guard.** With concurrent runs the write order need not match the
+  measurement order, so a measurement whose `profile.measured_at` is OLDER than
+  the one on disk never overwrites it: the store logs a warning and the run
+  continues. The newer measurement wins.
+* **One writer.** Only the controller writes it — the recon pipeline's
+  deterministic projection (`pipeline._default_write_posture`). Agents read it,
+  read-only, through the single `rate_limit_posture` tool bound to the Pod
+  Runner and the Hunter. A failed write fails the run before any phase runs
+  (the same discipline as the admission envelope).
+* **Unreadable is not absent.** A missing file means "no measurement for this
+  target"; a corrupt or non-validating file raises instead of degrading to "no
+  known limit", and the tool answers `unreadable`.
+
 ### Structured reason codes
 
 A pruned job always carries exactly one code from the closed vocabulary
