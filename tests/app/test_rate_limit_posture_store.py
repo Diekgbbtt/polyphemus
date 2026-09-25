@@ -2,6 +2,10 @@
 
 The store's WRITE path: one YAML per `target_key`, atomic, recency-guarded.
 """
+import os
+import threading
+from datetime import timedelta
+
 import yaml
 import pytest
 
@@ -116,3 +120,63 @@ def test_a_corrupt_file_is_unreadable_never_absent(tmp_path):
 
     with pytest.raises(PostureUnreadableError):
         store.read("proj-1", "acme.com")
+
+
+def test_a_failed_write_keeps_the_previous_file_and_leaves_no_temp(
+    tmp_path, monkeypatch
+):
+    """Atomic by construction: a mid-write failure must leave the PREVIOUS
+    posture exactly as it was, and must not leak a half-written temp file."""
+    store = RateLimitPostureStore(root=tmp_path)
+    store.write("proj-1", _profile("acme.com"), "run-1")
+    bucket = tmp_path / "proj-1" / "rate-limit"
+    before = (bucket / "acme.com.yaml").read_text(encoding="utf-8")
+
+    def _no_space(src, dst):
+        raise OSError("no space left on device")
+
+    monkeypatch.setattr(os, "replace", _no_space)
+
+    with pytest.raises(PostureWriteError):
+        store.write("proj-1", _profile("acme.com"), "run-2")
+
+    assert (bucket / "acme.com.yaml").read_text(encoding="utf-8") == before
+    assert [path.name for path in bucket.iterdir()] == ["acme.com.yaml"]
+
+
+def test_concurrent_writes_never_lose_the_newest_measurement(tmp_path):
+    """The per-project lock covers the whole check-then-write section, so
+    concurrent measurements of ONE target converge on the newest one."""
+    store = RateLimitPostureStore(root=tmp_path)
+    base = _profile("acme.com").measured_at
+    profiles = [
+        _profile("acme.com").model_copy(
+            update={"measured_at": base + timedelta(seconds=index)}
+        )
+        for index in range(1, 9)
+    ]
+
+    def _write(profile, run_id):
+        store.write("proj-1", profile, run_id)
+
+    threads = [
+        threading.Thread(target=_write, args=(profile, f"run-{index}"))
+        for index, profile in enumerate(profiles)
+    ]
+    for thread in threads:
+        thread.start()
+    for thread in threads:
+        thread.join()
+
+    stored = yaml.safe_load(
+        (tmp_path / "proj-1" / "rate-limit" / "acme.com.yaml").read_text(
+            encoding="utf-8"
+        )
+    )
+    # The file and `stats.rate_limit` carry the SAME serialisation of the
+    # instant (the envelope dumps the profile in JSON mode).
+    assert (
+        stored["profile"]["measured_at"]
+        == profiles[-1].model_dump(mode="json")["measured_at"]
+    )
+    assert stored["source_run_id"] == f"run-{len(profiles) - 1}"

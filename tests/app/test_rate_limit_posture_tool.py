@@ -3,6 +3,8 @@
 The four distinct outcomes are never collapsed, and the tool never raises into
 the turn (fail-open); the store underneath stays fail-loud.
 """
+import json
+
 from polymerhus.app.rate_limit.store import RateLimitPostureStore
 from polymerhus.app.rate_limit.tool import build_rate_limit_posture_tool
 from polymerhus.recon.config import rate_limit_safety_budget
@@ -76,3 +78,36 @@ def test_the_tool_exposes_no_write_operation(tmp_path):
     # the guarantee. Assert it here so a future widening fails loudly.
     assert set(tool.args_schema.model_fields) == {"command", "target", "host"}
     assert "write" not in str(tool.args_schema.model_fields["command"].annotation)
+
+
+def test_a_raising_store_fails_open_never_into_the_turn(tmp_path):
+    """The store is fail-LOUD; this adapter is the boundary that turns its
+    failure into a legible answer, never a raise into the conversation."""
+
+    class _Boom(RateLimitPostureStore):
+        def list_targets(self, project_id):
+            raise RuntimeError("the store exploded")
+
+    tool = build_rate_limit_posture_tool("proj-1", store=_Boom(root=tmp_path))
+
+    result = tool.invoke({"command": "list"})
+
+    assert result["ok"] is False
+    assert result["status"] == "store_unavailable"
+
+
+def test_the_tool_returns_only_the_advisory_fields_never_secrets(tmp_path):
+    """The posture carries no secrets by construction; this pins the rendered
+    surface so a future widening (headers, credentials, raw evidence) reddens."""
+    tool = build_rate_limit_posture_tool("proj-1", store=_store(tmp_path))
+
+    posture = tool.invoke({"command": "get", "target": "acme.com"})["posture"]
+
+    assert set(posture) == {
+        "target_key", "outcome", "safe_rate_per_s", "burst", "max_concurrency",
+        "host_patterns", "measured_at", "expires_at", "fresh", "source_run_id",
+        "advisory",
+    }
+    blob = json.dumps(tool.invoke({"command": "resolve", "host": "acme.com"})).lower()
+    for secret_shaped in ("authorization", "cookie", "password", "token", "header"):
+        assert secret_shaped not in blob
